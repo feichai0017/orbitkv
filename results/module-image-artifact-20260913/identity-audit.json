@@ -1,0 +1,126 @@
+{
+  "audited_at_utc": "2026-09-13T11:22:07.552837+00:00",
+  "status": "passed",
+  "failures": [],
+  "source_file_count": 424,
+  "source_manifest_sha256": "6784f9753cf8c6c7bb879cf791970497aa0137d7ac346244e2b9d51d3ae685f3",
+  "binary": {
+    "path": "/workspace/orbitkv/.qualification/module-image-artifact-20260913/model_execution",
+    "bytes": 18682000,
+    "sha256": "eeb10112d242b10c7de24b341f8f2e4ede06d18e55fa6d5d080c094f575c01b7"
+  },
+  "checked_file_references": 877,
+  "qualification_result_sha256": "77f838a5f5b08c8e34000c1df21f7983055d59c0121713e07ea8970b46078961",
+  "trace_sha256": "71e71699ea8938cd9773d3afed20d396b7002765178b79cac8b64f14ec06a95d",
+  "trace_event_counts": {
+    "search_started": 1,
+    "program": 58,
+    "direct": 58,
+    "deployment": 2,
+    "finalist_validation": 2,
+    "selected": 2,
+    "search_completed": 1
+  },
+  "direct_status_counts": {
+    "rejected": 56,
+    "measured": 2
+  },
+  "search_config": [
+    {
+      "event": "search_started",
+      "schema_version": 1,
+      "backend": "cuda",
+      "program_identity": "selected-schedule LLIR identity; build-local, not a source digest",
+      "limit": 1,
+      "keep_best": 1,
+      "trials": 3,
+      "search_time_limit_ns": null,
+      "candidate_timeout_ns": 60000000000,
+      "execution_timeout_ns": 1000000000
+    }
+  ],
+  "buckets": [
+    {
+      "bucket_indices": {
+        "b": 0,
+        "c_0": 0,
+        "s": 0
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 1
+      },
+      "program": "4d674a11d72371c4a58d57414a320d7e",
+      "artifact_program": "4d674a11d72371c4a58d57414a320d7e",
+      "operation_count": 14136,
+      "direct_candidates": [
+        "CandidateId(15)"
+      ],
+      "direct_device_duration_ns": [
+        31176234
+      ],
+      "deployment_cuda_graph_duration_ns": [
+        23917568
+      ],
+      "accepted_validation_count": 1
+    },
+    {
+      "bucket_indices": {
+        "b": 0,
+        "c_0": 0,
+        "s": 1
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 4
+      },
+      "program": "f18b4122375476d6b316338d18977c48",
+      "artifact_program": "f18b4122375476d6b316338d18977c48",
+      "operation_count": 14418,
+      "direct_candidates": [
+        "CandidateId(41)"
+      ],
+      "direct_device_duration_ns": [
+        33876991
+      ],
+      "deployment_cuda_graph_duration_ns": [
+        29368415
+      ],
+      "accepted_validation_count": 1
+    }
+  ],
+  "artifact": {
+    "bytes": 15236929,
+    "path": "/workspace/orbitkv/.qualification/module-image-artifact-20260913/model-reference/decoder.json",
+    "sha256": "eb16a937ad2fc814914c7a6cf62e5720c4c8753acbd21fbcf53a900b3dc9f849"
+  },
+  "phases": [
+    {
+      "phase": "cold-search",
+      "status": "passed",
+      "reference_steps": 8,
+      "max_abs": 0.5,
+      "drain_passed": true,
+      "elapsed_process_seconds": 258.09822091832757
+    },
+    {
+      "phase": "strict-replay",
+      "status": "passed",
+      "reference_steps": 8,
+      "max_abs": 0.5,
+      "drain_passed": true,
+      "elapsed_process_seconds": 33.210191894322634
+    },
+    {
+      "phase": "profile",
+      "status": "passed",
+      "reference_steps": 8,
+      "max_abs": 0.5,
+      "drain_passed": true,
+      "elapsed_process_seconds": 33.00860621407628
+    }
+  ],
+  "scope": "Identity correlation and recorded reference/drain gates for this run; no global-optimality or serving-performance claim."
+}

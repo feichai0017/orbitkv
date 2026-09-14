@@ -1,133 +1,108 @@
+<p align="center">
+  <img src="website/public/readme-banner.svg" alt="OrbitKV — Compile the lifetime of state" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://feichai0017.github.io/orbitkv/">Website</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/roadmap.md">Roadmap</a> ·
+  <a href="results/README.md">Evidence</a>
+</p>
+
 # OrbitKV
 
-OrbitKV is a Rust attention-state compiler and KV block manager for a native
-inference engine. It compiles attention visibility into physical layouts and
-lifetime rules, owns every KV page generation, and reuses storage only after
-both semantic death and device completion are proven.
+**An attention-state compiler and native Rust inference stack.**
 
-The product has three layers:
+OrbitKV compiles attention visibility and retention into physical memory plans.
+It owns KV pages and persistent model state, and reuses storage after semantic
+lifetime, device completion, and acknowledgement permit it. The inference-only
+[Luminal fork](third_party/luminal) compiles model graphs and measures legal CUDA
+implementations to select an execution schedule.
 
-| Layer | Responsibility |
+Created by **[feichai](https://github.com/feichai0017)**. MIT licensed.
+
+> **Status:** active development, with bounded correctness and serving
+> qualification on NVIDIA H20. The primary 27B block-FP8 hybrid text decoder runs
+> end to end. Competitive serving performance against vLLM and SGLang remains
+> an open goal; see the [capability matrix](docs/capability-matrix.md).
+
+## Why OrbitKV
+
+- **Compile state lifetimes.** Full, Sliding, mixed, and exact Chunked attention
+  produce different placement and retirement programs. Recurrent and convolution
+  layers carry generation-checked fixed state.
+- **Keep ownership explicit.** One manager handles page generations, prefix
+  sharing, copy-on-write, cancellation, retirement, and safe reuse. Executors and
+  external transports consume its plans.
+- **Search implementations from contracts.** Model math, dtype, shape, state
+  layout, and target capabilities admit kernel candidates. Luminal profiles
+  alternatives on CUDA and persists selected programs for strict replay.
+
+The direction is [joint state and execution compilation](docs/joint-compilation.md).
+Current state facts enforce ownership and artifact compatibility. Competition
+between multiple KV layouts, transport-aware scheduling, and general megakernel
+generation are future work.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Model[Model semantics] --> Core[OrbitKV state compiler]
+    Model --> Graph[Luminal graph]
+    Core --> State[RuntimeSession]
+    State -->|State contracts and arenas| Graph
+    Graph --> Search[Legal candidates + CUDA profiling]
+    Search --> Run[Selected execution program]
+    Run -->|Device completion| State
+    Engine[Request scheduler] --> State
+```
+
+| Crate | Responsibility |
 | --- | --- |
-| `core/` | Attention-state compilation, request and snapshot identity, Prefix/COW, token disposition, physical-page ownership, retirement, acknowledgement, and safe reuse |
-| `executor/` | OrbitKV plan lowering, forked Luminal graph/device execution, and external byte transports |
-| `server/` | Rust API and scheduling boundary; optionally reuses vLLM's Rust OpenAI/tokenizer/chat frontend through a narrow protocol adapter |
+| [`orbitkv`](crates/orbitkv) | Backend-independent state compiler, KV manager, snapshots, prefix/COW, retirement, and `RuntimeSession` |
+| [`orbitkv-executor`](crates/orbitkv-executor) | Checkpoint normalization, state bindings, Luminal graph execution, artifacts, and external byte transports |
+| [`orbitkv-engine`](crates/orbitkv-engine) | Scheduling, batching, cancellation, protocol contracts, and the optional OpenAI-compatible HTTP frontend |
 
-OrbitKV is the only KV authority. The executor consumes manager-authored pages
-and the server cannot name a physical page. There is no compatibility layer, C
-boundary, Python runtime, or second allocator in the active product.
+The core is usable independently of the inference engine. The complete stack
+runs in one Rust process. The optional frontend reuses the pinned vLLM Rust
+HTTP/tokenizer/chat/SSE components; OrbitKV retains scheduling and KV ownership.
 
-## Repository layout
+## Model and kernel support
 
-```text
-orbitkv/
-├── core/
-│   ├── src/                 compiler, KV manager, RuntimeSession
-│   ├── examples/            generic attention-state inputs
-│   └── fixtures/            generic compiler fixtures
-├── executor/
-│   ├── src/                 plan lowering, device execution, external transport
-│   │   └── model/           config, weight contract, block math, step validation
-│   ├── tests/               executor and transport protocol closures
-│   └── luminal/             pinned Luminal fork (Git submodule)
-├── server/                  local async Engine and request contracts
-├── docs/                    architecture and qualification boundary
-├── tools/                   repository invariants
-├── website/                 project documentation site
-└── results/                 compact current evidence only
-```
+| Model / state family | Current qualification |
+| --- | --- |
+| Dense Full attention | Bounded released-checkpoint execution on H20 |
+| Interleaved Full + Sliding attention | Released-model correctness, window crossing, page reuse, batching, and HTTP lifecycle on H20 |
+| Qwen3.8-27B-FP8 hybrid text decoder | Block-FP8 linear, Full attention, Gated DeltaNet, convolution state, logit checks, and bounded HTTP serving on H20 |
+| Exact Chunked attention | Core compilation and host lifecycle tests; released-model device qualification pending |
+| MLA, MoE, multimodal, multi-device | End-to-end execution remains open |
 
-The Luminal fork is pinned by the parent repository. Its paged-attention path
-accepts externally managed page indices, query/KV indptrs, last-page lengths,
-and page geometry. It may cache those inputs for execution, but it does not
-allocate or recycle KV pages. The executor depends on the visible submodule by
-local path, so the reviewed fork and the code linked into the product cannot
-silently diverge.
+The 27B checkpoint normalizes through its Qwen3.5 text architecture configuration.
+Model names do not select kernels. See [checkpoint import](docs/checkpoint-import.md)
+for the supported configuration contracts.
 
-The native decoder compiles one symbolic graph into decode and prefill buckets.
-Both phases share the same runtime, preallocated dynamic inputs, and one
-persistent K/V arena per attention class; requests update only tokens, positions,
-write slots, CSR metadata, and dynamic dimensions before dispatch. Greedy
-sampling is part of the graph,
-so the default execution path returns one token ID per query row instead of
-copying vocabulary-sized logits to the host. A fixed-signature decode can also
-be captured as one outer CUDA Graph after warmup. Replay updates the same input
-allocations before launching the graph; a change to query/batch/context shape
-or CSR indptr geometry is rejected and requires a new capture. The generic
-CUDA capture path and a released-checkpoint prefill/capture/replay lifecycle
-both pass on H20. The first flattened outer graph was 24.9% slower than eager;
-composing Luminal's selected executables as child graphs reversed that result,
-reducing matched fixed-step decode wall time by 8.3% over 20 iterations and
-5.8% over a 100-iteration confirmation. This is a narrow batch-one result, not
-a throughput or general model-speed claim.
+| CUDA provider | Role |
+| --- | --- |
+| cuBLASLt | Dense and batched matrix products, with supported epilogues |
+| DeepGEMM | SM90 block-scaled FP8 linear and tile candidates |
+| FlashInfer | CUDA-core decode and tensor-core decode / packed prefill |
+| FlashAttention-3 | Optional SM90 F16/BF16 paged decode / prefill, head dimensions 64/128/256 |
+| Generated CUDA | Primitive operations, state updates, and legal fused regions |
 
-The core also has a backend-neutral external-export transaction for immutable
-request snapshots. It pins exact local page generations, emits logical-page
-copy records, requires per-page durable receipts and a monotonic completion
-frontier, then publishes an external replica catalog entry. This is the intended
-integration boundary for transports such as Mooncake or NIXL. The symmetric
-request-private restore transaction allocates fresh OrbitKV-owned pages,
-validates external copy receipts, and publishes through the native append
-lifecycle. An object-safe async transport contract and a host-memory reference
-adapter now execute the plans against real byte buffers, including compact
-partial tails, checksums, deletion, and deterministic unobserved/ambiguous
-faults. Mooncake/NIXL adapters and external-system qualification remain open;
-see [external KV tiers](docs/external-kv.md).
+Attention candidates share logical semantics and an explicit paged KV view.
+The current executed attention contract is causal/sliding with separate NHD
+K/V pages. The handwritten native attention provider has been removed.
+[Provider documentation](docs/attention-providers.md) specifies admission,
+source setup, and device limits. CUDA Graph replay combines launches; it does
+not turn the entire model into one kernel.
 
-## Compilation and execution
+## Quickstart
 
-```text
-attention visibility / retention semantics
-        |
-        v
-RuntimeManifest
-        |
-        +--> RuntimeSession: identities, pages, COW, retirement, reuse
-        |
-        v
-ExecutorPlan: attention classes and physical metadata
-        |
-        +--> Luminal graph + kernels (local execution)
-        |
-        +--> ExternalKvTransport (tier movement)
-        |
-        v
-completion evidence -> RuntimeSession publication and acknowledgement
-```
+From a checkout of this revision, initialize the pinned Luminal submodule.
+Host tests need a Rust toolchain (workspace MSRV 1.88) and Python 3; no GPU is
+required. Use current stable Rust for the complete dependency graph, as CI does.
 
-Ring layouts, append-only layouts, resettable arenas, and page-level COW are
-compiled physical choices, not separate product modes. Token-level management
-is always present: the manager tracks logical token placement and disposition,
-then relocates only when the state semantics and cost policy permit it.
-For attribution testing, an explicit request-lifetime residence baseline keeps
-the same attention visibility but delays physical reclamation; normal
-construction always uses the compiled policy.
-
-Current compiled token lifetimes include:
-
-- Full attention: append-only placement, optional shared Prefix, and COW.
-- Sliding attention: periodic placement and retirement after the visibility
-  window passes.
-- Full + Sliding: class-separated placement and independent retirement.
-- Exact Chunked attention: resettable epoch arenas.
-- Full latent KV: component-aware token storage in the core; executor support is
-  still pending.
-- Recurrent and convolution state: generation-checked checkpoints in the core;
-  unified executor transactions are still pending.
-
-## Server boundary
-
-`orbitkv-server` defines an async, in-process `Engine` interface with explicit
-execution and cancellation. Its optional `vllm-frontend` feature launches the
-pinned vLLM Rust OpenAI HTTP/tokenizer/chat/SSE stack and translates only
-tokenized Add/Abort traffic to the local engine. PegaInfer informed this bridge
-shape, but its scheduler, KV cache, model runtime, and CUDA ownership are not
-part of OrbitKV. The current adapter is greedy text-only and rejects unsupported
-semantics rather than silently dropping them.
-
-## Build and test
-
-```bash
+```sh
 git submodule update --init --recursive
 cargo test --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
@@ -135,47 +110,89 @@ cargo fmt --all -- --check
 python tools/verify_active_source.py
 ```
 
-Compile a canonical runtime manifest:
+Compile an example runtime manifest:
 
-```bash
+```sh
 cargo run --locked -p orbitkv --bin orbitkv -- \
-  compile-runtime-manifest core/examples/hybrid-attention-state-plan.json
+  compile-runtime-manifest crates/orbitkv/examples/hybrid-attention-state-plan.json
 ```
 
-## Evidence boundary
+CUDA execution additionally requires an NVIDIA GPU, a compatible driver/CUDA
+toolkit, and the sources for the providers used by the workload. Prefetch them
+explicitly; model compilation performs no network downloads:
 
-Core lifecycle and executor lowering are host-verified. On H20, the current
-source also executes a released 18-layer Full+Sliding checkpoint with its native
-3 Full / 15 Sliding schedule and 512-token window. A 512-token prefill plus 33
-decode steps matches a separately generated Transformers greedy-token sequence,
-crosses the window, reclaims and reuses a page generation, executes a second
-request from reused storage, and drains every arena after release. The direct
-explicit-CSR prefill kernel also matches its independent BF16 reference within
-`1.93e-4`. See `results/released-hybrid-lifecycle-20260906`.
+```sh
+cargo run --manifest-path third_party/luminal/Cargo.toml \
+  -p luminal_cuda_lite --bin fetch-provider -- flashinfer
 
-A separate fixed-signature child-graph experiment records a narrow matched
-dispatch improvement. A release-mode same-executor test on the released hybrid
-checkpoint now gives the first narrow compiler-benefit closure: over ten paired
-alternating runs, compiled residence reduced live payload by 27.8%, extended a
-fixed page budget from boundary 528 to 560, and reduced median single-request
-test-path time by 0.77% while preserving all 256 generated tokens. This remains
-a batch-one engine microbenchmark, not an end-to-end serving-throughput result.
-There is still no production-serving, broad model-family, or complete SGLang
-replacement claim.
+# For block-FP8 linear or the optional SM90 attention candidate:
+cargo run --manifest-path third_party/luminal/Cargo.toml \
+  -p luminal_cuda_lite --bin fetch-provider -- deepgemm
+cargo run --manifest-path third_party/luminal/Cargo.toml \
+  -p luminal_cuda_lite --bin fetch-provider -- flashattention
 
-`results/**` contains only compact reviewed evidence directly relevant to the
-current architecture. Removed historical archives remain recoverable from Git
-history. See the [Capability Matrix](docs/capability-matrix.md) and
-[Results Index](results/README.md).
+cargo run --release --locked -p orbitkv-engine \
+  --features server --bin orbitkv-serve -- --help
+```
 
-## Documentation
+Serving requires a supported checkpoint and an explicit page budget for each
+compiled KV class. Start with the [engine setup](crates/orbitkv-engine/README.md)
+and [qualification workloads](docs/benchmarking.md). Use `--decoder-artifact`
+to save a fresh search or strictly load an existing schedule and CUDA module
+images. Provider libraries are cached separately. Artifact compatibility and
+startup behavior are documented in [module artifacts](docs/module-artifacts.md)
+and [graph residency](docs/graph-residency.md).
 
-- [Architecture](docs/architecture.md)
-- [Components and external projects](docs/components.md)
-- [Implementation status](docs/implementation-status.md)
-- [Capability Matrix](docs/capability-matrix.md)
-- [Executor fork and upstream policy](docs/executor-upstream.md)
-- [Matched serving benchmarks](docs/benchmarking.md)
-- [RuntimeSession](docs/runtime-session.md)
-- [State lifetime and reclamation](docs/state-lifecycle.md)
-- [Roadmap](docs/roadmap.md)
+## Measured progress
+
+The [14 September H20 qualification](results/provider-kernels-20260914/README.md)
+records:
+
+- **Provider selection:** FlashInfer tensor-core attention for the recorded decode
+  bucket and FlashAttention-3 for the packed-prefill bucket.
+- **Correctness:** 96 full-vocabulary logit comparisons across fresh search and
+  two strict replay configurations; maximum absolute error 0.71875 under the
+  existing 1.0 gate.
+- **Replay and lifecycle:** 423 generated module-image hits with zero NVRTC calls
+  in the recorded HTTP replay run, plus cancellation and complete state drain.
+  External provider libraries were already cached.
+
+Warm full-logit diagnostic decode was about **24.1 ms**. This is a bounded
+measurement, not an established whole-model speedup. Historical same-executor
+experiments show memory savings and improvements from compiler selection;
+recorded vLLM/SGLang serving comparisons still show a performance gap. The
+[results index](results/README.md) retains the exact workloads and source limits.
+
+## Repository and documentation
+
+```text
+crates/                 core, executor, and engine
+  <crate>/src/          implementation
+  <crate>/tests/        integration tests, private unit suites, and fixtures
+third_party/luminal/    pinned inference-only compiler workspace
+docs/                   architecture, contracts, and roadmap
+benchmarks/             workload and tuning manifests
+tools/                  qualification tools; tests in tools/tests/
+results/                compact reviewed evidence
+website/                static Astro website
+```
+
+| Understand the system | Work on the implementation |
+| --- | --- |
+| [Architecture](docs/architecture.md) | [Code and test layout](docs/code-layout.md) |
+| [Joint compilation](docs/joint-compilation.md) | [Luminal design](docs/luminal-design.md) |
+| [RuntimeSession](docs/runtime-session.md) | [Compiler boundaries](docs/compiler-boundaries.md) |
+| [State lifetimes](docs/state-lifecycle.md) | [Kernel providers](docs/attention-providers.md) |
+| [External KV tiers](docs/external-kv.md) | [Benchmarking](docs/benchmarking.md) |
+| [Capability matrix](docs/capability-matrix.md) | [Website development](website/README.md) |
+
+## Author and acknowledgements
+
+OrbitKV is created and maintained by **[feichai](https://github.com/feichai0017)**.
+The project is available under the [MIT license](LICENSE).
+
+The Luminal fork builds on [Luminal](https://github.com/luminal-ai/luminal).
+CUDA integrations use cuBLASLt, DeepGEMM, FlashInfer, and FlashAttention.
+The optional HTTP frontend reuses vLLM's Rust components. Upstream projects
+retain their own authorship and licenses; see [components](docs/components.md)
+and the [fork policy](docs/executor-upstream.md).

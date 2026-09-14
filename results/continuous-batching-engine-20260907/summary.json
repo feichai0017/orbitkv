@@ -1,0 +1,56 @@
+{
+  "schema": "orbitkv.continuous-batching-engine",
+  "status": "passed",
+  "qualification": "released_checkpoint_continuous_batching_correctness_only",
+  "configuration": {
+    "dtype": "bfloat16",
+    "layers": 18,
+    "full_layers": [5, 11, 17],
+    "sliding_layer_count": 15,
+    "sliding_window_tokens": 512,
+    "page_tokens": 16,
+    "page_counts": [128, 66],
+    "maximum_model_tokens": 1024,
+    "maximum_prefill_tokens": 512,
+    "maximum_batch_tokens": 1024,
+    "maximum_active_requests": 2,
+    "maximum_queued_requests": 8,
+    "event_buffer_size": 16,
+    "search_graphs_per_bucket": 2
+  },
+  "concurrent_same_shape": {
+    "request_count": 2,
+    "prompt_tokens_per_request": 512,
+    "generated_tokens_per_request": 8,
+    "reference_tokens": [236743, 199, 236820, 34280, 236813, 208, 236820, 34280],
+    "both_requests_match_reference": true,
+    "maximum_observed_batch_size": 2,
+    "multi_request_dispatches_at_least": 2,
+    "final_drain": true,
+    "final_combined_test_seconds": 91.25
+  },
+  "late_prefill": {
+    "decode_request_prompt_tokens": 512,
+    "decode_request_generated_tokens": 32,
+    "decode_reference_prefix_match": true,
+    "late_request_prompt_tokens": 16,
+    "late_request_generated_tokens": 4,
+    "late_request_first_token": 106,
+    "mixed_phase_dispatches_at_least": 1,
+    "maximum_observed_batch_size": 2,
+    "final_drain": true,
+    "final_combined_test_seconds": 91.25
+  },
+  "claims": {
+    "bounded_admission_and_output": true,
+    "multi_request_prefill_and_decode": true,
+    "mixed_prefill_decode_dispatch": true,
+    "continuous_batching_correctness": true,
+    "http_model_execution": false,
+    "fairness_qualified": false,
+    "serving_capacity_qualified": false,
+    "latency_benefit": false,
+    "throughput_benefit": false,
+    "production_ready": false
+  }
+}

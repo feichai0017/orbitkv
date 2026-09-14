@@ -1,0 +1,367 @@
+{
+  "build": {
+    "frozen_at_utc": "2026-09-13T15:15:54.675853+00:00",
+    "source_inputs_unchanged": true,
+    "source_file_count": 441,
+    "source_manifest_sha256": "95184ebdd2a3c3dd4a6b8a108b2576cf62c34a887a5bd4ca3374fa7963a98f57",
+    "binary": {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/verified/orbitkv-serve",
+      "bytes": 65674648,
+      "sha256": "56ca46578bcc4a452799bcc1524974017875039763b26041709d543ed757b703"
+    },
+    "build_command": [
+      "cargo",
+      "build",
+      "--offline",
+      "--locked",
+      "--release",
+      "-p",
+      "orbitkv-engine",
+      "--features",
+      "server",
+      "--bin",
+      "orbitkv-serve",
+      "--message-format=json"
+    ],
+    "root_commit": "5c45719149ce8c5716d614e92bdeb809ba26913f",
+    "luminal_commit": "bfa83afeb80c04040ca5c67ea8a9ae22b204b5c8",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n"
+  },
+  "artifact": {
+    "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/decoder.json",
+    "bytes": 15184754,
+    "sha256": "44dc4c03cf606718da6f223d732ffd025fb79d4a4497c8b98ea986976dcdc174"
+  },
+  "module_image_count": 418,
+  "inputs": [
+    {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/verified/orbitkv-serve",
+      "bytes": 65674648,
+      "sha256": "56ca46578bcc4a452799bcc1524974017875039763b26041709d543ed757b703"
+    },
+    {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/decoder.json",
+      "bytes": 15184754,
+      "sha256": "44dc4c03cf606718da6f223d732ffd025fb79d4a4497c8b98ea986976dcdc174"
+    },
+    {
+      "path": "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+      "bytes": 63,
+      "sha256": "ebc739cbe1e00ca29412c7ea62d2d58d522a97829393e0650aca24d3521288e9"
+    },
+    {
+      "path": "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+      "bytes": 266,
+      "sha256": "751ca5e9e7d1108dc84f9a4f7f3b231d151a4154559f0c8ed83c38f8837522a7"
+    },
+    {
+      "path": "/workspace/orbitkv/tools/run_matched_serving.py",
+      "bytes": 20956,
+      "sha256": "caeaa6089b0e02aaea4b81dab7e5d9b9a33a25e4941a3dbd63e546d27cd2573a"
+    },
+    {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/workloads.json",
+      "bytes": 601,
+      "sha256": "becc7cc5f753dc910fd673920804f55b1b43707ee6ea3c59303fb73a85c5dc48"
+    },
+    {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/verified/build-receipt.json",
+      "bytes": 1018,
+      "sha256": "159633dd262281ce8edf201961ce02403eae36c05f616db043761dc66dd54380"
+    },
+    {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/run_serving.py",
+      "bytes": 4191,
+      "sha256": "6ead6aa1213b5ffe23d91cbdfd4d4a058fc0649351ba25d1cc0e32e5a6488dba"
+    },
+    {
+      "path": "/workspace/models/qwen3.8-27b-fp8/config.json",
+      "bytes": 51350,
+      "sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc"
+    },
+    {
+      "path": "/workspace/models/qwen3.8-27b-fp8/model.safetensors.index.json",
+      "bytes": 137335,
+      "sha256": "f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2"
+    },
+    {
+      "path": "/workspace/models/qwen3.8-27b-fp8/tokenizer.json",
+      "bytes": 12809320,
+      "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+    }
+  ],
+  "test_binaries": [
+    {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/verified/model-tests",
+      "bytes": 18822248,
+      "sha256": "19c6c7f0dd7cad98a6d8f8c6c645d5bf604f35427e852f30aae8a51c0d1e54ab"
+    },
+    {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/verified/cuda-tests",
+      "bytes": 32131000,
+      "sha256": "0845f12255976bf32671e66d0065dbb4150d425882ef0ee7fadf82b2f1ea71db"
+    }
+  ],
+  "http_probe": {
+    "started_at_utc": "2026-09-13T15:28:29.634353+00:00",
+    "command": [
+      "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/verified/orbitkv-serve",
+      "--model",
+      "/workspace/models/qwen3.8-27b-fp8",
+      "--decoder-artifact",
+      "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/decoder.json",
+      "--tuning-profile",
+      "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+      "--graph-cache-capacity",
+      "2",
+      "--page-counts",
+      "64",
+      "--max-model-tokens",
+      "1024",
+      "--max-prefill-tokens",
+      "4",
+      "--max-batch-tokens",
+      "8",
+      "--max-active-requests",
+      "1",
+      "--max-queued-requests",
+      "16",
+      "--search-graphs",
+      "1",
+      "--search-seed",
+      "7",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8010",
+      "--served-model",
+      "qwen38-27b-fp8",
+      "--prepare-execution",
+      "true"
+    ],
+    "binary": {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/verified/orbitkv-serve",
+      "bytes": 65674648,
+      "sha256": "56ca46578bcc4a452799bcc1524974017875039763b26041709d543ed757b703"
+    },
+    "artifact_before": {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/decoder.json",
+      "bytes": 15184754,
+      "sha256": "44dc4c03cf606718da6f223d732ffd025fb79d4a4497c8b98ea986976dcdc174"
+    },
+    "environment": {
+      "CUDA_HOME": "/usr/local/cuda",
+      "FLASHINFER_CUDA_ARCH": "sm_90",
+      "LUMINAL_DEEPGEMM_DIR": "/root/.cache/luminal/providers/deepgemm/559d79fb6994",
+      "LUMINAL_FLASHINFER_DIR": "/root/.cache/luminal/providers/flashinfer/f1e6fdcb8f65",
+      "LUMINAL_STAGE_TRACE": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/http-probe/stages.jsonl"
+    },
+    "ready_seconds": 18.525126434862614,
+    "oracle_probe": {
+      "request": {
+        "model": "qwen38-27b-fp8",
+        "prompt": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "max_tokens": 3,
+        "temperature": 0,
+        "ignore_eos": true
+      },
+      "response": {
+        "id": "cmpl-26ad29a4",
+        "object": "text_completion",
+        "created": 1789313328,
+        "model": "qwen38-27b-fp8",
+        "choices": [
+          {
+            "index": 0,
+            "text": "&!@",
+            "logprobs": null,
+            "finish_reason": "length",
+            "stop_reason": null,
+            "prompt_logprobs": null,
+            "token_ids": null,
+            "prompt_token_ids": null
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 4,
+          "total_tokens": 7,
+          "completion_tokens": 3,
+          "prompt_tokens_details": null
+        },
+        "system_fingerprint": null,
+        "kv_transfer_params": null,
+        "ec_transfer_params": null
+      },
+      "expected_text": "&!@",
+      "oracle_token_ids": [
+        5,
+        0,
+        31
+      ]
+    },
+    "active_stream_probe": {
+      "request": {
+        "model": "qwen38-27b-fp8",
+        "prompt": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "max_tokens": 512,
+        "temperature": 0,
+        "ignore_eos": true,
+        "stream": true
+      },
+      "first_nonempty_event": {
+        "id": "cmpl-5c002c5e",
+        "object": "text_completion",
+        "created": 1789313328,
+        "model": "qwen38-27b-fp8",
+        "choices": [
+          {
+            "index": 0,
+            "text": "&"
+          }
+        ]
+      },
+      "client_open_at_signal": true
+    },
+    "shutdown_seconds": 10.5268499776721,
+    "exit_code": 0,
+    "artifact_after": {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/decoder.json",
+      "bytes": 15184754,
+      "sha256": "44dc4c03cf606718da6f223d732ffd025fb79d4a4497c8b98ea986976dcdc174"
+    },
+    "shutdown_report": {
+      "stats": {
+        "manager": {
+          "active_requests": 0,
+          "active_snapshots": 0,
+          "active_prefixes": 0,
+          "evicted_prefixes": 0,
+          "prepared_steps": 0,
+          "submitted_steps": 0,
+          "free_pages": 64,
+          "reserved_pages": 0,
+          "writing_pages": 0,
+          "active_pages": 0,
+          "retiring_pages": 0,
+          "quarantined_pages": 0,
+          "exhausted_pages": 0,
+          "pending_reclamations": 0,
+          "total_request_page_refs": 0,
+          "total_prefix_page_refs": 0,
+          "total_reader_pins": 0
+        },
+        "queued_requests": 0,
+        "active_requests": 0,
+        "admitted_requests": 2,
+        "completed_requests": 2,
+        "cancelled_requests": 1,
+        "model_dispatches": 5,
+        "multi_request_dispatches": 0,
+        "mixed_phase_dispatches": 0,
+        "maximum_observed_batch_size": 1
+      },
+      "fixed_states": [
+        [
+          1,
+          {
+            "identity": {
+              "engine_epoch": 1,
+              "pool_epoch": 3,
+              "byte_count": 150994944,
+              "pool_id": 2,
+              "slot_count": 2
+            },
+            "free_slots": 2,
+            "reserved_slots": 0,
+            "copying_slots": 0,
+            "live_slots": 0,
+            "retiring_slots": 0,
+            "quarantined_slots": 0,
+            "active_owners": 0,
+            "pending_transitions": 0,
+            "pending_retirements": 0
+          }
+        ],
+        [
+          2,
+          {
+            "identity": {
+              "engine_epoch": 1,
+              "pool_epoch": 4,
+              "byte_count": 2949120,
+              "pool_id": 3,
+              "slot_count": 2
+            },
+            "free_slots": 2,
+            "reserved_slots": 0,
+            "copying_slots": 0,
+            "live_slots": 0,
+            "retiring_slots": 0,
+            "quarantined_slots": 0,
+            "active_owners": 0,
+            "pending_transitions": 0,
+            "pending_retirements": 0
+          }
+        ]
+      ],
+      "decoder_graph_builds": 2,
+      "materialized_decoder_graphs": 2
+    },
+    "startup_report": {
+      "elapsed": {
+        "secs": 17,
+        "nanos": 82691256
+      },
+      "preparation": {
+        "elapsed": {
+          "secs": 0,
+          "nanos": 125533012
+        },
+        "compiled_buckets": 2,
+        "buckets": [
+          {
+            "bucket_index": 1,
+            "dimensions": {
+              "b": 1,
+              "c_0": 1,
+              "s": 4
+            },
+            "elapsed": {
+              "secs": 0,
+              "nanos": 9348257
+            },
+            "graph_builds": 0
+          },
+          {
+            "bucket_index": 0,
+            "dimensions": {
+              "b": 1,
+              "c_0": 1,
+              "s": 1
+            },
+            "elapsed": {
+              "secs": 0,
+              "nanos": 116159288
+            },
+            "graph_builds": 1
+          }
+        ],
+        "cache": {
+          "graph_builds": 2,
+          "materialized_graphs": 2
+        }
+      }
+    },
+    "status": "passed"
+  }
+}

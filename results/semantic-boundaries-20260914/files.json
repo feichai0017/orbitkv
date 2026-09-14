@@ -1,0 +1,452 @@
+[
+  {
+    "path": "/workspace/models/qwen3.8-27b-fp8/config.json",
+    "bytes": 51350,
+    "sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc"
+  },
+  {
+    "path": "/workspace/models/qwen3.8-27b-fp8/model.safetensors.index.json",
+    "bytes": 137335,
+    "sha256": "f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/artifact-tests.log",
+    "bytes": 2359,
+    "sha256": "d7f950ad96509fef29be0fd27c3240eeae16ef02d4284b38b7961b085db41b79"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/audit.json",
+    "bytes": 2905,
+    "sha256": "634ed14253e358978b96b305d6769dd880749e1c29945c5282dbe7ea990c8f0f"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/check.log",
+    "bytes": 2158,
+    "sha256": "0b69896b98bd326a63be75948edb3d7c662021b7c265b91c0424e4fa823f843c"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/core-symbol-tests.log",
+    "bytes": 1484,
+    "sha256": "4722fad451d65f7221ccd851696fb83a6b7a6c345d0c231ab33bcdfcbf5ffeb5"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/core-tests-final.log",
+    "bytes": 15182,
+    "sha256": "0e0265875f4067b7020d54bceac7dda28897d65ab4057bb14d8ee6c9ead9e118"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/cuda-build.log",
+    "bytes": 368,
+    "sha256": "749fcf5661b4d5a18e8820ffb89fd2a80fbc2b66f2601d5639d70ac0a05a790a"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/cuda-clippy.log",
+    "bytes": 436,
+    "sha256": "c52e09c1a0e047952d4e39fa32d4ba5dbe795d01d9682611d044fdd950ca8c8a"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/decoder.json",
+    "bytes": 15182526,
+    "sha256": "e37b63fb5af9b653b4f456e7784c1d1aa838e06829c4771d2612258c94a65af0"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/engine-build.log",
+    "bytes": 417,
+    "sha256": "809b97434181d27943e60d743a32bf5c1f8c4e0c5ff0c2c244fa6624ea3f72c4"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/engine-clippy.log",
+    "bytes": 560,
+    "sha256": "0b9cf785e0ad08a05acb541ed7877bd9450b65082287ba184a7c900891664a55"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/executor-build.log",
+    "bytes": 507,
+    "sha256": "aa78e09d41f0b2c4e2007c96ea1877c44f8c6c7c3304828d39aec18567be2919"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/executor-clippy-final.log",
+    "bytes": 417,
+    "sha256": "7e2fc3808015caf5de677fbd71f43187b3e12c80f937ef927f4175d8a4c9405e"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/executor-clippy.log",
+    "bytes": 348,
+    "sha256": "4ad3eaffeb21372e7b8dbe089a52fac138ea286c667a592f15ea2259b227f6ad"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/executor-final-build.log",
+    "bytes": 243,
+    "sha256": "6735b0174bda510ed8aa6d18fc31e3d69b65a57c4fd7eb25394efd7b13f6107e"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/executor-host-tests-final.log",
+    "bytes": 7336,
+    "sha256": "89200f7cf9ae1274e446215167d5436fd409dde71a06950d822a77eb387b3f53"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/executor-host-tests.log",
+    "bytes": 10373,
+    "sha256": "6f13ac026f1b5e2d8adedf9d8c3a316479c6c41e0fb701b976f1257d1707733c"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/final-build.log",
+    "bytes": 1018,
+    "sha256": "215affdd023dbbee76e45acda1017ddccf1a0751ed4f917d9c2a1d006f8a0a3c"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/final-model-replay-capacity-one.log",
+    "bytes": 9795,
+    "sha256": "14192097164cc0d4002ef08f0f70d36e0897df66bc031b2477f79e5365be23d9"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/final-model-replay-prepared.log",
+    "bytes": 9900,
+    "sha256": "40ff844786e1473ee6d14d657b9958b57e0118e8e1db7b9f93c156a67bf3e0a2"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/final-old-artifact-reject.log",
+    "bytes": 522,
+    "sha256": "7ecbe2d870f09add1417a6d5353f43b34b289f70ae6df5f8d0a1c4cd88e2df62"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/frontend-tests.log",
+    "bytes": 1905,
+    "sha256": "a70fcf63b7c19da12bfdfbdbec72a212a298d2be1796f4e3c46c221700845974"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/frozen-build.log",
+    "bytes": 1012,
+    "sha256": "42023ca6329a2993577ac63d08412edf26b16ec5cfe1f0ad6ff7ad0b5cd0026d"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/gpu-checks.json",
+    "bytes": 2259,
+    "sha256": "03777d1658c191ee546d0dc1be92cb118e8e238f826e302cd5867546614c1bab"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/gpu-final.txt",
+    "bytes": 42,
+    "sha256": "34a432870dd04f007ab75fdf812cb2a895b35cddfc3e24d28e0925860f03e083"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/gpu.txt",
+    "bytes": 118,
+    "sha256": "24a20557c0ab8d9b9e59dc33cc38b8ab5149dae9e18c24a03fb4eb273f3b1030"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/gpu_checks.py",
+    "bytes": 1686,
+    "sha256": "6d4f4c4369cbdcd604e3d806394735d4fcf7c9bb880d1155c55ef0b7948ad56b"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/historical-results.json",
+    "bytes": 12945,
+    "sha256": "0c921c45f2e4be8ed2f253146300e9329866ec7b2d1715f85844068b5995a205"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/host-deepgemm.log",
+    "bytes": 18840,
+    "sha256": "5178314c2393f99ed6eae78e224a1f9577ef21069dddff974fc499779d8f06f0"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/host-native_attention-tests.log",
+    "bytes": 202,
+    "sha256": "6537cc4f007ce6778d10b5d3fa1f49864b052ea6036d97f35bc8c427c08b37ad"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/host-paged_attention_tests.log",
+    "bytes": 1596,
+    "sha256": "73344a72ebcf80830e6b27dd1f4c5ba706ac1682f1f7951de1458ba2674d8f20"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-final/result.json",
+    "bytes": 6503,
+    "sha256": "1613005c8e3688ed0194b88271505d8cf206eeecbe9886e44f80b30b943d97bc"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-final/run.json",
+    "bytes": 1725,
+    "sha256": "92e8239ee04007d0cf586726a2436e460ebf06f0bf3c997136c313e8785c1dcf"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-final/server.log",
+    "bytes": 2090,
+    "sha256": "f0012a503697f85e9e63675420cf93629dfe20aabef969ef8c5f782d1ee8e038"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-final/stages.jsonl",
+    "bytes": 1195655,
+    "sha256": "45f3867c5ed1e8b5bdd878f540b5a532d2588c70e3abfa048bd925f165a139b1"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-generate/result.json",
+    "bytes": 6297,
+    "sha256": "3b6210b3f2a96db44265da3b18676570d1499c7d44ebe2f7dc4196ba50c725c2"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-generate/run.json",
+    "bytes": 1520,
+    "sha256": "050991196acb9c5b7cf835065b000a38a65f2e68dd37c2f9ac4cc8a9083c543a"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-generate/server.log",
+    "bytes": 4169,
+    "sha256": "a1df09a6511373f14beb56d72594ec2a32351f67648d7c546cb4f61d6b8df47c"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-generate/stages.jsonl",
+    "bytes": 1483646,
+    "sha256": "0e13f5805e9c373ff6391453e18cfda576de17a73a5c43d8e8ade638c835e449"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-oracle-rows.json",
+    "bytes": 600,
+    "sha256": "9183653423f1ff7518322df15ccf5401270a43fb106ff164f6dd6fbae1a2b14e"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-probe/result.json",
+    "bytes": 6490,
+    "sha256": "1d582cbda539af74bd291216bdf0ffdda5ca8f7aec5167409f5ec49a27116015"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-probe/run.json",
+    "bytes": 1713,
+    "sha256": "f08432026903b390d0b0206cf56d613dc67bdd51bf70460a0f8ed735ff1a19dc"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-probe/server.log",
+    "bytes": 2089,
+    "sha256": "2e876be3d119918fcf3ff2b28865d9998ede0f6fd0b486a3be065f71fe6a2277"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http-probe/stages.jsonl",
+    "bytes": 1195736,
+    "sha256": "9133534b52255c6843e8ba26bcdfa6debbd1a9e9ec918754ba824af4f8d46a00"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http_final.py",
+    "bytes": 5505,
+    "sha256": "1e0c3d395a5ecbe359f4194b72b4322e32d0a42ddab36b0231582f37081329ba"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http_generate.py",
+    "bytes": 5480,
+    "sha256": "24e0ea0757a0700f0b5192c1612f80cf1edc68b9a5d68d1ff1e6b566e02ac70a"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/http_probe.py",
+    "bytes": 5499,
+    "sha256": "b2d98a5e415644c626c3659ec0db97dcc432dfc18eff183b932211917c887b91"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/import-tests.log",
+    "bytes": 1306,
+    "sha256": "ddefef68e9141cff38c2d9156359557cc5212365d71ae0dd947326cb6cc38be7"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/importer.py",
+    "bytes": 12296,
+    "sha256": "cb23faa29c03f311f206b04daa8d2923bd18a86bd74af308f8f812fb5ef965c1"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/initial-check.log",
+    "bytes": 1688,
+    "sha256": "2b73c332cc52dc302f0293f00146e9d705480f3fc266ca3249bc051e76402310"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/layout-final.log",
+    "bytes": 156,
+    "sha256": "14618cc0da760e6ae53d82494e5281322b4a81a07a695793c12fd3bb6d82eef8"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/layout.log",
+    "bytes": 156,
+    "sha256": "14618cc0da760e6ae53d82494e5281322b4a81a07a695793c12fd3bb6d82eef8"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/luminal-cpu-clippy.log",
+    "bytes": 1588,
+    "sha256": "dd1290063fcaf29c8ffdb5365d222e47e36dfa1c8502306438db2b94e072277b"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/luminal-cpu-tests.log",
+    "bytes": 16583,
+    "sha256": "a70fae20494335b677a0c18830f844e8d2089b6bbd93616db09dfb046146d68b"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/luminal-metadata.json",
+    "bytes": 20674,
+    "sha256": "fef59762f562cefb9be0af16deeb788a8c5c0b9c0d1f69364386228f0c2d772d"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model-build.log",
+    "bytes": 506,
+    "sha256": "51edd9d17bdaf442bd8d3429dbf576c58cfe45125396b1df47fd6dcd7d6f4ac4"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model-checks-final.json",
+    "bytes": 3920,
+    "sha256": "0fb370935541e48d4bcf513f872237fc2fc9fd408c3256b777954a4bb6f91848"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model-checks.json",
+    "bytes": 5200,
+    "sha256": "9ebfaf93b8ecbe3726263bc25c9e494b2c95ab550738ca6d7d4cc14eecc2da19"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model-decoder.json",
+    "bytes": 15195430,
+    "sha256": "f329c2f4519bea55c848fbb1b5fecbc1feecaca5f6131092539fd674d338d38f"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model-final-build.log",
+    "bytes": 242,
+    "sha256": "a763162438c787752d6a0c0acefe316853898b381786e7528d8a820922192f99"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model-replay-capacity-one.log",
+    "bytes": 9788,
+    "sha256": "0ef17afa0246f5fd59d53b5fde857eaa66975f66a796d864d3933ee5ea946778"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model-replay-prepared.log",
+    "bytes": 9903,
+    "sha256": "461a270c5938f9316818956228012ed384e6f69ce8a5e32aa1a5a31d13082146"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model-search.log",
+    "bytes": 11681,
+    "sha256": "76dc60f78a10b334a8f2ae9051686579154190878362e9f76d63920f3009bba3"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model_checks.py",
+    "bytes": 2680,
+    "sha256": "0e0aa4701bdc6f1f07cc7840d57b3355cc01be8e34b8c5cf357901ee534585d1"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/model_checks_final.py",
+    "bytes": 2665,
+    "sha256": "051ae5711d8336b3db4c88fbea965a36b38b21d5bc003e38868ccb13492dfea4"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/nn-build.log",
+    "bytes": 1704,
+    "sha256": "f4c66b4779b8c782a4583f5450f310174ebfcea7c103433ebca7a94e44225067"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/nn-tracing-tests.log",
+    "bytes": 2773,
+    "sha256": "eb4fe0f2cb30677bd51786beea25fe9b2e0b5337faa92eddad4177c158ad29b2"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/old-artifact-reject.log",
+    "bytes": 522,
+    "sha256": "26c7117e39e7a4934ffcc948da9e928aa0a7ce1d99142703af2532306d406f94"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/package-closure.json",
+    "bytes": 1460,
+    "sha256": "03cb5d8f454d0dfdf2cd27c60510b2d4c614a92736a8627c9ab8a6ba29b6c271"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/python-tests.log",
+    "bytes": 133,
+    "sha256": "0efb50e2ee85b1485b20374a6716638e9f5b31a12518496fe543eb80737d07a2"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/refactor.py",
+    "bytes": 7897,
+    "sha256": "66ba72f4bb4020d95654ebd378ce28dd92415aa8b8560bb05f7debc2b4f20ba1"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/root-metadata.json",
+    "bytes": 2586752,
+    "sha256": "8eecd2ea705ef8175c8be97e5718810d55afa6d0c142dfd551f7ab2c5d112cae"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/runtime-residency-tests.log",
+    "bytes": 3216,
+    "sha256": "75dfc1cc8898d865a596c20bc048bdd3efc082e091b0e533f9821c7de3f8905d"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/semantic-ops.log",
+    "bytes": 595,
+    "sha256": "e963e7a34d32a80bf45345a18bdd6c8b5f581bb76696d96d5e8cbec198e2917a"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified/build-receipt.json",
+    "bytes": 1012,
+    "sha256": "42023ca6329a2993577ac63d08412edf26b16ec5cfe1f0ad6ff7ad0b5cd0026d"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified/build.jsonl",
+    "bytes": 489139,
+    "sha256": "59e07e1c1be718cb7e8cbeed6ddb0a6812b3a8c798ca557210120eb439a5f920"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified/build.py",
+    "bytes": 2980,
+    "sha256": "421a00661694809128c04b39609987a4e2d8ddeaa808ce0f978c4374fd50d7d3"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified/build.stderr.log",
+    "bytes": 486,
+    "sha256": "40c6fe2125a3a010c13c1749a5d9b182d8e9fa393c5010d1aad6b4e26438b56d"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified/cuda-binary.json",
+    "bytes": 171,
+    "sha256": "2b45d0ceef22a6fde0c9128135fa088750bb680b3537ebab4e728704d353ee90"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified/model-binary.json",
+    "bytes": 168,
+    "sha256": "940381a85f71d8377932de23a8994006120f8b15f30a1d9249cc576ec8c28d31"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified/source-before-build.json",
+    "bytes": 65053,
+    "sha256": "2b12251a898aab8b7b4a2d25b0096bcbc206e869a1487a1223f9911ac3deb481"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified-final/build-receipt.json",
+    "bytes": 1018,
+    "sha256": "215affdd023dbbee76e45acda1017ddccf1a0751ed4f917d9c2a1d006f8a0a3c"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified-final/build.jsonl",
+    "bytes": 489136,
+    "sha256": "324b8a2b9cb2e2fbc714e3b18439f01be278d19d3c75550bce260606ab9ec7fa"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified-final/build.py",
+    "bytes": 2980,
+    "sha256": "421a00661694809128c04b39609987a4e2d8ddeaa808ce0f978c4374fd50d7d3"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified-final/build.stderr.log",
+    "bytes": 223,
+    "sha256": "34c27d20bacc80cd0ad61cd32342ceff49204225b1f268fdb44170884d23888e"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified-final/model-binary.json",
+    "bytes": 168,
+    "sha256": "a39195511718e192452e5bf72341c9db563ec60429d4ebd8f422ea30585d27e6"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/verified-final/source-before-build.json",
+    "bytes": 65053,
+    "sha256": "54cb74f24f476232d77f0e677ff01b0505662a693e21d5002f2c35faffd876c0"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/workspace-clippy.log",
+    "bytes": 296,
+    "sha256": "b06f9f0c88abf4858c196c7392a87ac8fa751e3ce8c193efedefaa5a7db7d655"
+  },
+  {
+    "path": ".qualification/semantic-boundaries-20260914/workspace-tests.log",
+    "bytes": 26003,
+    "sha256": "71cdc6b5da34274ba913bc64517b70438d6de250609edc187b42cedafc5ba5e0"
+  }
+]

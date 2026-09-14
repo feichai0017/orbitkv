@@ -1,0 +1,2140 @@
+{
+  "b1_comparisons": {
+    "control_vs_baseline": {
+      "diagnostic_wall_change_percent": 19.709336447048422,
+      "diagnostic_wall_delta_ms": 4.786544999999997,
+      "lm_head_profile_delta_ms": 4.6834999999999996,
+      "profile_total_delta_ms": 5.166499999999999
+    },
+    "shared_vs_baseline": {
+      "diagnostic_wall_change_percent": -2.660957758922322,
+      "diagnostic_wall_delta_ms": -0.6462315000000025,
+      "lm_head_profile_delta_ms": -0.01100000000000012,
+      "profile_total_delta_ms": 1.1614999999999966
+    },
+    "shared_vs_control": {
+      "diagnostic_wall_change_percent": -18.687175846025916,
+      "diagnostic_wall_delta_ms": -5.432776499999999,
+      "lm_head_profile_delta_ms": -4.6945,
+      "profile_total_delta_ms": -4.005000000000003
+    }
+  },
+  "b1_diagnostic": {
+    "baseline": {
+      "artifact": {
+        "bytes": 12589316,
+        "path": "/workspace/orbitkv/.qualification/fp8-region-baseline-20260912/decoder.json",
+        "sha256": "093c487d54f31ce109a801d9c8470cbb875a8f97e1284e612546fd3f647c7029"
+      },
+      "decode_lm_head": {
+        "count": 1,
+        "logical_shape": {
+          "K": 5120,
+          "M": 1,
+          "N": 248320,
+          "dtype": "BF16"
+        },
+        "mean_profile_ms": 0.6725000000000001,
+        "profile_lines": [
+          12,
+          15,
+          18,
+          21,
+          24,
+          27
+        ],
+        "provider": "CuBlasLt"
+      },
+      "decode_profile_mean_ms": 40.34916666666667,
+      "phases": {
+        "cold-search": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 24.256883000000002,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            24.236261,
+            24.42333
+          ],
+          "elapsed_scope": "Rust test duration",
+          "elapsed_seconds": 378.64,
+          "max_abs": 0.5234375,
+          "status": "passed"
+        },
+        "profile": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 47.100607499999995,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            47.004369999999994,
+            47.236514
+          ],
+          "elapsed_scope": "Rust test duration",
+          "elapsed_seconds": 38.56,
+          "max_abs": 0.5234375,
+          "status": "passed"
+        },
+        "strict-replay": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 24.285673000000003,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            24.26489,
+            24.406158
+          ],
+          "elapsed_scope": "Rust test duration",
+          "elapsed_seconds": 39.54,
+          "max_abs": 0.5234375,
+          "status": "passed"
+        }
+      },
+      "result_sources": {
+        "cold-search": {
+          "bytes": 2150,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-baseline-20260912/cold-search-result.json",
+          "sha256": "1ac3afba8433b2bb7a7493717a001ad7720da4eb6bfa19ab40955c6f5fc055cc"
+        },
+        "profile": {
+          "bytes": 2594,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-baseline-20260912/profile-result.json",
+          "sha256": "71136e29eabf821b0ed7052ba56fbff266f9f3bac62ef1fb7542b0e48477f2d7"
+        },
+        "strict-replay": {
+          "bytes": 1871,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-baseline-20260912/strict-replay-result.json",
+          "sha256": "2cb51d8df83cd9985ef14804d66c4509238c409d5fc0414d4bd8da048ebfb3bf"
+        }
+      },
+      "selected_buckets": [
+        {
+          "crosschecked_against_profile": true,
+          "profile_line": 12,
+          "representative_dyn_map": {
+            "b": 1,
+            "c_0": 1,
+            "s": 1
+          },
+          "selected_combined_deepgemm_unrolled": 400,
+          "selected_fanout_histogram_unrolled": {},
+          "selected_prequantized_consumers_unrolled": 0,
+          "selected_quantizers_unrolled": 0,
+          "unrolled_llir_fingerprint": [
+            11281003896812788152,
+            13060376268866940566
+          ]
+        },
+        {
+          "crosschecked_against_profile": true,
+          "profile_line": 6,
+          "representative_dyn_map": {
+            "b": 1,
+            "c_0": 1,
+            "s": 4
+          },
+          "selected_combined_deepgemm_unrolled": 400,
+          "selected_fanout_histogram_unrolled": {},
+          "selected_prequantized_consumers_unrolled": 0,
+          "selected_quantizers_unrolled": 0,
+          "unrolled_llir_fingerprint": [
+            10998009410271064476,
+            12981239019374443079
+          ]
+        }
+      ],
+      "status": "passed",
+      "version": "baseline"
+    },
+    "control": {
+      "artifact": {
+        "bytes": 12589347,
+        "path": "/workspace/orbitkv/.qualification/fp8-region-control-20260912/decoder.json",
+        "sha256": "dab57f8b2ba53ccecb2fb6d34fa0654306a22051646bb653bf3b016cc61eef85"
+      },
+      "decode_lm_head": {
+        "count": 1,
+        "logical_shape": {
+          "K": 5120,
+          "M": 1,
+          "N": 248320,
+          "dtype": "BF16"
+        },
+        "mean_profile_ms": 5.356,
+        "profile_lines": [
+          10,
+          13,
+          16,
+          19,
+          22,
+          25
+        ],
+        "provider": "GenericMatmul"
+      },
+      "decode_profile_mean_ms": 45.51566666666667,
+      "phases": {
+        "cold-search": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 29.005688,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            28.919572000000002,
+            29.189837
+          ],
+          "elapsed_scope": "subprocess duration",
+          "elapsed_seconds": 441.46806828677654,
+          "max_abs": 0.625,
+          "status": "passed"
+        },
+        "profile": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 52.015576,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            51.866552000000006,
+            52.107245000000006
+          ],
+          "elapsed_scope": "subprocess duration",
+          "elapsed_seconds": 37.111479848623276,
+          "max_abs": 0.625,
+          "status": "passed"
+        },
+        "strict-replay": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 29.072218,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            28.94114,
+            29.169504999999997
+          ],
+          "elapsed_scope": "subprocess duration",
+          "elapsed_seconds": 37.11333089694381,
+          "max_abs": 0.625,
+          "status": "passed"
+        }
+      },
+      "result_sources": {
+        "cold-search": {
+          "bytes": 6568,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-control-20260912/cold-search/result.json",
+          "sha256": "5d5c81409319994bfa90c6b089987c7f838703ffbe442fab5f70ac19f5ae42b1"
+        },
+        "profile": {
+          "bytes": 7631,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-control-20260912/profile/result.json",
+          "sha256": "b3ad0855e1e3768c254cc88340ebbece22399419e0a609f48d21252daf080a12"
+        },
+        "strict-replay": {
+          "bytes": 6765,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-control-20260912/strict-replay/result.json",
+          "sha256": "d978efa044ed0cd1f14040b50263af12856d334fedc1599c0a591a1b469c6b31"
+        }
+      },
+      "selected_buckets": [
+        {
+          "crosschecked_against_profile": true,
+          "profile_line": 10,
+          "representative_dyn_map": {
+            "b": 1,
+            "c_0": 1,
+            "s": 1
+          },
+          "selected_combined_deepgemm_unrolled": 400,
+          "selected_fanout_histogram_unrolled": {},
+          "selected_prequantized_consumers_unrolled": 0,
+          "selected_quantizers_unrolled": 0,
+          "unrolled_llir_fingerprint": [
+            11306256349181322390,
+            5110263311990778370
+          ]
+        },
+        {
+          "crosschecked_against_profile": true,
+          "profile_line": 4,
+          "representative_dyn_map": {
+            "b": 1,
+            "c_0": 1,
+            "s": 4
+          },
+          "selected_combined_deepgemm_unrolled": 400,
+          "selected_fanout_histogram_unrolled": {},
+          "selected_prequantized_consumers_unrolled": 0,
+          "selected_quantizers_unrolled": 0,
+          "unrolled_llir_fingerprint": [
+            10209570944219033883,
+            14934849041492698636
+          ]
+        }
+      ],
+      "status": "passed",
+      "version": "b1_control_shared"
+    },
+    "shared": {
+      "artifact": {
+        "bytes": 12655174,
+        "path": "/workspace/orbitkv/.qualification/fp8-region-shared-20260912/decoder.json",
+        "sha256": "0be5d00d1540e86150e6f048d22d38e49b902ad044e1a9984d4189b8302546c6"
+      },
+      "decode_lm_head": {
+        "count": 1,
+        "logical_shape": {
+          "K": 5120,
+          "M": 1,
+          "N": 248320,
+          "dtype": "BF16"
+        },
+        "mean_profile_ms": 0.6615,
+        "profile_lines": [
+          10,
+          13,
+          16,
+          19,
+          22,
+          25
+        ],
+        "provider": "Gemv"
+      },
+      "decode_profile_mean_ms": 41.510666666666665,
+      "phases": {
+        "cold-search": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 23.601763,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            23.575291,
+            23.625849000000002
+          ],
+          "elapsed_scope": "subprocess duration",
+          "elapsed_seconds": 278.9966400414705,
+          "max_abs": 0.625,
+          "status": "passed"
+        },
+        "profile": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 47.818956,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            47.71678,
+            47.906499
+          ],
+          "elapsed_scope": "subprocess duration",
+          "elapsed_seconds": 38.76634929701686,
+          "max_abs": 0.625,
+          "status": "passed"
+        },
+        "strict-replay": {
+          "decode_2_through_7_diagnostic_wall_median_ms": 23.6394415,
+          "decode_2_through_7_diagnostic_wall_range_ms": [
+            23.589334,
+            23.75248
+          ],
+          "elapsed_scope": "subprocess duration",
+          "elapsed_seconds": 39.2670480273664,
+          "max_abs": 0.625,
+          "status": "passed"
+        }
+      },
+      "result_sources": {
+        "cold-search": {
+          "bytes": 6830,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-shared-20260912/cold-search/result.json",
+          "sha256": "dacbd1be52883947a84da4fd13c7d682afdbac19e16773979270ef21f4e31028"
+        },
+        "profile": {
+          "bytes": 7892,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-shared-20260912/profile/result.json",
+          "sha256": "6b06795f208279a8989948747b85475de7d1e616782b1def7eb24c43b0012a9c"
+        },
+        "strict-replay": {
+          "bytes": 7025,
+          "path": "/workspace/orbitkv/.qualification/fp8-region-shared-20260912/strict-replay/result.json",
+          "sha256": "afac1dda795455fc8c34150a7cabfbdd882f8ee071ccc6036bde1c4953df0197"
+        }
+      },
+      "selected_buckets": [
+        {
+          "crosschecked_against_profile": true,
+          "profile_line": 10,
+          "representative_dyn_map": {
+            "b": 1,
+            "c_0": 1,
+            "s": 1
+          },
+          "selected_combined_deepgemm_unrolled": 192,
+          "selected_fanout_histogram_unrolled": {
+            "1": 176,
+            "2": 16
+          },
+          "selected_prequantized_consumers_unrolled": 208,
+          "selected_quantizers_unrolled": 192,
+          "unrolled_llir_fingerprint": [
+            8519316530857774579,
+            9347030278144657573
+          ]
+        },
+        {
+          "crosschecked_against_profile": true,
+          "profile_line": 4,
+          "representative_dyn_map": {
+            "b": 1,
+            "c_0": 1,
+            "s": 4
+          },
+          "selected_combined_deepgemm_unrolled": 160,
+          "selected_fanout_histogram_unrolled": {
+            "1": 112,
+            "2": 64
+          },
+          "selected_prequantized_consumers_unrolled": 240,
+          "selected_quantizers_unrolled": 176,
+          "unrolled_llir_fingerprint": [
+            10794240046259817271,
+            11164973413388427893
+          ]
+        }
+      ],
+      "status": "passed",
+      "version": "b1_control_shared"
+    }
+  },
+  "created_at_utc": "2026-09-12T09:11:47.336514+00:00",
+  "final_v2_b4_aligned_profile_observation": {
+    "decode_dimensions": "{c_0: 4, s: 4, b: 4}",
+    "lines": [
+      14,
+      20,
+      26,
+      32,
+      38,
+      44
+    ],
+    "lm_head_provider": "CuBlasLt",
+    "mean_lm_head_profile_ms": 0.6778333333333334,
+    "mean_profile_ms": 46.687666666666665,
+    "scope": "Same source artifact as B8 but a different bucket/batch shape; not an equal-shape provider benchmark.",
+    "source": {
+      "bytes": 296454,
+      "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/profile/stderr.log",
+      "sha256": "ae54e7ddb68e31f4becd89fbd80a1cbfc8270f934b620cd2cfcecdce421e1894"
+    }
+  },
+  "final_v2_b8_profile_observation": {
+    "decode_2_through_7_lm_head_profile_mean_ms": 43.03616666666667,
+    "decode_2_through_7_profile_lines": [
+      22,
+      32,
+      42,
+      52,
+      62,
+      72
+    ],
+    "decode_2_through_7_profile_mean_ms": 96.33766666666666,
+    "decode_counts": {
+      "Argmax": 1,
+      "BlockScaledQuantize": 96,
+      "Cast": 278,
+      "Constant": 10,
+      "CuBlasLt": 48,
+      "DeepGemmPrequantizedV0": 64,
+      "DeepGemmPrequantizedV1": 16,
+      "DeepGemmPrequantizedV2": 16,
+      "DeepGemmPrequantizedV3": 48,
+      "DeepGemmV0": 16,
+      "DeepGemmV2": 144,
+      "DeepGemmV3": 96,
+      "FlashInferAttention": 16,
+      "FusedRegion": 2000,
+      "Gather": 865,
+      "GenericMatmul": 226,
+      "Iota": 147,
+      "LessThan": 96,
+      "PackedCausalConvolution": 48,
+      "PackedDeltaScan": 48,
+      "RMSNorm": 16,
+      "Scatter": 130,
+      "ScatterNoCopy": 130,
+      "SumReduce": 17
+    },
+    "decode_first": {
+      "counts": {
+        "Argmax": 1,
+        "BlockScaledQuantize": 96,
+        "Cast": 278,
+        "Constant": 10,
+        "CuBlasLt": 48,
+        "DeepGemmPrequantizedV0": 64,
+        "DeepGemmPrequantizedV1": 16,
+        "DeepGemmPrequantizedV2": 16,
+        "DeepGemmPrequantizedV3": 48,
+        "DeepGemmV0": 16,
+        "DeepGemmV2": 144,
+        "DeepGemmV3": 96,
+        "FlashInferAttention": 16,
+        "FusedRegion": 2000,
+        "Gather": 865,
+        "GenericMatmul": 226,
+        "Iota": 147,
+        "LessThan": 96,
+        "PackedCausalConvolution": 48,
+        "PackedDeltaScan": 48,
+        "RMSNorm": 16,
+        "Scatter": 130,
+        "ScatterNoCopy": 130,
+        "SumReduce": 17
+      },
+      "dynamic_dimensions": "{c_0: 8, s: 8, b: 8}",
+      "line": 12,
+      "lm_head": {
+        "count": 1,
+        "detail": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+        "milliseconds": 43.024,
+        "provider": "GenericMatmul"
+      },
+      "total_ms": 96.817
+    },
+    "decode_lm_head_detail": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+    "prefill": {
+      "counts": {
+        "Argmax": 1,
+        "BlockScaledQuantize": 208,
+        "Cast": 362,
+        "Constant": 8,
+        "CuBlasLt": 97,
+        "DeepGemmPrequantizedV0": 80,
+        "DeepGemmPrequantizedV1": 64,
+        "DeepGemmPrequantizedV2": 112,
+        "DeepGemmPrequantizedV3": 16,
+        "DeepGemmV0": 48,
+        "DeepGemmV1": 48,
+        "DeepGemmV2": 16,
+        "DeepGemmV3": 16,
+        "FlashInferAttention": 16,
+        "FusedRegion": 1839,
+        "Gather": 865,
+        "GenericMatmul": 64,
+        "Iota": 147,
+        "LessThan": 96,
+        "PackedCausalConvolution": 48,
+        "PackedDeltaScan": 48,
+        "RMSNorm": 64,
+        "Scatter": 129,
+        "ScatterNoCopy": 131,
+        "SumReduce": 82
+      },
+      "dynamic_dimensions": "{c_0: 8, s: 32, b: 8}",
+      "line": 2,
+      "lm_head": {
+        "count": 1,
+        "detail": "CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false, ",
+        "milliseconds": 0.715,
+        "provider": "CuBlasLt"
+      },
+      "total_ms": 64.334
+    },
+    "scope": "Instrumented CompiledStep intervals, separate from diagnostic walltime and serving latency. Decode s8 uses a generic BF16 LM head; prefill s32 uses CuBlasLt at a different shape, so this is not an equal-shape provider A/B.",
+    "source": {
+      "bytes": 265441,
+      "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/profile/stderr.log",
+      "sha256": "1673886e44fc850cf955a60d319b6b471ead071f2fec61bbf0f7f43c1ce7c505"
+    }
+  },
+  "final_v2_batch_runs": [
+    {
+      "batch_capacity": 8,
+      "batch_size": 8,
+      "binary": {
+        "bytes": 17961656,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v2-20260912/model_execution",
+        "sha256": "17f8e394ceede4f6f53e49c035460829b77658b8be827886eb3d8f340d597dfe"
+      },
+      "directory": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912",
+      "expected_request_step_comparisons_per_phase": 64,
+      "oracle_inputs_match_environment_reference": true,
+      "phases": [
+        {
+          "artifact_after": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "artifact_before": null,
+          "completion": {
+            "artifact_mode": "search",
+            "batch_capacity": 8,
+            "batch_size": 8,
+            "compile_seconds": 953.120259564,
+            "drain_passed": true,
+            "parity_request_steps": 64,
+            "parity_steps": 8,
+            "ragged_prefill": false,
+            "reference_enabled": true,
+            "schema": 1
+          },
+          "decode_2_through_7_diagnostic_wall_median_ms": 79.69656649999999,
+          "elapsed_process_seconds": 955.5512791089714,
+          "exit_code": 0,
+          "logs": {
+            "stderr.log": {
+              "bytes": 15397,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/cold-search/stderr.log",
+              "sha256": "a1960345a1368cd6cb5d0f4d8f720f49b0475bed7e782dde5f26cfdab50c781d"
+            },
+            "stdout.log": {
+              "bytes": 18473,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/cold-search/stdout.log",
+              "sha256": "690cda3a1bc2504e3b5ec60c9a1737d403f6bebb63fe689bf42e41fce17555c9"
+            }
+          },
+          "max_abs": 0.90625,
+          "parity_rows": 64,
+          "phase": "cold-search",
+          "status": "passed"
+        },
+        {
+          "artifact_after": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "artifact_before": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "completion": {
+            "artifact_mode": "replay",
+            "batch_capacity": 8,
+            "batch_size": 8,
+            "compile_seconds": 42.523921108,
+            "drain_passed": true,
+            "parity_request_steps": 64,
+            "parity_steps": 8,
+            "ragged_prefill": false,
+            "reference_enabled": true,
+            "schema": 1
+          },
+          "decode_2_through_7_diagnostic_wall_median_ms": 79.287402,
+          "elapsed_process_seconds": 44.42150592058897,
+          "exit_code": 0,
+          "logs": {
+            "stderr.log": {
+              "bytes": 10669,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/strict-replay/stderr.log",
+              "sha256": "e3abf97b514a22d48c6f760a82c17b49cfd8579ef6b09a87982a626da959a0e6"
+            },
+            "stdout.log": {
+              "bytes": 171,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/strict-replay/stdout.log",
+              "sha256": "ed18e13442e881ec66c188de60db3e4bbfa0bec59a745822c09c53509a32811b"
+            }
+          },
+          "max_abs": 0.90625,
+          "parity_rows": 64,
+          "phase": "strict-replay",
+          "status": "passed"
+        },
+        {
+          "artifact_after": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "artifact_before": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "completion": {
+            "artifact_mode": "replay",
+            "batch_capacity": 8,
+            "batch_size": 8,
+            "compile_seconds": 42.452688336,
+            "drain_passed": true,
+            "parity_request_steps": 64,
+            "parity_steps": 8,
+            "ragged_prefill": false,
+            "reference_enabled": true,
+            "schema": 1
+          },
+          "decode_2_through_7_diagnostic_wall_median_ms": 107.56630100000001,
+          "elapsed_process_seconds": 44.57581092789769,
+          "exit_code": 0,
+          "logs": {
+            "stderr.log": {
+              "bytes": 265441,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/profile/stderr.log",
+              "sha256": "1673886e44fc850cf955a60d319b6b471ead071f2fec61bbf0f7f43c1ce7c505"
+            },
+            "stdout.log": {
+              "bytes": 171,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/profile/stdout.log",
+              "sha256": "cfe45c1562c4c19c0bfec669e036ed1ca4d20f40ee0bff2d2f268f298d910d13"
+            }
+          },
+          "max_abs": 0.90625,
+          "parity_rows": 64,
+          "phase": "profile",
+          "status": "passed"
+        }
+      ],
+      "ragged_prefill": false,
+      "replay_source": null,
+      "result": {
+        "bytes": 56289,
+        "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/result.json",
+        "sha256": "c87a999971c588e5d2bae6f49c25ab3d9ce17b8db9df2dbc0cec0ceefb4fb910"
+      },
+      "run": {
+        "bytes": 4462,
+        "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/run.json",
+        "sha256": "fbee2d84737598382670aea5103b649041955a187f1d8cb014457c052a464a6e"
+      },
+      "status": "passed",
+      "tuning_profile": {
+        "bytes": 215,
+        "path": "/workspace/orbitkv/benchmarks/batched-fp8-qualification.json",
+        "sha256": "a460d72a0cea7fb5908fae2649343b30afecb43b0401a4d7b7ab5666c77a5cd9"
+      },
+      "version": "final_v2"
+    },
+    {
+      "batch_capacity": 8,
+      "batch_size": 4,
+      "binary": {
+        "bytes": 17961656,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v2-20260912/model_execution",
+        "sha256": "17f8e394ceede4f6f53e49c035460829b77658b8be827886eb3d8f340d597dfe"
+      },
+      "directory": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912",
+      "expected_request_step_comparisons_per_phase": 32,
+      "oracle_inputs_match_environment_reference": true,
+      "phases": [
+        {
+          "artifact_after": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "artifact_before": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "completion": {
+            "artifact_mode": "replay",
+            "batch_capacity": 8,
+            "batch_size": 4,
+            "compile_seconds": 44.015213638,
+            "drain_passed": true,
+            "parity_request_steps": 32,
+            "parity_steps": 8,
+            "ragged_prefill": false,
+            "reference_enabled": true,
+            "schema": 1
+          },
+          "decode_2_through_7_diagnostic_wall_median_ms": 29.081668999999998,
+          "elapsed_process_seconds": 45.62512869760394,
+          "exit_code": 0,
+          "logs": {
+            "stderr.log": {
+              "bytes": 6100,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/strict-replay/stderr.log",
+              "sha256": "e35802da39f2db41b5abcddbe536ce8324e18f8c119ac1d64643ea0c95d52053"
+            },
+            "stdout.log": {
+              "bytes": 171,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/strict-replay/stdout.log",
+              "sha256": "110a91e96e8165bff8b4fe602e08a488fd41ae6ba03bff4ee7272b241e68bb72"
+            }
+          },
+          "max_abs": 0.625,
+          "parity_rows": 32,
+          "phase": "strict-replay",
+          "status": "passed"
+        },
+        {
+          "artifact_after": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "artifact_before": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "completion": {
+            "artifact_mode": "replay",
+            "batch_capacity": 8,
+            "batch_size": 4,
+            "compile_seconds": 43.871764106,
+            "drain_passed": true,
+            "parity_request_steps": 32,
+            "parity_steps": 8,
+            "ragged_prefill": false,
+            "reference_enabled": true,
+            "schema": 1
+          },
+          "decode_2_through_7_diagnostic_wall_median_ms": 55.6995105,
+          "elapsed_process_seconds": 45.62533159554005,
+          "exit_code": 0,
+          "logs": {
+            "stderr.log": {
+              "bytes": 296454,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/profile/stderr.log",
+              "sha256": "ae54e7ddb68e31f4becd89fbd80a1cbfc8270f934b620cd2cfcecdce421e1894"
+            },
+            "stdout.log": {
+              "bytes": 171,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/profile/stdout.log",
+              "sha256": "8fb88b8c9ad61d6c25901a33a5bb7b9d2105fc85b2d56456560572987ee52484"
+            }
+          },
+          "max_abs": 0.625,
+          "parity_rows": 32,
+          "phase": "profile",
+          "status": "passed"
+        }
+      ],
+      "ragged_prefill": false,
+      "replay_source": {
+        "bytes": 44310241,
+        "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/decoder.json",
+        "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+      },
+      "result": {
+        "bytes": 32049,
+        "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/result.json",
+        "sha256": "fbcd333fd8fc6ea413f06e04f2356a10e76abcd8570797ce35a067af761cd05a"
+      },
+      "run": {
+        "bytes": 4860,
+        "path": "/workspace/orbitkv/.qualification/fp8-b4-final-20260912/run.json",
+        "sha256": "b2a96d6f0cf9fe925ca9821a027f6b709892bfd51ea5b325a7d0a588f16207c2"
+      },
+      "status": "passed",
+      "tuning_profile": {
+        "bytes": 215,
+        "path": "/workspace/orbitkv/benchmarks/batched-fp8-qualification.json",
+        "sha256": "a460d72a0cea7fb5908fae2649343b30afecb43b0401a4d7b7ab5666c77a5cd9"
+      },
+      "version": "final_v2"
+    },
+    {
+      "batch_capacity": 8,
+      "batch_size": 4,
+      "binary": {
+        "bytes": 17961656,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v2-20260912/model_execution",
+        "sha256": "17f8e394ceede4f6f53e49c035460829b77658b8be827886eb3d8f340d597dfe"
+      },
+      "directory": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912",
+      "expected_request_step_comparisons_per_phase": 32,
+      "failure": {
+        "attempted_next_input_from_fixture": {
+          "batch_size": 4,
+          "query_indptr": [
+            0,
+            2,
+            4,
+            8,
+            12
+          ],
+          "query_tokens": 12
+        },
+        "drain_completion_marker_present": false,
+        "error_line": 5,
+        "inference_note": "Next-input shape is derived from the frozen ragged fixture; execution failed before its step timing marker. CUDA error cause remains under investigation. Profile and B8-ragged were not run.",
+        "last_successful_step": {
+          "batch_size": 2,
+          "diagnostic_logits": true,
+          "phase": "ragged-warmup",
+          "query_indptr": [
+            0,
+            2,
+            4
+          ],
+          "query_tokens": 4,
+          "seconds": 0.143346947
+        },
+        "message": "CUDA graph materialization failed: DriverError(CUDA_ERROR_INVALID_VALUE, \"invalid argument\"); active_bucket=3; materialized_bucket_limit=Some(1); materialized_bucket_lru=[3]; device_memory=Ok((67440214016, 102010781696))",
+        "source": {
+          "bytes": 761,
+          "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/strict-replay/stderr.log",
+          "sha256": "c114b8fbd7ec81f92c145793aa9c863362fdf539831a29884c28c7352f1b100b"
+        }
+      },
+      "oracle_inputs_match_environment_reference": true,
+      "phases": [
+        {
+          "artifact_after": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "artifact_before": {
+            "bytes": 44310241,
+            "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/decoder.json",
+            "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+          },
+          "elapsed_process_seconds": 43.87154544144869,
+          "error": "test process exited with 101",
+          "exit_code": 101,
+          "logs": {
+            "stderr.log": {
+              "bytes": 761,
+              "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/strict-replay/stderr.log",
+              "sha256": "c114b8fbd7ec81f92c145793aa9c863362fdf539831a29884c28c7352f1b100b"
+            },
+            "stdout.log": {
+              "bytes": 251,
+              "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/strict-replay/stdout.log",
+              "sha256": "1ea08220876f668b117d36d5d44e71830523c5012a40ec4ea35c99efa003233b"
+            }
+          },
+          "phase": "strict-replay",
+          "status": "failed"
+        }
+      ],
+      "ragged_prefill": true,
+      "replay_source": {
+        "bytes": 44310241,
+        "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/decoder.json",
+        "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+      },
+      "result": {
+        "bytes": 11291,
+        "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/result.json",
+        "sha256": "662bce4a91c31dfdb77211e79344947f4135cfda88a7c17f535cc84d87ad72b0"
+      },
+      "run": {
+        "bytes": 4864,
+        "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/run.json",
+        "sha256": "04f2c75b945828d77152dbe1598f1f504b8e5aacc2bee8cde0d38d9116e410e0"
+      },
+      "status": "failed",
+      "tuning_profile": {
+        "bytes": 215,
+        "path": "/workspace/orbitkv/benchmarks/batched-fp8-qualification.json",
+        "sha256": "a460d72a0cea7fb5908fae2649343b30afecb43b0401a4d7b7ab5666c77a5cd9"
+      },
+      "version": "final_v2"
+    },
+    {
+      "batch_capacity": 8,
+      "batch_size": 8,
+      "directory": "/workspace/orbitkv/.qualification/fp8-b8-ragged-final-20260912",
+      "expected_request_step_comparisons_per_phase": 64,
+      "ragged_prefill": true,
+      "reason": "Subsequent batch execution stopped after B4 ragged strict-replay failure.",
+      "status": "not_run",
+      "version": "final_v2"
+    }
+  ],
+  "final_v2_head_choice_audit": {
+    "bytes": 7568,
+    "path": "/workspace/orbitkv/.qualification/fp8-region-report-20260912/head-choice-audit.json",
+    "sha256": "6997e70ba5011aebde7aa21a4c4f2c3ce8c79a0056e12d9f74e38f8712ef395c"
+  },
+  "final_v2_host_validation": {
+    "engine_server_clippy_all_targets": "passed with -D warnings",
+    "executor_cuda_clippy_all_targets": "passed with -D warnings",
+    "model_execution_capacity_tests": {
+      "failed": 0,
+      "filter": "quantized_batch::qualification_capacity",
+      "passed": 2
+    },
+    "real_serialized_model_artifacts": {
+      "failed": 0,
+      "fixture_artifacts": 3,
+      "passed": 1,
+      "scope": "Production ChoiceEligibility::build using all-true runtime custom-op metadata; literal parser, ownership and productive graph paths.",
+      "seconds": 4.12,
+      "serialized_egraphs_checked": 6,
+      "test": "egglog_utils::eligibility::tests::real_serialized_model_artifacts_have_productive_custom_op_eligibility"
+    },
+    "server_help_includes_tuning_profile": true
+  },
+  "final_v2_operator_semantic_gpu_rerun": {
+    "note": "v2 custom-op ID alias fix has host validation on six real serialized egraphs; earlier semantic GPU fixture used v1. Full-model aligned v2 qualification is a separate record.",
+    "status": "not_run"
+  },
+  "final_v2_reranking_observation": {
+    "bucket_ordinal": 2,
+    "bucket_ranges": {
+      "b": [
+        1,
+        1
+      ],
+      "c_0": [
+        1,
+        64
+      ],
+      "s": [
+        2,
+        31
+      ]
+    },
+    "cuda_graph_latency_change_rank3_vs_rank1_percent": -7.189862542014924,
+    "fastest_cuda_graph_direct_rank": 3,
+    "finalists": [
+      {
+        "cuda_graph_device_ms": 28.319999,
+        "direct_device_ms": 32.442699,
+        "direct_rank": 1,
+        "line": 78
+      },
+      {
+        "cuda_graph_device_ms": 27.286101,
+        "direct_device_ms": 32.475264,
+        "direct_rank": 2,
+        "line": 79
+      },
+      {
+        "cuda_graph_device_ms": 26.28383,
+        "direct_device_ms": 32.496916,
+        "direct_rank": 3,
+        "line": 80
+      }
+    ],
+    "keep_best": 3,
+    "line_number_convention": "Physical LF-delimited file lines, matching rg -n; ANSI carriage returns are not counted as extra lines.",
+    "representative": {
+      "b": 1,
+      "c_0": 8,
+      "s": 4
+    },
+    "scope": "Observed candidate score rank reversal on this bucket. It does not link each finalist to the final artifact fingerprint, or establish serving speedup.",
+    "source": {
+      "bytes": 18473,
+      "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/cold-search/stdout.log",
+      "sha256": "690cda3a1bc2504e3b5ec60c9a1737d403f6bebb63fe689bf42e41fce17555c9"
+    }
+  },
+  "final_v2_serving": {
+    "claim": "No serving run used the final_v2 server binary. The completed v3 serving experiment is recorded separately.",
+    "commands_source": {
+      "bytes": 7163,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/commands.json",
+      "sha256": "e1a3049892e5554e37e7d2dc52754d3a3a99ec3dacd9e938f8f8842cd8a4b87a"
+    },
+    "planned_output_directory": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912",
+    "planned_workload": {
+      "profiles": {
+        "qwen38-s4-o8-c1": {
+          "input_tokens": 4,
+          "max_concurrency": 1,
+          "output_tokens": 8,
+          "requests": 8
+        }
+      },
+      "schema": "orbitkv.matched-serving-profiles"
+    },
+    "status": "not_run_superseded_by_v3"
+  },
+  "final_v3_batch_runs": {
+    "aggregate_record": {
+      "bytes": 6088,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/batched-replay-result.json",
+      "sha256": "1284e5c487ac2805fab76d4d6897cd2fff46438e7cefdd104ead4e4e941e00c4"
+    },
+    "cases": [
+      {
+        "batch_capacity": 8,
+        "batch_size": 4,
+        "binary": {
+          "bytes": 17986560,
+          "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/model_execution",
+          "sha256": "7b3b63cee9922369310f3654432e13f092af6e1c1dccae041824c2e761c84204"
+        },
+        "case": "b4-ragged",
+        "directory": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912",
+        "expected_request_step_comparisons_per_phase": 32,
+        "model_inputs_match_environment_reference": true,
+        "oracle_inputs_match_environment_reference": true,
+        "phases": [
+          {
+            "artifact_after": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "artifact_before": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "completion": {
+              "artifact_mode": "replay",
+              "batch_capacity": 8,
+              "batch_size": 4,
+              "compile_seconds": 43.037185863,
+              "drain_passed": true,
+              "parity_request_steps": 32,
+              "parity_steps": 8,
+              "ragged_prefill": true,
+              "reference_enabled": true,
+              "schema": 1
+            },
+            "decode_2_through_7_diagnostic_wall_median_ms": 29.059538,
+            "elapsed_process_seconds": 44.82412128522992,
+            "exit_code": 0,
+            "initial_decode_diagnostic_wall_seconds": 0.125206889,
+            "logs": {
+              "stderr.log": {
+                "bytes": 6248,
+                "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/strict-replay/stderr.log",
+                "sha256": "ea56174fd2dd2be8a061d27cd599aa2bda54aa789acb298973a15073a9832ab2"
+              },
+              "stdout.log": {
+                "bytes": 171,
+                "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/strict-replay/stdout.log",
+                "sha256": "f578d5a7a4f9bfea9b3099af2333c2771d9ad0756018a769f9212fc2917d38b8"
+              }
+            },
+            "max_abs": 0.625,
+            "parity_rows": 32,
+            "phase": "strict-replay",
+            "prefill_diagnostic_wall_seconds": 0.146329022,
+            "prefill_shape": {
+              "batch_size": 4,
+              "query_indptr": [
+                0,
+                2,
+                4,
+                8,
+                12
+              ],
+              "query_tokens": 12
+            },
+            "ragged_warmup": [
+              {
+                "batch_size": 2,
+                "diagnostic_logits": true,
+                "phase": "ragged-warmup",
+                "query_indptr": [
+                  0,
+                  2,
+                  4
+                ],
+                "query_tokens": 4,
+                "seconds": 0.139524821
+              }
+            ],
+            "result": {
+              "bytes": 11644,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/strict-replay/result.json",
+              "sha256": "426935ce3f5d44e0b742473b41bd772b9c8e5491034d5e1bbd37a7714713159b"
+            },
+            "status": "passed"
+          },
+          {
+            "artifact_after": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "artifact_before": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "completion": {
+              "artifact_mode": "replay",
+              "batch_capacity": 8,
+              "batch_size": 4,
+              "compile_seconds": 44.407823565,
+              "drain_passed": true,
+              "parity_request_steps": 32,
+              "parity_steps": 8,
+              "ragged_prefill": true,
+              "reference_enabled": true,
+              "schema": 1
+            },
+            "decode_2_through_7_diagnostic_wall_median_ms": 55.8638025,
+            "elapsed_process_seconds": 46.326134741306305,
+            "exit_code": 0,
+            "initial_decode_diagnostic_wall_seconds": 0.1331103,
+            "logs": {
+              "stderr.log": {
+                "bytes": 332894,
+                "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/profile/stderr.log",
+                "sha256": "69738084b49ba344783e6fc6da5ebee446b1795eb353a8e57b0629ba7dfebe1f"
+              },
+              "stdout.log": {
+                "bytes": 171,
+                "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/profile/stdout.log",
+                "sha256": "db60465ebc99c2b34aa3f77690a19bed824f07475f5109e01c55fc2c43ffb2b3"
+              }
+            },
+            "max_abs": 0.625,
+            "parity_rows": 32,
+            "phase": "profile",
+            "prefill_diagnostic_wall_seconds": 0.149836325,
+            "prefill_shape": {
+              "batch_size": 4,
+              "query_indptr": [
+                0,
+                2,
+                4,
+                8,
+                12
+              ],
+              "query_tokens": 12
+            },
+            "ragged_warmup": [
+              {
+                "batch_size": 2,
+                "diagnostic_logits": true,
+                "phase": "ragged-warmup",
+                "query_indptr": [
+                  0,
+                  2,
+                  4
+                ],
+                "query_tokens": 4,
+                "seconds": 0.145967002
+              }
+            ],
+            "result": {
+              "bytes": 12611,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/profile/result.json",
+              "sha256": "8c492245778988baf9317ff1db88c938f956bb053600c5fcc3cf700c62a698b7"
+            },
+            "status": "passed"
+          }
+        ],
+        "ragged_prefill": true,
+        "result": {
+          "bytes": 32853,
+          "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/result.json",
+          "sha256": "82d8376813ce6d4ece4d3c05dabc27a3beefdd5042066f5aa1572d76afc38328"
+        },
+        "run": {
+          "bytes": 4870,
+          "path": "/workspace/orbitkv/.qualification/fp8-b4-ragged-v3-final-20260912/run.json",
+          "sha256": "7153e38ae238b11c2cd6c89528f7f9c69f6c13237064e561f13530f5fc2ec9b7"
+        },
+        "status": "passed",
+        "tuning_profile": {
+          "bytes": 215,
+          "path": "/workspace/orbitkv/benchmarks/batched-fp8-qualification.json",
+          "sha256": "a460d72a0cea7fb5908fae2649343b30afecb43b0401a4d7b7ab5666c77a5cd9"
+        },
+        "version": "final_v3"
+      },
+      {
+        "batch_capacity": 8,
+        "batch_size": 8,
+        "binary": {
+          "bytes": 17986560,
+          "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/model_execution",
+          "sha256": "7b3b63cee9922369310f3654432e13f092af6e1c1dccae041824c2e761c84204"
+        },
+        "case": "b8-ragged",
+        "directory": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912",
+        "expected_request_step_comparisons_per_phase": 64,
+        "model_inputs_match_environment_reference": true,
+        "oracle_inputs_match_environment_reference": true,
+        "phases": [
+          {
+            "artifact_after": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "artifact_before": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "completion": {
+              "artifact_mode": "replay",
+              "batch_capacity": 8,
+              "batch_size": 8,
+              "compile_seconds": 43.445779354,
+              "drain_passed": true,
+              "parity_request_steps": 64,
+              "parity_steps": 8,
+              "ragged_prefill": true,
+              "reference_enabled": true,
+              "schema": 1
+            },
+            "decode_2_through_7_diagnostic_wall_median_ms": 79.2747085,
+            "elapsed_process_seconds": 53.235821064561605,
+            "exit_code": 0,
+            "initial_decode_diagnostic_wall_seconds": 0.181225269,
+            "logs": {
+              "stderr.log": {
+                "bytes": 10861,
+                "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/strict-replay/stderr.log",
+                "sha256": "8f829764fe7751804f1e68f6caf306d07be5deffbcf8cccfee2f95d0e4ccf2ec"
+              },
+              "stdout.log": {
+                "bytes": 171,
+                "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/strict-replay/stdout.log",
+                "sha256": "e090fbf691269851c01acbdc878360fbb7e98065f3bf73a904939c67ba3144f7"
+              }
+            },
+            "max_abs": 0.78125,
+            "parity_rows": 64,
+            "phase": "strict-replay",
+            "prefill_diagnostic_wall_seconds": 7.771256099,
+            "prefill_shape": {
+              "batch_size": 8,
+              "query_indptr": [
+                0,
+                2,
+                4,
+                6,
+                8,
+                12,
+                16,
+                20,
+                24
+              ],
+              "query_tokens": 24
+            },
+            "ragged_warmup": [
+              {
+                "batch_size": 4,
+                "diagnostic_logits": true,
+                "phase": "ragged-warmup",
+                "query_indptr": [
+                  0,
+                  2,
+                  4,
+                  6,
+                  8
+                ],
+                "query_tokens": 8,
+                "seconds": 0.146524061
+              }
+            ],
+            "result": {
+              "bytes": 15105,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/strict-replay/result.json",
+              "sha256": "8c855d51100126807542509053fadc1672a424ee91a464e4d694b335eb2a9c42"
+            },
+            "status": "passed"
+          },
+          {
+            "artifact_after": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "artifact_before": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "completion": {
+              "artifact_mode": "replay",
+              "batch_capacity": 8,
+              "batch_size": 8,
+              "compile_seconds": 43.615107498,
+              "drain_passed": true,
+              "parity_request_steps": 64,
+              "parity_steps": 8,
+              "ragged_prefill": true,
+              "reference_enabled": true,
+              "schema": 1
+            },
+            "decode_2_through_7_diagnostic_wall_median_ms": 108.209413,
+            "elapsed_process_seconds": 46.075726453214884,
+            "exit_code": 0,
+            "initial_decode_diagnostic_wall_seconds": 0.186839488,
+            "logs": {
+              "stderr.log": {
+                "bytes": 300313,
+                "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/profile/stderr.log",
+                "sha256": "9d6900e6bcd78c48b25ec6df1b9033200bad9db372d7a74c5352045d86e2082a"
+              },
+              "stdout.log": {
+                "bytes": 171,
+                "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/profile/stdout.log",
+                "sha256": "6517384153908dbb07a9ce12b856bfbf19becb64f4558ae73a3af41e9d9f49a0"
+              }
+            },
+            "max_abs": 0.78125,
+            "parity_rows": 64,
+            "phase": "profile",
+            "prefill_diagnostic_wall_seconds": 0.299645327,
+            "prefill_shape": {
+              "batch_size": 8,
+              "query_indptr": [
+                0,
+                2,
+                4,
+                6,
+                8,
+                12,
+                16,
+                20,
+                24
+              ],
+              "query_tokens": 24
+            },
+            "ragged_warmup": [
+              {
+                "batch_size": 4,
+                "diagnostic_logits": true,
+                "phase": "ragged-warmup",
+                "query_indptr": [
+                  0,
+                  2,
+                  4,
+                  6,
+                  8
+                ],
+                "query_tokens": 8,
+                "seconds": 0.149299911
+              }
+            ],
+            "result": {
+              "bytes": 16073,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/profile/result.json",
+              "sha256": "aec0e151124fd665ea55946646ceb9b1c3862efbcd0c595f2ec88e640fc1d1c7"
+            },
+            "status": "passed"
+          }
+        ],
+        "ragged_prefill": true,
+        "result": {
+          "bytes": 41328,
+          "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/result.json",
+          "sha256": "623f0370b1ec6ca5d5b1fc78960d26611b4df296706b4a0005b89e5bb3f39824"
+        },
+        "run": {
+          "bytes": 4870,
+          "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/run.json",
+          "sha256": "83d20d3d17dafbc5b08389e7dc5b693e0bf572ca3da154522d3c242be2daaa6d"
+        },
+        "status": "passed",
+        "tuning_profile": {
+          "bytes": 215,
+          "path": "/workspace/orbitkv/benchmarks/batched-fp8-qualification.json",
+          "sha256": "a460d72a0cea7fb5908fae2649343b30afecb43b0401a4d7b7ab5666c77a5cd9"
+        },
+        "version": "final_v3"
+      },
+      {
+        "batch_capacity": 8,
+        "batch_size": 4,
+        "binary": {
+          "bytes": 17986560,
+          "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/model_execution",
+          "sha256": "7b3b63cee9922369310f3654432e13f092af6e1c1dccae041824c2e761c84204"
+        },
+        "case": "b4-aligned",
+        "directory": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912",
+        "expected_request_step_comparisons_per_phase": 32,
+        "model_inputs_match_environment_reference": true,
+        "oracle_inputs_match_environment_reference": true,
+        "phases": [
+          {
+            "artifact_after": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "artifact_before": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "completion": {
+              "artifact_mode": "replay",
+              "batch_capacity": 8,
+              "batch_size": 4,
+              "compile_seconds": 47.778716622,
+              "drain_passed": true,
+              "parity_request_steps": 32,
+              "parity_steps": 8,
+              "ragged_prefill": false,
+              "reference_enabled": true,
+              "schema": 1
+            },
+            "decode_2_through_7_diagnostic_wall_median_ms": 29.053154,
+            "elapsed_process_seconds": 49.429099671542645,
+            "exit_code": 0,
+            "initial_decode_diagnostic_wall_seconds": 0.141570971,
+            "logs": {
+              "stderr.log": {
+                "bytes": 6102,
+                "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/strict-replay/stderr.log",
+                "sha256": "13011a31edfa7460118857c70c68987ce3b3772bd5ac20229c6fa2d82480872c"
+              },
+              "stdout.log": {
+                "bytes": 171,
+                "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/strict-replay/stdout.log",
+                "sha256": "0e610448ea7e3acf762b6bdc7c543d79554918ad75ac3407108db4db10ab9c62"
+              }
+            },
+            "max_abs": 0.625,
+            "parity_rows": 32,
+            "phase": "strict-replay",
+            "prefill_diagnostic_wall_seconds": 0.172403974,
+            "prefill_shape": {
+              "batch_size": 4,
+              "query_indptr": [
+                0,
+                4,
+                8,
+                12,
+                16
+              ],
+              "query_tokens": 16
+            },
+            "ragged_warmup": [],
+            "result": {
+              "bytes": 11409,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/strict-replay/result.json",
+              "sha256": "1420c97e6589f23c5a824ea1d70768ec205959327d6218fac1dd36abb6fb343e"
+            },
+            "status": "passed"
+          },
+          {
+            "artifact_after": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "artifact_before": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "completion": {
+              "artifact_mode": "replay",
+              "batch_capacity": 8,
+              "batch_size": 4,
+              "compile_seconds": 41.726247983,
+              "drain_passed": true,
+              "parity_request_steps": 32,
+              "parity_steps": 8,
+              "ragged_prefill": false,
+              "reference_enabled": true,
+              "schema": 1
+            },
+            "decode_2_through_7_diagnostic_wall_median_ms": 54.891904,
+            "elapsed_process_seconds": 43.47157150506973,
+            "exit_code": 0,
+            "initial_decode_diagnostic_wall_seconds": 0.13510248,
+            "logs": {
+              "stderr.log": {
+                "bytes": 296453,
+                "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/profile/stderr.log",
+                "sha256": "463ea28b99647c0bcea56b7507d8f6a37a2433aea42a2d75557b6f4d0dd5f9ff"
+              },
+              "stdout.log": {
+                "bytes": 171,
+                "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/profile/stdout.log",
+                "sha256": "ebfbeb71841dd7826ceb50c417eb8b7503035b88d27bcc05a962966290b657ba"
+              }
+            },
+            "max_abs": 0.625,
+            "parity_rows": 32,
+            "phase": "profile",
+            "prefill_diagnostic_wall_seconds": 0.15687504,
+            "prefill_shape": {
+              "batch_size": 4,
+              "query_indptr": [
+                0,
+                4,
+                8,
+                12,
+                16
+              ],
+              "query_tokens": 16
+            },
+            "ragged_warmup": [],
+            "result": {
+              "bytes": 12274,
+              "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/profile/result.json",
+              "sha256": "4cc8e3692cd326016947ede70e043b207d2e2854271bc27d2ee6363be0413259"
+            },
+            "status": "passed"
+          }
+        ],
+        "ragged_prefill": false,
+        "result": {
+          "bytes": 32170,
+          "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/result.json",
+          "sha256": "d83cb553cda6667e0b4b4af3a544db53a4b41f5945a916402a1ef2a374a23b4f"
+        },
+        "run": {
+          "bytes": 4871,
+          "path": "/workspace/orbitkv/.qualification/fp8-b4-aligned-v3-final-20260912/run.json",
+          "sha256": "32ddb390f08ac489d15909a87ec2b04c4115f7ec544d213e0f66ead1c4724c14"
+        },
+        "status": "passed",
+        "tuning_profile": {
+          "bytes": 215,
+          "path": "/workspace/orbitkv/benchmarks/batched-fp8-qualification.json",
+          "sha256": "a460d72a0cea7fb5908fae2649343b30afecb43b0401a4d7b7ab5666c77a5cd9"
+        },
+        "version": "final_v3"
+      },
+      {
+        "batch_capacity": 8,
+        "batch_size": 8,
+        "binary": {
+          "bytes": 17986560,
+          "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/model_execution",
+          "sha256": "7b3b63cee9922369310f3654432e13f092af6e1c1dccae041824c2e761c84204"
+        },
+        "case": "b8-aligned",
+        "directory": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912",
+        "expected_request_step_comparisons_per_phase": 64,
+        "model_inputs_match_environment_reference": true,
+        "oracle_inputs_match_environment_reference": true,
+        "phases": [
+          {
+            "artifact_after": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "artifact_before": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "completion": {
+              "artifact_mode": "replay",
+              "batch_capacity": 8,
+              "batch_size": 8,
+              "compile_seconds": 42.08186582,
+              "drain_passed": true,
+              "parity_request_steps": 64,
+              "parity_steps": 8,
+              "ragged_prefill": false,
+              "reference_enabled": true,
+              "schema": 1
+            },
+            "decode_2_through_7_diagnostic_wall_median_ms": 79.28124349999999,
+            "elapsed_process_seconds": 43.982136365026236,
+            "exit_code": 0,
+            "initial_decode_diagnostic_wall_seconds": 0.182857052,
+            "logs": {
+              "stderr.log": {
+                "bytes": 10669,
+                "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/strict-replay/stderr.log",
+                "sha256": "9b29722acd02d12193fa3e2394d80f747725693d65a27c126ca906add2754c17"
+              },
+              "stdout.log": {
+                "bytes": 171,
+                "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/strict-replay/stdout.log",
+                "sha256": "2d6bc60f0528535a8994d1a5e92e8e7b423f734b51ed1a9851ad81613b41a297"
+              }
+            },
+            "max_abs": 0.90625,
+            "parity_rows": 64,
+            "phase": "strict-replay",
+            "prefill_diagnostic_wall_seconds": 0.075619616,
+            "prefill_shape": {
+              "batch_size": 8,
+              "query_indptr": [
+                0,
+                4,
+                8,
+                12,
+                16,
+                20,
+                24,
+                28,
+                32
+              ],
+              "query_tokens": 32
+            },
+            "ragged_warmup": [],
+            "result": {
+              "bytes": 14781,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/strict-replay/result.json",
+              "sha256": "09b5d18e4c7fb56e589e25f66ecd751b126a81dbf67e01959875e66c630e3e71"
+            },
+            "status": "passed"
+          },
+          {
+            "artifact_after": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "artifact_before": {
+              "bytes": 44310241,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/decoder.json",
+              "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+            },
+            "completion": {
+              "artifact_mode": "replay",
+              "batch_capacity": 8,
+              "batch_size": 8,
+              "compile_seconds": 42.313793938,
+              "drain_passed": true,
+              "parity_request_steps": 64,
+              "parity_steps": 8,
+              "ragged_prefill": false,
+              "reference_enabled": true,
+              "schema": 1
+            },
+            "decode_2_through_7_diagnostic_wall_median_ms": 107.6596285,
+            "elapsed_process_seconds": 44.62265019118786,
+            "exit_code": 0,
+            "initial_decode_diagnostic_wall_seconds": 0.19415983,
+            "logs": {
+              "stderr.log": {
+                "bytes": 265440,
+                "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/profile/stderr.log",
+                "sha256": "1547d807e04635b040eaaf1ca1f294229596bd68a86fb72400f91f9581bd0dce"
+              },
+              "stdout.log": {
+                "bytes": 171,
+                "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/profile/stdout.log",
+                "sha256": "5a2d87eb3f3e1e02fc1d96604ad1f647ef0cbc3766d60c4c5f88ef0d33a926c6"
+              }
+            },
+            "max_abs": 0.90625,
+            "parity_rows": 64,
+            "phase": "profile",
+            "prefill_diagnostic_wall_seconds": 0.109069832,
+            "prefill_shape": {
+              "batch_size": 8,
+              "query_indptr": [
+                0,
+                4,
+                8,
+                12,
+                16,
+                20,
+                24,
+                28,
+                32
+              ],
+              "query_tokens": 32
+            },
+            "ragged_warmup": [],
+            "result": {
+              "bytes": 15648,
+              "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/profile/result.json",
+              "sha256": "a2ec0b1144a2d7d9886165272bde4d8cf42b0326671646206cb401af557c1d76"
+            },
+            "status": "passed"
+          }
+        ],
+        "ragged_prefill": false,
+        "result": {
+          "bytes": 40452,
+          "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/result.json",
+          "sha256": "873ae35899f19d0e65d52c3d7828884bfbaa17d73aad24923366fecc17c998a8"
+        },
+        "run": {
+          "bytes": 4871,
+          "path": "/workspace/orbitkv/.qualification/fp8-b8-aligned-v3-final-20260912/run.json",
+          "sha256": "a00826119595ab59212c954f80f2d60c9dcb0d02547a5e9f8ecea5be426ef775"
+        },
+        "status": "passed",
+        "tuning_profile": {
+          "bytes": 215,
+          "path": "/workspace/orbitkv/benchmarks/batched-fp8-qualification.json",
+          "sha256": "a460d72a0cea7fb5908fae2649343b30afecb43b0401a4d7b7ab5666c77a5cd9"
+        },
+        "version": "final_v3"
+      }
+    ],
+    "cold_search": false,
+    "completed_processes": 8,
+    "replay_artifact": {
+      "bytes": 44310241,
+      "path": "/workspace/orbitkv/.qualification/fp8-b8-final-20260912/decoder.json",
+      "sha256": "50b61c0cba09be4ada2e8db00b8fbe31580e92b2227693c58d7b13343891d253"
+    },
+    "status": "passed",
+    "total_request_step_comparisons": 384
+  },
+  "final_v3_first_use_observation": {
+    "case": "b8-ragged",
+    "code_reference": {
+      "file": {
+        "bytes": 45222,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/source/orbitkv/third_party/luminal/crates/luminal_cuda_lite/src/host/deepgemm/mod.rs",
+        "sha256": "05c10c9da25d67d131c899b78da5c96a749437f242158b3684280f7feddd22ca"
+      },
+      "physical_lines": [
+        717,
+        718
+      ]
+    },
+    "hypothesis": "DeepGEMM execute resolves a variant for actual M and calls ensure_compiled, so unseen-shape setup/JIT is a possible contributor. Existing logs contain no per-stage trace proving causality.",
+    "included_in_compile_or_load_interval": false,
+    "limit": "Selected-schedule strict replay does not establish that every dynamic shape was prepared or that all provider JIT/setup is absent. Provider/native caches are shared and were not cleared; these two observations are not a controlled performance A/B.",
+    "observed": "The first s24 prefill in strict replay is much slower than the same shape in the subsequent instrumented process; selected artifact remained unchanged in both.",
+    "profile_process_prefill_diagnostic_wall_seconds": 0.299645327,
+    "shape": {
+      "batch_size": 8,
+      "query_indptr": [
+        0,
+        2,
+        4,
+        6,
+        8,
+        12,
+        16,
+        20,
+        24
+      ],
+      "query_tokens": 24
+    },
+    "source_logs": {
+      "profile": {
+        "bytes": 300313,
+        "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/profile/stderr.log",
+        "sha256": "9d6900e6bcd78c48b25ec6df1b9033200bad9db372d7a74c5352045d86e2082a"
+      },
+      "strict-replay": {
+        "bytes": 10861,
+        "path": "/workspace/orbitkv/.qualification/fp8-b8-ragged-v3-final-20260912/strict-replay/stderr.log",
+        "sha256": "8f829764fe7751804f1e68f6caf306d07be5deffbcf8cccfee2f95d0e4ccf2ec"
+      }
+    },
+    "strict_replay_compile_or_load_interval_seconds": 43.445779354,
+    "strict_replay_prefill_diagnostic_wall_seconds": 7.771256099
+  },
+  "final_v3_host_validation": {
+    "model_execution_capacity_tests": {
+      "failed": 0,
+      "passed": 2
+    },
+    "server_help_includes_tuning_profile": true
+  },
+  "final_v3_serving": {
+    "audit": {
+      "bytes": 37688,
+      "path": "/workspace/orbitkv/.qualification/fp8-region-report-20260912/serving-audit.json",
+      "sha256": "25e6a46d122819b2af07e053d56fc2865dc6fa09b62a32f2b5c62c128aa80819"
+    },
+    "different_output_indices_zero_based": [
+      0,
+      3
+    ],
+    "epochs": 2,
+    "measured_requests": 32,
+    "median_paired_candidate_over_baseline": {
+      "median_e2el_ms": 0.9834729493412568,
+      "median_itl_ms": 0.855762946633429,
+      "median_tpot_ms": 0.9417873536414754,
+      "median_ttft_ms": 1.082618200548543,
+      "output_throughput": 1.018199462863983,
+      "p95_e2el_ms": 0.9867600259413267,
+      "p95_itl_ms": 1.072495901927311,
+      "p95_tpot_ms": 0.9406069339067448,
+      "p95_ttft_ms": 1.0766635289876099,
+      "p99_e2el_ms": 0.9851547544612382,
+      "p99_itl_ms": 1.073452830208676,
+      "p99_tpot_ms": 0.9372643342193925,
+      "p99_ttft_ms": 1.0720035020901877,
+      "request_throughput": 1.018199462863983
+    },
+    "output_equivalence_passed": false,
+    "performance_qualified": false,
+    "prompt_reconstruction_receipt": {
+      "bytes": 19286,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/prompt-receipt.json",
+      "sha256": "50b7e2d8b24731a9b7694445d361a1a49b8dcf70e6bed0be8a6ef6e78d6f01c5"
+    },
+    "request_completion_and_length_gate_passed": true,
+    "selected_plan_findings": "Decode off selects GenericMatmul LM head while on selects cuBLASLt; prefill heads have identical cuBLASLt descriptors. On decode has no multi-consumer activation sharing; prefill removes 48 of 400 activation quantizations. Variant choices also differ, so the whole-plan timing delta is not an isolated sharing estimate.",
+    "status": "completed_diagnostic",
+    "within_arm_output_repeatability": {
+      "off": true,
+      "on": true
+    }
+  },
+  "later_semantic_search_replay": {
+    "record": {
+      "bytes": 1441,
+      "path": "/workspace/orbitkv/.qualification/fp8-region-operators-20260912/semantic-search-replay-final-code.json",
+      "sha256": "7afd5686fefdb0b957c14bbda78fc04758350149336b1cf7410f58d154c1d7ce"
+    },
+    "result": "passed",
+    "version": "operator_semantic_later"
+  },
+  "limitations": [
+    "All B1 latency numbers include diagnostic logits. They are not serving throughput or TPOT. Instrumented CUDA Graph step intervals carry event overhead and are a separate metric.",
+    "B1 control/shared use the same binary but independent searched schedules. The LM head changes GenericMatmul to GEMV; the complete speed difference is not a causal shared-quantization estimate.",
+    "The initial operator benchmark, later semantic test, B1 binary, and final v2 binaries have separate hashes and validation scopes. Earlier device results do not automatically qualify v2.",
+    "Batch fixtures use identical token prompt [1,2,3,4] for 4 or 8 requests and teacher-forced continuation. 32/64 are eight-step per-request comparisons, not 32/64 independent prompts. Ragged prefill changes packing by pre-advancing half the requests, not prompt semantics.",
+    "Existing provider/native caches are reused. Cold means no selected decoder artifact; build time is excluded. Startup timings cannot be interpreted as controlled cold-JIT speedups.",
+    "Runtime arena sizes are not allocator peak, full VRAM, or service capacity. No maximum-capacity result is claimed.",
+    "Teacher-forced per-request logit checks are bounded numeric/state-lifecycle witnesses. They do not establish free-running text equality, diverse prompt coverage, or the failed/unrun ragged shapes.",
+    "B8 head eclass contains two cuBLASLt alternatives, but no same-shape device measurement or finalist-to-head mapping was preserved; the stage that lost these alternatives is undetermined.",
+    "The scratch lifecycle regression covers 24 tiny dynamic executions and two frozen replays, with exact old-owner lifetime assertions; it does not establish model throughput or arbitrary dynamic-shape coverage.",
+    "Package review is complete and promotion remains a separate root review action; historical failed experiments are retained.",
+    "Final v3 serving completed 32 measured requests, but two of eight generated texts differ between arms in both epochs. Exact-output equivalence remains unresolved; no independent oracle for these prompts supports a near-tie explanation.",
+    "The final serving schedule changes decode LM head and FP8 variant choices; on-decode has no multi-consumer shared quantizer. Whole-plan throughput/TPOT differences cannot be attributed solely to shared quantization.",
+    "First streaming gaps exceed subsequent intervals in all four serving runs. A one-materialized-bucket policy may contribute; client timing provides no per-stage causal attribution."
+  ],
+  "model": {
+    "architectures": [
+      "Qwen3_5ForConditionalGeneration"
+    ],
+    "config": {
+      "bytes": 51350,
+      "path": "/workspace/models/qwen3.8-27b-fp8/config.json",
+      "sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc"
+    },
+    "hidden_size": 5120,
+    "local_target_label": "qwen3.8-27b-fp8",
+    "model_card": {
+      "architecture_foundation_claim": "Qwen3.5",
+      "base_model": "Qwen/Qwen3.8-27B",
+      "base_model_line": 3,
+      "bytes": 65249,
+      "foundation_line": 25,
+      "path": "/workspace/models/qwen3.8-27b-fp8/README.md",
+      "provenance": "Current local model card; historical B1 phases did not fingerprint README.md.",
+      "release_title": "Qwen3.8-27B-FP8",
+      "sha256": "a247d876f5398eed9ae898f32a984083552de57237b5e20714657e1675e26d2e",
+      "title_line": 9
+    },
+    "model_directory": "/workspace/models/qwen3.8-27b-fp8",
+    "model_type": "qwen3_5",
+    "num_hidden_layers": 64,
+    "qualification_note": "Current local model card identifies release Qwen3.8-27B-FP8, base_model Qwen/Qwen3.8-27B, built on Qwen3.5 architecture. The HF config class Qwen3_5ForConditionalGeneration identifies architecture compatibility, not release identity. Baseline flat result did not retain a config fingerprint; control/shared config fingerprints match this observation.",
+    "text_model_type": "qwen3_5_text",
+    "vocab_size": 248320
+  },
+  "operator_qualification": {
+    "limitations": [
+      "Sequential implementation order; not an interleaved statistical experiment.",
+      "CUDA-event intervals include any host enqueue starvation; isolated tiny quantizer timing may approach that floor.",
+      "Static-M fixtures do not independently qualify changing M within one captured graph or whole-model accuracy/performance.",
+      "runtime_intermediate_bytes is the runtime arena, not total peak VRAM or combined HostOp hidden workspace."
+    ],
+    "microbenchmark_source": {
+      "bytes": 3216,
+      "path": "/workspace/orbitkv/.qualification/fp8-region-operators-20260912/dual-consumer-results.json",
+      "sha256": "431dc7585b5832e3c27b492b50a62f3939403307185175b2fca0609d00214a2e"
+    },
+    "microbenchmarks": [
+      {
+        "K": 5120,
+        "M": 1,
+        "N": 17408,
+        "combined_median_device_us": 104.2080078125,
+        "consumers": 2,
+        "latency_change_percent": -1.595284840079092,
+        "launches_per_trial": 20,
+        "shared_median_device_us": 102.54559326171875,
+        "trials": 31,
+        "variant": 0
+      },
+      {
+        "K": 5120,
+        "M": 4,
+        "N": 17408,
+        "combined_median_device_us": 104.22239685058594,
+        "consumers": 2,
+        "latency_change_percent": -1.4522747766246402,
+        "launches_per_trial": 20,
+        "shared_median_device_us": 102.70880126953125,
+        "trials": 31,
+        "variant": 0
+      },
+      {
+        "K": 5120,
+        "M": 8,
+        "N": 17408,
+        "combined_median_device_us": 104.36161041259766,
+        "consumers": 2,
+        "latency_change_percent": -1.6741861635652278,
+        "launches_per_trial": 20,
+        "shared_median_device_us": 102.6144027709961,
+        "trials": 31,
+        "variant": 0
+      },
+      {
+        "K": 5120,
+        "M": 64,
+        "N": 17408,
+        "combined_median_device_us": 111.2800064086914,
+        "consumers": 2,
+        "latency_change_percent": -4.1854850503160845,
+        "launches_per_trial": 20,
+        "shared_median_device_us": 106.62239837646484,
+        "trials": 31,
+        "variant": 0
+      }
+    ],
+    "source": {
+      "bytes": 3574,
+      "path": "/workspace/orbitkv/.qualification/fp8-region-operators-20260912/qualification.json",
+      "sha256": "31394a3074ad98facea40c22168d63d87885212a96d979a1eba7f51e0cd7613f"
+    },
+    "status": "passed",
+    "tests": [
+      {
+        "coverage": "M=[1,3,4,5,8,16], N=[128,256], K=256; four DeepGEMM variants; zero, signed finite and clamp-region inputs; exact combined/shared BF16 outputs and independent CPU FP8/scales/padding bytes",
+        "log": "fanout-parity-qualified.log",
+        "name": "shared_fp8_fanout_matches_combined_on_sm90",
+        "status": "passed"
+      },
+      {
+        "coverage": "provider-neutral semantic fanout; one egglog quantizer; selected-schedule serialize/load; exact constant output",
+        "log": "semantic-search-replay.log",
+        "name": "shared_fp8_semantic_search_and_schedule_replay_on_sm90",
+        "status": "passed"
+      },
+      {
+        "coverage": "M=[1,4,8,64], N=17408, K=5120; two projections, variant0; combined/shared/GEMM-only equality; warmed captured graphs;31 trials of20 launches",
+        "log": "dual-consumer-benchmark.log",
+        "name": "shared_fp8_dual_consumer_benchmark_on_sm90",
+        "status": "passed"
+      }
+    ],
+    "version": "operator_initial"
+  },
+  "performance_qualified": false,
+  "promoted": true,
+  "review_status": "reviewed-complete-bounded-correctness-and-serving-diagnostic",
+  "runtime_scratch_lifetime_audit": {
+    "bytes": 13895,
+    "path": "/workspace/orbitkv/.qualification/fp8-region-report-20260912/scratch-lifetime-audit.json",
+    "sha256": "a1fd1d6cf114e204b35774d971333bbc0de15eba3a2d78bbc8878be38264ff01"
+  },
+  "schema": "orbitkv.fp8-region-reviewed-package.v1",
+  "selected_schedule_analysis": {
+    "bytes": 32521,
+    "path": "/workspace/orbitkv/.qualification/fp8-region-analysis-20260912/analysis.json",
+    "sha256": "f22782eb7e488b73d8206d1156a4fbfca4ebba62d9383783c02e23cce07d7a70"
+  },
+  "status": "complete",
+  "timing_definitions": {
+    "b4_aligned_strict_replay": {
+      "compile_or_load_interval_seconds": 44.015213638,
+      "full_process_seconds": 45.62512869760394
+    },
+    "b8_aligned_cold": {
+      "compile_or_load_interval_seconds": 953.120259564,
+      "full_process_seconds": 955.5512791089714
+    },
+    "b8_aligned_strict_replay": {
+      "compile_or_load_interval_seconds": 42.523921108,
+      "full_process_seconds": 44.42150592058897
+    },
+    "comparison_limit": "Existing native/provider caches reused. These are separate searched/load paths and include multiple preparation stages; not a controlled empty-cache JIT comparison.",
+    "elapsed_process_seconds": "Full prebuilt test subprocess, including test setup, decoder work, reference comparisons, diagnostic logits and drain; Rust build excluded.",
+    "strict_replay_first_use_boundary": "compile_or_load excludes later first-use shape preparation during prefill/decode. Restoring a selected schedule does not prove zero runtime setup/JIT for every live shape.",
+    "test_marker_compile_seconds": "Wall interval around the test compile_or_load_with_tuning invocation (including argument evaluation); covers decoder preparation/loading/search as performed by that call, not isolated compiler CPU time or Rust build time. Artifact JSON parsing occurs before this marker interval."
+  },
+  "updated_at_utc": "2026-09-12T10:36:35.714937+00:00",
+  "versions": {
+    "b1_control_shared": {
+      "binary": {
+        "bytes": 17925976,
+        "path": "/workspace/orbitkv/.qualification/fp8-region-binaries-20260912/model_execution",
+        "sha256": "7520f548ee52ac99b602f49c374c4b5bb81576eeecc84f768cb96dc3de83c111"
+      },
+      "provenance": {
+        "bytes": 2496,
+        "path": "/workspace/orbitkv/.qualification/fp8-region-binaries-20260912/source.json",
+        "sha256": "1f8f62a8b822806c90d5fc5e432f566536e77320808d553877680d1aa47904b2"
+      },
+      "scope": "One frozen model_execution binary used for both control/shared B1 arms; earlier than final v2."
+    },
+    "baseline": {
+      "binary": {
+        "sha256": "99fc66238b6397f0ebcec3495c15ffd9741f4d634b81daff86edd79206e5e486"
+      },
+      "provenance": {
+        "bytes": 701,
+        "path": "/workspace/orbitkv/.qualification/fp8-region-baseline-20260912/run.json",
+        "sha256": "8ab1936ec5fffc5856dc6f50c7841c022f9f9c25f3a7d0b8ce3d08324ccb210d"
+      },
+      "scope": "Earlier isolated baseline source snapshot and B1 qualification."
+    },
+    "final_v2": {
+      "binaries": {
+        "model_execution": {
+          "bytes": 17961656,
+          "frozen_path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v2-20260912/model_execution",
+          "sha256": "17f8e394ceede4f6f53e49c035460829b77658b8be827886eb3d8f340d597dfe",
+          "source_path": "/workspace/orbitkv/target/release/deps/model_execution-32746f984913d3d8"
+        },
+        "orbitkv-serve": {
+          "bytes": 64814192,
+          "frozen_path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v2-20260912/orbitkv-serve",
+          "sha256": "da5b2dfd35baa8effe58d6dbf8ce6e7e30190fc68bcf501b4d60eb0875fe7340",
+          "source_path": "/workspace/orbitkv/target/release/orbitkv-serve"
+        }
+      },
+      "provenance": {
+        "bytes": 156240,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v2-20260912/provenance.json",
+        "sha256": "56bce3a9dc8efcfc41256e48c8ec95f8727a63c08ea53ef5eddca667b1dea311"
+      },
+      "scope": "Final model_execution and server build; completion of device runs is tracked separately."
+    },
+    "final_v3": {
+      "binaries": {
+        "model_execution": {
+          "bytes": 17986560,
+          "frozen_path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/model_execution",
+          "sha256": "7b3b63cee9922369310f3654432e13f092af6e1c1dccae041824c2e761c84204",
+          "source_path": "/workspace/orbitkv/target/release/deps/model_execution-32746f984913d3d8"
+        },
+        "orbitkv-serve": {
+          "bytes": 64842840,
+          "frozen_path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/orbitkv-serve",
+          "sha256": "ac44ab7f9ee8bdd3c273e15e4218c4d010a5b18e27630bfcf5f1d2a3806fcbfd",
+          "source_path": "/workspace/orbitkv/target/release/orbitkv-serve"
+        }
+      },
+      "provenance": {
+        "bytes": 161842,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/provenance.json",
+        "sha256": "665805673164355ce96314aacd91cacb110a546f3628f1a18a26e6569ec18316"
+      },
+      "scope": "Post-scratch-lifetime-fix frozen binaries. Full-model replay/profile and serving completion are recorded separately."
+    },
+    "operator_initial": {
+      "binary_sha256": "df389ada6d166c232d20de9247be34244d1829a8087a3fc37022428edcc9a1e3",
+      "provenance": {
+        "bytes": 3574,
+        "path": "/workspace/orbitkv/.qualification/fp8-region-operators-20260912/qualification.json",
+        "sha256": "31394a3074ad98facea40c22168d63d87885212a96d979a1eba7f51e0cd7613f"
+      },
+      "scope": "Original operator parity and dual-consumer benchmark, before generic eligibility, input-length-map optimization and custom-op ID alias fix."
+    },
+    "operator_semantic_later": {
+      "provenance": {
+        "bytes": 1441,
+        "path": "/workspace/orbitkv/.qualification/fp8-region-operators-20260912/semantic-search-replay-final-code.json",
+        "sha256": "7afd5686fefdb0b957c14bbda78fc04758350149336b1cf7410f58d154c1d7ce"
+      },
+      "record": {
+        "device": "NVIDIA H20 SM90",
+        "duration_seconds": 1.37,
+        "result": "passed",
+        "scope": "Final-code shared quantization provider lowering, graph sharing, search and selected schedule replay. Fixed-shape test; timings diagnostic only.",
+        "sha256": {
+          ".qualification/fp8-region-operators-20260912/semantic-search-replay-final-code.log": "bda5a9ad6986e30cd3d744e4b3f772def353c1d94ea24db8b479185d625f25f3",
+          "third_party/luminal/crates/luminal_cuda_lite/src/host/deepgemm/mod.rs": "09e6a8ac65c06529833df957cc8e5c84ed09bdc814585297a5f3e5f29d5b937f",
+          "third_party/luminal/crates/luminal_cuda_lite/src/host/deepgemm/shared.rs": "e50b8f4fa866906652d358e35323ed6d7ab20ba1c12800831656ef2c7daecdec",
+          "third_party/luminal/crates/luminal_cuda_lite/src/search.rs": "c2842a635ff98c1f9355381c75a248da37aa04bd6639db4fd44337e2beec2829",
+          "third_party/luminal/src/egglog_utils/eligibility.rs": "f2c3cea8ca4dfa5b5f38ec9323460289df265f93a5af1fec77630ac725628436",
+          "third_party/luminal/src/egglog_utils/mod.rs": "59946bbe6044a70aef533ca4edac8fe81a7e89bfb0f901e775b5ccb86c8e3828",
+          "third_party/luminal/src/search/genetic.rs": "0954576d6d57ad5f499d75357aa5e577ce9ee820cede2b74f223230ea8dd5cb5",
+          "third_party/luminal/target/release/deps/luminal_cuda_lite-2876d24ff5453342": "2c7f54abbeba9c64266d0adcc069347311a692e4af17f77a158dc7ae00aa1788"
+        },
+        "test": "shared_fp8_semantic_search_and_schedule_replay_on_sm90",
+        "tests": 1
+      },
+      "scope": "v1 semantic GPU replay after generic eligibility/input-length-map optimization, before custom-op ID alias fix. This is not final v2 GPU semantic evidence."
+    },
+    "scratch_lifetime_after": {
+      "binary": {
+        "bytes": 31309488,
+        "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/scratch-after-fix",
+        "sha256": "daa2857010cc6e1142417ed946fdf7972adaa7fb5ae43cb9e6a56b6589ae9ed5"
+      },
+      "provenance": {
+        "bytes": 921,
+        "path": "/workspace/orbitkv/.qualification/fp8-ragged-final-20260912/scratch-after-fix.json",
+        "sha256": "1c46237d895f39eec98d94645e2cf028b8617555126fe3ee340b2b26232a0747"
+      },
+      "scope": "Scoped SM90 dynamic scratch regression; production sources match final fix, GPU-tested test source predates clippy-only syntax cleanup."
+    }
+  },
+  "root_review": {
+    "completed_at_utc": "2026-09-12T10:40:21.089224+00:00",
+    "record_scope": "Bounded device/model correctness and completed serving diagnostic; no qualified performance benefit.",
+    "source_draft": "/workspace/orbitkv/.qualification/fp8-region-report-20260912",
+    "independent_reference_file_checks": 149,
+    "serving_output_equivalence_passed": false,
+    "default_shared_fp8_enabled": false
+  }
+}

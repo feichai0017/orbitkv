@@ -1,0 +1,1027 @@
+{
+  "schema": 1,
+  "comparison": "startup preparation disabled/enabled at separately fixed capacities one and two",
+  "profiles": [
+    {
+      "name": "phase-switch-c1",
+      "workload": {
+        "input_tokens": 4,
+        "max_concurrency": 1,
+        "output_tokens": 8,
+        "requests": 16
+      },
+      "graph_cache_capacity": 2,
+      "timing_processes": 8,
+      "comparisons": {
+        "output_throughput": {
+          "baseline": 35.5961752777792,
+          "candidate": 36.79889510539053,
+          "paired_change_percent": 3.467179808312326
+        },
+        "median_ttft_ms": {
+          "baseline": 49.26244914531708,
+          "candidate": 49.16199762374163,
+          "paired_change_percent": -0.4074792378333303
+        },
+        "p99_ttft_ms": {
+          "baseline": 67.46506169438362,
+          "candidate": 61.12245433032512,
+          "paired_change_percent": -9.287267133860178
+        },
+        "median_tpot_ms": {
+          "baseline": 23.845982604793143,
+          "candidate": 23.811272345483303,
+          "paired_change_percent": -0.14555573049448434
+        },
+        "p99_tpot_ms": {
+          "baseline": 37.6889602015061,
+          "candidate": 24.478952001248086,
+          "paired_change_percent": -35.026783895137086
+        },
+        "median_itl_ms": {
+          "baseline": 23.60887173563242,
+          "candidate": 23.58598541468382,
+          "paired_change_percent": -0.07896076800192886
+        },
+        "median_e2el_ms": {
+          "baseline": 216.17422997951508,
+          "candidate": 215.82572627812624,
+          "paired_change_percent": -0.1933184696398138
+        },
+        "first_ttft_ms": {
+          "baseline": 70.63488848507404,
+          "candidate": 63.17280977964401,
+          "paired_change_percent": -10.555562980465865
+        },
+        "first_stream_interval_ms": {
+          "baseline": 138.91687244176865,
+          "candidate": 29.928017407655716,
+          "paired_change_percent": -78.45624496983542
+        },
+        "engine_startup_ms": {
+          "baseline": 16953.0976515,
+          "candidate": 15837.363588,
+          "paired_change_percent": -3.2549094930385603
+        },
+        "preparation_ms": {
+          "baseline": 0.0,
+          "candidate": 125.5720685,
+          "paired_change_percent": null
+        },
+        "ready_seconds": {
+          "baseline": 18.52340422384441,
+          "candidate": 17.523385640233755,
+          "paired_change_percent": -2.703802598144761
+        }
+      },
+      "generated_texts_sha256": "804977d2cc080057da1b3a2a27d1e795efdb67c063b68f11a60af6747b2447a1"
+    },
+    {
+      "name": "decode-c1",
+      "workload": {
+        "input_tokens": 4,
+        "max_concurrency": 1,
+        "output_tokens": 64,
+        "requests": 16
+      },
+      "graph_cache_capacity": 2,
+      "timing_processes": 8,
+      "comparisons": {
+        "output_throughput": {
+          "baseline": 40.23398379460171,
+          "candidate": 40.476377320138525,
+          "paired_change_percent": 0.5981451654034187
+        },
+        "median_ttft_ms": {
+          "baseline": 49.541160464286804,
+          "candidate": 49.92876388132572,
+          "paired_change_percent": 0.6035005013057204
+        },
+        "p99_ttft_ms": {
+          "baseline": 67.25553236901759,
+          "candidate": 64.90156752988696,
+          "paired_change_percent": -3.507146660623772
+        },
+        "median_tpot_ms": {
+          "baseline": 24.235932008614615,
+          "candidate": 24.226103761484698,
+          "paired_change_percent": 0.03306527205862997
+        },
+        "p99_tpot_ms": {
+          "baseline": 25.860778441918747,
+          "candidate": 24.80495101846163,
+          "paired_change_percent": -4.545609157270464
+        },
+        "median_itl_ms": {
+          "baseline": 23.60860165208578,
+          "candidate": 23.58789276331663,
+          "paired_change_percent": -0.10649027658307109
+        },
+        "median_e2el_ms": {
+          "baseline": 1576.563185080886,
+          "candidate": 1576.1652095243335,
+          "paired_change_percent": 0.04650851151876134
+        },
+        "first_ttft_ms": {
+          "baseline": 70.35578601062298,
+          "candidate": 67.5026886165142,
+          "paired_change_percent": -4.06334437048878
+        },
+        "first_stream_interval_ms": {
+          "baseline": 137.9096917808056,
+          "candidate": 31.412003561854362,
+          "paired_change_percent": -77.33839306251261
+        },
+        "engine_startup_ms": {
+          "baseline": 17401.3430705,
+          "candidate": 17496.4854205,
+          "paired_change_percent": 0.1797322579016103
+        },
+        "preparation_ms": {
+          "baseline": 0.0,
+          "candidate": 126.710261,
+          "paired_change_percent": null
+        },
+        "ready_seconds": {
+          "baseline": 18.774083394557238,
+          "candidate": 19.02274169959128,
+          "paired_change_percent": 0.061586452558892724
+        }
+      },
+      "generated_texts_sha256": "6b41ce756bb860d09c95087beb9990deef598bc3ad03ffd3b2b957dd46c119f1"
+    },
+    {
+      "name": "context-growth-c1",
+      "workload": {
+        "input_tokens": 4,
+        "max_concurrency": 1,
+        "output_tokens": 128,
+        "requests": 8
+      },
+      "graph_cache_capacity": 2,
+      "timing_processes": 4,
+      "comparisons": {
+        "output_throughput": {
+          "baseline": 40.75761834502916,
+          "candidate": 40.747697436504325,
+          "paired_change_percent": -0.024106899064074705
+        },
+        "median_ttft_ms": {
+          "baseline": 49.532897770404816,
+          "candidate": 49.77899789810181,
+          "paired_change_percent": 0.5001451436908388
+        },
+        "p99_ttft_ms": {
+          "baseline": 70.55743230506776,
+          "candidate": 62.84225534647703,
+          "paired_change_percent": -10.871353623400172
+        },
+        "median_tpot_ms": {
+          "baseline": 24.146736423506983,
+          "candidate": 24.287657775571496,
+          "paired_change_percent": 0.5842434739563473
+        },
+        "p99_tpot_ms": {
+          "baseline": 25.06319367730125,
+          "candidate": 24.78978400771308,
+          "paired_change_percent": -1.0906638812849256
+        },
+        "median_itl_ms": {
+          "baseline": 23.620864376425743,
+          "candidate": 23.64619355648756,
+          "paired_change_percent": 0.10725039400937275
+        },
+        "median_e2el_ms": {
+          "baseline": 3116.272911429405,
+          "candidate": 3134.5181530341506,
+          "paired_change_percent": 0.5861359470137439
+        },
+        "first_ttft_ms": {
+          "baseline": 72.12885655462742,
+          "candidate": 63.780058175325394,
+          "paired_change_percent": -11.502273774319027
+        },
+        "first_stream_interval_ms": {
+          "baseline": 141.97505824267864,
+          "candidate": 30.045446008443832,
+          "paired_change_percent": -78.815917319721
+        },
+        "engine_startup_ms": {
+          "baseline": 15733.519196000001,
+          "candidate": 16164.7737835,
+          "paired_change_percent": 2.810500019265766
+        },
+        "preparation_ms": {
+          "baseline": 0.0,
+          "candidate": 127.84772749999999,
+          "paired_change_percent": null
+        },
+        "ready_seconds": {
+          "baseline": 17.274815410375595,
+          "candidate": 17.773393696174026,
+          "paired_change_percent": 2.971329166468773
+        }
+      },
+      "generated_texts_sha256": "43e30c2c077c2a27eb15f268e7e7455a017ffed3ab04d7913ab9f3f7d33c2f4e"
+    },
+    {
+      "name": "default-capacity-c1",
+      "workload": {
+        "input_tokens": 4,
+        "max_concurrency": 1,
+        "output_tokens": 8,
+        "requests": 16
+      },
+      "graph_cache_capacity": 1,
+      "timing_processes": 4,
+      "comparisons": {
+        "output_throughput": {
+          "baseline": 18.33800016087199,
+          "candidate": 18.12338652241102,
+          "paired_change_percent": -1.176650113702432
+        },
+        "median_ttft_ms": {
+          "baseline": 163.92015106976032,
+          "candidate": 162.07766998559237,
+          "paired_change_percent": -1.1251416537776615
+        },
+        "p99_ttft_ms": {
+          "baseline": 178.91734708100557,
+          "candidate": 195.95383405685425,
+          "paired_change_percent": 9.738482222247335
+        },
+        "median_tpot_ms": {
+          "baseline": 39.239831800971714,
+          "candidate": 38.99245123778071,
+          "paired_change_percent": -0.6310181010026117
+        },
+        "p99_tpot_ms": {
+          "baseline": 42.43219634518027,
+          "candidate": 43.877933347331634,
+          "paired_change_percent": 3.4495034568339467
+        },
+        "median_itl_ms": {
+          "baseline": 23.645948618650436,
+          "candidate": 23.605694994330406,
+          "paired_change_percent": -0.17024935899344062
+        },
+        "median_e2el_ms": {
+          "baseline": 437.9301043227315,
+          "candidate": 435.08214596658945,
+          "paired_change_percent": -0.6487315303006946
+        },
+        "first_ttft_ms": {
+          "baseline": 75.73949173092842,
+          "candidate": 60.563232749700546,
+          "paired_change_percent": -19.677153451294483
+        },
+        "first_stream_interval_ms": {
+          "baseline": 139.27147537469864,
+          "candidate": 130.5142343044281,
+          "paired_change_percent": -6.042528454684099
+        },
+        "engine_startup_ms": {
+          "baseline": 17051.141464,
+          "candidate": 15627.557384,
+          "paired_change_percent": -8.350780553758174
+        },
+        "preparation_ms": {
+          "baseline": 0.0,
+          "candidate": 9.692184000000001,
+          "paired_change_percent": null
+        },
+        "ready_seconds": {
+          "baseline": 18.524481017142534,
+          "candidate": 17.273083616048098,
+          "paired_change_percent": -6.755410304773774
+        }
+      },
+      "generated_texts_sha256": "804977d2cc080057da1b3a2a27d1e795efdb67c063b68f11a60af6747b2447a1"
+    }
+  ],
+  "rejected_workload": {
+    "status": "rejected_workload",
+    "exit_code": 2,
+    "failed_profile": "longer-context-c1",
+    "reason": "128 input tokens exceed the fixed server maximum_prefill_tokens=4; zero requests were admitted. The output-length gate rejected all empty responses.",
+    "inputs_after": [
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/verified/orbitkv-serve",
+        "bytes": 65660888,
+        "sha256": "70755522983694d2250eebdd2e4681a076efbf9c89d39e58ebd3d3fe47d7a16a"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/decoder.json",
+        "bytes": 15184754,
+        "sha256": "44dc4c03cf606718da6f223d732ffd025fb79d4a4497c8b98ea986976dcdc174"
+      },
+      {
+        "path": "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+        "bytes": 63,
+        "sha256": "ebc739cbe1e00ca29412c7ea62d2d58d522a97829393e0650aca24d3521288e9"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+        "bytes": 266,
+        "sha256": "751ca5e9e7d1108dc84f9a4f7f3b231d151a4154559f0c8ed83c38f8837522a7"
+      },
+      {
+        "path": "/workspace/orbitkv/tools/run_matched_serving.py",
+        "bytes": 20956,
+        "sha256": "caeaa6089b0e02aaea4b81dab7e5d9b9a33a25e4941a3dbd63e546d27cd2573a"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/workloads.json",
+        "bytes": 466,
+        "sha256": "a0b83006a300daf8280c339963267501d0ef6d868e9d8f3975c164782c36ffb9"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/verified/build-receipt.json",
+        "bytes": 1012,
+        "sha256": "203b332c640ab4142265aaf71f79d7d3072c29e67ea07aef8adc3213e5ce768e"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/run_serving.py",
+        "bytes": 4092,
+        "sha256": "303262e987fba85fbac03c06476ceaae4370f2a694b28f046f255c10b8a45a9e"
+      },
+      {
+        "path": "/workspace/models/qwen3.8-27b-fp8/config.json",
+        "bytes": 51350,
+        "sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc"
+      },
+      {
+        "path": "/workspace/models/qwen3.8-27b-fp8/model.safetensors.index.json",
+        "bytes": 137335,
+        "sha256": "f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2"
+      },
+      {
+        "path": "/workspace/models/qwen3.8-27b-fp8/tokenizer.json",
+        "bytes": 12809320,
+        "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+      }
+    ],
+    "raw": [
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/longer-context-c1/epoch-001/baseline/benchmark.json",
+        "bytes": 1752,
+        "sha256": "4042d47a7573b74aa0726b1fd21ad8658aee30a3580a817636272c541fd49196"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/longer-context-c1/epoch-001/baseline/server.log",
+        "bytes": 1751,
+        "sha256": "b5b2747b83f99a0fff444877626f6b1367e7425a5b047fddd8891bc6415da153"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/longer-context-c1/epoch-001/baseline/client.log",
+        "bytes": 5308,
+        "sha256": "d09baa79b4ea6e1433e5b8b22663b87fe9111d0239150a5f0f81f840912ed8dc"
+      }
+    ],
+    "shutdown": {
+      "stats": {
+        "manager": {
+          "active_requests": 0,
+          "active_snapshots": 0,
+          "active_prefixes": 0,
+          "evicted_prefixes": 0,
+          "prepared_steps": 0,
+          "submitted_steps": 0,
+          "free_pages": 64,
+          "reserved_pages": 0,
+          "writing_pages": 0,
+          "active_pages": 0,
+          "retiring_pages": 0,
+          "quarantined_pages": 0,
+          "exhausted_pages": 0,
+          "pending_reclamations": 0,
+          "total_request_page_refs": 0,
+          "total_prefix_page_refs": 0,
+          "total_reader_pins": 0
+        },
+        "queued_requests": 0,
+        "active_requests": 0,
+        "admitted_requests": 0,
+        "completed_requests": 0,
+        "cancelled_requests": 0,
+        "model_dispatches": 0,
+        "multi_request_dispatches": 0,
+        "mixed_phase_dispatches": 0,
+        "maximum_observed_batch_size": 0
+      },
+      "fixed_states": [
+        [
+          1,
+          {
+            "identity": {
+              "engine_epoch": 1,
+              "pool_epoch": 3,
+              "byte_count": 150994944,
+              "pool_id": 2,
+              "slot_count": 2
+            },
+            "free_slots": 2,
+            "reserved_slots": 0,
+            "copying_slots": 0,
+            "live_slots": 0,
+            "retiring_slots": 0,
+            "quarantined_slots": 0,
+            "active_owners": 0,
+            "pending_transitions": 0,
+            "pending_retirements": 0
+          }
+        ],
+        [
+          2,
+          {
+            "identity": {
+              "engine_epoch": 1,
+              "pool_epoch": 4,
+              "byte_count": 2949120,
+              "pool_id": 3,
+              "slot_count": 2
+            },
+            "free_slots": 2,
+            "reserved_slots": 0,
+            "copying_slots": 0,
+            "live_slots": 0,
+            "retiring_slots": 0,
+            "quarantined_slots": 0,
+            "active_owners": 0,
+            "pending_transitions": 0,
+            "pending_retirements": 0
+          }
+        ]
+      ],
+      "decoder_graph_builds": 1,
+      "materialized_decoder_graphs": 1
+    },
+    "build": {
+      "frozen_at_utc": "2026-09-13T14:36:25.320663+00:00",
+      "source_inputs_unchanged": true,
+      "source_file_count": 440,
+      "source_manifest_sha256": "2144a36e01dd8acc3d8b906056c6f4431ca105c7d717fb08a675e5966882758e",
+      "binary": {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/verified/orbitkv-serve",
+        "bytes": 65660888,
+        "sha256": "70755522983694d2250eebdd2e4681a076efbf9c89d39e58ebd3d3fe47d7a16a"
+      },
+      "build_command": [
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "orbitkv-engine",
+        "--features",
+        "server",
+        "--bin",
+        "orbitkv-serve",
+        "--message-format=json"
+      ],
+      "root_commit": "5c45719149ce8c5716d614e92bdeb809ba26913f",
+      "luminal_commit": "bfa83afeb80c04040ca5c67ea8a9ae22b204b5c8",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n"
+    }
+  },
+  "corrected_preparation_policy": {
+    "reason": "Preparing an artifact-order prefix evicted the existing prefill graph at capacity one.",
+    "resolution": "Preserve existing materializations before filling unused capacity in artifact order.",
+    "build": {
+      "frozen_at_utc": "2026-09-13T14:36:25.320663+00:00",
+      "source_inputs_unchanged": true,
+      "source_file_count": 440,
+      "source_manifest_sha256": "2144a36e01dd8acc3d8b906056c6f4431ca105c7d717fb08a675e5966882758e",
+      "binary": {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/verified/orbitkv-serve",
+        "bytes": 65660888,
+        "sha256": "70755522983694d2250eebdd2e4681a076efbf9c89d39e58ebd3d3fe47d7a16a"
+      },
+      "build_command": [
+        "cargo",
+        "build",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "orbitkv-engine",
+        "--features",
+        "server",
+        "--bin",
+        "orbitkv-serve",
+        "--message-format=json"
+      ],
+      "root_commit": "5c45719149ce8c5716d614e92bdeb809ba26913f",
+      "luminal_commit": "bfa83afeb80c04040ca5c67ea8a9ae22b204b5c8",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n"
+    },
+    "test_binaries": [
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/verified/model-tests",
+        "bytes": 18822368,
+        "sha256": "2be968db22d0a474dc2718352f8103f2a900be55db11950b04491c0d971fe8bb"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/verified/cuda-tests",
+        "bytes": 32157456,
+        "sha256": "31d20b92c7c4dc5a3b0847f19fe060da715c3b89a0623b6a0af6723225a85b53"
+      }
+    ],
+    "model_runs": [
+      {
+        "name": "default-lazy",
+        "first_sequence": {
+          "sequence": 0,
+          "capacity": 1,
+          "prefill_seconds": 0.043163216,
+          "first_decode_seconds": 0.132818099,
+          "warm_decode_seconds": [
+            0.024713201,
+            0.024596813,
+            0.024539122,
+            0.024462462,
+            0.024452735,
+            0.024441898
+          ],
+          "sequence_seconds": 0.342543078,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        "log": {
+          "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/default-lazy.log",
+          "bytes": 9559,
+          "sha256": "fae6c79d4e7c9e9dbf967bc87b59116593af08713ed755de55fcf855937a4e85"
+        }
+      },
+      {
+        "name": "default-prepared",
+        "first_sequence": {
+          "sequence": 0,
+          "capacity": 1,
+          "prefill_seconds": 0.140220965,
+          "first_decode_seconds": 0.120960975,
+          "warm_decode_seconds": [
+            0.024580862,
+            0.024521704,
+            0.024495004,
+            0.024440894,
+            0.024448094,
+            0.024468855
+          ],
+          "sequence_seconds": 0.426507205,
+          "graph_builds_before": 2,
+          "graph_builds_after": 4,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        "log": {
+          "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/default-prepared.log",
+          "bytes": 9833,
+          "sha256": "8427a1ebb1cc93cf5a263984c1752c13dee44582ca914ef91e1a860092d6b91a"
+        }
+      }
+    ],
+    "archived_result_checksums": {
+      "path": "/workspace/orbitkv/.qualification/startup-preparation-20260913/reviewed-initial-result/SHA256SUMS",
+      "bytes": 402,
+      "sha256": "9288049b45cd07dce23d332bda7e6fca1cd788a92e3540faba432ca45b85cadf"
+    }
+  },
+  "measured_requests": 352,
+  "measured_output_tokens": 13824,
+  "timing_processes": 24,
+  "all_timing_shutdowns_drained": true,
+  "performance_qualified": false,
+  "performance_scope": "Narrow same-binary paired observations; no statistical significance or production-tail claim.",
+  "model_reference": [
+    {
+      "name": "model-lazy",
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 2,
+          "prefill_seconds": 0.047940331,
+          "first_decode_seconds": 0.239883534,
+          "warm_decode_seconds": [
+            0.024665642,
+            0.024602938,
+            0.024569261,
+            0.024583855,
+            0.02448159,
+            0.024442599
+          ],
+          "sequence_seconds": 0.455606977,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 2,
+          "prefill_seconds": 0.029651962,
+          "first_decode_seconds": 0.02623655,
+          "warm_decode_seconds": [
+            0.02444339,
+            0.02459142,
+            0.024467684,
+            0.024527912,
+            0.02443852,
+            0.024469434
+          ],
+          "sequence_seconds": 0.219372976,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 2,
+          "prefill_seconds": 0.029762365,
+          "first_decode_seconds": 0.026216399,
+          "warm_decode_seconds": [
+            0.02459037,
+            0.024471108,
+            0.024484567,
+            0.024499762,
+            0.024540801,
+            0.024564609
+          ],
+          "sequence_seconds": 0.219913,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.04580571,
+          "first_decode_seconds": 0.131650601,
+          "warm_decode_seconds": [
+            0.02460629,
+            0.024542638,
+            0.024593513,
+            0.024561432,
+            0.024577429,
+            0.024526664
+          ],
+          "sequence_seconds": 0.341497377,
+          "graph_builds_before": 2,
+          "graph_builds_after": 3,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "result": {
+        "schema": 1,
+        "reference_enabled": true,
+        "parity_steps": 32,
+        "sequences": 4,
+        "drain_passed": true,
+        "artifact_mode": "replay"
+      },
+      "maximum_absolute_logit_error": 0.5,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/model-lazy.log",
+        "bytes": 9557,
+        "sha256": "b10edaea9e80bacd901287c8df6486d7d31b084e126806e4719f6da065f790a9"
+      }
+    },
+    {
+      "name": "model-prepared",
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 2,
+          "prefill_seconds": 0.03636523,
+          "first_decode_seconds": 0.030591026,
+          "warm_decode_seconds": [
+            0.024701271,
+            0.024658658,
+            0.024612337,
+            0.024542936,
+            0.024603981,
+            0.024544047
+          ],
+          "sequence_seconds": 0.233208274,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 2,
+          "prefill_seconds": 0.029674067,
+          "first_decode_seconds": 0.026108222,
+          "warm_decode_seconds": [
+            0.024551304,
+            0.024525429,
+            0.024568202,
+            0.024542284,
+            0.024583816,
+            0.024544054
+          ],
+          "sequence_seconds": 0.219128937,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 2,
+          "prefill_seconds": 0.029556817,
+          "first_decode_seconds": 0.026137826,
+          "warm_decode_seconds": [
+            0.024558339,
+            0.024580469,
+            0.024562462,
+            0.02453754,
+            0.024561614,
+            0.024570798
+          ],
+          "sequence_seconds": 0.219057643,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.044677861,
+          "first_decode_seconds": 0.130652914,
+          "warm_decode_seconds": [
+            0.024592944,
+            0.024562007,
+            0.024481672,
+            0.024516787,
+            0.024508199,
+            0.024527027
+          ],
+          "sequence_seconds": 0.339306258,
+          "graph_builds_before": 2,
+          "graph_builds_after": 3,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "result": {
+        "schema": 1,
+        "reference_enabled": true,
+        "parity_steps": 32,
+        "sequences": 4,
+        "drain_passed": true,
+        "artifact_mode": "replay"
+      },
+      "maximum_absolute_logit_error": 0.5,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/model-prepared.log",
+        "bytes": 9935,
+        "sha256": "1c1fa346b9c0744b80e311101111e4e79417e0d16469fc03ce788bfca33eb9ba"
+      }
+    },
+    {
+      "name": "default-lazy",
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 1,
+          "prefill_seconds": 0.04312701,
+          "first_decode_seconds": 0.133602618,
+          "warm_decode_seconds": [
+            0.024784142,
+            0.024663273,
+            0.024601411,
+            0.024664363,
+            0.024552309,
+            0.024547859
+          ],
+          "sequence_seconds": 0.345056625,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 1,
+          "prefill_seconds": 0.127220807,
+          "first_decode_seconds": 0.131503652,
+          "warm_decode_seconds": [
+            0.024683135,
+            0.024617998,
+            0.024637293,
+            0.024571375,
+            0.024540839,
+            0.024458399
+          ],
+          "sequence_seconds": 0.424363877,
+          "graph_builds_before": 2,
+          "graph_builds_after": 4,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 1,
+          "prefill_seconds": 0.129820723,
+          "first_decode_seconds": 0.129048268,
+          "warm_decode_seconds": [
+            0.024792831,
+            0.02463365,
+            0.024604706,
+            0.024564026,
+            0.024591051,
+            0.024515362
+          ],
+          "sequence_seconds": 0.423437016,
+          "graph_builds_before": 4,
+          "graph_builds_after": 6,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.129678929,
+          "first_decode_seconds": 0.131963682,
+          "warm_decode_seconds": [
+            0.024688332,
+            0.024639011,
+            0.024575117,
+            0.024479491,
+            0.024540103,
+            0.02449076
+          ],
+          "sequence_seconds": 0.426077138,
+          "graph_builds_before": 6,
+          "graph_builds_after": 8,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "result": {
+        "schema": 1,
+        "reference_enabled": true,
+        "parity_steps": 32,
+        "sequences": 4,
+        "drain_passed": true,
+        "artifact_mode": "replay"
+      },
+      "maximum_absolute_logit_error": 0.5,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/default-lazy.log",
+        "bytes": 9565,
+        "sha256": "da90a65d8ac930aeb0ca790e35c027de2bc28da27d14f80d2484bf914a0018a2"
+      }
+    },
+    {
+      "name": "default-prepared",
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 1,
+          "prefill_seconds": 0.033319342,
+          "first_decode_seconds": 0.131858666,
+          "warm_decode_seconds": [
+            0.024665519,
+            0.024594185,
+            0.024623653,
+            0.024726225,
+            0.024521907,
+            0.024558154
+          ],
+          "sequence_seconds": 0.334209923,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 1,
+          "prefill_seconds": 0.125902335,
+          "first_decode_seconds": 0.126823315,
+          "warm_decode_seconds": [
+            0.024547208,
+            0.024510049,
+            0.024485955,
+            0.024503391,
+            0.024509955,
+            0.024496714
+          ],
+          "sequence_seconds": 0.417491306,
+          "graph_builds_before": 2,
+          "graph_builds_after": 4,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 1,
+          "prefill_seconds": 0.126492794,
+          "first_decode_seconds": 0.128168177,
+          "warm_decode_seconds": [
+            0.024632095,
+            0.02455267,
+            0.024627887,
+            0.024528518,
+            0.024531221,
+            0.024491488
+          ],
+          "sequence_seconds": 0.418747356,
+          "graph_builds_before": 4,
+          "graph_builds_after": 6,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.127142244,
+          "first_decode_seconds": 0.128262994,
+          "warm_decode_seconds": [
+            0.024620865,
+            0.024601363,
+            0.024697725,
+            0.024881708,
+            0.024858622,
+            0.024867917
+          ],
+          "sequence_seconds": 0.425334592,
+          "graph_builds_before": 6,
+          "graph_builds_after": 8,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "result": {
+        "schema": 1,
+        "reference_enabled": true,
+        "parity_steps": 32,
+        "sequences": 4,
+        "drain_passed": true,
+        "artifact_mode": "replay"
+      },
+      "maximum_absolute_logit_error": 0.5,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/startup-preparation-final-20260913/default-prepared.log",
+        "bytes": 9827,
+        "sha256": "8499e8a7c7fc45fd37e3c1fca84ff7e68f29a7b1c6b0f47a577a3a8ea6ed08ce"
+      }
+    }
+  ],
+  "limits": [
+    "One H20, C1, one fixed Qwen3.8 27B FP8 artifact, explicit shared-FP8 tuning.",
+    "Four timing processes per arm for short/decode; two per arm for context growth and default capacity.",
+    "Per-run percentiles use 16 or 8 requests; no population-tail or significance claim.",
+    "Context-growth output agrees across arms; independent full-logit qualification covers the separate short reference fixture.",
+    "First stream interval is client-observed and is not isolated GPU execution time.",
+    "Preparation moves work before readiness; it does not improve steady kernel execution.",
+    "At default capacity one, observed P99 TPOT worsens and throughput is slightly lower; no default-capacity performance benefit is established.",
+    "No continuous multi-request batching, external-KV, other-GPU or reference-engine performance claim."
+  ]
+}

@@ -1,0 +1,199 @@
+{
+  "status": "passed",
+  "scope": "checkpoint import, semantic operations and inference-only compiler fork",
+  "retained_packages": [
+    "luminal",
+    "luminal_nn",
+    "luminal_cuda_lite",
+    "luminal_tracing"
+  ],
+  "removed_packages": 16,
+  "decoder_artifact_schema": 7,
+  "historical_result_files_unchanged": 102,
+  "final_build_inputs_unchanged": 338,
+  "host_checks": {
+    "workspace-tests": {
+      "passed": 247,
+      "ignored": 2
+    },
+    "frontend-tests": {
+      "passed": 11,
+      "ignored": 1
+    },
+    "core-tests-final": {
+      "passed": 210,
+      "ignored": 1
+    },
+    "nn-tracing-tests": {
+      "passed": 23,
+      "ignored": 1
+    },
+    "executor-host-tests-final": {
+      "passed": 71,
+      "ignored": 2
+    }
+  },
+  "python_tests_passed": 34,
+  "directed_cuda_tests_passed": 35,
+  "final_model": [
+    {
+      "case": "final-model-replay-prepared",
+      "schema": 1,
+      "reference_enabled": true,
+      "parity_steps": 32,
+      "sequences": 4,
+      "drain_passed": true,
+      "artifact_mode": "replay",
+      "max_abs_error": 0.53125
+    },
+    {
+      "case": "final-model-replay-capacity-one",
+      "schema": 1,
+      "reference_enabled": true,
+      "parity_steps": 32,
+      "sequences": 4,
+      "drain_passed": true,
+      "artifact_mode": "replay",
+      "max_abs_error": 0.53125
+    }
+  ],
+  "initial_search_and_replay_rows": 96,
+  "http_final": {
+    "status": "passed",
+    "expected_text": "&!@",
+    "ready_seconds": 17.021805074065924,
+    "shutdown_seconds": 10.376608397811651,
+    "artifact_unchanged": true,
+    "module_image_hits": 420,
+    "module_image_compiles": 0,
+    "state_drain": {
+      "stats": {
+        "manager": {
+          "active_requests": 0,
+          "active_snapshots": 0,
+          "active_prefixes": 0,
+          "evicted_prefixes": 0,
+          "prepared_steps": 0,
+          "submitted_steps": 0,
+          "free_pages": 64,
+          "reserved_pages": 0,
+          "writing_pages": 0,
+          "active_pages": 0,
+          "retiring_pages": 0,
+          "quarantined_pages": 0,
+          "exhausted_pages": 0,
+          "pending_reclamations": 0,
+          "total_request_page_refs": 0,
+          "total_prefix_page_refs": 0,
+          "total_reader_pins": 0
+        },
+        "queued_requests": 0,
+        "active_requests": 0,
+        "admitted_requests": 2,
+        "completed_requests": 2,
+        "cancelled_requests": 1,
+        "model_dispatches": 5,
+        "multi_request_dispatches": 0,
+        "mixed_phase_dispatches": 0,
+        "maximum_observed_batch_size": 1
+      },
+      "fixed_states": [
+        [
+          1,
+          {
+            "identity": {
+              "engine_epoch": 1,
+              "pool_epoch": 3,
+              "byte_count": 150994944,
+              "pool_id": 2,
+              "slot_count": 2
+            },
+            "free_slots": 2,
+            "reserved_slots": 0,
+            "copying_slots": 0,
+            "live_slots": 0,
+            "retiring_slots": 0,
+            "quarantined_slots": 0,
+            "active_owners": 0,
+            "pending_transitions": 0,
+            "pending_retirements": 0
+          }
+        ],
+        [
+          2,
+          {
+            "identity": {
+              "engine_epoch": 1,
+              "pool_epoch": 4,
+              "byte_count": 2949120,
+              "pool_id": 3,
+              "slot_count": 2
+            },
+            "free_slots": 2,
+            "reserved_slots": 0,
+            "copying_slots": 0,
+            "live_slots": 0,
+            "retiring_slots": 0,
+            "quarantined_slots": 0,
+            "active_owners": 0,
+            "pending_transitions": 0,
+            "pending_retirements": 0
+          }
+        ]
+      ],
+      "decoder_graph_builds": 2,
+      "materialized_decoder_graphs": 2
+    },
+    "startup": {
+      "elapsed": {
+        "secs": 15,
+        "nanos": 279418484
+      },
+      "preparation": {
+        "elapsed": {
+          "secs": 0,
+          "nanos": 161406263
+        },
+        "compiled_buckets": 2,
+        "buckets": [
+          {
+            "bucket_index": 1,
+            "dimensions": {
+              "b": 1,
+              "c_0": 1,
+              "s": 4
+            },
+            "elapsed": {
+              "secs": 0,
+              "nanos": 10132133
+            },
+            "graph_builds": 0
+          },
+          {
+            "bucket_index": 0,
+            "dimensions": {
+              "b": 1,
+              "c_0": 1,
+              "s": 1
+            },
+            "elapsed": {
+              "secs": 0,
+              "nanos": 151250346
+            },
+            "graph_builds": 1
+          }
+        ],
+        "cache": {
+          "graph_builds": 2,
+          "materialized_graphs": 2
+        }
+      }
+    }
+  },
+  "limitations": [
+    "H20 SM90 and this text checkpoint only; no expanded GPU/model qualification",
+    "Search used one candidate per bucket with seed 7; no speedup or search-optimality claim",
+    "HTTP check uses four prompt tokens, three generated tokens and one cancelled stream; not soak or serving-scale qualification",
+    "The existing attention contract still fixes a paged KV representation; logical Attention/KVView and megakernel lowering remain future work"
+  ]
+}

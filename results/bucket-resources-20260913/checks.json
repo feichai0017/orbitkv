@@ -1,0 +1,114 @@
+{
+  "status": "passed",
+  "tool_observed_tests": [
+    {
+      "command": "cargo test --offline -p luminal_cuda_lite --lib host::flashinfer::tests -- --include-ignored --test-threads=1",
+      "passed": 8,
+      "gpu_tests": 1,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/plan-tests-after.log",
+        "bytes": 1140,
+        "sha256": "12ad844421ae4bd2ac5049b7634e51542594529a902e65c44774d421969ca319"
+      }
+    },
+    {
+      "command": "cargo test --offline -p luminal_cuda_lite --lib kernel::to_host::tests -- --include-ignored --test-threads=1",
+      "passed": 7,
+      "gpu_tests": 1,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/resource-tests-final.log",
+        "bytes": 1019,
+        "sha256": "19c032647e9d6990ec35d9916172141fe3101f0db3aa9b785b3bb760c0b58045"
+      }
+    },
+    {
+      "command": "cargo test --offline --locked -p orbitkv-engine --all-features --lib --bin orbitkv-serve",
+      "library_passed": 25,
+      "library_ignored": 1,
+      "binary_passed": 6,
+      "exec_session": 34512
+    },
+    {
+      "command": "python -m unittest discover -s tools/tests -p 'test_run_decoder_qualification.py'",
+      "passed": 17,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/python-tests.log",
+        "bytes": 116,
+        "sha256": "bcc9c52c2cafe6ef84df693e20efee7e58a5469b3ac18e97a85dc180cc647983"
+      }
+    }
+  ],
+  "tool_observed_checks": [
+    {
+      "command": "cargo clippy --offline --locked --workspace --all-features --all-targets -- -D warnings",
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/root-clippy.log",
+        "bytes": 72,
+        "sha256": "a178c7902ac24dda0e2c0cd4cf0e47a2a6976ef30481cb4015f2f71620380d8b"
+      }
+    },
+    {
+      "command": "cargo clippy --offline -p luminal_cuda_lite --lib --tests -- -D warnings",
+      "cwd": "third_party/luminal",
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/luminal-clippy.log",
+        "bytes": 176,
+        "sha256": "ab51225b6b9d8d180c7c0b7c56261e80d263d5851c940b728e1354b6cc7c9aeb"
+      }
+    },
+    {
+      "command": "cargo fmt --all --check; git diff --check",
+      "cwd": "root and third_party/luminal",
+      "exec_session": 82876
+    },
+    {
+      "command": "python tools/verify_active_source.py",
+      "production_files": 67,
+      "test_files": 64,
+      "exec_session": 63042
+    }
+  ],
+  "model_processes": 5,
+  "reference_steps": 160,
+  "drained_requests": 20,
+  "maximum_absolute_logit_error": 0.5,
+  "unchanged_logit_gate": 1.0,
+  "notes": "Engine test counts were observed directly; no raw engine test log was reconstructed. One engine transport test remains opt-in for tokenizer assets. The new source field is checked by all-target Clippy and CLI tests.",
+  "earlier_setup_failures": "Raw capture-setup-failure.log used an unsupported default-stream capture; resource-tests.log contained an incorrect two-row expectation for a one-row fixture. Those harness mistakes were corrected and are excluded from product evidence. plan-repro-before.log is the deliberate production regression.",
+  "prior_results": [
+    {
+      "record": "fp8-region-tuning-20260912",
+      "files_verified": 6
+    },
+    {
+      "record": "fp8-logit-diagnosis-20260912",
+      "files_verified": 6
+    },
+    {
+      "record": "compiler-boundaries-20260912",
+      "files_verified": 5
+    },
+    {
+      "record": "engine-stage-attribution-20260913",
+      "files_verified": 5
+    },
+    {
+      "record": "module-image-artifact-20260913",
+      "files_verified": 5
+    },
+    {
+      "record": "weight-loading-20260913",
+      "files_verified": 5
+    }
+  ],
+  "audit_script": {
+    "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/audit.py",
+    "bytes": 7451,
+    "sha256": "a3cd134e4b8e6a647da317fb43f4ee7220ec03e1fd1a599fb794e0ccec165b99"
+  },
+  "promotion_script": {
+    "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/promote.py",
+    "bytes": 10460,
+    "sha256": "059abab4a1a48e1a67f44874233945efee90529364c0f107a64e999fde28e42d"
+  }
+}

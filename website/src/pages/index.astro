@@ -1,79 +1,236 @@
 ---
+import StateDiagram from "../components/StateDiagram.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
-import { compilerStages, evidenceRows, metrics, repositoryUrl, roadmap } from "../data/site";
+import {
+  compilerStages,
+  evidenceHighlights,
+  layers,
+  localUrl,
+  providers,
+  repositoryUrl,
+  roadmap,
+  sourceUrl,
+} from "../data/site";
 
-const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const quickstart = [
+  "# From a checkout of OrbitKV",
+  "git submodule update --init --recursive",
+  "cargo test --locked --all-targets",
+].join("\n");
 ---
 
 <SiteLayout active="Overview">
-  <section class="hero">
+  <section class="hero" aria-labelledby="hero-title">
     <div class="hero-copy">
-      <div class="hero-kicker"><span class="release-dot" aria-hidden="true"></span><span>Rust core · Luminal executor · Rust server</span></div>
-      <h1>Compile attention lifetimes.<br /><span>Reuse KV with proof.</span></h1>
+      <p class="eyebrow">
+        <span class="status-dot" aria-hidden="true"></span> An open-source
+        inference project
+      </p>
+      <h1 id="hero-title">
+        Compile the
+        <br />
+        lifetime of <em>state.</em>
+      </h1>
       <p class="hero-lede">
-        OrbitKV is the sole KV authority in a native inference engine. It turns
-        visibility semantics into physical plans, while Luminal executes model
-        graphs and a Rust server streams results without owning page state.
+        Better inference starts with knowing what to keep.
+      </p>
+      <p class="hero-description">
+        OrbitKV turns attention semantics into memory plans. Luminal searches
+        the model graph for efficient CUDA execution. Together, they connect
+        state ownership with the work that uses it.
       </p>
       <div class="hero-actions">
-        <a class="button primary" href={`${base}/docs/`}>Read the architecture</a>
-        <a class="button quiet" href={`${base}/evidence/`}>Inspect evidence boundaries</a>
-        <a class="button quiet" href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability matrix ↗</a>
+        <a class="button primary" href={localUrl("/docs/")}>
+          Explore the architecture <span aria-hidden="true">↗</span>
+        </a>
+        <a class="button secondary" href="#get-started">
+          Get started <span aria-hidden="true">↓</span>
+        </a>
       </div>
-      <ul class="hero-facts" aria-label="Project boundaries">
-        <li>One KV authority</li><li>Native Rust control path</li><li>Proof-gated reuse</li>
-      </ul>
+      <p class="hero-note">
+        Native Rust <span> / </span> CUDA execution <span> / </span> MIT
+        licensed
+      </p>
     </div>
-
-    <div class="kernel-console" aria-label="OrbitKV ownership program">
-      <div class="console-bar"><span>orbitkv://lifetime/plan</span><span class="console-state"><i></i> host checked</span></div>
-      <div class="console-grid" aria-hidden="true"></div>
-      <div class="console-body">
-        <div class="console-ident"><span>AUTHORITY</span><strong>RUNTIMESESSION + LUMINAL + SERVER</strong></div>
-        <div class="provider-switch" aria-label="Physical lowering"><span class="selected">SEMANTICS</span><span>PHYSICAL PLAN</span></div>
-        <div class="console-flow">
-          <div><small>compile</small><strong>RuntimeManifest</strong><em>01</em></div>
-          <div><small>prepare</small><strong>pages + views + COW</strong><em>02</em></div>
-          <div><small>execute</small><strong>Luminal graph</strong><em>03</em></div>
-          <div class="flow-active"><small>reclaim</small><strong>semantic + execution proof</strong><em>04</em></div>
-        </div>
-      </div>
-      <div class="console-footer"><span>identity / generation</span><span>semantic / execution frontier</span></div>
-    </div>
+    <StateDiagram />
   </section>
-
-  <section class="scope-strip" aria-label="Project boundary">
-    <div><span>ORBITKV OWNS</span><strong>plans · identities · pages · snapshots · reclamation</strong></div>
-    <div><span>LUMINAL OWNS</span><strong>graphs · tensors · kernels · streams · execution</strong></div>
-  </section>
-
-  <section class="section" id="compiler">
+  <div class="project-strip">
+    <span class="strip-label">THE DESIGN PRINCIPLE</span>
+    <p>
+      One owner for state. <span>Many legal ways to compute.</span>
+    </p>
+    <a href={sourceUrl("docs/compiler-boundaries.md")}>
+      Read the contract <span aria-hidden="true">↗</span>
+    </a>
+  </div>
+  <section class="section" aria-labelledby="architecture-title">
     <header class="section-heading">
-      <div><p class="eyebrow">Compilation pipeline</p><h2>One path from semantics to reuse.</h2></div>
-      <p>RuntimeManifest is the compiler source of truth. RuntimeSession owns physical state, and ExecutorPlan lowers it directly into the forked Luminal backend.</p>
+      <div>
+        <p class="eyebrow">01 / Architecture</p>
+        <h2 id="architecture-title">
+          A small stack.
+          <br />
+          Explicit responsibilities.
+        </h2>
+      </div>
+      <p>
+        Three owned Rust crates, joined by contracts. OrbitKV manages physical
+        state; the inference-only Luminal fork compiles and executes the graph.
+      </p>
+    </header>
+    <div class="layer-grid">
+      {layers.map((layer, index) => (
+        <article class="layer-card">
+          <div class="card-top">
+            <span class="card-number">0{index + 1}</span>
+            <span class="layer-symbol" aria-hidden="true">
+              {["⊞", "⌘", "↗"][index]}
+            </span>
+          </div>
+          <p class="package-name">{layer.name}</p>
+          <h3>{layer.role}</h3>
+          <p>{layer.detail}</p>
+          <a class="text-link" href={sourceUrl(layer.path)}>
+            Explore the crate <span aria-hidden="true">↗</span>
+          </a>
+        </article>
+      ))}
+    </div>
+  </section>
+  <section class="compiler-section" aria-labelledby="compiler-title">
+    <header class="section-heading">
+      <div>
+        <p class="eyebrow">02 / The compiler connection</p>
+        <h2 id="compiler-title">
+          Semantics in.
+          <br />
+          Measured execution out.
+        </h2>
+      </div>
+      <div>
+        <p>
+          Describe the computation and its state contract. Admit compatible
+          implementations, measure them on CUDA, then save the selected program
+          for replay.
+        </p>
+        <a class="text-link" href={sourceUrl("docs/luminal-design.md")}>
+          Inside the Luminal fork <span aria-hidden="true">↗</span>
+        </a>
+      </div>
     </header>
     <ol class="execution-chain">
-      {compilerStages.map((stage) => (<li><span class="chain-key">{stage.key}</span><div><h3>{stage.name}</h3><p>{stage.detail}</p></div></li>))}
+      {compilerStages.map((stage, index) => (
+        <li>
+          <span class="chain-key">0{index + 1}</span>
+          <h3>{stage.name}</h3>
+          <p>{stage.detail}</p>
+        </li>
+      ))}
     </ol>
-  </section>
-
-  <section class="section performance-section" id="evidence">
-    <header class="section-heading">
-      <div><p class="eyebrow">Qualification boundary</p><h2>Implementation is not a performance claim.</h2></div>
-      <p>The new native architecture has host evidence. It still needs current-source device, model, stream/event, capacity, and matched performance qualification.</p>
-    </header>
-    <div class="metric-grid">{metrics.map((item) => (<article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>))}</div>
-    <div class="evidence-table" role="table" aria-label="OrbitKV evidence summary">
-      <div class="evidence-row evidence-head" role="row"><span role="columnheader">Result</span><span role="columnheader">Value</span><span role="columnheader">Contract</span><span role="columnheader">Boundary</span></div>
-      {evidenceRows.slice(0, 5).map((item) => (<div class="evidence-row" role="row"><strong role="cell">{item.result}</strong><code role="cell">{item.value}</code><span role="cell">{item.contract}</span><small role="cell">{item.boundary}</small></div>))}
+    <div class="provider-heading">
+      <p class="eyebrow">Current library integrations</p>
+      <a href={sourceUrl("docs/attention-providers.md")}>
+        Capabilities &amp; setup <span aria-hidden="true">↗</span>
+      </a>
     </div>
-    <a class="text-link" href={`${base}/evidence/`}>Inspect records and exclusions <span>→</span></a>
+    <div class="provider-grid">
+      {providers.map((provider) => (
+        <article>
+          <h3>{provider.name}</h3>
+          <p>{provider.role}</p>
+          <small>{provider.scope}</small>
+        </article>
+      ))}
+    </div>
+    <p class="compiler-note">
+      Generated CUDA handles primitive operations and legal fused regions.
+      Whole-graph megakernel generation and joint search across multiple KV
+      layouts remain research directions.
+    </p>
   </section>
-
-  <section class="section roadmap-section" id="roadmap">
-    <header class="section-heading"><div><p class="eyebrow">Next gates</p><h2>Close the complete native loop.</h2></div><p>Execution, serving, and measurement proceed in that order so every claim remains tied to the code that produced it.</p></header>
-    <div class="milestone-list">{roadmap.map((item) => (<article><span>{item.state}</span><div><h3>{item.name}</h3><p>{item.detail}</p></div></article>))}</div>
+  <section class="section" aria-labelledby="evidence-title">
+    <header class="section-heading">
+      <div>
+        <p class="eyebrow">03 / Measured, with context</p>
+        <h2 id="evidence-title">
+          The work. The evidence.
+          <br />
+          The next questions.
+        </h2>
+      </div>
+      <p>
+        The latest H20 qualification exercises the 27B block-FP8 hybrid decoder,
+        attention provider selection, saved programs, and the HTTP lifecycle.
+      </p>
+    </header>
+    <div class="metric-grid">
+      {evidenceHighlights.map((item) => (
+        <article>
+          <strong>{item.value}</strong>
+          <h3>{item.label}</h3>
+          <p>{item.detail}</p>
+        </article>
+      ))}
+    </div>
+    <div class="evidence-note">
+      <p>
+        <strong>Research-stage, with bounded validation.</strong> The current
+        records establish correctness for specific workloads. Competitive
+        serving throughput against vLLM and SGLang remains an open goal.
+      </p>
+      <a class="text-link" href={localUrl("/evidence/")}>
+        Inspect the evidence <span aria-hidden="true">→</span>
+      </a>
+    </div>
   </section>
-
-  <section class="closing-band"><div><p class="eyebrow">Open source</p><h2>Compile lifetimes. Reuse with proof.</h2></div><div class="closing-actions"><a class="button primary" href={`${base}/docs/`}>Architecture</a><a class="button quiet" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub ↗</a></div></section>
+  <section class="section roadmap-section" aria-labelledby="roadmap-title">
+    <header class="section-heading">
+      <div>
+        <p class="eyebrow">04 / What comes next</p>
+        <h2 id="roadmap-title">Build toward joint compilation.</h2>
+      </div>
+      <a class="text-link" href={sourceUrl("docs/roadmap.md")}>
+        Full roadmap <span aria-hidden="true">↗</span>
+      </a>
+    </header>
+    <div class="milestone-list">
+      {roadmap.map((item) => (
+        <article>
+          <span>{item.state}</span>
+          <h3>{item.name}</h3>
+          <p>{item.detail}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+  <section class="get-started" id="get-started" aria-labelledby="start-title">
+    <div>
+      <p class="eyebrow">Start with the source</p>
+      <h2 id="start-title">
+        Follow the state.
+        <br />
+        Read the code.
+      </h2>
+      <p>
+        The core and host tests run without a GPU. CUDA execution adds the
+        toolchain and explicit provider sources.
+      </p>
+      <a class="text-link" href={sourceUrl("README.md#quickstart")}>
+        Full setup instructions <span aria-hidden="true">↗</span>
+      </a>
+    </div>
+    <div class="code-panel">
+      <div class="code-bar">
+        <span>terminal / host tests</span>
+        <span>Rust 1.88+</span>
+      </div>
+      <pre
+        tabindex="0"
+        aria-label="Commands to run host tests"
+      ><code>{quickstart}</code></pre>
+      <a href={repositoryUrl}>
+        View source on GitHub <span aria-hidden="true">↗</span>
+      </a>
+    </div>
+  </section>
 </SiteLayout>

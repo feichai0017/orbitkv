@@ -1,0 +1,863 @@
+{
+  "format_layout": {
+    "recorded_at_utc": "2026-09-13T23:49:55.968016+00:00",
+    "checks": [
+      {
+        "command": [
+          "cargo",
+          "fmt",
+          "--all",
+          "--check"
+        ],
+        "cwd": "/workspace/orbitkv",
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "cargo",
+          "fmt",
+          "--all",
+          "--check"
+        ],
+        "cwd": "/workspace/orbitkv/third_party/luminal",
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "python3",
+          "tools/verify_active_source.py"
+        ],
+        "cwd": "/workspace/orbitkv",
+        "exit_code": 0,
+        "output": "active-source verified: 71 production Rust files, 68 Rust test files; module/test layout consistent, removed integration paths absent and filenames generic"
+      }
+    ]
+  },
+  "host": {
+    "workspace-tests": {
+      "passed": 247,
+      "ignored": 2,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/workspace-tests.log",
+        "bytes": 26343,
+        "sha256": "f3ea8231a3f75e22bd9e4ef34ba9739ed8ff72b499599c57166fa8bbdb36135f"
+      }
+    },
+    "nn-tests": {
+      "passed": 27,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/nn-tests.log",
+        "bytes": 2547,
+        "sha256": "9e219a9e41af530b678e56d90fb5c1c5049b8b9903a8e49b7a6f4f2ee9d6bca4"
+      }
+    },
+    "executor-tests": {
+      "passed": 71,
+      "ignored": 2,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/executor-tests.log",
+        "bytes": 7336,
+        "sha256": "a8a99626c5f48a5c2742fcb07b8c3dd827e715ffb34c0de3ad1aa6d8e3d19abc"
+      }
+    }
+  },
+  "clippy": [
+    {
+      "cwd": "/workspace/orbitkv",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/workspace-clippy.log",
+        "bytes": 551,
+        "sha256": "1192d5961dc36cb961a6e28b6619eab8facf6d17d8816d652bbbe9425b084a81"
+      }
+    },
+    {
+      "cwd": "/workspace/orbitkv/third_party/luminal",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "-p",
+        "luminal_nn",
+        "-p",
+        "luminal_cuda_lite",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/luminal-clippy-final.log",
+        "bytes": 176,
+        "sha256": "8f6a9c5857c3f6740316c875c08c54ab9533e3fa8e9abc460496119fb5957924"
+      }
+    }
+  ],
+  "gpu": [
+    {
+      "group": "host::attention::tests",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/cuda-tests",
+        "host::attention::tests",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:36:52.193709+00:00",
+      "exit_code": 0,
+      "passed": 9,
+      "finished_at": "2026-09-13T23:37:08.528584+00:00"
+    },
+    {
+      "group": "host::native_attention::tests",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/cuda-tests",
+        "host::native_attention::tests",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:37:08.528938+00:00",
+      "exit_code": 0,
+      "passed": 1,
+      "finished_at": "2026-09-13T23:37:09.243669+00:00"
+    },
+    {
+      "group": "host::flashinfer::tests",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/cuda-tests",
+        "host::flashinfer::tests",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:37:09.243914+00:00",
+      "exit_code": 0,
+      "passed": 8,
+      "finished_at": "2026-09-13T23:37:09.758516+00:00"
+    },
+    {
+      "group": "host::tests",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/cuda-tests",
+        "host::tests",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:37:09.758770+00:00",
+      "exit_code": 0,
+      "passed": 9,
+      "finished_at": "2026-09-13T23:37:10.223221+00:00"
+    },
+    {
+      "group": "runtime::residency::tests",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/cuda-tests",
+        "runtime::residency::tests",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:37:10.223471+00:00",
+      "exit_code": 0,
+      "passed": 3,
+      "finished_at": "2026-09-13T23:37:17.897616+00:00"
+    },
+    {
+      "group": "artifact::tests",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/cuda-tests",
+        "artifact::tests",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:37:17.897864+00:00",
+      "exit_code": 0,
+      "passed": 7,
+      "finished_at": "2026-09-13T23:37:21.266597+00:00"
+    }
+  ],
+  "model": [
+    {
+      "name": "old-artifact-reject",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/model-tests",
+        "quantized_decoder_bucket_transitions",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:39:52.071973+00:00",
+      "environment": {
+        "CUDA_HOME": "/usr/local/cuda",
+        "FLASHINFER_CUDA_ARCH": "sm_90",
+        "LUMINAL_DEEPGEMM_DIR": "/root/.cache/luminal/providers/deepgemm/559d79fb6994",
+        "LUMINAL_FLASHINFER_DIR": "/root/.cache/luminal/providers/flashinfer/f1e6fdcb8f65",
+        "ORBITKV_MODEL_DIR": "/workspace/models/qwen3.8-27b-fp8",
+        "ORBITKV_REFERENCE_DIR": "/tmp/orbitkv-reference-out/qwen38-27b-fp8",
+        "ORBITKV_TUNING_PROFILE": "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+        "ORBITKV_SEARCH_GRAPHS": "1",
+        "ORBITKV_DECODER_ARTIFACT": "/workspace/orbitkv/.qualification/semantic-boundaries-20260914/model-decoder.json",
+        "ORBITKV_GRAPH_CACHE_CAPACITY": "2",
+        "LUMINAL_STAGE_TRACE": "/workspace/orbitkv/.qualification/attention-contract-20260914/old-artifact-reject-stages.jsonl"
+      },
+      "exit_code": 101,
+      "finished_at": "2026-09-13T23:39:52.586597+00:00",
+      "gate_passed": true
+    },
+    {
+      "name": "model-search",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/model-tests",
+        "quantized_decoder_bucket_transitions",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:39:52.586838+00:00",
+      "environment": {
+        "CUDA_HOME": "/usr/local/cuda",
+        "FLASHINFER_CUDA_ARCH": "sm_90",
+        "LUMINAL_DEEPGEMM_DIR": "/root/.cache/luminal/providers/deepgemm/559d79fb6994",
+        "LUMINAL_FLASHINFER_DIR": "/root/.cache/luminal/providers/flashinfer/f1e6fdcb8f65",
+        "ORBITKV_MODEL_DIR": "/workspace/models/qwen3.8-27b-fp8",
+        "ORBITKV_REFERENCE_DIR": "/tmp/orbitkv-reference-out/qwen38-27b-fp8",
+        "ORBITKV_TUNING_PROFILE": "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+        "ORBITKV_SEARCH_GRAPHS": "1",
+        "ORBITKV_DECODER_ARTIFACT": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-decoder.json",
+        "ORBITKV_GRAPH_CACHE_CAPACITY": "2",
+        "LUMINAL_STAGE_TRACE": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-search-stages.jsonl"
+      },
+      "exit_code": 0,
+      "finished_at": "2026-09-13T23:43:55.383775+00:00",
+      "qualification": {
+        "schema": 1,
+        "reference_enabled": true,
+        "parity_steps": 32,
+        "sequences": 4,
+        "drain_passed": true,
+        "artifact_mode": "search"
+      },
+      "gate_passed": true
+    },
+    {
+      "name": "model-replay-prepared",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/model-tests",
+        "quantized_decoder_bucket_transitions",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:43:55.384230+00:00",
+      "environment": {
+        "CUDA_HOME": "/usr/local/cuda",
+        "FLASHINFER_CUDA_ARCH": "sm_90",
+        "LUMINAL_DEEPGEMM_DIR": "/root/.cache/luminal/providers/deepgemm/559d79fb6994",
+        "LUMINAL_FLASHINFER_DIR": "/root/.cache/luminal/providers/flashinfer/f1e6fdcb8f65",
+        "ORBITKV_MODEL_DIR": "/workspace/models/qwen3.8-27b-fp8",
+        "ORBITKV_REFERENCE_DIR": "/tmp/orbitkv-reference-out/qwen38-27b-fp8",
+        "ORBITKV_TUNING_PROFILE": "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+        "ORBITKV_SEARCH_GRAPHS": "1",
+        "ORBITKV_DECODER_ARTIFACT": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-decoder.json",
+        "ORBITKV_GRAPH_CACHE_CAPACITY": "2",
+        "LUMINAL_STAGE_TRACE": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-replay-prepared-stages.jsonl",
+        "ORBITKV_PREPARE_EXECUTION": "1"
+      },
+      "exit_code": 0,
+      "finished_at": "2026-09-13T23:44:14.273230+00:00",
+      "qualification": {
+        "schema": 1,
+        "reference_enabled": true,
+        "parity_steps": 32,
+        "sequences": 4,
+        "drain_passed": true,
+        "artifact_mode": "replay"
+      },
+      "gate_passed": true
+    },
+    {
+      "name": "model-replay-capacity-one",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/model-tests",
+        "quantized_decoder_bucket_transitions",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_at": "2026-09-13T23:44:14.273574+00:00",
+      "environment": {
+        "CUDA_HOME": "/usr/local/cuda",
+        "FLASHINFER_CUDA_ARCH": "sm_90",
+        "LUMINAL_DEEPGEMM_DIR": "/root/.cache/luminal/providers/deepgemm/559d79fb6994",
+        "LUMINAL_FLASHINFER_DIR": "/root/.cache/luminal/providers/flashinfer/f1e6fdcb8f65",
+        "ORBITKV_MODEL_DIR": "/workspace/models/qwen3.8-27b-fp8",
+        "ORBITKV_REFERENCE_DIR": "/tmp/orbitkv-reference-out/qwen38-27b-fp8",
+        "ORBITKV_TUNING_PROFILE": "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+        "ORBITKV_SEARCH_GRAPHS": "1",
+        "ORBITKV_DECODER_ARTIFACT": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-decoder.json",
+        "ORBITKV_GRAPH_CACHE_CAPACITY": "1",
+        "LUMINAL_STAGE_TRACE": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-replay-capacity-one-stages.jsonl",
+        "ORBITKV_PREPARE_EXECUTION": "1"
+      },
+      "exit_code": 0,
+      "finished_at": "2026-09-13T23:44:33.511844+00:00",
+      "qualification": {
+        "schema": 1,
+        "reference_enabled": true,
+        "parity_steps": 32,
+        "sequences": 4,
+        "drain_passed": true,
+        "artifact_mode": "replay"
+      },
+      "gate_passed": true
+    }
+  ],
+  "http": {
+    "http-generate": {
+      "started_at_utc": "2026-09-13T23:48:08.808328+00:00",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/orbitkv-serve",
+        "--model",
+        "/workspace/models/qwen3.8-27b-fp8",
+        "--decoder-artifact",
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/decoder.json",
+        "--tuning-profile",
+        "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+        "--graph-cache-capacity",
+        "2",
+        "--page-counts",
+        "64",
+        "--max-model-tokens",
+        "1024",
+        "--max-prefill-tokens",
+        "4",
+        "--max-batch-tokens",
+        "8",
+        "--max-active-requests",
+        "1",
+        "--max-queued-requests",
+        "16",
+        "--search-graphs",
+        "1",
+        "--search-seed",
+        "7",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8010",
+        "--served-model",
+        "qwen38-27b-fp8",
+        "--prepare-execution",
+        "true"
+      ],
+      "binary": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/orbitkv-serve",
+        "bytes": 65693568,
+        "sha256": "0e1859f1c6ff7f3e156572bdbd9ff8a21c60db9e786d60f633cb20b71fd0c188"
+      },
+      "artifact_before": null,
+      "environment": {
+        "CUDA_HOME": "/usr/local/cuda",
+        "FLASHINFER_CUDA_ARCH": "sm_90",
+        "LUMINAL_DEEPGEMM_DIR": "/root/.cache/luminal/providers/deepgemm/559d79fb6994",
+        "LUMINAL_FLASHINFER_DIR": "/root/.cache/luminal/providers/flashinfer/f1e6fdcb8f65",
+        "LUMINAL_STAGE_TRACE": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-generate/stages.jsonl"
+      },
+      "ready_seconds": 237.79873315617442,
+      "oracle_probe": {
+        "request": {
+          "model": "qwen38-27b-fp8",
+          "prompt": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "max_tokens": 3,
+          "temperature": 0,
+          "ignore_eos": true
+        },
+        "response": {
+          "id": "cmpl-e4031c9f",
+          "object": "text_completion",
+          "created": 1789343526,
+          "model": "qwen38-27b-fp8",
+          "choices": [
+            {
+              "index": 0,
+              "text": "&!@",
+              "logprobs": null,
+              "finish_reason": "length",
+              "stop_reason": null,
+              "prompt_logprobs": null,
+              "token_ids": null,
+              "prompt_token_ids": null
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 4,
+            "total_tokens": 7,
+            "completion_tokens": 3,
+            "prompt_tokens_details": null
+          },
+          "system_fingerprint": null,
+          "kv_transfer_params": null,
+          "ec_transfer_params": null
+        },
+        "expected_text": "&!@",
+        "oracle_token_ids": [
+          5,
+          0,
+          31
+        ]
+      },
+      "active_stream_probe": {
+        "request": {
+          "model": "qwen38-27b-fp8",
+          "prompt": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "max_tokens": 512,
+          "temperature": 0,
+          "ignore_eos": true,
+          "stream": true
+        },
+        "first_nonempty_event": {
+          "id": "cmpl-0c881f7b",
+          "object": "text_completion",
+          "created": 1789343526,
+          "model": "qwen38-27b-fp8",
+          "choices": [
+            {
+              "index": 0,
+              "text": "&"
+            }
+          ]
+        },
+        "client_open_at_signal": true
+      },
+      "shutdown_seconds": 10.878574818372726,
+      "exit_code": 0,
+      "artifact_after": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/decoder.json",
+        "bytes": 15222025,
+        "sha256": "b9b054433f11f53e138ce22715b233472fb51e6c46498530580449fbfd89e968"
+      },
+      "shutdown_report": {
+        "stats": {
+          "manager": {
+            "active_requests": 0,
+            "active_snapshots": 0,
+            "active_prefixes": 0,
+            "evicted_prefixes": 0,
+            "prepared_steps": 0,
+            "submitted_steps": 0,
+            "free_pages": 64,
+            "reserved_pages": 0,
+            "writing_pages": 0,
+            "active_pages": 0,
+            "retiring_pages": 0,
+            "quarantined_pages": 0,
+            "exhausted_pages": 0,
+            "pending_reclamations": 0,
+            "total_request_page_refs": 0,
+            "total_prefix_page_refs": 0,
+            "total_reader_pins": 0
+          },
+          "queued_requests": 0,
+          "active_requests": 0,
+          "admitted_requests": 2,
+          "completed_requests": 2,
+          "cancelled_requests": 1,
+          "model_dispatches": 5,
+          "multi_request_dispatches": 0,
+          "mixed_phase_dispatches": 0,
+          "maximum_observed_batch_size": 1
+        },
+        "fixed_states": [
+          [
+            1,
+            {
+              "identity": {
+                "engine_epoch": 1,
+                "pool_epoch": 3,
+                "byte_count": 150994944,
+                "pool_id": 2,
+                "slot_count": 2
+              },
+              "free_slots": 2,
+              "reserved_slots": 0,
+              "copying_slots": 0,
+              "live_slots": 0,
+              "retiring_slots": 0,
+              "quarantined_slots": 0,
+              "active_owners": 0,
+              "pending_transitions": 0,
+              "pending_retirements": 0
+            }
+          ],
+          [
+            2,
+            {
+              "identity": {
+                "engine_epoch": 1,
+                "pool_epoch": 4,
+                "byte_count": 2949120,
+                "pool_id": 3,
+                "slot_count": 2
+              },
+              "free_slots": 2,
+              "reserved_slots": 0,
+              "copying_slots": 0,
+              "live_slots": 0,
+              "retiring_slots": 0,
+              "quarantined_slots": 0,
+              "active_owners": 0,
+              "pending_transitions": 0,
+              "pending_retirements": 0
+            }
+          ]
+        ],
+        "decoder_graph_builds": 2,
+        "materialized_decoder_graphs": 2
+      },
+      "startup_report": {
+        "elapsed": {
+          "secs": 236,
+          "nanos": 365785612
+        },
+        "preparation": {
+          "elapsed": {
+            "secs": 0,
+            "nanos": 104748457
+          },
+          "compiled_buckets": 2,
+          "buckets": [
+            {
+              "bucket_index": 1,
+              "dimensions": {
+                "b": 1,
+                "c_0": 1,
+                "s": 4
+              },
+              "elapsed": {
+                "secs": 0,
+                "nanos": 11138431
+              },
+              "graph_builds": 0
+            },
+            {
+              "bucket_index": 0,
+              "dimensions": {
+                "b": 1,
+                "c_0": 1,
+                "s": 1
+              },
+              "elapsed": {
+                "secs": 0,
+                "nanos": 93577781
+              },
+              "graph_builds": 1
+            }
+          ],
+          "cache": {
+            "graph_builds": 2,
+            "materialized_graphs": 2
+          }
+        }
+      },
+      "status": "passed"
+    },
+    "http-probe": {
+      "started_at_utc": "2026-09-13T23:52:53.026092+00:00",
+      "command": [
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/orbitkv-serve",
+        "--model",
+        "/workspace/models/qwen3.8-27b-fp8",
+        "--decoder-artifact",
+        "/workspace/orbitkv/.qualification/attention-contract-20260914/decoder.json",
+        "--tuning-profile",
+        "/workspace/orbitkv/benchmarks/shared-fp8-ablation.json",
+        "--graph-cache-capacity",
+        "2",
+        "--page-counts",
+        "64",
+        "--max-model-tokens",
+        "1024",
+        "--max-prefill-tokens",
+        "4",
+        "--max-batch-tokens",
+        "8",
+        "--max-active-requests",
+        "1",
+        "--max-queued-requests",
+        "16",
+        "--search-graphs",
+        "1",
+        "--search-seed",
+        "7",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8010",
+        "--served-model",
+        "qwen38-27b-fp8",
+        "--prepare-execution",
+        "true"
+      ],
+      "binary": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/orbitkv-serve",
+        "bytes": 65693568,
+        "sha256": "0e1859f1c6ff7f3e156572bdbd9ff8a21c60db9e786d60f633cb20b71fd0c188"
+      },
+      "artifact_before": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/decoder.json",
+        "bytes": 15222025,
+        "sha256": "b9b054433f11f53e138ce22715b233472fb51e6c46498530580449fbfd89e968"
+      },
+      "environment": {
+        "CUDA_HOME": "/usr/local/cuda",
+        "FLASHINFER_CUDA_ARCH": "sm_90",
+        "LUMINAL_DEEPGEMM_DIR": "/root/.cache/luminal/providers/deepgemm/559d79fb6994",
+        "LUMINAL_FLASHINFER_DIR": "/root/.cache/luminal/providers/flashinfer/f1e6fdcb8f65",
+        "LUMINAL_STAGE_TRACE": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-probe/stages.jsonl"
+      },
+      "ready_seconds": 19.02607301622629,
+      "oracle_probe": {
+        "request": {
+          "model": "qwen38-27b-fp8",
+          "prompt": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "max_tokens": 3,
+          "temperature": 0,
+          "ignore_eos": true
+        },
+        "response": {
+          "id": "cmpl-c31d377d",
+          "object": "text_completion",
+          "created": 1789343592,
+          "model": "qwen38-27b-fp8",
+          "choices": [
+            {
+              "index": 0,
+              "text": "&!@",
+              "logprobs": null,
+              "finish_reason": "length",
+              "stop_reason": null,
+              "prompt_logprobs": null,
+              "token_ids": null,
+              "prompt_token_ids": null
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 4,
+            "total_tokens": 7,
+            "completion_tokens": 3,
+            "prompt_tokens_details": null
+          },
+          "system_fingerprint": null,
+          "kv_transfer_params": null,
+          "ec_transfer_params": null
+        },
+        "expected_text": "&!@",
+        "oracle_token_ids": [
+          5,
+          0,
+          31
+        ]
+      },
+      "active_stream_probe": {
+        "request": {
+          "model": "qwen38-27b-fp8",
+          "prompt": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "max_tokens": 512,
+          "temperature": 0,
+          "ignore_eos": true,
+          "stream": true
+        },
+        "first_nonempty_event": {
+          "id": "cmpl-11486c41",
+          "object": "text_completion",
+          "created": 1789343592,
+          "model": "qwen38-27b-fp8",
+          "choices": [
+            {
+              "index": 0,
+              "text": "&"
+            }
+          ]
+        },
+        "client_open_at_signal": true
+      },
+      "shutdown_seconds": 10.377424817532301,
+      "exit_code": 0,
+      "artifact_after": {
+        "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/decoder.json",
+        "bytes": 15222025,
+        "sha256": "b9b054433f11f53e138ce22715b233472fb51e6c46498530580449fbfd89e968"
+      },
+      "shutdown_report": {
+        "stats": {
+          "manager": {
+            "active_requests": 0,
+            "active_snapshots": 0,
+            "active_prefixes": 0,
+            "evicted_prefixes": 0,
+            "prepared_steps": 0,
+            "submitted_steps": 0,
+            "free_pages": 64,
+            "reserved_pages": 0,
+            "writing_pages": 0,
+            "active_pages": 0,
+            "retiring_pages": 0,
+            "quarantined_pages": 0,
+            "exhausted_pages": 0,
+            "pending_reclamations": 0,
+            "total_request_page_refs": 0,
+            "total_prefix_page_refs": 0,
+            "total_reader_pins": 0
+          },
+          "queued_requests": 0,
+          "active_requests": 0,
+          "admitted_requests": 2,
+          "completed_requests": 2,
+          "cancelled_requests": 1,
+          "model_dispatches": 5,
+          "multi_request_dispatches": 0,
+          "mixed_phase_dispatches": 0,
+          "maximum_observed_batch_size": 1
+        },
+        "fixed_states": [
+          [
+            1,
+            {
+              "identity": {
+                "engine_epoch": 1,
+                "pool_epoch": 3,
+                "byte_count": 150994944,
+                "pool_id": 2,
+                "slot_count": 2
+              },
+              "free_slots": 2,
+              "reserved_slots": 0,
+              "copying_slots": 0,
+              "live_slots": 0,
+              "retiring_slots": 0,
+              "quarantined_slots": 0,
+              "active_owners": 0,
+              "pending_transitions": 0,
+              "pending_retirements": 0
+            }
+          ],
+          [
+            2,
+            {
+              "identity": {
+                "engine_epoch": 1,
+                "pool_epoch": 4,
+                "byte_count": 2949120,
+                "pool_id": 3,
+                "slot_count": 2
+              },
+              "free_slots": 2,
+              "reserved_slots": 0,
+              "copying_slots": 0,
+              "live_slots": 0,
+              "retiring_slots": 0,
+              "quarantined_slots": 0,
+              "active_owners": 0,
+              "pending_transitions": 0,
+              "pending_retirements": 0
+            }
+          ]
+        ],
+        "decoder_graph_builds": 2,
+        "materialized_decoder_graphs": 2
+      },
+      "startup_report": {
+        "elapsed": {
+          "secs": 17,
+          "nanos": 633076546
+        },
+        "preparation": {
+          "elapsed": {
+            "secs": 0,
+            "nanos": 125351213
+          },
+          "compiled_buckets": 2,
+          "buckets": [
+            {
+              "bucket_index": 1,
+              "dimensions": {
+                "b": 1,
+                "c_0": 1,
+                "s": 4
+              },
+              "elapsed": {
+                "secs": 0,
+                "nanos": 10250483
+              },
+              "graph_builds": 0
+            },
+            {
+              "bucket_index": 0,
+              "dimensions": {
+                "b": 1,
+                "c_0": 1,
+                "s": 1
+              },
+              "elapsed": {
+                "secs": 0,
+                "nanos": 115076929
+              },
+              "graph_builds": 1
+            }
+          ],
+          "cache": {
+            "graph_builds": 2,
+            "materialized_graphs": 2
+          }
+        }
+      },
+      "status": "passed"
+    }
+  },
+  "retained_initial_failure": {
+    "log": {
+      "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/luminal-clippy.log",
+      "bytes": 4817,
+      "sha256": "16c27b510da9fd8a6da53fedb6d19e04a9568379ae9441ee85ede6ebbe1813ba"
+    },
+    "reason": "redundant field names in moved tests; final Clippy passed after cleanup"
+  }
+}

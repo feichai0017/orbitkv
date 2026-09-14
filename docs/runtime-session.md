@@ -1,19 +1,21 @@
 # RuntimeSession
 
 `RuntimeSession` is the transactional boundary between compiled attention-state
-semantics and device execution. It owns a `CanonicalKvManager`; callers receive
-plans and opaque operation identities, never allocator authority.
+semantics and device execution. It owns a `CanonicalKvManager` and, for hybrid
+models, generation-checked recurrent/convolution pools. Callers receive plans
+and opaque operation identities, never allocator authority.
 
 ## Owned state
 
-- request, Prefix, batch, publication, release, control, and relocation IDs;
-- immutable request heads and token placement views;
+- request, Prefix, batch, publication, release, control, and external-transfer IDs;
+- immutable request heads and manager-authored page views;
 - page identity and generation;
 - prepared and submitted append transactions;
 - Prefix lookup, attach, publish, eviction, fork, and COW state;
-- semantic token disposition;
 - execution completion high-water marks;
 - retirement certificates, acknowledgement, quarantine, and reuse.
+- fixed-state source/destination slots, private transition capabilities, and
+  the last real completion frontier that published each owner.
 
 The session is synchronous state-machine code. The async device executor owns
 streams and events and calls session transitions in their required order. This
@@ -38,6 +40,30 @@ transaction may be aborted only when the executor proves it was unobserved. An
 ambiguous post-mutation failure is quarantined or fail-stopped; OrbitKV does not
 invent rollback evidence.
 
+For hybrid fixed-state sessions, each append step contains token-KV actions and
+one state plan per recurrent/convolution class. The session preflights candidate
+pools before mutating the KV manager, validates all state receipts before either
+side is submitted, and publishes both sides from the same completion domain and
+value. A contradiction quarantines the complete request batch. Request release
+retires fixed slots against their last confirmed completion and makes them
+reusable only after semantic release. Prefix sharing is rejected for these
+sessions until recurrent-state sharing semantics are defined.
+
+The public plan exposes state id, source/destination slot, and byte count but
+never the private transition or retirement capability. The ordinary token-KV
+executor cannot manufacture a fixed-state success receipt. The CUDA state
+executor resolves those leases into stable arena ranges, initializes each
+destination from its published source (or zero), uploads manager-selected slot
+ids, and executes the Luminal graph. Only an opaque receipt tied to the exact
+runtime binding and recorded after graph execution can release observed write
+evidence. Packed recurrent and convolution state both require direct in-place
+commits selected through Luminal's egglog rules. Rebinding the same pointer
+creates a new identity, so an older receipt cannot certify it. The production
+decoder exposes this as a separate stateful execution operation: the ordinary
+execution method cannot update fixed state, while the stateful method accepts
+decode or packed-prefill CSR segments only with one manager-authored state plan
+per request.
+
 ## Prefix and copy-on-write
 
 Shared Prefix is an explicit cache policy. A Prefix stores an opaque snapshot
@@ -45,19 +71,6 @@ lease and indexes immutable state; it does not contain a page allocator.
 Extending a shared partial page prepares a copy-on-write destination and exact
 copy intent. The executor proves copy ordering before RuntimeSession publishes
 the new request head. Request-private sessions reject Prefix operations.
-
-## Relocation
-
-Relocation starts from canonical token views and explicit token dispositions. A
-collective relocation transaction selects destinations, emits component-aware
-copy work, waits for device completion, atomically publishes changed request
-views, retires source generations, and requires exact acknowledgement before
-reuse.
-
-Relocation is not automatically profitable. Full state should move only when a
-fragmentation or pressure policy predicts a net benefit. Sliding and Chunked
-state normally obtain reuse from their compiled lifetime boundaries without
-copying live tokens.
 
 ## Frontiers
 
@@ -80,8 +93,8 @@ and exact restore receipts are submitted through the normal binding and
 completion path before the request head becomes visible.
 
 Host tests cover ordering, stale identities, hostile evidence, abort,
-quarantine, Prefix/COW, class-specific retirement, relocation, and repeated
-generation reuse. The executor now gates relocation success evidence on a real
-CUDA event, and real-device tests cover relocation followed by packed decode.
-Ordinary append completion evidence is still supplied by the embedding runtime,
-and no current test establishes matched model performance.
+quarantine, Prefix/COW, class-specific retirement, external transfer, joint
+token-KV/fixed-state completion, and repeated generation reuse. Append
+completion evidence is still supplied by the embedding runtime. Released-model
+tests establish narrow correctness and lifecycle benefits; they do not establish
+broad model or serving superiority.
