@@ -17,8 +17,11 @@ name. Graph construction, state binding and kernel selection consume that result
 | `qwen3_5_text` | Pre-norm, unit-offset RMSNorm, SiLU, gated full attention and explicitly declared gated-delta layers |
 | `qwen3_5` | Validated `qwen3_5_text` envelope; text tensors under `model.language_model.*` |
 
+The verified Qwen3.8-27B-FP8 checkpoint uses the `qwen3_5` envelope. Release
+identity is established by checkpoint hashes, separately from this architecture tag.
+
 `model_type` is required. If `architectures` is present it must agree with the
-supported causal-LM class (or the Qwen3.5 conditional-generation envelope). Missing,
+supported causal-LM class (or the `qwen3_5` conditional-generation envelope). Missing,
 unknown, contradictory or incorrectly nested metadata is rejected. Checkpoint
 paths and release names do not affect the normalized graph. `tie_word_embeddings`
 uses the architecture default when omitted, with the envelope supplying the
@@ -26,7 +29,7 @@ nested default when explicitly present.
 
 These are frontend contracts, not blanket model support claims. Weight inventory,
 state topology, numerical semantics and backend capabilities must still pass
-admission. The Qwen3.5 envelope admits text inference only. Unsupported MoE,
+admission. The `qwen3_5` envelope admits text inference only. Unsupported MoE,
 position-scaling and softcapping semantics remain rejected. Provider-supported
 head sizes do not belong in the checkpoint parser: an importable shape may still
 have no executable lowering. See the [capability matrix](capability-matrix.md)
@@ -63,6 +66,6 @@ resource/launch ownership and an independent numerical gate. No Rust LLIR
 pattern-rewriting pass is used.
 
 Decoder artifact schema 11 retains explicit attention algorithms and request-count
-expressions through provider lowering. Schema 9 and earlier artifacts require fresh search. CUDA module integrity, target and
-compiler checks still apply; historical qualification records retain the schema
+expressions through provider lowering. Earlier artifacts require regeneration.
+CUDA module integrity, target and compiler checks still apply; historical records retain the schema
 and source identities they actually measured.

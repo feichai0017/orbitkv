@@ -117,6 +117,87 @@ graphs; local exploration now preserves the remaining parent bindings, while
 state-compatible dependency-closure generation remains further work. Optional aliases still permit
 materializing implementations, and mutation-order checks remain mandatory.
 
+## Searchable activation preparation
+
+The original DeepGEMM provider quantizes BF16 activations separately inside each
+linear call. The experimental alternative exposes one graph-owned packed
+activation to multiple GEMMs. A gate/up or QKV/Z fanout can therefore reuse the
+same quantized values and scales.
+
+Egglog introduces and shares this producer. Original combined providers remain
+candidates. `enable_shared_fp8_quantization` is an explicit, artifact-bound opt-in;
+bounded device and model correctness does not enable it by default.
+
+The packed ABI contains row-major E4M3 values followed by FP32 scales indexed by
+128-column block and an aligned row stride. Its byte capacity, scale offset,
+alignment, producer identity, and consumer ABI are checked. The output is opaque
+byte storage. Ordinary graph dependencies keep it alive through its consumers.
+Both implementations use the same CUDA quantizer source, including clamping,
+rounding, and deterministic padding.
+
+Captured library calls also need explicit temporary-resource lifetime. The
+`HostOp::cuda_graph_capture_resources` hook snapshots allocation owners after
+preparation. Each captured child graph retains those owners, including when a
+different shape becomes active in the resident graph cache. DeepGEMM acquires
+scratch addresses outside capture and completes their allocation before
+publishing them. Graph retirement waits for previous execution before releasing
+the captured resources. This prevents scratch growth from invalidating an older
+graph and avoids recording allocator bookkeeping events inside child captures.
+
+## Workload profiles
+
+`DecoderTuningProfile` is separate from executable capacity. Existing compilation
+and engine entry points keep their default search settings; explicit callers use
+`compile_or_load_with_tuning` or `ModelEngine::start_with_tuning`. The server
+accepts `--tuning-profile PATH`.
+
+| Field | Meaning |
+| --- | --- |
+| `batch_sizes` | Preferred representative request counts |
+| `prefill_tokens` | Preferred total query-token counts, not per-request lengths |
+| `context_pages` | Preferred flattened CSR page counts |
+| `keep_best` | Finalists compared on the CUDA Graph deployment path |
+| `initial_candidates` | Initial genomes from per-class coverage cycles, including the first executable seed; defaults to 1 and is clamped to the graph budget |
+| `trials` | Profiling trials per candidate |
+| `search_time_limit_ms` | Cooperative genetic-search budget, starting after graph saturation; synchronous compiler calls are not preempted |
+| `maximum_buckets` | Bound on the proposed Cartesian bucket count before search-space construction |
+| `enable_shared_fp8_quantization` | Admit the packed preparation/GEMM alternative |
+
+[decoder-tuning.json](../benchmarks/decoder-tuning.json) is an example for an
+executable admitting at least 8 requests and 128 query tokens. Representatives
+must fit configured capacity, and `keep_best` must not exceed the graph-search
+limit. Empty lists retain the existing bucket policy.
+
+For broader initial exploration, [search-coverage.json](../benchmarks/search-coverage.json)
+reserves eight initial genomes and two deployment finalists. Use it with
+`--search-graphs 8` or a larger graph budget. After the first executable seed,
+duplicate programs and rejected genomes consume the initial allowance; remaining
+measurement budget then goes to mutation and restarts. This is bounded sampling
+of admitted alternatives, not guaranteed measurement of every provider. See
+[search coverage](search-coverage.md) for ordering and reproducibility limits.
+
+The compiler chooses feasible joint representative shapes within bucket ranges.
+The synthetic fixture supplies all query and page CSR rows, per-request write
+slots, positions, and fixed-state slots before candidate preparation. These
+inputs belong to profiling scratch state; request execution supplies its own
+manager-authored metadata. This first fixture uses private physical pages.
+It does not qualify shared-Prefix layout search. The entire tuning profile
+participates in decoder artifact identity; changing it requires a fresh artifact.
+
+The search timer excludes model loading, loop rolling and per-bucket e-graph
+saturation. Initial extraction can attempt one candidate per bucket before the
+retry deadline is checked; finalist graph preparation also has to finish.
+Consequently this is not a hard startup deadline. The qualification runner's
+separate process timeout bounds the complete phase.
+
+CUDA supplies each custom op's existing deployment eligibility to the generic
+extractor. Sampling excludes non-executable placeholders and dependencies that
+cannot form a finite executable term. This leaves the e-graph and every legal
+provider alternative intact. Initial-candidate retries obey the cooperative
+deadline and a finite attempt bound, including cases that never reach a timed
+GPU candidate. Buffer validation examines an operation's own inputs and output
+without copying the entire graph's buffer table on every host launch.
+
 ## Verification and use
 
 Host regressions under OrbitKV compiler's `tests/unit/egglog` and `tests/unit/search`
@@ -142,19 +223,6 @@ Broader initial sampling can cost more compilation time and need not improve
 every workload. It is a foundation for measured region exploration; multi-choice
 region search and fresh-saturation canonicalization remain separate work.
 
-The [27B H20 qualification](validation/search-coverage-20260914/README.md) passes
-296 logit comparisons but records a mixed performance result. Every one of its
-263 rejected graphs violates a required state alias. B8 decode measures eight
-generic output projections while graphs with the cuBLASLt projection fail state
-validation elsewhere. Earlier rejection addresses wasted preparation; constrained
-exploration of expensive regions motivated the local phase above.
-
-The [state-preflight qualification](validation/state-preflight-20260914/README.md)
-passes another 296 logit comparisons and drains. Rejected-candidate evaluation
-totals 8.00 seconds against the preceding 81.06-second observation, while warmed
-decode stays close. Snapshot identities differ and caches were reused; this is
-not a paired compiler-speedup or serving-throughput claim.
-
 The `hotspot_search` CUDA regression combines a GEMM with a separate persistent
 scatter branch. It requires a measured local transition between generated GEMM
 and cuBLASLt, checks every measured region's LLIR provenance, and verifies CPU
@@ -166,12 +234,6 @@ parent feedback, finite neighbors, shared-region cost and loop provenance.
 cargo test --release \
   -p orbitkv-cuda --test hotspot_search -- --ignored
 ```
-
-The [hotspot qualification](validation/hotspot-search-20260914/README.md) records
-49 measured local neighbors with no state/resource rejection and two prefill
-provider transitions inside valid parents. All 296 reference comparisons pass.
-The B8 decode seed already uses cuBLASLt; improved historical runtime observations
-are not proof of a hotspot provider transition or serving speedup.
 
 ## MoE query compilation
 
@@ -213,11 +275,3 @@ attributing complete compilation. Tests check conflicting intervals, exact-value
 unions, alias isolation, late passes and fresh/prepared search-space agreement.
 The saturation implementation lives in `egglog_utils/saturation.rs`; private
 tests remain under the compiler crate's `tests/unit/egglog_utils/`.
-
-A same-executable decoder-fixture ABBA experiment compared the original argmax
-query with a staged rewrite. Medians were 26.51 s and 26.77 s, with identical
-operation counts and two observations per arm. The staged rewrite was discarded.
-These CPU diagnostics are not model inference performance; raw experiments stay
-under `.qualification/compilation-reuse-20260914/`. `kernel_specialize` remains
-an optimization target. Per-rule entry timers omit some parallel child work,
-so their sum must not be used to infer query-planning overhead.

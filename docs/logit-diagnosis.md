@@ -5,9 +5,6 @@
 只负责按 manifest 严格重放已有 schedule、保存实际 logits/token，并提交和释放状态。
 诊断代码不改编译候选、模型定义、sampling 规则或误差阈值。
 
-两处原 serving 分岔的实际 logits、冻结版本证明和检查结果见
-[已审阅诊断报告](validation/fp8-logit-diagnosis-20260912/README.md)。
-
 ## 输入与边界
 
 Probe manifest 使用版本字段 `schema: 1`，包含：

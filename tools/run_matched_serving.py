@@ -83,11 +83,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def add_workload_arguments(parser: argparse.ArgumentParser) -> None:
+def add_workload_arguments(
+    parser: argparse.ArgumentParser, *, multiple_profiles: bool = False
+) -> None:
     """Shared client/workload controls for paired and single-engine runs."""
     parser.add_argument("--model", required=True)
     parser.add_argument("--tokenizer", required=True)
-    parser.add_argument("--profile", required=True)
+    parser.add_argument("--profile", required=True, action="append" if multiple_profiles else "store")
     parser.add_argument("--profiles-file", type=Path, default=DEFAULT_PROFILES)
     parser.add_argument("--backend", default="openai")
     parser.add_argument("--endpoint", default="/v1/completions")
@@ -177,12 +179,23 @@ def bench_command(
     workload: Workload,
     result_dir: Path,
     result_name: str,
+    *,
+    trace_path: Path | None = None,
 ) -> list[str]:
     client_style = args.client_style
     if client_style == "auto":
         executable = Path(client[0]).name
         client_style = "rust" if executable == "vllm-bench" else "python"
     prefix = [*client] if client_style == "rust" else [*client, "bench", "serve"]
+    dataset = ["--dataset-name", "random", "--random-input-len", str(workload.input_tokens),
+               "--random-output-len", str(workload.output_tokens), "--random-range-ratio", "0.0"]
+    if trace_path is not None:
+        if client_style != "python" or args.backend not in ("openai", "vllm"):
+            raise ValueError("token traces require the Python vLLM client and a completions backend")
+        if not 0 <= args.seed <= 0xFFFFFFFF:
+            raise ValueError("token trace seed must fit PYTHONHASHSEED (an unsigned 32-bit integer)")
+        dataset = ["--dataset-name", "timed_trace", "--dataset-path", str(trace_path),
+                   "--timed-trace-chunk-hash-size", "1", "--no-self-timed"]
     return [
         *prefix,
         "--backend",
@@ -195,14 +208,7 @@ def bench_command(
         args.model,
         "--tokenizer",
         args.tokenizer,
-        "--dataset-name",
-        "random",
-        "--random-input-len",
-        str(workload.input_tokens),
-        "--random-output-len",
-        str(workload.output_tokens),
-        "--random-range-ratio",
-        "0.0",
+        *dataset,
         "--num-prompts",
         str(workload.requests),
         "--max-concurrency",
@@ -332,8 +338,6 @@ def run_one(
 ) -> dict[str, Any]:
     run_dir = root / f"epoch-{epoch:03d}" / server.name
     run_dir.mkdir(parents=True, exist_ok=False)
-    result_name = "benchmark.json"
-    command = bench_command(client, server, args, workload, run_dir, result_name)
     server_log = (run_dir / "server.log").open("wb")
     process = subprocess.Popen(
         server.command,
@@ -354,35 +358,13 @@ def run_one(
         if memory_interval_seconds is not None:
             memory = ProcessMemorySampler(process.pid, memory_interval_seconds, memory_device_index)
             memory.start()
-        completed = subprocess.run(
-            command,
-            cwd=REPOSITORY_ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-        (run_dir / "client.log").write_bytes(completed.stdout)
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"vllm bench serve failed for {server.name} with status {completed.returncode}"
-            )
-        result_path = run_dir / result_name
-        if not result_path.is_file():
-            raise RuntimeError(f"benchmark did not create {result_path}")
-        result = json.loads(result_path.read_text(encoding="utf-8"))
-        metrics, output_digest = benchmark_result(
-            result, workload.requests, workload.output_tokens
-        )
+        measurement = run_client(server, client, args, workload, run_dir)
         observation = {
+            **measurement,
             "server": server.name,
             "epoch": epoch,
             "ready_seconds": ready_seconds,
-            "result": str(result_path.relative_to(root)),
-            "client_command": command,
-            "reported_completed": workload.requests,
-            "reported_failed": 0,
-            "metrics": metrics,
-            "generated_texts_sha256": output_digest,
+            "result": str((run_dir / "benchmark.json").relative_to(root)),
         }
     finally:
         if memory is not None:
@@ -395,6 +377,45 @@ def run_one(
         observation["memory"] = memory.report()
     observation["shutdown"] = shutdown.__dict__
     return observation
+
+
+def run_client(
+    server: ServerSpec,
+    client: tuple[str, ...],
+    args: argparse.Namespace,
+    workload: Workload,
+    run_dir: Path,
+    *,
+    trace_path: Path | None = None,
+) -> dict[str, Any]:
+    """Measure an already-ready server with the shared client and result gates."""
+    result_name = "benchmark.json"
+    command = bench_command(client, server, args, workload, run_dir, result_name, trace_path=trace_path)
+    # TimedTrace expands each hash with Python's hash(), independently of --seed.
+    # Fix its process-level seed so every engine receives identical token IDs.
+    environment = dict(os.environ, PYTHONHASHSEED=str(args.seed)) if trace_path else None
+    completed = subprocess.run(
+        command, cwd=REPOSITORY_ROOT, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, check=False, env=environment,
+    )
+    (run_dir / "client.log").write_bytes(completed.stdout)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"vllm bench serve failed for {server.name} with status {completed.returncode}"
+        )
+    result_path = run_dir / result_name
+    if not result_path.is_file():
+        raise RuntimeError(f"benchmark did not create {result_path}")
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    metrics, output_digest = benchmark_result(result, workload.requests, workload.output_tokens)
+    return {
+        "client_command": command,
+        "client_environment": {"PYTHONHASHSEED": str(args.seed)} if trace_path else {},
+        "reported_completed": workload.requests,
+        "reported_failed": 0,
+        "metrics": metrics,
+        "generated_texts_sha256": output_digest,
+    }
 
 
 def git_revision() -> dict[str, Any]:

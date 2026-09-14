@@ -3,38 +3,12 @@ export const models = [
     name: "Qwen3.8 27B",
     precision: "Block FP8",
     attention: "Full + Gated DeltaNet",
-    status: "Validated text inference",
+    status: "Bounded text inference",
     scope:
-      "NVIDIA H20 · bounded context and concurrency. Vision and MTP are not supported.",
+      "Verified official checkpoint · one NVIDIA H20 · text inference through C8. Vision and MTP are outside this scope.",
     path: "docs/capability-matrix.md",
   },
-  {
-    name: "Qwen3.5 27B",
-    precision: "Block FP8",
-    attention: "Full + Gated DeltaNet",
-    status: "Earlier validation",
-    scope: "Text inference on H20. Measurements apply to the recorded build.",
-    path: "results/deepgemm-luminal-bringup-20260909/README.md",
-  },
-  {
-    name: "Gemma 3 270M",
-    precision: "BF16",
-    attention: "Full + Sliding",
-    status: "Earlier validation",
-    scope: "Text inference, sliding-state retirement and HTTP serving on H20.",
-    path: "results/serving-load-qualification-20260907/README.md",
-  },
-  {
-    name: "Qwen2.5 0.5B Instruct",
-    precision: "BF16",
-    attention: "Full",
-    status: "Earlier validation",
-    scope: "Batch-one prefill and decode. No current serving measurement.",
-    path: "docs/validation/bucketed-decoder-correctness-20260904/README.md",
-  },
 ];
-
-export const plannedModels = ["Qwen Flash-Next", "GLM", "Kimi", "DeepSeek"];
 
 export interface PerformanceReport {
   schema: "orbitkv.model-performance.v1";
@@ -44,8 +18,13 @@ export interface PerformanceReport {
   source: { commit: string; binary_sha256: string };
   measurement: string;
   notes: string[];
+  comparison?: {
+    client: string;
+    engines: { name: string; version: string }[];
+  };
   workloads: {
     name: string;
+    engine?: string;
     input_tokens: number[];
     output_tokens: number;
     concurrency: number;
