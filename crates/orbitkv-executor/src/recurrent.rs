@@ -221,7 +221,7 @@ fn require_len(field: &'static str, values: &[f32], expected: usize) -> Result<(
 
 #[cfg(feature = "cuda")]
 mod graph {
-    use luminal::{
+    use orbitkv_compiler::{
         dtype::DType,
         prelude::{Expression, GraphTensor},
     };
@@ -247,7 +247,7 @@ mod graph {
         pub next_state: GraphTensor,
     }
 
-    /// Expands one normalized gated-delta transition into pure Luminal HLIR.
+    /// Expands one normalized gated-delta transition into pure `OrbitKV` HLIR.
     ///
     /// This is the semantic graph that future CUDA candidates must match in
     /// egglog. It intentionally materializes `next_state`; required-alias

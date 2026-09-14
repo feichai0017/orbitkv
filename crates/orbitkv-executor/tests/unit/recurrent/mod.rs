@@ -122,8 +122,8 @@ fn grouped_query_heads_feed_multiple_value_state_heads() {
 
 #[cfg(feature = "cuda")]
 #[test]
-fn luminal_semantic_step_matches_independent_reference() {
-    use luminal::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
+fn compiler_semantic_step_matches_independent_reference() {
+    use orbitkv_compiler::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
 
     let geometry = GatedDeltaGeometry {
         key_heads: 2,
@@ -156,7 +156,7 @@ fn luminal_semantic_step_matches_independent_reference() {
     .unwrap();
 
     let mut graph = Graph::new();
-    let batch = luminal::prelude::Expression::from('b');
+    let batch = orbitkv_compiler::prelude::Expression::from('b');
     let q = graph.named_tensor("query", (batch, 2, 2));
     let k = graph.named_tensor("key", (batch, 2, 2));
     let v = graph.named_tensor("value", (batch, 2, 2));
@@ -194,7 +194,7 @@ fn luminal_semantic_step_matches_independent_reference() {
     assert_close(runtime.get_f32(values), &expected.values);
     assert_close(runtime.get_f32(next_state), &expected.state);
 
-    graph.build_search_space::<luminal_cuda_lite::runtime::CudaRuntime>(CompileOptions::default());
+    graph.build_search_space::<orbitkv_cuda::runtime::CudaRuntime>(CompileOptions::default());
     assert!(
         egraph_has_kernel(&graph, "KernelDeltaStateUpdate"),
         "the complete recurrence graph must expose the in-place CUDA state candidate",
@@ -203,8 +203,8 @@ fn luminal_semantic_step_matches_independent_reference() {
 
 #[cfg(feature = "cuda")]
 #[test]
-fn luminal_grouped_heads_match_independent_reference() {
-    use luminal::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
+fn compiler_grouped_heads_match_independent_reference() {
+    use orbitkv_compiler::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
 
     let geometry = GatedDeltaGeometry {
         key_heads: 1,
@@ -271,12 +271,12 @@ fn luminal_grouped_heads_match_independent_reference() {
     assert_close(runtime.get_f32(values), &expected.values);
     assert_close(runtime.get_f32(next_state), &expected.state);
 
-    graph.build_search_space::<luminal_cuda_lite::runtime::CudaRuntime>(CompileOptions::default());
+    graph.build_search_space::<orbitkv_cuda::runtime::CudaRuntime>(CompileOptions::default());
     assert!(egraph_has_kernel(&graph, "KernelDeltaStateUpdate"));
 }
 
 #[cfg(feature = "cuda")]
-fn egraph_has_kernel(graph: &luminal::prelude::Graph, kind: &str) -> bool {
+fn egraph_has_kernel(graph: &orbitkv_compiler::prelude::Graph, kind: &str) -> bool {
     let egraph = graph.egraph().expect("CUDA search space");
     egraph.eclasses.values().any(|(sort, nodes)| {
         sort == "IR"

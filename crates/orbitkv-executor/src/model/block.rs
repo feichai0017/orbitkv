@@ -1,8 +1,8 @@
-use luminal::{
+use orbitkv_compiler::{
     dtype::DType,
     prelude::{Expression, F32Pow, Graph, GraphTensor},
 };
-use luminal_nn::scatter_rows;
+use orbitkv_ops::scatter_rows;
 
 use super::{
     DecoderActivation, DecoderBlockLayout, DecoderClassDimensions, DecoderConfig,

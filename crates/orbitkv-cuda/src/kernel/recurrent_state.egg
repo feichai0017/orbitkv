@@ -1,0 +1,90 @@
+(rule
+    (
+        (= ?next (Op (Add ?shape ?out_stride ?out_stride ?out_stride)
+            (ICons ?decayed (ICons ?update (INil)))))
+        (= ?shape
+            (ECons ?batch
+            (ECons ?heads
+            (ECons ?key_width
+            (ECons ?value_width (ENil))))))
+        (= ?out_stride
+            (ECons (MMul (MMul (MMul (MIter) ?value_width) ?key_width) ?heads)
+            (ECons (MMul (MMul (MIter) ?value_width) ?key_width)
+            (ECons (MMul (MIter) ?value_width)
+            (ECons (MIter) (ENil))))))
+        (= ?decay_stride
+            (ECons (MMul (MIter) ?heads)
+            (ECons (MIter)
+            (ECons (MNum 0)
+            (ECons (MNum 0) (ENil))))))
+        (= ?key_stride
+            (ECons (MMul (MMul (MIter) ?key_width) ?heads)
+            (ECons (MMul (MIter) ?key_width)
+            (ECons (MIter)
+            (ECons (MNum 0) (ENil))))))
+        (= ?delta_stride
+            (ECons (MMul (MMul (MIter) ?value_width) ?heads)
+            (ECons (MMul (MIter) ?value_width)
+            (ECons (MNum 0)
+            (ECons (MIter) (ENil))))))
+        (= ?decayed (Op (Mul ?shape ?out_stride ?decay_stride ?out_stride)
+            (ICons ?state (ICons ?decay (INil)))))
+        (= ?update (Op (Mul ?shape ?key_stride ?delta_stride ?out_stride)
+            (ICons ?key (ICons ?delta (INil)))))
+        (= (F32) (dtype ?state))
+        (= (F32) (dtype ?decay))
+        (= (F32) (dtype ?key))
+        (= (F32) (dtype ?delta))
+    )
+    (
+        (let ?candidate (Op
+            (KernelDeltaStateUpdate ?shape ?out_stride ?decay_stride
+                ?key_stride ?delta_stride)
+            (ICons ?state
+            (ICons ?decay
+            (ICons ?key
+            (ICons ?delta (INil)))))))
+        (union ?next ?candidate)
+        (set (dtype ?candidate) (F32))
+    )
+    :ruleset kernel_specialize
+    :name "kernel in-place delta state update"
+)
+
+; Commit the selected request state back to the same stable arena only when
+; the state-update input was gathered from that exact arena with the exact
+; same flat indices. Candidate-local alias validation still rejects any
+; unordered competing arena read.
+(rule
+    (
+        (= ?commit (Op
+            (KernelScatter ?arena_shape ?arena_stride ?index_shape
+                ?index_stride ?source_stride ?arena_out_stride (F32))
+            (ICons ?arena
+            (ICons ?indices
+            (ICons ?next (INil))))))
+        (= ?next (Op
+            (KernelDeltaStateUpdate ?state_shape ?state_stride ?decay_stride
+                ?key_stride ?delta_stride)
+            (ICons ?selected
+            (ICons ?decay
+            (ICons ?key
+            (ICons ?delta (INil)))))))
+        (= ?selected (Op
+            (Gather ?index_shape ?index_stride ?arena_shape ?arena_stride)
+            (ICons ?indices (ICons ?arena (INil)))))
+        (= ?arena_stride ?arena_out_stride)
+    )
+    (
+        (let ?in_place (Op
+            (KernelScatterNoCopy ?arena_shape ?arena_stride ?index_shape
+                ?index_stride ?source_stride ?arena_out_stride (F32))
+            (ICons ?arena
+            (ICons ?indices
+            (ICons ?next (INil))))))
+        (union ?commit ?in_place)
+        (set (dtype ?in_place) (F32))
+    )
+    :ruleset kernel_specialize
+    :name "commit delta state to gathered arena slots"
+)

@@ -52,7 +52,7 @@ pub type EngineAbortFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> +
 
 /// The only server-to-runtime execution boundary.
 ///
-/// Implementations own the complete `OrbitKV` transaction and Luminal execution.
+/// Implementations own the complete `OrbitKV` transaction and `OrbitKV` execution.
 /// The server sees request intent and ordered output events, never physical KV
 /// identities or device page tables.
 pub trait Engine: Send + Sync {

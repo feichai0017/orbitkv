@@ -54,10 +54,10 @@ never the private transition or retirement capability. The ordinary token-KV
 executor cannot manufacture a fixed-state success receipt. The CUDA state
 executor resolves those leases into stable arena ranges, initializes each
 destination from its published source (or zero), uploads manager-selected slot
-ids, and executes the Luminal graph. Only an opaque receipt tied to the exact
+ids, and executes the OrbitKV compiler graph. Only an opaque receipt tied to the exact
 runtime binding and recorded after graph execution can release observed write
 evidence. Packed recurrent and convolution state both require direct in-place
-commits selected through Luminal's egglog rules. Rebinding the same pointer
+commits selected through OrbitKV compiler's egglog rules. Rebinding the same pointer
 creates a new identity, so an older receipt cannot certify it. The production
 decoder exposes this as a separate stateful execution operation: the ordinary
 execution method cannot update fixed state, while the stateful method accepts

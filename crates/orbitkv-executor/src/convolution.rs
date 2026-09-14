@@ -110,7 +110,7 @@ fn require_len(
 
 #[cfg(feature = "cuda")]
 mod graph {
-    use luminal::{
+    use orbitkv_compiler::{
         dtype::DType,
         prelude::{Expression, GraphTensor},
     };
@@ -176,7 +176,7 @@ mod graph {
 
 #[cfg(feature = "cuda")]
 mod state_graph {
-    use luminal::{
+    use orbitkv_compiler::{
         dtype::DType,
         prelude::{Expression, Graph, GraphTensor},
     };

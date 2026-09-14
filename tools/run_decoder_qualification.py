@@ -27,13 +27,13 @@ from summarize_stage_trace import summarize as summarize_stages
 ROOT = Path(__file__).resolve().parents[1]
 MARKER = "ORBITKV_DECODER_QUALIFICATION "
 PROFILE_FLAGS = (
-    "LUMINAL_CUDA_PROFILE_GRAPH_STEPS",
-    "LUMINAL_CUDA_PROFILE_GRAPH_STEP_DETAILS",
+    "ORBITKV_CUDA_PROFILE_GRAPH_STEPS",
+    "ORBITKV_CUDA_PROFILE_GRAPH_STEP_DETAILS",
 )
 ENVIRONMENT_KEYS = (
     "PATH", "CUDA_HOME", "CUDA_PATH", "CUDA_VISIBLE_DEVICES",
-    "FLASHINFER_CUDA_ARCH", "LUMINAL_DEEPGEMM_DIR", "LUMINAL_FLASHINFER_DIR",
-    "LUMINAL_FLASHATTENTION_DIR", "LUMINAL_DEEPGEMM_CACHE_DIR", "LUMINAL_MAX_ROLLED_REGIONS",
+    "FLASHINFER_CUDA_ARCH", "ORBITKV_DEEPGEMM_DIR", "ORBITKV_FLASHINFER_DIR",
+    "ORBITKV_FLASHATTENTION_DIR", "ORBITKV_DEEPGEMM_CACHE_DIR", "ORBITKV_MAX_ROLLED_REGIONS",
     "NVCC_CCBIN", "NVCC_PREPEND_FLAGS", "NVCC_APPEND_FLAGS", "CPATH",
     "CPLUS_INCLUDE_PATH", "LIBRARY_PATH", "LD_LIBRARY_PATH",
     "ORBITKV_MODEL_DIR", "ORBITKV_REFERENCE_DIR", "ORBITKV_SEARCH_GRAPHS",
@@ -41,7 +41,7 @@ ENVIRONMENT_KEYS = (
     "ORBITKV_QUALIFICATION_BATCH_SIZE", "ORBITKV_QUALIFICATION_BATCH_CAPACITY",
     "ORBITKV_QUALIFICATION_RAGGED",
     "ORBITKV_DECODER_ARTIFACT", "ORBITKV_TUNING_PROFILE", *PROFILE_FLAGS,
-    "LUMINAL_SEARCH_TRACE", "LUMINAL_STAGE_TRACE",
+    "ORBITKV_SEARCH_TRACE", "ORBITKV_STAGE_TRACE",
 )
 
 
@@ -173,9 +173,9 @@ def source_identity(directory: Path) -> dict:
 
 def phase_environment(args: argparse.Namespace, artifact: Path, phase: str) -> dict[str, str]:
     environment = os.environ.copy()
-    diagnostics = [key for key in environment if key.startswith("LUMINAL_CUDA_PROFILE_")]
-    for name in (*diagnostics, "LUMINAL_CUDA_ARENA_PROFILE", "LUMINAL_CUDA_SYNC_EACH_EXEC_OP",
-                 "LUMINAL_CUDA_CHECK_NONFINITE_INTERNAL", "ORBITKV_TUNING_PROFILE", "LUMINAL_STAGE_TRACE"):
+    diagnostics = [key for key in environment if key.startswith("ORBITKV_CUDA_PROFILE_")]
+    for name in (*diagnostics, "ORBITKV_CUDA_ARENA_PROFILE", "ORBITKV_CUDA_SYNC_EACH_EXEC_OP",
+                 "ORBITKV_CUDA_CHECK_NONFINITE_INTERNAL", "ORBITKV_TUNING_PROFILE", "ORBITKV_STAGE_TRACE"):
         environment.pop(name, None)
     environment.update({
         "ORBITKV_MODEL_DIR": str(args.model_dir),
@@ -186,7 +186,7 @@ def phase_environment(args: argparse.Namespace, artifact: Path, phase: str) -> d
     if args.tuning_profile:
         environment["ORBITKV_TUNING_PROFILE"] = str(args.tuning_profile)
     if getattr(args, "stage_trace", False):
-        environment["LUMINAL_STAGE_TRACE"] = str(args.output_dir / phase / "stages.jsonl")
+        environment["ORBITKV_STAGE_TRACE"] = str(args.output_dir / phase / "stages.jsonl")
     if phase == "profile":
         environment.update(dict.fromkeys(PROFILE_FLAGS, "1"))
     return environment
@@ -357,13 +357,12 @@ def qualify(args: argparse.Namespace) -> dict:
     artifact = args.output_dir / "decoder.json"
     phases = ("strict-replay", "profile") if args.replay_artifact else ("cold-search", "strict-replay", "profile")
     report = {
-        "schema": "orbitkv.decoder-qualification.v1", "status": "running",
+        "schema": "orbitkv.decoder-qualification.v2", "status": "running",
         "created_at_utc": timestamp(), "test_name": args.test_name,
         "execution_plan": list(phases),
         "input_identity": inputs, "harness": file_identity(Path(__file__).resolve()),
         "source_observation_directory": str(args.source_dir),
         "source": source_identity(args.source_dir),
-        "luminal_source": source_identity(args.source_dir / "third_party/luminal"),
         "provenance_note": "Source checkout is observed, not proof of binary build inputs; retain the prebuilt binary and its build record.",
         "cache_policy": {"selected_schedule": ("immutable external artifact copied into fresh output; no search"
                                                if args.replay_artifact else

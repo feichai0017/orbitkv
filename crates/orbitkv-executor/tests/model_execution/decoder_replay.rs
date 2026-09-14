@@ -11,7 +11,7 @@ pub(super) fn run(sequences: usize) {
     let prompt = [1_u32, 2, 3, 4];
     let positions = [0_u32, 1, 2, 3];
     let mut run = prepare_model_run(&config_bytes, prompt.len());
-    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
+    let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
         maximum_query_tokens: 8,

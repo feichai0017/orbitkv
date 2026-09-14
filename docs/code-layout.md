@@ -65,8 +65,7 @@ caches are not checked-in test fixtures.
 
 | Directory | Contents |
 | --- | --- |
-| `crates/` | Three owned product crates, each with a `tests/` tree |
-| `third_party/luminal/` | Pinned compiler fork, with its own workspace and contributor guide |
+| `crates/` | Seven owned crates in one Cargo workspace, each with a `tests/` tree |
 | `tools/` and `tools/tests/` | Qualification/invariant scripts and Python tests |
 | `benchmarks/` | Workload and tuning manifests |
 | `docs/` | Architecture, contracts, and qualification boundaries |
@@ -74,13 +73,20 @@ caches are not checked-in test fixtures.
 | `.qualification/` | Local runs, frozen inputs, and large raw evidence |
 | `results/` | Compact reviewed evidence, retaining its original source identity |
 
-Maintained CUDA runtime, provider, weight-loader and search-trace unit tests live in
-`luminal_cuda_lite/tests/unit/`. Unrelated upstream Luminal modules retain their
-upstream layout until modified; the root checker does not impose OrbitKV style
-across the entire vendored project.
+Compiler, operation, tracing and CUDA tests follow the same layout as the state
+manager and engine. Inherited inline suites and `src/tests/` trees have moved
+under their owning crate's `tests/`, preserving private test namespaces.
 
-`python tools/verify_active_source.py` enforces the three owned crates' layout,
+`python tools/verify_active_source.py` enforces all seven owned crates' layout,
 checks that explicit unit-test bridges stay under `cfg(test)` and resolve within
 `tests/unit/`, and rejects test files/functions in `src/`. It also checks
 repository dependency direction, generic filenames, and file-size limits.
-Compilation and behavioral tests still establish correctness.
+Inherited large files are listed in `tools/source-size-baseline.json`; their
+limits may only decrease. Extract cohesive responsibilities and remove entries
+when they reach the normal limit. Generated protobuf code is identified by its
+generator declaration. Compilation and behavioral tests establish correctness.
+
+The default Cargo members include all host crates. CUDA device tests are
+explicit: `cargo test -p orbitkv-cuda` requires a CUDA toolchain and GPU.
+`cargo fmt --all` checks every workspace member. There are no nested workspaces,
+crate-local lockfiles, or compiler submodules.

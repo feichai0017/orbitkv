@@ -123,7 +123,7 @@ fn decoder_manifest_logits_and_drain() {
         &std::fs::read(environment_path("ORBITKV_TUNING_PROFILE")).unwrap(),
     )
     .unwrap();
-    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(probe.device_index).unwrap();
+    let context = orbitkv_cuda::cudarc::driver::CudaContext::new(probe.device_index).unwrap();
     let stream = context.new_stream().unwrap();
     let fixed_states = fixed_state_identities(&harness.session);
     let (mut decoder, _) = CompiledDecoder::compile_or_load_with_tuning(

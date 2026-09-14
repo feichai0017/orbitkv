@@ -198,7 +198,7 @@ texts across process restarts, but the arms differed for two of eight prompts
 in both epochs. At the time of that report no independent logit oracle covered
 those prompts. A subsequent frozen-v3 probe using identical teacher-forced
 inputs explains both first divergences: OFF logits tie at the maximum and
-Luminal chooses the highest token ID; ON has a unique maximum matching the
+OrbitKV compiler chooses the highest token ID; ON has a unique maximum matching the
 independent reference. All measured selected tokens attain their own row's
 maximum. This does not promote the serving result or qualify every internal
 numerical path; see [logits diagnosis](logit-diagnosis.md).

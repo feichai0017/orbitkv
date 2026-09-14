@@ -96,7 +96,7 @@ External KV transport also does not implement weight offload.
 The planned deployment object binds a compatible **compute schedule, mutable
 state realization and immutable weight-residency plan**. OrbitKV keeps authority
 over KV/recurrent/convolution ownership and publication. The executor coordinates
-immutable host/device weight storage and transfers; Luminal owns compute
+immutable host/device weight storage and transfers; OrbitKV compiler owns compute
 candidates and their kernel/workspace requirements. Their physical allocations
 share one device budget, with explicit host and staging budgets.
 

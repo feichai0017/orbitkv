@@ -3,15 +3,15 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use luminal::{
+use orbitkv::StatePoolIdentity;
+use orbitkv_compiler::{
     op::Runtime,
     prelude::{Graph, Symbol, bf16, rand::SeedableRng, tracing},
 };
-use luminal_cuda_lite::{
+use orbitkv_cuda::{
     cudarc::driver::{CudaContext, CudaSlice, CudaStream},
     runtime::CudaRuntime,
 };
-use orbitkv::StatePoolIdentity;
 
 use super::{
     CompiledDecoder, CompiledFixedState, DecoderArtifact, DecoderCompilation, DecoderCompileConfig,
@@ -23,7 +23,7 @@ use super::{
 };
 use crate::{ExecutorPlan, FixedStateDeviceArenas, FixedStateGraphResource};
 
-#[allow(clippy::mutable_key_type)] // Luminal Symbols are stable interned dimension identities.
+#[allow(clippy::mutable_key_type)] // OrbitKV Symbols are stable interned dimension identities.
 pub(super) fn prepare_decoder_compilation(
     config: &DecoderConfig,
     plan: &ExecutorPlan,
@@ -33,16 +33,16 @@ pub(super) fn prepare_decoder_compilation(
     compile: DecoderCompileConfig,
     tuning: &DecoderTuningProfile,
 ) -> Result<DecoderCompilation, DecoderError> {
-    let _stage = tracing::info_span!(target: "luminal::stage", "orbitkv.decoder.prepare").entered();
+    let _stage = tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.prepare").entered();
     compile.validate()?;
     config.require_executable()?;
     if weight_files.is_empty() {
         return Err(DecoderError::InvalidGeometry("weight files"));
     }
-    let weights = tracing::info_span!(target: "luminal::stage", "orbitkv.weights.inspect")
+    let weights = tracing::info_span!(target: "orbitkv::stage", "orbitkv.weights.inspect")
         .in_scope(|| inspect_weight_features(weight_files, config))?;
     let fixed_state_registrations = plan.fixed_state_registrations(storage.fixed_state_pools)?;
-    let compiler_facts = plan.luminal_compiler_facts(storage.token_arenas)?;
+    let compiler_facts = plan.compiler_facts(storage.token_arenas)?;
     let identity = decoder_artifact_identity_with_tuning(
         config,
         plan,
@@ -55,7 +55,7 @@ pub(super) fn prepare_decoder_compilation(
     )?;
     let mut graph = Graph::default();
     let decoder =
-        tracing::info_span!(target: "luminal::stage", "orbitkv.graph.build").in_scope(|| {
+        tracing::info_span!(target: "orbitkv::stage", "orbitkv.graph.build").in_scope(|| {
             DecoderGraph::build(
                 &mut graph,
                 config,
@@ -74,7 +74,7 @@ pub(super) fn prepare_decoder_compilation(
     let mut facts = compiler_facts.egglog().to_owned();
     if tuning.enable_shared_fp8_quantization {
         facts.push('\n');
-        facts.push_str(luminal_cuda_lite::host::deepgemm::SHARED_QUANTIZATION_COMPILER_FACT);
+        facts.push_str(orbitkv_cuda::host::deepgemm::SHARED_QUANTIZATION_COMPILER_FACT);
     }
     options = options.compiler_facts(facts);
     if options
@@ -83,9 +83,9 @@ pub(super) fn prepare_decoder_compilation(
         .unwrap()
         .iter()
         .any(|dims| {
-            fixed_state_registrations
-                .iter()
-                .any(|state| dims[&luminal::prelude::Symbol::from('b')] > state.slot_count as usize)
+            fixed_state_registrations.iter().any(|state| {
+                dims[&orbitkv_compiler::prelude::Symbol::from('b')] > state.slot_count as usize
+            })
         })
     {
         return Err(DecoderError::InvalidGeometry(
@@ -98,7 +98,7 @@ pub(super) fn prepare_decoder_compilation(
     }
     let mut runtime = initialize_weight_runtime(&graph, stream, weight_files)?;
     let _bindings_stage =
-        tracing::info_span!(target: "luminal::stage", "orbitkv.inputs.bind_and_seed").entered();
+        tracing::info_span!(target: "orbitkv::stage", "orbitkv.inputs.bind_and_seed").entered();
     let persistent_cache = register_persistent_cache(&mut runtime, &decoder, plan, config)?;
     let mut fixed_state_scratch = Vec::with_capacity(decoder.outputs.fixed_states.len());
     let representative_batch = representative[&Symbol::from('b')];
@@ -133,9 +133,9 @@ fn initialize_weight_runtime(
     stream: &Arc<CudaStream>,
     weight_files: &[PathBuf],
 ) -> Result<CudaRuntime, DecoderError> {
-    let mut runtime = tracing::info_span!(target: "luminal::stage", "cuda.initialize")
+    let mut runtime = tracing::info_span!(target: "orbitkv::stage", "cuda.initialize")
         .in_scope(|| CudaRuntime::initialize(Arc::clone(stream)));
-    let _weights_stage = tracing::info_span!(target: "luminal::stage", "orbitkv.weights.load", files = weight_files.len()).entered();
+    let _weights_stage = tracing::info_span!(target: "orbitkv::stage", "orbitkv.weights.load", files = weight_files.len()).entered();
     for weights_path in weight_files {
         runtime
             .load_safetensors(graph, weights_path)
@@ -215,7 +215,7 @@ impl CompiledDecoder {
     ///
     /// # Errors
     ///
-    /// Rejects invalid bucket geometry or incompatible model plans. Luminal
+    /// Rejects invalid bucket geometry or incompatible model plans. `OrbitKV`
     /// compile failures currently surface through its native panic boundary.
     pub fn compile(
         config: &DecoderConfig,
@@ -270,7 +270,7 @@ impl CompiledDecoder {
         tuning: &DecoderTuningProfile,
         artifact: Option<&DecoderArtifact>,
     ) -> Result<(Self, DecoderArtifact), DecoderError> {
-        let _stage = tracing::info_span!(target: "luminal::stage", "orbitkv.decoder.compile_or_load", replay = artifact.is_some()).entered();
+        let _stage = tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.compile_or_load", replay = artifact.is_some()).entered();
         if let Some(artifact) = artifact {
             artifact.validate()?;
             artifact
@@ -306,7 +306,7 @@ impl CompiledDecoder {
         }
         let effective_artifact = if let Some(artifact) = artifact {
             let _stage =
-                tracing::info_span!(target: "luminal::stage", "orbitkv.schedule.replay").entered();
+                tracing::info_span!(target: "orbitkv::stage", "orbitkv.schedule.replay").entered();
             graph.prepare_selected_schedule(&options);
             graph.install_selected_schedule(artifact.schedule.clone());
             runtime
@@ -315,7 +315,7 @@ impl CompiledDecoder {
             artifact.clone()
         } else {
             let mut rng =
-                luminal::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
+                orbitkv_compiler::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
             runtime = graph.compile_with_rng(runtime, options, &mut rng);
             let modules = runtime
                 .capture_module_artifact(&graph)
@@ -330,7 +330,7 @@ impl CompiledDecoder {
             )
         };
         let _finalize_stage =
-            tracing::info_span!(target: "luminal::stage", "orbitkv.decoder.finalize").entered();
+            tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.finalize").entered();
         let fixed_state = bind_fixed_state(
             plan,
             storage.fixed_state_pools,
@@ -372,7 +372,7 @@ impl CompiledDecoder {
     ///
     /// This is the high-level composition boundary. Callers that do not need
     /// to coordinate another CUDA subsystem should use it instead of depending
-    /// directly on Luminal's stream type.
+    /// directly on `OrbitKV`'s stream type.
     ///
     /// # Errors
     ///

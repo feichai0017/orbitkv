@@ -1,13 +1,13 @@
 # Architecture
 
-OrbitKV is one native inference stack with three owned crates.
+OrbitKV is one native inference stack with seven owned crates.
 
 The target compiler architecture and its implementation gates are described in
 [Joint compilation](joint-compilation.md). The first acceptance model is
 Qwen3.8 27B block-FP8; product graph construction and optimization remain
 structural rather than checkpoint-specific.
 The implemented compiler/backend boundary, search objective and fusion limits
-are described in [Luminal design](luminal-design.md).
+are described in [OrbitKV compiler design](compiler.md).
 
 ```text
 HTTP / SSE / WebSocket
@@ -22,7 +22,7 @@ crates/orbitkv-engine/
         +--> crates/orbitkv/ compile visibility and own the KV lifecycle
         |       | prepared pages, copies, views, retirement rules
         |       v
-        +--> crates/orbitkv-executor/ Luminal graph and device execution
+        +--> crates/orbitkv-executor/ OrbitKV compiler graph and device execution
                 | local or external completion evidence
                 v
         crates/orbitkv/ publish, retire, acknowledge, reuse
@@ -82,11 +82,11 @@ reference implementation and fault oracle, not a performance backend.
 3. The model executor compiles one symbolic decoder graph into decode and
    prefill buckets and retains one stable K/V arena per attention class. Dynamic input buffers are
    allocated to their configured capacities before search. OrbitKV registers
-   every persistent K/V update as a required output-to-input alias; Luminal may
+   every persistent K/V update as a required output-to-input alias; OrbitKV compiler may
    search freely only among schedules that preserve that state contract.
 4. `RuntimeSession` prepares append, Prefix/COW, external transfer, or release
    work.
-5. The executor updates bounded dynamic inputs, dispatches the matching Luminal
+5. The executor updates bounded dynamic inputs, dispatches the matching OrbitKV compiler
    bucket, runs on the owning stream without recompiling the model, and samples
    greedy token IDs on device. A warmed fixed-signature decode may instead
    replay one outer CUDA Graph; shape or CSR-indptr changes fail closed and
@@ -110,7 +110,7 @@ engine/CLI configuration and qualification scope.
 The executor coordinates state and computation without moving their ownership
 boundaries. OrbitKV derives backend-neutral state facts from a validated
 manifest; the executor binds those facts to arena contracts and lowers them into
-Luminal's compiler vocabulary. Luminal matches and selects implementations in
+OrbitKV compiler's compiler vocabulary. OrbitKV compiler matches and selects implementations in
 egglog, while the CUDA runtime owns candidate preparation, resource validation,
 profiling, and loading.
 
@@ -126,7 +126,7 @@ Current state facts describe one selected physical realization. Full joint
 layout search still requires explicit physical-choice inputs, deterministic
 OrbitKV validation, and matching manifest/arena/artifact identities. Runtime
 facts such as current sharing and page contiguity must be guarded rather than
-inferred from one profiling fixture. Luminal may optimize graph-local buffer
+inferred from one profiling fixture. OrbitKV compiler may optimize graph-local buffer
 lifetimes; OrbitKV retains page generations, cross-request references,
 publication, retirement, and reuse authority.
 
@@ -142,7 +142,7 @@ default. `new_with_residence` additionally accepts a backend-neutral
 `PhysicalResidencePolicy` for controlled experiments:
 
 - `Compiled` uses generated address and retirement programs.
-- `RequestLifetime` keeps the same attention visibility and Luminal kernels,
+- `RequestLifetime` keeps the same attention visibility and OrbitKV compiler kernels,
   but uses append-only addresses and retains physical pages until request
   release.
 
@@ -192,34 +192,27 @@ crates/orbitkv-executor/
     transport.rs          external byte-movement contract
   tests/                  real-byte reference transport closures
 docs/                     current product contracts
-third_party/luminal/      complete pinned compiler/executor fork
-results/                  compact reviewed current evidence, never active source
+crates/orbitkv-compiler/   symbolic graphs, equivalence compilation, search utilities
+crates/orbitkv-ops/        portable operation contracts and graph builders
+crates/orbitkv-cuda/       CUDA providers, compilation, profiling and execution
+crates/orbitkv-tracing/    compiler/runtime diagnostics
+results/                  compact reviewed evidence, never active source
 ```
 
-The [code and test layout](code-layout.md) defines module entries, private unit
-tests, public-API integration suites, fixtures, and test helpers consistently
-across the three owned crates.
-
-The Luminal submodule preserves its upstream history. `crates/orbitkv-executor/Cargo.toml`
-depends directly on its local crates, so the reviewed fork source and the code
-compiled into the product are the same tree. OrbitKV-specific changes are made
-in the fork and pinned by the parent submodule pointer, rather than copied into
-model- or hardware-specific directories. See
-[executor-upstream.md](executor-upstream.md) for the update procedure.
-
-The root Cargo workspace contains exactly the three owned `crates/orbitkv-*`
-packages. `third_party/luminal` is a path dependency but is explicitly excluded
-from workspace membership, so upstream crates remain visibly third-party and
-can be synchronized and qualified independently.
+The [code and test layout](code-layout.md) applies to all seven owned crates.
+They share the root workspace and lockfile. Default members include every host
+crate; CUDA device tests are explicit. The [compiler maintenance policy](compiler-maintenance.md)
+records source ancestry and licenses. Compiler and state-contract updates are
+reviewed and qualified together in this repository.
 
 ## Enforced dependency boundaries
 
-The crate graph is intentionally one-way. `orbitkv` has no executor, Luminal,
+The crate graph is intentionally one-way. `orbitkv` has no executor, OrbitKV compiler,
 server, async-runtime, or HTTP dependency. `orbitkv-executor` depends inward on
 `orbitkv` and the embedded compiler crates, but never on `orbitkv-engine`.
 `orbitkv-engine` joins core and executor and owns the optional frontend. Inside
 that crate, `protocol` and `frontend` remain logical boundaries: they cannot
-import core/executor/Luminal implementations or name page, arena, and decoder
+import core/executor/OrbitKV compiler implementations or name page, arena, and decoder
 implementation types. `tools/verify_active_source.py` checks this source boundary
 in addition to the Cargo dependency graph. The frontend feature compiles and
 tests without enabling CUDA. External KV transports live in `orbitkv-executor`
@@ -227,10 +220,10 @@ because they operate on lowered tensor spans, while replica identity, pins,
 publication, and deletion authority stay in `orbitkv`.
 
 The compiler boundary shares semantic lifetime, physical arena, and
-persistent-state constraints in the OrbitKV-to-Luminal direction. A candidate
+persistent-state constraints in the OrbitKV-to-OrbitKV compiler direction. A candidate
 that violates a required state alias is rejected before profiling, and an
 artifact containing such a candidate is rejected during load. Backend-specific
-egglog and CUDA types stay inside the fork and executor; Luminal never receives
+egglog and CUDA types stay inside the compiler/backend and executor; OrbitKV compiler never receives
 page-allocation, publication, or lifecycle authority.
 
 Concretely, `RuntimeManifest::state_layout_facts` emits a backend-neutral view
@@ -242,11 +235,11 @@ participates in decoder artifact identity, so an artifact cannot silently
 survive a changed state/search contract. Fixed-state lifecycle joins token KV in
 one RuntimeSession transaction. The executor owns stable per-class CUDA
 allocations, lowers session-authored generation leases to byte ranges, and
-shares those allocations with Luminal through typed state bindings without
+shares those allocations with OrbitKV compiler through typed state bindings without
 transferring lifecycle authority. A fixed graph sees the complete arena plus a
 small dynamic destination-slot tensor; manifest layer order determines the
 per-layer byte region. Search uses a private scratch allocation, so profiling
-cannot mutate live manager state. Success evidence is withheld until a Luminal
+cannot mutate live manager state. Success evidence is withheld until a OrbitKV compiler
 execution receipt tied to the exact shared allocation and runtime registration
 has synchronized its CUDA event. The ignored-by-default real-device
 qualification gate passes on H20 and executes two recurrent transitions and
@@ -261,7 +254,7 @@ receipts. Binding policy is explicit: packed recurrent and convolution updates
 both require an in-place state-commit schedule selected through egglog.
 
 The recurrent computation boundary is semantic rather than model-specific. A
-normalized gated-delta transition is expressed as pure Luminal HLIR over
+normalized gated-delta transition is expressed as pure OrbitKV compiler HLIR over
 `query`, `key`, `value`, `log_decay`, `update_gate`, and previous state, yielding
 both token values and next state. An independent Rust sequence oracle defines
 f32 accumulation and proves that chunked continuation from a returned state is
@@ -269,7 +262,7 @@ equivalent to one-shot execution. The semantic HLIR and packed CUDA path support
 different key and value-head counts through an exact grouped-head mapping. A
 second graph composes checkpoint-shaped input projections, minimal `K-1`
 causal-convolution history, delta gates, recurrence, gated RMS normalization,
-and output projection. The Luminal fork recognizes the exact rank-four
+and output projection. The OrbitKV compiler recognizes the exact rank-four
 `state * decay + key * delta` subgraph and adds an in-place CUDA state-update
 candidate to the same e-class. Its static resource pass proves ordered reads of
 the old state precede mutation and rejects competing reads. Binding selected
@@ -308,7 +301,7 @@ Its independent two-kernel CUDA implementation is a correctness oracle and is
 not a deployment-eligible fallback.
 Egglog unions four legal DeepGEMM tile schedules into that e-class;
 candidate preparation JIT-compiles the resolved provider source before timing, and
-Luminal's normal device profiler chooses the implementation per dynamic bucket.
+OrbitKV compiler's normal device profiler chooses the implementation per dynamic bucket.
 The selected LLIR contains a digest of provider/dependency and wrapper contents
 plus the tile variant. Strict replay checks the recorded provider identity
 against current sources before loading that implementation.
@@ -334,7 +327,7 @@ layout search remain open; see [FP8 region tuning](fp8-region-tuning.md).
 
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product
-Luminal dependencies to resolve through the visible submodule, rejects removed
+compiler dependencies to resolve through the root workspace, rejects removed
 compatibility paths and model/hardware/version-specific active filenames, and
 bounds source-file size. The gate cannot prove every semantic ownership rule,
 so transaction and failure-atomicity tests remain the executable authority.
@@ -349,7 +342,7 @@ definitions, scratch ownership and DeepGEMM tile ordering have separate owners.
 
 [Generated module artifacts](module-artifacts.md) sit at the CUDA backend
 boundary. OrbitKV embeds the selected images with its schedule identity, while
-Luminal owns serialization, target/compiler checks and strict source lookup.
+OrbitKV compiler owns serialization, target/compiler checks and strict source lookup.
 The runtime retains that policy through bucket materialization and execution;
 weight loading, provider planning and live CUDA resources keep their own owners.
 
@@ -381,7 +374,7 @@ performance qualification remains outside this closure.
 Model-step completion still relies on the embedding runtime's completion
 assertion. Generic stable-input outer-graph replay and a released-checkpoint
 capture/replay lifecycle pass on H20. The current parent graph preserves
-Luminal's searched executables
+OrbitKV compiler's searched executables
 as child graphs and orders persistent-state D2D epilogues after them. In their
 recorded source closure, narrow fixed-step matched tests improved decode wall
 time by 5.8-8.3%; that result is not a current-tree claim and broader

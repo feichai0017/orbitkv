@@ -5,11 +5,11 @@ use super::{
     DecoderCompileConfig, DecoderConfig, DecoderError, DecoderTuningProfile, DecoderWeightFeatures,
 };
 use crate::{ExecutorArena, ExecutorPlan, FixedStateArenaRegistration};
-use luminal::graph::SelectedSchedule;
-use luminal_cuda_lite::CudaModuleArtifact;
+use orbitkv_compiler::graph::SelectedSchedule;
+use orbitkv_cuda::CudaModuleArtifact;
 
 // A decoder artifact is a complete, target-validated execution program.
-const DECODER_ARTIFACT_SCHEMA: u32 = 10;
+const DECODER_ARTIFACT_SCHEMA: u32 = 11;
 
 /// Selected schedule and CUDA module images for one native decoder configuration.
 ///

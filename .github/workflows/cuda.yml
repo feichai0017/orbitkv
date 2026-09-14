@@ -1,0 +1,23 @@
+name: CUDA device regressions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  device:
+    runs-on: [self-hosted, linux, x64, cuda]
+    timeout-minutes: 30
+    env:
+      RUST_TEST_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: nvidia-smi
+      - run: cargo clippy --locked -p orbitkv-cuda --all-targets -- -D warnings
+      - run: cargo test --locked --release -p orbitkv-cuda --test hotspot_search --test search_coverage -- --ignored
+      - run: cargo test --locked --release -p orbitkv-executor --features cuda --test state_arena_cuda -- --ignored

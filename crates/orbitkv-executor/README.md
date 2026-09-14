@@ -1,61 +1,29 @@
 # OrbitKV executor
 
-`crates/orbitkv-executor/` joins OrbitKV's state compiler with the forked Luminal model
-compiler. It does not own a second page allocator.
+The executor connects the state manager with OrbitKV's integrated model compiler
+and CUDA backend. It imports checkpoint semantics, builds a symbolic decoder,
+binds manager-authored state arenas, and executes scheduled batches. It does
+not allocate logical pages or authorize their reuse.
 
-The Rust composition crate lowers an OrbitKV `RuntimeManifest` into immutable
-attention-class geometry, produces FlashInfer CSR metadata from authoritative
-request page views, and translates prepared write/COW actions into physical
-token slots. Recurrent and convolution state identities, layer assignments, and
-checkpoint geometry are also retained in `ExecutorPlan` and Luminal compiler
-facts. Their atomic session transaction is host-tested; device operators and
-stable fixed-state arena bindings remain explicit fail-closed gaps. The
-ordinary paged-attention executor refuses to sign fixed-state success evidence
-until a real device operator supplies it. The complete Luminal fork lives in
-`third_party/luminal/` as a Git
-submodule tracking `feichai0017/orbitkv-luminal`; its `upstream` remote is
-`luminal-ai/luminal`.
+`ExecutorPlan` carries attention classes, fixed-state geometry, and physical
+arena facts. `CompilerFacts` lowers those contracts into each search bucket.
+Persistent KV updates must alias their registered inputs; recurrent and
+convolution state updates produce event-backed completion evidence.
 
-The fork adds an external paged-attention entry point that accepts page size,
-page indices, query/KV indptrs, and last-page lengths directly. This is a
-source-level integration boundary. Accelerator correctness and throughput are
-not qualified by host compilation alone. The current pin has real-device
-correctness coverage for externally planned block pages and a
-released-checkpoint prefill/decode path. `DecoderGraph` assigns each
-layer to its manifest class and keeps per-class write slots, CSR metadata,
-context dimensions, and arena geometry. A synthetic interleaved Full/Sliding
-policy completes a short prefill and captured decode on H20; this validates the
-device plumbing, not a released hybrid model. `CompiledDecoder` builds one
-symbolic graph, performs one real search over separate decode and prefill
-buckets, reserves stable-capacity dynamic inputs, and retains one persistent
-K/V arena across every dispatch. OrbitKV registers those updates as required
-aliases, so materializing candidates and incompatible stored artifacts fail
-closed. Prefill and repeated decode now use one runtime; there is
-no cross-runtime `transfer_cache` path. Throughput remains unqualified.
-Greedy argmax is compiled into the same graph; the default runtime API reads
-only token IDs. Full-logit transfer remains available through an explicit
-diagnostic API for correctness comparison. `capture_decode` performs one
-ordinary warmup and records the prepared decode work as a caller-owned outer
-CUDA Graph; `replay_decode` updates stable input allocations and launches it.
-The initial contract freezes query/batch/context shape and the CSR indptr
-arrays. Page identities and last-page lengths may change without recapture.
-The Luminal capture primitive and the complete released-checkpoint replay path
-pass their H20 correctness tests. A matched diagnostic found flattened replay
-24.9% slower than eager materialized-graph dispatch in its recorded source
-closure. That source closure instead
-composes those selected executables as child nodes and appends persistent-state
-D2D copies to one parent graph; matched fixed-step decode improved by 8.3% over
-20 iterations and 5.8% over a 100-iteration confirmation. This historical
-result does not qualify the current tree, throughput, larger batches, or other
-checkpoints.
+`CompiledDecoder` searches legal implementations during initialization or loads
+a compatible schema-11 artifact. Token IDs, positions and attention metadata
+update stable-capacity device allocations. The normal path reads device-selected
+greedy token IDs; full logits are available through an explicit diagnostic API.
+Optional outer decode capture retains selected child graphs under a guarded
+signature. Provider replanning and bucket materialization have separate costs.
 
-The executor also owns the byte-movement edge for external KV tiers.
-`ExternalKvTransport` is an object-safe async contract over manager-authored,
-executor-lowered layer/component spans. The included host-memory implementation
-moves real bytes, verifies per-page checksums and partial tails, and injects
-unobserved or ambiguous failures. It is a protocol reference and test oracle,
-not a performance backend. Mooncake and NIXL must implement this boundary
-without acquiring page-allocation or lifecycle authority.
+The executor also owns `ExternalKvTransport`, the asynchronous byte-movement
+boundary over manager-authored spans. Its host-memory implementation is a
+reference transport. Production remote storage and CPU weight offload remain
+separate qualification work.
 
-The exact fork delta and upstream update procedure are documented in
-[`docs/executor-upstream.md`](../../docs/executor-upstream.md).
+The bounded H20 model closures and remaining gaps are recorded in the
+[implementation status](../../docs/implementation-status.md). See
+[compiler architecture](../../docs/compiler.md),
+[maintenance](../../docs/compiler-maintenance.md), and
+[state lifecycle](../../docs/runtime-session.md) for the execution contracts.

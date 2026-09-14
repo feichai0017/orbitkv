@@ -1,11 +1,11 @@
-//! Direct Luminal graph boundary for OrbitKV-managed paged attention.
+//! Direct `OrbitKV` graph boundary for `OrbitKV`-managed paged attention.
 
-use luminal::{
+use orbitkv_compiler::{
     dtype::DType,
     prelude::{Expression, Graph, GraphTensor},
 };
-use luminal_cuda_lite::runtime::CudaRuntime;
-use luminal_nn::ops::attention::{
+use orbitkv_cuda::runtime::CudaRuntime;
+use orbitkv_ops::ops::attention::{
     AttentionInputs, AttentionMask, AttentionSpec, KvView, PagedKvLayout, PagedKvView,
     attention as compile_attention,
 };
@@ -33,7 +33,7 @@ pub struct PagedAttentionInputs {
     pub context_pages: Expression,
 }
 
-/// Graph inputs that carry one OrbitKV-authored CSR page plan.
+/// Graph inputs that carry one `OrbitKV`-authored CSR page plan.
 #[derive(Clone, Copy)]
 pub struct PagedAttentionMetadata {
     class_id: u16,
@@ -153,7 +153,7 @@ impl PagedAttentionMetadata {
 ///
 /// Q must be a contiguous `(query_tokens, heads, head_dim)` NHD tensor,
 /// with an explicit NHD storage contract. The result stays heads-first for the surrounding
-/// graph. The K/V buffers remain Luminal tensors, but their page identities
+/// graph. The K/V buffers remain `OrbitKV` tensors, but their page identities
 /// and lifetime are controlled by `RuntimeSession`.
 ///
 /// # Errors

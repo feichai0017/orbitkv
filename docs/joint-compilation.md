@@ -5,7 +5,7 @@ proposed extensions; it does not claim that joint layout search or generated
 persistent execution is implemented.
 
 The goal is one native Rust inference process in which OrbitKV compiles and
-owns persistent state, Luminal compiles equivalent compute implementations, and
+owns persistent state, OrbitKV compiler compiles equivalent compute implementations, and
 the executor selects a compatible state/compute deployment. The first acceptance
 workload is the official Qwen3.8-27B-FP8 text decoder on H20. Its structural
 requirements drive coverage; checkpoint names must never select an operator,
@@ -21,7 +21,7 @@ by the current checkpoint loader or external KV transport.
 
 - `RuntimeManifest` and backend-neutral `StateLayoutFacts` describe state classes,
   retention, address/retirement programs, and byte geometry. The executor joins
-  these facts with stable arenas and lowers them into Luminal compiler facts.
+  these facts with stable arenas and lowers them into compiler facts.
 - Token-KV updates require in-place aliases. Recurrent/convolution state uses
   typed shared arenas, generation-checked bindings, and event-backed completion.
   Search uses scratch state rather than live request state.
@@ -50,9 +50,9 @@ and [roadmap.md](roadmap.md) for the current implementation and qualification sc
 
 | Component | Owns | Boundary |
 | --- | --- | --- |
-| `orbitkv` | State semantics, legal state realizations, pages, generations, Prefix/COW, publication, retirement, acknowledgement, reuse | No Luminal, egglog, CUDA, provider, or model-name dependency |
+| `orbitkv` | State semantics, legal state realizations, pages, generations, Prefix/COW, publication, retirement, acknowledgement, reuse | No OrbitKV compiler, egglog, CUDA, provider, or model-name dependency |
 | `orbitkv-executor` | Proposed joint compilation coordinator, arena bindings, provider adapters, compiled deployment, streams and execution receipts | Can join state and compute contracts; cannot grant page ownership or bypass session transactions |
-| Luminal | Equivalent graphs, algorithm regions, kernel schedules, resource/alias validation and profiling | Consumes state constraints; never owns the runtime page lifecycle |
+| OrbitKV compiler | Equivalent graphs, algorithm regions, kernel schedules, resource/alias validation and profiling | Consumes state constraints; never owns the runtime page lifecycle |
 | Operator providers | Implementations and their numerical, launch, workspace and effect contracts | Cannot hide page allocation, state publication, or unaccounted device work |
 | `orbitkv-engine` | Logical request/output contracts, optional client frontend, scheduling, admission, runtime plan selection, execution and completion coordination | Protocol/frontend modules contain no page identities or kernel policy; the coordinator invokes the executor and `RuntimeSession` without checkpoint-name dispatch |
 
@@ -140,7 +140,7 @@ The proposed joint coordinator operates as follows:
    generated manifest. Existing manifest validation reconstructs the expected
    plan from its source.
 3. For each realization, generate a consistent manifest, state facts, arena ABI,
-   and compute graph. Luminal searches providers, algorithm regions, and tile
+   and compute graph. OrbitKV compiler searches providers, algorithm regions, and tile
    schedules under that contract.
 4. Reject numerical, layout, alias, synchronization, and resource violations
    before interpreting performance. Use independent references and scratch state

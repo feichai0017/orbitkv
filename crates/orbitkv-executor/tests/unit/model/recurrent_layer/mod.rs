@@ -1,4 +1,4 @@
-use luminal::prelude::{CompileOptions, ReferenceRuntime, Runtime};
+use orbitkv_compiler::prelude::{CompileOptions, ReferenceRuntime, Runtime};
 
 use super::*;
 use crate::model::{
@@ -97,8 +97,8 @@ fn decode_core_updates_convolution_and_recurrent_state() {
 
 #[test]
 fn state_graph_composes_both_manager_owned_state_classes() {
-    use luminal_cuda_lite::runtime::CudaRuntime;
     use orbitkv::RecurrentFamily;
+    use orbitkv_cuda::runtime::CudaRuntime;
 
     let config = config();
     let plan = crate::tests::support::executor_plan_with_fixed_states(

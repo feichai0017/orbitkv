@@ -2,12 +2,12 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use luminal_cuda_lite::cudarc::driver::{CudaSlice, CudaStream, DevicePtr};
-use luminal_cuda_lite::runtime::{
+use orbitkv::{EngineFixedStateEvidence, EngineFixedStatePlan, StateSlotLease};
+use orbitkv_cuda::cudarc::driver::{CudaSlice, CudaStream, DevicePtr};
+use orbitkv_cuda::runtime::{
     CudaExecutionReceipt, CudaRuntime, CudaSharedStateBinding, CudaSharedStatePolicy,
     copy_shared_device_range, zero_shared_device_range,
 };
-use orbitkv::{EngineFixedStateEvidence, EngineFixedStatePlan, StateSlotLease};
 use thiserror::Error;
 
 use crate::{
@@ -62,7 +62,7 @@ pub struct PendingFixedStateCompletion {
 }
 
 /// Runtime-owned proof that one fixed-state class is bound to a particular
-/// Luminal required alias.
+/// `OrbitKV` required alias.
 #[derive(Clone)]
 pub struct FixedStateRuntimeBinding {
     state_id: u16,
@@ -99,7 +99,7 @@ pub enum FixedStateDeviceError {
     #[error(transparent)]
     Contract(#[from] ExecutorError),
     #[error(transparent)]
-    Device(#[from] luminal_cuda_lite::cudarc::driver::DriverError),
+    Device(#[from] orbitkv_cuda::cudarc::driver::DriverError),
     #[error("fixed-state plan is empty or has duplicate/unknown classes")]
     InvalidPlan,
     #[error("fixed-state source and destination ranges overlap")]
@@ -256,7 +256,7 @@ impl FixedStateDeviceArenas {
         })
     }
 
-    /// Binds an entire stable arena as a Luminal state edge.
+    /// Binds an entire stable arena as a `OrbitKV` state edge.
     /// The runtime retains shared ownership of the allocation.
     ///
     /// # Errors
@@ -395,7 +395,7 @@ impl ReadyFixedStateDeviceBatch {
         &self.initialized.batches
     }
 
-    /// Executes Luminal after initialization and records completion on the
+    /// Executes `OrbitKV` after initialization and records completion on the
     /// same stream. Every planned state class must be represented by a shared
     /// required alias owned by that runtime.
     ///
@@ -406,7 +406,7 @@ impl ReadyFixedStateDeviceBatch {
     pub fn complete_after(
         self,
         runtime: &mut CudaRuntime,
-        graph: &luminal::prelude::Graph,
+        graph: &orbitkv_compiler::prelude::Graph,
         bindings: &[FixedStateRuntimeBinding],
     ) -> Result<PendingFixedStateCompletion, FixedStateDeviceError> {
         self.initialized.validate_bindings(bindings)?;
@@ -417,7 +417,7 @@ impl ReadyFixedStateDeviceBatch {
         Ok(self.initialized.into_pending(receipt, bindings))
     }
 
-    /// Launches a captured Luminal execution after initialization and records
+    /// Launches a captured `OrbitKV` execution after initialization and records
     /// completion on the same stream.
     ///
     /// # Errors
@@ -426,7 +426,7 @@ impl ReadyFixedStateDeviceBatch {
     /// CUDA launch or event failures.
     pub fn launch_captured(
         self,
-        execution: &luminal_cuda_lite::runtime::CapturedCudaExecution,
+        execution: &orbitkv_cuda::runtime::CapturedCudaExecution,
         bindings: &[FixedStateRuntimeBinding],
     ) -> Result<PendingFixedStateCompletion, FixedStateDeviceError> {
         self.initialized.validate_bindings(bindings)?;

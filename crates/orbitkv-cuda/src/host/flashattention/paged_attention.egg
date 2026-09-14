@@ -1,0 +1,17 @@
+; Metadata conversion and scratch belong to the provider; K/V retain their
+; OrbitKV allocations. Capability admission precedes executable extraction.
+(rule
+    ((attention-op ?cid ?qh ?kh ?hd ?hd ?q ?requests ?dt ?scale ?mask)
+     (paged-kv-view ?cid ?state ?page ?ctx (TokenMajorKv))
+     (cuda-attention-provider "flashattention" "fa3-paged" ?cid ?window)
+     (= ?semantic (Op (CustomOpKind ?cid ?dt)
+        (ICons ?query (ICons ?k (ICons ?v (ICons ?indices
+        (ICons ?qptr (ICons ?kptr (ICons ?last (INil)))))))))))
+    ((let ?provider (Op
+        (FlashAttention ?qh ?kh ?hd ?page ?q ?ctx ?requests ?dt ?scale ?window "@PROVIDER_IDENTITY@")
+        (ICons ?query (ICons ?k (ICons ?v (ICons ?indices
+        (ICons ?qptr (ICons ?kptr (ICons ?last (INil))))))))))
+     (union ?semantic ?provider)
+     (set (dtype ?provider) ?dt))
+    :ruleset matmul_backend
+    :name "FlashAttention-3 provider for logical attention with paged KV")

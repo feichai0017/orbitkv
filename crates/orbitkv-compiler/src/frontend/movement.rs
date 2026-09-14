@@ -1,0 +1,697 @@
+use itertools::Itertools;
+
+use crate::{
+    hlir::{Gather, Scatter},
+    prelude::*,
+};
+
+/// Select elementwise without arithmetic masking. Multiplying an inactive
+/// branch by zero would let NaNs and infinities leak through (`0 * NaN` is
+/// NaN), which is especially visible when padding tensors containing them.
+fn select_by_index(
+    graph: &mut Graph,
+    index: GraphTensor,
+    if_true: GraphTensor,
+    if_false: GraphTensor,
+) -> GraphTensor {
+    assert_eq!(if_true.dims(), if_false.dims());
+    assert_eq!(if_true.dtype, if_false.dtype);
+    assert_eq!(index.dims(), if_true.dims());
+    assert_eq!(index.dtype, DType::Int);
+
+    let shape = if_true.dims();
+    let mut packed_shape = shape.clone();
+    packed_shape.push(2usize.into());
+    let even = graph.iota(Expression::from('z') * 2, shape.clone());
+    let odd = graph.iota(Expression::from('z') * 2 + 1, shape.clone());
+    let zero = graph.iota(0, packed_shape).cast(if_true.dtype);
+    let packed = if_true.scatter(odd, if_false.scatter(even, zero));
+    let base = graph.iota(Expression::from('z') * 2, shape);
+    packed.gather(base + index)
+}
+
+impl GraphTensor {
+    /// Swap dimensions of the tensor
+    pub fn permute(mut self, axes: impl ToAxes) -> GraphTensor {
+        self.shape.permute(axes.to_axes());
+        self
+    }
+
+    /// Swap 2 dimensions. This is a view-only operation and does not materialize a new tensor
+    pub fn transpose(self, dim0: usize, dim1: usize) -> GraphTensor {
+        let num_dims = self.shape.len();
+        assert!(
+            dim0 < num_dims && dim1 < num_dims,
+            "transpose dimensions ({dim0}, {dim1}) out of bounds for tensor with {num_dims} dimensions"
+        );
+        let mut perm_axes: Vec<usize> = (0..num_dims).collect();
+        perm_axes.swap(dim0, dim1);
+        self.permute(perm_axes)
+    }
+
+    /// Transpose a 2D tensor
+    pub fn t(self) -> GraphTensor {
+        assert_eq!(self.shape.len(), 2, ".t() supports only 2D tensors");
+        self.transpose(0, 1)
+    }
+
+    /// Broadcast tensor along a new dimension
+    pub fn expand_dim(mut self, axis: usize, size: impl Into<Expression>) -> GraphTensor {
+        self.shape.expand_dim(axis, size);
+        self
+    }
+
+    /// Broadcast tensor along new dimensions on the right-hand-side. For instance, if the original tensor is [5, 2] and you call .expand([4, 2, 3]), the final  tensor will be [5, 2, 4, 2, 3]
+    pub fn expand_rhs(mut self, shape: impl ToShape) -> GraphTensor {
+        let orig_dims = self.shape.len();
+        for (i, s) in shape.to_shape().into_iter().enumerate() {
+            self.shape.expand_dim(orig_dims + i, s);
+        }
+        self
+    }
+
+    /// Tile a tensor along its existing dimensions without materializing a new buffer.
+    pub fn repeat(mut self, repeats: impl ToShape) -> GraphTensor {
+        self.shape.repeat(repeats);
+        self
+    }
+
+    /// Broadcast tensor along new dimensions on the left-hand-side. For instance, if the original tensor is [5, 2] and you call .expand([4, 2, 3]), the final  tensor will be [5, 2, 4, 2, 3]
+    pub fn expand_lhs(mut self, shape: impl ToShape) -> GraphTensor {
+        for (i, s) in shape.to_shape().into_iter().enumerate() {
+            self.shape.expand_dim(i, s);
+        }
+        self
+    }
+
+    pub fn expand_to_shape_on_axes(
+        mut self,
+        shape: impl ToShape,
+        axes: impl ToAxes,
+    ) -> GraphTensor {
+        let shape = shape.to_shape();
+        let axes = axes.to_axes();
+        assert_eq!(shape.len(), self.shape.len() + axes.len());
+        for axis in axes.into_iter().sorted() {
+            self = self.expand_dim(axis, shape[axis]);
+        }
+        self
+    }
+
+    /// Merge two dimensions together
+    pub fn merge_dims(mut self, axis1: usize, axis2: usize) -> GraphTensor {
+        self.shape.merge_dims(axis1, axis2);
+        self
+    }
+
+    /// Flatten all dimensions into a single 1D tensor.
+    pub fn flatten(mut self) -> GraphTensor {
+        self.shape.flatten();
+        self
+    }
+
+    //// Split a dim into 2 dims, new dim is placed directly after original dim
+    pub fn split_dims(mut self, axis: usize, new_dim_size: impl Into<Expression>) -> GraphTensor {
+        self.shape.split_dims(axis, new_dim_size);
+        self
+    }
+
+    /// add a new dimension of size 1 at the specified place
+    pub fn unsqueeze(mut self, dim: usize) -> GraphTensor {
+        assert!(self.shape.len() < 10, "Shape is maxed out at 10 dimensions");
+        self.shape.expand_dim(dim, 1);
+        self
+    }
+
+    /// remove a dimension of size 1
+    pub fn squeeze(mut self, axis: usize) -> GraphTensor {
+        assert_eq!(
+            self.dims()[axis],
+            Expression::from(1),
+            "Only dimensions of size 1 can be squeezed!"
+        );
+        self.shape.remove_dim(axis);
+        self
+    }
+
+    /// Gather elements along an axis using per-element indices (ONNX GatherElements semantics).
+    ///
+    /// `output[i0,..,ik] = self[i0,..,i_{axis-1}, indices[i0,..,ik], i_{axis+1},..,ik]`
+    ///
+    /// indices must have the same rank as self and the same shape as the output.
+    pub fn gather_elements(self, indexes: GraphTensor, axis: usize) -> GraphTensor {
+        let dims = self.dims();
+        let rank = dims.len();
+        let out_shape: Vec<usize> = indexes
+            .dims()
+            .iter()
+            .map(|d| {
+                d.to_usize()
+                    .expect("gather_elements: index dim must be concrete")
+            })
+            .collect();
+
+        // Row-major strides: stride[i] = prod(dims[i+1..])
+        let strides: Vec<usize> = (0..rank)
+            .map(|i| {
+                dims[i + 1..]
+                    .iter()
+                    .map(|d| d.to_usize().unwrap())
+                    .product()
+            })
+            .collect();
+
+        // Normalize negative indices for axis dim
+        let axis_dim = dims[axis].to_usize().unwrap();
+        let idx_f32 = indexes.cast(DType::F32);
+        let zero = idx_f32
+            .graph()
+            .constant_float(0.0)
+            .expand_rhs(idx_f32.shape);
+        let adj = idx_f32
+            .graph()
+            .constant_float(axis_dim as f32)
+            .expand_rhs(idx_f32.shape);
+        let is_neg = idx_f32.lt(zero).cast(DType::F32);
+        let idx_normalized = (idx_f32 + (is_neg * adj)).cast(DType::Int);
+
+        // Non-axis flat index via iota + flatten_strides
+        let axis_exprs: Vec<Expression> = (0..rank)
+            .map(|d| {
+                if d == axis {
+                    Expression::from(0)
+                } else {
+                    Expression::from('z') * strides[d]
+                }
+            })
+            .collect();
+        let out_shape_expr: Vec<Expression> =
+            out_shape.iter().map(|&s| Expression::from(s)).collect();
+        let non_axis_flat = self
+            .graph()
+            .iota(flatten_strides(&out_shape_expr, &axis_exprs), out_shape);
+
+        // Axis contribution from the runtime index values
+        let stride_tensor = self
+            .graph()
+            .constant(strides[axis])
+            .expand_rhs(idx_normalized.shape);
+        let flat_idx = non_axis_flat + idx_normalized * stride_tensor;
+
+        self.gather(flat_idx)
+    }
+
+    /// Scatter updates into a copy of self at positions specified by per-element indices along an axis.
+    ///
+    /// ONNX ScatterElements semantics:
+    /// `output[i0,..,i_{a-1}, indices[i0,..,ik], i_{a+1},..,ik] = updates[i0,..,ik]`
+    ///
+    /// indices and updates must have the same shape.
+    /// Overlapping writes: last write wins.
+    pub fn scatter_elements(
+        self,
+        indices: GraphTensor,
+        updates: GraphTensor,
+        axis: usize,
+    ) -> GraphTensor {
+        let data_dims = self.dims();
+        let rank = data_dims.len();
+        let idx_shape: Vec<usize> = indices
+            .dims()
+            .iter()
+            .map(|d| {
+                d.to_usize()
+                    .expect("scatter_elements: index dim must be concrete")
+            })
+            .collect();
+
+        // Row-major strides for data
+        let strides: Vec<usize> = (0..rank)
+            .map(|i| {
+                data_dims[i + 1..]
+                    .iter()
+                    .map(|d| d.to_usize().unwrap())
+                    .product()
+            })
+            .collect();
+
+        // Normalize negative indices for axis dim
+        let axis_dim = data_dims[axis].to_usize().unwrap();
+        let idx_f32 = indices.cast(DType::F32);
+        let zero = idx_f32
+            .graph()
+            .constant_float(0.0)
+            .expand_rhs(idx_f32.shape);
+        let adj = idx_f32
+            .graph()
+            .constant_float(axis_dim as f32)
+            .expand_rhs(idx_f32.shape);
+        let is_neg = idx_f32.lt(zero).cast(DType::F32);
+        let idx_normalized = (idx_f32 + (is_neg * adj)).cast(DType::Int);
+
+        // Non-axis flat index via iota + flatten_strides
+        let axis_exprs: Vec<Expression> = (0..rank)
+            .map(|d| {
+                if d == axis {
+                    Expression::from(0)
+                } else {
+                    Expression::from('z') * strides[d]
+                }
+            })
+            .collect();
+        let idx_shape_expr: Vec<Expression> =
+            idx_shape.iter().map(|&s| Expression::from(s)).collect();
+        let non_axis_flat = self.graph().iota(
+            flatten_strides(&idx_shape_expr, &axis_exprs),
+            idx_shape.clone(),
+        );
+
+        // Axis contribution from the runtime index values
+        let stride_tensor = self
+            .graph()
+            .constant(strides[axis])
+            .expand_rhs(idx_normalized.shape);
+        let flat_dest = non_axis_flat + idx_normalized * stride_tensor;
+
+        // Flatten to 1D using materialize + reshape
+        let flat_dest_1d = flat_dest.flatten();
+        let flat_updates = updates.flatten();
+        let flat_data = self.flatten();
+
+        // Use HLIR Scatter: dest[indexes[i]] = src[i]
+        let output_flat = flat_updates.scatter(flat_dest_1d, flat_data);
+
+        // Reshape back to data_shape
+        let data_shape_usize: Vec<usize> =
+            data_dims.iter().map(|d| d.to_usize().unwrap()).collect();
+        let mut result = output_flat;
+        result.shape = ShapeTracker::new(data_shape_usize);
+
+        result
+    }
+
+    /// Scatter updates into a copy of self using multi-dimensional index vectors (ONNX ScatterND semantics).
+    ///
+    /// `indices` has shape [S0, ..., Sq-2, K] where K <= rank(data).
+    /// `updates` has shape [S0, ..., Sq-2, D_K, ..., D_{r-1}].
+    /// For each batch element (s0, ..., sq-2):
+    ///   multi_idx = indices[s0, ..., sq-2, :]
+    ///   output[multi_idx[0], ..., multi_idx[K-1], :, ..] = updates[s0, ..., sq-2, :, ..]
+    pub fn scatter_nd(self, indices: GraphTensor, updates: GraphTensor) -> GraphTensor {
+        let indices = indices.cast(DType::Int);
+        let data_dims = self.dims();
+        let data_rank = data_dims.len();
+        let idx_dims = indices.dims();
+        let idx_rank = idx_dims.len();
+
+        let data_shape: Vec<usize> = data_dims
+            .iter()
+            .map(|d| d.to_usize().expect("scatter_nd: data dim must be concrete"))
+            .collect();
+        let idx_shape: Vec<usize> = idx_dims
+            .iter()
+            .map(|d| {
+                d.to_usize()
+                    .expect("scatter_nd: indices dim must be concrete")
+            })
+            .collect();
+
+        let k = idx_shape[idx_rank - 1]; // last dim of indices = number of index dimensions
+        assert!(k <= data_rank, "scatter_nd: K must be <= data rank");
+
+        // Batch shape = indices shape without last dim: [S0, ..., Sq-2]
+        let batch_shape: Vec<usize> = idx_shape[..idx_rank - 1].to_vec();
+        let batch_numel: usize = batch_shape.iter().product::<usize>().max(1);
+
+        // Trailing shape = data_shape[K..]
+        let trailing_shape: Vec<usize> = data_shape[k..].to_vec();
+        let trailing_numel: usize = trailing_shape.iter().product::<usize>().max(1);
+
+        // Row-major strides for data
+        let data_strides: Vec<usize> = (0..data_rank)
+            .map(|i| data_shape[i + 1..].iter().product::<usize>().max(1))
+            .collect();
+
+        // Flatten batch dims of indices to [batch_numel, K] using materialize + reshape
+        let mut indices_flat = indices;
+        if idx_rank > 2 {
+            indices_flat.shape = ShapeTracker::new(vec![batch_numel, k]);
+        }
+        // indices_flat: [batch_numel, K] or [K] if idx_rank == 1
+
+        // For each k_dim, extract the slice and multiply by stride
+        let mut flat_base: Option<GraphTensor> = None;
+        for (k_dim, &stride) in data_strides.iter().enumerate().take(k) {
+            let idx_k = indices_flat.slice_along(k_dim..k_dim + 1, indices_flat.dims().len() - 1);
+            let idx_k = idx_k.squeeze(idx_k.dims().len() - 1);
+
+            let stride_tensor = self.graph().constant(stride).expand_rhs(idx_k.shape);
+            let contribution = idx_k * stride_tensor;
+
+            flat_base = Some(match flat_base {
+                Some(fb) => fb + contribution,
+                None => contribution,
+            });
+        }
+        let flat_base = flat_base.unwrap();
+
+        let mut full_flat_dest = if trailing_shape.is_empty() || trailing_numel == 1 {
+            flat_base
+        } else {
+            // Expand flat_base to [batch_numel, trailing_numel]
+            let mut base_expanded = flat_base.expand_dim(1, trailing_numel);
+
+            let trailing_rank = trailing_shape.len();
+            for (ti, d) in (k..data_rank).enumerate() {
+                let ar = self.graph().arange(data_shape[d]);
+                let mut ar_shaped = ar;
+                for _ in ti + 1..trailing_rank {
+                    let n = ar_shaped.dims().len();
+                    ar_shaped = ar_shaped.expand_dim(n, 1);
+                }
+                for _ in 0..ti {
+                    ar_shaped = ar_shaped.expand_dim(0, 1);
+                }
+                ar_shaped.shape.expand(trailing_shape.clone());
+                // Flatten trailing dims using materialize + reshape
+                let mut ar_flat = ar_shaped;
+                ar_flat.shape = ShapeTracker::new(vec![trailing_numel]);
+                // Expand to [batch_numel, trailing_numel]
+                ar_flat = ar_flat.expand_dim(0, batch_numel);
+
+                let stride_tensor = self
+                    .graph()
+                    .constant(data_strides[d])
+                    .expand_rhs(ar_flat.shape);
+                base_expanded += ar_flat * stride_tensor;
+            }
+            base_expanded
+        };
+
+        full_flat_dest = full_flat_dest.flatten();
+
+        // Flatten data out
+        let flat_updates = updates.flatten();
+        let flat_data = self.flatten();
+
+        // Use HLIR Scatter: dest[indexes[i]] = src[i]
+        let output_flat = flat_updates.scatter(full_flat_dest, flat_data);
+
+        // Reshape back to data_shape
+        let mut result = output_flat;
+        result.shape = ShapeTracker::new(data_shape);
+
+        result
+    }
+
+    pub fn gather(self, indexes: GraphTensor) -> GraphTensor {
+        assert_eq!(
+            indexes.dtype,
+            DType::Int,
+            "Gather indexes must have an integer dtype!"
+        );
+        let id = self.graph().add_op(
+            Gather {
+                input_shapes: vec![indexes.shape, self.shape],
+                ..Default::default()
+            },
+            &[indexes.id, self.id],
+        );
+        GraphTensor::from_id(id, indexes.shape.contiguous(), self.graph_ref, self.dtype)
+    }
+
+    /// Scatter self (src) into dest at flat 1D positions given by indexes.
+    /// output = copy(dest); output[indexes[i]] = src[i]
+    pub fn scatter(self, indexes: GraphTensor, dest: GraphTensor) -> GraphTensor {
+        assert_eq!(
+            indexes.dtype,
+            DType::Int,
+            "Scatter indexes must have an integer dtype!"
+        );
+        // Pad src_strides with leading zero-strides when src has lower rank
+        // than indexes. A zero stride reads the same src element at every
+        // index position — matches PyTorch's broadcast semantics for
+        // `x[idx] = scalar`. Without this, KernelScatter::compile calls
+        // flatten_strides(index_shape, src_strides) with mismatched lengths
+        // and panics with `assertion `left == right` failed, left: 1 right: 0`.
+        let mut src_strides = self.shape.strides.to_vec();
+        let target_rank = indexes.shape.dims.len();
+        while src_strides.len() < target_rank {
+            src_strides.insert(0, Expression::from(0));
+        }
+        let id = self.graph().add_op(
+            Scatter {
+                dest_shape: dest.shape.dims.to_vec(),
+                dest_strides: dest.shape.strides.to_vec(),
+                index_shape: indexes.shape.dims.to_vec(),
+                index_strides: indexes.shape.strides.to_vec(),
+                src_strides,
+            },
+            &[dest.id, indexes.id, self.id],
+        );
+        GraphTensor::from_id(id, dest.shape.contiguous(), self.graph_ref, self.dtype)
+    }
+
+    /// Extracts sliding local windows from an input tensor.
+    pub fn unfold(
+        self,
+        kernel: impl ToShape,
+        strides: impl ToShape,
+        dilation: impl ToShape,
+    ) -> GraphTensor {
+        let (kernel, strides, dilation) =
+            (kernel.to_shape(), strides.to_shape(), dilation.to_shape());
+
+        assert_eq!(
+            self.shape.len(),
+            kernel.len(),
+            "Kernel must be same number of dimensions as tensor!"
+        );
+        assert_eq!(
+            self.shape.len(),
+            strides.len(),
+            "Strides must be same number of dimensions as tensor!"
+        );
+        assert_eq!(
+            self.shape.len(),
+            dilation.len(),
+            "Dilation must be same number of dimensions as tensor!"
+        );
+
+        // Compute input strides (row-major contiguous)
+        let dims = self.dims();
+        let n = dims.len();
+        let mut in_strides = vec![Expression::from(1); n];
+        let mut acc = Expression::from(1);
+        for (dim, in_stride) in dims.iter().zip(&mut in_strides).rev() {
+            *in_stride = acc;
+            acc *= dim;
+        }
+
+        // Per-dim window counts
+        let mut win = Vec::with_capacity(n);
+        for (((dim, k), s), d) in dims.iter().zip(&kernel).zip(&strides).zip(&dilation) {
+            let effective_window = *d * (*k - 1) + 1;
+            win.push((*dim - effective_window).floor_div(s) + 1);
+        }
+
+        // [win..., kernel...]
+        let mut final_shape: Vec<Expression> = win.into_iter().map(|e| e.simplify()).collect();
+        final_shape.extend(kernel.iter().copied());
+
+        // Axis exprs must match final_shape axis order: first w axes, then k axes.
+        // idx = Σ_d (w_d * stride_d + k_d * dilation_d) * in_strides[d]
+        let mut axis_exprs = Vec::with_capacity(2 * n);
+
+        // w axes
+        for i in 0..n {
+            axis_exprs.push(Expression::from('z') * strides[i] * in_strides[i]);
+        }
+        // k axes
+        for i in 0..n {
+            axis_exprs.push(Expression::from('z') * dilation[i] * in_strides[i]);
+        }
+
+        let index_expression = flatten_strides(&final_shape, &axis_exprs).simplify();
+        let iota = self.graph().iota(index_expression, final_shape);
+        self.gather(iota)
+    }
+
+    /// Take a slice of a tensor along multiple dimensions.
+    ///
+    /// ```
+    /// # use orbitkv_compiler::prelude::*;
+    /// # let mut cx = Graph::new();
+    /// let a = cx.tensor((5, 10));
+    /// let b = a.slice((2..4, 1..)); // 2x9 tensor
+    /// assert_eq!(b.dims(), vec![Expression::from(2), Expression::from(9)]);
+    /// ```
+    pub fn slice(mut self, slice: impl ToSlice) -> GraphTensor {
+        let mut ranges = slice.to_range_vec();
+        ranges.extend(
+            self.dims()
+                .iter()
+                .skip(ranges.len())
+                .map(|d| (0.into(), *d)),
+        ); // Make sure we have a range per dim
+        if ranges.iter().any(|(st, _)| *st != 0) {
+            // We have a start slice, need to use an iota because tensors don't have offsets
+            let mut new_dims = vec![];
+            let mut index_expressions = vec![];
+            let mut phys_size = Expression::from(1);
+            for (dim, (start, end)) in self.dims().into_iter().zip(ranges).rev() {
+                index_expressions.push((Expression::from('z') + start) * phys_size);
+                phys_size *= dim;
+                new_dims.push(dim.min(end) - start);
+            }
+            new_dims.reverse();
+            // A zero-sized output has no elements to gather. Building gather indices for
+            // it would create an Iota expression containing modulo by zero, so represent
+            // the empty slice by updating its shape only.
+            if new_dims.iter().any(|dim| dim.to_usize() == Some(0)) {
+                self.shape.dims = new_dims.into_iter().collect();
+                return self;
+            }
+            index_expressions.reverse();
+            let index_expression = flatten_strides(&new_dims, &index_expressions);
+            let iota = self.graph().iota(index_expression, new_dims);
+            self.gather(iota)
+        } else {
+            // No start slices so no iota needed, just reduce the shape down
+            for (sh, (_, end)) in self.shape.dims.iter_mut().zip(ranges) {
+                *sh = sh.min(end);
+            }
+            self
+        }
+    }
+
+    /// Take a slice of a tensor along a dimension.
+    ///
+    /// ```
+    /// # use orbitkv_compiler::prelude::*;
+    /// # let mut cx = Graph::new();
+    /// let a = cx.tensor((5, 10));
+    /// let b = a.slice_along(4.., 1); // 5x6 tensor
+    /// assert_eq!(b.dims(), vec![Expression::from(5), Expression::from(6)]);
+    /// ```
+    pub fn slice_along(self, slice: impl SliceRange, axis: usize) -> GraphTensor {
+        let mut s = vec![(Expression::from(0), Expression::from(i64::MAX)); axis + 1];
+        s[axis] = slice.bounds();
+        self.slice(s)
+    }
+
+    // /// Cut out 'size' elements every 'spacing' elements on a dimension. 'size' must be smaller than the dimension
+    // pub fn excise(mut self, spacing: usize, size: usize) -> GraphTensor {
+    //     let n_dims = self.shape.len();
+    //     // Pad out to a multiple of spacing + size
+    //     let total_size = (self.shape.dims[n_dims - 1] + ((spacing + size) - 1))
+    //         / (spacing + size)
+    //         * (spacing + size);
+    //     let padding = total_size - self.shape.dims[self.shape.indexes[n_dims - 1]];
+    //     self.shape.padding[self.shape.indexes[n_dims - 1]].1 = padding;
+
+    //     self = self.contiguous();
+    //     // Expand a new dimension to do the slicing on
+    //     let n_rows = total_size / (spacing + size);
+    //     self.shape.expand_dim(n_dims, spacing + size);
+    //     // self = self.contiguous();
+    //     self.shape.dims[self.shape.indexes[n_dims - 1]] = n_rows;
+    //     self.shape.fake[self.shape.indexes[n_dims]] = false;
+
+    //     // Slice
+    //     self.shape.mask[self.shape.indexes[n_dims]].1 = spacing.into();
+
+    //     self = self.contiguous();
+
+    //     self.shape.remove_dim(n_dims);
+    //     self
+    // }
+
+    /// Pad out dimensions of a tensor with a typed scalar tensor.
+    ///
+    /// Keeping the fill as a tensor preserves F64 and integer constants that
+    /// cannot be represented exactly by the historical `f32` convenience API.
+    pub fn pad_with(self, padding: impl ToPad, elem: GraphTensor) -> GraphTensor {
+        assert_eq!(elem.shape.len(), 0, "padding value must be a scalar tensor");
+        assert_eq!(
+            elem.dtype, self.dtype,
+            "padding value dtype must match input"
+        );
+        let mut padding = padding.to_pad_vec();
+        padding.extend(vec![(0.into(), 0.into()); self.shape.len() - padding.len()]); // Make sure we have a padding per dim
+        let mut index_expressions = vec![];
+        let mut phys_size = Expression::from(1);
+        let mut new_dims = vec![];
+        for (dim, (start, end)) in self.dims().into_iter().zip(&padding).rev() {
+            let mut ind = Expression::from('z');
+            if *start != 0 {
+                ind = (ind - *start).max(0);
+            }
+            if *end != 0 {
+                ind = ind.min(dim - 1);
+            }
+            index_expressions.push(ind * phys_size);
+            phys_size *= dim;
+            new_dims.push((dim + *start + *end).simplify());
+        }
+        new_dims.reverse();
+        index_expressions.reverse();
+        let index_expression = flatten_strides(&new_dims, &index_expressions);
+        // get indexed tensor
+        let new_tensor = self.gather(self.graph().iota(index_expression, new_dims.clone()));
+        // mask out padded elements
+        let mut mask_expressions = vec![];
+        for ((start, end), dim) in padding.into_iter().zip(self.dims()) {
+            let mut mask = Expression::from(1);
+            if start != 0 {
+                mask *= Expression::from('z').gte(start);
+            }
+            if end != 0 {
+                mask *= Expression::from('z').lt(start + dim);
+            }
+            mask_expressions.push(mask);
+        }
+        let mut current_elem_size = Expression::from(1);
+        let mut flat_stride = Expression::from(1);
+        for (dim, (range, stride)) in new_dims.iter().zip(mask_expressions).enumerate().rev() {
+            let div = expr('z') / current_elem_size;
+            let m = if dim > 0 { div % range } else { div };
+            flat_stride *= stride.substitute('z', m);
+            current_elem_size *= range;
+        }
+        let mask_expression = flat_stride.simplify();
+        let mask = self.graph().iota(mask_expression, new_dims);
+        let fill = elem.expand_rhs(mask.shape);
+        select_by_index(self.graph(), mask, new_tensor, fill)
+    }
+
+    /// Pad out dimensions of a tensor with an `f32` convenience value.
+    pub fn pad(self, padding: impl ToPad, elem: f32) -> GraphTensor {
+        let fill = self.graph().constant_float(elem).cast(self.dtype);
+        self.pad_with(padding, fill)
+    }
+
+    /// Pad along an existing dimension
+    pub fn pad_along(
+        self,
+        left: impl Into<Expression>,
+        right: impl Into<Expression>,
+        axis: usize,
+        elem: f32,
+    ) -> GraphTensor {
+        let mut p = vec![(Expression::from(0), Expression::from(0)); axis + 1];
+        p[axis] = (left.into(), right.into());
+        self.pad(p, elem)
+    }
+
+    /// Concat along an existing dimension
+    pub fn concat_along(self, rhs: GraphTensor, axis: usize) -> GraphTensor {
+        // Pad and add
+        self.pad_along(0, rhs.dims()[axis], axis, 0.)
+            + rhs.pad_along(self.dims()[axis], 0, axis, 0.)
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/frontend/movement/mod.rs"]
+mod tests;

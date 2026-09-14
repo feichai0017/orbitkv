@@ -38,7 +38,7 @@ pub(super) fn run() {
         .map(|id| EngineRequestId(u64::try_from(id).unwrap()))
         .collect::<Vec<_>>();
     harness.session.acquire_requests(&requests).unwrap();
-    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
+    let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
         maximum_query_tokens: capacity * 4,
@@ -213,7 +213,7 @@ fn execute_batch(
         .map(|(request_id, states)| DecoderFixedStateStep { request_id, states })
         .collect::<Vec<_>>();
     let started = Instant::now();
-    let output = luminal::prelude::tracing::info_span!(target: "luminal::stage", "orbitkv.qualification.step",
+    let output = orbitkv_compiler::prelude::tracing::info_span!(target: "orbitkv::stage", "orbitkv.qualification.step",
         phase, batch_size = requests.len(), query_tokens = tokens.len(), diagnostic_logits = true)
     .in_scope(|| {
         decoder.execute_with_fixed_states_and_logits(

@@ -1,4 +1,4 @@
-use luminal::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
+use orbitkv_compiler::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
 
 use super::*;
 use crate::{GatedDeltaReferenceInput, gated_delta_reference};

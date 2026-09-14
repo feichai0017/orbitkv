@@ -26,7 +26,7 @@ first-decode costs without qualifying a serving-performance improvement.
 [Generated-module artifact replay](../results/module-image-artifact-20260913/README.md)
 now skips all 428 NVRTC compilations on a fixed 27B schedule. Two H20 timing
 pairs reduce schedule load by 56.5% and complete diagnostic process startup by
-14.0%. The recorded run used decoder schema 6 with validated images. Current schema 10
+14.0%. The recorded run used decoder schema 6 with validated images. Current schema 11
 also binds logical attention/KV-view semantics, explicit provider algorithms and request geometry; older formats are
 rejected and must be regenerated.
 Fresh compilation adds a selected-program capture pass and warm diagnostic
@@ -48,7 +48,7 @@ supported encoding conversions, error behavior and stage timing boundaries.
 | Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested; request-lifetime residence provides a same-semantics baseline | CSR/window lowering implemented; compiled/baseline CSR geometry is host-matched | Sliding layers cross a 512-token window in the released hybrid H20 closure | Released-hybrid matched run: Sliding residency 48 to 32 pages; no serving-throughput claim |
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
-| MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
+| MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching OrbitKV compiler attention kernel contract missing | Unsupported | Unproven |
 | Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, packed delta scan, gated RMSNorm/readout, dynamic arena addressing, and required in-place writes to manager-owned state arenas | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20; a fresh 16-candidate artifact passes eight teacher-forced reference steps with 0.625 maximum absolute logit error and one within-envelope top-1 tie | Negative bounded serving diagnostic |
 | Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, typed packed causal convolution, dynamic arena addressing, and required in-place writes to manager-owned history arenas are part of the production graph | Ragged packed operator parity, bounded full-checkpoint drain, and eight-step logit parity pass on H20 | Negative bounded serving diagnostic |
 | Block-FP8 linear compiler | Not a state owner | Provider-neutral BF16 x E4M3/128x128-scale semantics; four DeepGEMM tile variants plus opt-in graph-visible shared activation preparation compete per bucket | H20 independent quantizer/combined-path parity, semantic search/replay and eight-step complete-checkpoint reference parity pass | Isolated two-consumer preparation saves 1.45–4.19%; complete-graph selection also changes other kernels, so that is not a serving speedup claim |
@@ -76,12 +76,12 @@ attention and 48 GDN layers. Its canonical state manifest compiles from the real
 checkpoint configuration. The executor now parses nested text-decoder geometry,
 the `linear_attention` schedule, partial rotary dimensions, the language-model
 tensor namespace, and the block-FP8 format; it also carries recurrent and
-convolution state geometry into Luminal compiler facts. Token KV, recurrent, and
+convolution state geometry into compiler facts. Token KV, recurrent, and
 convolution state now share one host-qualified RuntimeSession lifecycle and one
 completion frontier. The executor allocates stable per-class CUDA arenas, maps
 generation-checked state slots to byte ranges, copies prior published state to
 the selected destination, and feeds only dynamic slot ids into a fixed-address
-Luminal graph. Search profiles a runtime-owned scratch arena; the real OrbitKV
+OrbitKV compiler graph. Search profiles a runtime-owned scratch arena; the real OrbitKV
 allocation is bound only after schedule selection. Success evidence requires an
 opaque receipt tied to the exact runtime alias and an event recorded after the
 model execution. The stable-arena two-step CUDA gate and the packed
@@ -90,7 +90,7 @@ now builds mixed token-KV/GDN layers, owns fixed-state device arenas, binds them
 after search, and returns event-backed evidence that the engine submits
 atomically with token KV. Packed prefill is admitted through shared request
 segmentation. Block-FP8 projections now load the checkpoint's E4M3 tensors and
-128x128 inverse scales into a provider-neutral Luminal op. Its independent CUDA
+128x128 inverse scales into a provider-neutral OrbitKV compiler op. Its independent CUDA
 reference and four pinned DeepGEMM schedules share one e-class and are
 selected by device profiling. Operator parity passes on H20, and a bounded
 full-checkpoint run now completes search, prefill, seven decode steps, manager
@@ -103,13 +103,13 @@ copy-back path without changing the pre-rolling model graph. One near-tied
 position may reorder top-1 within that measured error envelope; exact
 greedy-text equivalence remains a separate serving criterion.
 The gated-delta recurrence
-has an independent f32 sequence oracle, a pure Luminal single-token expression,
+has an independent f32 sequence oracle, a pure OrbitKV compiler single-token expression,
 and a typed packed CUDA scan. Token values and next state match the oracle,
 including grouped key/value heads. A checkpoint-shaped graph composes
 split projections, minimal-history causal convolution, gates, recurrent update,
 gated RMSNorm, and output projection. The local small BF16 and 27B FP8
 checkpoint headers pass structural config, tensor, shape, dtype, and block-scale
-validation. The Luminal fork can derive in-place CUDA candidates for both
+validation. The OrbitKV compiler can derive in-place CUDA candidates for both
 recurrent-state and convolution-history commits. Its static alias validator
 accepts an ordered old-state read before mutation and rejects competing reads.
 The operator and arena paths are H20-qualified, while the complete checkpoint
@@ -150,7 +150,7 @@ The async local `Engine` contract and optional vLLM Rust frontend adapter are
 implemented and host-tested. The `orbitkv-engine` composition root has bounded
 admission and output queues and combines independently submitted fresh prompts
 into decode-first token-budgeted batches over one `RuntimeSession` and compiled
-Luminal decoder. On H20, two concurrent 512-token hybrid requests execute with
+OrbitKV compiler decoder. On H20, two concurrent 512-token hybrid requests execute with
 B=2 prefill/decode and match the existing reference prefix; a late prefill also
 joins an active decode request. Length, stop-token, cancellation, backpressure,
 and complete drain are covered. The same released checkpoint also passes a
@@ -177,7 +177,7 @@ Four artifact-loaded H20 restarts produced identical candidate output digests
 and 0.74% output-throughput coefficient of variation.
 
 Persistent K/V state is now a compiler constraint rather than a post-search
-observation. Luminal rejects candidates and stored artifacts unless every K/V
+observation. OrbitKV compiler rejects candidates and stored artifacts unless every K/V
 output aliases its registered input arena in every retained bucket. A deeper
 16-candidate search produced 36/36 in-place tensors and zero copy-back bytes.
 Four alternating C2 epochs improved the same engine's throughput by 14.5%, TTFT
@@ -193,7 +193,7 @@ plus seven teacher-forced decode comparisons with maximum absolute logit error
 The joint-compiler seam is implemented structurally. A validated manifest now
 derives backend-neutral facts for storage components, retention, addressing, and
 retirement. The executor binds token classes to stable arenas, lowers
-deterministic facts into every Luminal search bucket, and tags each
+deterministic facts into every OrbitKV compiler search bucket, and tags each
 attention KV view with its manager class. The facts digest is part of
 decoder artifact identity. Logical attention and physical KV representation now
 have separate compiler facts. Declarative capability rules admit explicit
@@ -207,7 +207,7 @@ them. Broader geometry and joint physical-layout competition remain open; see
 [attention providers](attention-providers.md).
 DeepGEMM, FlashInfer and FlashAttention sources are resolved by the same pinned provider-source
 manager. They can come from explicit local directories or an explicit prefetch
-into the Luminal cache; normal model compilation is offline and no recursive
+into the OrbitKV compiler cache; normal model compilation is offline and no recursive
 DeepGEMM source submodule is required.
 
 Compiler-generated DeepGEMM, FlashInfer and FlashAttention nodes now record an identity of the
@@ -326,7 +326,7 @@ blocking, checked shutdown and the executable reports final state ownership.
 [B1/B8 workload attribution](../results/workload-attribution-20260914/README.md)
 now retains full egglog rule identities and complete GPU step descriptions,
 joined to workload dimensions and selected programs. Explicit FlashInfer request
-geometry fixes retained-bucket planning; schema 10 rejects older artifacts.
+geometry fixes retained-bucket planning. The integrated compiler uses schema 11 and rejects earlier decoder artifacts.
 Two frozen builds pass 592 reference comparisons across fresh search, strict
 replay and profiling, with final drain and maximum absolute error 0.8125 under
 the unchanged 1.0 gate. Ordinary compilation uses time-only egglog reports;

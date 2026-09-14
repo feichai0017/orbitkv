@@ -1,0 +1,17 @@
+; The semantic operation and storage view are independent. Only admitted
+; combinations reach the provider, before extraction or native preparation.
+(rule
+    ((attention-op ?cid ?qh ?kh ?hd ?hd ?q ?requests ?dt ?scale ?mask)
+     (paged-kv-view ?cid ?state ?page ?ctx (TokenMajorKv))
+     (cuda-attention-provider "flashinfer" ?algorithm ?cid ?window)
+     (= ?semantic (Op (CustomOpKind ?cid ?dt)
+        (ICons ?query (ICons ?k (ICons ?v (ICons ?indices
+        (ICons ?qptr (ICons ?kptr (ICons ?last (INil)))))))))))
+    ((let ?provider (Op
+        (FlashInferAttention ?qh ?kh ?hd ?page ?q ?ctx ?requests ?dt ?scale ?window ?algorithm "@PROVIDER_IDENTITY@")
+        (ICons ?query (ICons ?k (ICons ?v (ICons ?indices
+        (ICons ?qptr (ICons ?kptr (ICons ?last (INil))))))))))
+     (union ?semantic ?provider)
+     (set (dtype ?provider) ?dt))
+    :ruleset matmul_backend
+    :name "FlashInfer provider for logical attention with paged KV")

@@ -24,8 +24,8 @@ source of measurement drift; it does not by itself make the systems comparable.
 1. Correctness preflight: deterministic greedy outputs and lifecycle final drain
    must pass before timings are interpreted.
 2. Compiler ablation: run conservative retention and compiled retention through
-   the same OrbitKV/Luminal executor. This isolates the compiler contribution.
-3. Product comparison: run OrbitKV/Luminal, tuned stock SGLang, and tuned stock
+   the same OrbitKV/OrbitKV compiler executor. This isolates the compiler contribution.
+3. Product comparison: run OrbitKV/OrbitKV compiler, tuned stock SGLang, and tuned stock
    vLLM with the same
    model, weights, dtype, kernels where possible, request trace, batching limits,
    device budget, and sampling semantics.
@@ -41,7 +41,7 @@ source of measurement drift; it does not by itself make the systems comparable.
 | hybrid-pressure | Cross Sliding retirement boundaries under concurrency | RA, resident bytes, admission failures, p95/p99 latency, reclaimed pages |
 | capacity-sweep | Hold the device budget fixed and increase concurrency/context | maximum admitted requests, OOM/failure point, throughput |
 
-For the compiler ablation, both arms must use identical Luminal graphs and
+For the compiler ablation, both arms must use identical OrbitKV compiler graphs and
 kernels. Only the retention/layout policy may differ:
 
 ```text
@@ -184,7 +184,7 @@ benefit claim.
 
 ## Compiler-constrained schedule follow-up
 
-R4.1 moved the persistent K/V address contract into Luminal candidate
+R4.1 moved the persistent K/V address contract into OrbitKV compiler candidate
 selection. All selected buckets must resolve every K/V output directly to its
 registered input arena; candidates and stored artifacts that require copy-back
 are rejected before deployment. A 16-candidate search produced two buckets

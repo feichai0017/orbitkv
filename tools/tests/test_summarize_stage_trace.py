@@ -78,13 +78,13 @@ class StageSummaryTest(unittest.TestCase):
         phase = {"phase": "main-1", "schedule": "(run rules)", "run_wall_ns": 80,
                  "iterations": 1, "tuples_before": 10, "tuples_after": 12}
         rows = [
-            span(0, None, 0, 500, name="luminal.egglog.bucket", fields={"bucket": 3}),
-            span(1, 0, 0, 500, name="luminal.egglog.run", fields={"schedule_count": 2}),
-            span(2, 1, 10, 100, name="luminal.egglog.schedule", fields=phase),
-            metric(2, 95, "luminal.egglog.rule", rule=name, search_apply_ns=60, matches=2),
-            span(3, 1, 120, 100, name="luminal.egglog.schedule", fields={**phase, "phase": "main-2"}),
-            metric(3, 205, "luminal.egglog.rule", rule=name, search_apply_ns=70, matches=0),
-            metric(3, 206, "luminal.egglog.ruleset", ruleset="rules", search_apply_ns=75, merge_ns=2, rebuild_ns=3),
+            span(0, None, 0, 500, name="orbitkv.compiler.egglog.bucket", fields={"bucket": 3}),
+            span(1, 0, 0, 500, name="orbitkv.compiler.egglog.run", fields={"schedule_count": 2}),
+            span(2, 1, 10, 100, name="orbitkv.compiler.egglog.schedule", fields=phase),
+            metric(2, 95, "orbitkv.compiler.egglog.rule", rule=name, search_apply_ns=60, matches=2),
+            span(3, 1, 120, 100, name="orbitkv.compiler.egglog.schedule", fields={**phase, "phase": "main-2"}),
+            metric(3, 205, "orbitkv.compiler.egglog.rule", rule=name, search_apply_ns=70, matches=0),
+            metric(3, 206, "orbitkv.compiler.egglog.ruleset", ruleset="rules", search_apply_ns=75, merge_ns=2, rebuild_ns=3),
         ]
         result = self.summarize(rows)
         run = result["egglog_runs"][0]
@@ -137,7 +137,7 @@ class StageSummaryTest(unittest.TestCase):
     def test_rejects_orphaned_escaped_or_mistyped_measurements(self):
         invalid = [metric(99, 50, "counter"), metric(0, 101, "counter"),
                    {**metric(0, 50, "counter"), "at_ns": True},
-                   metric(0, 50, "luminal.egglog.rule", rule="rule", search_apply_ns=1, matches=1)]
+                   metric(0, 50, "orbitkv.compiler.egglog.rule", rule="rule", search_apply_ns=1, matches=1)]
         for row in invalid:
             with self.subTest(row=row), self.assertRaises(ValueError):
                 self.summarize([span(0, None, 0, 100), row])

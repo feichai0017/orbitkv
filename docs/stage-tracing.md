@@ -1,6 +1,6 @@
 # Compiler and runtime stage attribution
 
-The optional `LUMINAL_STAGE_TRACE` diagnostic records synchronous CPU wall-time
+The optional `ORBITKV_STAGE_TRACE` diagnostic records synchronous CPU wall-time
 spans and reported compiler/device measurements through the existing `tracing`
 API. It separates graph construction,
 weight inspection/loading, egglog preparation and schedules, candidate
@@ -31,8 +31,8 @@ thread-local subscribers must propagate their dispatch to those workers. The env
 processes: it installs a global subscriber for stage spans and returns an error
 if a subscriber is already installed. Keep its guard until all worker spans
 close and call `finish`; dropping it without finishing marks the trace
-incomplete. The composable layer and file writer live in Luminal's
-`luminal_tracing` crate; the executor only exposes the diagnostic entry point.
+incomplete. The composable layer and file writer live in OrbitKV compiler's
+`orbitkv-tracing` crate; the executor only exposes the diagnostic entry point.
 
 | Output | Meaning |
 | --- | --- |
@@ -44,7 +44,7 @@ incomplete. The composable layer and file writer live in Luminal's
 | `egglog_runs` | Per-run and per-schedule rule/ruleset measurements, full identities, iteration counts and tuple growth, with bucket context when present |
 | `cuda_graph_profiles` | Ordered CUDA Graph step measurements, grouped operation costs, program identity, symbolic dimensions and workload context when present |
 
-The trace format is schema 2 and the summary is `luminal.stage-summary.v2`.
+The trace format is schema 2 and the summary is `orbitkv.compiler.stage-summary.v2`.
 Measurement events have a parent and a timestamp, but are not spans. The
 summarizer keeps their explicit units separate from CPU inclusive/self time.
 Older trace formats require the summarizer from their recorded source revision;
@@ -72,7 +72,7 @@ representations are materialized only for the existing verbose plan printer
 Structured stage tracing does not require full plan representations.
 
 CUDA step measurements reuse the existing opt-in event nodes enabled by
-`LUMINAL_CUDA_PROFILE_GRAPH_STEPS`. `LUMINAL_CUDA_PROFILE_GRAPH_STEP_DETAILS`
+`ORBITKV_CUDA_PROFILE_GRAPH_STEPS`. `ORBITKV_CUDA_PROFILE_GRAPH_STEP_DETAILS`
 retains full operation descriptors; the qualification runner enables both only
 in its separate profile process. A provider step can contain several native
 launches, preparation kernels or captured child nodes: this is an execution-step
@@ -112,7 +112,7 @@ conversion, device allocation, upload API calls and per-shard completion.
 not include all first-touch page faults, and the upload span is a CPU API timer.
 See [weight loading](weight-loading.md) for the ownership and timing contract.
 
-`luminal.search.next_candidate` includes candidate mutation/extraction work;
+`orbitkv.compiler.search.next_candidate` includes candidate mutation/extraction work;
 it is not a pure extraction timer. Provider JIT records include a cache-hit
 field; `cuda.nvrtc.compile` only wraps actual compilation after a cache miss.
 Resource/provider preparation and compilation are nested inside candidate

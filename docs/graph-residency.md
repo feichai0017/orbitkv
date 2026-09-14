@@ -8,7 +8,7 @@ which CUDA Graph executables are currently materialized. The executor exposes
 both decode and prefill with `--graph-cache-capacity 2` when its memory budget
 allows it. This policy does not change the selected artifact's identity.
 
-Before materializing a bucket, Luminal evicts least recently used buckets until
+Before materializing a bucket, OrbitKV compiler evicts least recently used buckets until
 there is room. It synchronizes before retirement and releases executables before
 the captured resources. Reducing the capacity takes effect at the next bucket
 materialization. Changing it also invalidates the executor's outer fixed-signature

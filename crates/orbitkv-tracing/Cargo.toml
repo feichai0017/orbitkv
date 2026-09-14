@@ -1,0 +1,19 @@
+[package]
+name = "orbitkv-tracing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Compiler and runtime trace collection for OrbitKV."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde_json = "1"
+tracing = "0.1.43"
+tracing-perfetto = "0.1.5"
+tracing-appender = "0.2.4"
+tracing-subscriber = "0.3"
+prost = "0.13"
+
+[dev-dependencies]
+tempfile = "3"

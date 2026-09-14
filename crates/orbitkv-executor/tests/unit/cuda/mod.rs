@@ -59,12 +59,12 @@ fn builds_external_page_plan_node() {
 
 #[test]
 fn orbitkv_layout_facts_bind_to_paged_attention_during_search_build() {
-    use luminal::graph::CompileOptions;
-    use luminal_cuda_lite::runtime::CudaRuntime;
     use orbitkv::{
         AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage,
         compile_runtime_manifest, plan::RetentionKind,
     };
+    use orbitkv_compiler::graph::CompileOptions;
+    use orbitkv_cuda::runtime::CudaRuntime;
 
     let manifest = compile_runtime_manifest(AttentionStatePlanInput {
         page_tokens: 16,
@@ -82,7 +82,7 @@ fn orbitkv_layout_facts_bind_to_paged_attention_during_search_build() {
     .unwrap();
     let plan = crate::ExecutorPlan::compile(&manifest).unwrap();
     let facts = plan
-        .luminal_compiler_facts(&[crate::ExecutorArena {
+        .compiler_facts(&[crate::ExecutorArena {
             engine_epoch: 1,
             pool_epoch: 1,
             pool_id: 1,

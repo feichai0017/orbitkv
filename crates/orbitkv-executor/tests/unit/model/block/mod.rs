@@ -1,4 +1,4 @@
-use luminal::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
+use orbitkv_compiler::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
 
 #[test]
 fn gated_query_projection_deinterleaves_each_head() {

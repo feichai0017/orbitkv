@@ -47,7 +47,7 @@ if behavior.endswith("replay_only"):
     assert mode == "replay", "search was not allowed"
 assert sys.argv[1:] == ["decoder_contract", "--ignored", "--exact", "--nocapture", "--test-threads=1"]
 assert Path(os.environ["ORBITKV_REFERENCE_DIR"]).is_dir()
-profile = "LUMINAL_CUDA_PROFILE_GRAPH_STEPS" in os.environ
+profile = "ORBITKV_CUDA_PROFILE_GRAPH_STEPS" in os.environ
 print(json.dumps({{"mode": mode, "profile": profile,
                  "tuning": os.environ.get("ORBITKV_TUNING_PROFILE")}}), flush=True)
 if behavior == "timeout":
@@ -97,7 +97,7 @@ if behavior != "no_marker":
     print("ORBITKV_DECODER_QUALIFICATION " + json.dumps(marker), file=sys.stderr)
 if profile:
     print("CUDA_GRAPH_STEP_PROFILE dyn={{s: 1}} total_ms=2.5 Kernel[1]=2.5ms", file=sys.stderr)
-stage_path = os.environ.get("LUMINAL_STAGE_TRACE")
+stage_path = os.environ.get("ORBITKV_STAGE_TRACE")
 if stage_path and behavior != "missing_stage_trace":
     rows = [{{"event": "trace_started", "schema": 2}},
             {{"event": "stage", "id": 0, "parent": None, "start_ns": 0,
@@ -190,7 +190,7 @@ print("test result: ok. 1 passed; 0 failed; 0 ignored; 3 filtered out")
     def test_requested_stage_traces_are_separate_complete_and_identified(self):
         self.fixture()
         inherited = self.root / "inherited.jsonl"
-        with patch.dict(os.environ, {"LUMINAL_STAGE_TRACE": str(inherited)}):
+        with patch.dict(os.environ, {"ORBITKV_STAGE_TRACE": str(inherited)}):
             report = self.run_qualification("--stage-trace")
         self.assertEqual(report["status"], "passed")
         self.assertFalse(inherited.exists())
@@ -224,13 +224,13 @@ print("test result: ok. 1 passed; 0 failed; 0 ignored; 3 filtered out")
     def test_stage_trace_is_opt_in_even_with_an_ambient_environment(self):
         self.fixture()
         inherited = self.root / "inherited.jsonl"
-        with patch.dict(os.environ, {"LUMINAL_STAGE_TRACE": str(inherited)}):
+        with patch.dict(os.environ, {"ORBITKV_STAGE_TRACE": str(inherited)}):
             report = self.run_qualification()
         self.assertEqual(report["status"], "passed")
         self.assertFalse(inherited.exists())
         for phase in report["phases"]:
             self.assertFalse(phase["stage_instrumented"])
-            self.assertNotIn("LUMINAL_STAGE_TRACE", phase["selected_environment"])
+            self.assertNotIn("ORBITKV_STAGE_TRACE", phase["selected_environment"])
 
     def test_batched_marker_cannot_hide_missing_duplicate_or_out_of_order_request_rows(self):
         for behavior in ("batched_missing_row", "batched_duplicate_row", "batched_out_of_order"):
