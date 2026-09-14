@@ -1,0 +1,4 @@
+(rule ((= ?alias (Op (FusionStart ?shape ?strides ?dt)
+                                  (ICons ?input (INil)))))
+                   ((cuda-scatter-alias ?alias))
+                   :ruleset post_cleanup)

@@ -1,0 +1,55 @@
+
+{dyn_defines}
+extern "C" {{
+    __global__ void generic_conv2d_bias(
+        float* __restrict__ out,
+        const float* __restrict__ input,
+        const float* __restrict__ weight,
+        const float* __restrict__ bias{dyn_dims_param}
+    ) {{
+        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+        const long long total = {total};
+        if (const_z >= total) return;
+
+        const long long COUT = {c_out};
+        const long long HOUT = {h_out};
+        const long long WOUT = {w_out};
+        const long long CIN = {c_in};
+        const long long HIN = {h_in};
+        const long long WIN = {w_in};
+        const long long KH = {kh};
+        const long long KW = {kw};
+        const long long SH = {stride_h};
+        const long long SW = {stride_w};
+        const long long DH = {dilation_h};
+        const long long DW = {dilation_w};
+        const long long PH = {pad_h};
+        const long long PW = {pad_w};
+        const long long W_CO_STRIDE = {weight_co_stride};
+        const long long W_INNER_STRIDE = {weight_inner_stride};
+        const long long BIAS_C_STRIDE = {bias_c_stride};
+
+        long long co = const_z / (HOUT * WOUT);
+        long long rem = const_z - co * HOUT * WOUT;
+        long long oh = rem / WOUT;
+        long long ow = rem - oh * WOUT;
+
+        float acc = bias[co * BIAS_C_STRIDE];
+        for (long long ci = 0; ci < CIN; ++ci) {{
+            for (long long r = 0; r < KH; ++r) {{
+                long long ih = oh * SH + r * DH - PH;
+                if (ih < 0 || ih >= HIN) continue;
+                for (long long s = 0; s < KW; ++s) {{
+                    long long iw = ow * SW + s * DW - PW;
+                    if (iw < 0 || iw >= WIN) continue;
+                    long long input_linear = (ci * HIN + ih) * WIN + iw;
+                    long long input_idx = {input_idx};
+                    long long inner = (ci * KH + r) * KW + s;
+                    long long weight_idx = co * W_CO_STRIDE + inner * W_INNER_STRIDE;
+                    acc += input[input_idx] * weight[weight_idx];
+                }}
+            }}
+        }}
+        out[{out_idx}] = acc;
+    }}
+}}

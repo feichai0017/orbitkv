@@ -74,7 +74,7 @@ pub(super) fn prepare_decoder_compilation(
     let mut facts = compiler_facts.egglog().to_owned();
     if tuning.enable_shared_fp8_quantization {
         facts.push('\n');
-        facts.push_str(orbitkv_cuda::host::deepgemm::SHARED_QUANTIZATION_COMPILER_FACT);
+        facts.push_str(orbitkv_cuda::providers::deepgemm::SHARED_QUANTIZATION_COMPILER_FACT);
     }
     options = options.compiler_facts(facts);
     if options

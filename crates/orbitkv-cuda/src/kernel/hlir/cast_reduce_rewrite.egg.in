@@ -1,0 +1,10 @@
+(rule (
+                        (= ?x_cast (Op (Cast ?cast_size (F32)) (ICons ?x (INil))))
+                        (= ({dt}) (dtype ?x))
+                        (= ?sum (Op (Sum ?shape ?iters ?strides ?iter_stride ?out_strides) (ICons ?x_cast (INil))))
+                        (= ?out_cast (Op (Cast ?out_size ({dt})) (ICons ?sum (INil))))
+                     ) (
+                        (let ?ks (Op (KernelCastSum ?shape ?iters ?strides ?iter_stride ?out_strides ({dt})) (ICons ?x (INil))))
+                        (union ?out_cast ?ks)
+                        (set (dtype ?ks) ({dt}))
+                     ) :ruleset kernel_specialize :name "kernel-cast-sum-{dt}")

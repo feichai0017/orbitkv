@@ -94,22 +94,24 @@ integration does not claim their coverage or a whole-model speedup.
 Prepare sources explicitly before compilation:
 
 ```sh
-cargo run -p orbitkv-cuda --bin fetch-provider -- flashattention
+cargo run -p orbitkv-cuda --bin providers -- fetch flashattention
 ```
 
 Alternatively set `ORBITKV_FLASHATTENTION_DIR` to a complete checkout with its
 pinned CUTLASS dependency. Model compilation performs no network fetch.
-`ORBITKV_FLASHATTENTION_CACHE_DIR` overrides the native-library cache. Source,
+`ORBITKV_CACHE_DIR` controls the shared source/library cache root. The exact
+provider and CUTLASS commits live in `crates/orbitkv-cuda/providers.lock.json`. Source,
 wrapper and ABI content determine provider identity; compiler/flags determine
 additional native-library cache identity, following the common provider policy.
 
-Decoder artifact schema 11 retains request-count expressions in the FlashInfer
-operator ABI. Schema 9 and older artifacts require fresh search. Historical qualification directories remain immutable.
+Decoder artifacts retain request-count expressions in the FlashInfer operator
+ABI and bind the provider lock. Artifacts from before the backend reorganization
+require fresh search. Historical qualification directories remain immutable.
 External `.so` libraries are cached separately from generated CUDA module images.
 
 ## Qualification
 
-Independent CPU softmax references live under CUDA `tests/unit/host/attention`.
+Independent CPU softmax references live under CUDA `tests/unit/providers/attention`.
 They exercise each admitted algorithm directly, including non-power-of-two GQA,
 ragged queries, permuted pages and sliding visibility. Separate tests cover
 semantic extraction, saved-schedule replay, changing CSR contents and captured

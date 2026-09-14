@@ -20,7 +20,7 @@ use orbitkv_compiler::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::host::HostOp;
+use crate::providers::HostOp;
 
 const TRACE_SCHEMA_VERSION: u32 = 2;
 const TRACE_ENVIRONMENT_VARIABLE: &str = "ORBITKV_SEARCH_TRACE";

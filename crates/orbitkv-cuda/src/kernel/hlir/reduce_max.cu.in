@@ -1,0 +1,48 @@
+{includes}
+#define WARP_SIZE 32
+#define THREADS_PER_BLOCK 256
+#define FULL_MASK 0xffffffff
+#define NEG_INF_F __int_as_float(0xff800000)
+{dyn_defines}
+extern "C" {{
+    __global__ void reduce_max_k({dtype} *out, const {dtype} *in{dyn_dims_param}) {{
+        __shared__ {accum_dtype} warp_sums[THREADS_PER_BLOCK / WARP_SIZE];
+        long long const_z = blockIdx.x;
+
+        int tid = threadIdx.x;
+        int lane_id = tid % WARP_SIZE;
+        int warp_id = tid / WARP_SIZE;
+
+        long long in_start = {in_index};
+        long long iters = {iters};
+
+        {accum_dtype} max_value = ({accum_dtype})NEG_INF_F;
+        for (long long i = tid; i < iters; i += THREADS_PER_BLOCK) {{
+            max_value = fmaxf(max_value, {load_value});
+        }}
+
+        #pragma unroll
+        for (int s = WARP_SIZE / 2; s > 0; s /= 2) {{
+            max_value = fmaxf(max_value, __shfl_down_sync(FULL_MASK, max_value, s));
+        }}
+
+        if (lane_id == 0) {{
+            warp_sums[warp_id] = max_value;
+        }}
+        __syncthreads();
+
+        if (warp_id == 0) {{
+            int cnt = THREADS_PER_BLOCK / WARP_SIZE;
+            {accum_dtype} block_max = tid < cnt ? warp_sums[tid] : ({accum_dtype})NEG_INF_F;
+
+            #pragma unroll
+            for (int s = cnt / 2; s > 0; s /= 2) {{
+                block_max = fmaxf(block_max, __shfl_down_sync(FULL_MASK, block_max, s));
+            }}
+
+            if (tid == 0) {{
+                out[{out_index}] = ({dtype})block_max;
+            }}
+        }}
+    }}
+}}

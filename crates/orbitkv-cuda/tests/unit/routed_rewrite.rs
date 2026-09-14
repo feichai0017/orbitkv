@@ -2,7 +2,7 @@ use half::bf16;
 use orbitkv_compiler::{dtype::DType, prelude::*, shape::Expression};
 
 use super::utilities::{assert_close, get_cuda_stream, random_f32_vec};
-use crate::{host::moe::GLUMoE, runtime::CudaRuntime};
+use crate::{providers::moe::GLUMoE, runtime::CudaRuntime};
 
 const SEQ: usize = 2;
 const HIDDEN: usize = 32;

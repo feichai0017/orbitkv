@@ -739,7 +739,7 @@ fn mini_qwen_stage5_exclude_glumoe() {
     let d = mini_data();
     let (m, reference, _n_out) = reference_run(5, || {
         let mut m = build_mini_qwen_stage(DType::F32, 5);
-        m.cx.build_search_space_exclude_ops::<CudaRuntime, crate::host::moe::GLUMoE>(
+        m.cx.build_search_space_exclude_ops::<CudaRuntime, crate::providers::moe::GLUMoE>(
             CompileOptions::default(),
         );
         let mut rt = CudaRuntime::initialize(stream.clone());
@@ -809,7 +809,7 @@ fn rms_norm_rule_fires_on_mini_layer() {
 fn rms_norm_dense_stride_guard_is_part_of_rewrite() {
     let rewrites =
         <crate::kernel::rms_norm::KernelRMSNorm as orbitkv_compiler::op::EgglogOp>::rewrites(
-            &crate::kernel::rms_norm::KernelRMSNorm::default(),
+            &crate::kernel::rms_norm::KernelRMSNorm,
         );
     let text = format!("{rewrites:?}");
     assert!(text.contains("(= ?sq_a (ECons (MMul (MIter) ?cols)"));
@@ -957,7 +957,7 @@ fn rope_rule_rejects_nonzero_safe_padding() {
 }
 
 #[test]
-fn rope_scatter_materialized_fallback_remains_in_lite() {
+fn rope_scatter_materialized_fallback_is_searchable() {
     use orbitkv_ops::scatter_rows;
 
     let mut cx = Graph::default();
@@ -971,11 +971,7 @@ fn rope_scatter_materialized_fallback_remains_in_lite() {
     cx.build_search_space::<CudaRuntime>(CompileOptions::default());
     assert!(
         egraph_has_op_alternatives(&cx, &["KernelScatterNoCopy"]),
-        "Lite must retain the materialized KernelRoPE plus scatter fallback"
-    );
-    assert!(
-        !egraph_has_op_alternatives(&cx, &["KernelRoPEScatterFused"]),
-        "the fused RoPE scatter specialization belongs to full CUDA"
+        "retain the materialized KernelRoPE plus scatter fallback"
     );
 }
 

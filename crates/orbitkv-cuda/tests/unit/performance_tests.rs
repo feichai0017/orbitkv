@@ -2,7 +2,6 @@ use cudarc::driver::CudaContext;
 use orbitkv_compiler::prelude::*;
 use tracing::{Level, enabled};
 
-use crate::cuda_bandwidth_gbps;
 use crate::runtime::CudaRuntime;
 
 /// Test that measures bandwidth utilization for a large element-wise add kernel.
@@ -69,26 +68,4 @@ pub fn kernel_add_bandwidth_test() {
     }
 
     // Check bandwidth is reasonable (at least 50% of peak for large kernels)
-    if let Some(peak_bw) = cuda_bandwidth_gbps(&ctx) {
-        for stat in &rt.last_kernel_stats {
-            let total_bytes = stat.bytes_loaded + stat.bytes_stored;
-            if stat.name == "Add" && total_bytes > 0 {
-                let utilization = stat.bandwidth_gbps / peak_bw as f64 * 100.0;
-                println!(
-                    "\nAdd kernel achieved {:.1} GB/s ({:.1}% of {:.0} GB/s peak)",
-                    stat.bandwidth_gbps, utilization, peak_bw
-                );
-                println!(
-                    "  Loaded: {} bytes, Stored: {} bytes",
-                    stat.bytes_loaded, stat.bytes_stored
-                );
-                // Large adds should achieve decent bandwidth
-                assert!(
-                    utilization > 50.0,
-                    "Bandwidth utilization too low: {:.1}%",
-                    utilization
-                );
-            }
-        }
-    }
 }

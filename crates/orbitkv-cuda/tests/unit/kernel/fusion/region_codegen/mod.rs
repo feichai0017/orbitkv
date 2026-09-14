@@ -48,7 +48,7 @@ fn build_test_region(reversed: bool) -> (LLIRGraph, Vec<NodeIndex>) {
     };
 
     let mut g: LLIRGraph = LLIRGraph::default();
-    let mut add_nodes = |g: &mut LLIRGraph| {
+    let add_nodes = |g: &mut LLIRGraph| {
         let p_sqrt = g.add_node(llir_of(unary("Sqrt")));
         let p_sin = g.add_node(llir_of(unary("Sin")));
         let p_exp = g.add_node(llir_of(unary("Exp")));

@@ -90,3 +90,9 @@ The default Cargo members include all host crates. CUDA device tests are
 explicit: `cargo test -p orbitkv-cuda` requires a CUDA toolchain and GPU.
 `cargo fmt --all` checks every workspace member. There are no nested workspaces,
 crate-local lockfiles, or compiler submodules.
+
+CUDA provider integration follows the same ownership layout: Rust adapters,
+`.egg` rules and `.cu`/`.cuh` sources sit under their owning component. Templates
+requiring Rust interpolation use `.egg.in`/`.cu.in`. Central source provenance is
+in `crates/orbitkv-cuda/providers.lock.json`; native build/cache code is shared.
+See [CUDA backend](cuda-backend.md) for the directory map.

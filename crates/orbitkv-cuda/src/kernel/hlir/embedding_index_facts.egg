@@ -1,0 +1,25 @@
+; Prove row-major storage locally in kernel_specialize rather
+                 ; than relying on the earlier expression schedule to retain a
+                 ; RowMajor(...) term. The carried expression is the number of
+                 ; logical elements covered by the proven suffix.
+                 (rule
+                    (
+                        (= ?shape (ECons ?dim (ENil)))
+                        (= ?strides (ECons (MIter) (ENil)))
+                    )
+                    ((kernel_embed_row_major ?shape ?strides ?dim))
+                    :ruleset kernel_specialize
+                    :name "prove rank-one row-major table"
+                 )
+                 (rule
+                    (
+                        (= ?shape (ECons ?dim ?tail_shape))
+                        (= ?strides (ECons ?head_stride ?tail_strides))
+                        (kernel_embed_row_major ?tail_shape ?tail_strides ?tail_elements)
+                        (= ?head_stride (MMul (MIter) ?tail_elements))
+                    )
+                    ((kernel_embed_row_major
+                        ?shape ?strides (MMul ?dim ?tail_elements)))
+                    :ruleset kernel_specialize
+                    :name "prove recursive row-major table"
+                 )

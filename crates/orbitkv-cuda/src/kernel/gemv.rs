@@ -76,58 +76,13 @@ impl EgglogOp for KernelGemv {
         ];
         m_variants
             .into_iter()
-            .flat_map(|(variant, m_cond)| {
-                ["Bf16", "F16"].map(move |dt| (variant, m_cond, dt))
-            })
+            .flat_map(|(variant, m_cond)| ["Bf16", "F16"].map(move |dt| (variant, m_cond, dt)))
             .map(|(variant, m_cond, dt)| {
                 Rule::raw(format!(
-                    "(rule
-                        (
-                            (= ?sum (Op (GenericMatmul
-                                ?out_shape ?mul_shape ?k
-                                ?a_stride ?b_stride
-                                ?sum_in_stride ?k_stride ?sum_out_stride
-                                ?matmul_dtype)
-                                (ICons ?a (ICons ?b (INil)))))
-
-                            {m_cond}
-                            (generic_matmul_exact_2d
-                                ?sum ?semantic_m ?n ?k ({dt}))
-                            (= ?matmul_dtype ({dt}))
-                            (!= ?n (MNum 0))
-                            (!= ?k (MNum 1))
-
-                            (= ?a_stride (ECons ?a_m_stride (ECons ?a_n_stride (ECons ?a_k_stride (ENil)))))
-                            (= ?b_stride (ECons ?b_m_stride (ECons ?b_n_stride (ECons ?b_k_stride (ENil)))))
-                            (= ?k_stride (MIter))
-
-                            ; A (the activation row) reads as a contiguous
-                            ; [k] vector. Both m variants guarantee m <= 1,
-                            ; so the m stride is never advanced and carries
-                            ; no layout constraint: a reshaped view (e.g. an
-                            ; attention output merged from [heads, head_dim])
-                            ; may spell it as any value.
-                            (= ?a_n_stride (MNum 0))
-                            (= ?a_k_stride (MIter))
-
-                            ; B is column-major [k, n] — i.e. the weight stored
-                            ; row-major [n, k], read row by row.
-                            (= ?b_m_stride (MNum 0))
-                            (= ?b_n_stride (MMul (MIter) ?k))
-                            (= ?b_k_stride (MIter))
-
-                            (= ?dt (dtype ?a))
-                            (= ?dt (dtype ?b))
-                            (= ?dt ({dt}))
-                        )
-                        (
-                            (let ?gemv (Op (KernelGemv ?n ?k ({dt})) (ICons ?a (ICons ?b (INil)))))
-                            (union ?sum ?gemv)
-                            (set (dtype ?gemv) ({dt}))
-                        )
-                        :ruleset matmul_backend
-                        :name \"kernel gemv m1 {dt} {variant}\"
-                    )"
+                    include_str!("gemv/gemv_rewrite.egg.in"),
+                    dt = dt,
+                    m_cond = m_cond,
+                    variant = variant,
                 ))
             })
             .collect()
@@ -220,25 +175,14 @@ impl KernelOp for KernelGemv {
         };
 
         let kernel = format!(
-            "{includes}
-#define FULL_MASK 0xffffffff
-{dyn_defines}
-extern \"C\" {{
-    __global__ void gemv_k({ty} *out, const {ty} *x, const {ty} *w{dyn_dims_param}) {{
-        long long row = (long long)blockIdx.x * {WARPS_PER_BLOCK} + (threadIdx.x >> 5);
-        if (row >= ({n})) return;
-        int lane = threadIdx.x & 31;
-{body}
-
-        #pragma unroll
-        for (int s = 16; s > 0; s /= 2) {{
-            acc += __shfl_down_sync(FULL_MASK, acc, s);
-        }}
-        if (lane == 0) {{
-            out[row] = ({ty})acc;
-        }}
-    }}
-}}"
+            include_str!("gemv/gemv.cu.in"),
+            WARPS_PER_BLOCK = WARPS_PER_BLOCK,
+            body = body,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            n = n,
+            ty = ty,
         );
 
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {

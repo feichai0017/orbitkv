@@ -12,7 +12,10 @@ use orbitkv_compiler::{op::IntoEgglogOp, prelude::Graph};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{cuda_nvrtc_compile_options, loaded_nvrtc_version, runtime::CudaRuntimeImpl};
+use crate::{
+    compilation::{cuda_nvrtc_compile_options, loaded_nvrtc_version},
+    runtime::CudaRuntimeImpl,
+};
 
 thread_local! {
     static MODULE_ARTIFACT_SESSION: RefCell<Option<Arc<Mutex<ModuleArtifact>>>> =

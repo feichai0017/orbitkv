@@ -6,11 +6,10 @@ use crate::{
     kernel::hlir::{dtype_includes, generate_dyn_dims_defines},
 };
 use cudarc::driver::{CudaFunction, CudaModule, CudaSlice, CudaStream};
-use itertools::Itertools;
 use orbitkv_compiler::{
     egglog_utils::{
         api::{Rule, SortDef, sort},
-        base::{DTYPE, ELIST, EXPRESSION, OP_KIND, STRING},
+        base::{DTYPE, ELIST, EXPRESSION, OP_KIND},
         extract_dtype, extract_expr, extract_expr_list,
     },
     op::*,
@@ -149,38 +148,7 @@ impl KernelOp for KernelMeanReduce {
         };
 
         let kernel = format!(
-            "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void reduce_mean_k({dtype} *out, const {dtype} *in{dyn_dims_param}) {{
-        long long const_z = blockIdx.x;
-        long long n_elements = {n_outputs};
-        if (const_z >= n_elements) return;
-
-        long long in_start = {in_index};
-        long long iters = {iters};
-        long long iter_stride = {iter_stride};
-
-        float thread_sum = 0.0f;
-        for (long long i = threadIdx.x; i < iters; i += {threads_per_block})
-            thread_sum += (float)in[in_start + i * iter_stride];
-
-        for (int offset = 16; offset > 0; offset >>= 1)
-            thread_sum += __shfl_down_sync(0xffffffff, thread_sum, offset);
-
-        __shared__ float warp_sums[{n_warps}];
-        int lane = threadIdx.x & 31;
-        int warp = threadIdx.x >> 5;
-        if (lane == 0) warp_sums[warp] = thread_sum;
-        __syncthreads();
-
-        if (threadIdx.x == 0) {{
-            float sum = 0.0f;
-            for (int w = 0; w < {n_warps}; w++) sum += warp_sums[w];
-            out[{out_index}] = ({dtype})(sum / (float)iters);
-        }}
-    }}
-}}",
+            include_str!("other_ops/mean.cu.in"),
             dtype = dtype,
             in_index = flatten_strides(&self.out_shape, &self.in_stride).to_kernel(),
             out_index = flatten_strides(&self.out_shape, &self.out_stride).to_kernel(),
@@ -193,6 +161,9 @@ extern \"C\" {{
                 .to_kernel(),
             threads_per_block = threads_per_block,
             n_warps = n_warps,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
         );
 
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
@@ -386,18 +357,15 @@ impl KernelOp for KernelScatterNoCopy {
         let scatter_idx_idx = flatten_strides(&self.index_shape, &self.index_strides).to_kernel();
         let scatter_src_idx = flatten_strides(&self.index_shape, &self.src_strides).to_kernel();
         let scatter_kernel = format!(
-            "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void scatter_nocopy({dtype} *dest, const int *indexes, const {dtype} *src{dyn_dims_param}) {{
-        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (const_z >= {n_src_elements}) return;
-        int idx = indexes[{scatter_idx_idx}];
-        if (idx >= 0 && idx < {n_dest_elements}) {{
-            dest[idx] = src[{scatter_src_idx}];
-        }}
-    }}
-}}"
+            include_str!("other_ops/scatter_no_copy.cu.in"),
+            dtype = dtype,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            n_dest_elements = n_dest_elements,
+            n_src_elements = n_src_elements,
+            scatter_idx_idx = scatter_idx_idx,
+            scatter_src_idx = scatter_src_idx,
         );
         let (module, func) = if let Some((module, func)) = compile_cache.get(&scatter_kernel) {
             (module.clone(), func.clone())

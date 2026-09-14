@@ -1,0 +1,11 @@
+(rule
+                ({}
+                )
+                (
+                    (let ?ks (Op (KernelSwiglu ?o_sh) (ICons ?x (INil))))
+                    (union ?out ?ks)
+                    (set (dtype ?ks) (Bf16))
+                )
+                :ruleset kernel_fuse_late
+                :name "kernel swiglu bf16"
+            )

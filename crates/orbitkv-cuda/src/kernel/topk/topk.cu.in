@@ -1,0 +1,30 @@
+{dyn_defines}
+extern "C" {{
+    __global__ void stable_sort_idx_k(int *out, const float *x{dyn_dims_param}) {{
+        __shared__ float row[{e}];
+        long long r = blockIdx.x;
+        int j = threadIdx.x;
+        const float* xr = x + r * {e};
+        if (j < {e}) {{
+            row[j] = xr[j];
+            // Prefill with 0 (the decomposed chain's scatter dest is a
+            // materialized zeros iota). For real inputs the ranks are a
+            // permutation and every slot is overwritten; with NaN/garbage
+            // inputs (search-time dummy buffers) ranks collide and unwritten
+            // slots would otherwise hold stale ints that downstream
+            // consumers use as gather/expert indices — an OOB crash.
+            out[r * {e} + j] = 0;
+        }}
+        __syncthreads();
+        if (j >= {e}) return;
+        float vj = row[j];
+        int count = 0;
+        for (int i = 0; i < {e}; i++) {{
+            float vi = row[i];
+            // descending rank with index tie-break (lower index first)
+            count += (vi > vj) || (vi == vj && i < j);
+        }}
+        // ranks are a permutation: element j lands at sorted position count
+        out[r * {e} + count] = j;
+    }}
+}}

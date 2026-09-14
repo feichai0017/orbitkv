@@ -1,0 +1,9 @@
+(rule
+                (
+                    (= ?e (Op (GLUMoE ?gu_io ?dn_io ?gu_matmul_k ?dn_matmul_k ?output_k ?gu_within_range ?dn_within_range ?mode) ?inputs))
+                )
+                (
+                    (set (dtype ?e) (F32))
+                )
+                :ruleset dtype_prop
+            )

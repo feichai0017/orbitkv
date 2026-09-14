@@ -863,7 +863,7 @@ fn host_memory_aggregation_preserves_lifetimes_and_shared_dedup() {
 
 #[test]
 fn resident_shared_memory_survives_into_non_host_and_flash_plans() {
-    let resident = crate::host::flashinfer::shared_device_memory_allocation();
+    let resident = crate::providers::flashinfer::shared_device_memory_allocation();
 
     let (_, _, non_flash_shared) =
         CudaRuntime::aggregate_host_device_memory(&[Vec::new()], std::slice::from_ref(&resident))

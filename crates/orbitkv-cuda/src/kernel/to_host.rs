@@ -31,7 +31,13 @@ use orbitkv_compiler::{
 use tracing::{Level, enabled, span};
 
 use crate::{
-    host::{
+    kernel::{
+        CudaFunctionExt, CudaGraphExecHandle, CudaGraphHandle, KernelOp, create_cuda_event,
+        destroy_cuda_event,
+        fusion::region_codegen::{self, CompileUnit},
+        hlir::{clear_global_dyn_dims, get_global_dyn_dims, set_global_dyn_dims},
+    },
+    providers::{
         CudaGraphCaptureResource, DeviceBuffer, HostOp,
         cublaslt::{
             CuBlasLt, CuBlasLtCaptureSignature, CuBlasLtPrepareKey, LtMatmulPointers,
@@ -41,12 +47,6 @@ use crate::{
             FlashInferAttention, FlashInferCaptureSignature, FlashInferPointers,
             FlashInferPrepareKey, PreparedFlashInferAttention,
         },
-    },
-    kernel::{
-        CudaFunctionExt, CudaGraphExecHandle, CudaGraphHandle, KernelOp, create_cuda_event,
-        destroy_cuda_event, event_elapsed_ms,
-        fusion::region_codegen::{self, CompileUnit},
-        hlir::{clear_global_dyn_dims, get_global_dyn_dims, set_global_dyn_dims},
     },
     resource::{
         CandidateResourceCaps, CudaDeviceResourceLimits, HostDeviceMemoryPlan, KernelResourcePlan,
@@ -1464,22 +1464,6 @@ impl CudaGraphOp {
             .unwrap_or_default()
     }
 
-    /// Exact launch-resource facts for the compiled kernels in this CUDA graph.
-    /// This is queried before profiling so impossible launch configurations do
-    /// not consume search trials. It does not assign a cost to legal kernels.
-    pub(crate) fn resource_plans(
-        &self,
-        dyn_map: &DynMap,
-        function_cache: &mut CompiledFunctionResourceCache,
-    ) -> Result<Vec<KernelResourcePlan>, ResourceViolation> {
-        self.state
-            .borrow()
-            .kernels
-            .iter()
-            .map(|kernel| kernel.resource_plan(dyn_map, function_cache))
-            .collect()
-    }
-
     pub(crate) fn validate_kernel_resources(
         &self,
         dyn_map: &DynMap,
@@ -1575,7 +1559,7 @@ impl CudaGraphOp {
             });
         }
 
-        let mut buffers = buffers
+        let buffers = buffers
             .into_iter()
             .enumerate()
             .filter_map(|(node, accumulator)| {
@@ -1718,7 +1702,7 @@ impl CudaGraphOp {
         }
 
         let mut shared_allocations: Vec<_> = (!state.flashinfer_ops.is_empty())
-            .then(crate::host::flashinfer::shared_device_memory_allocation)
+            .then(crate::providers::flashinfer::shared_device_memory_allocation)
             .into_iter()
             .chain(captured_shared_allocations)
             .collect();
@@ -5330,7 +5314,7 @@ pub(crate) fn kernel_to_host_with_prepared(
                 }
                 // Also add edges to HostOps (like cuBLAS ops) that consume our outputs
                 if llir_graph[consumer]
-                    .to_dialect::<dyn super::super::host::HostOp>()
+                    .to_dialect::<dyn super::super::providers::HostOp>()
                     .is_some()
                 {
                     edges_to_add.push((*cuda_graph_node, consumer));

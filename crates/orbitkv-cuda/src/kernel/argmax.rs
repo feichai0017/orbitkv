@@ -63,80 +63,7 @@ impl EgglogOp for KernelArgmax {
         // Cast(Constant) eclass (F32 included), which is matched directly
         // here (const_like lives in the flashinfer host-op file, which loads
         // after kernel ops).
-        vec![Rule::raw(
-            "(rule
-                (
-                    ; final Max over cols of (one_hot * iota)
-                    (= ?out (Op (Max ?out_shape ?cols ?out_in_strides (MIter) ?out_out_strides)
-                        (ICons ?prod (INil))))
-                    (= ?prod (Op (Mul ?prod_shape ?onehot_strides ?iota_strides ?prod_out_strides)
-                        (ICons ?one_hot (ICons ?iota (INil)))))
-                    (= ?iota (Op (Iota (MIter) ?cols2) (INil)))
-
-                    ; one_hot = Cast(Int)(Cast(Bool)(ne * -1 + 1))
-                    (= ?one_hot (Op (Cast ?oh_size (Int)) (ICons ?eq (INil))))
-                    (= ?eq (Op (Cast ?eq_size (Bool)) (ICons ?plus1 (INil))))
-                    (= ?plus1 (Op (Add ?p1_shape ?neg_strides ?one_strides ?p1_out_strides)
-                        (ICons ?neg (ICons ?one (INil)))))
-                    (= ?one (Op (KernelConstant 1.000000 (F32)) (INil)))
-                    (= ?neg (Op (Mul ?neg_shape ?ne_strides ?negone_strides ?neg_out_strides)
-                        (ICons ?ne (ICons ?negone (INil)))))
-                    (= ?negone (Op (KernelConstant -1.000000 (F32)) (INil)))
-
-                    ; ne = Cast(F32)(x < mx) + Cast(F32)(mx < x)
-                    (= ?ne (Op (Add ?ne_shape ?lt1_strides ?lt2_strides ?ne_out_strides)
-                        (ICons ?lt1f (ICons ?lt2f (INil)))))
-                    (= ?lt1f (Op (Cast ?lt1_size (F32)) (ICons ?lt1 (INil))))
-                    (= ?lt2f (Op (Cast ?lt2_size (F32)) (ICons ?lt2 (INil))))
-                    (= ?lt1 (Op (LessThan ?lt_shape ?x_strides1 ?mx_strides1 ?lt1_out_strides)
-                        (ICons ?x (ICons ?mx (INil)))))
-                    (= ?lt2 (Op (LessThan ?lt_shape2 ?mx_strides2 ?x_strides2 ?lt2_out_strides)
-                        (ICons ?mx (ICons ?x (INil)))))
-
-                    ; mx = Max(x) over the same axis (broadcast back via strides)
-                    (= ?mx (Op (Max ?mx_shape ?cols3 ?mx_in_strides (MIter) ?mx_out_strides)
-                        (ICons ?x (INil))))
-
-                    (= ?dt (dtype ?x))
-                )
-                (
-                    (let ?am (Op (KernelArgmax ?out_shape ?cols ?dt) (ICons ?x (INil))))
-                    (union ?out ?am)
-                    (set (dtype ?am) (Int))
-                    ; The decomposed frontend spelling expands several
-                    ; vocab-sized temporaries and is never competitive once
-                    ; this last-axis kernel is legal. Removing the exact
-                    ; matched root makes greedy sampling deterministic under
-                    ; schedule search and prevents an infeasible fallback.
-                    (delete (Op (Max ?out_shape ?cols ?out_in_strides (MIter) ?out_out_strides)
-                        (ICons ?prod (INil))))
-                )
-                :ruleset kernel_specialize
-                :name \"kernel argmax last axis\"
-            )
-            ; `Max` is lowered to KernelMax before conditional HLIR cleanup,
-            ; so deleting only the proof root above can still leave the
-            ; decomposed reduction as an extraction candidate. Once argmax
-            ; has matched, remove that exact same-eclass backend alternative
-            ; in the final cleanup phase. The other Max in the proof (the
-            ; floating-point row maximum) is in a different eclass.
-            (rule
-                (
-                    (= ?am (Op (KernelArgmax ?out_shape ?cols ?dt) (ICons ?x (INil))))
-                    (= ?km (Op (KernelMax ?km_shape ?km_cols ?km_in_strides
-                                      ?km_iter_stride ?km_out_strides ?km_dt)
-                               ?km_inputs))
-                    (= ?am ?km)
-                )
-                (
-                    (delete (Op (KernelMax ?km_shape ?km_cols ?km_in_strides
-                                           ?km_iter_stride ?km_out_strides ?km_dt)
-                                ?km_inputs))
-                )
-                :ruleset base_cleanup
-                :name \"prefer fused argmax over decomposed max\"
-            )",
-        )]
+        vec![Rule::raw(include_str!("argmax/argmax_rewrite.egg"))]
     }
 
     fn cleanup(&self) -> bool {
@@ -202,66 +129,13 @@ impl KernelOp for KernelArgmax {
         // Tie rule: highest index wins, matching both the decomposed chain
         // (max over index*one_hot) and the CPU sampler's `max_by` (last max).
         let kernel = format!(
-            "{includes}
-#define WARP_SIZE 32
-#define FULL_MASK 0xffffffff
-#define NEG_INF_F __int_as_float(0xff800000)
-{dyn_defines}
-extern \"C\" {{
-    __global__ void argmax_k(int *out, const {ty} *in{dyn_dims_param}) {{
-        __shared__ float warp_vals[{TPB} / WARP_SIZE];
-        __shared__ int warp_idxs[{TPB} / WARP_SIZE];
-        long long const_z = blockIdx.x;
-        long long cols = {cols};
-        int tid = threadIdx.x;
-        int lane_id = tid % WARP_SIZE;
-        int warp_id = tid / WARP_SIZE;
-
-        const {ty} *row = in + const_z * cols;
-        float best = NEG_INF_F;
-        int best_idx = 0;
-        for (long long i = tid; i < cols; i += {TPB}) {{
-            float v = (float)row[i];
-            if (v > best || (v == best && (int)i > best_idx)) {{
-                best = v;
-                best_idx = (int)i;
-            }}
-        }}
-
-        #pragma unroll
-        for (int s = WARP_SIZE / 2; s > 0; s /= 2) {{
-            float ov = __shfl_down_sync(FULL_MASK, best, s);
-            int oi = __shfl_down_sync(FULL_MASK, best_idx, s);
-            if (ov > best || (ov == best && oi > best_idx)) {{
-                best = ov;
-                best_idx = oi;
-            }}
-        }}
-        if (lane_id == 0) {{
-            warp_vals[warp_id] = best;
-            warp_idxs[warp_id] = best_idx;
-        }}
-        __syncthreads();
-
-        if (warp_id == 0) {{
-            int cnt = {TPB} / WARP_SIZE;
-            best = tid < cnt ? warp_vals[tid] : NEG_INF_F;
-            best_idx = tid < cnt ? warp_idxs[tid] : 0;
-            #pragma unroll
-            for (int s = cnt / 2; s > 0; s /= 2) {{
-                float ov = __shfl_down_sync(FULL_MASK, best, s);
-                int oi = __shfl_down_sync(FULL_MASK, best_idx, s);
-                if (ov > best || (ov == best && oi > best_idx)) {{
-                    best = ov;
-                    best_idx = oi;
-                }}
-            }}
-            if (tid == 0) {{
-                out[const_z] = best_idx;
-            }}
-        }}
-    }}
-}}"
+            include_str!("argmax/argmax.cu.in"),
+            TPB = TPB,
+            cols = cols,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            ty = ty,
         );
 
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {

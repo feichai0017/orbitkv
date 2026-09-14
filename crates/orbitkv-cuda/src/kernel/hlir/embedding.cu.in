@@ -1,0 +1,18 @@
+{includes}
+{dyn_defines}
+extern "C" {{
+    __global__ void embed({cuda_ty} *out, const int *token_ids, const {cuda_ty} *embed_table{dyn_dims_param}) {{
+        long long const_z = 0;
+        long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= {n_elements}) return;
+        long long embed_dim = {embed_dim_expr};
+        long long row_stride = {row_stride_expr};
+        long long batch_idx = idx / embed_dim;
+        long long embed_idx = idx % embed_dim;
+        const_z = batch_idx;
+        long long token_offset = {token_offset_expr};
+        long long out_offset = {out_offset_expr};
+        int token_id = token_ids[token_offset];
+        out[out_offset + embed_idx] = embed_table[(long long)token_id * row_stride + embed_idx];
+    }}
+}}

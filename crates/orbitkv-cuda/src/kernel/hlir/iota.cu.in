@@ -1,0 +1,9 @@
+
+{dyn_defines}
+extern "C" {{
+    __global__ void iota_k(int *C{dyn_dims_param}) {{
+        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+        if (const_z >= {range}) return;
+        C[const_z] = {};
+    }}
+}}

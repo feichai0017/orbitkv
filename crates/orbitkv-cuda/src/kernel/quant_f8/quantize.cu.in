@@ -1,0 +1,10 @@
+{includes}
+{dyn_defines}
+extern "C" {{
+    __global__ void quant_f8_k(__nv_fp8_e4m3 *out, const __nv_bfloat16 *x, const float *scale{dyn_dims_param}) {{
+        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+        if (const_z >= {size}) return;
+        float rs = 1.0f / scale[0];
+        out[const_z] = (__nv_fp8_e4m3)((float)x[const_z] * rs);
+    }}
+}}

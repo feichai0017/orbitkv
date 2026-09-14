@@ -619,12 +619,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "colorize"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc17e449bc7854c50b943d113a98bc0e01dc6585d2c66eaa09ca645ebd8a7e62"
-
-[[package]]
 name = "compact_str"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3398,20 +3392,17 @@ dependencies = [
  "base64 0.22.1",
  "bytemuck",
  "candle-core",
- "colorize",
  "cudarc 0.19.9 (git+https://github.com/luminal-ai/cudarc.git?rev=a42f3897b6d00aded8e6ac7ad258c72d8bad5596)",
  "fixedbitset 0.5.7",
  "half",
  "itertools 0.12.1",
  "libc",
  "libloading 0.8.9",
- "lru",
  "memmap2",
  "num-traits",
  "orbitkv-compiler",
  "orbitkv-ops",
  "orbitkv-tracing",
- "pretty-duration",
  "proptest",
  "rand 0.9.5",
  "rustc-hash 2.1.3",

@@ -1,0 +1,11 @@
+{includes}
+{dyn_defines}
+extern "C" {{
+    __global__ void gather({dtype} *C, const int *indexes, const {dtype} *data{dyn_dims_param}) {{
+        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+        if (const_z >= {n_elements}) return;
+        {dtype}* out = C + {out_idx};
+        const_z = indexes[{idx_idx}];
+        *out = data[{data_idx}];
+    }}
+}}

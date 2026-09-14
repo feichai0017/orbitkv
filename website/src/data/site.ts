@@ -96,6 +96,7 @@ export const evidenceHighlights = [
 export const docs = [
   { name: "System architecture", path: "docs/architecture.md" },
   { name: "Model compiler", path: "docs/compiler.md" },
+  { name: "CUDA backend and providers", path: "docs/cuda-backend.md" },
   { name: "State lifecycle", path: "docs/runtime-session.md" },
   { name: "Execution artifacts", path: "docs/module-artifacts.md" },
   { name: "Joint compilation", path: "docs/joint-compilation.md" },
@@ -104,6 +105,13 @@ export const docs = [
 ];
 
 export const records = [
+  {
+    date: "2026-09-14",
+    name: "CUDA backend and provider builds",
+    detail:
+      "One provider lock, device-aware compilation, and 152 passing B1/B8 reference comparisons on H20.",
+    path: "results/cuda-backend-refactor-20260914/README.md",
+  },
   {
     date: "2026-09-14",
     name: "Integrated compiler workspace",

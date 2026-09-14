@@ -8,7 +8,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    host::{
+    providers::{
         CublasLtMatrixOrders, CublasLtScaleValues, CublasLtTransposeOps, CublasLtTypeTuple, HostOp,
         cublaslt::{cublaslt_prepare_count_for_test, reset_cublaslt_prepare_count_for_test},
         cublaslt_c_d_layouts_match, cublaslt_epilogue, cublaslt_matrix_orders,
@@ -159,7 +159,7 @@ fn reference_mixed_chain(
 }
 
 fn cublaslt_available_for_runtime(stream: &Arc<cudarc::driver::CudaStream>) -> bool {
-    crate::try_create_cublaslt(stream.clone()).is_ok()
+    crate::providers::cublaslt::try_create_cublaslt(stream.clone()).is_ok()
 }
 
 fn build_mixed_chain_graph(
@@ -785,7 +785,7 @@ fn mixed_cuda_graph_cublaslt_kernel_chain_executes_correctly() {
     if !cublaslt_available_for_runtime(&stream) {
         return;
     }
-    if !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream) {
+    if !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream) {
         return;
     }
 
@@ -840,7 +840,7 @@ fn cuda_graph_cublaslt_only_executes_correctly() {
     if !cublaslt_available_for_runtime(&stream) {
         return;
     }
-    if !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream) {
+    if !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream) {
         return;
     }
 
@@ -878,7 +878,7 @@ fn cuda_graph_cublaslt_bf16_output_keeps_storage_dtype() {
         return;
     };
     if !cublaslt_available_for_runtime(&stream)
-        || !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream)
+        || !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream)
     {
         return;
     }
@@ -913,7 +913,7 @@ fn mixed_cuda_graph_reuses_prepared_for_ordered_matching_cublaslt_ops() {
     if !cublaslt_available_for_runtime(&stream) {
         return;
     }
-    if !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream) {
+    if !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream) {
         return;
     }
 
@@ -977,7 +977,7 @@ fn cuda_graph_cublaslt_skips_prepare_when_unrelated_dyn_dim_changes() {
     if !cublaslt_available_for_runtime(&stream) {
         return;
     }
-    if !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream) {
+    if !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream) {
         return;
     }
 
@@ -1032,7 +1032,7 @@ fn cuda_graph_cublaslt_only_recaptures_on_dynamic_shape_change() {
     if !cublaslt_available_for_runtime(&stream) {
         return;
     }
-    if !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream) {
+    if !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream) {
         return;
     }
 
@@ -1115,7 +1115,7 @@ fn cuda_graph_bf16_batched_matmul_profile_to_prefill_transition() {
         return;
     };
     if !cublaslt_available_for_runtime(&stream)
-        || !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream)
+        || !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream)
     {
         return;
     }
@@ -1223,7 +1223,7 @@ fn bucket_range_and_singleton_cublaslt_buckets_are_captured() {
     if !cublaslt_available_for_runtime(&stream) {
         return;
     }
-    if !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream) {
+    if !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream) {
         return;
     }
 
@@ -1304,7 +1304,7 @@ fn warmup_cublaslt_preserves_exact_dynamic_bucket_values() {
         return;
     };
     if !cublaslt_available_for_runtime(&stream)
-        || !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream)
+        || !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream)
     {
         return;
     }
@@ -1427,7 +1427,7 @@ fn check_cublaslt_variants_switch_without_recapture(strict: bool) {
         return;
     };
     if !cublaslt_available_for_runtime(&stream)
-        || !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream)
+        || !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream)
     {
         return;
     }
@@ -1510,7 +1510,7 @@ fn mixed_cuda_graph_cublaslt_recaptures_on_input_pointer_change() {
     if !cublaslt_available_for_runtime(&stream) {
         return;
     }
-    if !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream) {
+    if !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream) {
         return;
     }
 
@@ -1561,7 +1561,7 @@ fn mixed_cuda_graph_cublaslt_recaptures_on_dynamic_shape_change() {
     if !cublaslt_available_for_runtime(&stream) {
         return;
     }
-    if !crate::host::cublaslt::cublaslt_graph_capture_supported(&stream) {
+    if !crate::providers::cublaslt::cublaslt_graph_capture_supported(&stream) {
         return;
     }
 

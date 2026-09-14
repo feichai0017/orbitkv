@@ -1,0 +1,9 @@
+(rule
+                (
+                    (= ?e (Op (FusedMoE ?hidden ?intermediate ?top_k) ?inputs))
+                )
+                (
+                    (set (dtype ?e) (F32))
+                )
+                :ruleset dtype_prop
+            )

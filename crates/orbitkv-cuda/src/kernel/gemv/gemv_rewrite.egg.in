@@ -1,0 +1,47 @@
+(rule
+                        (
+                            (= ?sum (Op (GenericMatmul
+                                ?out_shape ?mul_shape ?k
+                                ?a_stride ?b_stride
+                                ?sum_in_stride ?k_stride ?sum_out_stride
+                                ?matmul_dtype)
+                                (ICons ?a (ICons ?b (INil)))))
+
+                            {m_cond}
+                            (generic_matmul_exact_2d
+                                ?sum ?semantic_m ?n ?k ({dt}))
+                            (= ?matmul_dtype ({dt}))
+                            (!= ?n (MNum 0))
+                            (!= ?k (MNum 1))
+
+                            (= ?a_stride (ECons ?a_m_stride (ECons ?a_n_stride (ECons ?a_k_stride (ENil)))))
+                            (= ?b_stride (ECons ?b_m_stride (ECons ?b_n_stride (ECons ?b_k_stride (ENil)))))
+                            (= ?k_stride (MIter))
+
+                            ; A (the activation row) reads as a contiguous
+                            ; [k] vector. Both m variants guarantee m <= 1,
+                            ; so the m stride is never advanced and carries
+                            ; no layout constraint: a reshaped view (e.g. an
+                            ; attention output merged from [heads, head_dim])
+                            ; may spell it as any value.
+                            (= ?a_n_stride (MNum 0))
+                            (= ?a_k_stride (MIter))
+
+                            ; B is column-major [k, n] — i.e. the weight stored
+                            ; row-major [n, k], read row by row.
+                            (= ?b_m_stride (MNum 0))
+                            (= ?b_n_stride (MMul (MIter) ?k))
+                            (= ?b_k_stride (MIter))
+
+                            (= ?dt (dtype ?a))
+                            (= ?dt (dtype ?b))
+                            (= ?dt ({dt}))
+                        )
+                        (
+                            (let ?gemv (Op (KernelGemv ?n ?k ({dt})) (ICons ?a (ICons ?b (INil)))))
+                            (union ?sum ?gemv)
+                            (set (dtype ?gemv) ({dt}))
+                        )
+                        :ruleset matmul_backend
+                        :name "kernel gemv m1 {dt} {variant}"
+                    )

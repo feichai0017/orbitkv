@@ -49,22 +49,11 @@ impl KernelOp for SwigluKernel {
         // decode row still spreads across the GPU instead of one SM.
         let col_tiles = i.div_ceil(TPB);
         let kernel = format!(
-            r#"{includes}
-extern "C" __global__ void swiglu_k(
-    {ty}* __restrict__ out,
-    const {ty}* __restrict__ x
-) {{
-    const long long I = {i};
-    long long row = blockIdx.x;
-    long long col = (long long)blockIdx.y * {TPB} + threadIdx.x;
-    if (col >= I) return;
-    const {ty}* xr = x + row * (2 * I);
-    float g = (float)xr[col];
-    float u = (float)xr[I + col];
-    float silu = g / (1.0f + expf(-g));
-    out[row * I + col] = ({ty})(silu * u);
-}}
-"#
+            include_str!("swiglu/swiglu.cu.in"),
+            TPB = TPB,
+            i = i,
+            includes = includes,
+            ty = ty,
         );
 
         let (module, func) = if let Some((m, f)) = compile_cache.get(&kernel) {
@@ -178,7 +167,7 @@ use orbitkv_compiler::{
     prelude::{ENodeId, SerializedEGraph},
 };
 
-/// Shared structural match used by full CUDA's quantized SwiGLU alternative.
+/// Structural SwiGLU proof shared by generated-kernel rules.
 #[doc(hidden)]
 pub fn swiglu_chain_atoms() -> &'static str {
     "
@@ -223,10 +212,7 @@ pub fn swiglu_chain_atoms() -> &'static str {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct KernelSwiglu {
-    /// Output shape `(rows, intermediate)`; rows may be dynamic.
-    out_shape: Vec<Expression>,
-}
+pub struct KernelSwiglu;
 
 impl EgglogOp for KernelSwiglu {
     fn sort(&self) -> SortDef {
@@ -239,17 +225,7 @@ impl EgglogOp for KernelSwiglu {
 
     fn rewrites(&self) -> Vec<Rule> {
         vec![Rule::raw(format!(
-            "(rule
-                ({}
-                )
-                (
-                    (let ?ks (Op (KernelSwiglu ?o_sh) (ICons ?x (INil))))
-                    (union ?out ?ks)
-                    (set (dtype ?ks) (Bf16))
-                )
-                :ruleset kernel_fuse_late
-                :name \"kernel swiglu bf16\"
-            )",
+            include_str!("swiglu/swiglu_rewrite.egg.in"),
             swiglu_chain_atoms()
         ))]
     }

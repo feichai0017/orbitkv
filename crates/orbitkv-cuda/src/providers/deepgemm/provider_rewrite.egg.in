@@ -1,0 +1,22 @@
+(rule
+                        (
+                            (= (cuda-target-major) 9)
+                            (= (cuda-target-minor) 0)
+                            {gate}
+                            (block-scaled-linear-op ?cid ?m ?n ?k {BLOCK} {BLOCK})
+                            (= ?reference (Op (CustomOpKind ?cid (Bf16))
+                                (ICons ?x (ICons ?w (ICons ?ws (INil))))))
+                            (= (Bf16) (dtype ?x))
+                            (= (F8E4M3) (dtype ?w))
+                            (= (F32) (dtype ?ws))
+                        )
+                        (
+                            {prepare}
+                            (let ?candidate (Op ({name} ?m ?n ?k {variant} "{provider}")
+                                (ICons {activation} (ICons ?w (ICons ?ws (INil))))))
+                            (union ?reference ?candidate)
+                            (set (dtype ?candidate) (Bf16))
+                        )
+                        :ruleset matmul_backend
+                        :name "{name} sm90 1d2d block-scaled variant {variant}"
+                    )

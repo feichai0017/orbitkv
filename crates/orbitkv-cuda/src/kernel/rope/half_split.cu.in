@@ -1,0 +1,29 @@
+{includes}
+extern "C" __global__ void rope_half_kernel(
+    {out_ty}* __restrict__ out,
+    const {in_ty}* __restrict__ x,
+    const float* __restrict__ cos_,
+    const float* __restrict__ sin_
+) {{
+    const int H = {h};
+    const int D = {d};
+    const int HALF = {half};
+    int sh = blockIdx.x;       // 0..S*H
+    int s_idx = sh / H;
+    int h_idx = sh - s_idx * H;
+    int tid = threadIdx.x;
+
+    const {in_ty}* xr   = x    + (long long)s_idx * {pitch} + {offset} + h_idx * D;
+    const float* cosr = cos_ + (long long)s_idx * HALF;
+    const float* sinr = sin_ + (long long)s_idx * HALF;
+    {out_ty}* yr = out + (long long)sh * D;
+
+    for (int j = tid; j < HALF; j += {TPB}) {{
+        float x0 = (float)xr[j];
+        float x1 = (float)xr[j + HALF];
+        float c = cosr[j];
+        float s = sinr[j];
+        yr[j] = ({out_ty})(x0 * c - x1 * s);
+        yr[j + HALF] = ({out_ty})(x1 * c + x0 * s);
+    }}
+}}

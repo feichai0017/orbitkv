@@ -1,0 +1,9 @@
+{includes}
+{dyn_defines}
+extern "C" {{
+    __global__ void mod_k({dtype} *C, const {dtype} *A, const {dtype} *B{dyn_dims_param}) {{
+        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+        if (const_z >= {n_elements}) return;
+        C[{out_idx}] = fmodf(A[{a_idx}], B[{b_idx}]);
+    }}
+}}

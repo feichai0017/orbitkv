@@ -22,6 +22,10 @@ by the current checkpoint loader or external KV transport.
 - `RuntimeManifest` and backend-neutral `StateLayoutFacts` describe state classes,
   retention, address/retirement programs, and byte geometry. The executor joins
   these facts with stable arenas and lowers them into compiler facts.
+- CUDA adds facts from the actual execution context through
+  `Runtime::compilation_facts()`. Target-dependent provider admission remains
+  in egglog. One provider lock and shared build/cache implementation govern the
+  integrated native libraries; see [CUDA backend](cuda-backend.md).
 - Token-KV updates require in-place aliases. Recurrent/convolution state uses
   typed shared arenas, generation-checked bindings, and event-backed completion.
   Search uses scratch state rather than live request state.

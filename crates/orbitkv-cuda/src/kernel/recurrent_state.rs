@@ -16,7 +16,7 @@ use orbitkv_compiler::{
         extract_expr_list,
     },
     op::{EgglogOp, LLIROp},
-    prelude::{DynMap, ENodeId, Expression, FxHashMap, FxHashSet, SerializedEGraph, Symbol},
+    prelude::{ENodeId, Expression, FxHashMap, FxHashSet, SerializedEGraph, Symbol},
     shape::flatten_strides,
 };
 
