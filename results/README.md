@@ -1,12 +1,16 @@
 # Current evidence
 
+The [Rust 1.98 follow-up](workspace-integration-lint-20260914/README.md) records
+typed byte conversion, all-target CUDA/executor Clippy and 144 B1/B8 reference
+comparisons against the rebuilt binary.
+
 The [integrated workspace qualification](workspace-integration-20260914/README.md)
 records the compiler/crate migration, fresh compilation, and final-binary B1/B8
 replay. Earlier records retain their original source identities.
 
 
 This directory contains only compact evidence that directly qualifies the
-current `core + Luminal executor + Rust engine/HTTP frontend` architecture. A record keeps
+current state-manager, compiler, CUDA executor and Rust engine/HTTP architecture. A record keeps
 the concrete model, hardware/software environment, measured result, source
 identity, and claim boundary. It must not embed source trees, binaries, package
 caches, model weights, or superseded integration snapshots.

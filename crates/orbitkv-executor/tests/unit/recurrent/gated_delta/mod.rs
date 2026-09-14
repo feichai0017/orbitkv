@@ -46,8 +46,10 @@ fn projected_gate_and_readout_match_independent_reference() {
     .unwrap();
     let expected = reference
         .values
-        .chunks_exact(2)
-        .zip(output_gate.chunks_exact(2))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(output_gate.as_chunks::<2>().0)
         .flat_map(|(values, gate)| {
             let inverse = (values.iter().map(|value| value * value).sum::<f32>() / 2.0 + 1e-6)
                 .sqrt()

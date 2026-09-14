@@ -1,0 +1,815 @@
+{
+  "schema": "orbitkv.workspace-integration.v1",
+  "purpose": "Typed byte conversion follow-up to Rust 1.98 Clippy; strict replay of existing schema 11 artifact, no search or performance claim",
+  "hardware": "One NVIDIA H20, SM90, 97871 MiB",
+  "processes": [
+    {
+      "run": "b1",
+      "phase": "strict-replay",
+      "status": "passed",
+      "binary_sha256": "01e1e7f0c2ce0d2559c5bc5b60d2134b360ddcf194ced689c90c0ecbfef071db",
+      "artifact_sha256": "8272ac2c31fd9b302c792bdd206d804d24d48b8b16f2c5679a1e6e8f1bbe0463",
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 1,
+        "compile_seconds": 18.140327399,
+        "drain_passed": true,
+        "parity_request_steps": 8,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "parity": [
+        {
+          "max_abs": 0.5,
+          "phase": "prefill",
+          "request": 0
+        },
+        {
+          "max_abs": 0.4375,
+          "phase": "decode",
+          "request": 0
+        },
+        {
+          "max_abs": 0.55859375,
+          "phase": "decode-2",
+          "request": 0
+        },
+        {
+          "max_abs": 0.5,
+          "phase": "decode-3",
+          "request": 0
+        },
+        {
+          "max_abs": 0.453125,
+          "phase": "decode-4",
+          "request": 0
+        },
+        {
+          "max_abs": 0.5,
+          "phase": "decode-5",
+          "request": 0
+        },
+        {
+          "max_abs": 0.4765625,
+          "phase": "decode-6",
+          "request": 0
+        },
+        {
+          "max_abs": 0.60546875,
+          "phase": "decode-7",
+          "request": 0
+        }
+      ],
+      "elapsed_process_seconds": 19.64042568206787
+    },
+    {
+      "run": "b1",
+      "phase": "profile",
+      "status": "passed",
+      "binary_sha256": "01e1e7f0c2ce0d2559c5bc5b60d2134b360ddcf194ced689c90c0ecbfef071db",
+      "artifact_sha256": "8272ac2c31fd9b302c792bdd206d804d24d48b8b16f2c5679a1e6e8f1bbe0463",
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 1,
+        "compile_seconds": 17.758359141,
+        "drain_passed": true,
+        "parity_request_steps": 8,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "parity": [
+        {
+          "max_abs": 0.5,
+          "phase": "prefill",
+          "request": 0
+        },
+        {
+          "max_abs": 0.4375,
+          "phase": "decode",
+          "request": 0
+        },
+        {
+          "max_abs": 0.55859375,
+          "phase": "decode-2",
+          "request": 0
+        },
+        {
+          "max_abs": 0.5,
+          "phase": "decode-3",
+          "request": 0
+        },
+        {
+          "max_abs": 0.453125,
+          "phase": "decode-4",
+          "request": 0
+        },
+        {
+          "max_abs": 0.5,
+          "phase": "decode-5",
+          "request": 0
+        },
+        {
+          "max_abs": 0.4765625,
+          "phase": "decode-6",
+          "request": 0
+        },
+        {
+          "max_abs": 0.60546875,
+          "phase": "decode-7",
+          "request": 0
+        }
+      ],
+      "elapsed_process_seconds": 19.53903942555189
+    },
+    {
+      "run": "b8",
+      "phase": "strict-replay",
+      "status": "passed",
+      "binary_sha256": "01e1e7f0c2ce0d2559c5bc5b60d2134b360ddcf194ced689c90c0ecbfef071db",
+      "artifact_sha256": "8272ac2c31fd9b302c792bdd206d804d24d48b8b16f2c5679a1e6e8f1bbe0463",
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 8,
+        "compile_seconds": 19.619152966,
+        "drain_passed": true,
+        "parity_request_steps": 64,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "parity": [
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 0
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 1
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 2
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 3
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 4
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 5
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 6
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 7
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 0
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 1
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 2
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 3
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 4
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 5
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 6
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 7
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 0
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 1
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 2
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 3
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 4
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 5
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 6
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 7
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 0
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 1
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 2
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 3
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 4
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 5
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 6
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 7
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 0
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 1
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 2
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 3
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 4
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 5
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 6
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 7
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 0
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 1
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 2
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 3
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 4
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 5
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 6
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 7
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 0
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 1
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 2
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 3
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 4
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 5
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 6
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 7
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 0
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 1
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 2
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 3
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 4
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 5
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 6
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 7
+        }
+      ],
+      "elapsed_process_seconds": 21.441715113818645
+    },
+    {
+      "run": "b8",
+      "phase": "profile",
+      "status": "passed",
+      "binary_sha256": "01e1e7f0c2ce0d2559c5bc5b60d2134b360ddcf194ced689c90c0ecbfef071db",
+      "artifact_sha256": "8272ac2c31fd9b302c792bdd206d804d24d48b8b16f2c5679a1e6e8f1bbe0463",
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 8,
+        "compile_seconds": 18.462191182,
+        "drain_passed": true,
+        "parity_request_steps": 64,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "parity": [
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 0
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 1
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 2
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 3
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 4
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 5
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 6
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "prefill",
+          "request": 7
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 0
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 1
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 2
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 3
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 4
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 5
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 6
+        },
+        {
+          "max_abs": 0.578125,
+          "phase": "decode",
+          "request": 7
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 0
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 1
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 2
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 3
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 4
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 5
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 6
+        },
+        {
+          "max_abs": 0.44433594,
+          "phase": "decode-2",
+          "request": 7
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 0
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 1
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 2
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 3
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 4
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 5
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 6
+        },
+        {
+          "max_abs": 0.390625,
+          "phase": "decode-3",
+          "request": 7
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 0
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 1
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 2
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 3
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 4
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 5
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 6
+        },
+        {
+          "max_abs": 0.546875,
+          "phase": "decode-4",
+          "request": 7
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 0
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 1
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 2
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 3
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 4
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 5
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 6
+        },
+        {
+          "max_abs": 0.515625,
+          "phase": "decode-5",
+          "request": 7
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 0
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 1
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 2
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 3
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 4
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 5
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 6
+        },
+        {
+          "max_abs": 0.40625,
+          "phase": "decode-6",
+          "request": 7
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 0
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 1
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 2
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 3
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 4
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 5
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 6
+        },
+        {
+          "max_abs": 0.6875,
+          "phase": "decode-7",
+          "request": 7
+        }
+      ],
+      "elapsed_process_seconds": 20.48922510817647
+    }
+  ]
+}

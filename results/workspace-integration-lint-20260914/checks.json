@@ -1,0 +1,46 @@
+{
+  "schema": "orbitkv.validation-checks.v1",
+  "checks": [
+    {
+      "name": "rust198-cuda-executor-clippy",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "clippy",
+        "--locked",
+        "-p",
+        "orbitkv-cuda",
+        "-p",
+        "orbitkv-executor",
+        "--features",
+        "orbitkv-executor/cuda",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "status": "passed",
+      "raw_log": ".qualification/workspace-integration-lint-20260914/checks/rust198-cuda-executor-clippy.log",
+      "log_sha256": "1d31d5655193feb3aa18c2eee8935e8ebd09f16a7db64717f2d8c3d8988f4073"
+    },
+    {
+      "name": "typed-weight-conversion-tests",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "orbitkv-cuda",
+        "--lib",
+        "runtime::weights::convert::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "status": "passed",
+      "raw_log": ".qualification/workspace-integration-lint-20260914/checks/typed-weight-conversion-tests.log",
+      "log_sha256": "70a20e718065b3bd5cb31a60ec118f50e6b763e713c713ae1fe45f31185a07b1"
+    }
+  ]
+}
