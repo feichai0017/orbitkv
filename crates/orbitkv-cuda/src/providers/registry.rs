@@ -85,13 +85,25 @@ pub fn inspect(provider: ProviderId) -> Result<serde_json::Value, String> {
         ProviderOrigin::CudaToolkit { library } => {
             // Query the same dynamically loaded library used by the adapter.
             // This inspection requires cuBLASLt to be installed; `list` does not.
-            let version = unsafe { cudarc::cublaslt::sys::cublasLtGetVersion() };
+            let version = toolkit_library_version(provider)?;
             Ok(serde_json::json!({
                 "provider": provider,
                 "library": library,
                 "runtime_version": version,
             }))
         }
+    }
+}
+
+pub(crate) fn toolkit_library_version(provider: ProviderId) -> Result<usize, String> {
+    let version = match provider {
+        ProviderId::CublasLt => unsafe { cudarc::cublaslt::sys::cublasLtGetVersion() },
+        _ => return Err(format!("{provider} is not a CUDA Toolkit library")),
+    };
+    if version == 0 {
+        Err(format!("{provider} runtime version is unavailable"))
+    } else {
+        Ok(version)
     }
 }
 

@@ -107,6 +107,13 @@ export const docs = [
 export const records = [
   {
     date: "2026-09-14",
+    name: "Execution environment and query compilation",
+    detail:
+      "Strict artifact admission, faster decoder query compilation, and 152 passing B1/B8 reference comparisons on H20.",
+    path: "results/environment-search-20260914/README.md",
+  },
+  {
+    date: "2026-09-14",
     name: "CUDA backend and provider builds",
     detail:
       "One provider lock, device-aware compilation, and 152 passing B1/B8 reference comparisons on H20.",

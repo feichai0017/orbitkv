@@ -272,11 +272,7 @@ impl CompiledDecoder {
     ) -> Result<(Self, DecoderArtifact), DecoderError> {
         let _stage = tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.compile_or_load", replay = artifact.is_some()).entered();
         if let Some(artifact) = artifact {
-            artifact.validate()?;
-            artifact
-                .cuda_modules
-                .validate_for_device(stream.context())
-                .map_err(DecoderError::Artifact)?;
+            artifact.validate_for_device(stream.context())?;
         }
         let prepared = prepare_decoder_compilation(
             config,
@@ -312,6 +308,15 @@ impl CompiledDecoder {
             runtime
                 .load_selected_schedule_with_modules(&graph, &artifact.cuda_modules)
                 .map_err(DecoderError::Artifact)?;
+            // Check declarations against the installed program as well: a
+            // missing provider in the serialized record cannot bypass admission.
+            let installed_environment = runtime
+                .execution_environment()
+                .map_err(|error| DecoderError::Artifact(format!("{error:#}")))?;
+            artifact
+                .environment
+                .validate_against(&installed_environment)
+                .map_err(|error| DecoderError::Artifact(error.to_string()))?;
             artifact.clone()
         } else {
             let mut rng =
@@ -320,6 +325,9 @@ impl CompiledDecoder {
             let modules = runtime
                 .capture_module_artifact(&graph)
                 .map_err(DecoderError::Artifact)?;
+            let environment = runtime
+                .execution_environment()
+                .map_err(|error| DecoderError::Artifact(format!("{error:#}")))?;
             new_artifact(
                 identity,
                 graph
@@ -327,6 +335,7 @@ impl CompiledDecoder {
                     .cloned()
                     .ok_or_else(|| DecoderError::Artifact("selected schedule missing".into()))?,
                 modules,
+                environment,
             )
         };
         let _finalize_stage =

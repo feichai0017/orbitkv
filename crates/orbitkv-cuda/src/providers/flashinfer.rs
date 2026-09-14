@@ -1276,6 +1276,10 @@ pub(crate) fn flashinfer_graph_plan_capacity(actual_c: usize, max_kv_pages: usiz
 }
 
 impl HostOp for FlashInferAttention {
+    fn provider_dependencies(&self) -> Vec<super::registry::ProviderId> {
+        vec![super::registry::ProviderId::FlashInfer]
+    }
+
     fn prepare_compilation(
         &self,
         stream: &Arc<CudaStream>,

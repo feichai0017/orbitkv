@@ -372,6 +372,17 @@ pub(crate) fn compilation_key(
     for argument in arguments {
         hash_part(&mut hasher, argument.as_bytes());
     }
+    hash_compiler_environment(&mut hasher);
+    format!("{:x}", hasher.finalize())
+}
+
+pub(crate) fn compiler_environment_digest() -> String {
+    let mut hasher = Sha256::new();
+    hash_compiler_environment(&mut hasher);
+    format!("{:x}", hasher.finalize())
+}
+
+fn hash_compiler_environment(hasher: &mut Sha256) {
     // nvcc also accepts flags and include/library paths from its environment.
     for name in [
         "NVCC_CCBIN",
@@ -382,15 +393,14 @@ pub(crate) fn compilation_key(
         "LIBRARY_PATH",
         "LD_LIBRARY_PATH",
     ] {
-        hash_part(&mut hasher, name.as_bytes());
+        hash_part(hasher, name.as_bytes());
         if let Some(value) = std::env::var_os(name) {
-            hash_part(&mut hasher, b"set");
-            hash_part(&mut hasher, value.as_encoded_bytes());
+            hash_part(hasher, b"set");
+            hash_part(hasher, value.as_encoded_bytes());
         } else {
-            hash_part(&mut hasher, b"unset");
+            hash_part(hasher, b"unset");
         }
     }
-    format!("{:x}", hasher.finalize())
 }
 
 pub(crate) fn validate_provider_identity(selected: &str, current: &str) -> Result<(), String> {

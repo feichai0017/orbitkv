@@ -1,7 +1,10 @@
 //! Dynamic mixed-library capture regression with an independent constant oracle.
 
 use super::*;
-use crate::{providers::flashinfer::FlashInferAttention, runtime::CudaRuntime};
+use crate::{
+    providers::{flashinfer::FlashInferAttention, registry::ProviderId},
+    runtime::CudaRuntime,
+};
 use orbitkv_compiler::{graph::DimBucket, op::CustomOp};
 
 const WIDTH: usize = 64;
@@ -126,6 +129,11 @@ fn flashinfer_then_cublaslt_recaptures_dynamic_rows_with_stable_inputs() {
             .dim_buckets('b', &[DimBucket::new(1, MAX_REQUESTS).representative(2)])
             .dim_buckets('c', &[DimBucket::new(1, MAX_REQUESTS).representative(2)]),
     );
+    let expected_environment = crate::environment::CudaExecutionEnvironment::capture(
+        &context,
+        [ProviderId::CublasLt, ProviderId::FlashInfer],
+    )
+    .unwrap();
 
     // Explicit custom operations make this a capture-runtime regression, with
     // no random provider-selection prerequisite. All shapes share one bucket.
@@ -157,6 +165,9 @@ fn flashinfer_then_cublaslt_recaptures_dynamic_rows_with_stable_inputs() {
             assert_eq!(runtime.input_allocation(input), Some(allocation));
         }
         runtime.execute(&graph.dyn_map);
+        expected_environment
+            .validate_against(&runtime.execution_environment().unwrap())
+            .unwrap();
         let values = runtime.get_bf16(output);
         assert_eq!(values.len(), rows * WIDTH);
         // Attention over constant V=1 gives one in every channel for every

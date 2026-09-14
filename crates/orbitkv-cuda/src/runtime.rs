@@ -46,6 +46,7 @@ use uuid::Uuid;
 mod trace;
 use self::trace::record_cuda_graph_timings;
 
+mod environment;
 mod residency;
 mod weights;
 pub use weights::WeightLoadReport;

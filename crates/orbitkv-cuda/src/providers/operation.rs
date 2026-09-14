@@ -99,6 +99,12 @@ impl DeviceBuffer {
 /// parameters only. Runtime handles, planner caches and allocation owners must
 /// not change that representation when a provider is prepared or executed.
 pub trait HostOp: Debug + as_any::AsAny + EgglogOp {
+    /// Native providers used by this operation, including nested launches.
+    /// Artifact provenance queries this after selection, outside timed execution.
+    fn provider_dependencies(&self) -> Vec<super::registry::ProviderId> {
+        Vec::new()
+    }
+
     /// Prepare provider code for one concrete profiling shape. This runs while
     /// a candidate is being compiled, before device timing starts. JIT-backed
     /// providers must use this hook rather than charging compilation to their

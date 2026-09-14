@@ -294,6 +294,10 @@ impl<const PREQUANTIZED: bool> DeepGemmImpl<PREQUANTIZED> {
 }
 
 impl<const PREQUANTIZED: bool> HostOp for DeepGemmImpl<PREQUANTIZED> {
+    fn provider_dependencies(&self) -> Vec<super::registry::ProviderId> {
+        vec![super::registry::ProviderId::DeepGemm]
+    }
+
     fn prepare_compilation(
         &self,
         stream: &Arc<CudaStream>,

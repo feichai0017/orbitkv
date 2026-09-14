@@ -7,6 +7,7 @@ use super::{
 use crate::{ExecutorArena, ExecutorPlan, FixedStateArenaRegistration};
 use orbitkv_compiler::graph::SelectedSchedule;
 use orbitkv_cuda::CudaModuleArtifact;
+use orbitkv_cuda::environment::CudaExecutionEnvironment;
 
 // A decoder artifact is a complete, target-validated execution program.
 const DECODER_ARTIFACT_SCHEMA: u32 = 11;
@@ -22,11 +23,11 @@ pub struct DecoderArtifact {
     pub(super) identity: String,
     pub(super) schedule: SelectedSchedule,
     pub(super) cuda_modules: CudaModuleArtifact,
+    pub(super) environment: CudaExecutionEnvironment,
 }
 
 #[derive(Serialize)]
 struct DecoderArtifactIdentity<'a> {
-    provider_lock_digest: String,
     manifest_fingerprint: &'a str,
     compiler_facts_digest: &'a str,
     page_tokens: u32,
@@ -93,18 +94,34 @@ impl DecoderArtifact {
         }
         Ok(())
     }
+
+    /// Reject environment and image drift before weight loading or preparation.
+    pub(super) fn validate_for_device(
+        &self,
+        context: &std::sync::Arc<orbitkv_cuda::cudarc::driver::CudaContext>,
+    ) -> Result<(), DecoderError> {
+        self.validate()?;
+        self.environment
+            .validate_for_device(context)
+            .map_err(DecoderError::Artifact)?;
+        self.cuda_modules
+            .validate_for_device(context)
+            .map_err(DecoderError::Artifact)
+    }
 }
 
 pub(super) fn new_artifact(
     identity: String,
     schedule: SelectedSchedule,
     cuda_modules: CudaModuleArtifact,
+    environment: CudaExecutionEnvironment,
 ) -> DecoderArtifact {
     DecoderArtifact {
         schema: DECODER_ARTIFACT_SCHEMA,
         identity,
         schedule,
         cuda_modules,
+        environment,
     }
 }
 
@@ -146,7 +163,6 @@ pub(super) fn decoder_artifact_identity_with_tuning(
     tuning: &DecoderTuningProfile,
 ) -> Result<String, DecoderError> {
     let identity = DecoderArtifactIdentity {
-        provider_lock_digest: orbitkv_cuda::providers::registry::provider_lock().digest(),
         manifest_fingerprint: &plan.manifest_fingerprint,
         compiler_facts_digest,
         page_tokens: plan.page_tokens,

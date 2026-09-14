@@ -33,8 +33,7 @@ impl NativeBuild<'_> {
     pub fn compile(self) -> Result<PathBuf> {
         let stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.jit", provider = %self.provider, cache_hit = tracing::field::Empty);
         let _entered = stage.enter();
-        let compiler = nvcc_path()?;
-        let compiler = resolve_compiler(&compiler).map_err(anyhow::Error::msg)?;
+        let compiler = native_compiler()?;
         let mut identity_arguments = self.arguments.clone();
         identity_arguments.push("<translation-unit>".into());
         identity_arguments.extend(self.link_arguments.iter().cloned());
@@ -95,6 +94,10 @@ fn compile_timeout() -> Result<Duration> {
         Err(std::env::VarError::NotPresent) => Ok(DEFAULT_COMPILE_TIMEOUT),
         Err(error) => Err(error).context("invalid ORBITKV_NVCC_TIMEOUT_SECONDS"),
     }
+}
+
+pub(crate) fn native_compiler() -> Result<super::provider_source::ResolvedCompiler> {
+    resolve_compiler(&nvcc_path()?).map_err(anyhow::Error::msg)
 }
 
 fn nvcc_path() -> Result<PathBuf> {

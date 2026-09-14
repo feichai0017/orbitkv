@@ -1,0 +1,71 @@
+{
+  "original_artifact_sha256": "25bdeedb9eab2a9ce73d156b21b9493b9f0e070d8aea9e69dadb9e144faece8f",
+  "cases": [
+    {
+      "case": "cublas-version",
+      "status": "expected_rejection",
+      "exit_code": 101,
+      "seconds": 1.0656929314136505,
+      "weights_loaded": false,
+      "stage_names": [
+        "orbitkv.decoder.compile_or_load"
+      ],
+      "diagnostic": "called `Result::unwrap()` on an `Err` value: Artifact(\"CUDA execution environment changed; regenerate the selected artifact; provider.cublaslt requires recompilation (saved Some(CudaToolkit { version: 130201 }), current Some(CudaToolkit { version: 130200 }))\")"
+    },
+    {
+      "case": "driver-api",
+      "status": "expected_rejection",
+      "exit_code": 101,
+      "seconds": 1.0154513269662857,
+      "weights_loaded": false,
+      "stage_names": [
+        "orbitkv.decoder.compile_or_load"
+      ],
+      "diagnostic": "called `Result::unwrap()` on an `Err` value: Artifact(\"CUDA execution environment changed; regenerate the selected artifact; driver_api_version requires retuning (saved 13011, current 13010)\")"
+    },
+    {
+      "case": "missing-environment",
+      "status": "expected_rejection",
+      "exit_code": 101,
+      "seconds": 0.8152227960526943,
+      "weights_loaded": false,
+      "stage_names": [],
+      "diagnostic": "called `Result::unwrap()` on an `Err` value: Json(Error(\"missing field `environment`\", line: 1, column: 50256559))"
+    },
+    {
+      "case": "omitted-provider",
+      "status": "expected_rejection",
+      "exit_code": 101,
+      "seconds": 20.35867900401354,
+      "weights_loaded": true,
+      "stage_names": [
+        "cuda.bucket.compile",
+        "cuda.buckets.compile_and_validate",
+        "cuda.graph.materialize",
+        "cuda.initialize",
+        "cuda.module_image.hit",
+        "cuda.provider.jit",
+        "cuda.providers.prepare",
+        "cuda.resources.retained",
+        "cuda.weights.allocate",
+        "cuda.weights.complete",
+        "cuda.weights.convert",
+        "cuda.weights.file",
+        "cuda.weights.loaded",
+        "cuda.weights.map",
+        "cuda.weights.metadata",
+        "cuda.weights.tensor",
+        "cuda.weights.upload",
+        "cuda.weights.validate",
+        "orbitkv.decoder.compile_or_load",
+        "orbitkv.decoder.prepare",
+        "orbitkv.graph.build",
+        "orbitkv.inputs.bind_and_seed",
+        "orbitkv.schedule.replay",
+        "orbitkv.weights.inspect",
+        "orbitkv.weights.load"
+      ],
+      "diagnostic": "called `Result::unwrap()` on an `Err` value: Artifact(\"CUDA execution environment changed; regenerate the selected artifact; cublaslt_autotune requires retuning (saved None, current Some(false)); provider.cublaslt requires recompilation (saved None, current Some(CudaToolkit { version: 130200 }))\")"
+    }
+  ]
+}

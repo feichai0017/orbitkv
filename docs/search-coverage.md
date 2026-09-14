@@ -139,8 +139,8 @@ decoder workload with eight initial genomes and two finalists. Pass it through
 `--tuning-profile` with `--search-graphs 8`, retain the search trace, and verify
 independent logits and strict artifact replay before interpreting timings.
 Broader initial sampling can cost more compilation time and need not improve
-every workload. It is a foundation for measured region exploration; multi-choice region search, fresh-saturation canonicalization and `glumoe` join
-optimization remain separate work.
+every workload. It is a foundation for measured region exploration; multi-choice
+region search and fresh-saturation canonicalization remain separate work.
 
 The [27B H20 qualification](../results/search-coverage-20260914/README.md) passes
 296 logit comparisons but records a mixed performance result. Every one of its
@@ -172,3 +172,27 @@ The [hotspot qualification](../results/hotspot-search-20260914/README.md) record
 provider transitions inside valid parents. All 296 reference comparisons pass.
 The B8 decode seed already uses cuBLASLt; improved historical runtime observations
 are not proof of a hotspot provider transition or serving speedup.
+
+## MoE query compilation
+
+The legacy MXFP4 matcher in the `glumoe` ruleset now stages unpacking, routing
+probabilities, index masks and the down projection through private relations.
+Each stage retains the variables shared with later predicates or the final
+action. Only the original final action adds an implementation. The existing
+fixed-point schedule, search budgets, GLUMoE activation rules and provider
+inventory are unchanged; there is no model-name filter or Rust graph rewrite.
+
+This optimizes the cost of asking whether a pattern exists, including on a
+dense/hybrid graph with no MoE match. It does not expand the old MXFP4 kernel's
+narrow geometry contract or qualify released MoE checkpoints. Small routed
+graphs can pay extra relation/setup costs, so both positive and no-match
+workloads are measured.
+
+The ignored `moe_rule_compilation_workloads` test accepts an explicitly recorded
+baseline rule directory through `ORBITKV_RULE_BASELINE_DIR`. The same executable
+runs both rule sets and reports input SHA-256, constructor counts and saturation
+time. `ORBITKV_RULE_FIXTURE` supplies an exported decoder graph; the executor's
+external-checkpoint structural test can write one with
+`ORBITKV_RULE_FIXTURE_OUTPUT`. These settings exist only in tests. The fixture
+uses metadata, normalization and decode intervals; it does not load weights,
+profile GPU candidates or represent complete model compilation.
