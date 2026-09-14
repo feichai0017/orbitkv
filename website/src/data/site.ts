@@ -1,5 +1,14 @@
 export const repositoryUrl = "https://github.com/feichai0017/orbitkv";
-export const homeUrl = "https://feichai0017.github.io/orbitkv/";
+export const author = {
+  name: "feichai",
+  url: "https://github.com/feichai0017",
+};
+
+// The build binds documentation links to the same source revision as the site.
+export const sourceUrl = (path: string) =>
+  `${repositoryUrl}/blob/${import.meta.env.PUBLIC_SOURCE_REF}/${path}`;
+export const localUrl = (path: string) =>
+  `${import.meta.env.BASE_URL.replace(/\/$/, "")}${path}`;
 
 export const navigation = [
   { label: "Overview", href: "/" },
@@ -7,179 +16,258 @@ export const navigation = [
   { label: "Evidence", href: "/evidence/" },
 ];
 
-export const compilerStages = [
+export const layers = [
   {
-    key: "01",
-    name: "Compile semantics",
-    detail: "Turn attention visibility and retention rules into a fingerprinted RuntimeManifest.",
+    name: "orbitkv",
+    role: "Compile & own state",
+    detail:
+      "Attention lifetimes, page layouts, prefix sharing, copy-on-write, and safe reclamation. Usable as a backend-independent Rust crate.",
+    path: "crates/orbitkv/README.md",
   },
   {
-    key: "02",
-    name: "Prepare state",
-    detail: "RuntimeSession selects pages, generations, Prefix/COW actions, and retirement rules.",
+    name: "orbitkv-executor",
+    role: "Lower & execute graphs",
+    detail:
+      "Bind manager-owned arenas to Luminal, profile legal kernel candidates on CUDA, and persist the selected programs.",
+    path: "crates/orbitkv-executor/README.md",
   },
   {
-    key: "03",
-    name: "Lower execution",
-    detail: "ExecutorPlan converts manager-owned views into Luminal attention metadata and physical writes.",
-  },
-  {
-    key: "04",
-    name: "Execute locally",
-    detail: "Luminal runs the model graph and records completion on the owning device stream.",
-  },
-  {
-    key: "05",
-    name: "Reuse with proof",
-    detail: "OrbitKV publishes new heads and recycles generations only after semantic death, completion, and ACK.",
+    name: "orbitkv-engine",
+    role: "Schedule & serve",
+    detail:
+      "Batch requests, coordinate execution, stream tokens, and handle cancellation through an optional OpenAI-compatible frontend.",
+    path: "crates/orbitkv-engine/README.md",
   },
 ];
 
-export const metrics = [
+export const compilerStages = [
   {
-    value: "3",
-    label: "Native layers",
-    detail: "Rust core, forked Luminal executor, and Rust server form the only active product architecture.",
+    name: "Describe",
+    detail: "Model math, attention visibility, and state retention.",
   },
   {
-    value: "1",
-    label: "KV authority",
-    detail: "RuntimeSession alone selects, retires, acknowledges, and reuses physical page generations.",
+    name: "Compile",
+    detail: "Physical layouts, ownership rules, and legal graph alternatives.",
   },
   {
-    value: "4",
-    label: "Compiled lifetime profiles",
-    detail: "Full, Sliding, Full+Sliding, and exact Chunked compile into lifecycle and executor plans on the host.",
+    name: "Measure",
+    detail: "CUDA execution selects candidates for each shape bucket.",
   },
   {
-    value: "L4 narrow",
-    label: "Model qualification",
-    detail: "Qwen2.5 Full and Gemma 3 Full+Sliding checkpoints have narrow H20 correctness closures.",
+    name: "Replay",
+    detail: "Load the selected program and reuse state after completion.",
+  },
+];
+
+export const providers = [
+  {
+    name: "cuBLASLt",
+    role: "Dense & batched matrix products",
+    scope: "Supported scaling, bias, and activation epilogues.",
+  },
+  {
+    name: "DeepGEMM",
+    role: "Block-scaled FP8 linear",
+    scope: "SM90 tile candidates and optional shared activation preparation.",
+  },
+  {
+    name: "FlashInfer",
+    role: "Paged attention",
+    scope: "CUDA-core decode and tensor-core decode / prefill.",
+  },
+  {
+    name: "FlashAttention-3",
+    role: "Paged attention",
+    scope: "Optional SM90 F16 / BF16 decode and packed prefill.",
+  },
+];
+
+export const evidenceHighlights = [
+  {
+    value: "27B",
+    label: "Hybrid model execution",
+    detail:
+      "Block-FP8 text decoder with Full attention, Gated DeltaNet, and convolution state.",
+  },
+  {
+    value: "96",
+    label: "Logit comparisons",
+    detail:
+      "Full-vocabulary checks across fresh search and two strict replay configurations.",
+  },
+  {
+    value: "0",
+    label: "NVRTC calls on replay",
+    detail:
+      "423 generated module images loaded in the recorded HTTP replay run; provider libraries cached.",
   },
 ];
 
 export const evidenceRows = [
   {
-    result: "Attention-state compiler",
-    value: "L1 + L2",
-    contract: "Typed attention state and Retention IR compile into deterministic manifests and physical lifetime plans.",
-    boundary: "Compiler output alone is not device or performance evidence.",
+    surface: "Attention-state compiler",
+    status: "Host verified",
+    detail:
+      "Full, Sliding, Full + Sliding, and exact Chunked lifetimes compile into deterministic plans.",
+    boundary: "Exact Chunked has no released-model device qualification.",
   },
   {
-    result: "RuntimeSession",
-    value: "L2 host",
-    contract: "Page generations, Prefix/COW, frontiers, retirement, ACK, external transfer, and failures are host-tested.",
-    boundary: "Raw completion fields are not yet authenticated against the integrated device executor.",
+    surface: "KV & fixed-state lifecycle",
+    status: "Host + H20",
+    detail:
+      "Generation ownership, prefix / COW, event-gated completion, cancellation, and final drain.",
+    boundary:
+      "Bounded workloads; production soak and capacity limits remain open.",
   },
   {
-    result: "Executor lowering",
-    value: "L2 host",
-    contract: "Full, Sliding, mixed, and Chunked manifests lower to manager-owned page metadata.",
-    boundary: "Fixed-state session transactions are host-tested; device kernels and arena bindings remain open.",
+    surface: "Model execution",
+    status: "Bounded H20",
+    detail:
+      "Dense Full, interleaved Full + Sliding, and the primary 27B block-FP8 hybrid text checkpoint.",
+    boundary:
+      "No end-to-end MLA, MoE, multimodal, or multi-device qualification.",
   },
   {
-    result: "Luminal fork",
-    value: "L3 + narrow L4",
-    contract: "One bucketed decoder graph consumes OrbitKV page metadata; Full and Full+Sliding checkpoints run on H20.",
-    boundary: "Paged attention is currently a FlashInfer custom op, not a multi-backend compiler choice.",
+    surface: "Attention selection",
+    status: "Measured on CUDA",
+    detail:
+      "FlashInfer CUDA-core / tensor-core algorithms and optional FlashAttention-3 enter the same search space.",
+    boundary:
+      "Current execution uses causal / sliding attention over paged NHD K/V. No global-optimum guarantee.",
   },
   {
-    result: "Residence ablation",
-    value: "narrow L5",
-    contract: "Released-hybrid paired runs preserve outputs while reducing live payload and increasing fixed-budget reach.",
-    boundary: "Batch-one same-executor result; no SGLang-relative serving win.",
+    surface: "Artifacts & serving",
+    status: "Bounded H20",
+    detail:
+      "Strict schedule and module-image replay, continuous batching, HTTP / SSE, shutdown, and state drain.",
+    boundary:
+      "Greedy text generation. Warm cached replay is distinct from a cold installation.",
   },
   {
-    result: "External KV transport",
-    value: "L2 host",
-    contract: "Async export, restore, deletion, checksums, partial tails, and ambiguous-failure quarantine move real host bytes.",
-    boundary: "Mooncake, NIXL, remote leases, and network benefit remain open.",
+    surface: "External KV tiers",
+    status: "Host verified",
+    detail:
+      "An async transport contract executes export, restore, deletion, and failure handling against real host bytes.",
+    boundary:
+      "Mooncake / NIXL adapters, remote leases, and network benefit remain open.",
   },
   {
-    result: "Rust server boundary",
-    value: "narrow L4",
-    contract: "The single-process engine serves OpenAI completions, batches requests, cancels streams, and drains state.",
-    boundary: "Greedy text-only; fairness, soak, capacity limit, and competitive performance remain open.",
-  },
-  {
-    result: "Current device evidence",
-    value: "11 indexed records",
-    contract: "Released-checkpoint correctness, lifecycle, HTTP serving, compiler attribution, and matched product comparisons retain their exact environments.",
-    boundary: "Historical measurements qualify only their recorded source closure; the current SGLang comparison remains negative.",
+    surface: "Serving performance",
+    status: "Open",
+    detail:
+      "Narrow same-executor results demonstrate memory savings and compiler-selection improvements.",
+    boundary:
+      "Recorded vLLM / SGLang comparisons remain slower. No competitive serving advantage is established.",
   },
 ];
 
 export const roadmap = [
   {
-    state: "NEXT",
-    name: "Run the primary hybrid model",
-    detail: "Bind recurrent and convolution arenas, add GDN execution and partial RoPE, then load block-FP8 weights for the 27B target.",
+    state: "01 / NEXT",
+    name: "Make optimization accountable",
+    detail:
+      "Attribute 27B execution and search time to regions, then optimize the measured bottlenecks against independent numerical references.",
   },
   {
-    state: "NEXT",
-    name: "Make attention searchable",
-    detail: "Offer FlashInfer and a Luminal-native CUDA candidate behind one semantic paged-attention op.",
+    state: "02 / NEXT",
+    name: "Expand joint planning",
+    detail:
+      "Let state layouts, kernel implementations, workspace, and graph residency compete under an explicit workload and memory budget.",
   },
   {
-    state: "THEN",
-    name: "Beat both reference engines",
-    detail: "Use one matched client and require higher throughput without worse p95 TTFT or TPOT than vLLM and SGLang.",
+    state: "03 / EXPLORE",
+    name: "Grow the compiler vocabulary",
+    detail:
+      "Add KV representations and attention families as their contracts become ready. Evaluate larger fused regions and megakernels where measurements justify them.",
   },
 ];
 
 export const docs = [
   {
-    key: "00 / ARCHITECTURE",
-    name: "Three-layer engine",
-    detail: "The ownership split between core, executor, and server.",
-    href: `${repositoryUrl}/blob/main/docs/architecture.md`,
+    name: "Architecture",
+    detail: "Ownership, execution, and the three-crate boundary.",
+    path: "docs/architecture.md",
   },
   {
-    key: "01 / CAPABILITIES",
-    name: "Capability matrix",
-    detail: "Implemented, host-tested, device, engine, benefit, and production boundaries.",
-    href: `${repositoryUrl}/blob/main/docs/capability-matrix.md`,
+    name: "Joint compilation",
+    detail: "How state plans and kernel search fit together.",
+    path: "docs/joint-compilation.md",
   },
   {
-    key: "02 / RUNTIME",
+    name: "Luminal design",
+    detail: "Semantic operations, e-graphs, and measured CUDA search.",
+    path: "docs/luminal-design.md",
+  },
+  {
+    name: "Kernel providers",
+    detail: "Capabilities, native adapters, and source setup.",
+    path: "docs/attention-providers.md",
+  },
+  {
+    name: "Checkpoint import",
+    detail: "Normalize model configuration without model-name dispatch.",
+    path: "docs/checkpoint-import.md",
+  },
+  {
     name: "RuntimeSession",
-    detail: "Transactional KV ownership, Prefix/COW, completion, and safe reuse.",
-    href: `${repositoryUrl}/blob/main/docs/runtime-session.md`,
+    detail: "Transactions, prefix sharing, completion, and reuse.",
+    path: "docs/runtime-session.md",
   },
   {
-    key: "03 / LIFETIMES",
-    name: "State lifetime",
-    detail: "Semantic and execution frontiers across heterogeneous attention.",
-    href: `${repositoryUrl}/blob/main/docs/state-lifecycle.md`,
+    name: "Execution artifacts",
+    detail: "Persist generated CUDA images and replay strictly.",
+    path: "docs/module-artifacts.md",
   },
   {
-    key: "04 / ROADMAP",
-    name: "Qualification roadmap",
-    detail: "The shortest path to a complete measured native engine.",
-    href: `${repositoryUrl}/blob/main/docs/roadmap.md`,
+    name: "External KV tiers",
+    detail: "Move bytes while preserving one state owner.",
+    path: "docs/external-kv.md",
   },
   {
-    key: "05 / RECORDS",
-    name: "Evidence index",
-    detail: "Compact evidence that directly qualifies the current architecture.",
-    href: `${repositoryUrl}/blob/main/results/README.md`,
+    name: "Code & test layout",
+    detail: "Module boundaries and tests in their owning crates.",
+    path: "docs/code-layout.md",
   },
   {
-    key: "06 / COMPONENTS",
-    name: "Components and dependencies",
-    detail: "Owned boundaries and the precise roles of Luminal, vLLM, PegaInfer, Dynamo, Mooncake, and NIXL.",
-    href: `${repositoryUrl}/blob/main/docs/components.md`,
+    name: "Capability matrix",
+    detail: "Implemented, verified, and planned surfaces.",
+    path: "docs/capability-matrix.md",
   },
   {
-    key: "07 / STATUS",
-    name: "Implementation status",
-    detail: "Compiler, manager, executor, model, and benefit support without overclaiming.",
-    href: `${repositoryUrl}/blob/main/docs/implementation-status.md`,
+    name: "Benchmarking",
+    detail: "Matched workloads, attribution, and qualification.",
+    path: "docs/benchmarking.md",
   },
   {
-    key: "08 / BENCHMARKS",
-    name: "Matched serving benchmarks",
-    detail: "Common-client compiler ablation and OrbitKV-versus-SGLang methodology.",
-    href: `${repositoryUrl}/blob/main/docs/benchmarking.md`,
+    name: "Roadmap",
+    detail: "Current baseline and the next acceptance gates.",
+    path: "docs/roadmap.md",
+  },
+];
+
+export const records = [
+  {
+    date: "2026.09.14",
+    name: "Mature attention providers",
+    detail:
+      "FA3 and FlashInfer selection, independent logit checks, graph lifetime, strict replay, and HTTP drain on H20.",
+    path: "results/provider-kernels-20260914/README.md",
+    tag: "LATEST",
+  },
+  {
+    date: "2026.09.14",
+    name: "Semantic compiler boundaries",
+    detail:
+      "Checkpoint normalization, portable operation contracts, and the reduced inference-only Luminal workspace.",
+    path: "results/semantic-boundaries-20260914/README.md",
+    tag: "ARCHITECTURE",
+  },
+  {
+    date: "2026.09.13",
+    name: "Startup preparation",
+    detail:
+      "Preparing selected decoder buckets before readiness, with bounded graph residency and final state drain.",
+    path: "results/startup-preparation-20260913/README.md",
+    tag: "RUNTIME",
   },
 ];
