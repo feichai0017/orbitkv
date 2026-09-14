@@ -1,0 +1,19 @@
+{
+  "batch_sizes": [
+    1,
+    8
+  ],
+  "prefill_tokens": [
+    4,
+    32,
+    256
+  ],
+  "context_pages": [],
+  "keep_best": 2,
+  "initial_candidates": 1,
+  "trials": 3,
+  "search_time_limit_ms": 1800000,
+  "maximum_buckets": 16,
+  "enable_shared_fp8_quantization": false,
+  "hotspot_candidates": 32
+}
