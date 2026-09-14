@@ -14,6 +14,7 @@ move a compact reviewed result here only after its checks pass.
 
 | Record | Evidence | Boundary |
 | --- | --- | --- |
+| [state-preflight-20260914](state-preflight-20260914/README.md) | Required state aliases checked before CUDA preparation; 296 reference comparisons and final drains pass | Rejected-candidate evaluation is 8.00 s versus the preceding 81.06 s observation; independent snapshots and reused caches prevent causal speedup claims; warmed decode remains close |
 | [search-coverage-20260914](search-coverage-20260914/README.md) | Fixed-snapshot sampling, bounded initial exploration, 56 measured graphs and 296 passing logit comparisons on H20 | Mixed performance: B8 prefill improves against the prior observation while decode regresses; all 263 rejected graphs violate state aliases; no serving speedup claim |
 | `bucketed-decoder-correctness-20260904` | Qwen2.5-0.5B-Instruct executes prefill and repeated decode through one searched two-bucket Luminal runtime and one persistent OrbitKV K/V arena | Correctness only; tiny batch-one workload; removed relocation observations were dropped from the compact record |
 | `on-device-greedy-correctness-20260904` | Device argmax matches host argmax and the default path returns token IDs rather than vocabulary logits | Greedy only; no sampling-performance claim |

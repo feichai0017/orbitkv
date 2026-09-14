@@ -75,10 +75,18 @@ export const docs = [
   { name: "State lifecycle", path: "docs/runtime-session.md" },
   { name: "Execution artifacts", path: "docs/module-artifacts.md" },
   { name: "Joint compilation", path: "docs/joint-compilation.md" },
+  { name: "Models on one H20", path: "docs/model-targets.md" },
   { name: "Code and test layout", path: "docs/code-layout.md" },
 ];
 
 export const records = [
+  {
+    date: "2026-09-14",
+    name: "State checks before CUDA compilation",
+    detail:
+      "296 logit comparisons pass. Invalid candidates are cheaper to reject; warmed decode remains close.",
+    path: "results/state-preflight-20260914/README.md",
+  },
   {
     date: "2026-09-14",
     name: "Search coverage and limits",
