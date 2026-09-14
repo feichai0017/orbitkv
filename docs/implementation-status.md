@@ -12,18 +12,18 @@ The backend now offers FlashInfer CUDA-core/tensor-core algorithms and an option
 native C ABI adapter for upstream FlashAttention-3 on SM90. The handwritten
 native attention implementation and experimental policy flag are removed.
 See [attention providers](attention-providers.md) for exact geometry and ABI
-limits and [provider qualification](../results/provider-kernels-20260914/README.md)
+limits and [provider qualification](validation/provider-kernels-20260914/README.md)
 for the preceding schema-9 evidence. Additional KV representations remain open.
 
 The engine and HTTP frontend now live in one `orbitkv-engine` crate. Its
 protocol/frontend modules retain logical-only contracts and host-only feature
 tests; the model coordinator joins core and executor. The
-[engine/stage validation](../results/engine-stage-attribution-20260913/README.md)
+[engine/stage validation](validation/engine-stage-attribution-20260913/README.md)
 adds buffered CPU stage attribution, complete-trace validation, and fixed-artifact
 stage-on/off correctness on H20. It identifies compilation, weight-loading, and
 first-decode costs without qualifying a serving-performance improvement.
 
-[Generated-module artifact replay](../results/module-image-artifact-20260913/README.md)
+[Generated-module artifact replay](validation/module-image-artifact-20260913/README.md)
 now skips all 428 NVRTC compilations on a fixed 27B schedule. Two H20 timing
 pairs reduce schedule load by 56.5% and complete diagnostic process startup by
 14.0%. The recorded run used decoder schema 6 with validated images. Current schema 11
@@ -33,7 +33,7 @@ Fresh compilation adds a selected-program capture pass and warm diagnostic
 decode remains about 24.5 ms, so this qualifies startup only. Model-specific
 dispatch, sampling policy and the shared-FP8 default are unchanged.
 
-The [weight-loader refactor](../results/weight-loading-20260913/README.md) removes
+The [weight-loader refactor](validation/weight-loading-20260913/README.md) removes
 intermediate host byte copies and returns contextual loading errors. Two
 fixed-artifact H20 timing pairs reduce median weight loading from 23.12 s to
 6.60 s and complete diagnostic process time from 33.36 s to 17.04 s. Eight
@@ -259,7 +259,7 @@ scratch lifetime, tile policy and JIT have separate modules. The provider source
 identity changes, so the historical v3 schedules require their frozen source.
 New CUDA search traces connect complete program/operation identity with direct
 and deployment scores, timeout/rejection decisions and final installation.
-The [current-source validation](../results/compiler-boundaries-20260912/README.md)
+The [current-source validation](validation/compiler-boundaries-20260912/README.md)
 passes eight reference steps and drain in fresh search, strict replay, and
 instrumented replay on H20, with maximum absolute error 0.5423088. Both bucket
 identities agree from measurement through the stored artifact. Runtime caches
@@ -323,7 +323,7 @@ two narrow C1 HTTP workloads with identical output and final resource drain;
 its short-output P99 TPOT regression remains visible. The engine also exposes
 blocking, checked shutdown and the executable reports final state ownership.
 
-[B1/B8 workload attribution](../results/workload-attribution-20260914/README.md)
+[B1/B8 workload attribution](validation/workload-attribution-20260914/README.md)
 now retains full egglog rule identities and complete GPU step descriptions,
 joined to workload dimensions and selected programs. Explicit FlashInfer request
 geometry fixes retained-bucket planning. The integrated compiler uses schema 11 and rejects earlier decoder artifacts.
@@ -385,7 +385,7 @@ transition beside exact persistent-state updates. It is bounded coordinate
 exploration, with independent dependency-closure repair, joint layout search and
 whole-model persistent kernels still open. See [search coverage](search-coverage.md).
 
-The [27B hotspot qualification](../results/hotspot-search-20260914/README.md)
+The [27B hotspot qualification](validation/hotspot-search-20260914/README.md)
 passes 296 reference comparisons with 0.8125 maximum absolute logit error and
 all drains. It records 49 measured local neighbors with no state/resource
 rejection and two measured prefill provider transitions. B8 diagnostic decode

@@ -1,7 +1,13 @@
 # Roadmap
 
+The current [Qwen3.8-27B-FP8 H20 serving baseline](../results/qwen3.8-27b-fp8-h20-20260914/README.md)
+covers C1/C8 with bounded request lengths. All 192 requests complete and drain.
+The next runtime checks are the context-C8 first-run delay and generated-output
+consistency across batch compositions. Retain per-run ranges and first requests
+when measuring changes; a median alone hides the observed latency outlier.
+
 The model compiler is now integrated as four owned OrbitKV crates in the root
-workspace. The [migration qualification](../results/workspace-integration-20260914/README.md)
+workspace. The [migration qualification](validation/workspace-integration-20260914/README.md)
 records source identities, B1/B8 replay, numeric parity and state drains.
 See [compiler maintenance](compiler-maintenance.md) for the package/namespace
 change and artifact regeneration requirements.
@@ -10,39 +16,40 @@ The [CUDA backend](cuda-backend.md) now separates provider contracts, native
 build/cache management, generated source and egglog rules. Provider and CUTLASS
 commits share one lock; execution-device facts join state constraints before
 saturation. This unreleased reorganization keeps crate and library versions
-unchanged. Its [H20 qualification](../results/cuda-backend-refactor-20260914/README.md)
+unchanged. Its [H20 qualification](validation/cuda-backend-refactor-20260914/README.md)
 passes backend tests and B1/B8 model replay. Joint KV-layout/placement search
 remains a later executor milestone.
 
 The checkpoint/semantic boundary and inference-only fork reduction are implemented;
 see [checkpoint import](checkpoint-import.md) and its
-[qualification](../results/semantic-boundaries-20260914/README.md). Logical attention,
+[qualification](validation/semantic-boundaries-20260914/README.md). Logical attention,
 explicit paged KV views and declarative provider admission are now separated;
 see [attention providers](attention-providers.md) and the
-[H20 provider qualification](../results/provider-kernels-20260914/README.md).
+[H20 provider qualification](validation/provider-kernels-20260914/README.md).
 FlashInfer algorithms and optional FlashAttention-3 replace the handwritten
-native attention candidate. [B1/B8 workload attribution](../results/workload-attribution-20260914/README.md)
+native attention candidate. [B1/B8 workload attribution](validation/workload-attribution-20260914/README.md)
 now connects full rule identities, bucket dimensions and GPU execution steps.
 Fixed-snapshot sampling and bounded initial exploration are implemented; the
-[27B coverage follow-up](../results/search-coverage-20260914/README.md) passes
+[27B coverage follow-up](validation/search-coverage-20260914/README.md) passes
 correctness but records mixed performance. Required state-alias checks now run
 before fusion source generation and CUDA compilation, with final-load checks
 retained. [Profile-directed local exploration](search-coverage.md) is now
 implemented behind an artifact-bound attempt budget: exact execution provenance
 orders single-choice neighbors of measured valid parents. Whole-graph and final
 CUDA Graph scores still select programs. Multi-choice dependency closures,
-`kernel_specialize` query cost and repeated bucket setup remain compiler priorities.
-The [preflight qualification](../results/state-preflight-20260914/README.md)
+`kernel_specialize` query cost remains a compiler priority. Model-local setup
+is now reused across independent bucket instances.
+The [preflight qualification](validation/state-preflight-20260914/README.md)
 passes 296 reference comparisons; candidate rejection is cheaper in the recorded
 run, while warmed decode remains close to the preceding observation.
-The [hotspot qualification](../results/hotspot-search-20260914/README.md)
+The [hotspot qualification](validation/hotspot-search-20260914/README.md)
 passes 296 comparisons: 49 local candidates are measured, including two prefill
 provider transitions inside valid parents. B8 diagnostic decode is 37.29 ms,
 but its initial seed already contains cuBLASLt; this is not a same-snapshot
 search ablation or a serving claim. That run's `glumoe` counters total 358.31 s.
 Additional KV representations and joint state/layout competition remain open.
 
-The [environment/search qualification](../results/environment-search-20260914/README.md)
+The [environment/search qualification](validation/environment-search-20260914/README.md)
 now binds selected artifacts to device, CUDA/compiler and native-provider facts,
 with explicit recompilation/retuning diagnostics and dependency checks across
 all buckets. Staged MXFP4 matching reduces the isolated decoder-query median
@@ -241,7 +248,7 @@ see [independent logits diagnosis](logit-diagnosis.md).
 
 [Structured candidate tracing](compiler-boundaries.md) now preserves program
 identity, complete operation manifests, rejection reasons, and direct/deployment
-scores together. A [compiler-boundary H20 check](../results/compiler-boundaries-20260912/README.md)
+scores together. A [compiler-boundary H20 check](validation/compiler-boundaries-20260912/README.md)
 verifies both bucket identities through saved-artifact replay, alongside eight
 reference steps and final drain. Use that evidence to explore coherent shared regions and
 expensive operations deliberately. Also measure first-use and
@@ -250,7 +257,7 @@ with KV storage and workspace instead of increasing graph residency without
 accounting for memory. These followups precede broader kernel families or a
 full-model megakernel.
 
-The [first stage-attribution run](../results/engine-stage-attribution-20260913/README.md)
+The [first stage-attribution run](validation/engine-stage-attribution-20260913/README.md)
 now separates those costs on a newly selected B1/two-bucket artifact. The 299.7 s
 search process includes 200.6 s building the search space (180.8 s executing
 egglog schedules), 70.9 s in CUDA search, and 26.7 s preparing graph/weights.
@@ -263,7 +270,7 @@ result and roughly 24.2 ms warm diagnostic decode, while first decode is about
 These are bounded diagnostic timings with logits, not serving TPOT or an
 improvement over the earlier, differently selected artifact.
 
-The [B1/B8 attribution follow-up](../results/workload-attribution-20260914/README.md)
+The [B1/B8 attribution follow-up](validation/workload-attribution-20260914/README.md)
 also fixes request geometry: FlashInfer carries an explicit request expression
 through lowering and retained-bucket resource planning. Runtime CSR lengths are
 validated against that contract. Seven buckets now compile and replay with
@@ -288,7 +295,7 @@ and cuBLASLt with independent numerical checks. Fresh saturation is still not
 canonicalized, and broad sampling does not guarantee that expensive regions
 receive all useful provider alternatives.
 
-The [eight-graph qualification](../results/search-coverage-20260914/README.md)
+The [eight-graph qualification](validation/search-coverage-20260914/README.md)
 records 319 evaluations, 56 measured graphs and 263 state-alias rejections. All
 296 logit comparisons and final drains pass, but B8 decode's eight measured
 graphs all retain the slow generic vocabulary projection. Forty-six graphs with
@@ -309,10 +316,14 @@ The next implementation slices are:
    for expensive regions under a shared budget, covering both prefill and decode.
    Do not force a provider by model name or tensor dimensions. The staged MXFP4
    matcher now removes the large `glumoe` query cost without changing its
-   admitted implementation. Next address `kernel_specialize` and separate reusable
-   setup and bucket-independent transformations from interval-dependent rewrites.
-   Reuse requires a semantic key and must preserve the bucket's alias, range,
-   and state constraints. In the earlier stage-only run, candidate
+   admitted implementation. Model-local setup is now reused across bucket
+   instances, while each bucket
+   retains independent interval facts and complete saturation. An argmax query
+   factoring experiment showed no gain and was discarded. Next investigate
+   `kernel_specialize` and further bucket-independent work, preserving alias,
+   range and state constraints. Cross-compilation reuse would require a semantic
+   key; the current template is scoped to one model compilation. In the earlier
+   stage-only run, candidate
    generation costs 3.0 s here; the 118 rejected candidates account for 37.3 s
    of evaluation. Move provable legality checks ahead of expensive preparation
    while preserving accepted implementations. Keep candidate order and program
@@ -337,7 +348,7 @@ The next implementation slices are:
    context. Preserve numerical and next-state gates, then repeat an
    uninstrumented complete serving workload before claiming a benefit.
 
-The [module-image follow-up](../results/module-image-artifact-20260913/README.md)
+The [module-image follow-up](validation/module-image-artifact-20260913/README.md)
 closes the generated-module replay slice. Two fixed-artifact ABBA timing pairs
 on H20 reduce schedule loading from 11.40 s to 4.96 s and complete diagnostic
 process time from 38.69 s to 33.28 s (medians). Each cached replay obtains all
@@ -348,7 +359,7 @@ pass; its newly selected programs differ from earlier records, so cold-process
 times must not be compared as a compiler speedup. Warm diagnostic decode stays
 about 24.5 ms.
 
-The [weight-loading follow-up](../results/weight-loading-20260913/README.md)
+The [weight-loading follow-up](validation/weight-loading-20260913/README.md)
 finds 17.36–18.52 s of explicit host copies in the old loader. Two fixed-artifact
 timing pairs reduce weight loading from 23.12 s to 6.60 s median and complete
 diagnostic process time from 33.36 s to 17.04 s. All eight processes load the
@@ -364,7 +375,7 @@ engine/server expose a finite bucket cache capacity, retaining the default of
 one. H20 provider and repeated 27B request regressions cover phase alternation,
 reference logits, state drain and eviction. Automatic residency selection from
 a joint budget and broader long-context/ragged model transitions remain open.
-Two [fixed-artifact timing pairs](../results/bucket-resources-20260913/README.md)
+Two [fixed-artifact timing pairs](validation/bucket-resources-20260913/README.md)
 compare capacities one and two without stage tracing: repeated prefill falls
 from 127.91 ms to 29.41 ms and first decode from 128.68 ms to 25.93 ms. Warm
 diagnostic decode stays about 24.4 ms. Five model processes pass 160 reference

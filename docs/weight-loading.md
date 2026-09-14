@@ -52,7 +52,7 @@ is the CPU wall time of the CUDA copy API, not an isolated DMA or PCIe benchmark
 no additional synchronization. Nested inclusive durations must not be summed
 as independent process costs.
 
-The [fixed-artifact H20 result](../results/weight-loading-20260913/README.md)
+The [fixed-artifact H20 result](validation/weight-loading-20260913/README.md)
 compares frozen old and new loaders against the same selected programs,
 checkpoint and eight-step oracle. It qualifies weight loading and replay
 startup; warm execution uses the same selected kernels.

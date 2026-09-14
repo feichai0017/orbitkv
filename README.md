@@ -59,18 +59,18 @@ For CUDA inference, follow the [engine setup](crates/orbitkv-engine/README.md)
 and [provider setup](docs/attention-providers.md). Provider sources are prepared
 explicitly before model compilation.
 
-## Current status
+## Models and performance
 
-Active development. Bounded NVIDIA H20 qualification covers dense Full,
-Full + Sliding, and the Qwen3.8-27B-FP8 hybrid text decoder with Gated DeltaNet
-and convolution state. The [latest report](results/environment-search-20260914/README.md)
-covers execution-environment validation, faster query compilation, independent
-logits, artifact replay, and state correctness. Search coverage and serving performance
-remain optimization targets.
+Qwen3.8-27B-FP8 is the current text-inference target on one NVIDIA H20.
+Earlier model validation covers Qwen3.5 27B, Qwen2.5 0.5B Instruct and
+Gemma 3 270M. GLM, Kimi and DeepSeek are planned; their model paths are not
+end-to-end supported yet.
 
-See the [capability matrix](docs/capability-matrix.md) for supported contracts
-and qualification limits, and [model targets](docs/model-targets.md) for the
-Qwen, GLM, Kimi and DeepSeek roadmap on one H20.
+See [models and measured performance](https://feichai0017.github.io/orbitkv/models/)
+and [reproducible model reports](results/README.md). Measurements state the
+checkpoint, precision, request lengths, concurrency and source revision.
+The [capability matrix](docs/capability-matrix.md) defines the supported contracts;
+[model targets](docs/model-targets.md) describes the single-H20 roadmap.
 
 ## Documentation
 

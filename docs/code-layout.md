@@ -71,7 +71,8 @@ caches are not checked-in test fixtures.
 | `docs/` | Architecture, contracts, and qualification boundaries |
 | `website/` | Documentation site with its own toolchain layout |
 | `.qualification/` | Local runs, frozen inputs, and large raw evidence |
-| `results/` | Compact reviewed evidence, retaining its original source identity |
+| `results/` | Published model inference performance, with workload and source identities |
+| `docs/validation/` | Historical development evidence; new diagnostics stay under `.qualification/` |
 
 Compiler, operation, tracing and CUDA tests follow the same layout as the state
 manager and engine. Inherited inline suites and `src/tests/` trees have moved

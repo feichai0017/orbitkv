@@ -162,10 +162,10 @@ argmax: OrbitKV compiler's current `argmax`/`argmin` contract chooses the highes
 ties. A different sampling tie policy is a semantic compatibility change, not
 an optimization or a way to qualify a numerically different schedule.
 
-The [compiler-boundary validation](../results/compiler-boundaries-20260912/README.md)
+The [compiler-boundary validation](validation/compiler-boundaries-20260912/README.md)
 records the final frozen build, focused host/GPU regressions, and full-model
 search/replay checks. It also preserves the identity-audit failure that exposed
 runtime cache state in cuBLASLt fingerprints and the evidence for its fix.
-The subsequent [engine/stage validation](../results/engine-stage-attribution-20260913/README.md)
+The subsequent [engine/stage validation](validation/engine-stage-attribution-20260913/README.md)
 records the merged engine/frontend crate and a newly frozen stage-instrumented
 build, with a fixed-artifact stage-off control and the measured next priorities.

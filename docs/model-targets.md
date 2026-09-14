@@ -58,8 +58,10 @@ evidence for its teacher's MoE or attention architecture.
 
 1. **Keep Qwen 27B correct and reduce wasted compilation.** Reject broken
    persistent-state aliases before source generation; retain final-load checks.
-   Next, explore expensive regions inside valid graphs, reduce `glumoe` join
-   cost and retain workload/binary/artifact identities. Cold compilation,
+   Initial local region exploration, staged `glumoe` matching and reusable
+   bucket setup are implemented. Next, investigate `kernel_specialize`, coherent
+   region choices and generated-output consistency across batch compositions.
+   Retain workload/binary/artifact identities. Cold compilation,
    artifact loading, uninstrumented runtime and serving latency remain separate
    measurements. Broader candidate counts alone are not a performance result.
 2. **Establish shared MoE and latent-attention contracts.** Describe router
