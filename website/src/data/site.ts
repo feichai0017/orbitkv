@@ -57,16 +57,15 @@ export const evidenceHighlights = [
     detail: "Qwen3.8 block-FP8 on NVIDIA H20.",
   },
   {
-    value: "96",
+    value: "592",
     label: "Logit comparisons",
     detail:
-      "Full vocabulary, across fresh search and two strict replay configurations.",
+      "Full vocabulary at B1 and B8, across two builds, search, and replay.",
   },
   {
-    value: "0",
-    label: "NVRTC calls on replay",
-    detail:
-      "423 generated CUDA images loaded; provider libraries already cached.",
+    value: "7",
+    label: "Compiled workload buckets",
+    detail: "Explicit request geometry through search and retained replay.",
   },
 ];
 
@@ -80,6 +79,13 @@ export const docs = [
 ];
 
 export const records = [
+  {
+    date: "2026-09-14",
+    name: "Compiler and runtime attribution",
+    detail:
+      "B1/B8 replay, request geometry, and measured search and execution costs.",
+    path: "results/workload-attribution-20260914/README.md",
+  },
   {
     date: "2026-09-14",
     name: "Attention provider qualification",

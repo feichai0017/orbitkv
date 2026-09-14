@@ -1,7 +1,8 @@
 # Compiler and runtime stage attribution
 
 The optional `LUMINAL_STAGE_TRACE` diagnostic records synchronous CPU wall-time
-spans through the existing `tracing` API. It separates graph construction,
+spans and reported compiler/device measurements through the existing `tracing`
+API. It separates graph construction,
 weight inspection/loading, egglog preparation and schedules, candidate
 generation, provider compilation, resource preparation, profiling, CUDA Graph
 materialization, and execution/input preparation. It does not change the search
@@ -11,6 +12,8 @@ space, provider selection, numerical gates, or sampling policy.
 `stages.jsonl` to each search/replay/profile process and produces
 `stages-summary.json`. The bounded full-decoder integration harness installs the
 layer and explicitly finishes it after numerical checks and lifecycle drain.
+The batched oracle harness supports the same contract and labels each actual
+step with its phase, request count, query-token count and diagnostic-logit mode.
 A requested trace that is missing, incomplete, or structurally invalid fails
 qualification. Other harnesses must opt into the installer before using this
 flag. Ambient trace settings are cleared when the flag is absent.
@@ -23,7 +26,8 @@ python tools/summarize_stage_trace.py /tmp/stages.jsonl --output /tmp/stages-sum
 ```
 
 Embedders can compose `orbitkv_executor::diagnostics::stage_trace_layer` with
-their existing tracing subscriber. The environment installer is for standalone
+their existing tracing subscriber. Install it before compilation workers start;
+thread-local subscribers must propagate their dispatch to those workers. The environment installer is for standalone
 processes: it installs a global subscriber for stage spans and returns an error
 if a subscriber is already installed. Keep its guard until all worker spans
 close and call `finish`; dropping it without finishing marks the trace
@@ -35,8 +39,66 @@ incomplete. The composable layer and file writer live in Luminal's
 | `inclusive_wall_ns` | Sum of each span's lifetime, including children and host waits |
 | `self_wall_ns` | Inclusive duration minus the union of direct child intervals on the same thread |
 | `roots` | Top-level observed intervals, retaining their thread identities |
-| `candidate_program_spans` | Preparation/profile intervals carrying the semantic program identity used by search records and artifacts |
+| `program_spans` | Preparation, candidate profiling and execution intervals carrying the semantic LLIR identity used by search records and artifacts |
 | `non_profiled_executions` | `cuda.execute` calls with runtime profiling disabled; may include compile-time warmups, so these are not automatically serving steps |
+| `egglog_runs` | Per-run and per-schedule rule/ruleset measurements, full identities, iteration counts and tuple growth, with bucket context when present |
+| `cuda_graph_profiles` | Ordered CUDA Graph step measurements, grouped operation costs, program identity, symbolic dimensions and workload context when present |
+
+The trace format is schema 2 and the summary is `luminal.stage-summary.v2`.
+Measurement events have a parent and a timestamp, but are not spans. The
+summarizer keeps their explicit units separate from CPU inclusive/self time.
+Older trace formats require the summarizer from their recorded source revision;
+historical qualification records are unchanged.
+
+Egglog measurements come from each existing `run-schedule` report, not repeated
+snapshots of its cumulative report. Rule names are preserved in full, including
+zero-match rules that spent time searching. Each rule reports search/apply time
+and matches; each ruleset reports search/apply, merge and rebuild time. These
+are overlapping views of engine accounting and must not be added together or
+treated as exclusive CPU-span children. Schedule wall time includes work the
+engine's individual counters may not cover. The trace also records the expected
+schedule count, so missing schedule spans cannot qualify as complete attribution.
+
+In the pinned egglog parallel executor, a rule's entry task can delegate join
+work to other tasks. Its reported timer can finish before those tasks, while the
+ruleset timer waits for the enclosing scope. A small per-rule duration therefore
+does not prove the rule is cheap. Use ruleset and schedule wall time to locate
+expensive phases before interpreting individual-rule counters.
+
+Ordinary compilation uses egglog's `TimeOnly` report level. It still executes the
+same optimized join plans and records rule/ruleset times and matches. Full plan
+representations are materialized only for the existing verbose plan printer
+(`EGGLOG_LOG=1 EGGLOG_DEBUG=1`); `plan_reports` on each run records this choice.
+Structured stage tracing does not require full plan representations.
+
+CUDA step measurements reuse the existing opt-in event nodes enabled by
+`LUMINAL_CUDA_PROFILE_GRAPH_STEPS`. `LUMINAL_CUDA_PROFILE_GRAPH_STEP_DETAILS`
+retains full operation descriptors; the qualification runner enables both only
+in its separate profile process. A provider step can contain several native
+launches, preparation kernels or captured child nodes: this is an execution-step
+interval, not necessarily one kernel. The summarizer rejects missing/duplicate
+steps, invalid times, missing program identities and inconsistent totals. The
+runner also checks that structured profiles cover every reported graph profile.
+
+Use [the bounded workload manifest](../benchmarks/workload-attribution.json) to
+search representative batch 1/8 and query-token 1/4/32 buckets, then replay the
+same artifact for both actual batch sizes. With prepared provider sources and a
+built model-execution test binary:
+
+```bash
+ORBITKV_QUALIFICATION_BATCH_SIZE=1 ORBITKV_QUALIFICATION_BATCH_CAPACITY=8 \
+ORBITKV_GRAPH_CACHE_CAPACITY=2 python tools/run_decoder_qualification.py \
+  --test-binary "$MODEL_TEST_BINARY" \
+  --test-name quantized_decoder_batched_reference_and_drain \
+  --model-dir "$MODEL_DIR" --reference-dir "$REFERENCE_DIR" \
+  --tuning-profile benchmarks/workload-attribution.json --search-graphs 1 \
+  --stage-trace --output-dir "$FRESH_RUN_DIR"
+```
+
+For batch 8, choose a new output directory and pass the first run's `decoder.json`
+with `--replay-artifact`. Repeat strict replay without `--stage-trace` to retain an
+uninstrumented correctness/diagnostic-latency witness. These bounded oracle steps
+are not a serving benchmark or an exhaustive search for the fastest schedule.
 
 `cuda.module_artifact.capture` encloses the selected-schedule image capture pass.
 `cuda.module_image.hit` records a source digest and loaded image size;
@@ -66,8 +128,8 @@ Spans do not add CUDA synchronization, CUDA events, or per-kernel stage writes.
 The JSON header is written when the file is created; subsequent records stay
 in memory until the guard finishes. This keeps filesystem writes outside the
 measured stages, but span bookkeeping still adds CPU overhead. Memory use grows
-with the number of recorded spans: use this for bounded diagnostic runs.
-Durations are wall time, not CPU utilization or GPU kernel time. Threads can
+with the number of recorded spans and measurements: use this for bounded diagnostic runs.
+Span durations are wall time, not CPU utilization or GPU kernel time. Threads can
 overlap; their sums are not process elapsed time. Use the separate CUDA Graph
 profile for device timing and an uninstrumented serving benchmark for TPOT/ITL.
 
