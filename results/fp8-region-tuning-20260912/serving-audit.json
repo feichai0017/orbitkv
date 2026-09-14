@@ -1,0 +1,1045 @@
+{
+  "artifacts": [
+    {
+      "bytes": 12589595,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/off.decoder.json",
+      "sha256": "5935e5293b2926e7847b2fee0249504d9f51cd20b70614fc7d627764959817a5"
+    },
+    {
+      "bytes": 12655407,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/on.decoder.json",
+      "sha256": "4188fb1fbfac70214254f4015dfbdca35fdc9a8a05f362ee5bb542376c4472fe"
+    }
+  ],
+  "client_metric_caveat": {
+    "itl_scope": "Raw ITL arrays contain nine streaming intervals per response despite eight reported output tokens; first/following/trailing categories are positional observations, not a token-ID trace.",
+    "lines": [
+      695,
+      712
+    ],
+    "observation": "Raw max_concurrent_requests=4 counts requests active in coarse one-second bins. This is not evidence of four simultaneously admitted requests; configured client/server concurrency is one.",
+    "source": {
+      "bytes": 90294,
+      "path": "/workspace/orbitkv/.qualification/vllm-runtime/lib/python3.11/site-packages/vllm/benchmarks/serve.py",
+      "sha256": "ca017dceb15805283d2c45549f3c449cf7b1d411c34fb0d6f41eecf456b64e94"
+    }
+  },
+  "completed_record": {
+    "bytes": 11181,
+    "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/completed.json",
+    "sha256": "b69814b84a4960283de5010a9453bb5165ae56e392cbb30288353cd542c51a4f"
+  },
+  "execution_record": {
+    "bytes": 4328,
+    "path": "/workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/serving-v3-execution.json",
+    "sha256": "190addf5fe9fc6ab5aaf0b935466209d8b3d599d06cd8857c4d437e0b91f3dcd"
+  },
+  "gates": {
+    "between_arm_exact_text": "failed at indices 0 and 3 in both epochs",
+    "overall_vs_other_engines": "not measured; vLLM is only the benchmark client",
+    "predeclared_statistical_benefit": "not established; two paired epochs only",
+    "request_completion_and_length": "passed",
+    "same_output_performance_benefit": "not qualified",
+    "ttft_regression": "median paired TTFT and p95 TTFT ratios exceed one",
+    "within_arm_repeatability": "passed in two epochs"
+  },
+  "input_identities_verified_unchanged": {
+    "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/provenance.json": "665805673164355ce96314aacd91cacb110a546f3628f1a18a26e6569ec18316",
+    "/workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/off.json": "60a417aec50fb83b8e6a20772c30b3caed9843977bddca455b089f89d1e80024",
+    "/workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/on.json": "13f3182e5214543791b08b0b622df6d878238cb88a014475fd2bf32a0657d363",
+    "/workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/v3-commands.json": "8766801a863eb99672c8b31a60f78dadf7ddc64a7692f27150da1a86f91095af",
+    "/workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/workloads.json": "949bdf79813c3ba19c682d2161d7f5d39b4d1ece1ec7f00c42464b31f15b7298"
+  },
+  "limitations": [
+    "Different outputs prevent a same-output benefit claim; no independent oracle exists for these unsaved prompts, and near-tie explanations are unproved.",
+    "Fresh independently searched off/on schedules can change other operators. Artifact selection audit is separate; no controlled attribution of the whole latency delta to shared quantization.",
+    "One short C1 profile and two epochs do not establish broad workload performance, statistical confidence, maximum capacity, memory pressure or long-context behavior.",
+    "Per-request server completion differs from teacher-forced logit/state-drain qualification; the B4/B8 trace tests used a separate saved artifact and prompt fixture.",
+    "This is a completed negative/diagnostic experiment, not an unfinished benchmark. The feature remains opt-in/default-off."
+  ],
+  "median_paired_candidate_over_baseline": {
+    "median_e2el_ms": 0.9834729493412568,
+    "median_itl_ms": 0.855762946633429,
+    "median_tpot_ms": 0.9417873536414754,
+    "median_ttft_ms": 1.082618200548543,
+    "output_throughput": 1.018199462863983,
+    "p95_e2el_ms": 0.9867600259413267,
+    "p95_itl_ms": 1.072495901927311,
+    "p95_tpot_ms": 0.9406069339067448,
+    "p95_ttft_ms": 1.0766635289876099,
+    "p99_e2el_ms": 0.9851547544612382,
+    "p99_itl_ms": 1.073452830208676,
+    "p99_tpot_ms": 0.9372643342193925,
+    "p99_ttft_ms": 1.0720035020901877,
+    "request_throughput": 1.018199462863983
+  },
+  "median_paired_change_percent": {
+    "median_e2el_ms": -1.6527050658743159,
+    "median_itl_ms": -14.4237053366571,
+    "median_tpot_ms": -5.821264635852463,
+    "median_ttft_ms": 8.261820054854297,
+    "output_throughput": 1.8199462863982996,
+    "p95_e2el_ms": -1.3239974058673276,
+    "p95_itl_ms": 7.2495901927311035,
+    "p95_tpot_ms": -5.939306609325524,
+    "p95_ttft_ms": 7.666352898760986,
+    "p99_e2el_ms": -1.4845245538761764,
+    "p99_itl_ms": 7.34528302086761,
+    "p99_tpot_ms": -6.273566578060752,
+    "p99_ttft_ms": 7.200350209018769,
+    "request_throughput": 1.8199462863982996
+  },
+  "output_digests": {
+    "off": {
+      "epoch1": "8926f3c7c6058e4b906dc589c92b3521e044f7aeb3720048c10ed6c2c7f52b14",
+      "epoch2": "8926f3c7c6058e4b906dc589c92b3521e044f7aeb3720048c10ed6c2c7f52b14"
+    },
+    "on": {
+      "epoch1": "fbcfa095382f3523123a211201a5893172ba525d4f983f0ec1ccb0a502193361",
+      "epoch2": "fbcfa095382f3523123a211201a5893172ba525d4f983f0ec1ccb0a502193361"
+    }
+  },
+  "output_equivalence_passed": false,
+  "pairs": [
+    {
+      "candidate_over_baseline": {
+        "median_e2el_ms": 0.9803034182144088,
+        "median_itl_ms": 0.854372414897711,
+        "median_tpot_ms": 0.9457219244462353,
+        "median_ttft_ms": 1.0774926024256983,
+        "output_throughput": 1.0161950969102167,
+        "p95_e2el_ms": 0.9938518268576917,
+        "p95_itl_ms": 1.0870883476290598,
+        "p95_tpot_ms": 0.9462807688022361,
+        "p95_ttft_ms": 1.071397179676318,
+        "p99_e2el_ms": 0.9910194590363279,
+        "p99_itl_ms": 1.0951338204728562,
+        "p99_tpot_ms": 0.9408178967952671,
+        "p99_ttft_ms": 1.0672292359220938,
+        "request_throughput": 1.0161950969102167
+      },
+      "compared_outputs": 8,
+      "different_output_indices_zero_based": [
+        0,
+        3
+      ],
+      "epoch": 1,
+      "equal_output_count": 6,
+      "text_equivalence": false
+    },
+    {
+      "candidate_over_baseline": {
+        "median_e2el_ms": 0.986642480468105,
+        "median_itl_ms": 0.857153478369147,
+        "median_tpot_ms": 0.9378527828367156,
+        "median_ttft_ms": 1.0877437986713876,
+        "output_throughput": 1.0202038288177493,
+        "p95_e2el_ms": 0.9796682250249618,
+        "p95_itl_ms": 1.0579034562255623,
+        "p95_tpot_ms": 0.9349330990112534,
+        "p95_ttft_ms": 1.0819298782989017,
+        "p99_e2el_ms": 0.9792900498861484,
+        "p99_itl_ms": 1.051771839944496,
+        "p99_tpot_ms": 0.933710771643518,
+        "p99_ttft_ms": 1.0767777682582813,
+        "request_throughput": 1.0202038288177493
+      },
+      "compared_outputs": 8,
+      "different_output_indices_zero_based": [
+        0,
+        3
+      ],
+      "epoch": 2,
+      "equal_output_count": 6,
+      "text_equivalence": false
+    }
+  ],
+  "performance_qualified": false,
+  "profile_difference": "Only enable_shared_fp8_quantization differs in off/on JSON; both use keep_best=3. Server argv differ only in tuning-profile and artifact paths.",
+  "prompt_reconstruction": {
+    "differing_output_requests": [
+      {
+        "client_token_ids": [
+          210992,
+          210993,
+          210994,
+          210995
+        ],
+        "index": 0,
+        "prompt_utf8_sha256": "e6cef9b9d863463b8fce2ad988ef40feba03ab1e781b63cfc7022296adedd594"
+      },
+      {
+        "client_token_ids": [
+          66921,
+          66922,
+          66923,
+          66924
+        ],
+        "index": 3,
+        "prompt_utf8_sha256": "2c05da9a2a8c4a2f7d840f9a0511e088fec101eec34710759038a6290170379f"
+      }
+    ],
+    "limitations": [
+      "client_token_ids are local client reconstruction, cross-checked with tokenizer.json using Python tokenizers. The Rust server tokenizer was inspected but not executed in this receipt.",
+      "All four client logs lack /tokenize-unavailable and mismatch warnings, so the saved client path did not rewrite the sampled prompts. No server /tokenize response bodies were saved.",
+      "No independent logits or oracle were run for these eight prompts. Repeated arm-specific output differences remain unexplained; this receipt makes no near-tie or correctness conclusion.",
+      "Source hashes describe files present at reconstruction time; the saved run records client version 0.29.0 but did not pin all client/tokenizer source hashes at execution time."
+    ],
+    "log": {
+      "bytes": 1571,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/prompt-reconstruction.log",
+      "sha256": "7ff158b4ebf69b88a790330e8b3791a4d77562e9299e2fdb7a330a3e2c5c684e"
+    },
+    "receipt": {
+      "bytes": 19286,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/prompt-receipt.json",
+      "sha256": "50b7e2d8b24731a9b7694445d361a1a49b8dcf70e6bed0be8a6ef6e78d6f01c5"
+    },
+    "reconstructed_requests": 8,
+    "reproducer": {
+      "bytes": 10122,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/reconstruct-prompts.py",
+      "sha256": "8cc2374cb99f2b3d8979260d49f974ea339b55372515b360653b2a40bd172b1b"
+    },
+    "saved_namespaces": 4,
+    "scope": "Offline reconstruction using the actual pinned vLLM get_samples and tokenizer code; not captured HTTP traffic or engine input tracing.",
+    "verified_source_hashes": 33
+  },
+  "request_completion_and_length_gate_passed": true,
+  "run_record": {
+    "bytes": 2859,
+    "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/run.json",
+    "sha256": "211ebf8965947050b7a4718e69e0f3022287ab4a4fa4922af803f60dac4e2358"
+  },
+  "runs": [
+    {
+      "arm": "off",
+      "artifact_marker": {
+        "physical_lf_line": 92,
+        "text": "decoder: stored schedule artifact /workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/off.decoder.json"
+      },
+      "artifact_mode": "stored",
+      "client_log": {
+        "bytes": 5661,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-001/baseline/client.log",
+        "sha256": "969a01b285af5b7117c907f9455f23f90c5cc005668fedf88f21c44f2c1ffed4"
+      },
+      "client_reported_max_concurrent_requests": 4,
+      "completed": 8,
+      "duration_seconds": 3.1981367506086826,
+      "epoch": 1,
+      "failed": 0,
+      "generated_texts_sha256": "8926f3c7c6058e4b906dc589c92b3521e044f7aeb3720048c10ed6c2c7f52b14",
+      "input_lens": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "metrics": {
+        "median_e2el_ms": 409.52196903526783,
+        "median_itl_ms": 28.32900919020176,
+        "median_tpot_ms": 40.569767355918884,
+        "median_ttft_ms": 126.36463157832623,
+        "output_throughput": 20.01165209330691,
+        "p95_e2el_ms": 414.8238115012646,
+        "p95_itl_ms": 113.18786852061749,
+        "p95_tpot_ms": 41.438475889819,
+        "p95_ttft_ms": 129.9434619024396,
+        "p99_e2el_ms": 416.07676073908806,
+        "p99_itl_ms": 117.34945617616181,
+        "p99_tpot_ms": 41.72053520168577,
+        "p99_ttft_ms": 130.7119968906045,
+        "request_throughput": 2.501456511663364
+      },
+      "output_lens": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "persistent_state_markers": [
+        {
+          "physical_lf_line": 93,
+          "text": "decoder: bucket 0 persistent KV in-place=32/32 copy-back tensors=0 bytes=0"
+        },
+        {
+          "physical_lf_line": 94,
+          "text": "decoder: bucket 1 persistent KV in-place=32/32 copy-back tensors=0 bytes=0"
+        }
+      ],
+      "raw_result": {
+        "bytes": 3875,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-001/baseline/benchmark.json",
+        "sha256": "9be25398335985a417dcc967636d369d0cbe36630a5abb2c64f40cfb28d7877b"
+      },
+      "ready_seconds": 287.4233245626092,
+      "server_label": "baseline",
+      "server_log": {
+        "bytes": 7151,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-001/baseline/server.log",
+        "sha256": "64e2ec0cfdfaa1b3904f3c1695c021c9789d6af923cab1de645c4fa479347284"
+      },
+      "stream_intervals": {
+        "first_gap": {
+          "count": 8,
+          "max_ms": 122.31610715389252,
+          "median_ms": 113.19870874285698,
+          "min_ms": 105.17298057675362
+        },
+        "first_gap_per_request_ms": [
+          122.31610715389252,
+          115.32082408666611,
+          105.17298057675362,
+          113.042201846838,
+          114.88507315516472,
+          113.09030652046204,
+          113.30711096525192,
+          112.13728785514832
+        ],
+        "following_six_intervals": {
+          "count": 48,
+          "max_ms": 28.754577040672302,
+          "median_ms": 28.36143597960472,
+          "min_ms": 28.204329311847687
+        },
+        "recorded_intervals_per_request": [
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9
+        ],
+        "trailing_two_intervals": {
+          "count": 16,
+          "max_ms": 0.1599341630935669,
+          "median_ms": 0.0042673200368881226,
+          "min_ms": 0.003546476364135742
+        }
+      },
+      "total_input_tokens": 32,
+      "total_output_tokens": 64
+    },
+    {
+      "arm": "on",
+      "artifact_marker": {
+        "physical_lf_line": 92,
+        "text": "decoder: stored schedule artifact /workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/on.decoder.json"
+      },
+      "artifact_mode": "stored",
+      "client_log": {
+        "bytes": 5662,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-001/candidate/client.log",
+        "sha256": "4363216608b4fbb17bfbb70564a4ced981add60c3f0825d25fc03851d531d988"
+      },
+      "client_reported_max_concurrent_requests": 4,
+      "completed": 8,
+      "duration_seconds": 3.1471680589020252,
+      "epoch": 1,
+      "failed": 0,
+      "generated_texts_sha256": "fbcfa095382f3523123a211201a5893172ba525d4f983f0ec1ccb0a502193361",
+      "input_lens": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "metrics": {
+        "median_e2el_ms": 401.4557860791683,
+        "median_itl_ms": 24.203523993492126,
+        "median_tpot_ms": 38.36771845817566,
+        "median_ttft_ms": 136.1569557338953,
+        "output_throughput": 20.335742738291557,
+        "p95_e2el_ms": 412.27340288460255,
+        "p95_itl_ms": 123.04521296173334,
+        "p95_tpot_ms": 39.21243282301085,
+        "p95_ttft_ms": 139.22105859965086,
+        "p99_e2el_ms": 412.3401663452387,
+        "p99_itl_ms": 128.5133582726121,
+        "p99_tpot_ms": 39.25142618162291,
+        "p99_ttft_ms": 139.49966456741095,
+        "request_throughput": 2.5419678422864447
+      },
+      "output_lens": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "persistent_state_markers": [
+        {
+          "physical_lf_line": 93,
+          "text": "decoder: bucket 0 persistent KV in-place=32/32 copy-back tensors=0 bytes=0"
+        },
+        {
+          "physical_lf_line": 94,
+          "text": "decoder: bucket 1 persistent KV in-place=32/32 copy-back tensors=0 bytes=0"
+        }
+      ],
+      "raw_result": {
+        "bytes": 3870,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-001/candidate/benchmark.json",
+        "sha256": "da0d2d3227b41f498d2c93def549a5e689844b8b790f2aa1efddc8e112e62f10"
+      },
+      "ready_seconds": 232.27251813188195,
+      "server_label": "candidate",
+      "server_log": {
+        "bytes": 6679,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-001/candidate/server.log",
+        "sha256": "3390977369ef6fb0337662cccb35cf238c56ee03c2c188c4555b126bf53b4f2f"
+      },
+      "stream_intervals": {
+        "first_gap": {
+          "count": 8,
+          "max_ms": 129.31085750460625,
+          "median_ms": 123.18088673055172,
+          "min_ms": 119.52345445752144
+        },
+        "first_gap_per_request_ms": [
+          129.31085750460625,
+          119.52345445752144,
+          119.93327736854553,
+          124.5376244187355,
+          127.05888226628304,
+          128.1876191496849,
+          120.41828781366348,
+          121.82414904236794
+        ],
+        "following_six_intervals": {
+          "count": 48,
+          "max_ms": 24.456128478050232,
+          "median_ms": 24.21238273382187,
+          "min_ms": 24.143356829881668
+        },
+        "recorded_intervals_per_request": [
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9
+        ],
+        "trailing_two_intervals": {
+          "count": 16,
+          "max_ms": 0.13148784637451172,
+          "median_ms": 0.00391155481338501,
+          "min_ms": 0.0030547380447387695
+        }
+      },
+      "total_input_tokens": 32,
+      "total_output_tokens": 64
+    },
+    {
+      "arm": "on",
+      "artifact_marker": {
+        "physical_lf_line": 2,
+        "text": "decoder: loaded schedule artifact /workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/on.decoder.json"
+      },
+      "artifact_mode": "loaded",
+      "client_log": {
+        "bytes": 5662,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-002/candidate/client.log",
+        "sha256": "501c489664aec70a5141bf080748b9385e2775810e666fbf92480a2fdcca72a2"
+      },
+      "client_reported_max_concurrent_requests": 4,
+      "completed": 8,
+      "duration_seconds": 3.0980046913027763,
+      "epoch": 2,
+      "failed": 0,
+      "generated_texts_sha256": "fbcfa095382f3523123a211201a5893172ba525d4f983f0ec1ccb0a502193361",
+      "input_lens": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "metrics": {
+        "median_e2el_ms": 396.1847834289074,
+        "median_itl_ms": 24.201368913054466,
+        "median_tpot_ms": 37.93430940381118,
+        "median_ttft_ms": 131.86632841825485,
+        "output_throughput": 20.658458064854205,
+        "p95_e2el_ms": 400.817171856761,
+        "p95_itl_ms": 120.20606789737941,
+        "p95_tpot_ms": 38.18106816283295,
+        "p95_ttft_ms": 135.31758077442646,
+        "p99_e2el_ms": 400.93739949166775,
+        "p99_itl_ms": 121.70744817703962,
+        "p99_tpot_ms": 38.18634824029037,
+        "p99_ttft_ms": 135.65152324736118,
+        "request_throughput": 2.5823072581067756
+      },
+      "output_lens": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "persistent_state_markers": [
+        {
+          "physical_lf_line": 3,
+          "text": "decoder: bucket 0 persistent KV in-place=32/32 copy-back tensors=0 bytes=0"
+        },
+        {
+          "physical_lf_line": 4,
+          "text": "decoder: bucket 1 persistent KV in-place=32/32 copy-back tensors=0 bytes=0"
+        }
+      ],
+      "raw_result": {
+        "bytes": 3873,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-002/candidate/benchmark.json",
+        "sha256": "8a8b20e52ec2466a74621a56244a36190ad5285fa7613882cf5ee69ea2fb96c8"
+      },
+      "ready_seconds": 38.04182564467192,
+      "server_label": "candidate",
+      "server_log": {
+        "bytes": 428,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-002/candidate/server.log",
+        "sha256": "2d76a84759a3dc409ef36d698851aed0279549a16b3756ec5a88b94347322e39"
+      },
+      "stream_intervals": {
+        "first_gap": {
+          "count": 8,
+          "max_ms": 122.0005489885807,
+          "median_ms": 120.23268826305866,
+          "min_ms": 117.98270791769028
+        },
+        "first_gap_per_request_ms": [
+          122.0005489885807,
+          120.99289149045944,
+          117.98270791769028,
+          118.93663182854652,
+          121.58773094415665,
+          120.4988919198513,
+          119.60962787270546,
+          119.96648460626602
+        ],
+        "following_six_intervals": {
+          "count": 48,
+          "max_ms": 24.39124509692192,
+          "median_ms": 24.204755201935768,
+          "min_ms": 24.0541510283947
+        },
+        "recorded_intervals_per_request": [
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9
+        ],
+        "trailing_two_intervals": {
+          "count": 16,
+          "max_ms": 0.11247768998146057,
+          "median_ms": 0.003958120942115784,
+          "min_ms": 0.0032633543014526367
+        }
+      },
+      "total_input_tokens": 32,
+      "total_output_tokens": 64
+    },
+    {
+      "arm": "off",
+      "artifact_marker": {
+        "physical_lf_line": 2,
+        "text": "decoder: loaded schedule artifact /workspace/orbitkv/.qualification/fp8-serving-inputs-20260912/off.decoder.json"
+      },
+      "artifact_mode": "loaded",
+      "client_log": {
+        "bytes": 5661,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-002/baseline/client.log",
+        "sha256": "b3b25cd4ef35153c36a25021da7e8a65ae107b1cc144b97fc2d30b79d9dd565d"
+      },
+      "client_reported_max_concurrent_requests": 4,
+      "completed": 8,
+      "duration_seconds": 3.1605962477624416,
+      "epoch": 2,
+      "failed": 0,
+      "generated_texts_sha256": "8926f3c7c6058e4b906dc589c92b3521e044f7aeb3720048c10ed6c2c7f52b14",
+      "input_lens": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "metrics": {
+        "median_e2el_ms": 401.54847502708435,
+        "median_itl_ms": 28.234580531716347,
+        "median_tpot_ms": 40.448042697140146,
+        "median_ttft_ms": 121.22921645641327,
+        "output_throughput": 20.24934378926416,
+        "p95_e2el_ms": 409.13562532514334,
+        "p95_itl_ms": 113.62668983638287,
+        "p95_tpot_ms": 40.83828907459974,
+        "p95_ttft_ms": 125.07056463509797,
+        "p99_e2el_ms": 409.416392557323,
+        "p99_itl_ms": 115.71658752858639,
+        "p99_tpot_ms": 40.897405706346035,
+        "p99_ttft_ms": 125.97912702709435,
+        "request_throughput": 2.53116797365802
+      },
+      "output_lens": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "persistent_state_markers": [
+        {
+          "physical_lf_line": 3,
+          "text": "decoder: bucket 0 persistent KV in-place=32/32 copy-back tensors=0 bytes=0"
+        },
+        {
+          "physical_lf_line": 4,
+          "text": "decoder: bucket 1 persistent KV in-place=32/32 copy-back tensors=0 bytes=0"
+        }
+      ],
+      "raw_result": {
+        "bytes": 3879,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-002/baseline/benchmark.json",
+        "sha256": "1c69eb1bddd170091a06da1b873961b23995cf9c7b173390e387ec4adb030db6"
+      },
+      "ready_seconds": 38.04244528338313,
+      "server_label": "baseline",
+      "server_log": {
+        "bytes": 429,
+        "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/epoch-002/baseline/server.log",
+        "sha256": "741576f38f1f1878df8fb8cd3f2dee419bc4eb1a3e0e9008a55650c08784ef86"
+      },
+      "stream_intervals": {
+        "first_gap": {
+          "count": 8,
+          "max_ms": 116.67190864682198,
+          "median_ms": 113.64667862653732,
+          "min_ms": 108.71834680438042
+        },
+        "first_gap_per_request_ms": [
+          115.32638594508171,
+          116.67190864682198,
+          114.04955759644508,
+          109.96206849813461,
+          108.71834680438042,
+          109.00935530662537,
+          113.8465665280819,
+          113.44679072499275
+        ],
+        "following_six_intervals": {
+          "count": 48,
+          "max_ms": 28.39270979166031,
+          "median_ms": 28.24689820408821,
+          "min_ms": 28.086084872484207
+        },
+        "recorded_intervals_per_request": [
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9
+        ],
+        "trailing_two_intervals": {
+          "count": 16,
+          "max_ms": 0.10860338807106018,
+          "median_ms": 0.0036116689443588257,
+          "min_ms": 0.0028759241104125977
+        }
+      },
+      "total_input_tokens": 32,
+      "total_output_tokens": 64
+    }
+  ],
+  "schema": "orbitkv.reviewed-serving-audit.v1",
+  "selected_provider_audit": {
+    "buckets": [
+      {
+        "arm": "off",
+        "combined_gemms": 400,
+        "count_scope": "Selected reachable operations expanded by loop multiplicity; not measured/fused CUDA kernel launch counts.",
+        "flashinfer_attention": 16,
+        "lm_head": [
+          {
+            "instances": 1,
+            "ir_class": "IR-7937",
+            "provider": "GenericMatmul",
+            "selected_node": "function-2132-Op",
+            "specification": "(GenericMatmul (ECons (MNum 1) (ECons (MNum 248320) ENil)) (ECons (MNum 1) (ECons (MNum 248320) (ECons (MNum 5120) ENil))) (MNum 5120) (ECons (MMul MIter (MNum 5120)) (ECons (MNum 0) (ECons MIter ENil))) (ECons (MNum 0) (ECons (MMul MIter (MNum 5120)) (ECons MIter ENil))) (ECons (MMul (MMul MIter (MNum 5120)) (MNum 248320)) (ECons (MMul MIter (MNum 5120)) ENil)) MIter (ECons (MMul MIter (MNum 248320)) (ECons MIter ENil)) Bf16)"
+          }
+        ],
+        "prequantized_gemms": 0,
+        "quantizer_fanout_histogram_unrolled": {},
+        "representative_dyn_map": {
+          "b": 1,
+          "c_0": 1,
+          "s": 1
+        },
+        "standalone_quantizers": 0,
+        "total_activation_quantizations": 400
+      },
+      {
+        "arm": "off",
+        "combined_gemms": 400,
+        "count_scope": "Selected reachable operations expanded by loop multiplicity; not measured/fused CUDA kernel launch counts.",
+        "flashinfer_attention": 16,
+        "lm_head": [
+          {
+            "instances": 1,
+            "ir_class": "IR-7940",
+            "provider": "cublaslt",
+            "selected_node": "function-2147-Op",
+            "specification": "(cublaslt (MNum 248320) (MVar \"s\") (MNum 5120) \"T\" \"N\" \"COL\" \"COL\" \"COL\" \"COL\" (MMul MIter (MNum 5120)) (MMul MIter (MNum 5120)) (MNum 248320) (MNum 248320) (MNum 1) (MNum 0) (MNum 0) (MNum 0) (MNum 0) Bf16 Bf16 Bf16 Bf16 \"default\" \"default\" 1.0 0.0 \"DEFAULT\")"
+          }
+        ],
+        "prequantized_gemms": 0,
+        "quantizer_fanout_histogram_unrolled": {},
+        "representative_dyn_map": {
+          "b": 1,
+          "c_0": 1,
+          "s": 4
+        },
+        "standalone_quantizers": 0,
+        "total_activation_quantizations": 400
+      },
+      {
+        "arm": "on",
+        "combined_gemms": 320,
+        "count_scope": "Selected reachable operations expanded by loop multiplicity; not measured/fused CUDA kernel launch counts.",
+        "flashinfer_attention": 16,
+        "lm_head": [
+          {
+            "instances": 1,
+            "ir_class": "IR-7937",
+            "provider": "cublaslt",
+            "selected_node": "function-2198-Op",
+            "specification": "(cublaslt (MNum 1) (MNum 248320) (MNum 5120) \"N\" \"N\" \"ROW\" \"COL\" \"ROW\" \"ROW\" (MMul MIter (MNum 5120)) (MMul MIter (MNum 5120)) (MNum 248320) (MNum 248320) (MNum 1) (MNum 0) (MNum 0) (MNum 0) (MNum 0) Bf16 Bf16 Bf16 Bf16 \"default\" \"default\" 1.0 0.0 \"DEFAULT\")"
+          }
+        ],
+        "prequantized_gemms": 80,
+        "quantizer_fanout_histogram_unrolled": {
+          "1": 80
+        },
+        "representative_dyn_map": {
+          "b": 1,
+          "c_0": 1,
+          "s": 1
+        },
+        "standalone_quantizers": 80,
+        "total_activation_quantizations": 400
+      },
+      {
+        "arm": "on",
+        "combined_gemms": 176,
+        "count_scope": "Selected reachable operations expanded by loop multiplicity; not measured/fused CUDA kernel launch counts.",
+        "flashinfer_attention": 16,
+        "lm_head": [
+          {
+            "instances": 1,
+            "ir_class": "IR-7940",
+            "provider": "cublaslt",
+            "selected_node": "function-2200-Op",
+            "specification": "(cublaslt (MNum 248320) (MVar \"s\") (MNum 5120) \"T\" \"N\" \"COL\" \"COL\" \"COL\" \"COL\" (MMul MIter (MNum 5120)) (MMul MIter (MNum 5120)) (MNum 248320) (MNum 248320) (MNum 1) (MNum 0) (MNum 0) (MNum 0) (MNum 0) Bf16 Bf16 Bf16 Bf16 \"default\" \"default\" 1.0 0.0 \"DEFAULT\")"
+          }
+        ],
+        "prequantized_gemms": 224,
+        "quantizer_fanout_histogram_unrolled": {
+          "1": 128,
+          "2": 48
+        },
+        "representative_dyn_map": {
+          "b": 1,
+          "c_0": 1,
+          "s": 4
+        },
+        "standalone_quantizers": 176,
+        "total_activation_quantizations": 352
+      }
+    ],
+    "finding": "Decode off selects GenericMatmul LM head while on selects cuBLASLt; prefill heads have identical cuBLASLt descriptors. On decode has no multi-consumer activation sharing; prefill removes 48 of 400 activation quantizations. Variant choices also differ, so the whole-plan timing delta is not an isolated sharing estimate.",
+    "projection_variant_changes": [
+      {
+        "changes": [
+          {
+            "instances": 48,
+            "off_variant": 2,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.linear_attn.in_proj_qkv.weight\""
+            ]
+          },
+          {
+            "instances": 48,
+            "off_variant": 3,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.linear_attn.in_proj_z.weight\""
+            ]
+          },
+          {
+            "instances": 48,
+            "off_variant": 1,
+            "on_variant": 2,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.linear_attn.out_proj.weight\""
+            ]
+          },
+          {
+            "instances": 48,
+            "off_variant": 1,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.mlp.gate_proj.weight\""
+            ]
+          },
+          {
+            "instances": 48,
+            "off_variant": 1,
+            "on_variant": 3,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.mlp.up_proj.weight\""
+            ]
+          },
+          {
+            "instances": 48,
+            "off_variant": 2,
+            "on_variant": 1,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.mlp.down_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 1,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.self_attn.q_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 0,
+            "on_variant": 1,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.self_attn.k_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 2,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.self_attn.v_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 1,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.self_attn.o_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 3,
+            "on_variant": 2,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.mlp.gate_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 1,
+            "on_variant": 3,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.mlp.up_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 3,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.mlp.down_proj.weight\""
+            ]
+          }
+        ],
+        "different_variant_groups": 13,
+        "matched_rolled_projection_groups": 13,
+        "representative_dyn_map": {
+          "b": 1,
+          "c_0": 1,
+          "s": 1
+        }
+      },
+      {
+        "changes": [
+          {
+            "instances": 48,
+            "off_variant": 2,
+            "on_variant": 1,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.linear_attn.out_proj.weight\""
+            ]
+          },
+          {
+            "instances": 48,
+            "off_variant": 1,
+            "on_variant": 3,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.mlp.gate_proj.weight\""
+            ]
+          },
+          {
+            "instances": 48,
+            "off_variant": 3,
+            "on_variant": 1,
+            "weight_names_first": [
+              "\"model.language_model.layers.0.mlp.down_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 1,
+            "on_variant": 2,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.self_attn.q_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 2,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.self_attn.k_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 3,
+            "on_variant": 2,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.self_attn.o_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 2,
+            "on_variant": 0,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.mlp.gate_proj.weight\""
+            ]
+          },
+          {
+            "instances": 16,
+            "off_variant": 0,
+            "on_variant": 1,
+            "weight_names_first": [
+              "\"model.language_model.layers.11.mlp.up_proj.weight\""
+            ]
+          }
+        ],
+        "different_variant_groups": 8,
+        "matched_rolled_projection_groups": 13,
+        "representative_dyn_map": {
+          "b": 1,
+          "c_0": 1,
+          "s": 4
+        }
+      }
+    ],
+    "reproducer": {
+      "bytes": 9853,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/selected-provider-audit.py",
+      "sha256": "f6043f8942cb2ff4a02eaa10e0f3199886503909982b8f2b9de63666e23a3392"
+    },
+    "source": {
+      "bytes": 63831,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-ab-20260912/selected-provider-audit.json",
+      "sha256": "fa2e34cff79917b80b3721bfeb6faa8424f1fe72be45c7535c27983e45453e77"
+    }
+  },
+  "server_binary": {
+    "bytes": 64842840,
+    "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/orbitkv-serve",
+    "sha256": "ac44ab7f9ee8bdd3c273e15e4218c4d010a5b18e27630bfcf5f1d2a3806fcbfd"
+  },
+  "startup_scope": "ready_seconds is runner wall time until /v1/models readiness, before the client benchmark. Epoch1 stores fresh schedules and epoch2 loads them. Existing provider/native caches were retained; this is not an isolated JIT or Rust build measurement.",
+  "status": "reviewed_complete_diagnostic",
+  "stream_gap_observation": {
+    "hypothesis": "Prefill-to-decode graph rematerialization may contribute to first-gap and TTFT. Client intervals do not isolate graph materialization, provider setup, queueing or transport; no per-stage causal proof is available.",
+    "line": 633,
+    "observation": "The first recorded streaming interval is substantially larger than the following six in all four runs; the raw two trailing near-zero intervals remain preserved.",
+    "source": {
+      "bytes": 49274,
+      "path": "/workspace/orbitkv/.qualification/fp8-serving-binaries-v3-20260912/source/orbitkv/crates/orbitkv-executor/src/model.rs",
+      "sha256": "81b5fa00e4b3bd91cb80a5d00cd61de37361d94b0299fa0bb24ea40f4ff7c630"
+    },
+    "source_fact": "The frozen model executor sets max_materialized_buckets(Some(1))."
+  },
+  "within_arm_output_repeatability": {
+    "off": true,
+    "on": true
+  },
+  "workload": {
+    "arm_sequence": [
+      "off",
+      "on",
+      "on",
+      "off"
+    ],
+    "client": "vLLM 0.29.0 bench serve (client only; both servers are OrbitKV)",
+    "endpoint": "/v1/completions",
+    "epochs": 2,
+    "generation_warmup": "None: ready_check_timeout_sec=0 and num_warmups=0 in saved Namespaces. The initial-test banner is printed, but generation endpoint readiness is skipped. A first-prompt /tokenize length check is distinct.",
+    "ignore_eos": true,
+    "input_tokens": 4,
+    "max_concurrency_argument": 1,
+    "measured_requests_per_run": 8,
+    "measured_requests_total": 32,
+    "output_tokens": 8,
+    "profile": "qwen38-s4-o8-c1",
+    "prompt_trace": "No wire-level or server-token-ID trace was captured. An offline reconstruction receipt using the local pinned client samples all four saved Namespaces identically.",
+    "seed": 0,
+    "temperature": 0
+  }
+}

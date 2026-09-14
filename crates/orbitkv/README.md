@@ -7,9 +7,8 @@ target contract.
 ```text
 crates/orbitkv/
 ├── src/       compiler, manager, RuntimeSession, checkpoint pool, CLI
-├── tests/     CLI integration tests
-├── examples/  generic attention-state and manager-plan inputs
-└── fixtures/  generic compiler fixtures
+├── tests/     CLI integration tests and shared fixtures
+└── examples/  generic attention-state and manager-plan inputs
 ```
 
 `RuntimeManifest` is the canonical compiler artifact. `RuntimeSession` owns

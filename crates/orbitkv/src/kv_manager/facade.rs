@@ -10,7 +10,7 @@ use super::{
     SnapshotLease, SnapshotPage, StepLease, SubmissionLease, ViewVersion,
 };
 #[cfg(test)]
-use super::{DeviceKvEntry, HotPathInstrumentation};
+use super::{HotPathInstrumentation, tests::model::DeviceKvEntry};
 
 impl CanonicalKvManager {
     pub(crate) const fn page_tokens(&self) -> u64 {

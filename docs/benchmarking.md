@@ -1,5 +1,20 @@
 # Matched serving benchmarks
 
+Workload-profile controls and the separate search/replay/profile qualification
+workflow for the first FP8 region experiment are described in
+[FP8 region tuning](fp8-region-tuning.md).
+
+Compiler startup and CPU/GPU execution attribution are described in
+[stage tracing](stage-tracing.md). Use separate stage-instrumented and
+uninstrumented runs; neither diagnostic logit timings nor inclusive compiler
+span sums are serving TPOT.
+
+The fixed-artifact [weight-loading comparison](../results/weight-loading-20260913/README.md)
+uses frozen baseline and changed binaries, with a separate device-profile
+process for each timing run. Keep source/build manifests: a plain source
+snapshot has no Git identity of its own and must not inherit its parent
+checkout's revision. The runner records Git metadata only at a checkout root.
+
 OrbitKV uses `vllm bench serve` as a common OpenAI-compatible client for both
 the OrbitKV candidate and the reference server. Sharing the client removes one
 source of measurement drift; it does not by itself make the systems comparable.
@@ -105,6 +120,23 @@ a performance claim. Ratios above one favor the candidate for throughput;
 ratios below one favor it for latency. The run manifest records the benchmark
 client version when the client exposes one.
 
+The harness also records each server's exit status and rejects shutdowns that
+require SIGKILL. OrbitKV emits `ORBITKV_ENGINE_SHUTDOWN` after joining its model
+worker; qualification must inspect the final KV/fixed-state census as well as
+HTTP completion. Other engines' shutdown contracts need their own audit. For a
+graph-cache comparison, freeze one binary and selected artifact and change only
+`--graph-cache-capacity`; keep the workload, weights, tuning profile and sampling
+identical. Short-output and longer-decode requests expose different fractions
+of phase-switch overhead. Record startup separately and retain tail metrics.
+
+For startup preparation, hold `--graph-cache-capacity` fixed and change only
+`--prepare-execution false/true`. Record `ORBITKV_ENGINE_STARTUP` as well as
+observed HTTP readiness. Keep the first generation request and its first decode
+interval in the results. The Python benchmark client's `--num-warmups 0` and
+`--ready-check-timeout-sec 0` prevent an unmeasured generation from warming the
+server before that request. Preparation time moves work ahead of readiness;
+it must not be presented as a kernel speedup or omitted from startup reporting.
+
 ## Current single-process load closure
 
 A same-instance release-mode run of the released Full+Sliding checkpoint held
@@ -171,7 +203,7 @@ OrbitKV reached 679.32 versus 1136.68 token/s (0.598x), with 2.682 versus
 444.51 ms E2E (1.69x). This improves the previous executor baseline but does
 not qualify an OrbitKV-over-SGLang serving advantage.
 
-## Current Qwen3.5 27B block-FP8 diagnostic
+## Current Qwen3.8 27B block-FP8 diagnostic
 
 The primary checkpoint now runs through the same OpenAI benchmark client as
 SGLang 0.5.17 and vLLM 0.29.0. Two alternating epochs used four input tokens,
@@ -182,17 +214,30 @@ OrbitKV/SGLang output throughput was 14.07/31.61 token/s (0.445x), with
 49.47/18.18 ms median TPOT. The OrbitKV and SGLang random-trace digests match;
 vLLM differs on one of eight generated texts.
 
-A fixed pre-tokenized `[1,2,3,4]` SSE follow-up resolves the claim boundary.
-SGLang and the independent Transformers oracle generate
-`[5,0,31,46474,4,5,0,31]`; OrbitKV and vLLM generate
-`[5,0,31,0,31,0,31,0]`. Therefore the prior prefill plus one-decode logit gate
-was extended through all eight generated steps. The general artifact remains
-within `0.42285156` maximum absolute error throughout. At token four the
-serving artifact has a near tie (`0=11.1875`, `46474=11.125`) while the oracle
-has the reverse order (`46474=11.25`, `0=11.125`), with maximum absolute error
-`0.5`. This rules out state corruption but still prevents an exact-output
-comparison against vLLM. Compact evidence lives in
+A fixed pre-tokenized `[1,2,3,4]` SSE follow-up found a near-tied fourth token
+whose argmax can differ between implementations. The current correctness gate
+therefore teacher-forces the independent reference token after every step,
+requires `max_abs <= 1.0`, and requires exact top-1 whenever the reference margin
+exceeds the measured error envelope. A fresh schema-5 16-candidate artifact
+passes four-token prefill plus seven decode comparisons with maximum absolute
+logit error `0.74609375`, while selecting 32/32 token-KV updates in place in both
+buckets. The historical greedy benchmark remains useful as performance evidence,
+but its model labels should be read as Qwen3.8. Compact historical evidence lives in
 `results/deepgemm-luminal-bringup-20260909/`.
+
+A two-epoch rerun after schema 5 made all 32 token-KV writes mandatory in-place
+improves the same C1 diagnostic but remains negative. Against SGLang, median
+OrbitKV output throughput is about 19.98 versus 32.21 token/s (`0.620x`), median
+TTFT 141.26 versus 114.53 ms (`1.234x`), and median TPOT 38.68 versus 19.02 ms
+(`2.034x`). Against vLLM, throughput is about 19.63 versus 36.44 token/s
+(`0.539x`), median TTFT 143.77 versus 90.57 ms (`1.587x`), and median TPOT
+39.40 versus 18.15 ms (`2.170x`). All requests and token counts completed, but
+the generated-text digests differ, so this remains diagnostic evidence rather
+than a qualified performance comparison. Raw outputs are under
+`.qualification/qwen38-schema5-vs-{sglang,vllm}/` and are intentionally not
+promoted. The replayable decoder artifact is
+`.qualification/qwen38-27b-fp8-schema5-g16.json` with SHA-256
+`6b155436a83249f7c1b67d3013500c890bbee19da4b0df848f7e041f0602b40a`.
 
 ## Promotion rule
 

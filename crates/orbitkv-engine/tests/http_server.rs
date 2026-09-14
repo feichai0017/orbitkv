@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use orbitkv_engine::{EngineStats, ModelEngine, ModelEngineConfig};
-use orbitkv_server::{FrontendDtype, HttpFrontendConfig, serve_openai};
+use orbitkv_engine::{FrontendDtype, HttpFrontendConfig, serve_openai};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -16,6 +16,8 @@ fn engine_config(model_directory: PathBuf) -> ModelEngineConfig {
     ModelEngineConfig {
         model_directory,
         decoder_artifact: None,
+        graph_cache_capacity: orbitkv_executor::model::DEFAULT_GRAPH_CACHE_CAPACITY,
+        prepare_execution: true,
         device_index: 0,
         page_tokens: 16,
         page_counts: vec![128, 66],

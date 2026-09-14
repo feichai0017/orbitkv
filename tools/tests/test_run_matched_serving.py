@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 
@@ -44,13 +45,40 @@ def result(metrics=None, generated=None):
 
 
 class MatchedServingTest(unittest.TestCase):
+    def test_shutdown_retains_early_exit_status(self):
+        process = Mock()
+        process.poll.return_value = 7
+        with patch.object(MODULE.os, "killpg") as kill:
+            observed = MODULE.stop_server(process, 1.0)
+        self.assertEqual(observed, MODULE.ServerShutdown(7, False))
+        kill.assert_not_called()
+
+    def test_shutdown_records_graceful_exit(self):
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        with patch.object(MODULE.os, "killpg") as kill:
+            observed = MODULE.stop_server(process, 1.0)
+        self.assertEqual(observed, MODULE.ServerShutdown(0, False))
+        kill.assert_called_once_with(123, MODULE.signal.SIGTERM)
+
+    def test_shutdown_exposes_forced_kill(self):
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        process.wait.side_effect = [MODULE.subprocess.TimeoutExpired("server", 1), -9]
+        with patch.object(MODULE.os, "killpg") as kill:
+            observed = MODULE.stop_server(process, 1.0)
+        self.assertEqual(observed, MODULE.ServerShutdown(-9, True))
+        self.assertEqual([call.args[1] for call in kill.call_args_list],
+                         [MODULE.signal.SIGTERM, MODULE.signal.SIGKILL])
+
     def test_command_parsing_accepts_relative_paths_during_dry_run(self):
         command = MODULE.parse_command(
-            "target/release/orbitkv-server --port 8000",
+            "target/release/orbitkv-serve --port 8000",
             "candidate",
             require_executable=False,
         )
-        self.assertEqual(command[0], "target/release/orbitkv-server")
+        self.assertEqual(command[0], "target/release/orbitkv-serve")
         self.assertEqual(command[-1], "8000")
 
     def test_bench_command_fixes_random_lengths_and_tail_metrics(self):

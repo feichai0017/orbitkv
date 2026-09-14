@@ -205,7 +205,7 @@ fn hf_token_manager_plan_rejects_unproven_layer_semantics() {
 #[test]
 fn hybrid_gdn_hf_state_input_uses_the_consumable_storage_schema() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config = root.join("fixtures/hybrid-fixed-state/config.json");
+    let config = root.join("tests/fixtures/hybrid-fixed-state/config.json");
     let common = [
         config.to_str().unwrap(),
         "--page-tokens",
@@ -250,7 +250,7 @@ fn hybrid_gdn_hf_state_input_uses_the_consumable_storage_schema() {
 #[test]
 fn hybrid_gdn_hf_frontend_compiles_state_and_token_manager_plans() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config = root.join("fixtures/hybrid-fixed-state/config.json");
+    let config = root.join("tests/fixtures/hybrid-fixed-state/config.json");
     let common = [
         config.to_str().unwrap(),
         "--page-tokens",
@@ -339,7 +339,8 @@ fn hybrid_gdn_hf_frontend_compiles_state_and_token_manager_plans() {
 fn renamed_hybrid_hf_frontend_compiles_every_public_artifact() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source =
-        std::fs::read_to_string(root.join("fixtures/hybrid-fixed-state/config.json")).unwrap();
+        std::fs::read_to_string(root.join("tests/fixtures/hybrid-fixed-state/config.json"))
+            .unwrap();
     let mut config: serde_json::Value = serde_json::from_str(&source).unwrap();
     config["architectures"] = serde_json::json!(["RenamedArchitecture"]);
     config["model_type"] = serde_json::json!("renamed_envelope");
@@ -685,7 +686,7 @@ fn hf_runtime_manifest_cli_supports_token_only_and_heterogeneous_configs() {
     assert!(token_manifest.token_manager_plan.is_some());
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config = root.join("fixtures/hybrid-fixed-state/config.json");
+    let config = root.join("tests/fixtures/hybrid-fixed-state/config.json");
     let hybrid_output = run(&[
         "compile-hf-runtime-manifest",
         config.to_str().unwrap(),

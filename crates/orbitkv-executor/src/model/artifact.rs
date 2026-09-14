@@ -1,16 +1,17 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{DecoderCompileConfig, DecoderConfig, DecoderError, DecoderWeightFeatures};
+use super::{
+    DecoderCompileConfig, DecoderConfig, DecoderError, DecoderTuningProfile, DecoderWeightFeatures,
+};
 use crate::{ExecutorArena, ExecutorPlan, FixedStateArenaRegistration};
 use luminal::graph::SelectedSchedule;
+use luminal_cuda_lite::CudaModuleArtifact;
 
-// Schema 2 separates semantic paged attention from provider-specific LLIR and
-// renames the DeepGEMM provider. Old schedules must be searched again rather
-// than remapped across changed e-graph identities.
-const DECODER_ARTIFACT_SCHEMA: u32 = 2;
+// A decoder artifact is a complete, target-validated execution program.
+const DECODER_ARTIFACT_SCHEMA: u32 = 9;
 
-/// Portable graph-selection artifact for one native decoder configuration.
+/// Selected schedule and CUDA module images for one native decoder configuration.
 ///
 /// It contains no weights, device pointers, or KV contents. Its identity binds
 /// the selected schedule to model semantics and persistent-state geometry.
@@ -20,6 +21,7 @@ pub struct DecoderArtifact {
     pub(super) schema: u32,
     pub(super) identity: String,
     pub(super) schedule: SelectedSchedule,
+    pub(super) cuda_modules: CudaModuleArtifact,
 }
 
 #[derive(Serialize)]
@@ -32,6 +34,7 @@ struct DecoderArtifactIdentity<'a> {
     arenas: Vec<DecoderArtifactArena>,
     fixed_states: Vec<DecoderArtifactFixedState>,
     compile: DecoderCompileConfig,
+    tuning: &'a DecoderTuningProfile,
 }
 
 #[derive(Serialize)]
@@ -49,12 +52,17 @@ struct DecoderArtifactFixedState {
 }
 
 impl DecoderArtifact {
+    /// Current serialization schema. Consumers can inspect compatibility
+    /// without duplicating a version literal outside the artifact owner.
+    pub const SCHEMA_VERSION: u32 = DECODER_ARTIFACT_SCHEMA;
+
     /// Serializes the artifact as compact JSON bytes.
     ///
     /// # Errors
     ///
     /// Returns serialization failures without emitting partial data.
     pub fn to_bytes(&self) -> Result<Vec<u8>, DecoderError> {
+        self.validate()?;
         serde_json::to_vec(self).map_err(DecoderError::from)
     }
 
@@ -65,24 +73,45 @@ impl DecoderArtifact {
     /// Rejects malformed JSON or an unknown artifact schema.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DecoderError> {
         let artifact = serde_json::from_slice::<Self>(bytes)?;
-        if artifact.schema != DECODER_ARTIFACT_SCHEMA {
+        artifact.validate()?;
+        Ok(artifact)
+    }
+
+    /// Number of distinct generated CUDA modules in this execution program.
+    #[must_use]
+    pub fn module_image_count(&self) -> usize {
+        self.cuda_modules.image_count()
+    }
+
+    pub(super) fn validate(&self) -> Result<(), DecoderError> {
+        if self.schema != DECODER_ARTIFACT_SCHEMA {
             return Err(DecoderError::Artifact(format!(
                 "schema {} != {DECODER_ARTIFACT_SCHEMA}",
-                artifact.schema
+                self.schema
             )));
         }
-        Ok(artifact)
+        Ok(())
     }
 }
 
-pub(super) fn new_artifact(identity: String, schedule: SelectedSchedule) -> DecoderArtifact {
+pub(super) fn new_artifact(
+    identity: String,
+    schedule: SelectedSchedule,
+    cuda_modules: CudaModuleArtifact,
+) -> DecoderArtifact {
     DecoderArtifact {
         schema: DECODER_ARTIFACT_SCHEMA,
         identity,
         schedule,
+        cuda_modules,
     }
 }
 
+#[cfg(test)]
+#[path = "../../tests/unit/model/artifact/mod.rs"]
+mod tests;
+
+#[cfg(test)]
 pub(super) fn decoder_artifact_identity(
     config: &DecoderConfig,
     plan: &ExecutorPlan,
@@ -91,6 +120,29 @@ pub(super) fn decoder_artifact_identity(
     weights: DecoderWeightFeatures,
     compile: DecoderCompileConfig,
     compiler_facts_digest: &str,
+) -> Result<String, DecoderError> {
+    decoder_artifact_identity_with_tuning(
+        config,
+        plan,
+        arenas,
+        fixed_states,
+        weights,
+        compile,
+        compiler_facts_digest,
+        &DecoderTuningProfile::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Mirrors the public compilation boundary.
+pub(super) fn decoder_artifact_identity_with_tuning(
+    config: &DecoderConfig,
+    plan: &ExecutorPlan,
+    arenas: &[ExecutorArena],
+    fixed_states: &[FixedStateArenaRegistration],
+    weights: DecoderWeightFeatures,
+    compile: DecoderCompileConfig,
+    compiler_facts_digest: &str,
+    tuning: &DecoderTuningProfile,
 ) -> Result<String, DecoderError> {
     let identity = DecoderArtifactIdentity {
         manifest_fingerprint: &plan.manifest_fingerprint,
@@ -115,6 +167,7 @@ pub(super) fn decoder_artifact_identity(
             })
             .collect(),
         compile,
+        tuning,
     };
     let bytes = serde_json::to_vec(&identity)?;
     Ok(format!("{:x}", Sha256::digest(bytes)))

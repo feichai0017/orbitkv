@@ -1,0 +1,670 @@
+{
+  "status": "passed",
+  "artifact": {
+    "path": "/workspace/orbitkv/.qualification/module-image-artifact-20260913/model-reference/decoder.json",
+    "bytes": 15236929,
+    "sha256": "eb16a937ad2fc814914c7a6cf62e5720c4c8753acbd21fbcf53a900b3dc9f849"
+  },
+  "selected_buckets": [
+    {
+      "bucket_indices": {
+        "c_0": 0,
+        "b": 0,
+        "s": 0
+      },
+      "representative_dyn_map": {
+        "c_0": 1,
+        "s": 1,
+        "b": 1
+      },
+      "unrolled_llir_fingerprint": [
+        5577508104005972420,
+        11929286925903596926
+      ]
+    },
+    {
+      "bucket_indices": {
+        "c_0": 0,
+        "b": 0,
+        "s": 1
+      },
+      "representative_dyn_map": {
+        "c_0": 1,
+        "s": 4,
+        "b": 1
+      },
+      "unrolled_llir_fingerprint": [
+        17405076800116389590,
+        12904558463372721224
+      ]
+    }
+  ],
+  "module_image_count": 428,
+  "probe_module_hits": 428,
+  "probe_nvrtc_calls": 0,
+  "per_process_median_rule": "Each process uses request sequences 1 and 2 (zero-based); exclude initial materialization and final forced eviction. Arm summaries are medians of two process medians.",
+  "timing_execution_order": [
+    "cap1-a",
+    "cap2-a",
+    "cap2-b",
+    "cap1-b"
+  ],
+  "arm_medians_ms": {
+    "1": {
+      "prefill_seconds": 127.90614975,
+      "first_decode_seconds": 128.67665150000002,
+      "sequence_seconds": 420.4151845,
+      "warm_decode_seconds": 24.486621500000002
+    },
+    "2": {
+      "prefill_seconds": 29.40796125,
+      "first_decode_seconds": 25.93164075,
+      "sequence_seconds": 217.04695299999997,
+      "warm_decode_seconds": 24.391614750000002
+    }
+  },
+  "relative_change_percent": {
+    "prefill_seconds": -77.0081725487949,
+    "first_decode_seconds": -79.84743895049212,
+    "sequence_seconds": -48.37318893271326,
+    "warm_decode_seconds": -0.3879945218249081
+  },
+  "processes": [
+    {
+      "label": "probe-cap2",
+      "capacity": 2,
+      "stage_trace": true,
+      "started_at_utc": "2026-09-13T13:03:49.560800+00:00",
+      "process_seconds": 17.9387697763741,
+      "repeated_request_medians_ms": {
+        "prefill_seconds": 29.796791,
+        "first_decode_seconds": 26.18871,
+        "sequence_seconds": 218.58636650000003,
+        "warm_decode_seconds": 24.519384499999997
+      },
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 2,
+          "prefill_seconds": 0.045895054,
+          "first_decode_seconds": 0.150664806,
+          "warm_decode_seconds": [
+            0.024647297,
+            0.024604234,
+            0.024572435,
+            0.02449724,
+            0.024542016,
+            0.024486222
+          ],
+          "sequence_seconds": 0.363357721,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 2,
+          "prefill_seconds": 0.029770658,
+          "first_decode_seconds": 0.02613692,
+          "warm_decode_seconds": [
+            0.024517235,
+            0.024487859,
+            0.02450074,
+            0.024530134,
+            0.024521534,
+            0.024618211
+          ],
+          "sequence_seconds": 0.21871139,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 2,
+          "prefill_seconds": 0.029822924,
+          "first_decode_seconds": 0.0262405,
+          "warm_decode_seconds": [
+            0.024549972,
+            0.024483785,
+            0.02456545,
+            0.024503979,
+            0.02446486,
+            0.024542369
+          ],
+          "sequence_seconds": 0.218461343,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.044347928,
+          "first_decode_seconds": 0.129413579,
+          "warm_decode_seconds": [
+            0.024572384,
+            0.024509562,
+            0.02444098,
+            0.024514387,
+            0.024453325,
+            0.024470648
+          ],
+          "sequence_seconds": 0.336658423,
+          "graph_builds_before": 2,
+          "graph_builds_after": 3,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "reference_steps": 32,
+      "max_abs": 0.5,
+      "drain_passed": true,
+      "result": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/probe-cap2/result.json",
+        "bytes": 7730,
+        "sha256": "820c45ab4d6c5e754456411b2d9a82a79b4507886616986de2131a42f8d864e4"
+      },
+      "run": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/probe-cap2/run.json",
+        "bytes": 4887,
+        "sha256": "5304cd9220e532bcfff565dd766ceea94c85d26f08720ae403054ca84a6e8493"
+      }
+    },
+    {
+      "label": "cap1-a",
+      "capacity": 1,
+      "stage_trace": false,
+      "started_at_utc": "2026-09-13T13:04:38.184471+00:00",
+      "process_seconds": 17.186845522373915,
+      "repeated_request_medians_ms": {
+        "prefill_seconds": 125.16116,
+        "first_decode_seconds": 125.57407850000001,
+        "sequence_seconds": 414.05479899999995,
+        "warm_decode_seconds": 24.442020000000003
+      },
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 1,
+          "prefill_seconds": 0.042586447,
+          "first_decode_seconds": 0.129041367,
+          "warm_decode_seconds": [
+            0.024614721,
+            0.024560641,
+            0.024541344,
+            0.024492978,
+            0.024454933,
+            0.024479091
+          ],
+          "sequence_seconds": 0.338094097,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 1,
+          "prefill_seconds": 0.124230747,
+          "first_decode_seconds": 0.124199328,
+          "warm_decode_seconds": [
+            0.024535072,
+            0.024451313,
+            0.024445634,
+            0.024400351,
+            0.024416793,
+            0.02440565
+          ],
+          "sequence_seconds": 0.412127824,
+          "graph_builds_before": 2,
+          "graph_builds_after": 4,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 1,
+          "prefill_seconds": 0.126091573,
+          "first_decode_seconds": 0.126948829,
+          "warm_decode_seconds": [
+            0.024681535,
+            0.024536736,
+            0.024427092,
+            0.024435531,
+            0.024452504,
+            0.024438406
+          ],
+          "sequence_seconds": 0.415981774,
+          "graph_builds_before": 4,
+          "graph_builds_after": 6,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.128753017,
+          "first_decode_seconds": 0.133598201,
+          "warm_decode_seconds": [
+            0.024641625,
+            0.024560476,
+            0.024468086,
+            0.024445351,
+            0.024405785,
+            0.024378415
+          ],
+          "sequence_seconds": 0.425326758,
+          "graph_builds_before": 6,
+          "graph_builds_after": 8,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "reference_steps": 32,
+      "max_abs": 0.5,
+      "drain_passed": true,
+      "result": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/cap1-a/result.json",
+        "bytes": 7732,
+        "sha256": "c99df01b5185e448784486e514336ebf188524344b331387f51d16f87d26af43"
+      },
+      "run": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/cap1-a/run.json",
+        "bytes": 4774,
+        "sha256": "af4bcf1ca4bd8aff4d74538bcc807c4efa2e7f8d0410fc3b2655345364ce0eec"
+      }
+    },
+    {
+      "label": "cap2-a",
+      "capacity": 2,
+      "stage_trace": false,
+      "started_at_utc": "2026-09-13T13:04:55.496421+00:00",
+      "process_seconds": 16.584806259721518,
+      "repeated_request_medians_ms": {
+        "prefill_seconds": 29.347082,
+        "first_decode_seconds": 25.913513,
+        "sequence_seconds": 217.038982,
+        "warm_decode_seconds": 24.389431
+      },
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 2,
+          "prefill_seconds": 0.042310725,
+          "first_decode_seconds": 0.147692986,
+          "warm_decode_seconds": [
+            0.024508344,
+            0.024442432,
+            0.024438963,
+            0.024457432,
+            0.024407344,
+            0.02443203
+          ],
+          "sequence_seconds": 0.355523371,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 2,
+          "prefill_seconds": 0.029560402,
+          "first_decode_seconds": 0.026057716,
+          "warm_decode_seconds": [
+            0.024346744,
+            0.024389548,
+            0.024396714,
+            0.024450787,
+            0.02441248,
+            0.024418426
+          ],
+          "sequence_seconds": 0.217558579,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 2,
+          "prefill_seconds": 0.029133762,
+          "first_decode_seconds": 0.02576931,
+          "warm_decode_seconds": [
+            0.024345061,
+            0.024383874,
+            0.024410176,
+            0.024386854,
+            0.024378231,
+            0.024389314
+          ],
+          "sequence_seconds": 0.216519385,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.04381818,
+          "first_decode_seconds": 0.130224491,
+          "warm_decode_seconds": [
+            0.024571385,
+            0.024471378,
+            0.024439156,
+            0.024399587,
+            0.024460429,
+            0.024420872
+          ],
+          "sequence_seconds": 0.337002452,
+          "graph_builds_before": 2,
+          "graph_builds_after": 3,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "reference_steps": 32,
+      "max_abs": 0.5,
+      "drain_passed": true,
+      "result": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/cap2-a/result.json",
+        "bytes": 7729,
+        "sha256": "9dbfff5fce817ea8329e4d2d2a41b81fca65c9f88bdc8cd7a53e8401e7a881af"
+      },
+      "run": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/cap2-a/run.json",
+        "bytes": 4774,
+        "sha256": "6aed865e4045f206f3cceab9215ff4220d4fecbca44bd369e49948d212fd7bea"
+      }
+    },
+    {
+      "label": "cap2-b",
+      "capacity": 2,
+      "stage_trace": false,
+      "started_at_utc": "2026-09-13T13:05:12.206069+00:00",
+      "process_seconds": 16.785611025989056,
+      "repeated_request_medians_ms": {
+        "prefill_seconds": 29.468840500000002,
+        "first_decode_seconds": 25.9497685,
+        "sequence_seconds": 217.05492399999997,
+        "warm_decode_seconds": 24.393798500000003
+      },
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 2,
+          "prefill_seconds": 0.042802755,
+          "first_decode_seconds": 0.153412255,
+          "warm_decode_seconds": [
+            0.024568527,
+            0.024505083,
+            0.02448651,
+            0.024454525,
+            0.024497879,
+            0.024421936
+          ],
+          "sequence_seconds": 0.362514733,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 2,
+          "prefill_seconds": 0.029540044,
+          "first_decode_seconds": 0.026004016,
+          "warm_decode_seconds": [
+            0.024345017,
+            0.024389646,
+            0.024401373,
+            0.024375181,
+            0.024422988,
+            0.02439234
+          ],
+          "sequence_seconds": 0.217193329,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 2,
+          "prefill_seconds": 0.029397637,
+          "first_decode_seconds": 0.025895521,
+          "warm_decode_seconds": [
+            0.024350618,
+            0.024395257,
+            0.024427477,
+            0.02441158,
+            0.024446774,
+            0.024377304
+          ],
+          "sequence_seconds": 0.216916519,
+          "graph_builds_before": 2,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 2,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.044279031,
+          "first_decode_seconds": 0.133937458,
+          "warm_decode_seconds": [
+            0.024595396,
+            0.024513321,
+            0.024574974,
+            0.024422434,
+            0.024470759,
+            0.024442634
+          ],
+          "sequence_seconds": 0.341198651,
+          "graph_builds_before": 2,
+          "graph_builds_after": 3,
+          "materialized_graphs_before": 2,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "reference_steps": 32,
+      "max_abs": 0.5,
+      "drain_passed": true,
+      "result": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/cap2-b/result.json",
+        "bytes": 7730,
+        "sha256": "ab1f207d8bf27ffaf4e223dd43b56a4ccd935ebf996a4e5bd89d8b0612b671aa"
+      },
+      "run": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/cap2-b/run.json",
+        "bytes": 4774,
+        "sha256": "a5463766902d05eeeb5c5e816744479e19d939a067716a4656b1727f39cf3dc8"
+      }
+    },
+    {
+      "label": "cap1-b",
+      "capacity": 1,
+      "stage_trace": false,
+      "started_at_utc": "2026-09-13T13:05:29.114729+00:00",
+      "process_seconds": 17.38689286261797,
+      "repeated_request_medians_ms": {
+        "prefill_seconds": 130.6511395,
+        "first_decode_seconds": 131.77922450000003,
+        "sequence_seconds": 426.77557,
+        "warm_decode_seconds": 24.531223
+      },
+      "sequences": [
+        {
+          "sequence": 0,
+          "capacity": 1,
+          "prefill_seconds": 0.042699686,
+          "first_decode_seconds": 0.136178675,
+          "warm_decode_seconds": [
+            0.024678751,
+            0.024574758,
+            0.024545961,
+            0.024532162,
+            0.02455237,
+            0.024499138
+          ],
+          "sequence_seconds": 0.345120001,
+          "graph_builds_before": 1,
+          "graph_builds_after": 2,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 1,
+          "capacity": 1,
+          "prefill_seconds": 0.129694077,
+          "first_decode_seconds": 0.133242663,
+          "warm_decode_seconds": [
+            0.024660753,
+            0.024583417,
+            0.024531322,
+            0.024527743,
+            0.024531124,
+            0.02454144
+          ],
+          "sequence_seconds": 0.427388769,
+          "graph_builds_before": 2,
+          "graph_builds_after": 4,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 2,
+          "capacity": 1,
+          "prefill_seconds": 0.131608202,
+          "first_decode_seconds": 0.130315786,
+          "warm_decode_seconds": [
+            0.025300094,
+            0.024566859,
+            0.02448604,
+            0.024426107,
+            0.024424606,
+            0.024467318
+          ],
+          "sequence_seconds": 0.426162371,
+          "graph_builds_before": 4,
+          "graph_builds_after": 6,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        },
+        {
+          "sequence": 3,
+          "capacity": 1,
+          "prefill_seconds": 0.130578076,
+          "first_decode_seconds": 0.127034429,
+          "warm_decode_seconds": [
+            0.024630663,
+            0.024517045,
+            0.02446422,
+            0.024442706,
+            0.024482135,
+            0.024466937
+          ],
+          "sequence_seconds": 0.420736958,
+          "graph_builds_before": 6,
+          "graph_builds_after": 8,
+          "materialized_graphs_before": 1,
+          "materialized_graphs_after": 1,
+          "parity_steps": 8,
+          "drain_passed": true
+        }
+      ],
+      "reference_steps": 32,
+      "max_abs": 0.5,
+      "drain_passed": true,
+      "result": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/cap1-b/result.json",
+        "bytes": 7728,
+        "sha256": "df91666808d1e582c9d48ee50bdc45a7d65d21ce8e99e13caec7dd22c56bce8d"
+      },
+      "run": {
+        "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/cap1-b/run.json",
+        "bytes": 4774,
+        "sha256": "1e3ef294c83a897815bc98e83f7cc4fb8f5fb545be8b8e285e3e3ba1c5f9178c"
+      }
+    }
+  ],
+  "reference_errors_by_phase": {
+    "prefill": 0.5,
+    "decode": 0.46875,
+    "decode-2": 0.34375,
+    "decode-3": 0.37109375,
+    "decode-4": 0.4296875,
+    "decode-5": 0.375,
+    "decode-6": 0.35107422,
+    "decode-7": 0.4375
+  },
+  "model_process_count": 5,
+  "reference_step_count": 160,
+  "drained_request_count": 20,
+  "unchanged_logit_gate": 1.0,
+  "default_graph_cache_capacity": 1,
+  "qualified_configurations": [
+    1,
+    2
+  ],
+  "behavior": "Private FlashInfer plan metadata permits retained prefill/decode graphs; full graph build counters remain unchanged for repeated requests at capacity 2 and increase again after forced eviction.",
+  "limitations": [
+    "Two timing processes per capacity, in ABBA order; each contributes two repeated requests. No statistical-significance claim.",
+    "B1, short-context, teacher-forced diagnostic execution with full-vocabulary logits. The request timer includes oracle checking and drain. This is not HTTP latency, serving TPOT or throughput.",
+    "Both timing arms use the same final binary with the ownership fix; they compare residency capacity 1 versus 2, not old versus new kernel performance.",
+    "Initial request materialization and final forced eviction are excluded from the repeated-request medians, but all raw timings and counters are retained.",
+    "Finite graph residency defaults to one and must be explicitly raised. All compiled buckets are conservatively budgeted; automatic residency selection from a joint budget remains open.",
+    "The provider metadata charge is 8 MiB per prepared plan plus replacement peak; float scratch is 128 MiB shared. CUDA driver-internal graph/module memory is outside payload estimates. Process-exit memory observation does not prove a live-process memory peak.",
+    "Single H20 and serialized execution on one owning stream. Long-context/ragged multi-request model transitions, cross-stream and multi-device ownership need separate qualification.",
+    "The independent Transformers model oracle uses the local DeepGEMM math library. Metadata and reference files are fingerprinted; no new full-weight-payload hash or new schedule search was performed.",
+    "The old provider regression has retained failing output and observed source files, but no frozen baseline binary receipt. It establishes metadata overwrite, not a fully reproduced historical build."
+  ],
+  "audit": {
+    "path": "/workspace/orbitkv/.qualification/bucket-resources-20260913/audit.json",
+    "bytes": 22939,
+    "sha256": "07f98d4decee1f88ddd9dc6408c3db2344700c3d287bbe16435dbbe5eebb68c6"
+  }
+}

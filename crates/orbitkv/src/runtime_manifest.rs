@@ -992,6 +992,5 @@ pub(crate) fn write_canonical_json(
 }
 
 #[cfg(test)]
-mod tests {
-    include!("runtime_manifest_tests.rs");
-}
+#[path = "../tests/unit/runtime_manifest/mod.rs"]
+mod tests;
