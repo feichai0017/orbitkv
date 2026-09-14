@@ -20,6 +20,7 @@ the table below assigns compiler responsibilities within that structure.
 | Profiling input fixture | `model/tuning/fixture.rs` | Typed graph bindings with explicit capacities; private-page CSR metadata |
 | Graph alternatives and generic extraction | Luminal `src/graph.rs`, `src/egglog_utils`, `src/search` | Semantic rewrites and executable dependencies; no GPU measurement in core |
 | Snapshot sampling and initial coverage | Luminal `src/egglog_utils/sampling.rs`, `src/search/genetic.rs` | Existing admitted egraph alternatives, RNG state and caller budgets; no provider preference or graph rewriting |
+| Local extraction and cost attribution | Luminal `src/egglog_utils/neighborhood.rs`, `src/search/profile.rs`, `src/search/unroll.rs` | Exact extraction provenance, runtime region costs and bounded single-choice neighbors; no new rewrites |
 | CUDA evaluation and deployment ranking | `luminal_cuda_lite/src/search.rs` | Actual device measurements plus resource checks |
 | Search evidence | `luminal_cuda_lite/src/search/trace.rs` | Candidate program identity, full operation manifest, outcomes and scores |
 | CPU stage attribution | `luminal_tracing/src/stages.rs`, exposed by executor `diagnostics.rs` | Buffered synchronous wall spans; explicit completion, no added device synchronization |
@@ -82,14 +83,14 @@ The parent directory must exist. A trace is created only for a fresh search;
 strict schedule replay does not fabricate candidate measurements. Existing
 files are never overwritten, and requested trace write failures are surfaced.
 
-Schema 1 is JSON Lines:
+Schema 2 is JSON Lines:
 
 | Event | Evidence |
 | --- | --- |
-| `search_started` | Backend, search/trial/initial-population budgets, schema and fingerprint scope |
+| `search_started` | Backend, search/trial/initial-population/local-attempt budgets, schema and fingerprint scope |
 | `bucket_started` | SHA-256 of the ordered serialized egraph and custom-op descriptors, format/scope, size and representative dimensions |
 | `program` | Semantic program identity, all operations, ordered inputs, available host-provider and generated-kernel labels |
-| `direct` | Candidate/bucket, sampling origin (`Coverage`, `Mutation`, `Restart`), actual dimensions, measurement/rejection, timeout decision, device and evaluation wall times |
+| `direct` | Candidate/bucket, sampling origin (`Coverage`, `Hotspot`, `Mutation`, `Restart`), actual dimensions, measurement/rejection, timeout decision, device and evaluation wall times; optional parent/class/from/to decision and separately measured LLIR regions |
 | `deployment` | Same program identity, direct rank/score, deployment CUDA Graph score or rejection |
 | `deployment_extraction_rejected` | Direct rank and available extraction failure reason |
 | `finalist_validation` | Deployment rank and final resource-validation result |
@@ -116,6 +117,13 @@ sampling also needs the same RNG state, options and feedback to reproduce later
 generations. GPU timing noise and time budgets can change rankings and stopping
 points. [Search coverage](search-coverage.md) describes the scope of the initial
 exploration policy and its regression checks.
+
+Schema 2 adds `targeted_choice` and `profile_regions` to direct records. The
+former names the exact snapshot e-class, old/new e-node and measured parent;
+the latter gives source LLIR node IDs and CUDA event costs in seconds. A fused
+region's cost is apportioned across its distinct mutable choices for scheduling
+exploration. These diagnostic costs never replace `device_duration_ns` or the
+final deployment score. Disabled hotspot search emits no region measurements.
 
 Direct measurements may use early-stop/trial limits; those options and the
 early-stop hint are retained, and a score does not certify that every trial
