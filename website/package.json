@@ -1,6 +1,7 @@
 {
   "name": "orbitkv-website",
   "version": "1.0.0",
+  "author": "feichai",
   "private": true,
   "type": "module",
   "packageManager": "npm@11.17.0",
