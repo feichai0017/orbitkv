@@ -1,0 +1,9 @@
+{
+  "schema": "orbitkv.matched-serving-profiles",
+  "profiles": {
+    "short-c1": {"input_tokens": 4, "output_tokens": 64, "requests": 16, "max_concurrency": 1},
+    "short-c8": {"input_tokens": 4, "output_tokens": 64, "requests": 16, "max_concurrency": 8},
+    "context-c1": {"input_tokens": 32, "output_tokens": 128, "requests": 16, "max_concurrency": 1},
+    "context-c8": {"input_tokens": 32, "output_tokens": 128, "requests": 16, "max_concurrency": 8}
+  }
+}

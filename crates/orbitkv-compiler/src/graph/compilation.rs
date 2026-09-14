@@ -7,9 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{CompileOptions, DimBucket, Graph, joint_bucket_combinations};
 use crate::{
-    egglog_utils::{
-        SerializedEGraph, hlir_to_egglog, run_egglog_with_late_passes_interval_analysis_and_log,
-    },
+    egglog_utils::{OpTextParts, PreparedEgglog, SerializedEGraph, hlir_to_egglog},
     op::{EgglogOp, IntoEgglogOp, Runtime},
     prelude::{DynMap, Symbol},
     search::{BucketSearchSpace, SearchSpace},
@@ -107,25 +105,24 @@ impl Graph {
         let (program, root) =
             tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.hlir.serialize")
                 .in_scope(|| hlir_to_egglog(self));
+        let op_parts = OpTextParts::new_with_late_passes(&ops, Rt::CLEANUP_HLIR, &late_passes)
+            .with_extra_egglog(extra_egglog);
+        let use_interval_analysis = !self.dim_intervals.is_empty() || !dim_buckets.is_empty();
+        let prepared = PreparedEgglog::new(
+            &program,
+            &op_parts,
+            use_interval_analysis,
+            options.egglog_log_enabled(),
+        )
+        .unwrap();
         let buckets = joint_bucket_combinations(&options)
             .into_iter()
             .enumerate()
             .map(|(bucket, (bucket_indices, representative_override))| {
                 let _stage = tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.egglog.bucket", bucket, indices = ?bucket_indices).entered();
                 let intervals = self.bucket_intervals(&dim_buckets, &bucket_indices);
-                let (contextual_program, use_interval_analysis) =
-                    self.egglog_program_with_interval_facts(&program, &intervals);
-                let egraph = run_egglog_with_late_passes_interval_analysis_and_log(
-                    &contextual_program,
-                    &root,
-                    &ops,
-                    Rt::CLEANUP_HLIR,
-                    &late_passes,
-                    &extra_egglog,
-                    use_interval_analysis,
-                    options.egglog_log_enabled(),
-                )
-                .unwrap();
+                let facts = crate::egglog_utils::base::interval_facts_egglog(&intervals, []);
+                let (egraph, _) = prepared.run_bucket(&facts, &root).unwrap();
                 BucketSearchSpace {
                     egraph,
                     bucket_indices,
@@ -170,19 +167,6 @@ impl Graph {
                 .or_insert(bucket_interval);
         }
         intervals
-    }
-
-    fn egglog_program_with_interval_facts(
-        &self,
-        program: &str,
-        intervals: &DynDimIntervals,
-    ) -> (String, bool) {
-        let facts = crate::egglog_utils::base::interval_facts_egglog(intervals, []);
-        if facts.is_empty() {
-            (program.to_string(), false)
-        } else {
-            (format!("{facts}\n{program}"), true)
-        }
     }
 
     /// Dyn map handed to backend late passes: bucket maxima override the

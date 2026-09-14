@@ -3,7 +3,7 @@
   "policy": "Do not increase these limits. Extract cohesive modules and remove entries once below the standard limit. This migration changes ownership, not compiler algorithms.",
   "files": {
     "crates/orbitkv-compiler/src/egglog_utils.rs": {
-      "max_lines": 3732
+      "max_lines": 3439
     },
     "crates/orbitkv-compiler/src/graph.rs": {
       "max_lines": 2444

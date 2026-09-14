@@ -23,6 +23,8 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+from serving_metrics import ProcessMemorySampler
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROFILES = REPOSITORY_ROOT / "benchmarks" / "serving-profiles.json"
@@ -76,11 +78,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-command", required=True)
     parser.add_argument("--candidate-url", default="http://127.0.0.1:8000")
     parser.add_argument("--baseline-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--epochs", type=int, default=4)
+    add_workload_arguments(parser)
+    return parser.parse_args()
+
+
+def add_workload_arguments(parser: argparse.ArgumentParser) -> None:
+    """Shared client/workload controls for paired and single-engine runs."""
     parser.add_argument("--model", required=True)
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--profile", required=True)
     parser.add_argument("--profiles-file", type=Path, default=DEFAULT_PROFILES)
-    parser.add_argument("--epochs", type=int, default=4)
     parser.add_argument("--backend", default="openai")
     parser.add_argument("--endpoint", default="/v1/completions")
     parser.add_argument("--health-path", default="/v1/models")
@@ -107,7 +115,7 @@ def parse_args() -> argparse.Namespace:
         help="Additional single argument passed to vllm bench serve; repeat as needed.",
     )
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+
 
 
 def load_workload(path: Path, name: str) -> Workload:
@@ -318,6 +326,9 @@ def run_one(
     args: argparse.Namespace,
     workload: Workload,
     root: Path,
+    *,
+    memory_interval_seconds: float | None = None,
+    memory_device_index: int | None = None,
 ) -> dict[str, Any]:
     run_dir = root / f"epoch-{epoch:03d}" / server.name
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -332,6 +343,7 @@ def run_one(
         start_new_session=True,
     )
     started = time.monotonic()
+    memory = None
     try:
         wait_until_ready(
             process,
@@ -339,6 +351,9 @@ def run_one(
             args.startup_timeout_seconds,
         )
         ready_seconds = time.monotonic() - started
+        if memory_interval_seconds is not None:
+            memory = ProcessMemorySampler(process.pid, memory_interval_seconds, memory_device_index)
+            memory.start()
         completed = subprocess.run(
             command,
             cwd=REPOSITORY_ROOT,
@@ -370,10 +385,14 @@ def run_one(
             "generated_texts_sha256": output_digest,
         }
     finally:
+        if memory is not None:
+            memory.stop()
         shutdown = stop_server(process, args.shutdown_timeout_seconds)
         server_log.close()
     if shutdown.forced:
         raise RuntimeError(f"server {server.name} required SIGKILL during shutdown")
+    if memory is not None:
+        observation["memory"] = memory.report()
     observation["shutdown"] = shutdown.__dict__
     return observation
 
