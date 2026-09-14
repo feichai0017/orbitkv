@@ -6,6 +6,14 @@ records source identities, B1/B8 replay, numeric parity and state drains.
 See [compiler maintenance](compiler-maintenance.md) for the package/namespace
 change and artifact regeneration requirements.
 
+The [CUDA backend](cuda-backend.md) now separates provider contracts, native
+build/cache management, generated source and egglog rules. Provider and CUTLASS
+commits share one lock; execution-device facts join state constraints before
+saturation. This unreleased reorganization keeps crate and library versions
+unchanged. Its [H20 qualification](../results/cuda-backend-refactor-20260914/README.md)
+passes backend tests and B1/B8 model replay. Joint KV-layout/placement search
+remains a later executor milestone.
+
 The checkpoint/semantic boundary and inference-only fork reduction are implemented;
 see [checkpoint import](checkpoint-import.md) and its
 [qualification](../results/semantic-boundaries-20260914/README.md). Logical attention,

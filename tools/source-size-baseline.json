@@ -11,14 +11,11 @@
     "crates/orbitkv-compiler/src/hlir.rs": {
       "max_lines": 3409
     },
-    "crates/orbitkv-cuda/src/host/cublaslt.rs": {
+    "crates/orbitkv-cuda/src/providers/cublaslt.rs": {
       "max_lines": 1962
     },
     "crates/orbitkv-cuda/src/kernel/hlir.rs": {
       "max_lines": 2627
-    },
-    "crates/orbitkv-cuda/src/kernel/rope.rs": {
-      "max_lines": 1559
     },
     "crates/orbitkv-cuda/src/kernel/to_host.rs": {
       "max_lines": 5383

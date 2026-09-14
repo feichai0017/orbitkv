@@ -1,4 +1,4 @@
-//! The full CUDA runtime's search strategy.
+//! CUDA candidate search and measured selection.
 //!
 //! CUDA drives OrbitKV's generic search state machine explicitly so candidate
 //! compilation, hard resource validation, installation, and profiling share
@@ -39,7 +39,7 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
             .map(|op| {
                 op.is_lowered()
                     && op
-                        .to_dialect::<dyn crate::host::HostOp>()
+                        .to_dialect::<dyn crate::providers::HostOp>()
                         .is_none_or(|host| host.deployment_eligible())
             })
             .collect::<Vec<_>>();

@@ -1,18 +1,15 @@
 use std::sync::Arc;
 
-use crate::{
-    compile_module_image_for_current_device, cuda_dtype,
-    kernel::{CudaFunctionExt, KernelOp},
-};
+use crate::{compile_module_image_for_current_device, cuda_dtype, kernel::KernelOp};
 use cudarc::driver::{CudaFunction, CudaModule, CudaSlice, CudaStream};
 use itertools::Itertools;
 use orbitkv_compiler::{
     egglog_utils::{
-        api::{Rule, SortDef, Term, app, eq, rule, set, sort, union, v},
+        api::{Rule, SortDef, Term, app, eq, rule, sort, union, v},
         base::{DTYPE, ELIST, EXPRESSION, F64, OP_KIND, SORTS, dtype, ilist, op_term},
         extract_dtype, extract_expr, extract_expr_list,
     },
-    hlir::{LessThan, MaxReduce, Mod, Scatter, SumReduce},
+    hlir::{LessThan, MaxReduce, Mod, SumReduce},
     op::*,
     prelude::*,
 };
@@ -196,60 +193,16 @@ impl KernelOp for KernelMaxReduce {
         };
 
         let kernel = format!(
-            "{includes}
-#define WARP_SIZE 32
-#define THREADS_PER_BLOCK 256
-#define FULL_MASK 0xffffffff
-#define NEG_INF_F __int_as_float(0xff800000)
-{dyn_defines}
-extern \"C\" {{
-    __global__ void reduce_max_k({dtype} *out, const {dtype} *in{dyn_dims_param}) {{
-        __shared__ {accum_dtype} warp_sums[THREADS_PER_BLOCK / WARP_SIZE];
-        long long const_z = blockIdx.x;
-
-        int tid = threadIdx.x;
-        int lane_id = tid % WARP_SIZE;
-        int warp_id = tid / WARP_SIZE;
-
-        long long in_start = {in_index};
-        long long iters = {iters};
-
-        {accum_dtype} max_value = ({accum_dtype})NEG_INF_F;
-        for (long long i = tid; i < iters; i += THREADS_PER_BLOCK) {{
-            max_value = fmaxf(max_value, {load_value});
-        }}
-
-        #pragma unroll
-        for (int s = WARP_SIZE / 2; s > 0; s /= 2) {{
-            max_value = fmaxf(max_value, __shfl_down_sync(FULL_MASK, max_value, s));
-        }}
-
-        if (lane_id == 0) {{
-            warp_sums[warp_id] = max_value;
-        }}
-        __syncthreads();
-
-        if (warp_id == 0) {{
-            int cnt = THREADS_PER_BLOCK / WARP_SIZE;
-            {accum_dtype} block_max = tid < cnt ? warp_sums[tid] : ({accum_dtype})NEG_INF_F;
-
-            #pragma unroll
-            for (int s = cnt / 2; s > 0; s /= 2) {{
-                block_max = fmaxf(block_max, __shfl_down_sync(FULL_MASK, block_max, s));
-            }}
-
-            if (tid == 0) {{
-                out[{out_index}] = ({dtype})block_max;
-            }}
-        }}
-    }}
-}}",
+            include_str!("hlir/reduce_max.cu.in"),
             dtype = dtype,
             accum_dtype = accum_dtype,
             in_index = flatten_strides(&self.out_shape, &self.in_stride).to_kernel(),
             out_index = flatten_strides(&self.out_shape, &self.out_stride).to_kernel(),
             iters = self.iters.to_kernel(),
             load_value = load_value,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
         );
 
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
@@ -429,57 +382,7 @@ impl KernelOp for KernelSumReduce {
         };
 
         let kernel = format!(
-            "{includes}
-#define WARP_SIZE 32
-#define THREADS_PER_BLOCK 256
-#define FULL_MASK 0xffffffff
-{dyn_defines}
-extern \"C\" {{
-    __global__ void reduce_sum_k({dtype} *out, const {dtype} *in_data{dyn_dims_param}) {{
-        __shared__ {accum_dtype} warp_sums[THREADS_PER_BLOCK / WARP_SIZE];
-        long long const_z = blockIdx.x;
-
-        int tid = threadIdx.x;
-        int lane_id = tid % WARP_SIZE;
-        int warp_id = tid / WARP_SIZE;
-
-        long long in_start = {in_index};
-        long long iters = {iters};
-
-        {accum_dtype} partial = {zero};
-        {accum_dtype} comp = {zero};   // Kahan compensation
-        for (long long i = tid; i < iters; i += THREADS_PER_BLOCK) {{
-            {accum_dtype} y = {load_value} - comp;
-            {accum_dtype} t = partial + y;
-            comp = (t - partial) - y;
-            partial = t;
-        }}
-
-        #pragma unroll
-        for (int s = WARP_SIZE / 2; s > 0; s /= 2) {{
-            partial += __shfl_down_sync(FULL_MASK, partial, s);
-        }}
-
-        if (lane_id == 0) {{
-            warp_sums[warp_id] = partial;
-        }}
-        __syncthreads();
-
-        if (warp_id == 0) {{
-            int cnt = THREADS_PER_BLOCK / WARP_SIZE;
-            {accum_dtype} block_sum = tid < cnt ? warp_sums[tid] : {zero};
-
-            #pragma unroll
-            for (int s = cnt / 2; s > 0; s /= 2) {{
-                block_sum += __shfl_down_sync(FULL_MASK, block_sum, s);
-            }}
-
-            if (tid == 0) {{
-                out[{out_index}] = ({dtype})block_sum;
-            }}
-        }}
-    }}
-}}",
+            include_str!("hlir/reduce_sum.cu.in"),
             dtype = dtype,
             accum_dtype = accum_dtype,
             in_index = flatten_strides(&self.out_shape, &self.in_stride).to_kernel(),
@@ -487,6 +390,9 @@ extern \"C\" {{
             iters = self.iters.to_kernel(),
             load_value = load_value,
             zero = zero,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
         );
 
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
@@ -587,16 +493,8 @@ impl EgglogOp for KernelCastSumReduce {
             .into_iter()
             .map(|dt| {
                 Rule::raw(format!(
-                    "(rule (
-                        (= ?x_cast (Op (Cast ?cast_size (F32)) (ICons ?x (INil))))
-                        (= ({dt}) (dtype ?x))
-                        (= ?sum (Op (Sum ?shape ?iters ?strides ?iter_stride ?out_strides) (ICons ?x_cast (INil))))
-                        (= ?out_cast (Op (Cast ?out_size ({dt})) (ICons ?sum (INil))))
-                     ) (
-                        (let ?ks (Op (KernelCastSum ?shape ?iters ?strides ?iter_stride ?out_strides ({dt})) (ICons ?x (INil))))
-                        (union ?out_cast ?ks)
-                        (set (dtype ?ks) ({dt}))
-                     ) :ruleset kernel_specialize :name \"kernel-cast-sum-{dt}\")"
+                    include_str!("hlir/cast_reduce_rewrite.egg.in"),
+                    dt = dt,
                 ))
             })
             .collect()
@@ -669,61 +567,15 @@ impl KernelOp for KernelCastSumReduce {
         let iter_stride_of_i = self.iter_stride.to_kernel_with_index("i");
 
         let kernel = format!(
-            "{includes}
-#define WARP_SIZE 32
-#define THREADS_PER_BLOCK 256
-#define FULL_MASK 0xffffffff
-{dyn_defines}
-extern \"C\" {{
-    __global__ void cast_reduce_sum_k({dtype} *out, const {dtype} *in_data{dyn_dims_param}) {{
-        __shared__ float warp_sums[THREADS_PER_BLOCK / WARP_SIZE];
-        long long const_z = blockIdx.x;
-
-        int tid = threadIdx.x;
-        int lane_id = tid % WARP_SIZE;
-        int warp_id = tid / WARP_SIZE;
-
-        long long in_start = {in_index};
-        long long iters = {iters};
-
-        float partial = 0.0f;
-        float comp = 0.0f;   // Kahan compensation
-        for (long long i = tid; i < iters; i += THREADS_PER_BLOCK) {{
-            float y = static_cast<float>(in_data[in_start + {iter_stride_of_i}]) - comp;
-            float t = partial + y;
-            comp = (t - partial) - y;
-            partial = t;
-        }}
-
-        #pragma unroll
-        for (int s = WARP_SIZE / 2; s > 0; s /= 2) {{
-            partial += __shfl_down_sync(FULL_MASK, partial, s);
-        }}
-
-        if (lane_id == 0) {{
-            warp_sums[warp_id] = partial;
-        }}
-        __syncthreads();
-
-        if (warp_id == 0) {{
-            int cnt = THREADS_PER_BLOCK / WARP_SIZE;
-            float block_sum = tid < cnt ? warp_sums[tid] : 0.0f;
-
-            #pragma unroll
-            for (int s = cnt / 2; s > 0; s /= 2) {{
-                block_sum += __shfl_down_sync(FULL_MASK, block_sum, s);
-            }}
-
-            if (tid == 0) {{
-                out[{out_index}] = ({dtype})block_sum;
-            }}
-        }}
-    }}
-}}",
+            include_str!("hlir/cast_reduce_sum.cu.in"),
             dtype = dtype,
             in_index = flatten_strides(&self.out_shape, &self.in_stride).to_kernel(),
             out_index = flatten_strides(&self.out_shape, &self.out_stride).to_kernel(),
             iters = self.iters.to_kernel(),
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            iter_stride_of_i = iter_stride_of_i,
         );
 
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
@@ -932,17 +784,15 @@ impl KernelOp for KernelGather {
         let idx_idx = flatten_strides(&self.out_shape, &self.index_stride).to_kernel();
         let data_idx = flatten_strides(&self.data_shape, &self.data_stride).to_kernel();
         let kernel = format!(
-            "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void gather({dtype} *C, const int *indexes, const {dtype} *data{dyn_dims_param}) {{
-        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (const_z >= {n_elements}) return;
-        {dtype}* out = C + {out_idx};
-        const_z = indexes[{idx_idx}];
-        *out = data[{data_idx}];
-    }}
-}}"
+            include_str!("hlir/gather.cu.in"),
+            data_idx = data_idx,
+            dtype = dtype,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            idx_idx = idx_idx,
+            includes = includes,
+            n_elements = n_elements,
+            out_idx = out_idx,
         );
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
             (module.clone(), func.clone())
@@ -1186,31 +1036,17 @@ impl KernelOp for KernelScatter {
         let scatter_idx_idx = flatten_strides(&self.index_shape, &self.index_strides).to_kernel();
         let scatter_src_idx = flatten_strides(&self.index_shape, &self.src_strides).to_kernel();
         let scatter_kernel = format!(
-            "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void scatter(
-        {dtype} *out, const {dtype} *dest, const int *indexes, const {dtype} *src{dyn_dims_param}
-    ) {{
-        int tid = threadIdx.x;
-        long long n_dest = {n_dest_elements};
-        long long n_src = {n_src_elements};
-        // Phase 1: materialize dest into the contiguous output layout.
-        // dest may be a strided or broadcast view, so copying dest[i] would read
-        // past the physical source buffer for expanded tensors.
-        for (long long const_z = tid; const_z < n_dest; const_z += blockDim.x) {{
-            out[{copy_out_idx}] = dest[{copy_dest_idx}];
-        }}
-        __syncthreads();
-        // Phase 2: scatter src → output[indexes[i]]
-        for (long long const_z = tid; const_z < n_src; const_z += blockDim.x) {{
-            int idx = indexes[{scatter_idx_idx}];
-            if (idx >= 0 && idx < n_dest) {{
-                out[idx] = src[{scatter_src_idx}];
-            }}
-        }}
-    }}
-}}"
+            include_str!("hlir/scatter.cu.in"),
+            copy_dest_idx = copy_dest_idx,
+            copy_out_idx = copy_out_idx,
+            dtype = dtype,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            n_dest_elements = n_dest_elements,
+            n_src_elements = n_src_elements,
+            scatter_idx_idx = scatter_idx_idx,
+            scatter_src_idx = scatter_src_idx,
         );
         let (module, func) = if let Some((module, func)) = compile_cache.get(&scatter_kernel) {
             (module.clone(), func.clone())
@@ -1403,16 +1239,11 @@ impl KernelOp for KernelIota {
         };
         let range = self.range.to_kernel();
         let kernel = format!(
-            "
-{dyn_defines}
-extern \"C\" {{
-    __global__ void iota_k(int *C{dyn_dims_param}) {{
-        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (const_z >= {range}) return;
-        C[const_z] = {};
-    }}
-}}",
+            include_str!("hlir/iota.cu.in"),
             self.expr.to_kernel(),
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            range = range,
         );
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
             (module.clone(), func.clone())
@@ -1565,15 +1396,15 @@ impl KernelOp for KernelMod {
         let a_idx = flatten_strides(&self.out_shape, &self.a_stride).to_kernel();
         let b_idx = flatten_strides(&self.out_shape, &self.b_stride).to_kernel();
         let kernel = format!(
-            "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void mod_k({dtype} *C, const {dtype} *A, const {dtype} *B{dyn_dims_param}) {{
-        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (const_z >= {n_elements}) return;
-        C[{out_idx}] = fmodf(A[{a_idx}], B[{b_idx}]);
-    }}
-}}"
+            include_str!("hlir/modulo.cu.in"),
+            a_idx = a_idx,
+            b_idx = b_idx,
+            dtype = dtype,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            n_elements = n_elements,
+            out_idx = out_idx,
         );
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
             (module.clone(), func.clone())
@@ -1744,15 +1575,15 @@ impl KernelOp for KernelLessThan {
         let a_idx = flatten_strides(&self.out_shape, &self.a_stride).to_kernel();
         let b_idx = flatten_strides(&self.out_shape, &self.b_stride).to_kernel();
         let kernel = format!(
-            "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void less_than_k(unsigned char *C, const {dtype} *A, const {dtype} *B{dyn_dims_param}) {{
-        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (const_z >= {n_elements}) return;
-        C[{out_idx}] = A[{a_idx}] < B[{b_idx}] ? 1 : 0;
-    }}
-}}"
+            include_str!("hlir/less_than.cu.in"),
+            a_idx = a_idx,
+            b_idx = b_idx,
+            dtype = dtype,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            n_elements = n_elements,
+            out_idx = out_idx,
         );
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
             (module.clone(), func.clone())
@@ -1838,15 +1669,7 @@ impl EgglogOp for KernelConstant {
             rule(union(hlir_op, kernel_op.clone()))
                 .set(dtype(kernel_op), app(&SORTS.f32_dt, vec![]))
                 .ruleset("kernel_lower"),
-            Rule::raw(
-                "(rule (
-                    (= ?c (Op (ConstantF64 ?val) (INil)))
-                 ) (
-                    (let ?kc (Op (KernelConstant ?val (F64)) (INil)))
-                    (union ?c ?kc)
-                    (set (dtype ?kc) (F64))
-                 ) :ruleset kernel_lower :name \"kernel-constant-f64\")",
-            ),
+            Rule::raw(include_str!("hlir/cast_identity.egg")),
         ];
         // Fold an explicit Cast around a Constant into a dtype-typed
         // KernelConstant. HLIR constants are always F32 (the frontend emits
@@ -1858,14 +1681,8 @@ impl EgglogOp for KernelConstant {
         // constant-valued enode (see const_like) in the cast's eclass.
         for dt in ["F16", "Bf16", "F32", "F64"] {
             rules.push(Rule::raw(format!(
-                "(rule (
-                    (= ?c (Op (Constant ?val) (INil)))
-                    (= ?cast (Op (Cast ?size ({dt})) (ICons ?c (INil))))
-                 ) (
-                    (let ?kc (Op (KernelConstant ?val ({dt})) (INil)))
-                    (union ?cast ?kc)
-                    (set (dtype ?kc) ({dt}))
-                 ) :ruleset kernel_lower :name \"kernel-constant-cast-{dt}\")"
+                include_str!("hlir/cast_composition.egg.in"),
+                dt = dt,
             )));
         }
         rules
@@ -1940,12 +1757,10 @@ impl KernelOp for KernelConstant {
         let cuda_ty = cuda_dtype(self.dtype);
         let includes = dtype_includes(&[self.dtype]);
         let kernel = format!(
-            "{includes}
-extern \"C\" {{
-    __global__ void constant_k({cuda_ty} *out) {{
-        out[0] = ({cuda_ty})({value_str});
-    }}
-}}"
+            include_str!("hlir/constant.cu.in"),
+            cuda_ty = cuda_ty,
+            includes = includes,
+            value_str = value_str,
         );
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
             (module.clone(), func.clone())
@@ -2092,35 +1907,26 @@ impl KernelOp for KernelCast {
             let in_cuda_type = cuda_dtype(self.in_dtype);
             let mask = (1u32 << bits) - 1;
             format!(
-                "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void cast_k({out_dtype} *out, const unsigned char *in_raw{dyn_dims_param}) {{
-        long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx >= {size}) return;
-        long long bit_offset = idx * {bits};
-        long long byte_idx = bit_offset >> 3;
-        int bit_pos = (int)(bit_offset & 7);
-        unsigned short raw = (unsigned short)in_raw[byte_idx];
-        if (bit_pos + {bits} > 8) raw |= ((unsigned short)in_raw[byte_idx + 1]) << 8;
-        {in_cuda_type} val;
-        val.__x = (unsigned char)((raw >> bit_pos) & {mask}u);
-        out[idx] = ({out_dtype})val;
-    }}
-}}"
+                include_str!("hlir/cast_packed.cu.in"),
+                bits = bits,
+                dyn_defines = dyn_defines,
+                dyn_dims_param = dyn_dims_param,
+                in_cuda_type = in_cuda_type,
+                includes = includes,
+                mask = mask,
+                out_dtype = out_dtype,
+                size = size,
             )
         } else {
             let in_dtype = cuda_dtype(self.in_dtype);
             format!(
-                "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void cast_k({out_dtype} *out, const {in_dtype} *in{dyn_dims_param}) {{
-        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (const_z >= {size}) return;
-        out[const_z] = ({out_dtype})in[const_z];
-    }}
-}}"
+                include_str!("hlir/cast.cu.in"),
+                dyn_defines = dyn_defines,
+                dyn_dims_param = dyn_dims_param,
+                in_dtype = in_dtype,
+                includes = includes,
+                out_dtype = out_dtype,
+                size = size,
             )
         };
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
@@ -2172,10 +1978,10 @@ extern \"C\" {{
     }
 }
 
-/// Thread-local global dim ordering override. When set, `generate_dyn_dims_defines`
-/// uses this ordering for buffer indices instead of the kernel's local ordering.
-/// This ensures all kernels in a CudaGraphOp use consistent indices into the shared
-/// dyn_dims buffer.
+// Thread-local global dim ordering override. When set, `generate_dyn_dims_defines`
+// uses this ordering for buffer indices instead of the kernel's local ordering.
+// This ensures all kernels in a CudaGraphOp use consistent indices into the shared
+// dyn_dims buffer.
 thread_local! {
     static GLOBAL_DYN_DIMS: std::cell::RefCell<Option<Vec<Symbol>>> = const { std::cell::RefCell::new(None) };
 }
@@ -2287,185 +2093,16 @@ impl EgglogOp for KernelEmbed {
 
     fn rewrites(&self) -> Vec<Rule> {
         vec![
-            Rule::raw(
-                "; Prove row-major storage locally in kernel_specialize rather
-                 ; than relying on the earlier expression schedule to retain a
-                 ; RowMajor(...) term. The carried expression is the number of
-                 ; logical elements covered by the proven suffix.
-                 (rule
-                    (
-                        (= ?shape (ECons ?dim (ENil)))
-                        (= ?strides (ECons (MIter) (ENil)))
-                    )
-                    ((kernel_embed_row_major ?shape ?strides ?dim))
-                    :ruleset kernel_specialize
-                    :name \"prove rank-one row-major table\"
-                 )
-                 (rule
-                    (
-                        (= ?shape (ECons ?dim ?tail_shape))
-                        (= ?strides (ECons ?head_stride ?tail_strides))
-                        (kernel_embed_row_major ?tail_shape ?tail_strides ?tail_elements)
-                        (= ?head_stride (MMul (MIter) ?tail_elements))
-                    )
-                    ((kernel_embed_row_major
-                        ?shape ?strides (MMul ?dim ?tail_elements)))
-                    :ruleset kernel_specialize
-                    :name \"prove recursive row-major table\"
-                 )",
-            ),
+            Rule::raw(include_str!("hlir/embedding_index_facts.egg")),
             // Match Gather with Add(Mul(Cast(token_ids), const), Iota) indices
             // Now uses (Op (OpKind ...) (ICons ...)) format
-            Rule::raw("(rule
-                (
-                    (= ?gather (Op (Gather ?idx_shape ?idx_stride ?embed_shape ?embed_stride) (ICons ?indices (ICons ?embed_table (INil)))))
-                    ; KernelEmbed directly addresses the backing allocation as
-                    ; `row * row_stride + column`.  Prove that Gather observes
-                    ; the same contiguous index and table layouts.  The table
-                    ; may have any row-major shape, including the flattened
-                    ; source emitted by fancy indexing.
-                    (= ?idx_shape (ECons ?batch (ECons ?embed_dim (ENil))))
-                    (= ?idx_stride
-                        (ECons (MMul (MIter) ?embed_dim) (ECons (MIter) (ENil))))
-                    (kernel_embed_row_major ?embed_shape ?embed_stride ?table_elements)
-                    (= ?indices (Op (Add ?add_shape ?mul_stride ?iota_stride ?add_out_stride) (ICons ?mul_result (ICons ?iota_result (INil)))))
-                    (= ?add_shape (ECons ?batch (ECons ?embed_dim (ENil))))
-                    (= ?mul_stride (ECons (MIter) (ECons (MNum 0) (ENil))))
-                    (= ?iota_stride (ECons (MNum 0) (ECons (MIter) (ENil))))
-                    (= ?add_out_stride
-                        (ECons (MMul (MIter) ?embed_dim) (ECons (MIter) (ENil))))
-                    (= ?mul_result (Op (Mul ?mul_shape ?token_cast_stride ?mul_const_stride ?mul_out_stride) (ICons ?token_ids_cast (ICons ?mul_const (INil)))))
-                    (= ?mul_shape (ECons ?batch (ENil)))
-                    (= ?token_cast_stride (ECons ?token_batch_stride (ENil)))
-                    (= ?mul_const_stride (ECons (MNum 0) (ENil)))
-                    (= ?mul_out_stride (ECons (MIter) (ENil)))
-                    ; One row selector per batch item: token_ids has one batch
-                    ; dimension, matching RemoveNthFromEnd(idx_shape). The
-                    ; explicit list form also prevents flatten_strides from
-                    ; receiving mismatched shape and stride ranks.
-                    (= ?token_ids_cast (Op (Cast ?cast_size (Int)) (ICons ?token_ids (INil))))
-                    (= ?mul_const (Op (Iota ?row_stride (MNum 1)) (INil)))
-                    (= ?iota_result (Op (Iota (MIter) ?embed_dim) (INil)))
-                    (= ?embed_dt (dtype ?embed_table))
-                )
-                (
-                    (let ?batch_shape (RemoveNthFromEnd ?idx_shape 0))
-                    (let ?out_stride_batch (RemoveNthFromEnd ?add_out_stride 0))
-                    (let ?ke (Op (KernelEmbed ?batch_shape ?token_cast_stride ?out_stride_batch ?embed_dim ?row_stride ?embed_dt) (ICons ?token_ids_cast (ICons ?embed_table (INil)))))
-                    (union ?gather ?ke)
-                    (set (dtype ?ke) ?embed_dt)
-                )
-                :ruleset kernel_specialize
-                :name \"kernel embed with cast mul\"
-            )"),
+            Rule::raw(include_str!("hlir/embedding_cast_scale.egg")),
             // Match Gather with Add(Iota, Mul(Cast(token_ids), const)) indices (reversed order)
-            Rule::raw("(rule
-                (
-                    (= ?gather (Op (Gather ?idx_shape ?idx_stride ?embed_shape ?embed_stride) (ICons ?indices (ICons ?embed_table (INil)))))
-                    (= ?idx_shape (ECons ?batch (ECons ?embed_dim (ENil))))
-                    (= ?idx_stride
-                        (ECons (MMul (MIter) ?embed_dim) (ECons (MIter) (ENil))))
-                    (kernel_embed_row_major ?embed_shape ?embed_stride ?table_elements)
-                    (= ?indices (Op (Add ?add_shape ?iota_stride ?mul_stride ?add_out_stride) (ICons ?iota_result (ICons ?mul_result (INil)))))
-                    (= ?add_shape (ECons ?batch (ECons ?embed_dim (ENil))))
-                    (= ?mul_stride (ECons (MIter) (ECons (MNum 0) (ENil))))
-                    (= ?iota_stride (ECons (MNum 0) (ECons (MIter) (ENil))))
-                    (= ?add_out_stride
-                        (ECons (MMul (MIter) ?embed_dim) (ECons (MIter) (ENil))))
-                    (= ?mul_result (Op (Mul ?mul_shape ?token_cast_stride ?mul_const_stride ?mul_out_stride) (ICons ?token_ids_cast (ICons ?mul_const (INil)))))
-                    (= ?mul_shape (ECons ?batch (ENil)))
-                    (= ?token_cast_stride (ECons ?token_batch_stride (ENil)))
-                    (= ?mul_const_stride (ECons (MNum 0) (ENil)))
-                    (= ?mul_out_stride (ECons (MIter) (ENil)))
-                    ; One row selector per batch item; keep its rank aligned
-                    ; with the derived batch shape.
-                    (= ?token_ids_cast (Op (Cast ?cast_size (Int)) (ICons ?token_ids (INil))))
-                    (= ?mul_const (Op (Iota ?row_stride (MNum 1)) (INil)))
-                    (= ?iota_result (Op (Iota (MIter) ?embed_dim) (INil)))
-                    (= ?embed_dt (dtype ?embed_table))
-                )
-                (
-                    (let ?batch_shape (RemoveNthFromEnd ?idx_shape 0))
-                    (let ?out_stride_batch (RemoveNthFromEnd ?add_out_stride 0))
-                    (let ?ke (Op (KernelEmbed ?batch_shape ?token_cast_stride ?out_stride_batch ?embed_dim ?row_stride ?embed_dt) (ICons ?token_ids_cast (ICons ?embed_table (INil)))))
-                    (union ?gather ?ke)
-                    (set (dtype ?ke) ?embed_dt)
-                )
-                :ruleset kernel_specialize
-                :name \"kernel embed with cast mul reversed\"
-            )"),
+            Rule::raw(include_str!("hlir/embedding_scale_cast.egg")),
             // Match Gather with Add(Mul(token_ids, const), Iota) indices (no Cast)
-            Rule::raw("(rule
-                (
-                    (= ?gather (Op (Gather ?idx_shape ?idx_stride ?embed_shape ?embed_stride) (ICons ?indices (ICons ?embed_table (INil)))))
-                    (= ?idx_shape (ECons ?batch (ECons ?embed_dim (ENil))))
-                    (= ?idx_stride
-                        (ECons (MMul (MIter) ?embed_dim) (ECons (MIter) (ENil))))
-                    (kernel_embed_row_major ?embed_shape ?embed_stride ?table_elements)
-                    (= ?indices (Op (Add ?add_shape ?mul_stride ?iota_stride ?add_out_stride) (ICons ?mul_result (ICons ?iota_result (INil)))))
-                    (= ?add_shape (ECons ?batch (ECons ?embed_dim (ENil))))
-                    (= ?mul_stride (ECons (MIter) (ECons (MNum 0) (ENil))))
-                    (= ?iota_stride (ECons (MNum 0) (ECons (MIter) (ENil))))
-                    (= ?add_out_stride
-                        (ECons (MMul (MIter) ?embed_dim) (ECons (MIter) (ENil))))
-                    (= ?mul_result (Op (Mul ?mul_shape ?token_stride ?mul_const_stride ?mul_out_stride) (ICons ?token_ids (ICons ?mul_const (INil)))))
-                    (= ?mul_shape (ECons ?batch (ENil)))
-                    (= ?token_stride (ECons ?token_batch_stride (ENil)))
-                    (= ?mul_const_stride (ECons (MNum 0) (ENil)))
-                    (= ?mul_out_stride (ECons (MIter) (ENil)))
-                    ; One row selector per batch item; keep its rank aligned
-                    ; with the derived batch shape.
-                    (= (dtype ?token_ids) (Int))
-                    (= ?mul_const (Op (Iota ?row_stride (MNum 1)) (INil)))
-                    (= ?iota_result (Op (Iota (MIter) ?embed_dim) (INil)))
-                    (= ?embed_dt (dtype ?embed_table))
-                )
-                (
-                    (let ?batch_shape (RemoveNthFromEnd ?idx_shape 0))
-                    (let ?out_stride_batch (RemoveNthFromEnd ?add_out_stride 0))
-                    (let ?ke (Op (KernelEmbed ?batch_shape ?token_stride ?out_stride_batch ?embed_dim ?row_stride ?embed_dt) (ICons ?token_ids (ICons ?embed_table (INil)))))
-                    (union ?gather ?ke)
-                    (set (dtype ?ke) ?embed_dt)
-                )
-                :ruleset kernel_specialize
-                :name \"kernel embed with mul\"
-            )"),
+            Rule::raw(include_str!("hlir/embedding_scale.egg")),
             // Match Gather with Add(Iota, Mul(token_ids, const)) indices (reversed order, no Cast)
-            Rule::raw("(rule
-                (
-                    (= ?gather (Op (Gather ?idx_shape ?idx_stride ?embed_shape ?embed_stride) (ICons ?indices (ICons ?embed_table (INil)))))
-                    (= ?idx_shape (ECons ?batch (ECons ?embed_dim (ENil))))
-                    (= ?idx_stride
-                        (ECons (MMul (MIter) ?embed_dim) (ECons (MIter) (ENil))))
-                    (kernel_embed_row_major ?embed_shape ?embed_stride ?table_elements)
-                    (= ?indices (Op (Add ?add_shape ?iota_stride ?mul_stride ?add_out_stride) (ICons ?iota_result (ICons ?mul_result (INil)))))
-                    (= ?add_shape (ECons ?batch (ECons ?embed_dim (ENil))))
-                    (= ?mul_stride (ECons (MIter) (ECons (MNum 0) (ENil))))
-                    (= ?iota_stride (ECons (MNum 0) (ECons (MIter) (ENil))))
-                    (= ?add_out_stride
-                        (ECons (MMul (MIter) ?embed_dim) (ECons (MIter) (ENil))))
-                    (= ?mul_result (Op (Mul ?mul_shape ?token_stride ?mul_const_stride ?mul_out_stride) (ICons ?token_ids (ICons ?mul_const (INil)))))
-                    (= ?mul_shape (ECons ?batch (ENil)))
-                    (= ?token_stride (ECons ?token_batch_stride (ENil)))
-                    (= ?mul_const_stride (ECons (MNum 0) (ENil)))
-                    (= ?mul_out_stride (ECons (MIter) (ENil)))
-                    ; One row selector per batch item; keep its rank aligned
-                    ; with the derived batch shape.
-                    (= (dtype ?token_ids) (Int))
-                    (= ?mul_const (Op (Iota ?row_stride (MNum 1)) (INil)))
-                    (= ?iota_result (Op (Iota (MIter) ?embed_dim) (INil)))
-                    (= ?embed_dt (dtype ?embed_table))
-                )
-                (
-                    (let ?batch_shape (RemoveNthFromEnd ?idx_shape 0))
-                    (let ?out_stride_batch (RemoveNthFromEnd ?add_out_stride 0))
-                    (let ?ke (Op (KernelEmbed ?batch_shape ?token_stride ?out_stride_batch ?embed_dim ?row_stride ?embed_dt) (ICons ?token_ids (ICons ?embed_table (INil)))))
-                    (union ?gather ?ke)
-                    (set (dtype ?ke) ?embed_dt)
-                )
-                :ruleset kernel_specialize
-                :name \"kernel embed with mul reversed\"
-            )"),
+            Rule::raw(include_str!("hlir/embedding_reverse_scale.egg")),
         ]
     }
 
@@ -2542,24 +2179,16 @@ impl KernelOp for KernelEmbed {
         let cuda_ty = cuda_dtype(self.dtype);
         let includes = dtype_includes(&[self.dtype]);
         let kernel = format!(
-            "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void embed({cuda_ty} *out, const int *token_ids, const {cuda_ty} *embed_table{dyn_dims_param}) {{
-        long long const_z = 0;
-        long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (idx >= {n_elements}) return;
-        long long embed_dim = {embed_dim_expr};
-        long long row_stride = {row_stride_expr};
-        long long batch_idx = idx / embed_dim;
-        long long embed_idx = idx % embed_dim;
-        const_z = batch_idx;
-        long long token_offset = {token_offset_expr};
-        long long out_offset = {out_offset_expr};
-        int token_id = token_ids[token_offset];
-        out[out_offset + embed_idx] = embed_table[(long long)token_id * row_stride + embed_idx];
-    }}
-}}"
+            include_str!("hlir/embedding.cu.in"),
+            cuda_ty = cuda_ty,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            embed_dim_expr = embed_dim_expr,
+            includes = includes,
+            n_elements = n_elements,
+            out_offset_expr = out_offset_expr,
+            row_stride_expr = row_stride_expr,
+            token_offset_expr = token_offset_expr,
         );
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {
             (module.clone(), func.clone())

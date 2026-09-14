@@ -1,5 +1,10 @@
 # Current evidence
 
+The [CUDA backend qualification](cuda-backend-refactor-20260914/README.md) records
+provider source/build identities, device-aware compiler facts, 148 backend test
+executions and 152 passing B1/B8 reference comparisons. Cold compilation remains
+costly; this reorganization does not establish a serving-performance improvement.
+
 The [Rust 1.98 follow-up](workspace-integration-lint-20260914/README.md) records
 typed byte conversion, all-target CUDA/executor Clippy and 144 B1/B8 reference
 comparisons against the rebuilt binary.
@@ -30,6 +35,7 @@ ablation or serving claim.
 
 | Record | Evidence | Boundary |
 | --- | --- | --- |
+| [cuda-backend-refactor-20260914](cuda-backend-refactor-20260914/README.md) | Unified provider lock/build cache, separated Rust/CUDA/egglog sources, device facts joined with state constraints, and final-binary B1/B8 parity and replay | Unchanged provider pins and package versions; cold compile 943 s and replay preparation about 17.5 s; no serving-speedup or joint KV-layout search claim |
 | [state-preflight-20260914](state-preflight-20260914/README.md) | Required state aliases checked before CUDA preparation; 296 reference comparisons and final drains pass | Rejected-candidate evaluation is 8.00 s versus the preceding 81.06 s observation; independent snapshots and reused caches prevent causal speedup claims; warmed decode remains close |
 | [search-coverage-20260914](search-coverage-20260914/README.md) | Fixed-snapshot sampling, bounded initial exploration, 56 measured graphs and 296 passing logit comparisons on H20 | Mixed performance: B8 prefill improves against the prior observation while decode regresses; all 263 rejected graphs violate state aliases; no serving speedup claim |
 | `bucketed-decoder-correctness-20260904` | Qwen2.5-0.5B-Instruct executes prefill and repeated decode through one searched two-bucket Luminal runtime and one persistent OrbitKV K/V arena | Correctness only; tiny batch-one workload; removed relocation observations were dropped from the compact record |

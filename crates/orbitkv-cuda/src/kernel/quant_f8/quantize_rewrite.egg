@@ -1,0 +1,18 @@
+(rule
+                (
+                    (= ?xf (Op (Cast ?xf_size (F32)) (ICons ?x (INil))))
+                    (= (Bf16) (dtype ?x))
+                    (= ?recip (Op (Recip ?r_shape ?r_in_strides ?r_out_strides)
+                        (ICons ?scale (INil))))
+                    (= ?mul (Op (Mul ?m_shape ?xf_strides ?recip_strides ?m_out_strides)
+                        (ICons ?xf (ICons ?recip (INil)))))
+                    (= ?q (Op (Cast ?q_size (F8E4M3)) (ICons ?mul (INil))))
+                )
+                (
+                    (let ?kq (Op (KernelQuantF8 ?q_size) (ICons ?x (ICons ?scale (INil)))))
+                    (union ?q ?kq)
+                    (set (dtype ?kq) (F8E4M3))
+                )
+                :ruleset kernel_specialize
+                :name "kernel quant f8 from bf16"
+            )

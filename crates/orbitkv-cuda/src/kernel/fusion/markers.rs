@@ -67,12 +67,7 @@ impl EgglogOp for FusionStart {
         vec![crate::kernel::other_ops::SCATTER_ALIAS_DECLARATION.to_string()]
     }
     fn rewrites(&self) -> Vec<Rule> {
-        vec![Rule::raw(
-            "(rule ((= ?alias (Op (FusionStart ?shape ?strides ?dt)
-                                  (ICons ?input (INil)))))
-                   ((cuda-scatter-alias ?alias))
-                   :ruleset post_cleanup)",
-        )]
+        vec![Rule::raw(include_str!("markers/concat_identity.egg"))]
     }
     fn cleanup(&self) -> bool {
         false
@@ -166,19 +161,7 @@ impl EgglogOp for FusionEnd {
         // versus absorbed partition.  Subsumption removes that spelling from
         // both future matching and extraction, so each boundary is fused once
         // and the e-graph retains only the canonical absorbed representation.
-        vec![Rule::raw(
-            "(rule (
-                (= ?producer_fe
-                   (Op (FusionEnd ?shape ?stride ?dt) (ICons ?producer_inner (INil))))
-                (= ?boundary
-                   (Op (FusionStart ?shape ?stride ?dt) (ICons ?producer_fe (INil))))
-             ) (
-                (union ?boundary ?producer_inner)
-                (subsume
-                    (Op (FusionStart ?shape ?stride ?dt) (ICons ?producer_fe (INil))))
-             ) :ruleset fusion_inline_safe_late
-                :name \"inline-safe-FE-through-FS\")",
-        )]
+        vec![Rule::raw(include_str!("markers/pad_identity.egg"))]
     }
 
     fn cleanup(&self) -> bool {

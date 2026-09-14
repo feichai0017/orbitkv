@@ -80,18 +80,9 @@ impl EgglogOp for CudaUnaryElementwise {
             // consumer's dtype instead would violate the construction
             // invariant whenever input and output dtypes differ.
             rules.push(Rule::raw(format!(
-                "(rule (
-                    (= ?u (Op ({hlir} ?shape ?s ?out_s) (ICons ?x (INil))))
-                    (= ?dt (dtype ?u))
-                    (= ?dt_x (dtype ?x))
-                 ) (
-                    (let ?fs (Op (FusionStart ?shape ?s ?dt_x) (ICons ?x (INil))))
-                    (let ?elem (Op (CudaUnaryElementwise \"{opcode}\" ?shape ?s ?out_s ?dt)
-                                   (ICons ?fs (INil))))
-                    (let ?fe (Op (FusionEnd ?shape ?out_s ?dt) (ICons ?elem (INil))))
-                    (union ?u ?fe)
-                    (set (dtype ?fe) ?dt)
-                 ) :ruleset kernel_lower :name \"cuda-elem-singleton-{hlir}\")"
+                include_str!("elementwise/binary_elementwise_rewrite.egg.in"),
+                hlir = hlir,
+                opcode = opcode,
             )));
         }
 
@@ -104,21 +95,7 @@ impl EgglogOp for CudaUnaryElementwise {
         // Give a flat Cast its own well-formed singleton region. This makes
         // adjacent elementwise work eligible for the safe forward-growth
         // rules without rewriting an existing FusionStart boundary.
-        rules.push(Rule::raw(
-            "(rule (
-                (= ?cast (Op (Cast ?size ?dt_out) (ICons ?x (INil))))
-                (= ?dt_in (dtype ?x))
-             ) (
-                (let ?shape (ECons ?size (ENil)))
-                (let ?stride (ECons (MIter) (ENil)))
-                (let ?fs (Op (FusionStart ?shape ?stride ?dt_in) (ICons ?x (INil))))
-                (let ?elem (Op (CudaUnaryElementwise \"Cast\" ?shape ?stride ?stride ?dt_out)
-                               (ICons ?fs (INil))))
-                (let ?fe (Op (FusionEnd ?shape ?stride ?dt_out) (ICons ?elem (INil))))
-                (union ?cast ?fe)
-                (set (dtype ?fe) ?dt_out)
-             ) :ruleset kernel_lower :name \"cuda-elem-singleton-Cast\")",
-        ));
+        rules.push(Rule::raw(include_str!("elementwise/binary_transforms.egg")));
 
         rules
     }
@@ -223,39 +200,13 @@ impl EgglogOp for CudaBinaryElementwise {
             Rule::raw(
                 // FusionStart dtypes follow each input's producer; see the
                 // unary rules for why anything else is construction-illegal.
-                "(rule (
-                    (= ?bin (Op (Add ?shape ?a_s ?b_s ?out_s) (ICons ?a (ICons ?b (INil)))))
-                    (= ?dt (dtype ?bin))
-                    (= ?dt_a (dtype ?a))
-                    (= ?dt_b (dtype ?b))
-                 ) (
-                    (let ?fs_a (Op (FusionStart ?shape ?a_s ?dt_a) (ICons ?a (INil))))
-                    (let ?fs_b (Op (FusionStart ?shape ?b_s ?dt_b) (ICons ?b (INil))))
-                    (let ?elem (Op (CudaBinaryElementwise \"Add\" ?shape ?a_s ?b_s ?out_s ?dt)
-                                   (ICons ?fs_a (ICons ?fs_b (INil)))))
-                    (let ?fe (Op (FusionEnd ?shape ?out_s ?dt) (ICons ?elem (INil))))
-                    (union ?bin ?fe)
-                    (set (dtype ?fe) ?dt)
-                 ) :ruleset kernel_lower :name \"cuda-elem-singleton-Add\")",
+                include_str!("elementwise/binary_producers.egg"),
             ),
             Rule::raw(
                 // The op and FusionEnd carry the RESULT dtype (?bin, not ?a —
                 // Mul(bf16, f32) stamped bf16 would round the product); the
                 // FusionStarts carry their producers' dtypes as above.
-                "(rule (
-                    (= ?bin (Op (Mul ?shape ?a_s ?b_s ?out_s) (ICons ?a (ICons ?b (INil)))))
-                    (= ?dt (dtype ?bin))
-                    (= ?dt_a (dtype ?a))
-                    (= ?dt_b (dtype ?b))
-                 ) (
-                    (let ?fs_a (Op (FusionStart ?shape ?a_s ?dt_a) (ICons ?a (INil))))
-                    (let ?fs_b (Op (FusionStart ?shape ?b_s ?dt_b) (ICons ?b (INil))))
-                    (let ?elem (Op (CudaBinaryElementwise \"Mul\" ?shape ?a_s ?b_s ?out_s ?dt)
-                                   (ICons ?fs_a (ICons ?fs_b (INil)))))
-                    (let ?fe (Op (FusionEnd ?shape ?out_s ?dt) (ICons ?elem (INil))))
-                    (union ?bin ?fe)
-                    (set (dtype ?fe) ?dt)
-                 ) :ruleset kernel_lower :name \"cuda-elem-singleton-Mul\")",
+                include_str!("elementwise/reversed_binary_producers.egg"),
             ),
         ]
     }

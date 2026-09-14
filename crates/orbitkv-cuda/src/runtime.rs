@@ -1,12 +1,11 @@
 use crate::{
     artifact::{ModuleArtifact, ModuleArtifactGuard, current_module_artifact_session},
-    host::{DeviceBuffer, HostOp},
     kernel::{
         CompiledFunctionResourceCache, CudaGraphExecHandle, CudaGraphHandle, CudaGraphOp,
         CudaGraphTiming, KernelOp, PreparedKernelToHostPlan,
         fusion::region_codegen::{CompileUnit, RegionSourceCache},
-        record_cuda_graph_timings,
     },
+    providers::{DeviceBuffer, HostOp},
     resource::{
         CandidateResourceCaps, CandidateResourcePlan, CudaDeviceResourceLimits,
         DEFAULT_MAX_KERNEL_SOURCE_BYTES, HostDeviceMemoryPlan, ResourceViolation,
@@ -44,69 +43,18 @@ use std::{
 use tracing::{Level, span, trace};
 use uuid::Uuid;
 
+mod trace;
+use self::trace::record_cuda_graph_timings;
+
 mod residency;
 mod weights;
 pub use weights::WeightLoadReport;
 
-const ARENA_ALIGNMENT: usize = 256;
-const MIN_ARENA_ALLOCATION_BYTES: usize = 16 * 1024 * 1024;
-const MIN_SEARCH_DEVICE_HEADROOM_BYTES: usize = 512 * 1024 * 1024;
-const SEARCH_DEVICE_HEADROOM_DIVISOR: usize = 200;
-const MIN_SEARCH_CACHE_EVICTION_HEADROOM_BYTES: usize = 1024 * 1024 * 1024;
-const SEARCH_CACHE_EVICTION_HEADROOM_DIVISOR: usize = 50;
-const MIN_SEARCH_CANDIDATE_NODE_ALLOWANCE: usize = 1024;
-
-fn materialized_bucket_evictions(
-    materialized: &[bool],
-    lru: &VecDeque<usize>,
-    keep: usize,
-    capacity: usize,
-) -> Vec<usize> {
-    let projected = materialized.iter().filter(|resident| **resident).count()
-        + usize::from(!materialized.get(keep).copied().unwrap_or(false));
-    let mut remaining = projected.saturating_sub(capacity);
-    let mut evictions = Vec::with_capacity(remaining);
-
-    for candidate in lru.iter().copied().chain(0..materialized.len()) {
-        if remaining == 0 {
-            break;
-        }
-        if candidate != keep
-            && materialized.get(candidate).copied().unwrap_or(false)
-            && !evictions.contains(&candidate)
-        {
-            evictions.push(candidate);
-            remaining -= 1;
-        }
-    }
-    evictions
-}
-
-fn search_candidate_node_limit(baseline_nodes: usize) -> usize {
-    baseline_nodes.saturating_add(MIN_SEARCH_CANDIDATE_NODE_ALLOWANCE)
-}
-
-fn bounded_search_intermediate_bytes(
-    configured: Option<usize>,
-    free_device_bytes: usize,
-    total_device_bytes: usize,
-) -> usize {
-    // Candidate plans account for arenas and declared HostOp workspaces, but
-    // the CUDA context, loaded modules, library internals, and allocator
-    // metadata also consume VRAM. Reserve a small device-relative margin so a
-    // graph that cannot physically allocate is rejected by planning instead
-    // of reaching cuMemAlloc and panicking during search.
-    let headroom =
-        (total_device_bytes / SEARCH_DEVICE_HEADROOM_DIVISOR).max(MIN_SEARCH_DEVICE_HEADROOM_BYTES);
-    let available = free_device_bytes.saturating_sub(headroom);
-    configured.map_or(available, |limit| limit.min(available))
-}
-
-fn search_cache_under_pressure(free_device_bytes: usize, total_device_bytes: usize) -> bool {
-    let minimum_free = (total_device_bytes / SEARCH_CACHE_EVICTION_HEADROOM_DIVISOR)
-        .max(MIN_SEARCH_CACHE_EVICTION_HEADROOM_BYTES);
-    free_device_bytes < minimum_free
-}
+mod budget;
+use budget::{
+    ARENA_ALIGNMENT, MIN_ARENA_ALLOCATION_BYTES, bounded_search_intermediate_bytes,
+    materialized_bucket_evictions, search_cache_under_pressure, search_candidate_node_limit,
+};
 
 pub enum CudaInput {
     Buffer { buf: CudaSlice<u8>, len: usize },
@@ -470,10 +418,9 @@ impl ArenaReleasePlan {
     }
 }
 
-/// Lite's standard operation set. A backend that derives from Lite can supply
-/// its own operation tuple while reusing the complete runtime, compiler, and
-/// search implementation.
-pub type DefaultCudaOps = (crate::kernel::Ops, crate::host::Ops);
+/// The standard generated-kernel and provider operation set. Specialized
+/// runtimes can supply another tuple while sharing compilation and execution.
+pub type DefaultCudaOps = (crate::kernel::Ops, crate::providers::Ops);
 
 type ProfileInputGenerator = dyn Fn(&DynMap) -> Vec<(NodeIndex, Vec<i32>)> + Send + Sync;
 
@@ -593,9 +540,8 @@ pub struct CudaRuntimeImpl<O> {
     external_output_buffers: FxHashMap<NodeIndex, std::mem::ManuallyDrop<CudaSlice<u8>>>,
 }
 
-/// The standard Lite runtime. Superset crates use [`CudaRuntimeImpl`] with a
-/// different operation tuple; ordinary Lite callers keep this concrete alias
-/// and therefore need no generic type annotations.
+/// CUDA runtime with the standard operation set. [`CudaRuntimeImpl`] also
+/// supports explicit operation tuples for qualification and backend extensions.
 pub type CudaRuntime = CudaRuntimeImpl<DefaultCudaOps>;
 
 /// Enqueues a checked byte copy within one shared CUDA allocation.
@@ -4532,7 +4478,7 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
         let (host_persistent_bytes, host_transient_peak_bytes, shared_device_allocations) =
             Self::aggregate_host_device_memory(
                 &host_plans,
-                &crate::host::flashinfer::resident_shared_device_memory_allocations(),
+                &crate::providers::flashinfer::resident_shared_device_memory_allocations(),
             )?;
         if std::env::var_os("ORBITKV_CUDA_RESOURCE_DETAIL").is_some() {
             let bucket_detail = buckets
@@ -5081,7 +5027,7 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
             executable
                 .internal
                 .prepare_compilation(&self.cuda_stream, &resource_dyn_map)
-                .map_err(|error| anyhow::anyhow!("provider preparation failed: {error}"))?;
+                .map_err(|error| anyhow::anyhow!("provider preparation failed: {error:#}"))?;
         }
         bucket.last_resource_validation_dyn_map = resource_dyn_map;
         bucket.resource_validation_complete = input_lengths_complete;
@@ -5351,7 +5297,7 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
                 executable
                     .internal
                     .prepare_compilation(&self.cuda_stream, representative_dyn_map)
-                    .map_err(|error| anyhow::anyhow!("provider preparation failed: {error}"))?;
+                    .map_err(|error| anyhow::anyhow!("provider preparation failed: {error:#}"))?;
             }
         }
         drop(providers_stage);
@@ -5507,7 +5453,13 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
 }
 
 impl<O: IntoEgglogOp> Runtime for CudaRuntimeImpl<O> {
-    type Ops = O;
+    type Ops = (crate::target::CudaTargetFacts, O);
+
+    fn compilation_facts(&self) -> String {
+        crate::target::CudaTarget::from_context(self.cuda_stream.context())
+            .expect("query execution CUDA target")
+            .compiler_facts()
+    }
     type CompileArg = Arc<CudaStream>;
     type ExecReturn = ();
 
@@ -6165,7 +6117,7 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
                 exec_op
                     .internal
                     .as_any()
-                    .downcast_ref::<crate::host::cublaslt::CuBlasLt>()
+                    .downcast_ref::<crate::providers::cublaslt::CuBlasLt>()
                     .is_some()
             })
             .count()
@@ -6507,9 +6459,6 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
             0.0
         };
 
-        let peak_bw = crate::cuda_bandwidth_gbps(self.cuda_stream.context());
-        let peak_tf = crate::cuda_compute_f32_tflops(self.cuda_stream.context());
-
         // Print kernel stats
         if !self.last_kernel_stats.is_empty() {
             println!("\n=== Kernel Execution Statistics ===\n");
@@ -6551,9 +6500,6 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
             format!("{:.4}", aggregate_tf),
         );
 
-        if let (Some(pb), Some(pt)) = (peak_bw, peak_tf) {
-            println!("\nDevice peak: {} GB/s bandwidth, {} TFLOPS (F32)", pb, pt);
-        }
         println!();
     }
 

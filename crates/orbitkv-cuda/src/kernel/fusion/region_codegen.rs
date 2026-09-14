@@ -33,7 +33,7 @@ use cudarc::driver::{CudaFunction, CudaModule, CudaSlice, CudaStream};
 use orbitkv_compiler::{
     graph::LLIRGraph,
     prelude::{
-        petgraph::{Direction, algo::toposort, visit::EdgeRef},
+        petgraph::{Direction, visit::EdgeRef},
         *,
     },
 };
@@ -977,7 +977,6 @@ fn singleton_program_matches(
 #[allow(clippy::type_complexity)]
 pub(crate) struct CompiledRegion {
     pub function: CudaFunction,
-    pub module: Arc<CudaModule>,
     pub source_bytes: usize,
     pub has_dyn_dims_param: bool,
     pub grid: (Expression, Expression, Expression),
@@ -1164,13 +1163,12 @@ pub(crate) fn region_kernel_source(
     body.push_str(&format!("        out[{write_idx}] = {fe_input_local};\n"));
 
     let kernel = format!(
-        "{includes}\n\
-         {dyn_defines}\n\
-         extern \"C\" {{\n\
-         \x20   __global__ void fused_region_k({signature}{dyn_dims_param}) {{\n\
-         {body}\
-         \x20   }}\n\
-         }}"
+        include_str!("region_codegen/region.cu.in"),
+        body = body,
+        dyn_defines = dyn_defines,
+        dyn_dims_param = dyn_dims_param,
+        includes = includes,
+        signature = signature,
     );
 
     let out_size = out_shape.iter().copied().product::<Expression>();
@@ -1178,16 +1176,6 @@ pub(crate) fn region_kernel_source(
 }
 
 #[allow(clippy::type_complexity)]
-pub(crate) fn compile_region(
-    region: &RegionUnit,
-    llir_graph: &LLIRGraph,
-    stream: &Arc<CudaStream>,
-    compile_cache: &mut FxHashMap<String, (Arc<CudaModule>, CudaFunction)>,
-) -> CompiledRegion {
-    let (kernel, out_size) = region_kernel_source(region, llir_graph);
-    compile_prepared_region(&kernel, out_size, stream, compile_cache)
-}
-
 pub(crate) fn compile_prepared_region(
     kernel: &str,
     out_size: Expression,
@@ -1197,8 +1185,8 @@ pub(crate) fn compile_prepared_region(
     let source_bytes = kernel.len();
     let has_dyn_dims_param = kernel.contains("dyn_dims");
 
-    let (module, function) = if let Some((m, f)) = compile_cache.get(kernel) {
-        (m.clone(), f.clone())
+    let function = if let Some((_, function)) = compile_cache.get(kernel) {
+        function.clone()
     } else {
         let ptx = compile_module_image_for_current_device(stream.context(), kernel)
             .expect("region kernel PTX compile failed");
@@ -1210,12 +1198,11 @@ pub(crate) fn compile_prepared_region(
             .load_function("fused_region_k")
             .expect("region kernel function not found");
         compile_cache.insert(kernel.to_owned(), (module.clone(), function.clone()));
-        (module, function)
+        function
     };
 
     CompiledRegion {
         function,
-        module,
         source_bytes,
         has_dyn_dims_param,
         grid: (out_size.ceil_div(256), 1.into(), 1.into()),

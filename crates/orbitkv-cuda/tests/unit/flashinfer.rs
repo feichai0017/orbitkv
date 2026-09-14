@@ -19,8 +19,8 @@ use orbitkv_compiler::egglog_utils::{
 use orbitkv_compiler::op::{EgglogOp, IntoEgglogOp};
 use orbitkv_compiler::prelude::*;
 
-use crate::host::flashinfer::FlashInferAttention;
-use crate::host::{DeviceBuffer, HostOp};
+use crate::providers::flashinfer::FlashInferAttention;
+use crate::providers::{DeviceBuffer, HostOp};
 use crate::runtime::CudaRuntime;
 use crate::tests::utilities::get_cuda_stream;
 
@@ -85,7 +85,13 @@ fn run_reference_attention(
     let (mut cx, q_t, k_t, v_t, out_t) = build_attention_graph();
     cx.set_dim('s', batch_size);
     cx.set_dim('c', context_len);
-    cx.build_search_space::<CudaRuntime>(CompileOptions::default());
+    cx.build_search_space::<CudaRuntime>(
+        CompileOptions::default().compiler_facts(
+            crate::target::CudaTarget::from_context(stream.context())
+                .unwrap()
+                .compiler_facts(),
+        ),
+    );
 
     let mut rt = CudaRuntime::initialize(stream.clone());
     rt.set_data(q_t, q.to_vec());
@@ -147,7 +153,7 @@ fn run_flashinfer(
     let out_buf = alloc_dev(stream, batch_size * HIDDEN * 4);
 
     let fi = FlashInferAttention {
-        algorithm: crate::host::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
+        algorithm: crate::providers::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
         num_qo_heads: N_HEADS,
         num_kv_heads: N_KV_HEADS,
         head_dim: HEAD_DIM,
@@ -224,7 +230,7 @@ fn run_flashinfer_with_compact_decode_indices(
     let out_buf = alloc_dev(stream, batch_size * HIDDEN * 4);
 
     let fi = FlashInferAttention {
-        algorithm: crate::host::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
+        algorithm: crate::providers::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
         num_qo_heads: N_HEADS,
         num_kv_heads: N_KV_HEADS,
         head_dim: HEAD_DIM,
@@ -280,9 +286,9 @@ fn run_flashinfer_with_compact_decode_indices(
 fn resolve_flashinfer_decode_for_signature_test(
     context_len: usize,
     cache_slots: usize,
-) -> crate::host::flashinfer::FlashInferResolvedAttention {
+) -> crate::providers::flashinfer::FlashInferResolvedAttention {
     let fi = FlashInferAttention {
-        algorithm: crate::host::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
+        algorithm: crate::providers::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
         num_qo_heads: N_HEADS,
         num_kv_heads: N_KV_HEADS,
         head_dim: HEAD_DIM,
@@ -861,6 +867,10 @@ fn saturate_and_has_flashinfer_inner(
     s_interval: Option<(i64, i64)>,
 ) -> (bool, Vec<String>) {
     let (program, root) = hlir_to_egglog(cx);
+    let program = format!(
+        "{}\n{program}",
+        crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts()
+    );
     let mut ops = <CudaRuntime as orbitkv_compiler::op::Runtime>::Ops::into_vec();
     ops.extend(<orbitkv_compiler::hlir::HLIROps as IntoEgglogOp>::into_vec());
     // cleanup=false: keep every saturation-introduced e-node so we can inspect
@@ -946,6 +956,10 @@ fn flashinfer_dump_paged_attn_egglog() {
 
     let (cx, _) = build_paged_attention_graph(N_HEADS, N_KV_HEADS, HEAD_DIM);
     let (program, root) = hlir_to_egglog(&cx);
+    let program = format!(
+        "{}\n{program}",
+        crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts()
+    );
     eprintln!("==== EGGLOG PROGRAM (root={root}) ====");
     for (i, line) in program.lines().enumerate() {
         eprintln!("{:5}: {line}", i + 1);
@@ -1403,7 +1417,10 @@ fn extract_forced_flashinfer_llir(cx: &mut Graph, case_name: &str) -> LLIRGraph 
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
-    cx.build_search_space::<CudaRuntime>(CompileOptions::default());
+    cx.build_search_space::<CudaRuntime>(
+        CompileOptions::default()
+            .compiler_facts(crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts()),
+    );
 
     let egraph = cx.egraph().expect("search space should have an e-graph");
     let ops = cx
@@ -1511,7 +1528,7 @@ fn run_flashinfer_bf16(
     let out_buf = alloc_dev(stream, total_q_tokens * HIDDEN * 2);
 
     let fi = FlashInferAttention {
-        algorithm: crate::host::flashinfer::FlashInferAlgorithm::TensorCore,
+        algorithm: crate::providers::flashinfer::FlashInferAlgorithm::TensorCore,
         num_qo_heads: N_HEADS,
         num_kv_heads: N_KV_HEADS,
         head_dim: HEAD_DIM,
@@ -1683,7 +1700,7 @@ fn flashinfer_bf16_decode_non_power_of_two_gqa_block_page() {
         );
     }
     let attention = FlashInferAttention::paged(
-        crate::host::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
+        crate::providers::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
         QUERY_HEADS,
         KV_HEADS,
         HEAD_DIM,
@@ -1872,21 +1889,6 @@ fn flashinfer_f32_prefill_still_rejected() {
     );
 }
 
-#[test]
-#[ignore = "one-time JIT compile check for the gemma variants (~2 min each cold)"]
-fn jit_compiles_gemma_variants() {
-    // sliding layers: head_dim 256 with the sliding-window kernel variant
-    let _ = crate::host::flashinfer::jit::ensure_compiled(256, true, 2);
-    // full layers: head_dim 512 (16-bit only; f32 instantiation is gated out)
-    let _ = crate::host::flashinfer::jit::ensure_compiled(512, false, 2);
-}
-
-#[test]
-#[ignore = "one-time JIT compile check for a non-power-of-two GQA ratio"]
-fn jit_compiles_non_power_of_two_gqa_geometry() {
-    let _ = crate::host::flashinfer::jit::ensure_compiled(64, false, 7);
-}
-
 /// Gemma-4 paged attention spelling at mini dims (scale-free scores; sliding
 /// window mask term). Mirrors examples/gemma4_moe/src/model.rs
 /// `paged_attention` exactly — used to derive the egg rule variants.
@@ -1977,6 +1979,10 @@ fn egraph_choice_eclass_census() {
     let _out = out.cast(DType::F32).output();
 
     let (program, root) = hlir_to_egglog(&cx);
+    let program = format!(
+        "{}\n{program}",
+        crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts()
+    );
     let mut ops = <CudaRuntime as orbitkv_compiler::op::Runtime>::Ops::into_vec();
     ops.extend(<orbitkv_compiler::hlir::HLIROps as IntoEgglogOp>::into_vec());
     // cleanup=true: census the egraph the search actually extracts from.
@@ -2209,25 +2215,12 @@ fn gemma_fi_rules_six_instances_build_time() {
     let total = outs.into_iter().reduce(|a, b| a + b).unwrap();
     let _ = total.cast(DType::F32).output();
     let start = std::time::Instant::now();
-    cx.build_search_space::<CudaRuntime>(CompileOptions::default());
+    cx.build_search_space::<CudaRuntime>(
+        CompileOptions::default()
+            .compiler_facts(crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts()),
+    );
     println!("six-instance gemma FI build: {:?}", start.elapsed());
 }
 
-#[test]
-#[ignore = "debug instrument: dump llama swiglu(+quant) chain egglog"]
-fn dump_llama_swiglu_chain_egglog() {
-    const I: usize = 8;
-    let mut cx = Graph::default();
-    let xgu = cx.tensor(('s', 2 * I)).as_dtype(DType::Bf16);
-    let scale = cx.tensor(()).as_dtype(DType::F32);
-    let gate = xgu.slice((.., ..I));
-    let up = xgu.slice((.., I..));
-    let h = gate.swish() * up;
-    // quant tail (the llama fp8 spelling)
-    let hf = h.cast(DType::F32);
-    let scale_e = scale.expand_dim(0, 's').expand_dim(1, I);
-    let q = (hf / scale_e).cast(DType::F8E4M3);
-    let _ = q.cast(DType::F32).output();
-    let (program, _root) = orbitkv_compiler::egglog_utils::hlir_to_egglog(&cx);
-    println!("{program}");
-}
+#[path = "flashinfer/diagnostics.rs"]
+mod diagnostics;

@@ -1,0 +1,200 @@
+{
+  "checks": [
+    {
+      "name": "host tests",
+      "command": "cargo +1.98.0 test --locked --all-targets",
+      "status": "passed",
+      "passed": 503,
+      "ignored": 3
+    },
+    {
+      "name": "doctests",
+      "command": "cargo +1.98.0 test --locked --doc",
+      "status": "passed",
+      "passed": 5,
+      "ignored": 1
+    },
+    {
+      "name": "frontend tests",
+      "command": "cargo +1.98.0 test --locked -p orbitkv-engine --features vllm-frontend",
+      "status": "passed",
+      "passed": 11,
+      "ignored": 1
+    },
+    {
+      "name": "host clippy",
+      "command": "cargo +1.98.0 clippy --locked --all-targets -- -D warnings",
+      "status": "passed"
+    },
+    {
+      "name": "CUDA/executor/server clippy",
+      "command": "cargo +1.98.0 clippy --locked -p orbitkv-cuda -p orbitkv-executor -p orbitkv-engine --features orbitkv-engine/server --all-targets -- -D warnings",
+      "status": "passed"
+    },
+    {
+      "name": "format",
+      "command": "cargo +1.98.0 fmt --all -- --check",
+      "status": "passed"
+    },
+    {
+      "name": "source layout",
+      "command": "python3 tools/verify_active_source.py",
+      "status": "passed"
+    },
+    {
+      "name": "Python tools",
+      "command": "python3 -m unittest discover -s tools/tests -p test_*.py",
+      "status": "passed"
+    },
+    {
+      "name": "website check",
+      "command": "npm run check",
+      "status": "passed"
+    },
+    {
+      "name": "website build",
+      "command": "npm run build",
+      "status": "passed"
+    }
+  ],
+  "cuda": {
+    "binary_sha256": "ef831fe6fa3189767150541210f58713661c1818c738847f184c35375aa11856",
+    "gates": [
+      {
+        "name": "providers",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "providers::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 68,
+        "failed": 0,
+        "ignored": 16
+      },
+      {
+        "name": "target",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "target::tests::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "cublaslt-identity",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "providers::cublaslt::tests::identity::",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "cublaslt-recapture",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "providers::cublaslt::tests::recapture::",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "deepgemm-reference",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "deepgemm_matches_independent_reference_on_sm90",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "shared-fp8-replay",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "shared_fp8_semantic_search_and_schedule_replay_on_sm90",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "flashinfer-rewrites",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "tests::flashinfer::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 31,
+        "failed": 0,
+        "ignored": 5
+      },
+      {
+        "name": "module-artifacts",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "artifact::tests::",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 7,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "kernel-contracts",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "kernel::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 30,
+        "failed": 0,
+        "ignored": 2
+      },
+      {
+        "name": "nvrtc-contracts",
+        "command": [
+          "/workspace/orbitkv/.qualification/cuda-refactor-20260914/cuda-tests",
+          "compilation::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0
+      }
+    ]
+  }
+}

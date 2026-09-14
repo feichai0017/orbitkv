@@ -23,7 +23,7 @@ fn flashinfer_recapture_budgets_both_plan_generations() {
                 NodeIndex::new(index * 8 + 7),
                 inputs,
                 Arc::new(Box::new(FlashInferAttention::paged(
-                    crate::host::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
+                    crate::providers::flashinfer::FlashInferAlgorithm::CudaCoreDecode,
                     4,
                     2,
                     64,
@@ -59,7 +59,7 @@ fn flashinfer_recapture_budgets_both_plan_generations() {
     assert_eq!(plan.persistent_bytes, 0);
     assert_eq!(
         plan.shared_allocations,
-        vec![crate::host::flashinfer::shared_device_memory_allocation()]
+        vec![crate::providers::flashinfer::shared_device_memory_allocation()]
     );
 }
 
@@ -75,7 +75,7 @@ fn prepared_fusion_sources_share_the_subgraph_dyn_dims_abi() {
         label: String::new(),
         dtype: DType::F32,
     })));
-    let mut add_region = |llir: &mut LLIRGraph, producer, dim: char| {
+    let add_region = |llir: &mut LLIRGraph, producer, dim: char| {
         let shape = vec![Expression::from(dim)];
         let strides = vec![Expression::from('z')];
         let start = llir.add_node(test_kernel_op(FusionStart {

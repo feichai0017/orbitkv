@@ -1,40 +1,20 @@
 # OrbitKV CUDA backend
 
-This crate contains the CUDA backend for OrbitKV compiler.
+CUDA code generation, measured candidate selection, provider integration and
+execution for OrbitKV. See the [backend architecture](../../docs/cuda-backend.md)
+for source boundaries, provider versions, cache policy and joint state/compute
+compilation.
 
-The backend can be broken down into several main types of ops. Starting from the highest level and going lower:
+- `kernel/` contains generated kernels and fusion rules.
+- `providers/` contains native adapters and shared source/build management.
+- Egglog rules and CUDA templates are separate source assets beside their owner.
+- `runtime/` and `search/` plan memory, profile candidates and execute schedules.
+- Tests live under `tests/`; all native source pins live in `providers.lock.json`.
 
-#### Host Ops
-
-Host ops are opaque operations executed from the host (can execute on device, simply launched in an opaque manner). cuBLAS is a good example of this type of op. OrbitKV compiler can't assume much about these operations since they are so opaque. These ops implement the `HostOp` trait.
-
-#### Kernel Ops
-
-Kernel ops are operations encoded as a kernel and launch parameters. OrbitKV compiler can put these into CUDA graphs. Cutlass kernels are good examples of these. These ops implement the `KernelOp` trait.
-
-#### Block Ops (planned)
-
-The proposed block-level representation would describe operations executed
-within a threadblock, with explicit thread and shared-memory requirements. It
-could support generated persistent or megakernel schedules. This crate does not
-currently implement a `BlockOp` trait or that composition pipeline.
-
-#### Warp Ops
-
-Warp-level composition is not implemented in this crate.
-
-#### Thread Ops
-
-Thread-level composition is not implemented in this crate.
-
-### Architecture
-
-`orbitkv-cuda` searches equivalent generated kernels and host-launched
-providers. Existing fusion rewrites can combine supported regions into a kernel;
-the runtime can capture multiple kernel and provider launches in a CUDA Graph.
-A CUDA Graph remains a multi-launch execution plan. The block-to-megakernel
-composition described above is a future extension, with synchronization,
-resource, and state-effect contracts still required.
+`KernelOp` describes a generated kernel. `HostOp` describes host-launched GPU
+work, including library calls, workspace and CUDA Graph capture contracts.
+Existing rules fuse supported generated regions. CUDA Graph capture retains
+multiple launches; persistent megakernel generation remains future work.
 
 ### Semantic search contract
 
@@ -96,20 +76,19 @@ and graph inputs absent from an individual shard are ignored. Loading and pure
 conversion have separate modules under `src/runtime/weights` and tests under
 `tests/unit/runtime/weights`.
 
-JIT provider sources use one policy. Set `ORBITKV_DEEPGEMM_DIR`,
-`ORBITKV_FLASHINFER_DIR` or `ORBITKV_FLASHATTENTION_DIR` to an existing pinned checkout, or prefetch the locked
-revision into OrbitKV compiler's revision-indexed source cache before model
-compilation:
+Prepare locked provider sources before model compilation:
 
-```bash
-cargo run -p orbitkv-cuda --bin fetch-provider -- deepgemm
-cargo run -p orbitkv-cuda --bin fetch-provider -- flashinfer
-cargo run -p orbitkv-cuda --bin fetch-provider -- flashattention
+```sh
+cargo run -p orbitkv-cuda --bin providers -- list
+cargo run -p orbitkv-cuda --bin providers -- fetch all
+cargo run -p orbitkv-cuda --bin providers -- inspect flashinfer
 ```
 
-Model compilation never performs a network fetch. DeepGEMM is not a recursive
-source submodule; its pinned revision and required CUTLASS revision live in the
-provider integration.
+Explicit checkouts use `ORBITKV_DEEPGEMM_DIR`, `ORBITKV_FLASHINFER_DIR` and
+`ORBITKV_FLASHATTENTION_DIR`. `ORBITKV_CACHE_DIR` controls the common cache root.
+An invalid explicit checkout fails without falling back to another installation.
+Model compilation never fetches sources. Each provider retains its own pinned
+CUTLASS dependency. cuBLASLt comes from the installed CUDA Toolkit.
 
 All three providers hash the actual provider/dependency header contents and embedded
 wrapper, including local edits present when the process first resolves sources.

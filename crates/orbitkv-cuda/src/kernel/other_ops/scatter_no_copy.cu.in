@@ -1,0 +1,12 @@
+{includes}
+{dyn_defines}
+extern "C" {{
+    __global__ void scatter_nocopy({dtype} *dest, const int *indexes, const {dtype} *src{dyn_dims_param}) {{
+        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+        if (const_z >= {n_src_elements}) return;
+        int idx = indexes[{scatter_idx_idx}];
+        if (idx >= 0 && idx < {n_dest_elements}) {{
+            dest[idx] = src[{scatter_src_idx}];
+        }}
+    }}
+}}

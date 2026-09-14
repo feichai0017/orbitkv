@@ -26,6 +26,7 @@ pub struct DecoderArtifact {
 
 #[derive(Serialize)]
 struct DecoderArtifactIdentity<'a> {
+    provider_lock_digest: String,
     manifest_fingerprint: &'a str,
     compiler_facts_digest: &'a str,
     page_tokens: u32,
@@ -145,6 +146,7 @@ pub(super) fn decoder_artifact_identity_with_tuning(
     tuning: &DecoderTuningProfile,
 ) -> Result<String, DecoderError> {
     let identity = DecoderArtifactIdentity {
+        provider_lock_digest: orbitkv_cuda::providers::registry::provider_lock().digest(),
         manifest_fingerprint: &plan.manifest_fingerprint,
         compiler_facts_digest,
         page_tokens: plan.page_tokens,

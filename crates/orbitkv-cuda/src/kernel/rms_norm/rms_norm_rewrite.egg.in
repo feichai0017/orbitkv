@@ -1,0 +1,27 @@
+(rule
+                    (
+                        (rms_rinv ?rin ?xf ?xb ?eps ?cols)
+
+                        ; × x → × w → bf16
+                        (= ?nrm (Op (Mul ?nr_shape ?nr_a ?nr_b ?nr_o)
+                            (ICons ?rin (ICons ?xf3 (INil)))))
+                        (= ?xf ?xf3)
+                        (= ?wgt (Op (Mul ?wg_shape ?wg_a ?wg_b ?wg_o)
+                            (ICons ?nrm (ICons ?w (INil)))))
+                        (= (F32) (dtype ?w))
+                        (= ?out (Op (Cast ?o_size (Bf16)) (ICons ?wgt (INil))))
+
+                        {shape_pins}
+                    )
+                    (
+                        (let ?krms (Op (KernelRMSNorm ?wg_shape ?eps)
+                            (ICons ?xb (ICons ?w (INil)))))
+                        (union ?out ?krms)
+                        (set (dtype ?krms) (Bf16))
+                        ; Once the fused kernel is legal, the decomposed norm
+                        ; only adds large temporaries and launch latency.
+                        (delete (Op (Cast ?o_size (Bf16)) (ICons ?wgt (INil))))
+                    )
+                    :ruleset kernel_fuse_late
+                    :name "kernel rms norm bf16 {variant}"
+                )

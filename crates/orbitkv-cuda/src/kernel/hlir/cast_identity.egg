@@ -1,0 +1,7 @@
+(rule (
+                    (= ?c (Op (ConstantF64 ?val) (INil)))
+                 ) (
+                    (let ?kc (Op (KernelConstant ?val (F64)) (INil)))
+                    (union ?c ?kc)
+                    (set (dtype ?kc) (F64))
+                 ) :ruleset kernel_lower :name "kernel-constant-f64")

@@ -347,7 +347,13 @@ pub fn fuzz_cuda_search_space_equivalence(
             None
         };
 
-    cx.build_search_space::<CudaRuntime>(config.build_options);
+    let target_facts = crate::target::CudaTarget::from_context(stream.context())
+        .unwrap()
+        .compiler_facts();
+    cx.build_search_space::<CudaRuntime>(config.build_options.clone().compiler_facts(format!(
+        "{}\n{target_facts}",
+        config.build_options.compiler_facts
+    )));
 
     let egraph = cx.egraph().expect("search space should be built");
     let ops = cx.egglog_ops().expect("search ops should be built");
@@ -857,7 +863,7 @@ pub fn gpu_compute_cap() -> Option<(i32, i32)> {
 /// itself) must skip on older arches like the T4 (sm_75), where the kernel
 /// symbol is absent at launch (CUDA_ERROR_NOT_FOUND).
 pub fn gpu_supports_flashinfer() -> bool {
-    crate::device_compute_major() >= 8
+    gpu_compute_cap().is_some_and(|(major, _)| major >= 8)
 }
 
 /// Check if the current GPU supports the given dtype for tensor core / WMMA operations.
@@ -927,7 +933,13 @@ pub fn test_unary_cuda<T: TestDType>(
     let a = cx.tensor(shape.clone());
     let b = func(a).output();
 
-    cx.build_search_space::<CudaRuntime>(CompileOptions::default());
+    cx.build_search_space::<CudaRuntime>(
+        CompileOptions::default().compiler_facts(
+            crate::target::CudaTarget::from_context(stream.context())
+                .unwrap()
+                .compiler_facts(),
+        ),
+    );
     let mut rt = CudaRuntime::initialize(stream.clone());
 
     let input_data = generator(n_elements, seed);
@@ -1000,7 +1012,13 @@ pub fn test_binary_cuda<T: TestDType>(
     let b = cx.tensor(b_shape.clone());
     let c = func(a, b).output();
 
-    cx.build_search_space::<CudaRuntime>(CompileOptions::default());
+    cx.build_search_space::<CudaRuntime>(
+        CompileOptions::default().compiler_facts(
+            crate::target::CudaTarget::from_context(stream.context())
+                .unwrap()
+                .compiler_facts(),
+        ),
+    );
     let mut rt = CudaRuntime::initialize(stream.clone());
 
     let a_data = a_generator(a_elements, seed);
@@ -1067,7 +1085,13 @@ pub fn test_mod(
     let b = cx.tensor(b_shape.clone());
     let c = func(a, b).output();
 
-    cx.build_search_space::<CudaRuntime>(CompileOptions::default());
+    cx.build_search_space::<CudaRuntime>(
+        CompileOptions::default().compiler_facts(
+            crate::target::CudaTarget::from_context(stream.context())
+                .unwrap()
+                .compiler_facts(),
+        ),
+    );
     let mut rt = CudaRuntime::initialize(stream.clone());
 
     let a_data = random_f32_vec(a_elements, seed, -0.5, 0.5);

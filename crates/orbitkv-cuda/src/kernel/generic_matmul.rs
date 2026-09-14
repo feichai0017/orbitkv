@@ -19,13 +19,7 @@ use orbitkv_compiler::{
     shape::flatten_strides,
 };
 
-const MATMUL_BACKEND_RELATION_DECLARATIONS: &str = "(relation generic_matmul_exact_2d
-        (IR Expression Expression Expression DType))
-     (relation generic_matmul_exact_3d
-        (IR Expression Expression Expression Expression DType))
-     (relation low_precision_matmul_dtype (DType))
-     (low_precision_matmul_dtype (F16))
-     (low_precision_matmul_dtype (Bf16))";
+const MATMUL_BACKEND_RELATION_DECLARATIONS: &str = include_str!("generic_matmul/declarations.egg");
 
 #[derive(Default, Debug, Clone)]
 pub struct GenericMatmul {
@@ -78,128 +72,8 @@ impl EgglogOp for GenericMatmul {
             // seeded spelling into the actual stride's e-class exactly when
             // the two are numerically equal, which lets the witness match
             // without ever equating unequal strides.
-            Rule::raw(
-                "(rule
-                    (
-                        (= ?sum (Op (GenericMatmul
-                            (ECons ?m (ECons ?n (ENil)))
-                            (ECons ?m (ECons ?n (ECons ?k (ENil))))
-                            ?k
-                            ?lhs_strides ?rhs_strides
-                            ?sum_input_strides ?sum_iter_stride ?out_strides
-                            ?dt)
-                            ?inputs))
-                    )
-                    (
-                        (let ?canonical_sum_m (MMul (MMul (MIter) ?k) ?n))
-                        (let ?canonical_sum_n (MMul (MIter) ?k))
-                        (let ?canonical_out_m (MMul (MIter) ?n))
-                    )
-                    :ruleset matmul_backend
-                    :name \"seed canonical 2d matmul stride spellings\"
-                )
-
-                (rule
-                    (
-                        (= ?sum (Op (GenericMatmul
-                            (ECons ?batch (ECons ?m (ECons ?n (ENil))))
-                            (ECons ?batch (ECons ?m (ECons ?n (ECons ?k (ENil)))))
-                            ?k
-                            ?lhs_strides ?rhs_strides
-                            ?sum_input_strides ?sum_iter_stride ?out_strides
-                            ?dt)
-                            ?inputs))
-                    )
-                    (
-                        (let ?canonical_sum_batch (MMul (MMul (MMul (MIter) ?k) ?n) ?m))
-                        (let ?canonical_sum_m (MMul (MMul (MIter) ?k) ?n))
-                        (let ?canonical_sum_n (MMul (MIter) ?k))
-                        (let ?canonical_out_batch (MMul (MMul (MIter) ?n) ?m))
-                        (let ?canonical_out_m (MMul (MIter) ?n))
-                    )
-                    :ruleset matmul_backend
-                    :name \"seed canonical 3d matmul stride spellings\"
-                )",
-            ),
-            Rule::raw(
-                "; cuBLASLt and GEMV implement only the canonical materialized
-             ; matmul reduction. Operand broadcast strides alone are not a
-             ; sufficient witness: a movement-only view between Mul and Sum
-             ; can permute the reduction's surviving axes while leaving both
-             ; operand strides unchanged. Stage the complete semantic layout
-             ; here so every optimized consumer shares the same proof.
-             (rule
-                (
-                    (= ?sum (Op (GenericMatmul
-                        (ECons ?m (ECons ?n (ENil)))
-                        (ECons ?m (ECons ?n (ECons ?k (ENil))))
-                        ?k
-                        ?lhs_strides ?rhs_strides
-                        (ECons
-                            (MMul (MMul (MIter) ?k) ?n)
-                            (ECons (MMul (MIter) ?k) (ENil)))
-                        (MIter)
-                        (ECons (MMul (MIter) ?n) (ECons (MIter) (ENil)))
-                        ?dt)
-                        ?inputs))
-                )
-                ((generic_matmul_exact_2d ?sum ?m ?n ?k ?dt))
-                :ruleset matmul_backend
-                :name \"prove exact materialized 2d matmul reduction\"
-             )
-
-             (rule
-                (
-                    (= ?sum (Op (GenericMatmul
-                        (ECons ?batch (ECons ?m (ECons ?n (ENil))))
-                        (ECons ?batch (ECons ?m (ECons ?n (ECons ?k (ENil)))))
-                        ?k
-                        ?lhs_strides ?rhs_strides
-                        (ECons
-                            (MMul (MMul (MMul (MIter) ?k) ?n) ?m)
-                            (ECons
-                                (MMul (MMul (MIter) ?k) ?n)
-                                (ECons (MMul (MIter) ?k) (ENil))))
-                        (MIter)
-                        (ECons
-                            (MMul (MMul (MIter) ?n) ?m)
-                            (ECons (MMul (MIter) ?n) (ECons (MIter) (ENil))))
-                        ?dt)
-                        ?inputs))
-                )
-                ((generic_matmul_exact_3d ?sum ?batch ?m ?n ?k ?dt))
-                :ruleset matmul_backend
-                :name \"prove exact materialized 3d matmul reduction\"
-             )
-
-             (rule
-                    (
-                        (= ?mul (Op (Mul ?mul_shape ?lhs_strides ?rhs_strides ?mul_out_strides)
-                            (ICons ?lhs (ICons ?rhs (INil)))))
-                        (= ?sum (Op (Sum ?out_shape ?k ?sum_input_strides ?sum_iter_stride ?out_strides)
-                            (ICons ?mul (INil))))
-                        (= ?dt (dtype ?sum))
-                    )
-                    (
-                        (let ?generic (Op (GenericMatmul
-                            ?out_shape
-                            ?mul_shape
-                            ?k
-                            ?lhs_strides
-                            ?rhs_strides
-                            ?sum_input_strides
-                            ?sum_iter_stride
-                            ?out_strides
-                            ?dt)
-                            (ICons ?lhs (ICons ?rhs (INil)))))
-                        (union ?sum ?generic)
-                        (set (dtype ?generic) ?dt)
-                    )
-                    :ruleset matmul_backend
-                    :name \"generic-matmul-cuda-mul-sum\"
-                )",
-            ),
-
+            Rule::raw(include_str!("generic_matmul/output_layout.egg")),
+            Rule::raw(include_str!("generic_matmul/contiguous_inputs.egg")),
             // A low-precision materialized Mul followed by a separate reduction is
             // not the floating-point matmul contract implemented by GenericMatmul,
             // GEMV, or cuBLASLt: it rounds every product to F16/BF16 before the
@@ -219,48 +93,7 @@ impl EgglogOp for GenericMatmul {
             // Both forms must be covered because cleanup can observe either the
             // original HLIR Sum or its CUDA KernelSum lowering depending on rule
             // scheduling.
-            Rule::raw(
-                "(rule
-                    (
-                        (= ?mul (Op (Mul ?mul_shape ?lhs_strides ?rhs_strides ?mul_out_strides)
-                            (ICons ?lhs (ICons ?rhs (INil)))))
-                        (= ?sum (Op (Sum ?out_shape ?k ?sum_input_strides ?sum_iter_stride ?out_strides)
-                            (ICons ?mul (INil))))
-                        (= ?sum (Op (GenericMatmul
-                            ?go ?gm ?gk ?gls ?grs ?gsis ?gsit ?gos ?dt)
-                            ?generic_inputs))
-                        (= ?dt (dtype ?sum))
-                        (= ?dt (dtype ?mul))
-                        (low_precision_matmul_dtype ?dt)
-                    )
-                    (
-                        (delete (Op (Sum ?out_shape ?k ?sum_input_strides ?sum_iter_stride ?out_strides)
-                            (ICons ?mul (INil))))
-                    )
-                    :ruleset cleanup
-                    :name \"delete-low-precision-sum-when-wide-accum-matmul-exists\"
-                )
-
-                (rule
-                    (
-                        (= ?kernel_sum (Op (KernelSum
-                            ?out_shape ?k ?sum_input_strides ?sum_iter_stride ?out_strides ?dt)
-                            ?sum_inputs))
-                        (= ?kernel_sum (Op (GenericMatmul
-                            ?go ?gm ?gk ?gls ?grs ?gsis ?gsit ?gos ?dt)
-                            ?generic_inputs))
-                        (= ?dt (dtype ?kernel_sum))
-                        (low_precision_matmul_dtype ?dt)
-                    )
-                    (
-                        (delete (Op (KernelSum
-                            ?out_shape ?k ?sum_input_strides ?sum_iter_stride ?out_strides ?dt)
-                            ?sum_inputs))
-                    )
-                    :ruleset cleanup
-                    :name \"delete-low-precision-kernel-sum-when-wide-accum-matmul-exists\"
-                )",
-            ),
+            Rule::raw(include_str!("generic_matmul/strided_output.egg")),
         ]
     }
 
@@ -339,55 +172,18 @@ impl KernelOp for GenericMatmul {
         let k = self.k.to_kernel();
 
         let kernel = format!(
-            "{includes}
-#define WARP_SIZE 32
-#define THREADS_PER_BLOCK 256
-#define FULL_MASK 0xffffffff
-{dyn_defines}
-extern \"C\" {{
-    __global__ void generic_matmul({dtype} *out, const {dtype} *lhs, const {dtype} *rhs{dyn_dims_param}) {{
-        __shared__ float warp_sums[THREADS_PER_BLOCK / WARP_SIZE];
-        long long const_z = blockIdx.x;
-        if (const_z >= {n_outputs}) return;
-
-        int tid = threadIdx.x;
-        int lane_id = tid % WARP_SIZE;
-        int warp_id = tid / WARP_SIZE;
-
-        long long base_idx = {sum_base_idx};
-        long long iters = {k};
-
-        float partial = 0.0f;
-        for (long long i = tid; i < iters; i += THREADS_PER_BLOCK) {{
-            long long mul_idx = base_idx + {iter_offset};
-            partial += static_cast<float>(lhs[{lhs_idx}]) * static_cast<float>(rhs[{rhs_idx}]);
-        }}
-
-        #pragma unroll
-        for (int s = WARP_SIZE / 2; s > 0; s >>= 1) {{
-            partial += __shfl_down_sync(FULL_MASK, partial, s);
-        }}
-
-        if (lane_id == 0) {{
-            warp_sums[warp_id] = partial;
-        }}
-        __syncthreads();
-
-        if (warp_id == 0) {{
-            float block_sum = tid < (THREADS_PER_BLOCK / WARP_SIZE) ? warp_sums[tid] : 0.0f;
-
-            #pragma unroll
-            for (int s = (THREADS_PER_BLOCK / WARP_SIZE) / 2; s > 0; s >>= 1) {{
-                block_sum += __shfl_down_sync(FULL_MASK, block_sum, s);
-            }}
-
-            if (tid == 0) {{
-                out[{out_idx}] = ({dtype})block_sum;
-            }}
-        }}
-    }}
-}}",
+            include_str!("generic_matmul/matmul.cu.in"),
             n_outputs = n_outputs.to_kernel(),
+            dtype = dtype,
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            iter_offset = iter_offset,
+            k = k,
+            lhs_idx = lhs_idx,
+            out_idx = out_idx,
+            rhs_idx = rhs_idx,
+            sum_base_idx = sum_base_idx,
         );
 
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {

@@ -62,112 +62,7 @@ impl EgglogOp for KernelStableSortIdx {
         // multiplies the join by the instance count). Each stage walks a
         // chain from a strongly-pinned anchor; later stages key every atom
         // off relation-bound variables.
-        vec![Rule::raw(
-            "(relation stable_ranks_part (IR IR IR IR IR EList))
-            (relation stable_ranks (IR IR EList))
-            (rule
-                (
-                    ; ranks = Cast(Int)(Sum(cast(primary) + tiebreak))
-                    (= ?a_val (Op (Mul ?av_shape
-                        (ECons ?av_row (ECons (MIter) (ECons (MNum 0) (ENil))))
-                        ?av_b ?av_o)
-                        (ICons ?x (ICons ?one_a (INil)))))
-                    (= ?one_a (Op (Constant 1.000000) (INil)))
-                    (= ?b_val (Op (Mul ?bv_shape
-                        (ECons ?bv_row (ECons (MNum 0) (ECons (MIter) (ENil))))
-                        ?bv_b ?bv_o)
-                        (ICons ?x2 (ICons ?one_b (INil)))))
-                    (= ?x ?x2)
-                    (= ?one_b (Op (Constant 1.000000) (INil)))
-                    (= ?prim (Op (LessThan ?p_shape ?p_a ?p_b ?p_o)
-                        (ICons ?b_val (ICons ?a_val (INil)))))
-                    (= ?prim_f (Op (Cast ?pf_size (F32)) (ICons ?prim (INil))))
-                    (= ?cmp (Op (Add ?c_shape ?c_a ?c_b ?c_o)
-                        (ICons ?prim_f (ICons ?eqidx (INil)))))
-                    (= ?sum (Op (Sum ?out_shape ?e_dim ?sum_in ?sum_k ?sum_out)
-                        (ICons ?cmp (INil))))
-                    (= ?ranks (Op (Cast ?r_size (Int)) (ICons ?sum (INil))))
-                    (= (F32) (dtype ?x))
-                )
-                (
-                    (stable_ranks_part ?ranks ?eqidx ?a_val ?b_val ?x ?out_shape)
-                )
-                :ruleset kernel_fuse_late_pre_topk
-                :name \"stable ranks part\"
-            )
-            (rule
-                (
-                    (stable_ranks_part ?ranks ?eqidx ?a_val ?b_val ?x ?out_shape)
-
-                    ; tie-break: val_eq · (iota_i < iota_j)
-                    (= ?eqidx (Op (Mul ?ei_shape ?ei_a ?ei_b ?ei_o)
-                        (ICons ?val_eq (ICons ?idx_f (INil)))))
-                    (= ?idx_f (Op (Cast ?if_size (F32)) (ICons ?idx_cmp (INil))))
-                    (= ?idx_cmp (Op (LessThan ?ic_shape
-                        (ECons (MNum 0) (ECons (MIter) (ECons (MNum 0) (ENil))))
-                        (ECons (MNum 0) (ECons (MNum 0) (ECons (MIter) (ENil))))
-                        ?ic_o)
-                        (ICons ?iota_a (ICons ?iota_b (INil)))))
-
-                    (= ?val_eq (Op (Mul ?ve_shape ?ve_a ?ve_b ?ve_o)
-                        (ICons ?not_lt (ICons ?not_gt (INil)))))
-                    (= ?not_lt (Op (Add ?nl_shape ?nl_a ?nl_b ?nl_o)
-                        (ICons ?nl_neg (ICons ?nl_one (INil)))))
-                    (= ?nl_neg (Op (Mul ?nln_shape ?nln_a ?nln_b ?nln_o)
-                        (ICons ?lt_f (ICons ?nl_negone (INil)))))
-                    (= ?lt_f (Op (Cast ?ltf_size (F32)) (ICons ?lt (INil))))
-                    (= ?lt (Op (LessThan ?lt_shape ?lt_a ?lt_b ?lt_o)
-                        (ICons ?a_val2 (ICons ?b_val2 (INil)))))
-                    (= ?a_val ?a_val2)
-                    (= ?b_val ?b_val2)
-                    (= ?not_gt (Op (Add ?ng_shape ?ng_a ?ng_b ?ng_o)
-                        (ICons ?ng_neg (ICons ?ng_one (INil)))))
-                    (= ?ng_neg (Op (Mul ?ngn_shape ?ngn_a ?ngn_b ?ngn_o)
-                        (ICons ?gt_f (ICons ?ng_negone (INil)))))
-                    (= ?gt_f (Op (Cast ?gtf_size (F32)) (ICons ?gt (INil))))
-                    (= ?gt (Op (LessThan ?gt_shape ?gt_a ?gt_b ?gt_o)
-                        (ICons ?b_val3 (ICons ?a_val3 (INil)))))
-                    (= ?a_val ?a_val3)
-                    (= ?b_val ?b_val3)
-                )
-                (
-                    (stable_ranks ?ranks ?x ?out_shape)
-                )
-                :ruleset kernel_fuse_late
-                :name \"stable ranks tiebreak\"
-            )
-            (rule
-                (
-                    (stable_ranks ?ranks ?x ?out_shape)
-
-                    ; rank → sorted-index scatter tail
-                    (= ?rsc (Op (Mul ?rs_shape ?rs_a ?rs_b ?rs_o)
-                        (ICons ?ranks (ICons ?one_s (INil)))))
-                    (= ?one_s (Op (Iota (MNum 1) ?os_range) (INil)))
-                    (= ?adj (Op (Add ?aj_shape ?aj_a ?aj_b ?aj_o)
-                        (ICons ?base (ICons ?rsc (INil)))))
-                    (= ?base (Op (Iota (MMul (MIter) ?e2) ?b_range) (INil)))
-                    (= ?sorted (Op (Scatter ?sc_ds ?sc_dst ?sc_is ?sc_istr ?sc_ss)
-                        (ICons ?zeros (ICons ?adj (ICons ?vals (INil))))))
-                    (= ?zeros (Op (Iota (MNum 0) ?z_range) (INil)))
-                    (= ?vals (Op (Iota (MIter) ?v_range) (INil)))
-
-                    (= ?out_shape (ECons ?rows (ECons ?e (ENil))))
-                    (= ?e ?e2)
-                )
-                (
-                    (let ?kr (Op (KernelStableSortIdx ?out_shape) (ICons ?x (INil))))
-                    (union ?sorted ?kr)
-                    (set (dtype ?kr) (Int))
-                    ; The exact O(E^2) decomposition is a proof spelling, not
-                    ; a useful CUDA fallback after this kernel has matched.
-                    (delete (Op (Scatter ?sc_ds ?sc_dst ?sc_is ?sc_istr ?sc_ss)
-                        (ICons ?zeros (ICons ?adj (ICons ?vals (INil))))))
-                )
-                :ruleset kernel_fuse_late
-                :name \"kernel stable ranks descending\"
-            )",
-        )]
+        vec![Rule::raw(include_str!("topk/topk_rewrite.egg"))]
     }
 
     fn cleanup(&self) -> bool {
@@ -219,36 +114,10 @@ impl KernelOp for KernelStableSortIdx {
         };
 
         let kernel = format!(
-            "{dyn_defines}
-extern \"C\" {{
-    __global__ void stable_sort_idx_k(int *out, const float *x{dyn_dims_param}) {{
-        __shared__ float row[{e}];
-        long long r = blockIdx.x;
-        int j = threadIdx.x;
-        const float* xr = x + r * {e};
-        if (j < {e}) {{
-            row[j] = xr[j];
-            // Prefill with 0 (the decomposed chain's scatter dest is a
-            // materialized zeros iota). For real inputs the ranks are a
-            // permutation and every slot is overwritten; with NaN/garbage
-            // inputs (search-time dummy buffers) ranks collide and unwritten
-            // slots would otherwise hold stale ints that downstream
-            // consumers use as gather/expert indices — an OOB crash.
-            out[r * {e} + j] = 0;
-        }}
-        __syncthreads();
-        if (j >= {e}) return;
-        float vj = row[j];
-        int count = 0;
-        for (int i = 0; i < {e}; i++) {{
-            float vi = row[i];
-            // descending rank with index tie-break (lower index first)
-            count += (vi > vj) || (vi == vj && i < j);
-        }}
-        // ranks are a permutation: element j lands at sorted position count
-        out[r * {e} + count] = j;
-    }}
-}}"
+            include_str!("topk/topk.cu.in"),
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            e = e,
         );
 
         let (module, func) = if let Some((m, f)) = compile_cache.get(&kernel) {

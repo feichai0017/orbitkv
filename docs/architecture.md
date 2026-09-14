@@ -384,3 +384,7 @@ payload by 27.8%, increase the fixed-budget sequence boundary by 32 tokens, and
 show a positive paired total-time confidence interval with identical output. The
 tree does not yet prove continuous-batching throughput, multi-user capacity, or
 long-running behavior.
+
+The [CUDA backend directory and compilation map](cuda-backend.md) describes the
+owned provider registry, shared native build/cache policy and explicit device
+facts used together with the executor's persistent-state constraints.

@@ -45,7 +45,7 @@ reuses this foundation with runtime operation registration.
 
 ## Two implemented execution levels
 
-`host::HostOp` describes an operation launched by host code. The computation
+`providers::HostOp` describes an operation launched by host code. The computation
 normally runs on the GPU: examples include cuBLASLt, FlashInfer, FlashAttention and DeepGEMM.
 The contract exposes compilation preparation, output layout, captured pointer
 and shape inputs, shared-state effects, allocation owners and resource costs.

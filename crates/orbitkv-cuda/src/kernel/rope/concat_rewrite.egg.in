@@ -1,0 +1,14 @@
+(rule
+                (
+                    {}
+                )
+                (
+                    (let ?kr (Op (KernelRoPE ?a3_sh (MMul ?heads ?e_hd)
+                        (MMul ?e_hd ?e_seq) ?e_w ?ln_theta ?inv_hd)
+                        (ICons ?x (ICons ?pos (INil)))))
+                    (union ?cat ?kr)
+                    (set (dtype ?kr) (Bf16))
+                )
+                :ruleset kernel_fuse_late2_rope
+                :name "kernel rope half bf16"
+            )

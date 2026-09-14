@@ -1,0 +1,52 @@
+
+            (rule
+                (
+                    (rope_angles ?cosb ?sinb ?pos ?ln_theta ?inv_hd)
+
+                    ; rotation: x0_out = x0*cos - x1*sin ; x1_out = x1*cos + x0*sin
+                    ; (every Mul keyed by the bound ?cosb / ?sinb second input)
+                    (= ?x0c (Op (Mul ?m1_sh
+                        (ECons (MMul (MIter) ?e_hd) (ECons (MMul (MIter) ?e_w) (ECons (MIter) (ENil))))
+                        (ECons (MNum 0) (ECons (MMul (MIter) ?e_hd2) (ECons (MIter) (ENil))))
+                        ?m1_o)
+                        (ICons ?x (ICons ?cosb (INil)))))
+                    (= ?x0out (Op (Add ?a1_sh ?a1_a ?a1_b ?a1_o)
+                        (ICons ?x0c (ICons ?x1sn (INil)))))
+                    (= ?x1sn (Op (Mul ?m3_sh ?m3_a ?m3_b ?m3_o)
+                        (ICons ?x1s (ICons ?negb (INil)))))
+                    (= ?x1s (Op (Mul ?m2_sh ?m2_a ?m2_b ?m2_o)
+                        (ICons ?x1 (ICons ?sinb (INil)))))
+                    (= ?negb (Op (Cast ?nb_size (Bf16)) (ICons ?m1c (INil))))
+                    (= ?m1c (Op (Constant -1.000000) (INil)))
+                    (= ?x1out (Op (Add ?a2_sh ?a2_a ?a2_b ?a2_o)
+                        (ICons ?x1c (ICons ?x0s (INil)))))
+                    (= ?x1c (Op (Mul ?m4_sh ?m4_a ?m4_b ?m4_o)
+                        (ICons ?x1 (ICons ?cosb (INil)))))
+                    (= ?x0s (Op (Mul ?m5_sh
+                        (ECons (MMul (MIter) ?e_hd) (ECons (MMul (MIter) ?e_w) (ECons (MIter) (ENil))))
+                        ?m5_b ?m5_o)
+                        (ICons ?x2 (ICons ?sinb (INil)))))
+                    (= ?x ?x2)
+
+                    ; x1 = offset-slice gather of the (heads, seq, hd) view of x
+                    (= ?x1 (Op (Gather ?g1_osh ?g1_ostr ?g1_dsh
+                        (ECons (MMul (MIter) ?e_hd) (ECons (MMul (MIter) ?e_w) (ECons (MIter) (ENil)))))
+                        (ICons ?x1idx (ICons ?x3 (INil)))))
+                    (= ?x ?x3)
+                    (= ?x1idx (Op (Iota
+                        (MAdd (MAdd (MAdd (MMod (MIter) ?e_hd2) ?e_hd2)
+                                    (MMul (MMod (MDiv (MIter) ?e_hd2) ?e_seq) ?e_hd))
+                              (MMul (MDiv (MIter) ?e_ch) ?e_hs2))
+                        ?x1_range) (INil)))
+
+                    (rope_row_dims ?e_hd ?e_hd2 ?e_seq ?e_hs2 ?e_ch)
+
+                    (= (Bf16) (dtype ?x))
+                )
+                (
+                    (rope_rotated ?x0out ?x1out ?x ?pos
+                        ?e_hd ?e_hd2 ?e_w ?e_seq ?ln_theta ?inv_hd)
+                )
+                :ruleset kernel_fuse_late
+                :name "kernel rope rotation stage"
+            )

@@ -1176,10 +1176,6 @@ fn quant_f8_linear_chain_matches_reference() {
         "fp8 quant chain should offer the fused quant candidate"
     );
     assert!(
-        !egraph_has_enode(&cx, "KernelGemvF8", None),
-        "Lite must leave the tensor-core FP8 GEMV specialization to full CUDA"
-    );
-    assert!(
         egraph_has_op_alternatives(&cx, &["GenericMatmul", "cublaslt"]),
         "the materialized F32-cast GenericMatmul and raw FP8 cuBLASLt must coexist"
     );
@@ -1272,10 +1268,6 @@ fn gemv_f8_unaligned_shape_matches_reference() {
         .output();
 
     cx.build_search_space::<CudaRuntime>(CompileOptions::default());
-    assert!(
-        !egraph_has_enode(&cx, "KernelGemvF8", None),
-        "Lite must not register full CUDA's unaligned FP8 GEMV specialization"
-    );
 
     let xb: Vec<bf16> = x_data.iter().map(|v| bf16::from_f32(*v)).collect();
     let expected: Vec<f32> = (0..N)

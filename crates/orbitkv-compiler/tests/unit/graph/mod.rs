@@ -274,6 +274,63 @@ fn caller_compiler_facts_are_visible_during_search_space_build() {
     );
 }
 
+#[test]
+fn runtime_facts_join_caller_constraints_before_saturation() {
+    struct DeviceRuntime(i64);
+    impl Runtime for DeviceRuntime {
+        type Ops = ();
+        type CompileArg = i64;
+        type ExecReturn = ();
+
+        fn initialize(device: i64) -> Self {
+            Self(device)
+        }
+        fn load_llir(&mut self, _: &LLIRGraph) {
+            unreachable!("this test observes the saturation-to-runtime boundary")
+        }
+        fn compilation_facts(&self) -> String {
+            format!(
+                "(relation backend-device (i64))\n(backend-device {})",
+                self.0
+            )
+        }
+        fn compile(
+            &mut self,
+            space: &crate::search::SearchSpace,
+            _: &DynMap,
+            options: &CompileOptions,
+            _: &mut dyn rand::RngCore,
+        ) {
+            for relation in ["backend-device", "external-layout-class"] {
+                assert!(
+                    space.buckets[0]
+                        .egraph
+                        .enodes
+                        .values()
+                        .any(|(op, _)| op == relation)
+                );
+            }
+            assert!(
+                options
+                    .compiler_facts
+                    .contains(&format!("(backend-device {})", self.0))
+            );
+        }
+        fn execute(&mut self, _: &DynMap) {}
+    }
+
+    for device in [2, 5] {
+        let mut graph = Graph::new();
+        graph.tensor(1).output();
+        graph.compile(
+            DeviceRuntime::initialize(device),
+            CompileOptions::default().compiler_facts(
+                "(relation external-layout-class (i64))\n(external-layout-class 7)",
+            ),
+        );
+    }
+}
+
 #[derive(Debug)]
 struct CompilerFactCustomOp;
 

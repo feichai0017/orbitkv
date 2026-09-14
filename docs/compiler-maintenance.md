@@ -58,8 +58,10 @@ Provider sources default to `~/.cache/orbitkv/providers`; explicit provider
 checkout variables remain the preferred way to reuse prepared sources.
 Source fetching is explicit and never occurs during model compilation.
 
-Decoder schema 11 rejects earlier decoder artifacts before weight loading.
-Recompile schedules and CUDA modules with the new workspace. The source and
+Decoder artifacts validate both serialization schema and compilation identity.
+The identity now includes the native provider lock without increasing the
+unreleased serialization version. Recompile schedules and CUDA modules after
+the breaking migration. The source and
 provider cache identities also change; cached libraries are rebuilt as needed.
 Historical `results/` records retain their original source, names and hashes.
 They are evidence for their recorded revisions, not fresh qualification of the
@@ -70,3 +72,9 @@ The standard CI compiles CUDA integration and checks the backend library.
 The manually dispatched device workflow needs a self-hosted CUDA runner.
 Model qualification additionally requires a local checkpoint and independent
 reference data; a successful compile check does not substitute for that gate.
+
+Native provider versions and dependency commits are centralized in
+[`providers.lock.json`](../crates/orbitkv-cuda/providers.lock.json). The
+[`providers` CLI](cuda-backend.md#provider-lock-and-build-policy) inspects and
+prefetches that inventory. Source, rules, native builds and execution contracts
+have separate owners; this organization does not require another version bump.

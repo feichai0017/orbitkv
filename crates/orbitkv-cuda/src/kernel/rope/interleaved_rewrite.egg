@@ -1,0 +1,6 @@
+(rule
+                ((= ?rope (Op (KernelRoPEHalf ?s ?h ?d ?out_width ?pitch ?offset ?in_dt ?out_dt) ?inputs)))
+                ((set (dtype ?rope) ?out_dt))
+                :ruleset dtype_prop
+                :name "kernel-rope-half-dtype"
+            )

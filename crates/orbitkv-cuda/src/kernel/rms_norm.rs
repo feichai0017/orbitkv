@@ -51,73 +51,12 @@ impl KernelOp for RMSNormKernel {
         let ty = crate::cuda_dtype(self.dtype);
         let includes = crate::kernel::hlir::dtype_includes(&[self.dtype]);
         let kernel = format!(
-            r#"{includes}
-#define WARP_SIZE 32
-#define FULL_MASK 0xffffffff
-extern "C" __global__ void rms_norm_k(
-    {ty}* __restrict__ out,
-    const {ty}* __restrict__ x,
-    const float* __restrict__ w
-) {{
-    const int COLS = {cols};
-    __shared__ float warp_sums[{TPB} / WARP_SIZE];
-    long long row = blockIdx.x;
-    int tid = threadIdx.x;
-    int lane_id = tid % WARP_SIZE;
-    int warp_id = tid / WARP_SIZE;
-
-    const {ty}* xr = x + row * COLS;
-    {ty}* yr = out + row * COLS;
-
-    float partial = 0.0f;
-#if {cols} % 8 == 0
-    {{
-        const uint4* xv = (const uint4*)xr;
-        for (int c = tid; c < COLS / 8; c += {TPB}) {{
-            uint4 chunk = xv[c];
-            const {ty}* xe = (const {ty}*)&chunk;
-            #pragma unroll
-            for (int e = 0; e < 8; e++) {{
-                float v = (float)xe[e];
-                partial += v * v;
-            }}
-        }}
-    }}
-#else
-    for (int i = tid; i < COLS; i += {TPB}) {{
-        float v = (float)xr[i];
-        partial += v * v;
-    }}
-#endif
-
-    #pragma unroll
-    for (int s = WARP_SIZE / 2; s > 0; s /= 2) {{
-        partial += __shfl_down_sync(FULL_MASK, partial, s);
-    }}
-    if (lane_id == 0) {{
-        warp_sums[warp_id] = partial;
-    }}
-    __syncthreads();
-
-    if (warp_id == 0) {{
-        int cnt = {TPB} / WARP_SIZE;
-        float block_sum = tid < cnt ? warp_sums[tid] : 0.0f;
-        #pragma unroll
-        for (int s = cnt / 2; s > 0; s /= 2) {{
-            block_sum += __shfl_down_sync(FULL_MASK, block_sum, s);
-        }}
-        if (tid == 0) {{
-            warp_sums[0] = rsqrtf(block_sum / (float)COLS + {eps:.10}f);
-        }}
-    }}
-    __syncthreads();
-    float rinv = warp_sums[0];
-
-    for (int i = tid; i < COLS; i += {TPB}) {{
-        yr[i] = ({ty})((float)xr[i] * rinv * w[i]);
-    }}
-}}
-"#
+            include_str!("rms_norm/rms_norm.cu.in"),
+            TPB = TPB,
+            cols = cols,
+            eps = eps,
+            includes = includes,
+            ty = ty,
         );
 
         let (module, func) = if let Some((m, f)) = compile_cache.get(&kernel) {
@@ -229,10 +168,7 @@ pub fn fused_rms_norm(x: GraphTensor, w: GraphTensor, eps: f32) -> GraphTensor {
 // ═══════════════════════════════════════════════════════════
 
 #[derive(Default, Debug, Clone)]
-pub struct KernelRMSNorm {
-    out_shape: Vec<Expression>,
-    eps: f64,
-}
+pub struct KernelRMSNorm;
 
 use orbitkv_compiler::{
     egglog_utils::{
@@ -263,42 +199,7 @@ impl EgglogOp for KernelRMSNorm {
         // weight-mul tail joins with ?rin/?xf bound, so each variant's pins
         // are cheap. A monolithic join explodes on rolled bodies with
         // several distinct layer instances.
-        let core = "(relation rms_rinv (IR IR IR f64 Expression))
-            (rule
-                (
-                    ; bf16 → f32 sandwich entry
-                    (= ?xf (Op (Cast ?xf_size (F32)) (ICons ?xb (INil))))
-                    (= (Bf16) (dtype ?xb))
-
-                    ; sum of squares over the last axis
-                    (= ?sq (Op (Mul ?sq_shape ?sq_a ?sq_b ?sq_o)
-                        (ICons ?xf (ICons ?xf2 (INil)))))
-                    (= ?xf ?xf2)
-                    (= ?sum (Op (Sum ?sum_shape ?cols ?sum_in (MIter) ?sum_out)
-                        (ICons ?sq (INil))))
-                    ; mean: × recip(cols) — the divisor iota must carry the
-                    ; reduce dim itself
-                    (= ?mean (Op (Mul ?mn_shape ?mn_a ?mn_b ?mn_o)
-                        (ICons ?sum (ICons ?rcpn (INil)))))
-                    (= ?rcpn (Op (Recip ?rn_shape ?rn_in ?rn_out) (ICons ?ncast (INil))))
-                    (= ?ncast (Op (Cast ?nc_size (F32)) (ICons ?ncst (INil))))
-                    (= ?ncst (Op (Iota ?cols3 ?nc_range) (INil)))
-                    (= ?cols ?cols3)
-
-                    ; + eps → sqrt → recip
-                    (= ?pe (Op (Add ?pe_shape ?pe_a ?pe_b ?pe_o)
-                        (ICons ?mean (ICons ?epsc (INil)))))
-                    (= ?epsc (Op (Constant ?eps) (INil)))
-                    (= ?sqr (Op (Sqrt ?sq2_shape ?sq2_in ?sq2_out) (ICons ?pe (INil))))
-                    (= ?rin (Op (Recip ?ri_shape ?ri_in ?ri_out) (ICons ?sqr (INil))))
-                )
-                (
-                    (rms_rinv ?rin ?xf ?xb ?eps ?cols)
-                )
-                :ruleset kernel_fuse_late_pre_rms
-                :name \"rms rinv core\"
-            )"
-        .to_string();
+        let core = include_str!("rms_norm/rms_norm_match.egg").to_string();
 
         // 2-D out-shape destructure + contiguous input / broadcast weight
         // stride pins.
@@ -315,33 +216,9 @@ impl EgglogOp for KernelRMSNorm {
             .into_iter()
             .map(|(variant, shape_pins)| {
                 format!(
-                    "(rule
-                    (
-                        (rms_rinv ?rin ?xf ?xb ?eps ?cols)
-
-                        ; × x → × w → bf16
-                        (= ?nrm (Op (Mul ?nr_shape ?nr_a ?nr_b ?nr_o)
-                            (ICons ?rin (ICons ?xf3 (INil)))))
-                        (= ?xf ?xf3)
-                        (= ?wgt (Op (Mul ?wg_shape ?wg_a ?wg_b ?wg_o)
-                            (ICons ?nrm (ICons ?w (INil)))))
-                        (= (F32) (dtype ?w))
-                        (= ?out (Op (Cast ?o_size (Bf16)) (ICons ?wgt (INil))))
-
-                        {shape_pins}
-                    )
-                    (
-                        (let ?krms (Op (KernelRMSNorm ?wg_shape ?eps)
-                            (ICons ?xb (ICons ?w (INil)))))
-                        (union ?out ?krms)
-                        (set (dtype ?krms) (Bf16))
-                        ; Once the fused kernel is legal, the decomposed norm
-                        ; only adds large temporaries and launch latency.
-                        (delete (Op (Cast ?o_size (Bf16)) (ICons ?wgt (INil))))
-                    )
-                    :ruleset kernel_fuse_late
-                    :name \"kernel rms norm bf16 {variant}\"
-                )"
+                    include_str!("rms_norm/rms_norm_rewrite.egg.in"),
+                    shape_pins = shape_pins,
+                    variant = variant,
                 )
             })
             .collect::<Vec<_>>()

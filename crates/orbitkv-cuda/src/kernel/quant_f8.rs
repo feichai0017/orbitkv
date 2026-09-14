@@ -54,26 +54,7 @@ impl EgglogOp for KernelQuantF8 {
     }
 
     fn rewrites(&self) -> Vec<Rule> {
-        vec![Rule::raw(
-            "(rule
-                (
-                    (= ?xf (Op (Cast ?xf_size (F32)) (ICons ?x (INil))))
-                    (= (Bf16) (dtype ?x))
-                    (= ?recip (Op (Recip ?r_shape ?r_in_strides ?r_out_strides)
-                        (ICons ?scale (INil))))
-                    (= ?mul (Op (Mul ?m_shape ?xf_strides ?recip_strides ?m_out_strides)
-                        (ICons ?xf (ICons ?recip (INil)))))
-                    (= ?q (Op (Cast ?q_size (F8E4M3)) (ICons ?mul (INil))))
-                )
-                (
-                    (let ?kq (Op (KernelQuantF8 ?q_size) (ICons ?x (ICons ?scale (INil)))))
-                    (union ?q ?kq)
-                    (set (dtype ?kq) (F8E4M3))
-                )
-                :ruleset kernel_specialize
-                :name \"kernel quant f8 from bf16\"
-            )",
-        )]
+        vec![Rule::raw(include_str!("quant_f8/quantize_rewrite.egg"))]
     }
 
     fn cleanup(&self) -> bool {
@@ -122,16 +103,11 @@ impl KernelOp for KernelQuantF8 {
         let size = self.size.to_kernel();
 
         let kernel = format!(
-            "{includes}
-{dyn_defines}
-extern \"C\" {{
-    __global__ void quant_f8_k(__nv_fp8_e4m3 *out, const __nv_bfloat16 *x, const float *scale{dyn_dims_param}) {{
-        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (const_z >= {size}) return;
-        float rs = 1.0f / scale[0];
-        out[const_z] = (__nv_fp8_e4m3)((float)x[const_z] * rs);
-    }}
-}}"
+            include_str!("quant_f8/quantize.cu.in"),
+            dyn_defines = dyn_defines,
+            dyn_dims_param = dyn_dims_param,
+            includes = includes,
+            size = size,
         );
 
         let (module, func) = if let Some((module, func)) = compile_cache.get(&kernel) {

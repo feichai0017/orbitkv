@@ -33,12 +33,12 @@ use orbitkv_compiler::{
 };
 
 use crate::{
-    host::HostOp,
     kernel::{
         KernelOp, PreparedKernelToHostPlan,
         fusion::region_codegen::{CompileUnit, RegionSourceCache},
         prepare_kernel_to_host_plan_with_topo_and_source_cache,
     },
+    providers::HostOp,
 };
 
 #[cfg(test)]
@@ -103,7 +103,7 @@ impl CudaDeviceResourceLimits {
 
         let max_kernel_parameter_bytes = kernel_parameter_abi_limit(
             compute_major,
-            crate::loaded_nvrtc_version(),
+            crate::compilation::loaded_nvrtc_version(),
             loaded_driver_api_version(),
         );
 

@@ -1,0 +1,6 @@
+{includes}
+extern "C" {{
+    __global__ void constant_k({cuda_ty} *out) {{
+        out[0] = ({cuda_ty})({value_str});
+    }}
+}}

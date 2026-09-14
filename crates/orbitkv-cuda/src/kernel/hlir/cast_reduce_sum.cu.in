@@ -1,0 +1,51 @@
+{includes}
+#define WARP_SIZE 32
+#define THREADS_PER_BLOCK 256
+#define FULL_MASK 0xffffffff
+{dyn_defines}
+extern "C" {{
+    __global__ void cast_reduce_sum_k({dtype} *out, const {dtype} *in_data{dyn_dims_param}) {{
+        __shared__ float warp_sums[THREADS_PER_BLOCK / WARP_SIZE];
+        long long const_z = blockIdx.x;
+
+        int tid = threadIdx.x;
+        int lane_id = tid % WARP_SIZE;
+        int warp_id = tid / WARP_SIZE;
+
+        long long in_start = {in_index};
+        long long iters = {iters};
+
+        float partial = 0.0f;
+        float comp = 0.0f;   // Kahan compensation
+        for (long long i = tid; i < iters; i += THREADS_PER_BLOCK) {{
+            float y = static_cast<float>(in_data[in_start + {iter_stride_of_i}]) - comp;
+            float t = partial + y;
+            comp = (t - partial) - y;
+            partial = t;
+        }}
+
+        #pragma unroll
+        for (int s = WARP_SIZE / 2; s > 0; s /= 2) {{
+            partial += __shfl_down_sync(FULL_MASK, partial, s);
+        }}
+
+        if (lane_id == 0) {{
+            warp_sums[warp_id] = partial;
+        }}
+        __syncthreads();
+
+        if (warp_id == 0) {{
+            int cnt = THREADS_PER_BLOCK / WARP_SIZE;
+            float block_sum = tid < cnt ? warp_sums[tid] : 0.0f;
+
+            #pragma unroll
+            for (int s = cnt / 2; s > 0; s /= 2) {{
+                block_sum += __shfl_down_sync(FULL_MASK, block_sum, s);
+            }}
+
+            if (tid == 0) {{
+                out[{out_index}] = ({dtype})block_sum;
+            }}
+        }}
+    }}
+}}

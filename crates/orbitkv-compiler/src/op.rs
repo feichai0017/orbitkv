@@ -44,6 +44,13 @@ pub trait Runtime {
         String::new()
     }
     fn initialize(arg: Self::CompileArg) -> Self;
+    /// Facts tied to this execution instance, such as its device target.
+    /// Graph compilation joins these with caller-owned state and workload facts
+    /// before saturation. Static search-space construction supplies its context
+    /// explicitly through `CompileOptions::compiler_facts`.
+    fn compilation_facts(&self) -> String {
+        String::new()
+    }
     /// Choose one program per bucket of `space` — by any strategy — and leave
     /// the runtime ready to [`Runtime::execute`].
     ///

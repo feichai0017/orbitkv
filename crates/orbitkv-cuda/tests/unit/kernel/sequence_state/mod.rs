@@ -1,7 +1,4 @@
-use orbitkv_compiler::{
-    op::{CustomOp, Runtime},
-    prelude::*,
-};
+use orbitkv_compiler::{op::CustomOp, prelude::*};
 
 use super::{convolution::PackedConvolutionKernel, delta_scan::PackedDeltaScanKernel, *};
 use crate::{
