@@ -1,0 +1,3564 @@
+{
+  "scope": "CPU wall spans and egglog report counters overlap; do not add different accounting views.",
+  "run": "b1",
+  "stages": [
+    {
+      "count": 63,
+      "inclusive_wall_ns": 455697594073,
+      "maximum_wall_ns": 67607724049,
+      "name": "luminal.egglog.schedule",
+      "self_wall_ns": 455697594073
+    },
+    {
+      "count": 7,
+      "inclusive_wall_ns": 62873098230,
+      "maximum_wall_ns": 9450940812,
+      "name": "luminal.egglog.setup_run",
+      "self_wall_ns": 62873098230
+    },
+    {
+      "count": 3515,
+      "inclusive_wall_ns": 53211551943,
+      "maximum_wall_ns": 36160460,
+      "name": "cuda.nvrtc.compile",
+      "self_wall_ns": 53211551943
+    },
+    {
+      "count": 7,
+      "inclusive_wall_ns": 130124728858,
+      "maximum_wall_ns": 24932311648,
+      "name": "cuda.search.bucket",
+      "self_wall_ns": 40535648608
+    },
+    {
+      "count": 288,
+      "inclusive_wall_ns": 26031404961,
+      "maximum_wall_ns": 585929810,
+      "name": "cuda.execute",
+      "self_wall_ns": 22704772480
+    },
+    {
+      "count": 91,
+      "inclusive_wall_ns": 63241927891,
+      "maximum_wall_ns": 4508285648,
+      "name": "cuda.bucket.compile",
+      "self_wall_ns": 10030375948
+    },
+    {
+      "count": 319,
+      "inclusive_wall_ns": 71020839804,
+      "maximum_wall_ns": 5618631141,
+      "name": "cuda.candidate.evaluate",
+      "self_wall_ns": 9532032987
+    },
+    {
+      "count": 326,
+      "inclusive_wall_ns": 7927134258,
+      "maximum_wall_ns": 115217601,
+      "name": "luminal.search.next_candidate",
+      "self_wall_ns": 7927134258
+    },
+    {
+      "count": 340,
+      "inclusive_wall_ns": 6614963630,
+      "maximum_wall_ns": 781291912,
+      "name": "cuda.resources.static_prepare",
+      "self_wall_ns": 6614963630
+    },
+    {
+      "count": 1251,
+      "inclusive_wall_ns": 4679389757,
+      "maximum_wall_ns": 399704808,
+      "name": "cuda.weights.upload",
+      "self_wall_ns": 4679389757
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 4252207537,
+      "maximum_wall_ns": 4252207537,
+      "name": "orbitkv.graph.build",
+      "self_wall_ns": 4252207537
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 149864921258,
+      "maximum_wall_ns": 149864921258,
+      "name": "cuda.search",
+      "self_wall_ns": 3679559904
+    },
+    {
+      "count": 80,
+      "inclusive_wall_ns": 3427342252,
+      "maximum_wall_ns": 112109646,
+      "name": "cuda.graph.materialize",
+      "self_wall_ns": 3427342252
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 2925425212,
+      "maximum_wall_ns": 2925425212,
+      "name": "luminal.graph.normalize",
+      "self_wall_ns": 2925425212
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 13912670270,
+      "maximum_wall_ns": 13912670270,
+      "name": "cuda.module_artifact.capture",
+      "self_wall_ns": 2482529794
+    },
+    {
+      "count": 7,
+      "inclusive_wall_ns": 522374906730,
+      "maximum_wall_ns": 77619151907,
+      "name": "luminal.egglog.run",
+      "self_wall_ns": 1665267779
+    },
+    {
+      "count": 7,
+      "inclusive_wall_ns": 1312403446,
+      "maximum_wall_ns": 204953017,
+      "name": "luminal.egglog.serialize",
+      "self_wall_ns": 1312403446
+    },
+    {
+      "count": 288,
+      "inclusive_wall_ns": 1303362029,
+      "maximum_wall_ns": 525337948,
+      "name": "cuda.inputs.prepare",
+      "self_wall_ns": 1303362029
+    },
+    {
+      "count": 79,
+      "inclusive_wall_ns": 1194616638,
+      "maximum_wall_ns": 81519665,
+      "name": "cuda.resources.retained",
+      "self_wall_ns": 1194616638
+    },
+    {
+      "count": 66,
+      "inclusive_wall_ns": 6315616934,
+      "maximum_wall_ns": 950836168,
+      "name": "cuda.weights.file",
+      "self_wall_ns": 818145683
+    },
+    {
+      "count": 7,
+      "inclusive_wall_ns": 816804491,
+      "maximum_wall_ns": 149788062,
+      "name": "luminal.egglog.parse",
+      "self_wall_ns": 816804491
+    },
+    {
+      "count": 1251,
+      "inclusive_wall_ns": 766074704,
+      "maximum_wall_ns": 29308987,
+      "name": "cuda.weights.allocate",
+      "self_wall_ns": 766074704
+    },
+    {
+      "count": 14,
+      "inclusive_wall_ns": 10115106662,
+      "maximum_wall_ns": 1197451513,
+      "name": "cuda.candidate.profile_deployment",
+      "self_wall_ns": 631217344
+    },
+    {
+      "count": 7,
+      "inclusive_wall_ns": 525999526,
+      "maximum_wall_ns": 78716259,
+      "name": "cuda.search.initialize",
+      "self_wall_ns": 525999526
+    },
+    {
+      "count": 79,
+      "inclusive_wall_ns": 386428763,
+      "maximum_wall_ns": 37583170,
+      "name": "cuda.providers.prepare",
+      "self_wall_ns": 350801146
+    },
+    {
+      "count": 7,
+      "inclusive_wall_ns": 522671434775,
+      "maximum_wall_ns": 77636968932,
+      "name": "luminal.egglog.bucket",
+      "self_wall_ns": 296528045
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 700243786968,
+      "maximum_wall_ns": 700243786968,
+      "name": "orbitkv.decoder.compile_or_load",
+      "self_wall_ns": 243542997
+    },
+    {
+      "count": 44,
+      "inclusive_wall_ns": 35701288,
+      "maximum_wall_ns": 31116912,
+      "name": "cuda.provider.jit",
+      "self_wall_ns": 35701288
+    },
+    {
+      "count": 66,
+      "inclusive_wall_ns": 28885033,
+      "maximum_wall_ns": 473323,
+      "name": "cuda.weights.validate",
+      "self_wall_ns": 28885033
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 525628410016,
+      "maximum_wall_ns": 525628410016,
+      "name": "luminal.search_space.build",
+      "self_wall_ns": 19081057
+    },
+    {
+      "count": 1251,
+      "inclusive_wall_ns": 5462680455,
+      "maximum_wall_ns": 404014651,
+      "name": "cuda.weights.tensor",
+      "self_wall_ns": 12653774
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 12099800,
+      "maximum_wall_ns": 12099800,
+      "name": "luminal.hlir.serialize",
+      "self_wall_ns": 12099800
+    },
+    {
+      "count": 56,
+      "inclusive_wall_ns": 19880776496,
+      "maximum_wall_ns": 935376140,
+      "name": "cuda.candidate.profile_direct",
+      "self_wall_ns": 10888767
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 10061528,
+      "maximum_wall_ns": 10061528,
+      "name": "orbitkv.decoder.finalize",
+      "self_wall_ns": 10061528
+    },
+    {
+      "count": 7,
+      "inclusive_wall_ns": 9738711,
+      "maximum_wall_ns": 1519831,
+      "name": "luminal.egglog.setup_text",
+      "self_wall_ns": 9738711
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 7385407,
+      "maximum_wall_ns": 7385407,
+      "name": "cuda.initialize",
+      "self_wall_ns": 7385407
+    },
+    {
+      "count": 8,
+      "inclusive_wall_ns": 430721810,
+      "maximum_wall_ns": 142795132,
+      "name": "orbitkv.qualification.step",
+      "self_wall_ns": 5166469
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 4909191,
+      "maximum_wall_ns": 4909191,
+      "name": "orbitkv.inputs.bind_and_seed",
+      "self_wall_ns": 4909191
+    },
+    {
+      "count": 79,
+      "inclusive_wall_ns": 64827621619,
+      "maximum_wall_ns": 11346891314,
+      "name": "cuda.buckets.compile_and_validate",
+      "self_wall_ns": 4648327
+    },
+    {
+      "count": 705,
+      "inclusive_wall_ns": 4562220,
+      "maximum_wall_ns": 29858,
+      "name": "cuda.weights.convert",
+      "self_wall_ns": 4562220
+    },
+    {
+      "count": 66,
+      "inclusive_wall_ns": 3538649,
+      "maximum_wall_ns": 380022,
+      "name": "cuda.weights.metadata",
+      "self_wall_ns": 3538649
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 3018200,
+      "maximum_wall_ns": 3018200,
+      "name": "orbitkv.weights.inspect",
+      "self_wall_ns": 3018200
+    },
+    {
+      "count": 66,
+      "inclusive_wall_ns": 1667112,
+      "maximum_wall_ns": 40732,
+      "name": "cuda.weights.map",
+      "self_wall_ns": 1667112
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 6316487721,
+      "maximum_wall_ns": 6316487721,
+      "name": "orbitkv.weights.load",
+      "self_wall_ns": 870787
+    },
+    {
+      "count": 66,
+      "inclusive_wall_ns": 666617,
+      "maximum_wall_ns": 17688,
+      "name": "cuda.weights.complete",
+      "self_wall_ns": 666617
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 369172,
+      "maximum_wall_ns": 369172,
+      "name": "luminal.egglog.declarations",
+      "self_wall_ns": 369172
+    },
+    {
+      "count": 1,
+      "inclusive_wall_ns": 10584180899,
+      "maximum_wall_ns": 10584180899,
+      "name": "orbitkv.decoder.prepare",
+      "self_wall_ns": 172843
+    },
+    {
+      "count": 66,
+      "inclusive_wall_ns": 33385,
+      "maximum_wall_ns": 1340,
+      "name": "cuda.weights.loaded",
+      "self_wall_ns": 33385
+    }
+  ],
+  "buckets": [
+    {
+      "bucket": {
+        "bucket": 0,
+        "indices": "{c_0: 0, b: 0, s: 0}"
+      },
+      "wall_duration_ns": 77028585917,
+      "schedule_wall_ns": 68836812049,
+      "rule_records": 393,
+      "ruleset_records": 36,
+      "top_rules": [
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe densify marker",
+          "search_apply_ns": 479116436
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel argmax last axis",
+          "search_apply_ns": 196794812
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe unpack marker",
+          "search_apply_ns": 124342514
+        },
+        {
+          "matches": 0,
+          "records": 1,
+          "rule": "kernel swiglu bf16",
+          "search_apply_ns": 109595655
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "cublaslt scaled fp8 row-major x column-major f32 output",
+          "search_apply_ns": 102061673
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove conv2d unfold matmul semantics",
+          "search_apply_ns": 47966150
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul",
+          "search_apply_ns": 47781147
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove static conv2d unfold matmul semantics",
+          "search_apply_ns": 47690887
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul reversed",
+          "search_apply_ns": 45627391
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel embed with mul",
+          "search_apply_ns": 37633145
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with mul reversed",
+          "search_apply_ns": 35008739
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=0",
+          "search_apply_ns": 33745728
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed recurrent state to selected arena slots",
+          "search_apply_ns": 30820012
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed convolution state to selected arena slots",
+          "search_apply_ns": 28720674
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel in-place delta state update",
+          "search_apply_ns": 26610753
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=3 state=0",
+          "search_apply_ns": 23129565
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=1",
+          "search_apply_ns": 22879828
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=4 state=1",
+          "search_apply_ns": 22351972
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge A-contiguous B-broadcast",
+          "search_apply_ns": 21830986
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=4 state=0",
+          "search_apply_ns": 21702215
+        }
+      ],
+      "rulesets": [
+        {
+          "merge_ns": 1998394,
+          "rebuild_ns": 775792,
+          "records": 2,
+          "ruleset": "glumoe",
+          "search_apply_ns": 49563697075
+        },
+        {
+          "merge_ns": 3913737,
+          "rebuild_ns": 15552852,
+          "records": 2,
+          "ruleset": "kernel_specialize",
+          "search_apply_ns": 13197506393
+        },
+        {
+          "merge_ns": 13389896,
+          "rebuild_ns": 98195652,
+          "records": 4,
+          "ruleset": "expr",
+          "search_apply_ns": 2632849530
+        },
+        {
+          "merge_ns": 5169032,
+          "rebuild_ns": 18189979,
+          "records": 2,
+          "ruleset": "matmul_backend",
+          "search_apply_ns": 671082158
+        },
+        {
+          "merge_ns": 1165360,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "matmul_flatten",
+          "search_apply_ns": 613401794
+        },
+        {
+          "merge_ns": 146390,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rope",
+          "search_apply_ns": 224117594
+        },
+        {
+          "merge_ns": 127488,
+          "rebuild_ns": 1071275,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rms",
+          "search_apply_ns": 65360004
+        },
+        {
+          "merge_ns": 1174644,
+          "rebuild_ns": 6932124,
+          "records": 1,
+          "ruleset": "kernel_fuse_late",
+          "search_apply_ns": 27848951
+        },
+        {
+          "merge_ns": 6455647,
+          "rebuild_ns": 15836044,
+          "records": 1,
+          "ruleset": "cuda_scatter_uses",
+          "search_apply_ns": 27843804
+        },
+        {
+          "merge_ns": 1831030,
+          "rebuild_ns": 2648583,
+          "records": 2,
+          "ruleset": "kernel_lower",
+          "search_apply_ns": 18104944
+        },
+        {
+          "merge_ns": 3376052,
+          "rebuild_ns": 8894344,
+          "records": 3,
+          "ruleset": "dtype_prop",
+          "search_apply_ns": 16594661
+        },
+        {
+          "merge_ns": 114783,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_flashinfer",
+          "search_apply_ns": 14716046
+        },
+        {
+          "merge_ns": 287180,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "cleanup",
+          "search_apply_ns": 5634034
+        },
+        {
+          "merge_ns": 365782,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_grow",
+          "search_apply_ns": 5349149
+        },
+        {
+          "merge_ns": 184047,
+          "rebuild_ns": 3012090,
+          "records": 1,
+          "ruleset": "fusion_inline_safe_late",
+          "search_apply_ns": 4525534
+        },
+        {
+          "merge_ns": 4395452,
+          "rebuild_ns": 4783717,
+          "records": 3,
+          "ruleset": "interval_expr",
+          "search_apply_ns": 4486427
+        },
+        {
+          "merge_ns": 734342,
+          "rebuild_ns": 1801868,
+          "records": 1,
+          "ruleset": "cuda_scatter_reuse",
+          "search_apply_ns": 2988501
+        },
+        {
+          "merge_ns": 108386,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_topk",
+          "search_apply_ns": 2490322
+        },
+        {
+          "merge_ns": 441506,
+          "rebuild_ns": 958054,
+          "records": 2,
+          "ruleset": "post_cleanup",
+          "search_apply_ns": 2432226
+        },
+        {
+          "merge_ns": 109409,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_value",
+          "search_apply_ns": 1042319
+        },
+        {
+          "merge_ns": 726158,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "base_cleanup",
+          "search_apply_ns": 934533
+        },
+        {
+          "merge_ns": 227809,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "kernel_fuse_late2_rope",
+          "search_apply_ns": 321330
+        },
+        {
+          "merge_ns": 123672,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_request",
+          "search_apply_ns": 82589
+        },
+        {
+          "merge_ns": 105904,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_final",
+          "search_apply_ns": 34120
+        },
+        {
+          "merge_ns": 109820,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_source",
+          "search_apply_ns": 33672
+        },
+        {
+          "merge_ns": 108808,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_qk",
+          "search_apply_ns": 27191
+        },
+        {
+          "merge_ns": 108111,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_denominator",
+          "search_apply_ns": 26204
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "buffer_reuse",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "direct_kernel",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_merge",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_pair",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_sink_attention",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_base",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_finish",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_past",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_request",
+          "search_apply_ns": 0
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cycle 001 main",
+          "run_wall_ns": 67605110180,
+          "iterations": 147,
+          "tuples_before": 19161,
+          "tuples_after": 28861,
+          "tuple_delta": 9700
+        },
+        {
+          "phase": "cycle 002 main",
+          "run_wall_ns": 166185291,
+          "iterations": 16,
+          "tuples_before": 28861,
+          "tuples_after": 28861,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "fuse late",
+          "run_wall_ns": 425040296,
+          "iterations": 19,
+          "tuples_before": 28861,
+          "tuples_after": 28892,
+          "tuple_delta": 31
+        },
+        {
+          "phase": "final expr",
+          "run_wall_ns": 16255099,
+          "iterations": 2,
+          "tuples_before": 28892,
+          "tuples_after": 28892,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "cleanup",
+          "run_wall_ns": 3791773,
+          "iterations": 1,
+          "tuples_before": 28892,
+          "tuples_after": 28886,
+          "tuple_delta": -6
+        },
+        {
+          "phase": "post cleanup",
+          "run_wall_ns": 3235849,
+          "iterations": 2,
+          "tuples_before": 28886,
+          "tuples_after": 29201,
+          "tuple_delta": 315
+        },
+        {
+          "phase": "base cleanup",
+          "run_wall_ns": 1425604,
+          "iterations": 1,
+          "tuples_before": 29201,
+          "tuples_after": 28488,
+          "tuple_delta": -713
+        },
+        {
+          "phase": "late pass 01",
+          "run_wall_ns": 546449353,
+          "iterations": 5,
+          "tuples_before": 28488,
+          "tuples_after": 28376,
+          "tuple_delta": -112
+        },
+        {
+          "phase": "late pass 02",
+          "run_wall_ns": 69318604,
+          "iterations": 21,
+          "tuples_before": 28376,
+          "tuples_after": 45729,
+          "tuple_delta": 17353
+        }
+      ]
+    },
+    {
+      "bucket": {
+        "bucket": 1,
+        "indices": "{c_0: 0, b: 0, s: 1}"
+      },
+      "wall_duration_ns": 77619151907,
+      "schedule_wall_ns": 68469071162,
+      "rule_records": 393,
+      "ruleset_records": 36,
+      "top_rules": [
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe densify marker",
+          "search_apply_ns": 498135205
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel argmax last axis",
+          "search_apply_ns": 190000632
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe unpack marker",
+          "search_apply_ns": 134024312
+        },
+        {
+          "matches": 0,
+          "records": 1,
+          "rule": "kernel swiglu bf16",
+          "search_apply_ns": 116511608
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "cublaslt scaled fp8 row-major x column-major f32 output",
+          "search_apply_ns": 101850247
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove static conv2d unfold matmul semantics",
+          "search_apply_ns": 55316104
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul",
+          "search_apply_ns": 54369843
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove conv2d unfold matmul semantics",
+          "search_apply_ns": 53658269
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul reversed",
+          "search_apply_ns": 50780224
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with mul reversed",
+          "search_apply_ns": 38609201
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel embed with mul",
+          "search_apply_ns": 35701086
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed convolution state to selected arena slots",
+          "search_apply_ns": 30881948
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel in-place delta state update",
+          "search_apply_ns": 27475727
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed recurrent state to selected arena slots",
+          "search_apply_ns": 27179266
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=3 state=0",
+          "search_apply_ns": 26017311
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=0",
+          "search_apply_ns": 24877000
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge B-contiguous A-broadcast",
+          "search_apply_ns": 24611125
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge A-contiguous B-broadcast",
+          "search_apply_ns": 23592730
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=1",
+          "search_apply_ns": 22915953
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=4 state=1",
+          "search_apply_ns": 22712332
+        }
+      ],
+      "rulesets": [
+        {
+          "merge_ns": 2132527,
+          "rebuild_ns": 897416,
+          "records": 2,
+          "ruleset": "glumoe",
+          "search_apply_ns": 50699980151
+        },
+        {
+          "merge_ns": 3818728,
+          "rebuild_ns": 16652059,
+          "records": 2,
+          "ruleset": "kernel_specialize",
+          "search_apply_ns": 10837501368
+        },
+        {
+          "merge_ns": 11943010,
+          "rebuild_ns": 114150203,
+          "records": 4,
+          "ruleset": "expr",
+          "search_apply_ns": 3170403089
+        },
+        {
+          "merge_ns": 5232362,
+          "rebuild_ns": 20395983,
+          "records": 2,
+          "ruleset": "matmul_backend",
+          "search_apply_ns": 793631513
+        },
+        {
+          "merge_ns": 1282232,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "matmul_flatten",
+          "search_apply_ns": 738705862
+        },
+        {
+          "merge_ns": 380689,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rope",
+          "search_apply_ns": 231396280
+        },
+        {
+          "merge_ns": 201617,
+          "rebuild_ns": 1136219,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rms",
+          "search_apply_ns": 59868337
+        },
+        {
+          "merge_ns": 7260347,
+          "rebuild_ns": 16476344,
+          "records": 1,
+          "ruleset": "cuda_scatter_uses",
+          "search_apply_ns": 29806757
+        },
+        {
+          "merge_ns": 1384966,
+          "rebuild_ns": 8416555,
+          "records": 1,
+          "ruleset": "kernel_fuse_late",
+          "search_apply_ns": 28817902
+        },
+        {
+          "merge_ns": 1985269,
+          "rebuild_ns": 3025790,
+          "records": 2,
+          "ruleset": "kernel_lower",
+          "search_apply_ns": 18973760
+        },
+        {
+          "merge_ns": 3971651,
+          "rebuild_ns": 10425409,
+          "records": 3,
+          "ruleset": "dtype_prop",
+          "search_apply_ns": 18391381
+        },
+        {
+          "merge_ns": 184127,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_flashinfer",
+          "search_apply_ns": 16121067
+        },
+        {
+          "merge_ns": 190820,
+          "rebuild_ns": 3130711,
+          "records": 1,
+          "ruleset": "fusion_inline_safe_late",
+          "search_apply_ns": 7877773
+        },
+        {
+          "merge_ns": 298371,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "cleanup",
+          "search_apply_ns": 5796863
+        },
+        {
+          "merge_ns": 389968,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_grow",
+          "search_apply_ns": 5732665
+        },
+        {
+          "merge_ns": 4513375,
+          "rebuild_ns": 4207115,
+          "records": 3,
+          "ruleset": "interval_expr",
+          "search_apply_ns": 4587476
+        },
+        {
+          "merge_ns": 828780,
+          "rebuild_ns": 1902724,
+          "records": 1,
+          "ruleset": "cuda_scatter_reuse",
+          "search_apply_ns": 3088967
+        },
+        {
+          "merge_ns": 126445,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_topk",
+          "search_apply_ns": 2776225
+        },
+        {
+          "merge_ns": 446681,
+          "rebuild_ns": 923716,
+          "records": 2,
+          "ruleset": "post_cleanup",
+          "search_apply_ns": 2254960
+        },
+        {
+          "merge_ns": 849998,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "base_cleanup",
+          "search_apply_ns": 966565
+        },
+        {
+          "merge_ns": 121723,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_value",
+          "search_apply_ns": 544493
+        },
+        {
+          "merge_ns": 252395,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "kernel_fuse_late2_rope",
+          "search_apply_ns": 201936
+        },
+        {
+          "merge_ns": 154083,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_request",
+          "search_apply_ns": 94459
+        },
+        {
+          "merge_ns": 150222,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_source",
+          "search_apply_ns": 31180
+        },
+        {
+          "merge_ns": 115438,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_final",
+          "search_apply_ns": 26980
+        },
+        {
+          "merge_ns": 118509,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_denominator",
+          "search_apply_ns": 25651
+        },
+        {
+          "merge_ns": 119485,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_qk",
+          "search_apply_ns": 24662
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "buffer_reuse",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "direct_kernel",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_merge",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_pair",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_sink_attention",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_base",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_finish",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_past",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_request",
+          "search_apply_ns": 0
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cycle 001 main",
+          "run_wall_ns": 67279009293,
+          "iterations": 147,
+          "tuples_before": 19166,
+          "tuples_after": 28844,
+          "tuple_delta": 9678
+        },
+        {
+          "phase": "cycle 002 main",
+          "run_wall_ns": 179608232,
+          "iterations": 16,
+          "tuples_before": 28844,
+          "tuples_after": 28844,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "fuse late",
+          "run_wall_ns": 442538055,
+          "iterations": 19,
+          "tuples_before": 28844,
+          "tuples_after": 28875,
+          "tuple_delta": 31
+        },
+        {
+          "phase": "final expr",
+          "run_wall_ns": 17729855,
+          "iterations": 2,
+          "tuples_before": 28875,
+          "tuples_after": 28875,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "cleanup",
+          "run_wall_ns": 3981374,
+          "iterations": 1,
+          "tuples_before": 28875,
+          "tuples_after": 28869,
+          "tuple_delta": -6
+        },
+        {
+          "phase": "post cleanup",
+          "run_wall_ns": 3131672,
+          "iterations": 2,
+          "tuples_before": 28869,
+          "tuples_after": 29184,
+          "tuple_delta": 315
+        },
+        {
+          "phase": "base cleanup",
+          "run_wall_ns": 1569246,
+          "iterations": 1,
+          "tuples_before": 29184,
+          "tuples_after": 28428,
+          "tuple_delta": -756
+        },
+        {
+          "phase": "late pass 01",
+          "run_wall_ns": 467879817,
+          "iterations": 5,
+          "tuples_before": 28428,
+          "tuples_after": 28316,
+          "tuple_delta": -112
+        },
+        {
+          "phase": "late pass 02",
+          "run_wall_ns": 73623618,
+          "iterations": 21,
+          "tuples_before": 28316,
+          "tuples_after": 45669,
+          "tuple_delta": 17353
+        }
+      ]
+    },
+    {
+      "bucket": {
+        "bucket": 2,
+        "indices": "{c_0: 0, b: 0, s: 2}"
+      },
+      "wall_duration_ns": 73871757723,
+      "schedule_wall_ns": 64011485898,
+      "rule_records": 393,
+      "ruleset_records": 36,
+      "top_rules": [
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe densify marker",
+          "search_apply_ns": 485177626
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel argmax last axis",
+          "search_apply_ns": 191918960
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe unpack marker",
+          "search_apply_ns": 125111945
+        },
+        {
+          "matches": 0,
+          "records": 1,
+          "rule": "kernel swiglu bf16",
+          "search_apply_ns": 119979018
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "cublaslt scaled fp8 row-major x column-major f32 output",
+          "search_apply_ns": 96421017
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove static conv2d unfold matmul semantics",
+          "search_apply_ns": 54582637
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul",
+          "search_apply_ns": 52323101
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove conv2d unfold matmul semantics",
+          "search_apply_ns": 50763183
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul reversed",
+          "search_apply_ns": 50732293
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with mul reversed",
+          "search_apply_ns": 38217976
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed recurrent state to selected arena slots",
+          "search_apply_ns": 36163560
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel embed with mul",
+          "search_apply_ns": 34268308
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=0",
+          "search_apply_ns": 26240972
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel in-place delta state update",
+          "search_apply_ns": 26190766
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge B-contiguous A-broadcast",
+          "search_apply_ns": 25381427
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=1",
+          "search_apply_ns": 25331249
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=4 state=0",
+          "search_apply_ns": 25016333
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed convolution state to selected arena slots",
+          "search_apply_ns": 25007447
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=3 state=0",
+          "search_apply_ns": 24550745
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge A-contiguous B-broadcast",
+          "search_apply_ns": 23980474
+        }
+      ],
+      "rulesets": [
+        {
+          "merge_ns": 2053616,
+          "rebuild_ns": 912940,
+          "records": 2,
+          "ruleset": "glumoe",
+          "search_apply_ns": 51134123765
+        },
+        {
+          "merge_ns": 3684095,
+          "rebuild_ns": 16394758,
+          "records": 2,
+          "ruleset": "kernel_specialize",
+          "search_apply_ns": 6086568660
+        },
+        {
+          "merge_ns": 12340317,
+          "rebuild_ns": 114072251,
+          "records": 4,
+          "ruleset": "expr",
+          "search_apply_ns": 3044826099
+        },
+        {
+          "merge_ns": 1213409,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "matmul_flatten",
+          "search_apply_ns": 821443869
+        },
+        {
+          "merge_ns": 4513958,
+          "rebuild_ns": 20283451,
+          "records": 2,
+          "ruleset": "matmul_backend",
+          "search_apply_ns": 748284671
+        },
+        {
+          "merge_ns": 322850,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rope",
+          "search_apply_ns": 223174972
+        },
+        {
+          "merge_ns": 169249,
+          "rebuild_ns": 1124218,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rms",
+          "search_apply_ns": 53565425
+        },
+        {
+          "merge_ns": 7142818,
+          "rebuild_ns": 16626661,
+          "records": 1,
+          "ruleset": "cuda_scatter_uses",
+          "search_apply_ns": 31243645
+        },
+        {
+          "merge_ns": 1296282,
+          "rebuild_ns": 8281962,
+          "records": 1,
+          "ruleset": "kernel_fuse_late",
+          "search_apply_ns": 29827330
+        },
+        {
+          "merge_ns": 3799725,
+          "rebuild_ns": 10400318,
+          "records": 3,
+          "ruleset": "dtype_prop",
+          "search_apply_ns": 18075452
+        },
+        {
+          "merge_ns": 1963332,
+          "rebuild_ns": 3090639,
+          "records": 2,
+          "ruleset": "kernel_lower",
+          "search_apply_ns": 17800849
+        },
+        {
+          "merge_ns": 214632,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_flashinfer",
+          "search_apply_ns": 14156661
+        },
+        {
+          "merge_ns": 316678,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "cleanup",
+          "search_apply_ns": 5731010
+        },
+        {
+          "merge_ns": 177715,
+          "rebuild_ns": 3186040,
+          "records": 1,
+          "ruleset": "fusion_inline_safe_late",
+          "search_apply_ns": 5243843
+        },
+        {
+          "merge_ns": 370341,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_grow",
+          "search_apply_ns": 5047604
+        },
+        {
+          "merge_ns": 4501725,
+          "rebuild_ns": 5507701,
+          "records": 3,
+          "ruleset": "interval_expr",
+          "search_apply_ns": 4652756
+        },
+        {
+          "merge_ns": 752466,
+          "rebuild_ns": 1860362,
+          "records": 1,
+          "ruleset": "cuda_scatter_reuse",
+          "search_apply_ns": 3238535
+        },
+        {
+          "merge_ns": 115160,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_topk",
+          "search_apply_ns": 2525891
+        },
+        {
+          "merge_ns": 422524,
+          "rebuild_ns": 1003882,
+          "records": 2,
+          "ruleset": "post_cleanup",
+          "search_apply_ns": 2053356
+        },
+        {
+          "merge_ns": 770401,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "base_cleanup",
+          "search_apply_ns": 1030376
+        },
+        {
+          "merge_ns": 114131,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_value",
+          "search_apply_ns": 531764
+        },
+        {
+          "merge_ns": 240267,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "kernel_fuse_late2_rope",
+          "search_apply_ns": 236294
+        },
+        {
+          "merge_ns": 116038,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_request",
+          "search_apply_ns": 85736
+        },
+        {
+          "merge_ns": 113927,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_source",
+          "search_apply_ns": 30173
+        },
+        {
+          "merge_ns": 110028,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_final",
+          "search_apply_ns": 24346
+        },
+        {
+          "merge_ns": 114704,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_qk",
+          "search_apply_ns": 21444
+        },
+        {
+          "merge_ns": 139198,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_denominator",
+          "search_apply_ns": 20204
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "buffer_reuse",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "direct_kernel",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_merge",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_pair",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_sink_attention",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_base",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_finish",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_past",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_request",
+          "search_apply_ns": 0
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cycle 001 main",
+          "run_wall_ns": 62753800164,
+          "iterations": 147,
+          "tuples_before": 19161,
+          "tuples_after": 28973,
+          "tuple_delta": 9812
+        },
+        {
+          "phase": "cycle 002 main",
+          "run_wall_ns": 181473723,
+          "iterations": 16,
+          "tuples_before": 28973,
+          "tuples_after": 28973,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "fuse late",
+          "run_wall_ns": 421638223,
+          "iterations": 19,
+          "tuples_before": 28973,
+          "tuples_after": 29004,
+          "tuple_delta": 31
+        },
+        {
+          "phase": "final expr",
+          "run_wall_ns": 17588027,
+          "iterations": 2,
+          "tuples_before": 29004,
+          "tuples_after": 29004,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "cleanup",
+          "run_wall_ns": 3931744,
+          "iterations": 1,
+          "tuples_before": 29004,
+          "tuples_after": 28998,
+          "tuple_delta": -6
+        },
+        {
+          "phase": "post cleanup",
+          "run_wall_ns": 3114158,
+          "iterations": 2,
+          "tuples_before": 28998,
+          "tuples_after": 29313,
+          "tuple_delta": 315
+        },
+        {
+          "phase": "base cleanup",
+          "run_wall_ns": 1479262,
+          "iterations": 1,
+          "tuples_before": 29313,
+          "tuples_after": 28566,
+          "tuple_delta": -747
+        },
+        {
+          "phase": "late pass 01",
+          "run_wall_ns": 553214140,
+          "iterations": 5,
+          "tuples_before": 28566,
+          "tuples_after": 28454,
+          "tuple_delta": -112
+        },
+        {
+          "phase": "late pass 02",
+          "run_wall_ns": 75246457,
+          "iterations": 21,
+          "tuples_before": 28454,
+          "tuples_after": 45807,
+          "tuple_delta": 17353
+        }
+      ]
+    },
+    {
+      "bucket": {
+        "bucket": 3,
+        "indices": "{c_0: 0, b: 1, s: 1}"
+      },
+      "wall_duration_ns": 74128468370,
+      "schedule_wall_ns": 64491703291,
+      "rule_records": 393,
+      "ruleset_records": 36,
+      "top_rules": [
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe densify marker",
+          "search_apply_ns": 506611986
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel argmax last axis",
+          "search_apply_ns": 194507211
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe unpack marker",
+          "search_apply_ns": 132628628
+        },
+        {
+          "matches": 0,
+          "records": 1,
+          "rule": "kernel swiglu bf16",
+          "search_apply_ns": 124163751
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "cublaslt scaled fp8 row-major x column-major f32 output",
+          "search_apply_ns": 91142941
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove static conv2d unfold matmul semantics",
+          "search_apply_ns": 53048500
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove conv2d unfold matmul semantics",
+          "search_apply_ns": 51647017
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul reversed",
+          "search_apply_ns": 50289221
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul",
+          "search_apply_ns": 49675547
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with mul reversed",
+          "search_apply_ns": 35478375
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel embed with mul",
+          "search_apply_ns": 34743667
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed convolution state to selected arena slots",
+          "search_apply_ns": 29153670
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=0",
+          "search_apply_ns": 26325806
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel in-place delta state update",
+          "search_apply_ns": 26130879
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge B-contiguous A-broadcast",
+          "search_apply_ns": 25447974
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed recurrent state to selected arena slots",
+          "search_apply_ns": 25079652
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=3 state=0",
+          "search_apply_ns": 23974329
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge A-contiguous B-broadcast",
+          "search_apply_ns": 23477858
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=4 state=0",
+          "search_apply_ns": 23359117
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=1",
+          "search_apply_ns": 22441818
+        }
+      ],
+      "rulesets": [
+        {
+          "merge_ns": 2110710,
+          "rebuild_ns": 994937,
+          "records": 2,
+          "ruleset": "glumoe",
+          "search_apply_ns": 46033424049
+        },
+        {
+          "merge_ns": 3812636,
+          "rebuild_ns": 17136131,
+          "records": 2,
+          "ruleset": "kernel_specialize",
+          "search_apply_ns": 11858867586
+        },
+        {
+          "merge_ns": 13647646,
+          "rebuild_ns": 124638412,
+          "records": 4,
+          "ruleset": "expr",
+          "search_apply_ns": 2949915457
+        },
+        {
+          "merge_ns": 4987406,
+          "rebuild_ns": 20486053,
+          "records": 2,
+          "ruleset": "matmul_backend",
+          "search_apply_ns": 738519109
+        },
+        {
+          "merge_ns": 1240360,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "matmul_flatten",
+          "search_apply_ns": 651689257
+        },
+        {
+          "merge_ns": 302300,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rope",
+          "search_apply_ns": 229569024
+        },
+        {
+          "merge_ns": 162749,
+          "rebuild_ns": 1133797,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rms",
+          "search_apply_ns": 56666872
+        },
+        {
+          "merge_ns": 7692243,
+          "rebuild_ns": 17227724,
+          "records": 1,
+          "ruleset": "cuda_scatter_uses",
+          "search_apply_ns": 31430393
+        },
+        {
+          "merge_ns": 1348438,
+          "rebuild_ns": 8424514,
+          "records": 1,
+          "ruleset": "kernel_fuse_late",
+          "search_apply_ns": 30865346
+        },
+        {
+          "merge_ns": 2014687,
+          "rebuild_ns": 3004311,
+          "records": 2,
+          "ruleset": "kernel_lower",
+          "search_apply_ns": 18959121
+        },
+        {
+          "merge_ns": 3995463,
+          "rebuild_ns": 10503930,
+          "records": 3,
+          "ruleset": "dtype_prop",
+          "search_apply_ns": 18518469
+        },
+        {
+          "merge_ns": 167524,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_flashinfer",
+          "search_apply_ns": 15658121
+        },
+        {
+          "merge_ns": 323464,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "cleanup",
+          "search_apply_ns": 5874308
+        },
+        {
+          "merge_ns": 390982,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_grow",
+          "search_apply_ns": 5416758
+        },
+        {
+          "merge_ns": 247093,
+          "rebuild_ns": 3274877,
+          "records": 1,
+          "ruleset": "fusion_inline_safe_late",
+          "search_apply_ns": 5016370
+        },
+        {
+          "merge_ns": 5130095,
+          "rebuild_ns": 4844936,
+          "records": 3,
+          "ruleset": "interval_expr",
+          "search_apply_ns": 4474429
+        },
+        {
+          "merge_ns": 819126,
+          "rebuild_ns": 1967129,
+          "records": 1,
+          "ruleset": "cuda_scatter_reuse",
+          "search_apply_ns": 3090215
+        },
+        {
+          "merge_ns": 123991,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_topk",
+          "search_apply_ns": 2421367
+        },
+        {
+          "merge_ns": 468501,
+          "rebuild_ns": 952601,
+          "records": 2,
+          "ruleset": "post_cleanup",
+          "search_apply_ns": 2131487
+        },
+        {
+          "merge_ns": 859831,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "base_cleanup",
+          "search_apply_ns": 1107968
+        },
+        {
+          "merge_ns": 122817,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_value",
+          "search_apply_ns": 713550
+        },
+        {
+          "merge_ns": 255392,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "kernel_fuse_late2_rope",
+          "search_apply_ns": 603951
+        },
+        {
+          "merge_ns": 130035,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_request",
+          "search_apply_ns": 82718
+        },
+        {
+          "merge_ns": 121282,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_denominator",
+          "search_apply_ns": 34477
+        },
+        {
+          "merge_ns": 122180,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_source",
+          "search_apply_ns": 29765
+        },
+        {
+          "merge_ns": 117443,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_final",
+          "search_apply_ns": 26629
+        },
+        {
+          "merge_ns": 150887,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_qk",
+          "search_apply_ns": 22123
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "buffer_reuse",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "direct_kernel",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_merge",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_pair",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_sink_attention",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_base",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_finish",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_past",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_request",
+          "search_apply_ns": 0
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cycle 001 main",
+          "run_wall_ns": 63195427973,
+          "iterations": 147,
+          "tuples_before": 19167,
+          "tuples_after": 28860,
+          "tuple_delta": 9693
+        },
+        {
+          "phase": "cycle 002 main",
+          "run_wall_ns": 180457590,
+          "iterations": 16,
+          "tuples_before": 28860,
+          "tuples_after": 28860,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "fuse late",
+          "run_wall_ns": 434975955,
+          "iterations": 19,
+          "tuples_before": 28860,
+          "tuples_after": 28891,
+          "tuple_delta": 31
+        },
+        {
+          "phase": "final expr",
+          "run_wall_ns": 17600007,
+          "iterations": 2,
+          "tuples_before": 28891,
+          "tuples_after": 28891,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "cleanup",
+          "run_wall_ns": 3856600,
+          "iterations": 1,
+          "tuples_before": 28891,
+          "tuples_after": 28885,
+          "tuple_delta": -6
+        },
+        {
+          "phase": "post cleanup",
+          "run_wall_ns": 3179903,
+          "iterations": 2,
+          "tuples_before": 28885,
+          "tuples_after": 29200,
+          "tuple_delta": 315
+        },
+        {
+          "phase": "base cleanup",
+          "run_wall_ns": 1690388,
+          "iterations": 1,
+          "tuples_before": 29200,
+          "tuples_after": 28441,
+          "tuple_delta": -759
+        },
+        {
+          "phase": "late pass 01",
+          "run_wall_ns": 577628570,
+          "iterations": 5,
+          "tuples_before": 28441,
+          "tuples_after": 28329,
+          "tuple_delta": -112
+        },
+        {
+          "phase": "late pass 02",
+          "run_wall_ns": 76886305,
+          "iterations": 21,
+          "tuples_before": 28329,
+          "tuples_after": 45682,
+          "tuple_delta": 17353
+        }
+      ]
+    },
+    {
+      "bucket": {
+        "bucket": 4,
+        "indices": "{c_0: 0, b: 1, s: 2}"
+      },
+      "wall_duration_ns": 74141647407,
+      "schedule_wall_ns": 64225816686,
+      "rule_records": 393,
+      "ruleset_records": 36,
+      "top_rules": [
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe densify marker",
+          "search_apply_ns": 515158395
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel argmax last axis",
+          "search_apply_ns": 202034535
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe unpack marker",
+          "search_apply_ns": 126520590
+        },
+        {
+          "matches": 0,
+          "records": 1,
+          "rule": "kernel swiglu bf16",
+          "search_apply_ns": 118077924
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed convolution state to selected arena slots",
+          "search_apply_ns": 110872129
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "cublaslt scaled fp8 row-major x column-major f32 output",
+          "search_apply_ns": 100930978
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove static conv2d unfold matmul semantics",
+          "search_apply_ns": 54827207
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove conv2d unfold matmul semantics",
+          "search_apply_ns": 53919062
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul reversed",
+          "search_apply_ns": 52298308
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul",
+          "search_apply_ns": 49595674
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed recurrent state to selected arena slots",
+          "search_apply_ns": 39855984
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel embed with mul",
+          "search_apply_ns": 39317568
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with mul reversed",
+          "search_apply_ns": 37749187
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel in-place delta state update",
+          "search_apply_ns": 28801963
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge B-contiguous A-broadcast",
+          "search_apply_ns": 27835409
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=0",
+          "search_apply_ns": 27681558
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=3 state=0",
+          "search_apply_ns": 26046399
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=1",
+          "search_apply_ns": 25990773
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=4 state=0",
+          "search_apply_ns": 25698839
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge A-contiguous B-broadcast",
+          "search_apply_ns": 25322634
+        }
+      ],
+      "rulesets": [
+        {
+          "merge_ns": 2113063,
+          "rebuild_ns": 956260,
+          "records": 2,
+          "ruleset": "glumoe",
+          "search_apply_ns": 52445439513
+        },
+        {
+          "merge_ns": 3778339,
+          "rebuild_ns": 17026983,
+          "records": 2,
+          "ruleset": "kernel_specialize",
+          "search_apply_ns": 4956071829
+        },
+        {
+          "merge_ns": 12819910,
+          "rebuild_ns": 119474815,
+          "records": 4,
+          "ruleset": "expr",
+          "search_apply_ns": 3009705314
+        },
+        {
+          "merge_ns": 1238489,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "matmul_flatten",
+          "search_apply_ns": 840831627
+        },
+        {
+          "merge_ns": 4584777,
+          "rebuild_ns": 21142462,
+          "records": 2,
+          "ruleset": "matmul_backend",
+          "search_apply_ns": 690577804
+        },
+        {
+          "merge_ns": 332535,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rope",
+          "search_apply_ns": 223700177
+        },
+        {
+          "merge_ns": 145556,
+          "rebuild_ns": 1138366,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rms",
+          "search_apply_ns": 64419188
+        },
+        {
+          "merge_ns": 7658140,
+          "rebuild_ns": 17380558,
+          "records": 1,
+          "ruleset": "cuda_scatter_uses",
+          "search_apply_ns": 31146425
+        },
+        {
+          "merge_ns": 1383152,
+          "rebuild_ns": 8677571,
+          "records": 1,
+          "ruleset": "kernel_fuse_late",
+          "search_apply_ns": 29593131
+        },
+        {
+          "merge_ns": 3906127,
+          "rebuild_ns": 10812094,
+          "records": 3,
+          "ruleset": "dtype_prop",
+          "search_apply_ns": 19004879
+        },
+        {
+          "merge_ns": 2096058,
+          "rebuild_ns": 3242764,
+          "records": 2,
+          "ruleset": "kernel_lower",
+          "search_apply_ns": 18873247
+        },
+        {
+          "merge_ns": 182326,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_flashinfer",
+          "search_apply_ns": 14879413
+        },
+        {
+          "merge_ns": 389839,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_grow",
+          "search_apply_ns": 6065999
+        },
+        {
+          "merge_ns": 476863,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "cleanup",
+          "search_apply_ns": 6062751
+        },
+        {
+          "merge_ns": 4575174,
+          "rebuild_ns": 5743562,
+          "records": 3,
+          "ruleset": "interval_expr",
+          "search_apply_ns": 4960111
+        },
+        {
+          "merge_ns": 200980,
+          "rebuild_ns": 3226531,
+          "records": 1,
+          "ruleset": "fusion_inline_safe_late",
+          "search_apply_ns": 4861969
+        },
+        {
+          "merge_ns": 808632,
+          "rebuild_ns": 1925891,
+          "records": 1,
+          "ruleset": "cuda_scatter_reuse",
+          "search_apply_ns": 2915294
+        },
+        {
+          "merge_ns": 120835,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_topk",
+          "search_apply_ns": 2569910
+        },
+        {
+          "merge_ns": 435348,
+          "rebuild_ns": 941863,
+          "records": 2,
+          "ruleset": "post_cleanup",
+          "search_apply_ns": 2255885
+        },
+        {
+          "merge_ns": 831255,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "base_cleanup",
+          "search_apply_ns": 1044681
+        },
+        {
+          "merge_ns": 149571,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_value",
+          "search_apply_ns": 825702
+        },
+        {
+          "merge_ns": 250365,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "kernel_fuse_late2_rope",
+          "search_apply_ns": 366801
+        },
+        {
+          "merge_ns": 123586,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_request",
+          "search_apply_ns": 109049
+        },
+        {
+          "merge_ns": 120299,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_source",
+          "search_apply_ns": 33182
+        },
+        {
+          "merge_ns": 116122,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_final",
+          "search_apply_ns": 27594
+        },
+        {
+          "merge_ns": 118551,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_denominator",
+          "search_apply_ns": 25199
+        },
+        {
+          "merge_ns": 120645,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_qk",
+          "search_apply_ns": 24270
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "buffer_reuse",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "direct_kernel",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_merge",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_pair",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_sink_attention",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_base",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_finish",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_past",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_request",
+          "search_apply_ns": 0
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cycle 001 main",
+          "run_wall_ns": 62922859501,
+          "iterations": 147,
+          "tuples_before": 19162,
+          "tuples_after": 28969,
+          "tuple_delta": 9807
+        },
+        {
+          "phase": "cycle 002 main",
+          "run_wall_ns": 187926624,
+          "iterations": 16,
+          "tuples_before": 28969,
+          "tuples_after": 28969,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "fuse late",
+          "run_wall_ns": 438872584,
+          "iterations": 19,
+          "tuples_before": 28969,
+          "tuples_after": 29000,
+          "tuple_delta": 31
+        },
+        {
+          "phase": "final expr",
+          "run_wall_ns": 17208146,
+          "iterations": 2,
+          "tuples_before": 29000,
+          "tuples_after": 29000,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "cleanup",
+          "run_wall_ns": 3832456,
+          "iterations": 1,
+          "tuples_before": 29000,
+          "tuples_after": 28994,
+          "tuple_delta": -6
+        },
+        {
+          "phase": "post cleanup",
+          "run_wall_ns": 3048375,
+          "iterations": 2,
+          "tuples_before": 28994,
+          "tuples_after": 29309,
+          "tuple_delta": 315
+        },
+        {
+          "phase": "base cleanup",
+          "run_wall_ns": 1546460,
+          "iterations": 1,
+          "tuples_before": 29309,
+          "tuples_after": 28559,
+          "tuple_delta": -750
+        },
+        {
+          "phase": "late pass 01",
+          "run_wall_ns": 574083406,
+          "iterations": 5,
+          "tuples_before": 28559,
+          "tuples_after": 28447,
+          "tuple_delta": -112
+        },
+        {
+          "phase": "late pass 02",
+          "run_wall_ns": 76439134,
+          "iterations": 21,
+          "tuples_before": 28447,
+          "tuples_after": 45800,
+          "tuple_delta": 17353
+        }
+      ]
+    },
+    {
+      "bucket": {
+        "bucket": 5,
+        "indices": "{c_0: 0, b: 2, s: 1}"
+      },
+      "wall_duration_ns": 74089238952,
+      "schedule_wall_ns": 64168224016,
+      "rule_records": 393,
+      "ruleset_records": 36,
+      "top_rules": [
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe densify marker",
+          "search_apply_ns": 504498509
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel argmax last axis",
+          "search_apply_ns": 200661404
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe unpack marker",
+          "search_apply_ns": 147529013
+        },
+        {
+          "matches": 0,
+          "records": 1,
+          "rule": "kernel swiglu bf16",
+          "search_apply_ns": 113907784
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "cublaslt scaled fp8 row-major x column-major f32 output",
+          "search_apply_ns": 91746243
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove conv2d unfold matmul semantics",
+          "search_apply_ns": 52696301
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove static conv2d unfold matmul semantics",
+          "search_apply_ns": 51577925
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul",
+          "search_apply_ns": 50288276
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul reversed",
+          "search_apply_ns": 50257691
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with mul reversed",
+          "search_apply_ns": 39191659
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel embed with mul",
+          "search_apply_ns": 36185134
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed recurrent state to selected arena slots",
+          "search_apply_ns": 35998980
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel in-place delta state update",
+          "search_apply_ns": 31080902
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=3 state=0",
+          "search_apply_ns": 26434647
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=0",
+          "search_apply_ns": 26419390
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed convolution state to selected arena slots",
+          "search_apply_ns": 26217768
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Mul body trips=4 state=1",
+          "search_apply_ns": 25855863
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge A-contiguous B-broadcast",
+          "search_apply_ns": 25819008
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge B-contiguous A-broadcast",
+          "search_apply_ns": 25635078
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Mul body trips=4 state=0",
+          "search_apply_ns": 25075639
+        }
+      ],
+      "rulesets": [
+        {
+          "merge_ns": 2017431,
+          "rebuild_ns": 955977,
+          "records": 2,
+          "ruleset": "glumoe",
+          "search_apply_ns": 52012735672
+        },
+        {
+          "merge_ns": 3748174,
+          "rebuild_ns": 17129801,
+          "records": 2,
+          "ruleset": "kernel_specialize",
+          "search_apply_ns": 5239017851
+        },
+        {
+          "merge_ns": 13074163,
+          "rebuild_ns": 120501664,
+          "records": 4,
+          "ruleset": "expr",
+          "search_apply_ns": 3030667873
+        },
+        {
+          "merge_ns": 1260616,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "matmul_flatten",
+          "search_apply_ns": 849314021
+        },
+        {
+          "merge_ns": 4659822,
+          "rebuild_ns": 21693594,
+          "records": 2,
+          "ruleset": "matmul_backend",
+          "search_apply_ns": 768820005
+        },
+        {
+          "merge_ns": 217057,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rope",
+          "search_apply_ns": 231220173
+        },
+        {
+          "merge_ns": 141759,
+          "rebuild_ns": 1142201,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rms",
+          "search_apply_ns": 64831723
+        },
+        {
+          "merge_ns": 7488963,
+          "rebuild_ns": 17190952,
+          "records": 1,
+          "ruleset": "cuda_scatter_uses",
+          "search_apply_ns": 31121947
+        },
+        {
+          "merge_ns": 1234207,
+          "rebuild_ns": 7876709,
+          "records": 1,
+          "ruleset": "kernel_fuse_late",
+          "search_apply_ns": 28762226
+        },
+        {
+          "merge_ns": 4134619,
+          "rebuild_ns": 10992456,
+          "records": 3,
+          "ruleset": "dtype_prop",
+          "search_apply_ns": 19581038
+        },
+        {
+          "merge_ns": 2112591,
+          "rebuild_ns": 3161834,
+          "records": 2,
+          "ruleset": "kernel_lower",
+          "search_apply_ns": 19537097
+        },
+        {
+          "merge_ns": 166797,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_flashinfer",
+          "search_apply_ns": 15207961
+        },
+        {
+          "merge_ns": 186083,
+          "rebuild_ns": 3118259,
+          "records": 1,
+          "ruleset": "fusion_inline_safe_late",
+          "search_apply_ns": 5449875
+        },
+        {
+          "merge_ns": 295500,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "cleanup",
+          "search_apply_ns": 5283265
+        },
+        {
+          "merge_ns": 400530,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_grow",
+          "search_apply_ns": 5201820
+        },
+        {
+          "merge_ns": 4584883,
+          "rebuild_ns": 3549228,
+          "records": 3,
+          "ruleset": "interval_expr",
+          "search_apply_ns": 4709829
+        },
+        {
+          "merge_ns": 798628,
+          "rebuild_ns": 1954321,
+          "records": 1,
+          "ruleset": "cuda_scatter_reuse",
+          "search_apply_ns": 3203919
+        },
+        {
+          "merge_ns": 121157,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_topk",
+          "search_apply_ns": 2400680
+        },
+        {
+          "merge_ns": 439826,
+          "rebuild_ns": 916993,
+          "records": 2,
+          "ruleset": "post_cleanup",
+          "search_apply_ns": 1956307
+        },
+        {
+          "merge_ns": 844384,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "base_cleanup",
+          "search_apply_ns": 887576
+        },
+        {
+          "merge_ns": 119946,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_value",
+          "search_apply_ns": 552150
+        },
+        {
+          "merge_ns": 313182,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "kernel_fuse_late2_rope",
+          "search_apply_ns": 338424
+        },
+        {
+          "merge_ns": 123433,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_request",
+          "search_apply_ns": 96359
+        },
+        {
+          "merge_ns": 120341,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_source",
+          "search_apply_ns": 31110
+        },
+        {
+          "merge_ns": 116712,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_final",
+          "search_apply_ns": 29110
+        },
+        {
+          "merge_ns": 117790,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_denominator",
+          "search_apply_ns": 23870
+        },
+        {
+          "merge_ns": 121031,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_qk",
+          "search_apply_ns": 22940
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "buffer_reuse",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "direct_kernel",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_merge",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_pair",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_sink_attention",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_base",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_finish",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_past",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_request",
+          "search_apply_ns": 0
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cycle 001 main",
+          "run_wall_ns": 62920180341,
+          "iterations": 147,
+          "tuples_before": 19168,
+          "tuples_after": 28866,
+          "tuple_delta": 9698
+        },
+        {
+          "phase": "cycle 002 main",
+          "run_wall_ns": 179062915,
+          "iterations": 16,
+          "tuples_before": 28866,
+          "tuples_after": 28866,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "fuse late",
+          "run_wall_ns": 441344493,
+          "iterations": 19,
+          "tuples_before": 28866,
+          "tuples_after": 28897,
+          "tuple_delta": 31
+        },
+        {
+          "phase": "final expr",
+          "run_wall_ns": 16954164,
+          "iterations": 2,
+          "tuples_before": 28897,
+          "tuples_after": 28897,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "cleanup",
+          "run_wall_ns": 3767411,
+          "iterations": 1,
+          "tuples_before": 28897,
+          "tuples_after": 28891,
+          "tuple_delta": -6
+        },
+        {
+          "phase": "post cleanup",
+          "run_wall_ns": 2890640,
+          "iterations": 2,
+          "tuples_before": 28891,
+          "tuples_after": 29206,
+          "tuple_delta": 315
+        },
+        {
+          "phase": "base cleanup",
+          "run_wall_ns": 1490484,
+          "iterations": 1,
+          "tuples_before": 29206,
+          "tuples_after": 28447,
+          "tuple_delta": -759
+        },
+        {
+          "phase": "late pass 01",
+          "run_wall_ns": 523911783,
+          "iterations": 5,
+          "tuples_before": 28447,
+          "tuples_after": 28335,
+          "tuple_delta": -112
+        },
+        {
+          "phase": "late pass 02",
+          "run_wall_ns": 78621785,
+          "iterations": 21,
+          "tuples_before": 28335,
+          "tuples_after": 45688,
+          "tuple_delta": 17353
+        }
+      ]
+    },
+    {
+      "bucket": {
+        "bucket": 6,
+        "indices": "{c_0: 0, b: 2, s: 2}"
+      },
+      "wall_duration_ns": 71496056454,
+      "schedule_wall_ns": 61425704361,
+      "rule_records": 393,
+      "ruleset_records": 36,
+      "top_rules": [
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe densify marker",
+          "search_apply_ns": 502856297
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel argmax last axis",
+          "search_apply_ns": 194023258
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "fused_moe unpack marker",
+          "search_apply_ns": 133431148
+        },
+        {
+          "matches": 0,
+          "records": 1,
+          "rule": "kernel swiglu bf16",
+          "search_apply_ns": 119688351
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "cublaslt scaled fp8 row-major x column-major f32 output",
+          "search_apply_ns": 101168285
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul",
+          "search_apply_ns": 48799970
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove static conv2d unfold matmul semantics",
+          "search_apply_ns": 48645358
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "prove conv2d unfold matmul semantics",
+          "search_apply_ns": 47616769
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with cast mul reversed",
+          "search_apply_ns": 47487198
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "kernel embed with mul",
+          "search_apply_ns": 37139604
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel embed with mul reversed",
+          "search_apply_ns": 35911815
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=0",
+          "search_apply_ns": 31551259
+        },
+        {
+          "matches": 1,
+          "records": 2,
+          "rule": "commit packed recurrent state to selected arena slots",
+          "search_apply_ns": 30156864
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=4 state=0",
+          "search_apply_ns": 26909387
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=2 state=1",
+          "search_apply_ns": 26582865
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "kernel in-place delta state update",
+          "search_apply_ns": 26463992
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge B-contiguous A-broadcast",
+          "search_apply_ns": 26413902
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=3 state=0",
+          "search_apply_ns": 25983933
+        },
+        {
+          "matches": 0,
+          "records": 4,
+          "rule": "unroll Add body trips=4 state=1",
+          "search_apply_ns": 25652219
+        },
+        {
+          "matches": 0,
+          "records": 2,
+          "rule": "batch-collapse merge A-contiguous B-broadcast",
+          "search_apply_ns": 23865572
+        }
+      ],
+      "rulesets": [
+        {
+          "merge_ns": 2296267,
+          "rebuild_ns": 928063,
+          "records": 2,
+          "ruleset": "glumoe",
+          "search_apply_ns": 39551907990
+        },
+        {
+          "merge_ns": 3882698,
+          "rebuild_ns": 16896205,
+          "records": 2,
+          "ruleset": "kernel_specialize",
+          "search_apply_ns": 15042752677
+        },
+        {
+          "merge_ns": 13166069,
+          "rebuild_ns": 117987972,
+          "records": 4,
+          "ruleset": "expr",
+          "search_apply_ns": 3109522666
+        },
+        {
+          "merge_ns": 1294404,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "matmul_flatten",
+          "search_apply_ns": 723623533
+        },
+        {
+          "merge_ns": 5004896,
+          "rebuild_ns": 21459289,
+          "records": 2,
+          "ruleset": "matmul_backend",
+          "search_apply_ns": 662246051
+        },
+        {
+          "merge_ns": 262304,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rope",
+          "search_apply_ns": 225052908
+        },
+        {
+          "merge_ns": 165843,
+          "rebuild_ns": 1130418,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_rms",
+          "search_apply_ns": 65313256
+        },
+        {
+          "merge_ns": 1378404,
+          "rebuild_ns": 8856420,
+          "records": 1,
+          "ruleset": "kernel_fuse_late",
+          "search_apply_ns": 31343408
+        },
+        {
+          "merge_ns": 7746695,
+          "rebuild_ns": 16891010,
+          "records": 1,
+          "ruleset": "cuda_scatter_uses",
+          "search_apply_ns": 30671864
+        },
+        {
+          "merge_ns": 3957763,
+          "rebuild_ns": 10488007,
+          "records": 3,
+          "ruleset": "dtype_prop",
+          "search_apply_ns": 19624878
+        },
+        {
+          "merge_ns": 2111268,
+          "rebuild_ns": 3177095,
+          "records": 2,
+          "ruleset": "kernel_lower",
+          "search_apply_ns": 19405182
+        },
+        {
+          "merge_ns": 188954,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_flashinfer",
+          "search_apply_ns": 14730984
+        },
+        {
+          "merge_ns": 405254,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_grow",
+          "search_apply_ns": 6102802
+        },
+        {
+          "merge_ns": 302107,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "cleanup",
+          "search_apply_ns": 5803687
+        },
+        {
+          "merge_ns": 180001,
+          "rebuild_ns": 3248412,
+          "records": 1,
+          "ruleset": "fusion_inline_safe_late",
+          "search_apply_ns": 4930773
+        },
+        {
+          "merge_ns": 4667008,
+          "rebuild_ns": 5664823,
+          "records": 3,
+          "ruleset": "interval_expr",
+          "search_apply_ns": 4750727
+        },
+        {
+          "merge_ns": 795342,
+          "rebuild_ns": 1949685,
+          "records": 1,
+          "ruleset": "cuda_scatter_reuse",
+          "search_apply_ns": 3044286
+        },
+        {
+          "merge_ns": 123027,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_topk",
+          "search_apply_ns": 2740374
+        },
+        {
+          "merge_ns": 466446,
+          "rebuild_ns": 971914,
+          "records": 2,
+          "ruleset": "post_cleanup",
+          "search_apply_ns": 2178614
+        },
+        {
+          "merge_ns": 838378,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "base_cleanup",
+          "search_apply_ns": 949889
+        },
+        {
+          "merge_ns": 126059,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_value",
+          "search_apply_ns": 547716
+        },
+        {
+          "merge_ns": 313748,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "kernel_fuse_late2_rope",
+          "search_apply_ns": 290170
+        },
+        {
+          "merge_ns": 129888,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_request",
+          "search_apply_ns": 56423
+        },
+        {
+          "merge_ns": 132730,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_qk",
+          "search_apply_ns": 34389
+        },
+        {
+          "merge_ns": 122501,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_source",
+          "search_apply_ns": 29026
+        },
+        {
+          "merge_ns": 118136,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_final",
+          "search_apply_ns": 26215
+        },
+        {
+          "merge_ns": 123041,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_flashinfer_softmax_denominator",
+          "search_apply_ns": 22367
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "buffer_reuse",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "direct_kernel",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_merge",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 2,
+          "ruleset": "fusion_pair",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late2_sink_attention",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_base",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_finish",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_past",
+          "search_apply_ns": 0
+        },
+        {
+          "merge_ns": 0,
+          "rebuild_ns": 0,
+          "records": 1,
+          "ruleset": "kernel_fuse_late_pre_sink_attention_request",
+          "search_apply_ns": 0
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cycle 001 main",
+          "run_wall_ns": 60171073918,
+          "iterations": 147,
+          "tuples_before": 19163,
+          "tuples_after": 29003,
+          "tuple_delta": 9840
+        },
+        {
+          "phase": "cycle 002 main",
+          "run_wall_ns": 206959691,
+          "iterations": 16,
+          "tuples_before": 29003,
+          "tuples_after": 29003,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "fuse late",
+          "run_wall_ns": 444927675,
+          "iterations": 19,
+          "tuples_before": 29003,
+          "tuples_after": 29034,
+          "tuple_delta": 31
+        },
+        {
+          "phase": "final expr",
+          "run_wall_ns": 18267804,
+          "iterations": 2,
+          "tuples_before": 29034,
+          "tuples_after": 29034,
+          "tuple_delta": 0
+        },
+        {
+          "phase": "cleanup",
+          "run_wall_ns": 4157736,
+          "iterations": 1,
+          "tuples_before": 29034,
+          "tuples_after": 29028,
+          "tuple_delta": -6
+        },
+        {
+          "phase": "post cleanup",
+          "run_wall_ns": 3186483,
+          "iterations": 2,
+          "tuples_before": 29028,
+          "tuples_after": 29343,
+          "tuple_delta": 315
+        },
+        {
+          "phase": "base cleanup",
+          "run_wall_ns": 1542746,
+          "iterations": 1,
+          "tuples_before": 29343,
+          "tuples_after": 28593,
+          "tuple_delta": -750
+        },
+        {
+          "phase": "late pass 01",
+          "run_wall_ns": 500081382,
+          "iterations": 5,
+          "tuples_before": 28593,
+          "tuples_after": 28481,
+          "tuple_delta": -112
+        },
+        {
+          "phase": "late pass 02",
+          "run_wall_ns": 75506926,
+          "iterations": 21,
+          "tuples_before": 28481,
+          "tuples_after": 45834,
+          "tuple_delta": 17353
+        }
+      ]
+    }
+  ]
+}

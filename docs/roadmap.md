@@ -11,9 +11,13 @@ native attention candidate. [B1/B8 workload attribution](../results/workload-att
 now connects full rule identities, bucket dimensions and GPU execution steps.
 Fixed-snapshot sampling and bounded initial exploration are implemented; the
 [27B coverage follow-up](../results/search-coverage-20260914/README.md) passes
-correctness but records mixed performance. The immediate priorities are early
-state-alias constraints, measured exploration of expensive regions inside valid
-graphs, and the costly `glumoe` ruleset.
+correctness but records mixed performance. Required state-alias checks now run
+before fusion source generation and CUDA compilation, with final-load checks
+retained. The immediate priorities are measured exploration of expensive regions
+inside valid graphs and the costly `glumoe` ruleset.
+The [preflight qualification](../results/state-preflight-20260914/README.md)
+passes 296 reference comparisons; candidate rejection is cheaper in the recorded
+run, while warmed decode remains close to the preceding observation.
 Additional KV representations and joint state/layout competition remain open.
 
 OrbitKV targets one native Rust inference process. `orbitkv` compiles and owns
@@ -26,6 +30,11 @@ Qwen3.8 27B block-FP8 is the first acceptance workload. Optimizations must be
 selected from mathematical semantics, state/layout contracts, dtype, shape,
 and target capabilities; checkpoint names and fixed layer numbers must never
 select implementations.
+
+The hardware budget is **one H20, with quantization and CPU offload allowed**.
+Qwen, GLM, Kimi and DeepSeek are the primary families. The dated
+[model target matrix](model-targets.md) records their latest release targets,
+smaller architecture witnesses, hardware blockers and acceptance gates.
 
 ## Current baseline
 
@@ -101,16 +110,19 @@ plus 48 recurrent and convolution layers. The executor now parses the nested
 Keep the structurally equivalent small BF16 checkpoint as a fast regression
 witness for the same 3:1 layer schedule and state transitions. The Qwen3.8 27B
 FP8 checkpoint is now the active correctness and performance target. Existing
-dense Full and Full+Sliding checkpoints remain lifecycle witnesses; they are not
-parallel product targets. Model support stays structural, so no checkpoint name
+dense Full and Full+Sliding checkpoints remain lifecycle witnesses. Model
+support stays structural, so no checkpoint name
 may select an operator or physical layout in product code.
 
-The second architecture target is the latest openly released DeepSeek family.
-At this roadmap revision that is DeepSeek V4 Flash Vision, whose text path adds
-sparse retrieval/index state, low-rank projections, MoE, mixed FP8/FP4 storage,
-and speculative heads. It follows the Qwen target because it needs several of
-the same quantized-linear and persistent-state foundations but is not a
-single-device bring-up model.
+The next shared foundations are MoE routing/dispatch and latent attention,
+qualified first with GLM-4.7-Flash and DeepSeek-V2-Lite-Chat. Kimi Linear supplies
+a smaller KDA/MLA witness. They then support advancement toward
+Qwen3.8-Flash-Next, GLM-5.3-Flash, Kimi K3 and DeepSeek-V4.1-Flash; newer sparse
+attention, residual and state-sharing semantics require their own contracts.
+Single-H20 expansion also requires validated quantization and bounded host
+weight residency. Memory fit and compatible kernels are independent gates;
+the latest targets are not currently executable in OrbitKV. Follow
+[model targets](model-targets.md) for the sequence and exact claim boundaries.
 
 ## Joint compiler milestones
 

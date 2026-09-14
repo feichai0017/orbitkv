@@ -51,6 +51,26 @@ options, RNG state, runtime outcomes and ranking feedback must also match.
 Timing noise can change parents, finalists and cooperative stopping points.
 The snapshot digest is deliberately separate from the selected program identity.
 
+## State constraints before preparation
+
+The CUDA runtime validates required persistent-state aliases while checking the
+extracted graph's topology and mutation ordering. It resolves each logical
+output through `KernelOp::output_aliases_input()` to the required logical input.
+Data ancestry through a copying operation does not establish storage identity.
+Missing, wrong or ambiguous bindings fail closed.
+
+Search and finalist preparation perform this check before fused CUDA source
+generation, NVRTC and provider preparation. Direct and stitched artifact loads
+run the same static check before compiling any replacement bucket; compiled
+bucket metadata is checked again before installation. An invalid replacement
+leaves the current executable intact.
+
+This reuses existing operation contracts and does not rewrite LLIR, force a
+provider, or remove alternatives from egglog. It saves preparation of rejected
+graphs; generating state-compatible genomes and exploring regions within a
+valid surrounding graph remain further work. Optional aliases still permit
+materializing implementations, and mutation-order checks remain mandatory.
+
 ## Verification and use
 
 Host regressions under Luminal's `tests/unit/egglog` and `tests/unit/search`
@@ -81,5 +101,12 @@ The [27B H20 qualification](../results/search-coverage-20260914/README.md) passe
 296 logit comparisons but records a mixed performance result. Every one of its
 263 rejected graphs violates a required state alias. B8 decode measures eight
 generic output projections while graphs with the cuBLASLt projection fail state
-validation elsewhere. The next step is constrained exploration of expensive
-regions inside a valid surrounding genome.
+validation elsewhere. Earlier rejection addresses wasted preparation; constrained
+exploration of expensive regions inside a valid surrounding genome remains the
+next search-space improvement.
+
+The [state-preflight qualification](../results/state-preflight-20260914/README.md)
+passes another 296 logit comparisons and drains. Rejected-candidate evaluation
+totals 8.00 seconds against the preceding 81.06-second observation, while warmed
+decode stays close. Snapshot identities differ and caches were reused; this is
+not a paired compiler-speedup or serving-throughput claim.

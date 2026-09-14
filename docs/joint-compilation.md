@@ -11,6 +11,12 @@ workload is the official Qwen3.8-27B-FP8 text decoder on H20. Its structural
 requirements drive coverage; checkpoint names must never select an operator,
 layout, fusion, or schedule in product code.
 
+The deployment budget is one H20, with quantization and CPU offload allowed.
+The [model targets](model-targets.md) extend this design toward Qwen, GLM, Kimi
+and DeepSeek. Immutable weight residency and transfer scheduling join compute
+and mutable state under a shared budget; host weight offload is not implemented
+by the current checkpoint loader or external KV transport.
+
 ## Current foundation
 
 - `RuntimeManifest` and backend-neutral `StateLayoutFacts` describe state classes,

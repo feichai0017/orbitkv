@@ -1,0 +1,157 @@
+[
+  {
+    "name": "root-fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit_code": 0,
+    "seconds": 1.7907033897936344,
+    "rust_test_results": []
+  },
+  {
+    "name": "fork-fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit_code": 0,
+    "seconds": 1.176122147589922,
+    "rust_test_results": []
+  },
+  {
+    "name": "root-host",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--workspace",
+      "--all-targets"
+    ],
+    "exit_code": 0,
+    "seconds": 0.9365823604166508,
+    "rust_test_results": [
+      "test result: ok. 203 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.66s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "name": "root-clippy",
+    "command": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--locked",
+      "--workspace",
+      "--all-features",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit_code": 0,
+    "seconds": 4.816489644348621,
+    "rust_test_results": []
+  },
+  {
+    "name": "site-check",
+    "command": [
+      "npm",
+      "run",
+      "check"
+    ],
+    "exit_code": 0,
+    "seconds": 2.924476783722639,
+    "rust_test_results": []
+  },
+  {
+    "name": "site-build",
+    "command": [
+      "npm",
+      "run",
+      "build"
+    ],
+    "exit_code": 0,
+    "seconds": 1.073375828564167,
+    "rust_test_results": []
+  },
+  {
+    "name": "fork-clippy",
+    "command": [
+      "cargo",
+      "clippy",
+      "--offline",
+      "--workspace",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "cwd": "third_party/luminal",
+    "exit_code": 0,
+    "evidence": "Codex command output; final command passed after fixing a test-only cloned-ref Clippy finding."
+  },
+  {
+    "name": "resource-regressions",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--release",
+      "-p",
+      "luminal_cuda_lite",
+      "--lib",
+      "resource::",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "third_party/luminal",
+    "exit_code": 0,
+    "passed": 20,
+    "evidence": "Codex command output; includes seven new host regressions."
+  },
+  {
+    "name": "required-state-alias-regressions",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--release",
+      "-p",
+      "luminal_cuda_lite",
+      "--lib",
+      "required_state_alias_tests",
+      "--",
+      "--include-ignored",
+      "--nocapture"
+    ],
+    "cwd": "third_party/luminal",
+    "exit_code": 0,
+    "passed": 8,
+    "evidence": "Codex command output; seven overlapping host regressions and one new H20 replacement regression."
+  },
+  {
+    "name": "final-site-check-build",
+    "command": "npm run check && npm run build",
+    "cwd": "website",
+    "evidence": "Codex command output after the final website links and evidence record were added: Astro check reports zero errors/warnings; static build produces four pages.",
+    "exit_code": 0
+  }
+]
