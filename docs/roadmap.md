@@ -7,8 +7,11 @@ explicit paged KV views and declarative provider admission are now separated;
 see [attention providers](attention-providers.md) and the
 [H20 provider qualification](../results/provider-kernels-20260914/README.md).
 FlashInfer algorithms and optional FlashAttention-3 replace the handwritten
-native attention candidate. Next prioritize workload-attributed region/search costs;
-additional KV representations and joint state/layout competition remain open.
+native attention candidate. [B1/B8 workload attribution](../results/workload-attribution-20260914/README.md)
+now connects full rule identities, bucket dimensions and GPU execution steps.
+The immediate priorities are reproducible candidate exploration, measured
+coverage of expensive matrix products, and the costly `glumoe` ruleset.
+Additional KV representations and joint state/layout competition remain open.
 
 OrbitKV targets one native Rust inference process. `orbitkv` compiles and owns
 attention-state lifetimes, the Luminal fork compiles and executes model graphs,
@@ -48,8 +51,8 @@ select implementations.
   implementation and experimental attention flag have been removed.
 - DeepGEMM, FlashInfer and FlashAttention use one pinned provider-source policy:
   explicit local checkout or explicit prefetch into Luminal's provider cache.
-  Model compilation performs no network fetch. Decoder schema 9 binds the
-  updated algorithm ABI; older artifacts require fresh search.
+  Model compilation performs no network fetch. Decoder schema 10 binds explicit
+  request geometry through provider lowering; older artifacts require fresh search.
 - Released H20 closures exist for a dense Full checkpoint, an interleaved
   Full+Sliding checkpoint, and bounded text-only Qwen3.8-27B-FP8 execution with
   recurrent/convolution state and block-FP8 linear operators. Exact Chunked,
@@ -213,12 +216,32 @@ result and roughly 24.2 ms warm diagnostic decode, while first decode is about
 These are bounded diagnostic timings with logits, not serving TPOT or an
 improvement over the earlier, differently selected artifact.
 
+The [B1/B8 attribution follow-up](../results/workload-attribution-20260914/README.md)
+also fixes request geometry: FlashInfer carries an explicit request expression
+through lowering and retained-bucket resource planning. Runtime CSR lengths are
+validated against that contract. Seven buckets now compile and replay with
+schema 10; two frozen builds pass 592 reference comparisons and final drain.
+
+Ordinary compilation collects egglog timings without materializing verbose
+query-plan reports. One full-plan/time-only process pair takes 744.69/657.04 s,
+with `glumoe` reporting 433.61/354.19 s. These are observations, not an isolated
+speedup measurement: all seven selected program fingerprints differ despite the
+same seed and one-graph search budget. B8 decode improves while prefill regresses.
+The final prefill's generic BF16 output projection takes 171.15 ms in the event
+profile, although its saved equivalence class contains a `cublaslt` candidate.
+Both modes pass the unchanged logit gate. Search coverage is the immediate
+runtime problem; this result does not establish a serving improvement.
+
 The next implementation slices are:
 
-1. **Cold compilation:** measure the expensive main egglog rules within each
-   bucket, then separate reusable setup and bucket-independent transformations
-   from interval-dependent rewrites. Reuse requires a semantic key and must
-   preserve the bucket's alias, range, and state constraints. Candidate
+1. **Candidate coverage and cold compilation:** stabilize candidate enumeration
+   and record the actual programs evaluated. Measure legal provider alternatives
+   for expensive regions under a shared budget, covering both prefill and decode.
+   Do not force a provider by model name or tensor dimensions. Restructure the
+   `glumoe` joins in egglog using semantic anchors, then separate reusable setup
+   and bucket-independent transformations from interval-dependent rewrites.
+   Reuse requires a semantic key and must preserve the bucket's alias, range,
+   and state constraints. In the earlier stage-only run, candidate
    generation costs 3.0 s here; the 118 rejected candidates account for 37.3 s
    of evaluation. Move provable legality checks ahead of expensive preparation
    while preserving accepted implementations. Keep candidate order and program

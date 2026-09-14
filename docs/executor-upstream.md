@@ -109,7 +109,7 @@ deterministic graph normalization, resolves the current custom-op table, and
 verifies the unrolled LLIR fingerprint of every bucket. OrbitKV wraps this in a
 decoder artifact identity covering the canonical manifest, decoder and weight
 family geometry, arena shape, and compile buckets. Incompatible artifacts fail
-closed. Decoder schema 9 also embeds generated CUDA module images with strict
+closed. Decoder schema 10 also embeds generated CUDA module images with strict
 target/compiler/source validation. Older decoder formats must be regenerated.
 Weight loading, FlashInfer/DeepGEMM prepared resources and CUDA Graph
 materialization still run. See [module artifacts](module-artifacts.md) for the

@@ -33,7 +33,7 @@ PROFILE_FLAGS = (
 ENVIRONMENT_KEYS = (
     "PATH", "CUDA_HOME", "CUDA_PATH", "CUDA_VISIBLE_DEVICES",
     "FLASHINFER_CUDA_ARCH", "LUMINAL_DEEPGEMM_DIR", "LUMINAL_FLASHINFER_DIR",
-    "LUMINAL_DEEPGEMM_CACHE_DIR", "LUMINAL_MAX_ROLLED_REGIONS",
+    "LUMINAL_FLASHATTENTION_DIR", "LUMINAL_DEEPGEMM_CACHE_DIR", "LUMINAL_MAX_ROLLED_REGIONS",
     "NVCC_CCBIN", "NVCC_PREPEND_FLAGS", "NVCC_APPEND_FLAGS", "CPATH",
     "CPLUS_INCLUDE_PATH", "LIBRARY_PATH", "LD_LIBRARY_PATH",
     "ORBITKV_MODEL_DIR", "ORBITKV_REFERENCE_DIR", "ORBITKV_SEARCH_GRAPHS",
@@ -144,6 +144,8 @@ def input_identity(args: argparse.Namespace) -> dict:
         "replay_artifact": file_identity(args.replay_artifact) if args.replay_artifact else None,
         "stage_summarizer": (file_identity(Path(__file__).with_name("summarize_stage_trace.py"))
                              if getattr(args, "stage_trace", False) else None),
+        "stage_metrics": (file_identity(Path(__file__).with_name("stage_metrics.py"))
+                          if getattr(args, "stage_trace", False) else None),
     }
 
 
@@ -323,6 +325,8 @@ def run_phase(args: argparse.Namespace, phase: str, artifact: Path, initial_inpu
         if getattr(args, "stage_trace", False):
             stage_path = directory / "stages.jsonl"
             summary = summarize_stages(stage_path)
+            if len(summary["cuda_graph_profiles"]) != len(result["evidence"]["cuda_graph_profiles"]):
+                raise ValueError("structured CUDA measurements do not cover the reported graph profiles")
             write_json(directory / "stages-summary.json", summary)
             result["stage_trace"] = file_identity(stage_path)
             result["stage_summary"] = file_identity(directory / "stages-summary.json")
@@ -367,7 +371,7 @@ def qualify(args: argparse.Namespace) -> dict:
                          "provider_and_cuda_caches": "existing caches reused; not cleared or claimed cold",
                          "build": "prebuilt binary; build time excluded",
                          "measurement": "diagnostic execution with logits; not serving TPOT",
-                         "stage_trace": ("buffered CPU spans in every phase; diagnostic overhead included, no added device synchronization"
+                         "stage_trace": ("buffered CPU spans and reported compiler/device measurements; diagnostic overhead included, no added device synchronization"
                                          if getattr(args, "stage_trace", False) else "disabled"),
                          "profile": "separate process with timing events; not comparable to uninstrumented wall time"},
         "phases": [],

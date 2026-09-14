@@ -38,7 +38,7 @@ cache keys; their libraries and prepared plans are not embedded here.
 
 | Format | Behavior |
 | --- | --- |
-| Decoder schema 9 | Explicit checkpoint import, NN semantic nodes and attention algorithms; requires a CUDA module artifact and strict image replay |
+| Decoder schema 10 | Explicit checkpoint import, NN semantics and attention algorithms with compiled request geometry; requires a CUDA module artifact and strict image replay |
 | CUDA module schema 3 | Sorted source-digest map, base64 images, per-image SHA-256 |
 
 The existing model/arena/tuning identity and per-bucket LLIR fingerprints remain
@@ -53,8 +53,8 @@ The image checksum detects corruption; it does not authenticate an artifact.
 The signature does not fingerprint the entire CUDA installation/header tree.
 Artifacts are build/toolchain-bound execution inputs, not a portability promise
 across arbitrary SDK installations or an expansion of supported GPU families.
-Only decoder schema 9 and CUDA module schema 3 are accepted. Older decoder
-formats predate the updated [provider algorithm ABI](attention-providers.md)
+Only decoder schema 10 and CUDA module schema 3 are accepted. Older decoder
+formats predate the updated [provider request-geometry ABI](attention-providers.md)
 and must be regenerated. The decoder owns a required module artifact and exposes
 `module_image_count() -> usize`; there is no schedule-only decoder mode or
 compatibility conversion API.

@@ -31,6 +31,16 @@ come from tensors instead of a second, potentially inconsistent geometry record.
 The state owner still validates runtime metadata and allocation authority;
 provider preparation checks live buffers and resources.
 
+Query-token count, context-page count and request count survive provider lowering
+as expressions. Retained buckets evaluate those expressions with their own
+allocation dimensions; they must not derive request geometry from CSR lengths
+left installed by another profiling bucket. FlashInfer still accounts for the
+physical K/V buffer capacities, and execution requires both CSR pointers to have
+exactly `requests + 1` entries and last-page lengths to have `requests` entries.
+The structural path without explicit CSR can describe one-query-per-request
+decode or single-request prefill; packed multi-request prefill needs explicit
+segmentation.
+
 The semantic vocabulary includes unmasked attention and unequal QK/V dimensions,
 and the view vocabulary describes both NHD and HND order. Current CUDA adapters
 admit only causal/sliding, equal-dimension, NHD combinations. Defining the other
@@ -93,8 +103,8 @@ pinned CUTLASS dependency. Model compilation performs no network fetch.
 wrapper and ABI content determine provider identity; compiler/flags determine
 additional native-library cache identity, following the common provider policy.
 
-Decoder artifact schema 9 records the new algorithm ABI and rejects schema 8
-and older artifacts. Historical qualification directories remain immutable.
+Decoder artifact schema 10 retains request-count expressions in the FlashInfer
+operator ABI. Schema 9 and older artifacts require fresh search. Historical qualification directories remain immutable.
 External `.so` libraries are cached separately from generated CUDA module images.
 
 ## Qualification

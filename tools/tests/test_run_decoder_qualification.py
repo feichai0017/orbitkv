@@ -99,12 +99,26 @@ if profile:
     print("CUDA_GRAPH_STEP_PROFILE dyn={{s: 1}} total_ms=2.5 Kernel[1]=2.5ms", file=sys.stderr)
 stage_path = os.environ.get("LUMINAL_STAGE_TRACE")
 if stage_path and behavior != "missing_stage_trace":
-    rows = [{{"event": "trace_started", "schema": 1}},
+    rows = [{{"event": "trace_started", "schema": 2}},
             {{"event": "stage", "id": 0, "parent": None, "start_ns": 0,
               "wall_duration_ns": 10, "thread": "main", "name": "fixture",
-              "fields": {{}}, "panicking": False}},
-            {{"event": "trace_incomplete" if behavior == "incomplete_stage_trace" else "trace_completed",
-              "open_spans": 0}}]
+              "fields": {{}}, "panicking": False}}]
+    if profile and behavior != "missing_gpu_stage_metrics":
+        rows += [
+            {{"event": "stage", "id": 1, "parent": 0, "start_ns": 1,
+              "wall_duration_ns": 8, "thread": "main", "name": "cuda.execute",
+              "fields": {{"program": "fixture-program", "profiling": False}}, "panicking": False}},
+            {{"event": "stage", "id": 2, "parent": 1, "start_ns": 2,
+              "wall_duration_ns": 6, "thread": "main", "name": "cuda.graph.profile",
+              "fields": {{"graph_node": 0, "detailed": True, "status": "measured",
+                         "step_count": 1, "total_device_ms": 2.5}}, "panicking": False}},
+            {{"event": "metric", "parent": 2, "at_ns": 3,
+              "thread": "main", "name": "cuda.graph.step", "panicking": False,
+              "fields": {{"index": 0, "operator": "Kernel", "implementation": "fixture",
+                         "duration_ms": 2.5}}}},
+        ]
+    rows.append({{"event": "trace_incomplete" if behavior == "incomplete_stage_trace" else "trace_completed",
+                 "open_spans": 0}})
     Path(stage_path).write_text("\\n".join(json.dumps(row) for row in rows))
 print("test result: ok. 1 passed; 0 failed; 0 ignored; 3 filtered out")
 ''')
@@ -188,7 +202,14 @@ print("test result: ok. 1 passed; 0 failed; 0 ignored; 3 filtered out")
             trace = self.output / phase["phase"] / "stages.jsonl"
             self.assertEqual(phase["stage_trace"], MODULE.file_identity(trace))
             summary = json.loads((trace.parent / "stages-summary.json").read_text())
-            self.assertEqual(summary["span_count"], 1)
+            self.assertEqual(summary["span_count"], 3 if phase["phase"] == "profile" else 1)
+
+    def test_requested_stage_trace_cannot_omit_device_measurements(self):
+        self.fixture("missing_gpu_stage_metrics")
+        report = self.run_qualification("--stage-trace")
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["phases"][-1]["phase"], "profile")
+        self.assertIn("structured CUDA measurements", report["phases"][-1]["error"])
 
     def test_missing_or_incomplete_requested_stage_trace_fails_before_replay(self):
         for behavior in ("missing_stage_trace", "incomplete_stage_trace"):

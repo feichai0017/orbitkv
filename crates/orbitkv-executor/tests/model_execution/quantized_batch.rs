@@ -12,6 +12,7 @@ fn batch_capacity(batch: usize, requested: Option<usize>) -> usize {
 
 #[allow(clippy::too_many_lines)]
 pub(super) fn run() {
+    let stage_trace = orbitkv_executor::diagnostics::install_stage_trace_from_env().unwrap();
     let batch = std::env::var("ORBITKV_QUALIFICATION_BATCH_SIZE")
         .map_or(4, |value| value.parse::<usize>().unwrap());
     let capacity = batch_capacity(
@@ -166,6 +167,9 @@ pub(super) fn run() {
             "artifact_mode": if artifact.is_some() { "replay" } else { "search" },
         })
     );
+    if let Some(trace) = stage_trace {
+        trace.finish().unwrap();
+    }
 }
 
 #[test]
@@ -209,8 +213,10 @@ fn execute_batch(
         .map(|(request_id, states)| DecoderFixedStateStep { request_id, states })
         .collect::<Vec<_>>();
     let started = Instant::now();
-    let output = decoder
-        .execute_with_fixed_states_and_logits(
+    let output = luminal::prelude::tracing::info_span!(target: "luminal::stage", "orbitkv.qualification.step",
+        phase, batch_size = requests.len(), query_tokens = tokens.len(), diagnostic_logits = true)
+    .in_scope(|| {
+        decoder.execute_with_fixed_states_and_logits(
             DecoderStep {
                 tokens,
                 positions,
@@ -218,7 +224,8 @@ fn execute_batch(
             },
             &states,
         )
-        .unwrap();
+    })
+    .unwrap();
     eprintln!(
         "ORBITKV_DECODER_STEP {}",
         serde_json::json!({

@@ -58,8 +58,8 @@ The [schema 7 boundary qualification](../results/semantic-boundaries-20260914/RE
 records the preceding fork reduction, backend-free semantic construction, final
 27B replay/reference and HTTP lifecycle gates. Import no longer hardcodes CUDA
 head sizes; the attention row above describes the previously qualified provider
-geometries, not a parser restriction. Current schema 9 separates
-logical attention/KV views and records explicit provider algorithms; see
+geometries, not a parser restriction. Current schema 10 separates
+logical attention/KV views and records explicit provider algorithms and request geometry; see
 [attention providers](attention-providers.md).
 
 Core support for a retention policy means its lifecycle can be compiled and

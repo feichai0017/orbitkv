@@ -13,7 +13,7 @@ native C ABI adapter for upstream FlashAttention-3 on SM90. The handwritten
 native attention implementation and experimental policy flag are removed.
 See [attention providers](attention-providers.md) for exact geometry and ABI
 limits and [provider qualification](../results/provider-kernels-20260914/README.md)
-for the current schema-9 evidence. Additional KV representations remain open.
+for the preceding schema-9 evidence. Additional KV representations remain open.
 
 The engine and HTTP frontend now live in one `orbitkv-engine` crate. Its
 protocol/frontend modules retain logical-only contracts and host-only feature
@@ -26,8 +26,8 @@ first-decode costs without qualifying a serving-performance improvement.
 [Generated-module artifact replay](../results/module-image-artifact-20260913/README.md)
 now skips all 428 NVRTC compilations on a fixed 27B schedule. Two H20 timing
 pairs reduce schedule load by 56.5% and complete diagnostic process startup by
-14.0%. The recorded run used decoder schema 6 with validated images. Current schema 9
-also binds logical attention/KV-view semantics and explicit provider algorithms; older formats are
+14.0%. The recorded run used decoder schema 6 with validated images. Current schema 10
+also binds logical attention/KV-view semantics, explicit provider algorithms and request geometry; older formats are
 rejected and must be regenerated.
 Fresh compilation adds a selected-program capture pass and warm diagnostic
 decode remains about 24.5 ms, so this qualifies startup only. Model-specific
@@ -322,6 +322,22 @@ and wider serving measurements remain open. The
 two narrow C1 HTTP workloads with identical output and final resource drain;
 its short-output P99 TPOT regression remains visible. The engine also exposes
 blocking, checked shutdown and the executable reports final state ownership.
+
+[B1/B8 workload attribution](../results/workload-attribution-20260914/README.md)
+now retains full egglog rule identities and complete GPU step descriptions,
+joined to workload dimensions and selected programs. Explicit FlashInfer request
+geometry fixes retained-bucket planning; schema 10 rejects older artifacts.
+Two frozen builds pass 592 reference comparisons across fresh search, strict
+replay and profiling, with final drain and maximum absolute error 0.8125 under
+the unchanged 1.0 gate. Ordinary compilation uses time-only egglog reports;
+verbose query-plan diagnostics remain opt-in.
+
+The final run still spends 354.19 s in the `glumoe` ruleset. Candidate selection
+also varies between the two builds under the same seed: B8 decode improves,
+but prefill selects a generic BF16 output projection taking 171.15 ms in the
+event profile despite an equivalent cuBLASLt candidate. The result establishes
+attribution and bucket correctness, not a whole-engine performance improvement.
+Reproducible candidate coverage and measured region selection are next.
 
 [Startup preparation](../results/startup-preparation-20260913/README.md) now moves
 bounded artifact-representative graph preparation before readiness. Separate

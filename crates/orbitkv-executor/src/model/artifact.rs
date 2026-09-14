@@ -9,7 +9,7 @@ use luminal::graph::SelectedSchedule;
 use luminal_cuda_lite::CudaModuleArtifact;
 
 // A decoder artifact is a complete, target-validated execution program.
-const DECODER_ARTIFACT_SCHEMA: u32 = 9;
+const DECODER_ARTIFACT_SCHEMA: u32 = 10;
 
 /// Selected schedule and CUDA module images for one native decoder configuration.
 ///
