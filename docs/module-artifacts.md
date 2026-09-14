@@ -97,12 +97,3 @@ the same `--replay-artifact` using frozen baseline and changed binaries.
 execution.
 Keep provider caches and numeric/state gates unchanged and record the binary,
 artifact and oracle identities. These diagnostics do not establish serving TPOT.
-
-The [H20 model result](validation/module-image-artifact-20260913/README.md) records
-two fixed-artifact pairs: 428 module hits and zero NVRTC calls on cached replay,
-11.40 s to 4.96 s median schedule loading, and 38.69 s to 33.28 s complete
-diagnostic process time. All nine processes pass eight reference steps and drain.
-Fresh creation pays 7.43 s for capture; warm diagnostic decode stays near 24.5 ms.
-That historical experiment used an image-omission harness retained with its raw
-source snapshot. Its compatibility path and ablation option are removed from
-the current API and qualification runner.

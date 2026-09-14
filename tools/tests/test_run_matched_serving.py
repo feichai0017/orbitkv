@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from argparse import Namespace
 from unittest.mock import Mock, patch
 from pathlib import Path
 
@@ -46,6 +47,26 @@ def result(metrics=None, generated=None):
 
 
 class MatchedServingTest(unittest.TestCase):
+    def test_token_trace_pins_hash_seed_and_avoids_text_retokenization(self):
+        args = Namespace(client_style="python", backend="openai", endpoint="/v1/completions",
+                         model="model", tokenizer="tokenizer", request_rate="inf", seed=7, bench_arg=[])
+        server = MODULE.ServerSpec("candidate", ("candidate",), "http://localhost:8000")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "benchmark.json").write_text(json.dumps(result(generated=["a"] * 4)))
+            with patch.object(MODULE.subprocess, "run", return_value=Mock(returncode=0, stdout=b"")) as run:
+                observed = MODULE.run_client(server, ("vllm",), args,
+                    MODULE.Workload(2, 32, 4, 1), root, trace_path=root / "trace.jsonl")
+            command = observed["client_command"]
+            self.assertEqual(command[command.index("--dataset-name") + 1], "timed_trace")
+            self.assertIn("--no-self-timed", command)
+            self.assertNotIn("--random-input-len", command)
+            self.assertEqual(run.call_args.kwargs["env"]["PYTHONHASHSEED"], "7")
+            args.seed = -1
+            with self.assertRaises(ValueError):
+                MODULE.bench_command(("vllm",), server, args, MODULE.Workload(2, 32, 4, 1),
+                                     root, "result.json", trace_path=root / "trace.jsonl")
+
     def test_shutdown_retains_early_exit_status(self):
         process = Mock()
         process.poll.return_value = 7

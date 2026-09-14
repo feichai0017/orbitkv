@@ -12,8 +12,8 @@ requirements drive coverage; checkpoint names must never select an operator,
 layout, fusion, or schedule in product code.
 
 The deployment budget is one H20, with quantization and CPU offload allowed.
-The [model targets](model-targets.md) extend this design toward Qwen, GLM, Kimi
-and DeepSeek. Immutable weight residency and transfer scheduling join compute
+The [roadmap](roadmap.md) extends coverage through explicit operation and state
+contracts. Immutable weight residency and transfer scheduling join compute
 and mutable state under a shared budget; host weight offload is not implemented
 by the current checkpoint loader or external KV transport.
 
@@ -36,7 +36,7 @@ by the current checkpoint loader or external KV transport.
 - An opt-in FP8 region alternative shares graph-visible activation preparation
   across compatible projections. Workload profiles now specify feasible joint
   batch/query/page representatives, scratch metadata and CUDA Graph finalist
-  budgets. See [FP8 region tuning](fp8-region-tuning.md) for qualification and
+  budgets. See [search and workload tuning](search-coverage.md) for qualification and
   the private-page fixture boundary.
 - `CustomOp`, `KernelOp`, and `HostOp` provide semantic facts, generated kernels,
   and host orchestration of GPU work. Host operations can declare workspace and
@@ -47,7 +47,7 @@ by the current checkpoint loader or external KV transport.
   remain planned. The existing bounded Qwen closure is not serving-scale or
   broad released-model qualification.
 
-See [architecture.md](architecture.md), [implementation-status.md](implementation-status.md),
+See [architecture.md](architecture.md), [model support](capability-matrix.md),
 and [roadmap.md](roadmap.md) for the current implementation and qualification scope.
 
 ## Responsibilities

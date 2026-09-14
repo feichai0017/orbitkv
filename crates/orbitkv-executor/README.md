@@ -22,8 +22,8 @@ boundary over manager-authored spans. Its host-memory implementation is a
 reference transport. Production remote storage and CPU weight offload remain
 separate qualification work.
 
-The bounded H20 model closures and remaining gaps are recorded in the
-[implementation status](../../docs/implementation-status.md). See
+The Qwen3.8 H20 execution scope and remaining gaps are recorded in the
+[model support contract](../../docs/capability-matrix.md). See
 [compiler architecture](../../docs/compiler.md),
 [maintenance](../../docs/compiler-maintenance.md), and
 [state lifecycle](../../docs/runtime-session.md) for the execution contracts.

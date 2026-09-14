@@ -1,0 +1,1394 @@
+{
+  "schema": "orbitkv.model-comparison-environment.v1",
+  "checkpoint": "checkpoint.json",
+  "orbitkv_source": {
+    "commit": "4b6c990ede51fdcb04edf49fa3adf41dc58921e8",
+    "binary_sha256": "135bc5a5d7564d22fa2ac5bc9196c7d1dfcc20911271e016f9f096195ebea8d8"
+  },
+  "source_receipt": "../qwen3.8-27b-fp8-h20-20260914/environment.json",
+  "orbitkv_execution_environment": {
+    "target": {
+      "major": 9,
+      "minor": 0
+    },
+    "device": {
+      "name": "NVIDIA H20",
+      "multiprocessors": 78,
+      "total_memory_bytes": 102010781696
+    },
+    "driver_api_version": 13010,
+    "nvrtc": {
+      "version": 13010,
+      "options": [
+        "--include-path=/usr/local/cuda/include",
+        "--include-path=/usr/include",
+        "--gpu-architecture=sm_90"
+      ]
+    },
+    "provider_lock_digest": "6400e1cbd604a042bf996a647239d01e0cda38abf1ecbcc925ed46c5de066314",
+    "providers": {
+      "cublaslt": {
+        "kind": "cuda_toolkit",
+        "version": 130200
+      },
+      "deepgemm": {
+        "kind": "native_source",
+        "digest": "9e45499d4957699743662883cdcd675aceed826f27bed224618f8a3df2016ffb"
+      },
+      "flashinfer": {
+        "kind": "native_source",
+        "digest": "d4ee2cfb79006b7ba7405ab8df272b26a3fffaba344a9cfaef8f4b7ebd54b4ae"
+      },
+      "flashattention": {
+        "kind": "native_source",
+        "digest": "4891c62feaeed8e868400c329985dc0e7d8aa97e85d7e010fc638bccb619897b"
+      }
+    },
+    "native_compiler": {
+      "executable_digest": "6a96e84a6e28cb3d5748cd40ef9c61b05f05684ff1c7b23afdd462c84ae09ee4",
+      "environment_digest": "7312bfdf5c822c99b08e05e6db6f837b605013ba923419cd3497c6d45e95fa75"
+    },
+    "cublaslt_autotune": false
+  },
+  "artifact": {
+    "sha256": "ef611fb5653e60107a991ffc5bca06d9ab7e037c94a8490e1818dac897bb8511",
+    "schema": 11,
+    "bytes": 67003525,
+    "buckets": 10
+  },
+  "prior_numerical_preflight": {
+    "http_prompt": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "http_greedy_text": "&!@",
+    "model_validation": {
+      "status": "passed",
+      "checks": [
+        {
+          "name": "dtype",
+          "exit_code": 0
+        },
+        {
+          "name": "routed",
+          "exit_code": 0
+        },
+        {
+          "name": "providers",
+          "exit_code": 0
+        },
+        {
+          "name": "kernel",
+          "exit_code": 0
+        },
+        {
+          "name": "artifacts",
+          "exit_code": 0
+        },
+        {
+          "name": "model-b1",
+          "exit_code": 0
+        },
+        {
+          "name": "model-b8",
+          "exit_code": 0
+        }
+      ]
+    },
+    "teacher_forced_reference": {
+      "prompt": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "prefill_token": 5,
+      "decode_token": 0,
+      "vocabulary_size": 248320,
+      "oracle": "Transformers 5.12.1 Qwen3_5ForConditionalGeneration; corrected mlp.gate prefix collision; local deep_gemm 2.6.1",
+      "model": "Qwen/Qwen3.8-27B-FP8",
+      "architecture_class": "Qwen3_5ForConditionalGeneration"
+    },
+    "numerical_runs": [
+      {
+        "batch_size": 1,
+        "phase": "cold-search",
+        "reference_steps": 8,
+        "comparisons": 8,
+        "maximum_absolute_logit_error": 0.625,
+        "drain_passed": true,
+        "artifact_sha256": "70191c655097d7ad9682be0c30b2eac6e34858f6b6a0adeceef672f7eb7c31a3"
+      },
+      {
+        "batch_size": 1,
+        "phase": "strict-replay",
+        "reference_steps": 8,
+        "comparisons": 8,
+        "maximum_absolute_logit_error": 0.625,
+        "drain_passed": true,
+        "artifact_sha256": "70191c655097d7ad9682be0c30b2eac6e34858f6b6a0adeceef672f7eb7c31a3"
+      },
+      {
+        "batch_size": 1,
+        "phase": "profile",
+        "reference_steps": 8,
+        "comparisons": 8,
+        "maximum_absolute_logit_error": 0.625,
+        "drain_passed": true,
+        "artifact_sha256": "70191c655097d7ad9682be0c30b2eac6e34858f6b6a0adeceef672f7eb7c31a3"
+      },
+      {
+        "batch_size": 8,
+        "phase": "strict-replay",
+        "reference_steps": 8,
+        "comparisons": 64,
+        "maximum_absolute_logit_error": 0.59375,
+        "drain_passed": true,
+        "artifact_sha256": "70191c655097d7ad9682be0c30b2eac6e34858f6b6a0adeceef672f7eb7c31a3"
+      },
+      {
+        "batch_size": 8,
+        "phase": "profile",
+        "reference_steps": 8,
+        "comparisons": 64,
+        "maximum_absolute_logit_error": 0.59375,
+        "drain_passed": true,
+        "artifact_sha256": "70191c655097d7ad9682be0c30b2eac6e34858f6b6a0adeceef672f7eb7c31a3"
+      }
+    ],
+    "absolute_logit_tolerance": 1.0,
+    "qualification_profile": {
+      "batch_sizes": [
+        1,
+        8
+      ],
+      "prefill_tokens": [
+        4,
+        32
+      ],
+      "context_pages": [],
+      "keep_best": 2,
+      "initial_candidates": 1,
+      "trials": 3,
+      "search_time_limit_ms": 1800000,
+      "maximum_buckets": 16,
+      "enable_shared_fp8_quantization": false,
+      "hotspot_candidates": 32
+    },
+    "scope": "The numerical preflight uses a separately compiled seven-bucket artifact. Serving uses the ten-bucket artifact above."
+  },
+  "baseline_packages": [
+    {
+      "engine": "vllm",
+      "packages": {
+        "torch": "2.13.0",
+        "nvidia-cublas": "13.1.1.3",
+        "transformers": "5.17.0",
+        "flashinfer-python": "0.6.18",
+        "vllm": "0.29.0",
+        "triton": "3.7.1"
+      },
+      "python_files_checked": 2512,
+      "modified_files": [],
+      "missing_files": [],
+      "record_sha256": "745afb5ceeeb2eae26195575bd2fac6722188c5c64d90e62155bf0344b98472b",
+      "ordered_python_sources_sha256": "4db771f5ffff7262b512311de0f8d23bbf8e071540a68dbc79fcf0c7c598e048"
+    },
+    {
+      "engine": "sglang",
+      "packages": {
+        "flashinfer-python": "0.6.15.post1",
+        "deep_gemm": "2.6.1",
+        "nvidia-cublas": "13.1.0.3",
+        "torch": "2.11.0",
+        "sglang": "0.5.17",
+        "transformers": "5.12.1",
+        "triton": "3.6.0"
+      },
+      "python_files_checked": 3022,
+      "modified_files": [],
+      "missing_files": [],
+      "record_sha256": "f05f7c56ba004bfa1b6fc44b92de981ccd1fc1c93906896342c66244ac151c64",
+      "ordered_python_sources_sha256": "da3425d85ca935cfca9795a5901c0c4b0fec43972ef94195fd72309576dd0eae"
+    }
+  ],
+  "benchmark_plan": {
+    "schema": "orbitkv.serving-comparison.v1",
+    "created_at_utc": "2026-09-14T17:19:04.639340+00:00",
+    "source": {
+      "commit": "0299d2357e5536dafe5a600113876500bf9e28a9",
+      "worktree_dirty": true
+    },
+    "model": "qwen38-27b-fp8",
+    "tokenizer": "/workspace/models/qwen3.8-27b-fp8",
+    "servers": [
+      {
+        "name": "orbitkv",
+        "command": [
+          "/workspace/orbitkv/.qualification/compilation-reuse-20260914/serving-serve",
+          "--model",
+          "/workspace/models/qwen3.8-27b-fp8",
+          "--decoder-artifact",
+          "/workspace/orbitkv/.qualification/compilation-reuse-20260914/serving-preparation/decoder.json",
+          "--tuning-profile",
+          "/workspace/orbitkv/benchmarks/model-serving-tuning.json",
+          "--graph-cache-capacity",
+          "12",
+          "--page-counts",
+          "256",
+          "--max-model-tokens",
+          "512",
+          "--max-prefill-tokens",
+          "32",
+          "--max-batch-tokens",
+          "256",
+          "--max-active-requests",
+          "8",
+          "--max-queued-requests",
+          "64",
+          "--search-graphs",
+          "8",
+          "--search-seed",
+          "7",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "8010",
+          "--served-model",
+          "qwen38-27b-fp8"
+        ],
+        "base_url": "http://127.0.0.1:8010",
+        "lifecycle": "orbitkv"
+      },
+      {
+        "name": "vllm",
+        "command": [
+          "env",
+          "PATH=/workspace/orbitkv/.qualification/vllm-runtime/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+          "serve",
+          "/workspace/models/qwen3.8-27b-fp8",
+          "--served-model-name",
+          "qwen38-27b-fp8",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "8030",
+          "--language-model-only",
+          "--dtype",
+          "bfloat16",
+          "--kv-cache-dtype",
+          "bfloat16",
+          "--kv-cache-memory-bytes",
+          "2560M",
+          "--max-model-len",
+          "512",
+          "--max-num-seqs",
+          "8",
+          "--max-num-batched-tokens",
+          "256",
+          "--no-enable-prefix-caching",
+          "--gdn-prefill-backend",
+          "triton",
+          "--generation-config",
+          "vllm"
+        ],
+        "base_url": "http://127.0.0.1:8030",
+        "lifecycle": null
+      },
+      {
+        "name": "sglang",
+        "command": [
+          "env",
+          "PATH=/workspace/orbitkv/.qualification/sglang-runtime/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "SGLANG_ENABLE_JIT_DEEPGEMM=1",
+          "SGLANG_JIT_DEEPGEMM_PRECOMPILE=0",
+          "/workspace/orbitkv/.qualification/sglang-runtime/bin/python",
+          "-m",
+          "sglang.launch_server",
+          "--model-path",
+          "/workspace/models/qwen3.8-27b-fp8",
+          "--served-model-name",
+          "qwen38-27b-fp8",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "8020",
+          "--language-only",
+          "--dtype",
+          "bfloat16",
+          "--kv-cache-dtype",
+          "bfloat16",
+          "--context-length",
+          "512",
+          "--page-size",
+          "16",
+          "--max-total-tokens",
+          "4096",
+          "--max-prefill-tokens",
+          "256",
+          "--chunked-prefill-size",
+          "256",
+          "--max-running-requests",
+          "8",
+          "--mem-fraction-static",
+          "0.7",
+          "--disable-radix-cache",
+          "--cuda-graph-max-bs-decode",
+          "8",
+          "--cuda-graph-bs-decode",
+          "1",
+          "2",
+          "4",
+          "8",
+          "--attention-backend",
+          "fa3",
+          "--log-level",
+          "info",
+          "--nccl-port",
+          "8021"
+        ],
+        "base_url": "http://127.0.0.1:8020",
+        "lifecycle": null
+      }
+    ],
+    "workloads": {
+      "short-c1": {
+        "input_tokens": 4,
+        "output_tokens": 64,
+        "requests": 16,
+        "max_concurrency": 1
+      },
+      "short-c8": {
+        "input_tokens": 4,
+        "output_tokens": 64,
+        "requests": 16,
+        "max_concurrency": 8
+      },
+      "context-c1": {
+        "input_tokens": 32,
+        "output_tokens": 128,
+        "requests": 16,
+        "max_concurrency": 1
+      },
+      "context-c8": {
+        "input_tokens": 32,
+        "output_tokens": 128,
+        "requests": 16,
+        "max_concurrency": 8
+      }
+    },
+    "schedule": [
+      [
+        "orbitkv",
+        "vllm",
+        "sglang"
+      ],
+      [
+        "vllm",
+        "sglang",
+        "orbitkv"
+      ],
+      [
+        "sglang",
+        "orbitkv",
+        "vllm"
+      ]
+    ],
+    "client": [
+      "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm"
+    ],
+    "seed": 0,
+    "client_style": "python",
+    "bench_args": [
+      "--num-warmups",
+      "0",
+      "--ready-check-timeout-sec",
+      "0"
+    ],
+    "dataset": {
+      "name": "timed_trace",
+      "chunk_hash_size": 1,
+      "python_hash_seed": 0,
+      "self_timed": false,
+      "traces": {
+        "short-c1": "/workspace/orbitkv/benchmarks/traces/short-c1.jsonl",
+        "short-c8": "/workspace/orbitkv/benchmarks/traces/short-c8.jsonl",
+        "context-c1": "/workspace/orbitkv/benchmarks/traces/context-c1.jsonl",
+        "context-c8": "/workspace/orbitkv/benchmarks/traces/context-c8.jsonl"
+      }
+    },
+    "environment": {
+      "platform": "Linux-5.15.152.bsk.7-amd64-x86_64-with-glibc2.36",
+      "python": "3.11.2 (main, Apr  8 2026, 01:58:00) [GCC 12.2.0]",
+      "rustc": null,
+      "cargo": null,
+      "benchmark_client": "0.29.0",
+      "gpu": "NVIDIA H20, GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3, 535.161.08, 97871 MiB",
+      "source_commit": "0299d2357e5536dafe5a600113876500bf9e28a9"
+    },
+    "files": [
+      {
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/token-servers.json",
+        "bytes": 3421,
+        "sha256": "a539c33423d4b2ac44af87416c325209371a9ad21d6433eec06c0a3ad79546b3"
+      },
+      {
+        "path": "/workspace/orbitkv/benchmarks/model-serving.json",
+        "bytes": 463,
+        "sha256": "ba7ad666ed49a6a6bd547e700fce3a088cfce90880d3d06c4e0026935a4b4ed1"
+      },
+      {
+        "path": "/workspace/orbitkv/benchmarks/traces/short-c1.jsonl",
+        "bytes": 1222,
+        "sha256": "04e43268ffbf43d5b82a5a4fd36f175b2d8d4d1807db54d44ea0f36abea31c22"
+      },
+      {
+        "path": "/workspace/orbitkv/benchmarks/traces/short-c8.jsonl",
+        "bytes": 1222,
+        "sha256": "04e43268ffbf43d5b82a5a4fd36f175b2d8d4d1807db54d44ea0f36abea31c22"
+      },
+      {
+        "path": "/workspace/orbitkv/benchmarks/traces/context-c1.jsonl",
+        "bytes": 3010,
+        "sha256": "052a23964d48f60dc6504204a9d4b0db987607bc3db004803746e9f532c9027a"
+      },
+      {
+        "path": "/workspace/orbitkv/benchmarks/traces/context-c8.jsonl",
+        "bytes": 3010,
+        "sha256": "052a23964d48f60dc6504204a9d4b0db987607bc3db004803746e9f532c9027a"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/compilation-reuse-20260914/serving-serve",
+        "bytes": 66552256,
+        "sha256": "135bc5a5d7564d22fa2ac5bc9196c7d1dfcc20911271e016f9f096195ebea8d8"
+      },
+      {
+        "path": "/workspace/orbitkv/.qualification/compilation-reuse-20260914/serving-preparation/decoder.json",
+        "bytes": 67003525,
+        "sha256": "ef611fb5653e60107a991ffc5bca06d9ab7e037c94a8490e1818dac897bb8511"
+      },
+      {
+        "path": "/workspace/orbitkv/benchmarks/model-serving-tuning.json",
+        "bytes": 304,
+        "sha256": "1ff1ea2bdf315d12e3a2c7a32bae02efe0ef57f4f56edc62fd1da01206d8ef0f"
+      },
+      {
+        "path": "/workspace/orbitkv/tools/run_serving_comparison.py",
+        "bytes": 13113,
+        "sha256": "885391bbcb061fb5427b8d6f7064955156a5656f309b1a786d8997842297a8ca"
+      },
+      {
+        "path": "/workspace/orbitkv/tools/run_matched_serving.py",
+        "bytes": 22729,
+        "sha256": "b8dfcab250f3aee5dd7da793f6afc7930870d235850ae4c942bbf8c4b5a18d3d"
+      },
+      {
+        "path": "/workspace/orbitkv/tools/run_model_serving.py",
+        "bytes": 6414,
+        "sha256": "9f413fc3cd691554ddcb39fadaab4ed0965a250cc7088c7b7a840ceb71ef9c82"
+      },
+      {
+        "path": "/workspace/orbitkv/tools/serving_metrics.py",
+        "bytes": 5158,
+        "sha256": "c4510b3be660e9f3a73a7a4984e5971400378b407bc1324b97f07057a61c8778"
+      }
+    ],
+    "measurement": "one fresh process per engine/epoch; workloads run in declared order after readiness",
+    "cache_policy": "provider and compiler disk caches retained; no benchmark observations discarded"
+  },
+  "tuning_profile": {
+    "batch_sizes": [
+      1,
+      8
+    ],
+    "prefill_tokens": [
+      4,
+      32,
+      256
+    ],
+    "context_pages": [],
+    "keep_best": 2,
+    "initial_candidates": 1,
+    "trials": 3,
+    "search_time_limit_ms": 1800000,
+    "maximum_buckets": 16,
+    "enable_shared_fp8_quantization": false,
+    "hotspot_candidates": 32
+  },
+  "profiles": {
+    "schema": "orbitkv.matched-serving-profiles",
+    "profiles": {
+      "short-c1": {
+        "input_tokens": 4,
+        "output_tokens": 64,
+        "requests": 16,
+        "max_concurrency": 1
+      },
+      "short-c8": {
+        "input_tokens": 4,
+        "output_tokens": 64,
+        "requests": 16,
+        "max_concurrency": 8
+      },
+      "context-c1": {
+        "input_tokens": 32,
+        "output_tokens": 128,
+        "requests": 16,
+        "max_concurrency": 1
+      },
+      "context-c8": {
+        "input_tokens": 32,
+        "output_tokens": 128,
+        "requests": 16,
+        "max_concurrency": 8
+      }
+    }
+  },
+  "limits": {
+    "device_count": 1,
+    "active_requests": 8,
+    "maximum_sequence_tokens": 512,
+    "maximum_aggregate_query_tokens": 256,
+    "orbitkv_maximum_prefill_tokens": 32,
+    "kv_precision": "BF16",
+    "weight_precision": "128x128 E4M3 block FP8",
+    "prefix_reuse": false,
+    "cpu_offload": false
+  },
+  "memory_policy": {
+    "orbitkv": "256 pages of 16 tokens plus double-buffered fixed-state slots; graph capacity 12",
+    "vllm": "Explicit 2560M KV-cache reservation; logs resolve 6656 cache tokens",
+    "sglang": "4096 total tokens; maximum 8 running requests; mem-fraction-static 0.7",
+    "scope": "Device-wide sampled usage, not equal allocation reservations or KV payload efficiency"
+  },
+  "runtime_source_check": {
+    "runtime_source_commit": "4b6c990ede51fdcb04edf49fa3adf41dc58921e8",
+    "checked_files": 310,
+    "differences": [],
+    "binary_sha256": "135bc5a5d7564d22fa2ac5bc9196c7d1dfcc20911271e016f9f096195ebea8d8",
+    "note": "Current production source, manifests, provider lock and root lock match the frozen inference build; documentation and benchmark tooling changes are separate."
+  },
+  "serving_artifact_probe": {
+    "status": "passed",
+    "scope": "B1, eight teacher-forced full-vocabulary steps on the exact ten-bucket serving artifact; not all serving buckets or random benchmark prompts.",
+    "reference_origin": "Existing independent Transformers/DeepGEMM FP8 reference; f32 rows and histories unchanged.",
+    "prompt_token_ids": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "vocabulary_size": 248320,
+    "reference_steps": 8,
+    "absolute_logit_tolerance": 1.0,
+    "maximum_absolute_error": 0.625,
+    "state_drain_passed": true,
+    "artifact_sha256": "ef611fb5653e60107a991ffc5bca06d9ab7e037c94a8490e1818dac897bb8511",
+    "test_binary_sha256": "5803472d24faa4fa38cddcfd60e79cccd3b788e63a17dcd9513f1c3d2c5046a4",
+    "elapsed_seconds": 26.21595973521471,
+    "command": [
+      "/workspace/orbitkv/.qualification/compilation-reuse-20260914/model-final",
+      "--exact",
+      "logit_probe::decoder_manifest_logits_and_drain",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "steps": [
+      {
+        "argmax_equal": true,
+        "candidate_logits_at_selected_tokens": {
+          "candidate_selected": 11.1875,
+          "reference_selected": 11.1875
+        },
+        "candidate_maximum_tie_count": 1,
+        "candidate_maximum_token_ids": [
+          5
+        ],
+        "candidate_preference_for_its_winner": 0.0,
+        "candidate_selected_matches_highest_maximum_token_id": true,
+        "candidate_selected_token_id": 5,
+        "candidate_top": [
+          {
+            "logit": 11.1875,
+            "token_id": 5
+          },
+          {
+            "logit": 10.25,
+            "token_id": 3
+          },
+          {
+            "logit": 9.1875,
+            "token_id": 9
+          },
+          {
+            "logit": 8.9375,
+            "token_id": 8687
+          },
+          {
+            "logit": 8.5625,
+            "token_id": 220
+          }
+        ],
+        "candidate_top2_margin": 0.9375,
+        "canonical_argmax_policy": "lowest-token-id",
+        "highest_token_id_argmax_equal": true,
+        "input_token_ids": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "maximum_absolute_error": 0.625,
+        "reference_logits_at_selected_tokens": {
+          "candidate_selected": 11.125,
+          "reference_selected": 11.125
+        },
+        "reference_maximum_tie_count": 1,
+        "reference_maximum_token_ids": [
+          5
+        ],
+        "reference_preference_for_its_winner": 0.0,
+        "reference_selected_token_id": 5,
+        "reference_selected_token_is_logit_maximum": true,
+        "reference_top": [
+          {
+            "logit": 11.125,
+            "token_id": 5
+          },
+          {
+            "logit": 10.1875,
+            "token_id": 3
+          },
+          {
+            "logit": 9.0625,
+            "token_id": 9
+          },
+          {
+            "logit": 8.9375,
+            "token_id": 8687
+          },
+          {
+            "logit": 8.5,
+            "token_id": 220
+          }
+        ],
+        "reference_top2_margin": 0.9375,
+        "root_mean_square_error": 0.09610104281542724,
+        "selected_token_equal": true,
+        "selected_token_is_logit_maximum": true,
+        "step": 0,
+        "worst_error_token_id": 82
+      },
+      {
+        "argmax_equal": true,
+        "candidate_logits_at_selected_tokens": {
+          "candidate_selected": 10.0625,
+          "reference_selected": 10.0625
+        },
+        "candidate_maximum_tie_count": 1,
+        "candidate_maximum_token_ids": [
+          0
+        ],
+        "candidate_preference_for_its_winner": 0.0,
+        "candidate_selected_matches_highest_maximum_token_id": true,
+        "candidate_selected_token_id": 0,
+        "candidate_top": [
+          {
+            "logit": 10.0625,
+            "token_id": 0
+          },
+          {
+            "logit": 9.8125,
+            "token_id": 6
+          },
+          {
+            "logit": 9.5,
+            "token_id": 1
+          },
+          {
+            "logit": 9.1875,
+            "token_id": 31
+          },
+          {
+            "logit": 9.125,
+            "token_id": 9
+          }
+        ],
+        "candidate_top2_margin": 0.25,
+        "canonical_argmax_policy": "lowest-token-id",
+        "highest_token_id_argmax_equal": true,
+        "input_token_ids": [
+          5
+        ],
+        "maximum_absolute_error": 0.40625,
+        "reference_logits_at_selected_tokens": {
+          "candidate_selected": 10.1875,
+          "reference_selected": 10.1875
+        },
+        "reference_maximum_tie_count": 1,
+        "reference_maximum_token_ids": [
+          0
+        ],
+        "reference_preference_for_its_winner": 0.0,
+        "reference_selected_token_id": 0,
+        "reference_selected_token_is_logit_maximum": true,
+        "reference_top": [
+          {
+            "logit": 10.1875,
+            "token_id": 0
+          },
+          {
+            "logit": 9.625,
+            "token_id": 6
+          },
+          {
+            "logit": 9.5625,
+            "token_id": 1
+          },
+          {
+            "logit": 9.3125,
+            "token_id": 8687
+          },
+          {
+            "logit": 9.25,
+            "token_id": 31
+          }
+        ],
+        "reference_top2_margin": 0.5625,
+        "root_mean_square_error": 0.0794918721287069,
+        "selected_token_equal": true,
+        "selected_token_is_logit_maximum": true,
+        "step": 1,
+        "worst_error_token_id": 74754
+      },
+      {
+        "argmax_equal": true,
+        "candidate_logits_at_selected_tokens": {
+          "candidate_selected": 9.5,
+          "reference_selected": 9.5
+        },
+        "candidate_maximum_tie_count": 1,
+        "candidate_maximum_token_ids": [
+          31
+        ],
+        "candidate_preference_for_its_winner": 0.0,
+        "candidate_selected_matches_highest_maximum_token_id": true,
+        "candidate_selected_token_id": 31,
+        "candidate_top": [
+          {
+            "logit": 9.5,
+            "token_id": 31
+          },
+          {
+            "logit": 9.0,
+            "token_id": 220
+          },
+          {
+            "logit": 8.9375,
+            "token_id": 2037
+          },
+          {
+            "logit": 8.3125,
+            "token_id": 198
+          },
+          {
+            "logit": 8.125,
+            "token_id": 353
+          }
+        ],
+        "candidate_top2_margin": 0.5,
+        "canonical_argmax_policy": "lowest-token-id",
+        "highest_token_id_argmax_equal": true,
+        "input_token_ids": [
+          0
+        ],
+        "maximum_absolute_error": 0.44580078125,
+        "reference_logits_at_selected_tokens": {
+          "candidate_selected": 9.5625,
+          "reference_selected": 9.5625
+        },
+        "reference_maximum_tie_count": 1,
+        "reference_maximum_token_ids": [
+          31
+        ],
+        "reference_preference_for_its_winner": 0.0,
+        "reference_selected_token_id": 31,
+        "reference_selected_token_is_logit_maximum": true,
+        "reference_top": [
+          {
+            "logit": 9.5625,
+            "token_id": 31
+          },
+          {
+            "logit": 9.125,
+            "token_id": 220
+          },
+          {
+            "logit": 9.125,
+            "token_id": 2037
+          },
+          {
+            "logit": 8.5,
+            "token_id": 198
+          },
+          {
+            "logit": 8.5,
+            "token_id": 7285
+          }
+        ],
+        "reference_top2_margin": 0.4375,
+        "root_mean_square_error": 0.09597551049709595,
+        "selected_token_equal": true,
+        "selected_token_is_logit_maximum": true,
+        "step": 2,
+        "worst_error_token_id": 3420
+      },
+      {
+        "argmax_equal": true,
+        "candidate_logits_at_selected_tokens": {
+          "candidate_selected": 11.1875,
+          "reference_selected": 11.1875
+        },
+        "candidate_maximum_tie_count": 1,
+        "candidate_maximum_token_ids": [
+          46474
+        ],
+        "candidate_preference_for_its_winner": 0.0,
+        "candidate_selected_matches_highest_maximum_token_id": true,
+        "candidate_selected_token_id": 46474,
+        "candidate_top": [
+          {
+            "logit": 11.1875,
+            "token_id": 46474
+          },
+          {
+            "logit": 11.0,
+            "token_id": 0
+          },
+          {
+            "logit": 10.3125,
+            "token_id": 2
+          },
+          {
+            "logit": 10.0625,
+            "token_id": 2037
+          },
+          {
+            "logit": 9.8125,
+            "token_id": 8687
+          }
+        ],
+        "candidate_top2_margin": 0.1875,
+        "canonical_argmax_policy": "lowest-token-id",
+        "highest_token_id_argmax_equal": true,
+        "input_token_ids": [
+          31
+        ],
+        "maximum_absolute_error": 0.40625,
+        "reference_logits_at_selected_tokens": {
+          "candidate_selected": 11.25,
+          "reference_selected": 11.25
+        },
+        "reference_maximum_tie_count": 1,
+        "reference_maximum_token_ids": [
+          46474
+        ],
+        "reference_preference_for_its_winner": 0.0,
+        "reference_selected_token_id": 46474,
+        "reference_selected_token_is_logit_maximum": true,
+        "reference_top": [
+          {
+            "logit": 11.25,
+            "token_id": 46474
+          },
+          {
+            "logit": 11.125,
+            "token_id": 0
+          },
+          {
+            "logit": 10.4375,
+            "token_id": 2
+          },
+          {
+            "logit": 10.0625,
+            "token_id": 2037
+          },
+          {
+            "logit": 9.9375,
+            "token_id": 30
+          }
+        ],
+        "reference_top2_margin": 0.125,
+        "root_mean_square_error": 0.07794956119235524,
+        "selected_token_equal": true,
+        "selected_token_is_logit_maximum": true,
+        "step": 3,
+        "worst_error_token_id": 85852
+      },
+      {
+        "argmax_equal": true,
+        "candidate_logits_at_selected_tokens": {
+          "candidate_selected": 12.0,
+          "reference_selected": 12.0
+        },
+        "candidate_maximum_tie_count": 1,
+        "candidate_maximum_token_ids": [
+          4
+        ],
+        "candidate_preference_for_its_winner": 0.0,
+        "candidate_selected_matches_highest_maximum_token_id": true,
+        "candidate_selected_token_id": 4,
+        "candidate_top": [
+          {
+            "logit": 12.0,
+            "token_id": 4
+          },
+          {
+            "logit": 10.9375,
+            "token_id": 44370
+          },
+          {
+            "logit": 10.75,
+            "token_id": 0
+          },
+          {
+            "logit": 10.75,
+            "token_id": 1
+          },
+          {
+            "logit": 10.5,
+            "token_id": 31
+          }
+        ],
+        "candidate_top2_margin": 1.0625,
+        "canonical_argmax_policy": "lowest-token-id",
+        "highest_token_id_argmax_equal": true,
+        "input_token_ids": [
+          46474
+        ],
+        "maximum_absolute_error": 0.4375,
+        "reference_logits_at_selected_tokens": {
+          "candidate_selected": 12.125,
+          "reference_selected": 12.125
+        },
+        "reference_maximum_tie_count": 1,
+        "reference_maximum_token_ids": [
+          4
+        ],
+        "reference_preference_for_its_winner": 0.0,
+        "reference_selected_token_id": 4,
+        "reference_selected_token_is_logit_maximum": true,
+        "reference_top": [
+          {
+            "logit": 12.125,
+            "token_id": 4
+          },
+          {
+            "logit": 11.125,
+            "token_id": 44370
+          },
+          {
+            "logit": 10.875,
+            "token_id": 1
+          },
+          {
+            "logit": 10.75,
+            "token_id": 0
+          },
+          {
+            "logit": 10.625,
+            "token_id": 31
+          }
+        ],
+        "reference_top2_margin": 1.0,
+        "root_mean_square_error": 0.0720807087035158,
+        "selected_token_equal": true,
+        "selected_token_is_logit_maximum": true,
+        "step": 4,
+        "worst_error_token_id": 10646
+      },
+      {
+        "argmax_equal": true,
+        "candidate_logits_at_selected_tokens": {
+          "candidate_selected": 12.6875,
+          "reference_selected": 12.6875
+        },
+        "candidate_maximum_tie_count": 1,
+        "candidate_maximum_token_ids": [
+          5
+        ],
+        "candidate_preference_for_its_winner": 0.0,
+        "candidate_selected_matches_highest_maximum_token_id": true,
+        "candidate_selected_token_id": 5,
+        "candidate_top": [
+          {
+            "logit": 12.6875,
+            "token_id": 5
+          },
+          {
+            "logit": 10.5625,
+            "token_id": 3
+          },
+          {
+            "logit": 9.9375,
+            "token_id": 8687
+          },
+          {
+            "logit": 9.6875,
+            "token_id": 2
+          },
+          {
+            "logit": 9.625,
+            "token_id": 9
+          }
+        ],
+        "candidate_top2_margin": 2.125,
+        "canonical_argmax_policy": "lowest-token-id",
+        "highest_token_id_argmax_equal": true,
+        "input_token_ids": [
+          4
+        ],
+        "maximum_absolute_error": 0.484375,
+        "reference_logits_at_selected_tokens": {
+          "candidate_selected": 12.75,
+          "reference_selected": 12.75
+        },
+        "reference_maximum_tie_count": 1,
+        "reference_maximum_token_ids": [
+          5
+        ],
+        "reference_preference_for_its_winner": 0.0,
+        "reference_selected_token_id": 5,
+        "reference_selected_token_is_logit_maximum": true,
+        "reference_top": [
+          {
+            "logit": 12.75,
+            "token_id": 5
+          },
+          {
+            "logit": 10.5625,
+            "token_id": 3
+          },
+          {
+            "logit": 10.0,
+            "token_id": 8687
+          },
+          {
+            "logit": 9.6875,
+            "token_id": 9
+          },
+          {
+            "logit": 9.625,
+            "token_id": 2
+          }
+        ],
+        "reference_top2_margin": 2.1875,
+        "root_mean_square_error": 0.0721129226673477,
+        "selected_token_equal": true,
+        "selected_token_is_logit_maximum": true,
+        "step": 5,
+        "worst_error_token_id": 12597
+      },
+      {
+        "argmax_equal": true,
+        "candidate_logits_at_selected_tokens": {
+          "candidate_selected": 13.4375,
+          "reference_selected": 13.4375
+        },
+        "candidate_maximum_tie_count": 1,
+        "candidate_maximum_token_ids": [
+          0
+        ],
+        "candidate_preference_for_its_winner": 0.0,
+        "candidate_selected_matches_highest_maximum_token_id": true,
+        "candidate_selected_token_id": 0,
+        "candidate_top": [
+          {
+            "logit": 13.4375,
+            "token_id": 0
+          },
+          {
+            "logit": 12.4375,
+            "token_id": 8687
+          },
+          {
+            "logit": 11.8125,
+            "token_id": 1
+          },
+          {
+            "logit": 11.0,
+            "token_id": 9
+          },
+          {
+            "logit": 11.0,
+            "token_id": 31
+          }
+        ],
+        "candidate_top2_margin": 1.0,
+        "canonical_argmax_policy": "lowest-token-id",
+        "highest_token_id_argmax_equal": true,
+        "input_token_ids": [
+          5
+        ],
+        "maximum_absolute_error": 0.359375,
+        "reference_logits_at_selected_tokens": {
+          "candidate_selected": 13.5,
+          "reference_selected": 13.5
+        },
+        "reference_maximum_tie_count": 1,
+        "reference_maximum_token_ids": [
+          0
+        ],
+        "reference_preference_for_its_winner": 0.0,
+        "reference_selected_token_id": 0,
+        "reference_selected_token_is_logit_maximum": true,
+        "reference_top": [
+          {
+            "logit": 13.5,
+            "token_id": 0
+          },
+          {
+            "logit": 12.5625,
+            "token_id": 8687
+          },
+          {
+            "logit": 11.9375,
+            "token_id": 1
+          },
+          {
+            "logit": 11.0625,
+            "token_id": 31
+          },
+          {
+            "logit": 11.0,
+            "token_id": 9
+          }
+        ],
+        "reference_top2_margin": 0.9375,
+        "root_mean_square_error": 0.06535933750539365,
+        "selected_token_equal": true,
+        "selected_token_is_logit_maximum": true,
+        "step": 6,
+        "worst_error_token_id": 4081
+      },
+      {
+        "argmax_equal": true,
+        "candidate_logits_at_selected_tokens": {
+          "candidate_selected": 13.0625,
+          "reference_selected": 13.0625
+        },
+        "candidate_maximum_tie_count": 1,
+        "candidate_maximum_token_ids": [
+          31
+        ],
+        "candidate_preference_for_its_winner": 0.0,
+        "candidate_selected_matches_highest_maximum_token_id": true,
+        "candidate_selected_token_id": 31,
+        "candidate_top": [
+          {
+            "logit": 13.0625,
+            "token_id": 31
+          },
+          {
+            "logit": 10.4375,
+            "token_id": 2
+          },
+          {
+            "logit": 10.375,
+            "token_id": 46474
+          },
+          {
+            "logit": 10.125,
+            "token_id": 59968
+          },
+          {
+            "logit": 10.0625,
+            "token_id": 3
+          }
+        ],
+        "candidate_top2_margin": 2.625,
+        "canonical_argmax_policy": "lowest-token-id",
+        "highest_token_id_argmax_equal": true,
+        "input_token_ids": [
+          0
+        ],
+        "maximum_absolute_error": 0.6015625,
+        "reference_logits_at_selected_tokens": {
+          "candidate_selected": 12.9375,
+          "reference_selected": 12.9375
+        },
+        "reference_maximum_tie_count": 1,
+        "reference_maximum_token_ids": [
+          31
+        ],
+        "reference_preference_for_its_winner": 0.0,
+        "reference_selected_token_id": 31,
+        "reference_selected_token_is_logit_maximum": true,
+        "reference_top": [
+          {
+            "logit": 12.9375,
+            "token_id": 31
+          },
+          {
+            "logit": 10.0,
+            "token_id": 2
+          },
+          {
+            "logit": 9.9375,
+            "token_id": 46474
+          },
+          {
+            "logit": 9.75,
+            "token_id": 59968
+          },
+          {
+            "logit": 9.5,
+            "token_id": 3
+          }
+        ],
+        "reference_top2_margin": 2.9375,
+        "root_mean_square_error": 0.14096155832543567,
+        "selected_token_equal": true,
+        "selected_token_is_logit_maximum": true,
+        "step": 7,
+        "worst_error_token_id": 16535
+      }
+    ],
+    "files": [
+      {
+        "bytes": 2287,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-reference/trace.json",
+        "sha256": "89e7237711546ca3aaa0dc1659ba1328946619970d0f5a6488c707cb052136b9"
+      },
+      {
+        "bytes": 1760,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/trace.json",
+        "sha256": "d74b56ab4a30e10839adf5d0f8be2656154aacdc7fd3b32c6d684c906ff88f7e"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/prefill-last.f32",
+        "sha256": "f9c956e374b36648cc4e5bba0a9743f36ff8007059372e5d8cf1f47ae35728d8"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/case-0-step-0.f32",
+        "sha256": "9f2522f425465275ea1b57280c9580e569c5022dcc5db2b7dc56b987e635304f"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode.f32",
+        "sha256": "12117266c12a5f43273b3e04a990737b092e52530aa48f700ab5e3f7a26887c0"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/case-0-step-1.f32",
+        "sha256": "d41d3f5b864288c8216b100d9d672e307604ebe7d1064b4a82418a20aa5ca903"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-2.f32",
+        "sha256": "3da428b9b66f10eb312545b5ddac4a8eab0ae8c419e355ee943acf99442dabef"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/case-0-step-2.f32",
+        "sha256": "5e265c883db9243b12d9106505371036eceb9c5db76c5748508972cf81f33a1e"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-3.f32",
+        "sha256": "2c99df81e22d3ff7f06a90a460fc2409f668fe361bc44de492cce788f9c82d9a"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/case-0-step-3.f32",
+        "sha256": "0eb132a1f4a2173e67c09864f866145ab6a260de5f9955d22e0796e1b1786053"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-4.f32",
+        "sha256": "ca01f6c57c2cfe46a7d2a3e085a313e31e112ec2c3c1a248ab1bad5d9d91332c"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/case-0-step-4.f32",
+        "sha256": "6c6bff8f054f8253a073e431906445a999695ad504781c8613bd1afebce0c5e3"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-5.f32",
+        "sha256": "cf7f66b0a1ac34012c817b02c2e966ac52399dbc6dad23bbd248d011d4b81c58"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/case-0-step-5.f32",
+        "sha256": "9fb87f2a63e76b6ac6947148e582308f0d4d64c7b19c07c1cb4a05c4c3baf2fe"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-6.f32",
+        "sha256": "ebb677f0dae674a26ed4fcb2c0cf8f0b17bd64d7ffd9294821830445c8a3a2a1"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/case-0-step-6.f32",
+        "sha256": "38092c2e02108879b9b2012cdb6397df0935c796f3e0daae4114f0f7327846b4"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-7.f32",
+        "sha256": "956101bab707008994b3267dfa33416b09be54604c9c2df72f73a9369e44875b"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/qwen38-comparison-20260915/serving-probe-candidate/case-0-step-7.f32",
+        "sha256": "a56168a187c997110661972b4352c12663cb19fdfc2e395b496fc7f726883d0b"
+      }
+    ],
+    "probe": {
+      "schema": 1,
+      "model_directory": "/workspace/models/qwen3.8-27b-fp8",
+      "device_index": 0,
+      "page_tokens": 16,
+      "kv_dtype_bytes": 2,
+      "page_counts": [
+        256
+      ],
+      "compile": {
+        "maximum_query_tokens": 256,
+        "representative_prefill_tokens": 32,
+        "maximum_batch_size": 8,
+        "maximum_context_pages": 256,
+        "representative_context_pages": 2,
+        "search_graphs": 8,
+        "search_seed": 7
+      },
+      "cases": [
+        {
+          "id": "reference-continuation",
+          "prompt_token_ids": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "continuation_token_ids": [
+            5,
+            0,
+            31,
+            46474,
+            4,
+            5,
+            0,
+            31
+          ]
+        }
+      ]
+    }
+  }
+}

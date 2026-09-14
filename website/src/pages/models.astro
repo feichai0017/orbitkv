@@ -1,6 +1,6 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
-import { models, performance, plannedModels } from "../data/models";
+import { models, performance } from "../data/models";
 import { sourceUrl } from "../data/site";
 const number = (value: number) => value.toFixed(1);
 const inputRange = (values: number[]) =>
@@ -52,11 +52,6 @@ const inputRange = (values: number[]) =>
           </article>
         ))}
       </div>
-      <p class="reading-copy">
-        Planned: {plannedModels.join(" · ")}. These targets are not yet
-        supported. See the{" "}
-        <a href={sourceUrl("docs/model-targets.md")}>single-H20 roadmap</a>.
-      </p>
     </section>
 
     <section class="detail-section" aria-labelledby="performance-title">
@@ -77,7 +72,7 @@ const inputRange = (values: number[]) =>
           measurements remain available in the model results.
         </p>
       )}
-      {performance.map((report) => (
+      {performance.slice(0, 1).map((report) => (
         <article class="performance-report">
           <div class="report-heading">
             <h3>
@@ -88,6 +83,15 @@ const inputRange = (values: number[]) =>
               <time datetime={report.measured_at}>{report.measured_at}</time>
             </p>
           </div>
+          {report.comparison && (
+            <p class="reading-copy">
+              {report.comparison.client}.{" "}
+              {report.comparison.engines
+                .map((engine) => `${engine.name} ${engine.version}`)
+                .join(" · ")}
+              .
+            </p>
+          )}
           <div
             class="table-scroll"
             role="region"
@@ -103,6 +107,9 @@ const inputRange = (values: number[]) =>
                 <tr>
                   <th scope="col">Input / output</th>
                   <th scope="col">Concurrency</th>
+                  <th scope="col" class="engine-cell">
+                    Engine
+                  </th>
                   <th scope="col">Tokens/s</th>
                   <th scope="col">TTFT</th>
                   <th scope="col">TPOT</th>
@@ -115,8 +122,9 @@ const inputRange = (values: number[]) =>
                     <th scope="row">
                       {inputRange(row.input_tokens)} / {row.output_tokens}
                     </th>
-                    <td>
-                      {row.concurrency}
+                    <td>{row.concurrency}</td>
+                    <td class="engine-cell">
+                      {row.engine ?? "OrbitKV"}
                       {!row.output_repeatable && (
                         <sup aria-label="Generated outputs varied across runs">
                           †
@@ -168,8 +176,9 @@ const inputRange = (values: number[]) =>
         </article>
       ))}
       <p class="reading-copy">
-        Performance depends on context, concurrency and precision. These
-        measurements establish no throughput advantage over vLLM or SGLang.{" "}
+        Performance depends on context, concurrency and precision. These short
+        traces measure the recorded configurations; they do not establish a
+        general performance advantage.{" "}
         <a href={sourceUrl("docs/benchmarking.md")}>Measurement method ↗</a>
       </p>
     </section>

@@ -106,8 +106,7 @@ additional native-library cache identity, following the common provider policy.
 
 Decoder artifacts retain request-count expressions in the FlashInfer operator
 ABI and bind the provider lock. Artifacts from before the backend reorganization
-require fresh search. Historical qualification directories remain immutable.
-External `.so` libraries are cached separately from generated CUDA module images.
+require fresh search. External `.so` libraries are cached separately from generated CUDA module images.
 
 ## Qualification
 
@@ -115,9 +114,8 @@ Independent CPU softmax references live under CUDA `tests/unit/providers/attenti
 They exercise each admitted algorithm directly, including non-power-of-two GQA,
 ragged queries, permuted pages and sliding visibility. Separate tests cover
 semantic extraction, saved-schedule replay, changing CSR contents and captured
-allocation lifetime. See the current [provider qualification](validation/provider-kernels-20260914/README.md)
-for actual device/model gates and limits; the preceding [attention contract result](validation/attention-contract-20260914/README.md)
-documents the earlier implementation and schema.
+allocation lifetime. Model-level scope is recorded in the
+[support contract](capability-matrix.md).
 
 ## Reference engine designs
 

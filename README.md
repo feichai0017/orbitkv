@@ -61,16 +61,16 @@ explicitly before model compilation.
 
 ## Models and performance
 
-Qwen3.8-27B-FP8 is the current text-inference target on one NVIDIA H20.
-Earlier model validation covers Qwen3.5 27B, Qwen2.5 0.5B Instruct and
-Gemma 3 270M. GLM, Kimi and DeepSeek are planned; their model paths are not
-end-to-end supported yet.
+**Qwen3.8-27B-FP8**: verified text inference on one NVIDIA H20, with Full
+attention and Gated DeltaNet state. Local weights, configuration and tokenizer
+match the official checkpoint revision. Vision and MTP are outside this scope.
 
 See [models and measured performance](https://feichai0017.github.io/orbitkv/models/)
 and [reproducible model reports](results/README.md). Measurements state the
 checkpoint, precision, request lengths, concurrency and source revision.
-The [capability matrix](docs/capability-matrix.md) defines the supported contracts;
-[model targets](docs/model-targets.md) describes the single-H20 roadmap.
+The [support contract](docs/capability-matrix.md) records the exact checkpoint
+and tested bounds. Engine comparisons use the same `vllm bench serve` suite for
+OrbitKV, vLLM and SGLang; see the [benchmark method](docs/benchmarking.md).
 
 ## Documentation
 

@@ -84,6 +84,6 @@ export const docs = [
   { name: "State lifecycle", path: "docs/runtime-session.md" },
   { name: "Execution artifacts", path: "docs/module-artifacts.md" },
   { name: "Joint compilation", path: "docs/joint-compilation.md" },
-  { name: "Models on one H20", path: "docs/model-targets.md" },
+  { name: "Model support", path: "docs/capability-matrix.md" },
   { name: "Code and test layout", path: "docs/code-layout.md" },
 ];

@@ -10,4 +10,5 @@ __pycache__/
 dist/
 build/
 *.jsonl
+!/benchmarks/traces/*.jsonl
 *.log

@@ -63,7 +63,7 @@ The identity now includes the native provider lock without increasing the
 unreleased serialization version. Recompile schedules and CUDA modules after
 the breaking migration. The source and
 provider cache identities also change; cached libraries are rebuilt as needed.
-Historical `results/` records retain their original source, names and hashes.
+Historical records in Git retain their original source, names and hashes.
 They are evidence for their recorded revisions, not fresh qualification of the
 renamed workspace.
 

@@ -89,33 +89,11 @@ and replacement plan generations.
 The model transition fixture reuses one decoder and state arenas across four
 request lifecycles. Each request checks eight teacher-forced full-vocabulary
 logit rows and drains KV and fixed-state ownership. It retains buckets for the
-first three requests, then reduces capacity to one to exercise eviction. The
-[H20 qualification](validation/bucket-resources-20260913/README.md) records the
-fixed artifact, source/binary fingerprints, alternating capacity timings and
-graph-build counters.
+first three requests, then reduces capacity to one to exercise eviction.
 
 `graph_cache_stats()` counts full graph builds and currently materialized graphs;
 a bucket may contain several graphs. Attention with explicit CSR metadata still
 replans and updates its captured islands when needed. The work above qualifies
 single-device execution on one owning stream. Cross-stream scratch ownership,
 long-context and ragged multi-request model transitions, automatic residency
-selection from a joint memory budget remain separate qualification work. The
-[serving comparison](../results/bucket-serving-20260913/README.md) adds two C1
-HTTP workloads with exact paired output and checked shutdown. It retains a
-short-output tail regression and leaves the default capacity unchanged.
-
-The [startup preparation comparison](../results/startup-preparation-20260913/README.md)
-holds capacity fixed within each off/on pair and covers capacities two and one.
-It retains the first generation request in each process and reports startup
-separately. All 24 timing processes complete and drain. At capacity two,
-short-output first stream interval and P99 TPOT are 138.9→29.9 ms and
-37.7→24.5 ms; steady ITL remains about 23.6 ms. At capacity one, preparation
-keeps the already loaded graph without an extra complete build; phase switches
-still require ordinary eviction. Its P99 TPOT is 42.4→43.9 ms and
-throughput 18.34→18.12 token/s, so no default-capacity performance benefit is
-established. The earlier artifact-prefix policy's unnecessary
-eviction is preserved as a corrected regression under its original source
-identity. These are narrow paired observations, not population-tail estimates.
-The context-growth trace reaches 128 generated tokens; it does not qualify
-long prefill. A rejected over-limit prefill attempt remains recorded, including
-the output-length gate that caught the client's empty-response classification.
+selection from a joint memory budget remain separate qualification work.
