@@ -1,166 +1,88 @@
 ---
-import DocsNav from "../../components/DocsNav.astro";
 import SiteLayout from "../../layouts/SiteLayout.astro";
-import { docs, layers, localUrl, providers, sourceUrl } from "../../data/site";
+import {
+  compilerStages,
+  docs,
+  layers,
+  providers,
+  sourceUrl,
+} from "../../data/site";
 ---
 
 <SiteLayout
   title="Architecture — OrbitKV"
-  description="How OrbitKV state ownership, Luminal compilation, and native Rust serving fit together."
+  description="State ownership, measured CUDA compilation, and native Rust serving."
   active="Architecture"
 >
-  <header class="page-hero">
-    <p class="eyebrow">Inside the architecture</p>
-    <h1>
-      State has one owner.
-      <br />
-      Execution has room to evolve.
-    </h1>
-    <p>
-      OrbitKV connects attention semantics to physical state. Luminal connects
-      mathematical graphs to CUDA implementations. Explicit contracts join the
-      two.
-    </p>
-  </header>
-  <div class="docs-layout">
-    <DocsNav active="Architecture" />
-    <article class="prose">
-      <h2>Three owned crates</h2>
+  <div class="container interior">
+    <header class="page-hero">
+      <p class="eyebrow">Architecture</p>
+      <h1>
+        State.
+        <br />
+        <span class="highlight">Compile.</span>
+        <br />
+        Serve.
+      </h1>
       <p>
-        The core can be used independently. The executor and engine compose it
-        into a native inference process with one authority for KV and persistent
-        model state.
+        OrbitKV owns state. Luminal compiles execution. <br />
+        Explicit contracts connect them.
       </p>
-      <div class="table-scroll">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th scope="col">Crate</th>
-              <th scope="col">Responsibility</th>
-            </tr>
-          </thead>
-          <tbody>
-            {layers.map((layer) => (
-              <tr>
-                <td>
-                  <a href={sourceUrl(layer.path)}>
-                    <code>{layer.name}</code>
-                  </a>
-                </td>
-                <td>{layer.detail}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <h2>From model semantics to execution</h2>
-      <pre
-        tabindex="0"
-        aria-label="Compilation and execution pipeline"
-      ><code>{`model configuration + mathematical operations
-    │
-    ├─ OrbitKV → state layout + lifetime plan
-    │               │
-    │          RuntimeSession
-    │          pages · generations · fixed state
-    │               │
-    └─ Luminal ← state contracts + stable arenas
-          │
-          e-graph → legal candidates → CUDA profiling
-          │
-          selected program + execution artifacts
-          │
-          device completion → publication → safe reuse`}</code></pre>
-      <p>
-        Model import normalizes configuration into reusable operations and state
-        contracts. Implementations are admitted by semantics, dtype, shape,
-        layout, and device capability. Checkpoint names do not choose kernels.
-      </p>
-      <h2>What Luminal searches</h2>
-      <p>
-        The inference-only fork retains four packages: the graph and e-graph
-        core, NN helpers and semantic operations, CUDA Lite, and tracing. Core
-        compilation produces a saturated search space; the CUDA runtime extracts
-        legal programs, profiles candidates, and loads the selected schedule.
-      </p>
-      <p>
-        External libraries contribute implementations alongside generated CUDA
-        operations. Attention stays a semantic operation with an explicit KV
-        view. The current executable view is paged NHD K/V, with causal or
-        sliding visibility.
-      </p>
-      <div class="table-scroll">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th scope="col">Provider</th>
-              <th scope="col">Current integration</th>
-            </tr>
-          </thead>
-          <tbody>
-            {providers.map((provider) => (
-              <tr>
-                <td>{provider.name}</td>
-                <td>
-                  {provider.role}
-                  <small>{provider.scope}</small>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p>
-        Search compares the alternatives supplied by compiler rules; it does not
-        guarantee a global optimum. CUDA Graph capture replays a sequence of
-        launches. General megakernel generation and competition between multiple
-        KV layouts remain on the{" "}
-        <a href={sourceUrl("docs/joint-compilation.md")}>
-          joint compilation roadmap
-        </a>
-        .
-      </p>
-      <h2>State outlives a kernel call</h2>
-      <p>
-        Full attention retains an append-only history. Sliding attention permits
-        periodic placement and retirement beyond its window. Exact Chunked
-        attention uses resettable epoch arenas. Recurrent and convolution layers
-        carry fixed-size state with generation-checked ownership.
-      </p>
-      <p>
-        A page becomes reusable after future attention can no longer reach it,
-        submitted device work has completed, and the exact retired generation is
-        acknowledged. Prefix sharing, copy-on-write, cancellation, and external
-        transfers follow the same ownership rules.
-      </p>
-      <h2>Compile once, replay deliberately</h2>
-      <p>
-        Selected decode and prefill schedules can be saved with generated CUDA
-        module images. Artifacts bind to model, state, arena, and compilation
-        contracts; incompatible artifacts fail closed. External provider
-        libraries use a separate cache, with sources prepared explicitly before
-        model compilation.
-      </p>
-      <p>
-        The engine retains materialized buckets under a graph-cache capacity,
-        prepares selected representatives before readiness, and updates stable
-        input allocations for execution. See{" "}
-        <a href={sourceUrl("docs/module-artifacts.md")}>module artifacts</a>,{" "}
-        <a href={sourceUrl("docs/graph-residency.md")}>graph residency</a>, and
-        the <a href={localUrl("/evidence/")}>recorded qualification</a>.
-      </p>
-      <h2>Read further</h2>
-      <div class="doc-grid">
-        {docs.map((item) => (
-          <div class="doc-card">
-            <a href={sourceUrl(item.path)}>
-              {item.name}
-              <span aria-hidden="true">↗</span>
+    </header>
+    <section class="detail-section" aria-labelledby="crates-title">
+      <h2 id="crates-title">The three-crate boundary</h2>
+      <div class="definition-list">
+        {layers.map((layer) => (
+          <div>
+            <a class="package-name" href={sourceUrl(layer.path)}>
+              {layer.name} <span aria-hidden="true">↗</span>
             </a>
-            <p>{item.detail}</p>
+            <p>{layer.detail}</p>
           </div>
         ))}
       </div>
-    </article>
+    </section>
+    <section class="detail-section" aria-labelledby="compile-title">
+      <h2 id="compile-title">From semantics to a saved program</h2>
+      <ol class="compile-flow">
+        {compilerStages.map((stage) => (
+          <li>
+            <h3>{stage.name}</h3>
+            <p>{stage.detail}</p>
+          </li>
+        ))}
+      </ol>
+      <p class="reading-copy">
+        Candidates follow math, dtype, shape, state layout, and device
+        capability. Generated CUDA and external libraries share the search
+        space. Current attention executes over causal or sliding paged NHD K/V.
+      </p>
+      <dl class="provider-list">
+        {providers.map((provider) => (
+          <div>
+            <dt>{provider.name}</dt>
+            <dd>{provider.role}</dd>
+          </div>
+        ))}
+      </dl>
+      <p class="reading-copy">
+        Search measures the alternatives supplied by compiler rules. Joint
+        KV-layout search and general megakernel generation remain future work.
+      </p>
+      <a class="text-link" href={sourceUrl("docs/attention-providers.md")}>
+        Provider contracts and setup <span aria-hidden="true">↗</span>
+      </a>
+    </section>
+    <section class="detail-section" aria-labelledby="docs-title">
+      <h2 id="docs-title">Read the contracts</h2>
+      <div class="doc-links">
+        {docs.map((doc) => (
+          <a href={sourceUrl(doc.path)}>
+            {doc.name}
+            <span aria-hidden="true">↗</span>
+          </a>
+        ))}
+      </div>
+    </section>
   </div>
 </SiteLayout>
