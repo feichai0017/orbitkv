@@ -6,6 +6,7 @@ use super::*;
 
 fn compile_fixture() -> DecoderCompileConfig {
     DecoderCompileConfig {
+        output_rows: crate::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 32,
         representative_prefill_tokens: 8,
         maximum_batch_size: 4,
@@ -14,6 +15,32 @@ fn compile_fixture() -> DecoderCompileConfig {
         search_graphs: 4,
         search_seed: 1,
     }
+}
+
+#[test]
+fn output_selection_is_bound_to_the_decoder_artifact() {
+    let config = test_config(4);
+    let plan = hybrid_executor_plan();
+    let arenas = hybrid_arenas();
+    let identity = |output_rows| {
+        decoder_artifact_identity(
+            &config,
+            &plan,
+            &arenas,
+            &[],
+            DecoderWeightFeatures::default(),
+            DecoderCompileConfig {
+                output_rows,
+                ..compile_fixture()
+            },
+            "facts",
+        )
+        .unwrap()
+    };
+    assert_ne!(
+        identity(DecoderOutputRows::AllTokens),
+        identity(DecoderOutputRows::LastTokenPerRequest)
+    );
 }
 
 #[test]
@@ -92,6 +119,7 @@ fn tuning_buckets_supply_valid_ragged_metadata_and_cover_feasible_intervals() {
         &hybrid_executor_plan(),
         &hybrid_arenas(),
         &[],
+        DecoderOutputRows::AllTokens,
     )
     .unwrap();
     let compile = compile_fixture();
@@ -192,9 +220,11 @@ fn tuning_rejects_ambiguous_representatives_and_unbounded_bucket_growth() {
         &hybrid_executor_plan(),
         &hybrid_arenas(),
         &[],
+        DecoderOutputRows::AllTokens,
     )
     .unwrap();
     let compile = DecoderCompileConfig {
+        output_rows: crate::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 32,
         representative_prefill_tokens: 8,
         maximum_batch_size: 4,
@@ -251,9 +281,11 @@ fn tuning_obeys_caller_budget_without_an_unrelated_global_ceiling() {
         &hybrid_executor_plan(),
         &hybrid_arenas(),
         &[],
+        DecoderOutputRows::AllTokens,
     )
     .unwrap();
     let compile = DecoderCompileConfig {
+        output_rows: crate::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 32,
         representative_prefill_tokens: 8,
         maximum_batch_size: 4,
@@ -291,9 +323,11 @@ fn tuning_covers_correlated_contexts_across_page_geometries_and_arena_offsets() 
             &plan,
             &arenas,
             &[],
+            DecoderOutputRows::AllTokens,
         )
         .unwrap();
         let compile = DecoderCompileConfig {
+            output_rows: crate::model::DecoderOutputRows::AllTokens,
             maximum_query_tokens: 32,
             representative_prefill_tokens: 8,
             maximum_batch_size: 4,

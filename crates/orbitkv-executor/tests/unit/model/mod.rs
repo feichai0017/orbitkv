@@ -13,6 +13,7 @@ mod tuning;
 #[test]
 fn compile_config_requires_distinct_decode_and_prefill_ranges() {
     let valid = DecoderCompileConfig {
+        output_rows: crate::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 32,
         representative_prefill_tokens: 8,
         maximum_batch_size: 4,
@@ -32,6 +33,7 @@ fn compile_config_requires_distinct_decode_and_prefill_ranges() {
     );
     assert!(
         DecoderCompileConfig {
+            output_rows: crate::model::DecoderOutputRows::AllTokens,
             maximum_query_tokens: 1,
             ..valid
         }
@@ -54,6 +56,7 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
     let plan = hybrid_executor_plan();
     let arenas = hybrid_arenas();
     let compile = DecoderCompileConfig {
+        output_rows: crate::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 32,
         representative_prefill_tokens: 8,
         maximum_batch_size: 4,
@@ -146,6 +149,9 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
 
 #[test]
 fn fp8_linear_declares_checkpoint_scale_and_searchable_deepgemm_candidates() {
+    // Tile eligibility needs occupancy as well as architecture. This is a
+    // synthetic Hopper target; the test does not query a local device.
+    let simulated_sm_count = 78;
     let mut config = test_config(1);
     config.weight_format = DecoderWeightFormat::Fp8E4M3Block {
         rows: 128,
@@ -172,9 +178,10 @@ fn fp8_linear_declares_checkpoint_scale_and_searchable_deepgemm_candidates() {
         name == "model.layers.0.mlp.gate_proj.weight_scale_inv" && *dtype == DType::F32
     }));
     graph.build_search_space::<CudaRuntime>(
-        orbitkv_compiler::prelude::CompileOptions::default().compiler_facts(
+        orbitkv_compiler::prelude::CompileOptions::default().compiler_facts(format!(
+            "{}\n(set (cuda-target-sm-count) {simulated_sm_count})",
             orbitkv_cuda::target::CudaTarget { major: 9, minor: 0 }.compiler_facts(),
-        ),
+        )),
     );
     assert!(
         graph
@@ -189,6 +196,7 @@ fn fp8_linear_declares_checkpoint_scale_and_searchable_deepgemm_candidates() {
 #[test]
 fn step_validation_enforces_compiled_capacities() {
     let compile = DecoderCompileConfig {
+        output_rows: crate::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 4,
         representative_prefill_tokens: 2,
         maximum_batch_size: 1,
@@ -590,8 +598,21 @@ fn external_hybrid_checkpoint_passes_structural_execution_admission() {
         .collect::<Vec<_>>();
     let registrations = plan.fixed_state_registrations(&identities).unwrap();
     let mut graph = Graph::default();
-    let decoder =
-        DecoderGraph::build(&mut graph, &config, weights, &plan, &arenas, &registrations).unwrap();
+    let decoder = DecoderGraph::build(
+        &mut graph,
+        &config,
+        weights,
+        &plan,
+        &arenas,
+        &registrations,
+        DecoderOutputRows::AllTokens,
+    )
+    .unwrap();
+    assert_fp8_weights_have_scales(&graph);
+    compilation::export_saturation_fixture(&mut graph, &decoder, &plan, &arenas);
+}
+
+fn assert_fp8_weights_have_scales(graph: &Graph) {
     let fp8_weights = graph
         .input_meta
         .values()
@@ -604,7 +625,6 @@ fn external_hybrid_checkpoint_passes_structural_execution_admission() {
         .count();
     assert!(fp8_weights > 0);
     assert_eq!(fp8_weights, scales);
-    compilation::export_saturation_fixture(&mut graph, &decoder, &plan, &arenas);
 }
 
 #[test]
@@ -627,6 +647,7 @@ fn graph_rejects_manifest_layer_semantics_that_disagree_with_model_config() {
             &hybrid_executor_plan(),
             &hybrid_arenas(),
             &[],
+            DecoderOutputRows::AllTokens
         ),
         Err(DecoderError::UnsupportedPlan)
     ));
@@ -840,6 +861,7 @@ fn graph_builds_layers_from_independent_full_and_sliding_classes() {
         &plan,
         &hybrid_arenas(),
         &[],
+        DecoderOutputRows::AllTokens,
     )
     .unwrap();
 
@@ -882,6 +904,7 @@ fn graph_composes_token_attention_and_fixed_state_layers() {
             backend_base_index: 0,
         }],
         &registrations,
+        DecoderOutputRows::AllTokens,
     )
     .unwrap();
 
@@ -913,6 +936,7 @@ fn graph_rejects_duplicate_or_missing_layer_ownership() {
             &duplicate,
             &hybrid_arenas(),
             &[],
+            DecoderOutputRows::AllTokens
         ),
         Err(DecoderError::UnsupportedPlan)
     ));
@@ -927,6 +951,7 @@ fn graph_rejects_duplicate_or_missing_layer_ownership() {
             &missing,
             &hybrid_arenas(),
             &[],
+            DecoderOutputRows::AllTokens
         ),
         Err(DecoderError::UnsupportedPlan)
     ));
@@ -935,6 +960,7 @@ fn graph_rejects_duplicate_or_missing_layer_ownership() {
 #[test]
 fn multi_class_step_validates_each_absolute_arena() {
     let compile = DecoderCompileConfig {
+        output_rows: crate::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 4,
         representative_prefill_tokens: 2,
         maximum_batch_size: 1,
@@ -1053,6 +1079,7 @@ fn runtime_session_hybrid_plan_feeds_one_multi_class_decoder_step() {
         &executor,
         &arenas,
         &[],
+        DecoderOutputRows::AllTokens,
     )
     .unwrap();
     let class_steps = prepared.steps()[0]
@@ -1073,6 +1100,7 @@ fn runtime_session_hybrid_plan_feeds_one_multi_class_decoder_step() {
                 classes: &class_steps,
             },
             DecoderCompileConfig {
+                output_rows: crate::model::DecoderOutputRows::AllTokens,
                 maximum_query_tokens: 32,
                 representative_prefill_tokens: 17,
                 maximum_batch_size: 1,

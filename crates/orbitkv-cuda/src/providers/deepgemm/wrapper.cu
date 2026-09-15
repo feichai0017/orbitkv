@@ -135,7 +135,7 @@ extern "C" int orbitkv_deepgemm_run(
     void* quantized, void* activation_scale, void* output, int m, void* raw_stream) {
     last_error[0] = '\0';
     auto stream = reinterpret_cast<cudaStream_t>(raw_stream);
-    block_scaled_quantize<<<dim3(@K@ / orbitkv_fp8::kScaleBlock, m, 1), orbitkv_fp8::kScaleBlock, 0, stream>>>(
+    block_scaled_quantize<<<dim3(@K@ / orbitkv_fp8::kScaleBlock, m, 1), orbitkv_fp8::kQuantizerThreads, 0, stream>>>(
         reinterpret_cast<__nv_fp8_e4m3*>(quantized),
         reinterpret_cast<float*>(activation_scale),
         reinterpret_cast<const __nv_bfloat16*>(input), m, @K@);

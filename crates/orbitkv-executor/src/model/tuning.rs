@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::DecoderError;
+use super::{DecoderError, DecoderOutputRows};
 
 mod buckets;
 
@@ -30,6 +30,7 @@ const PROFILE_INDEX_BYTES: usize = std::mem::size_of::<i32>();
 /// Dynamic-shape and search policy for one compiled decoder executable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DecoderCompileConfig {
+    pub output_rows: DecoderOutputRows,
     pub maximum_query_tokens: usize,
     pub representative_prefill_tokens: usize,
     pub maximum_batch_size: usize,

@@ -10,6 +10,9 @@ use orbitkv_compiler::{
 pub const FP8_SCALE_BLOCK: usize = 128;
 /// Largest finite E4M3 value used by dynamic activation quantization.
 pub const FP8_MAX_FINITE: f32 = 448.0;
+/// Rounded F32 reciprocal used before multiplying the block maximum. Keeping
+/// the order explicit preserves FP8 midpoint decisions across implementations.
+pub const FP8_INVERSE_MAX_FINITE: f32 = 1.0 / FP8_MAX_FINITE;
 /// Clamp each activation block's absolute maximum before deriving its scale.
 pub const QUANTIZATION_AMAX_FLOOR: f32 = 1.0e-4;
 
@@ -30,8 +33,12 @@ pub struct BlockScaledLinearSpec {
 ///
 /// Activations are dynamically quantized independently for every `(row, 128-K)`
 /// tile. Checkpoint weights use one inverse scale for every `(128-N, 128-K)`
-/// tile. The activation scale is `max(amax, QUANTIZATION_AMAX_FLOOR) / FP8_MAX_FINITE`;
-/// scaled values are rounded to E4M3 with nearest-even rounding. Products accumulate in F32 and are rounded once to BF16.
+/// tile. F32 operations use nearest-even rounding at each boundary: the scale is
+/// `max(amax, QUANTIZATION_AMAX_FLOOR) * FP8_INVERSE_MAX_FINITE`, and each value
+/// is multiplied by the rounded F32 reciprocal of that scale before conversion
+/// to E4M3 (also nearest-even). Division by the maximum or by the scale is not
+/// an interchangeable expression at quantization midpoints. Products accumulate
+/// in F32 and are rounded once to BF16.
 pub fn block_scaled_linear(
     input: GraphTensor,
     weight: GraphTensor,

@@ -487,6 +487,7 @@ fn compile_hybrid_decoder(
     let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
+        output_rows: orbitkv_executor::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: prompt_tokens,
         representative_prefill_tokens: prompt_tokens,
         maximum_batch_size: 1,
@@ -1174,6 +1175,7 @@ fn released_checkpoint_bounds_single_and_multi_request_logits() {
     let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
+        output_rows: orbitkv_executor::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 1_024,
         representative_prefill_tokens: 512,
         maximum_batch_size: batch_size,
@@ -1365,6 +1367,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
+        output_rows: orbitkv_executor::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 8,
         representative_prefill_tokens: prompt.len(),
         maximum_batch_size: 1,

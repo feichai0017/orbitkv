@@ -8,7 +8,8 @@ use orbitkv_compiler::prelude::Expression;
 
 use crate::resource::ResourceViolation;
 
-pub(super) const PACKED_ACTIVATION_ABI: &str = "fp8-e4m3-row128-f32-kmajor-align4-packed-v1";
+pub(super) const PACKED_ACTIVATION_ABI: &str =
+    "fp8-e4m3-row128-f32-kmajor-align4-rne-reciprocal-v2";
 /// Both activation K tiles and checkpoint weight tiles use this granularity.
 pub(super) use orbitkv_ops::ops::linear::FP8_SCALE_BLOCK as SCALE_BLOCK;
 /// TMA requires a 16-byte stride for the F32 scale plane.
@@ -16,10 +17,12 @@ pub(super) const TMA_ALIGNMENT_BYTES: usize = 16;
 pub(super) const BF16_BYTES: usize = std::mem::size_of::<half::bf16>();
 pub(super) const SCALE_BYTES: usize = std::mem::size_of::<f32>();
 pub(super) const SCALE_ROW_ALIGNMENT: usize = TMA_ALIGNMENT_BYTES / SCALE_BYTES;
+/// One CUDA warp owns a quantization group; each lane keeps several values.
+pub(super) const QUANTIZER_THREADS: usize = 32;
 /// One quantizer grid-y block is launched per row; CUDA grid-y is 16 bits.
 pub(super) const MAX_QUANTIZER_ROWS: usize = u16::MAX as usize;
 /// Finite E4M3 range and the provider's minimum per-block absolute maximum.
-use orbitkv_ops::ops::linear::{FP8_MAX_FINITE, QUANTIZATION_AMAX_FLOOR};
+use orbitkv_ops::ops::linear::{FP8_INVERSE_MAX_FINITE, FP8_MAX_FINITE, QUANTIZATION_AMAX_FLOOR};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PackedActivationLayout {
@@ -97,10 +100,12 @@ pub(super) fn quantizer_source() -> &'static str {
             include_str!("contract/quantizer.cu.in"),
             include_str!("quantize.cuh"),
             FP8_MAX_FINITE = FP8_MAX_FINITE,
+            FP8_INVERSE_MAX_FINITE = FP8_INVERSE_MAX_FINITE,
             PACKED_ACTIVATION_ABI = PACKED_ACTIVATION_ABI,
             QUANTIZATION_AMAX_FLOOR = QUANTIZATION_AMAX_FLOOR,
             SCALE_BLOCK = SCALE_BLOCK,
             SCALE_ROW_ALIGNMENT = SCALE_ROW_ALIGNMENT,
+            QUANTIZER_THREADS = QUANTIZER_THREADS,
         )
     })
 }

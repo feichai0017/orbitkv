@@ -8,6 +8,8 @@ use orbitkv_compiler::{
 };
 
 mod benchmark;
+mod golden;
+mod quantizer;
 mod replay;
 mod selection_rules;
 
@@ -321,11 +323,12 @@ fn independent_packed_quantization(values: &[bf16], m: usize, k: usize) -> Vec<u
                 .iter()
                 .map(|value| value.to_f32().abs())
                 .fold(0.0_f32, f32::max);
-            let scale = maximum.max(1.0e-4) / 448.0;
+            let scale = maximum.max(1.0e-4) * (1.0_f32 / 448.0);
+            let inverse = 1.0_f32 / scale;
             let offset = layout.scale_offset + (block * m.div_ceil(4) * 4 + row) * 4;
             packed[offset..offset + 4].copy_from_slice(&scale.to_ne_bytes());
             for (column, value) in values.iter().enumerate() {
-                packed[start + column] = encode_e4m3(value.to_f32() / scale);
+                packed[start + column] = encode_e4m3(value.to_f32() * inverse);
             }
         }
     }

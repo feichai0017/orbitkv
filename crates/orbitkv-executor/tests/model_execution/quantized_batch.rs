@@ -41,6 +41,7 @@ pub(super) fn run() {
     let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
+        output_rows: orbitkv_executor::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: capacity * 4,
         representative_prefill_tokens: capacity * 4,
         maximum_batch_size: capacity,

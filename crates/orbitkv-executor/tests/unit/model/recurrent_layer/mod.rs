@@ -1,6 +1,7 @@
 use orbitkv_compiler::prelude::{CompileOptions, ReferenceRuntime, Runtime};
 
 use super::*;
+mod probe;
 use crate::model::{
     DecoderActivation, DecoderBlockLayout, DecoderLayerKind, DecoderNormWeights,
     DecoderWeightFormat,

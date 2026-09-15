@@ -3,8 +3,10 @@
 #include <cuda_fp8.h>
 namespace orbitkv_fp8 {{
 constexpr int kScaleBlock = {SCALE_BLOCK};
+constexpr int kQuantizerThreads = {QUANTIZER_THREADS};
 constexpr int kScaleRowAlignment = {SCALE_ROW_ALIGNMENT};
 constexpr float kFp8MaxFinite = {FP8_MAX_FINITE:e}f;
+constexpr float kFp8InverseMaxFinite = {FP8_INVERSE_MAX_FINITE:e}f;
 constexpr float kQuantizationAmaxFloor = {QUANTIZATION_AMAX_FLOOR:e}f;
 __host__ __device__ constexpr int aligned_scale_rows(int rows) {{
 return (rows + kScaleRowAlignment - 1) / kScaleRowAlignment * kScaleRowAlignment;

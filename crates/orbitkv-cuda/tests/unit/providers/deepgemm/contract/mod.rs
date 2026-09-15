@@ -28,6 +28,10 @@ fn rendered_quantizer_records_abi_and_has_no_unresolved_placeholders() {
     };
     assert_eq!(literal("kFp8MaxFinite").to_bits(), 448.0_f32.to_bits());
     assert_eq!(
+        literal("kFp8InverseMaxFinite").to_bits(),
+        (1.0_f32 / 448.0).to_bits()
+    );
+    assert_eq!(
         literal("kQuantizationAmaxFloor").to_bits(),
         1.0e-4_f32.to_bits()
     );

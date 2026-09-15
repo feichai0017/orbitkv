@@ -63,9 +63,22 @@ when their dependency contracts require it.
 
 CUDA executes generated regions and library calls on the owning stream. Full
 attention reads a typed paged view; recurrent layers read/update their own state
-arenas. Required alias checks preserve storage identity. The normal graph
-produces greedy token IDs on the device; full logits are an explicit diagnostic
-path. Tokens return to the frontend for ordered streaming.
+arenas. Required alias checks preserve storage identity. The serving graph
+produces logits and greedy token IDs for all query rows; the worker selects
+the final token ID of each request. `DecoderCompileConfig.output_rows` binds
+output geometry to the artifact. `LastTokenPerRequest` selects hidden rows
+before final normalization/projection and produces one token ID per request.
+Both modes execute all layer and state updates. The reduced-row mode remains
+an explicit executor option while full-model equivalence is under qualification;
+serving keeps `AllTokens`. Logit readback is explicit. Tokens return to the
+frontend for ordered streaming.
+
+The row-selection policy follows the work elimination used by
+[vLLM's model runner](https://github.com/vllm-project/vllm/blob/v0.29.0/vllm/v1/worker/gpu_model_runner.py)
+and [SGLang's logits processor](https://github.com/sgl-project/sglang/blob/095ec6c997bfdd25d3864cb0ce77a6562a934b96/python/sglang/srt/layers/logits_processor.py).
+OrbitKV expresses it with the existing gather operation before final
+normalization/projection, preserving explicit dtype boundaries and symbolic CSR
+request geometry. It does not require their Python runtime or model dispatch.
 
 Event-backed completion receipts are tied to the exact state bindings. The
 session commits completed transitions, publishes state and applies compiled

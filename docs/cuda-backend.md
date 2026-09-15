@@ -35,6 +35,30 @@ algorithm. `HostOp` can describe several GPU launches and their preparation.
 `KernelOp` describes one generated kernel. A CUDA Graph captures launches and
 dependencies; it does not merge external libraries into one kernel.
 
+### FP8 preparation
+
+Combined DeepGEMM calls and shared preparation use one E4M3 contract: each
+128-element activation group has an F32 scale, stored in a K-major plane with
+four-row alignment. One CUDA warp reduces a group and retains its values in
+registers. Both paths initialize scale padding and use the same kernel source.
+
+Rounding order is part of that contract. Scale computation multiplies the
+clamped maximum by the rounded F32 reciprocal of 448; activation scaling
+multiplies by the rounded F32 reciprocal of the scale. Each operation rounds
+to nearest-even before E4M3 conversion. Algebraically equivalent division can
+produce different FP8 codes at midpoints. The packed ABI records this numerical
+policy, so strict replay rejects schedules prepared under the previous policy.
+
+The independent fixture in
+[`tests/fixtures/fp8`](../crates/orbitkv-cuda/tests/fixtures/fp8/)
+records Torch/DeepGEMM output bits, including an analytic rounding midpoint.
+The CUDA regression accepts those bits and rejects the previous division
+kernel; exhaustive finite BF16 inputs and shared/combined fanout checks cover
+the execution paths. The pinned upstream
+[`per_token_cast_to_fp8`](https://github.com/deepseek-ai/DeepGEMM/blob/559d79fb6994a58b8a15b4b93bf13ccc16edf247/deep_gemm/utils/math.py)
+is the reference operation. This adapter remains independently implemented;
+provider sources and their licenses remain external.
+
 ## Provider lock and build policy
 
 | Provider | Source of version | Current adapter |
