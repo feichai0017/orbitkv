@@ -56,9 +56,8 @@ fn build_fixture(
                 graph.custom_op(
                     DeepGemm {
                         rows: m.into(),
-                        output_features: n,
-                        input_features: k,
-                        variant: 0,
+                        selection: device_selection(&stream, m, n, k, 0),
+                        prepared: Arc::new(OnceLock::new()),
                         provider: provider.clone(),
                         scratch: Arc::new(Mutex::new(None)),
                     },
@@ -70,9 +69,8 @@ fn build_fixture(
                 graph.custom_op(
                     PrequantizedDeepGemm {
                         rows: m.into(),
-                        output_features: n,
-                        input_features: k,
-                        variant: 0,
+                        selection: device_selection(&stream, m, n, k, 0),
+                        prepared: Arc::new(OnceLock::new()),
                         provider: provider.clone(),
                         scratch: Arc::new(Mutex::new(None)),
                     },

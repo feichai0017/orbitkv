@@ -1,17 +1,21 @@
 ; Metadata conversion and scratch belong to the provider; K/V retain their
-; OrbitKV allocations. Capability admission precedes executable extraction.
+; OrbitKV allocations. The row stride and launch bound cover the bucket;
+; device CSR/last-page metadata supplies the actual visible context at replay.
+; A capacity proof precedes executable extraction; no runtime growth heuristic.
 (rule
     ((attention-op ?cid ?qh ?kh ?hd ?hd ?q ?requests ?dt ?scale ?mask)
      (paged-kv-view ?cid ?state ?page ?ctx (TokenMajorKv))
+     @CONTEXT_BOUND@
+     (> ?capacity 0)
      (cuda-attention-provider "flashattention" "fa3-paged" ?cid ?window)
      (= ?semantic (Op (CustomOpKind ?cid ?dt)
         (ICons ?query (ICons ?k (ICons ?v (ICons ?indices
         (ICons ?qptr (ICons ?kptr (ICons ?last (INil)))))))))))
     ((let ?provider (Op
-        (FlashAttention ?qh ?kh ?hd ?page ?q ?ctx ?requests ?dt ?scale ?window "@PROVIDER_IDENTITY@")
+        (FlashAttention ?qh ?kh ?hd ?page ?q (MNum ?capacity) ?requests ?dt ?scale ?window "@PROVIDER_IDENTITY@")
         (ICons ?query (ICons ?k (ICons ?v (ICons ?indices
         (ICons ?qptr (ICons ?kptr (ICons ?last (INil))))))))))
      (union ?semantic ?provider)
      (set (dtype ?provider) ?dt))
     :ruleset matmul_backend
-    :name "FlashAttention-3 provider for logical attention with paged KV")
+    :name "FlashAttention-3 provider for logical attention with @BOUND_NAME@ paged KV capacity")

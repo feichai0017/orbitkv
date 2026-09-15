@@ -31,6 +31,8 @@ pub(super) fn provider_identity() -> Result<String, String> {
             "flashattention@sha256:{}",
             content_digest(&[
                 source.digest.as_bytes(),
+                include_str!("plan.rs").as_bytes(),
+                include_str!("paged_attention.egg").as_bytes(),
                 WRAPPER.as_bytes(),
                 HEADER.as_bytes(),
             ])
@@ -97,6 +99,7 @@ impl Library {
     }
 
     unsafe fn load(path: &Path) -> anyhow::Result<Self> {
+        let _stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.load", provider = "flashattention", path = %path.display()).entered();
         let library = unsafe { libloading::Library::new(path)? };
         Ok(Self {
             run: unsafe { *library.get::<RunFn>(b"orbitkv_flashattention_run\0")? },

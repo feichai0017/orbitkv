@@ -1,7 +1,7 @@
 use super::*;
 use crate::kernel::{CudaGraphExecHandle, CudaGraphHandle};
 use crate::providers::attention::tests::reference::{Buffers, Case};
-use cudarc::driver::CudaContext;
+use cudarc::driver::{CudaContext, DevicePtr};
 
 mod search;
 
@@ -12,7 +12,7 @@ fn operation(case: &Case, dtype: DType, window: Option<usize>) -> FlashAttention
         head_dim: case.head_dim,
         page_size: case.page_size,
         query_tokens: 's'.into(),
-        context_pages: 'c'.into(),
+        context_page_capacity: case.page_indices.len(),
         requests: 'b'.into(),
         dtype,
         scale: case.scale(),
@@ -25,13 +25,13 @@ fn operation(case: &Case, dtype: DType, window: Option<usize>) -> FlashAttention
 #[test]
 fn scratch_planning_is_pointer_free_and_rejects_invalid_ranges() {
     let case = Case::new(128, 16, &[2, 1], &[19, 7]);
-    let op = FlashAttention {
+    let mut op = FlashAttention {
         query_heads: case.query_heads,
         kv_heads: case.kv_heads,
         head_dim: case.head_dim,
         page_size: case.page_size,
         query_tokens: 's'.into(),
-        context_pages: 'c'.into(),
+        context_page_capacity: case.page_indices.len(),
         requests: 'b'.into(),
         dtype: DType::Bf16,
         scale: case.scale(),
@@ -48,7 +48,7 @@ fn scratch_planning_is_pointer_free_and_rejects_invalid_ranges() {
     let mut invalid = case.dimensions();
     invalid.insert('s'.into(), 1);
     assert!(Plan::new(&op, &invalid).is_err());
-    invalid.insert('c'.into(), usize::MAX);
+    op.context_page_capacity = usize::MAX;
     assert!(Plan::new(&op, &invalid).is_err());
     assert!(Plan::new(&op, &DynMap::default()).is_err());
 }
@@ -67,8 +67,11 @@ fn paged_decode_and_prefill_match_independent_reference() {
         (256, DType::Bf16, vec![1, 1], vec![513, 19], Some(17), 32),
     ] {
         let case = Case::new(dimension, page_size, &queries, &lengths);
-        let buffers = case.upload(&stream, dtype);
-        let op = operation(&case, dtype, window);
+        // The plan may cover more pages than are currently visible. Keep the
+        // numerical oracle at the actual CSR lengths.
+        let mut op = operation(&case, dtype, window);
+        op.context_page_capacity *= 2;
+        let buffers = upload(&op, &case, &stream, dtype);
         let key_before = stream.clone_dtoh(&buffers.storage[1]).unwrap();
         let value_before = stream.clone_dtoh(&buffers.storage[2]).unwrap();
         op.prepare_compilation(&stream, &case.dimensions()).unwrap();
@@ -99,7 +102,7 @@ struct Captured {
 
 impl Captured {
     fn new(op: &FlashAttention, case: &Case, stream: &Arc<CudaStream>) -> Self {
-        let buffers = case.upload(stream, DType::Bf16);
+        let buffers = upload(op, case, stream, DType::Bf16);
         let dimensions = case.dimensions();
         op.prepare_cuda_graph_capture(
             stream,
@@ -141,10 +144,11 @@ impl Captured {
 fn captured_workspace_survives_replanning_and_other_graph_retirement() {
     let stream = CudaContext::new(0).unwrap().new_stream().unwrap();
     let first = Case::new(256, 16, &[1], &[19]);
-    let op = operation(&first, DType::Bf16, None);
+    let second = Case::new(256, 16, &[2, 1], &[35, 7]);
+    let mut op = operation(&first, DType::Bf16, None);
+    op.context_page_capacity = second.page_indices.len();
     let decode = Captured::new(&op, &first, &stream);
     decode.check(&stream);
-    let second = Case::new(256, 16, &[2, 1], &[35, 7]);
     let prefill = Captured::new(&op, &second, &stream);
     for _ in 0..3 {
         prefill.check(&stream);
@@ -176,4 +180,80 @@ fn graph_replay_reads_updated_page_metadata() {
     }
     captured.expected = case.expected(None);
     captured.check(&stream);
+}
+
+fn upload(op: &FlashAttention, case: &Case, stream: &Arc<CudaStream>, dtype: DType) -> Buffers {
+    let mut buffers = case.upload(stream, dtype);
+    let bytes = case
+        .page_indices
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>();
+    let mut padded = bytes.clone();
+    padded.resize(op.context_page_capacity * size_of::<i32>(), 0);
+    buffers.storage[3] = stream.clone_htod(&padded).unwrap();
+    buffers.map.insert(
+        buffers.nodes[3],
+        DeviceBuffer::new(buffers.storage[3].device_ptr(stream).0, bytes.len())
+            .with_capacity(padded.len()),
+    );
+    buffers
+}
+
+#[test]
+fn captured_capacity_replays_growing_and_shrinking_contexts() {
+    let stream = CudaContext::new(0).unwrap().new_stream().unwrap();
+    let mut case = Case::new(256, 16, &[1, 1], &[35, 19]);
+    let pages = case.page_indices.clone();
+    let mut op = operation(&case, DType::Bf16, None);
+    op.context_page_capacity *= 2;
+    assert!(!op.cuda_graph_capture_dyn_dims().contains(&'c'.into()));
+    let mut captured = Captured::new(&op, &case, &stream);
+    let prepared = op.prepared.lock().unwrap().as_ref().unwrap().clone();
+    captured.check(&stream);
+    for indptr in [vec![0, 2, 3], vec![0, 3, 5], vec![0, 1, 2], vec![0, 3, 5]] {
+        case.page_indices = pages[..*indptr.last().unwrap() as usize].to_vec();
+        case.page_indptr = indptr;
+        case.last_page_len = vec![9, 7];
+        for (index, values) in [
+            (3, &case.page_indices),
+            (5, &case.page_indptr),
+            (6, &case.last_page_len),
+        ] {
+            let bytes = values
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect::<Vec<_>>();
+            stream
+                .memcpy_htod(&bytes, &mut captured.buffers.storage[index])
+                .unwrap();
+        }
+        op.prepare_compilation(&stream, &case.dimensions()).unwrap();
+        assert!(Arc::ptr_eq(
+            &prepared,
+            op.prepared.lock().unwrap().as_ref().unwrap()
+        ));
+        captured.expected = case.expected(None);
+        captured.check(&stream);
+    }
+}
+
+#[test]
+fn capacity_plan_rejects_an_undersized_index_allocation_before_launch() {
+    let stream = CudaContext::new(0).unwrap().new_stream().unwrap();
+    let case = Case::new(256, 16, &[1], &[19]);
+    let mut op = operation(&case, DType::Bf16, None);
+    op.context_page_capacity *= 2;
+    let buffers = case.upload(&stream, DType::Bf16);
+    op.prepare_compilation(&stream, &case.dimensions()).unwrap();
+    let error = op
+        .execute(
+            &stream,
+            buffers.nodes[7],
+            &buffers.nodes[..7],
+            &buffers.map,
+            &case.dimensions(),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("CSR byte count mismatch"));
 }

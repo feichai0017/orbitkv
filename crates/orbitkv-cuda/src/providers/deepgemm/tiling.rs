@@ -5,14 +5,9 @@
 //! ordering. Hardware constraints and heuristic priors live here; JIT source
 //! generation and loading are separate in `jit`.
 
-use cudarc::driver::{
-    CudaStream, sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
-};
+use serde::{Deserialize, Serialize};
 
-use super::{
-    contract::{self, BF16_BYTES, SCALE_BLOCK, SCALE_BYTES},
-    jit::SEARCH_VARIANTS,
-};
+use super::contract::{self, BF16_BYTES, SCALE_BLOCK, SCALE_BYTES};
 
 // SM90 kernel/ABI requirements used by the pinned 1D2D implementation.
 const MAX_CLUSTER_SIZE: usize = 2;
@@ -24,7 +19,7 @@ const SHARED_SCALE_ALIGNMENT: usize = 128;
 const BARRIER_BYTES: usize = std::mem::size_of::<u64>();
 const BARRIERS_PER_STAGE: usize = 2; // Producer/consumer arrival barriers.
 
-// Upstream search priors: kept stable during this layout-only refactor.
+// Upstream search priors, used only when egglog generates candidates.
 // These are assumptions for ordering, not hardware measurements or legality.
 // In particular, the nominal clock/bandwidth are not queried device properties.
 const MAX_PIPELINE_STAGES: usize = 16;
@@ -41,7 +36,8 @@ const L1_BYTES_PER_SM_CYCLE: usize = 128;
 const NOMINAL_L2_BYTES_PER_MICROSECOND: f64 = 8_000_000.0;
 const NOMINAL_CLOCK_MHZ: f64 = 1_300.0;
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Hash, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Config {
     pub(super) output_features: usize,
     pub(super) input_features: usize,
@@ -58,12 +54,7 @@ pub(super) struct Config {
 }
 
 impl Config {
-    pub(super) fn validate_shape(
-        m: usize,
-        n: usize,
-        k: usize,
-        variant: usize,
-    ) -> anyhow::Result<()> {
+    pub(super) fn validate_shape(m: usize, n: usize, k: usize) -> anyhow::Result<()> {
         anyhow::ensure!(
             m > 0 && n > 0 && k > 0,
             "DeepGEMM dimensions must be positive"
@@ -81,32 +72,33 @@ impl Config {
             m <= contract::MAX_QUANTIZER_ROWS && n <= i32::MAX as usize && k <= i32::MAX as usize,
             "DeepGEMM dimensions exceed the quantizer launch or C ABI limits"
         );
-        anyhow::ensure!(variant < SEARCH_VARIANTS, "unknown DeepGEMM search variant");
         Ok(())
     }
 
-    pub(super) fn for_variant(
-        stream: &CudaStream,
-        m: usize,
-        n: usize,
-        k: usize,
-        variant: usize,
-    ) -> anyhow::Result<Self> {
-        Self::validate_shape(m, n, k, variant)?;
-        let (major, minor) = stream.context().compute_capability()?;
+    /// Validate a serialized tile without re-running candidate ranking.
+    pub(super) fn validate(self, row_limit: usize) -> anyhow::Result<()> {
+        Self::validate_shape(row_limit, self.output_features, self.input_features)?;
         anyhow::ensure!(
-            (major, minor) == (9, 0),
-            "DeepGEMM SM90 candidate requires compute capability 9.0"
+            self.num_sms > 0 && self.num_sms <= i32::MAX as usize,
+            "DeepGEMM requires a positive SM count"
         );
-        let num_sms = usize::try_from(
-            stream
-                .context()
-                .attribute(CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)?,
-        )?;
-        let candidates = candidates(m, n, k, num_sms);
-        candidates.get(variant).copied().ok_or_else(|| {
-            anyhow::anyhow!("DeepGEMM variant {variant} is unavailable for M={m}, N={n}, K={k}")
-        })
+        anyhow::ensure!(
+            tile_config(
+                self.output_features,
+                self.input_features,
+                self.num_sms,
+                self.block_m,
+                self.block_n,
+                self.cluster_m,
+                self.cluster_n,
+            ) == Some(self),
+            "invalid serialized DeepGEMM tile: {self:?}"
+        );
+        anyhow::ensure!(
+            self.block_m >= WGMMA_M_ROWS || row_limit <= self.block_m,
+            "DeepGEMM small-M tile exceeds its admitted row limit"
+        );
+        Ok(())
     }
 }
 #[derive(Clone, Copy)]
@@ -116,6 +108,9 @@ struct RankedConfig {
 }
 
 pub(super) fn candidates(m: usize, n: usize, k: usize, num_sms: usize) -> Vec<Config> {
+    if Config::validate_shape(m, n, k).is_err() || num_sms == 0 || num_sms > i32::MAX as usize {
+        return vec![];
+    }
     let mut block_ms = BASE_M_TILES.to_vec();
     block_ms.extend(SMALL_M_TILES.into_iter().filter(|tile| m <= *tile));
     block_ms.push(LARGE_M_TILE);
@@ -129,57 +124,10 @@ pub(super) fn candidates(m: usize, n: usize, k: usize, num_sms: usize) -> Vec<Co
             }
             for &block_m in &block_ms {
                 for block_n in (TILE_N_QUANTUM..=MAX_TILE_N).step_by(TILE_N_QUANTUM) {
-                    let block_k = SCALE_BLOCK;
-                    if block_n > block_k
-                        && !block_n.is_multiple_of(block_n - block_k)
-                        && !block_k.is_multiple_of(block_n - block_k)
-                    {
+                    let Some(config) =
+                        tile_config(n, k, num_sms, block_m, block_n, cluster_m, cluster_n)
+                    else {
                         continue;
-                    }
-                    if block_m > 128 && block_n > 128 {
-                        continue;
-                    }
-                    let swizzle_d = [128, 64, 32, 16]
-                        .into_iter()
-                        .find(|mode| (block_n * BF16_BYTES).is_multiple_of(*mode))
-                        .unwrap();
-                    let smem_d = align(block_m * block_n * BF16_BYTES, SHARED_STORE_ALIGNMENT);
-                    let smem_barriers = MAX_PIPELINE_STAGES * BARRIER_BYTES * BARRIERS_PER_STAGE;
-                    let smem_a = block_m * block_k;
-                    let smem_b = block_n * block_k;
-                    let smem_sfa = align(block_m * SCALE_BYTES, SHARED_SCALE_ALIGNMENT);
-                    let uniform_sfb = usize::from(!block_k.is_multiple_of(block_n)) + 1;
-                    let smem_sfb = align(
-                        k.div_ceil(block_k) * SCALE_BYTES * uniform_sfb,
-                        BARRIER_BYTES,
-                    );
-                    let extra = smem_d + smem_barriers + smem_sfb;
-                    let per_stage = smem_a + smem_b + smem_sfa;
-                    let stages = ((SM90_SHARED_MEMORY_BYTES.saturating_sub(extra)) / per_stage)
-                        .min(MAX_PIPELINE_STAGES);
-                    if stages < MIN_PIPELINE_STAGES
-                        || (block_m * block_n < LARGE_TILE_ELEMENTS
-                            && stages < SMALL_TILE_MIN_STAGES)
-                    {
-                        continue;
-                    }
-                    let config = Config {
-                        output_features: n,
-                        input_features: k,
-                        block_m,
-                        block_n,
-                        block_k,
-                        cluster_m,
-                        cluster_n,
-                        swizzle_d,
-                        stages,
-                        smem_bytes: extra + stages * per_stage,
-                        math_threads: if block_m <= WGMMA_M_ROWS {
-                            WARP_GROUP_THREADS
-                        } else {
-                            2 * WARP_GROUP_THREADS
-                        },
-                        num_sms,
                     };
                     ranked.push(RankedConfig {
                         cycles: estimated_cycles(config, m, n, k),
@@ -196,6 +144,80 @@ pub(super) fn candidates(m: usize, n: usize, k: usize, num_sms: usize) -> Vec<Co
         .collect()
 }
 
+fn tile_config(
+    n: usize,
+    k: usize,
+    num_sms: usize,
+    block_m: usize,
+    block_n: usize,
+    cluster_m: usize,
+    cluster_n: usize,
+) -> Option<Config> {
+    if !(SMALL_M_TILES.contains(&block_m)
+        || BASE_M_TILES.contains(&block_m)
+        || block_m == LARGE_M_TILE)
+        || !(TILE_N_QUANTUM..=MAX_TILE_N).contains(&block_n)
+        || !block_n.is_multiple_of(TILE_N_QUANTUM)
+        || !(1..=MAX_CLUSTER_SIZE).contains(&cluster_m)
+        || !(1..=MAX_CLUSTER_SIZE).contains(&cluster_n)
+        || cluster_m * cluster_n > MAX_CLUSTER_SIZE
+        || !num_sms.is_multiple_of(cluster_m * cluster_n)
+    {
+        return None;
+    }
+    let block_k = SCALE_BLOCK;
+    if block_n > block_k
+        && !block_n.is_multiple_of(block_n - block_k)
+        && !block_k.is_multiple_of(block_n - block_k)
+    {
+        return None;
+    }
+    if block_m > 128 && block_n > 128 {
+        return None;
+    }
+    let swizzle_d = [128, 64, 32, 16]
+        .into_iter()
+        .find(|mode| (block_n * BF16_BYTES).is_multiple_of(*mode))
+        .unwrap();
+    let smem_d = align(block_m * block_n * BF16_BYTES, SHARED_STORE_ALIGNMENT);
+    let smem_barriers = MAX_PIPELINE_STAGES * BARRIER_BYTES * BARRIERS_PER_STAGE;
+    let smem_a = block_m * block_k;
+    let smem_b = block_n * block_k;
+    let smem_sfa = align(block_m * SCALE_BYTES, SHARED_SCALE_ALIGNMENT);
+    let uniform_sfb = usize::from(!block_k.is_multiple_of(block_n)) + 1;
+    let smem_sfb = align(
+        k.div_ceil(block_k) * SCALE_BYTES * uniform_sfb,
+        BARRIER_BYTES,
+    );
+    let extra = smem_d + smem_barriers + smem_sfb;
+    let per_stage = smem_a + smem_b + smem_sfa;
+    let stages =
+        ((SM90_SHARED_MEMORY_BYTES.saturating_sub(extra)) / per_stage).min(MAX_PIPELINE_STAGES);
+    if stages < MIN_PIPELINE_STAGES
+        || (block_m * block_n < LARGE_TILE_ELEMENTS && stages < SMALL_TILE_MIN_STAGES)
+    {
+        return None;
+    }
+    Some(Config {
+        output_features: n,
+        input_features: k,
+        block_m,
+        block_n,
+        block_k,
+        cluster_m,
+        cluster_n,
+        swizzle_d,
+        stages,
+        smem_bytes: extra + stages * per_stage,
+        math_threads: if block_m <= WGMMA_M_ROWS {
+            WARP_GROUP_THREADS
+        } else {
+            2 * WARP_GROUP_THREADS
+        },
+        num_sms,
+    })
+}
+
 fn estimated_cycles(config: Config, m: usize, n: usize, k: usize) -> u64 {
     let blocks = m.div_ceil(config.block_m) * n.div_ceil(config.block_n);
     let waves = blocks.div_ceil(config.num_sms);
@@ -207,7 +229,8 @@ fn estimated_cycles(config: Config, m: usize, n: usize, k: usize) -> u64 {
     let l1_bytes = k * (config.block_m + config.block_n)
         + k * (WGMMA_M_ROWS.max(config.block_m) + config.block_n)
         + config.block_m * config.block_n * BF16_BYTES;
-    let cycles = (l2_bytes * blocks / l2_bandwidth).max(l1_bytes * blocks / l1_bandwidth);
+    let cycles = (l2_bytes as u128 * blocks as u128 / l2_bandwidth as u128)
+        .max(l1_bytes as u128 * blocks as u128 / l1_bandwidth as u128);
     if config.cluster_m * config.cluster_n > 1 && waves <= 1 {
         return u64::MAX;
     }

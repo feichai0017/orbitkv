@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::io::{Read, Write};
 
 use super::{
     DecoderCompileConfig, DecoderConfig, DecoderError, DecoderTuningProfile, DecoderWeightFeatures,
@@ -77,6 +78,29 @@ impl DecoderArtifact {
         let artifact = serde_json::from_slice::<Self>(bytes)?;
         artifact.validate()?;
         Ok(artifact)
+    }
+
+    /// Reads a complete artifact without retaining an additional JSON buffer.
+    /// Callers should buffer file input. Schema and image checks are identical
+    /// to [`Self::from_bytes`]; device validation still occurs before loading.
+    ///
+    /// # Errors
+    /// Returns I/O, malformed JSON, schema or image integrity errors.
+    pub fn read_from(reader: impl Read) -> Result<Self, DecoderError> {
+        let artifact = serde_json::from_reader::<_, Self>(reader)?;
+        artifact.validate()?;
+        Ok(artifact)
+    }
+
+    /// Writes compact JSON without allocating a second artifact-sized buffer.
+    /// The caller owns buffering, flushing and atomic file publication.
+    ///
+    /// # Errors
+    /// Returns schema, serialization or writer errors. Output may be partial
+    /// on failure and must not be published as a complete artifact.
+    pub fn write_to(&self, writer: impl Write) -> Result<(), DecoderError> {
+        self.validate()?;
+        serde_json::to_writer(writer, self).map_err(DecoderError::from)
     }
 
     /// Number of distinct generated CUDA modules in this execution program.

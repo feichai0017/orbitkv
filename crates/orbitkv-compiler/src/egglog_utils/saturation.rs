@@ -51,6 +51,9 @@ impl<'a> PreparedEgglog<'a> {
             tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.egglog.setup_text")
                 .in_scope(|| egglog_setup_with_options(program, parts, interval_analysis));
         let mut template = EGraph::default();
+        for primitive in &parts.primitives {
+            template.add_primitive(primitive.clone());
+        }
         template.set_report_level(if log && egglog_debug() {
             ReportLevel::WithPlan
         } else {

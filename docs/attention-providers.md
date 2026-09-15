@@ -81,10 +81,13 @@ upstream scheduler/kernel; `paged_attention.egg` adds the equivalent candidate.
 OrbitKV's compact CSR page rows become a provider-owned rectangular block table
 and actual KV lengths on the GPU. Conversion, scheduler preparation and attention
 launches all participate in measured execution and CUDA Graph replay. K/V payloads
-retain their existing allocations. The current safe table width is the total
-number of compact page references, so metadata storage is O(requests × references).
-The resource plan charges this storage, scheduler arrays and LSE; retained graphs
-own their scratch even after the operation prepares another shape.
+retain their existing allocations. The table width is the bucket's proved
+page-reference capacity, so metadata storage is O(requests × capacity). The
+index allocation must back that capacity; actual lengths stay in GPU metadata.
+Growing context within the bucket reuses the same plan and capture. Unbounded
+dynamic context admits no FA3 candidate. The resource plan charges this storage,
+scheduler arrays and LSE; retained graphs own their scratch even after the
+operation prepares another query or batch shape.
 
 The initial algorithm uses non-TMA paged loads, packed GQA and one unsplit KV
 partition. Upstream tile selection remains intact. Split-KV/TMA algorithms, FA2,

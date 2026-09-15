@@ -20,9 +20,6 @@ use std::{
 
 use crate::providers::provider_source::{ResolvedProviderSource, content_digest};
 
-/// Number of top heuristic tiles exposed as distinct e-graph alternatives.
-/// This bounds search breadth; it is not a claim that four tiles are optimal.
-pub(super) const SEARCH_VARIANTS: usize = 4;
 const WRAPPER: &str = include_str!("wrapper.cu");
 use super::contract;
 pub(super) use super::tiling::Config;
@@ -123,7 +120,9 @@ pub(super) fn ensure_compiled(
         return Ok(library);
     }
     let path = compile_or_cache(target, config)?;
-    let library = Box::leak(Box::new(unsafe { Library::load(&path)? }));
+    let library = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.load", provider = "deepgemm", path = %path.display(), config = ?config)
+        .in_scope(|| unsafe { Library::load(&path) })?;
+    let library = Box::leak(Box::new(library));
     libraries.insert((target, config), library);
     Ok(library)
 }
@@ -198,9 +197,11 @@ pub(super) fn provider_identity() -> Result<String, String> {
                 WRAPPER.as_bytes(),
                 contract::quantizer_source().as_bytes(),
                 contract::PACKED_ACTIVATION_ABI.as_bytes(),
-                // A selected schedule stores a variant index. Its mapping to
-                // a tile depends on this policy as well as the CUDA template.
+                // Explicit tile schema, legality and candidate policy are part
+                // of schedule provenance, along with native source contents.
                 include_str!("tiling.rs").as_bytes(),
+                include_str!("selection.rs").as_bytes(),
+                include_str!("provider_rewrite.egg.in").as_bytes(),
             ])
         )
     })

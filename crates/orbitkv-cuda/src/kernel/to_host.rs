@@ -3,7 +3,9 @@
 //! CudaGraphOp wraps a subgraph of KernelOps into a single executable unit
 //! that can be executed like any other HostOp.
 
+mod captured_host;
 mod operation;
+use captured_host::{CompiledCapturedHost, PreparedHostCapture};
 mod profile;
 
 use std::sync::Arc;
@@ -216,49 +218,6 @@ impl CompiledFlashInferDecode {
 struct PendingFlashInferDecodeRecapture {
     prepared: Option<Rc<PreparedFlashInferAttention>>,
     signature: FlashInferCaptureSignature,
-}
-
-struct CompiledCapturedHost {
-    node: NodeIndex,
-    inputs: Vec<NodeIndex>,
-    host_op: Arc<Box<dyn HostOp>>,
-    child_graph: Option<CudaGraphHandle>,
-    capture_resources: Vec<CudaGraphCaptureResource>,
-    graph_node: Option<CUgraphNode>,
-}
-
-// Field order retires the source child before the allocations it captured.
-struct PreparedHostCapture {
-    graph: CudaGraphHandle,
-    resources: Vec<CudaGraphCaptureResource>,
-}
-
-impl CompiledCapturedHost {
-    fn captured_pointer_nodes(&self) -> Vec<NodeIndex> {
-        let host = self.host_op.as_ref().as_ref();
-        let inputs: Box<dyn Iterator<Item = NodeIndex> + '_> =
-            match host.cuda_graph_capture_pointer_inputs() {
-                Some(indices) => Box::new(indices.iter().map(|&index| self.inputs[index])),
-                None => Box::new(self.inputs.iter().copied()),
-            };
-        std::iter::once(self.node).chain(inputs).collect()
-    }
-
-    fn prepare_graph_capture(
-        &self,
-        stream: &Arc<CudaStream>,
-        buffers: &FxHashMap<NodeIndex, DeviceBuffer>,
-        dyn_map: &DynMap,
-    ) -> anyhow::Result<()> {
-        let host = self.host_op.as_ref().as_ref();
-        stream.context().check_err().map_err(|error| {
-            anyhow::anyhow!("deferred CUDA error before HostOp capture preparation: {error:?}")
-        })?;
-        host.prepare_cuda_graph_capture(stream, self.node, &self.inputs, buffers, dyn_map)?;
-        stream.context().check_err().map_err(|error| {
-            anyhow::anyhow!("deferred CUDA error after HostOp capture preparation: {error:?}")
-        })
-    }
 }
 
 /// Prepared FlashInfer plan and the dependency-ordered steps that use it.
@@ -3636,6 +3595,7 @@ impl CudaGraphOp {
         ptrs: LtMatmulPointers,
         mut profile: Option<&mut RecaptureProfile>,
     ) -> anyhow::Result<CudaGraphHandle> {
+        let _stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.capture", provider = "cublaslt").entered();
         // Standalone stream capture records work but never executes it. It
         // therefore has no data hazard with work already queued on the runtime
         // stream, and inserting an event record/wait pair before every child
@@ -3688,6 +3648,7 @@ impl CudaGraphOp {
         include_metadata: bool,
         mut profile: Option<&mut RecaptureProfile>,
     ) -> anyhow::Result<(Vec<CUgraphNode>, CUgraphNode)> {
+        let _stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.capture", provider = "flashinfer").entered();
         let timer = Instant::now();
         capture_stream
             .join(stream)
@@ -4398,6 +4359,7 @@ impl CudaGraphOp {
                     let capture_resources = state.captured_host_ops[idx]
                         .host_op
                         .cuda_graph_capture_resources();
+                    let capture_stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.capture", provider = state.captured_host_ops[idx].host_op.stats_name().unwrap_or("host")).entered();
                     CudaGraphHandle::begin_standalone_capture(&capture_stream).map_err(
                         |error| {
                             anyhow::anyhow!(
@@ -4434,6 +4396,7 @@ impl CudaGraphOp {
                                 state.captured_host_ops[idx].host_op,
                             )
                         });
+                    drop(capture_stage);
                     enqueue_result?;
                     let child_graph = capture_result?;
                     let child_node = graph

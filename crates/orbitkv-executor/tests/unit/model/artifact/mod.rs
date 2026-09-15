@@ -53,3 +53,22 @@ fn missing_or_null_execution_records_are_rejected() {
         assert!(DecoderArtifact::from_bytes(&serde_json::to_vec(&value).unwrap()).is_err());
     }
 }
+
+#[test]
+fn streaming_preserves_the_byte_format_and_validation() {
+    let bytes = serde_json::to_vec(&fixture()).unwrap();
+    let artifact = DecoderArtifact::read_from(bytes.as_slice()).unwrap();
+    let mut streamed = Vec::new();
+    artifact.write_to(&mut streamed).unwrap();
+    assert_eq!(streamed, artifact.to_bytes().unwrap());
+    streamed.extend_from_slice(b" trailing");
+    assert!(DecoderArtifact::read_from(streamed.as_slice()).is_err());
+    let mut value = fixture();
+    value["schema"] = (DECODER_ARTIFACT_SCHEMA + 1).into();
+    assert!(DecoderArtifact::read_from(serde_json::to_vec(&value).unwrap().as_slice()).is_err());
+    assert!(
+        artifact
+            .write_to(std::io::Cursor::new(&mut [0u8; 8][..]))
+            .is_err()
+    );
+}

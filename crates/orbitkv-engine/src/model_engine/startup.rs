@@ -1,7 +1,7 @@
 //! Decoder loading, artifact persistence and preparation before readiness.
 
 use std::{
-    io::Write,
+    io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -17,8 +17,6 @@ use orbitkv_executor::{
 use serde::Serialize;
 
 use super::{ModelEngine, ModelEngineConfig, ModelEngineError};
-
-const MAX_DECODER_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Evidence published only after all configured startup work succeeds.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -118,14 +116,8 @@ fn initialization_error(error: impl std::fmt::Display) -> ModelEngineError {
 }
 
 fn read_decoder_artifact(path: &Path) -> Result<DecoderArtifact, ModelEngineError> {
-    let metadata = std::fs::metadata(path).map_err(initialization_error)?;
-    if metadata.len() > MAX_DECODER_ARTIFACT_BYTES {
-        return Err(ModelEngineError::Initialization(format!(
-            "decoder artifact exceeds {MAX_DECODER_ARTIFACT_BYTES} bytes"
-        )));
-    }
-    let bytes = std::fs::read(path).map_err(initialization_error)?;
-    DecoderArtifact::from_bytes(&bytes).map_err(initialization_error)
+    let file = std::fs::File::open(path).map_err(initialization_error)?;
+    DecoderArtifact::read_from(BufReader::new(file)).map_err(initialization_error)
 }
 
 fn persist_decoder_artifact(
@@ -140,12 +132,16 @@ fn persist_decoder_artifact(
         .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-    let bytes = artifact
-        .to_bytes()
-        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
+    {
+        let mut writer = BufWriter::new(temporary.as_file_mut());
+        artifact
+            .write_to(&mut writer)
+            .map_err(initialization_error)?;
+        writer.flush().map_err(initialization_error)?;
+    }
     temporary
-        .write_all(&bytes)
-        .and_then(|()| temporary.as_file().sync_all())
+        .as_file()
+        .sync_all()
         .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
     temporary
         .persist_noclobber(path)

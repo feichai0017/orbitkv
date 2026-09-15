@@ -21,6 +21,9 @@ pub mod base;
 mod diagnostics;
 mod eligibility;
 mod neighborhood;
+mod op_text;
+pub use op_text::OpTextParts;
+pub mod primitives;
 mod sampling;
 mod saturation;
 
@@ -193,100 +196,6 @@ fn op_defs_string(ops: &[Arc<Box<dyn EgglogOp>>]) -> String {
 pub fn full_egglog(program: &str, ops: &[Arc<Box<dyn EgglogOp>>], cleanup: bool) -> String {
     let parts = OpTextParts::new(ops, cleanup);
     full_egglog_with(program, &parts)
-}
-
-/// Pre-computed per-op text fragments. Materialising all op-derived strings
-/// once up front means callers that want to drive multiple egglog runs in
-/// parallel only need to share `&str` references and never touch the non-Send
-/// trait objects in `ops`.
-pub struct OpTextParts {
-    op_defs: String,
-    /// Declarations owned by registered ops, deduplicated and emitted before
-    /// every per-op rewrite. Unlike backend extras, these travel with a raw op
-    /// list through direct `run_egglog` callers as well as Runtime compilation.
-    op_declarations: String,
-    /// Backend-provided egglog text (see [`crate::op::Runtime::extra_egglog`]),
-    /// spliced after `op_defs` and `op_declarations`, before the rewrite rules.
-    /// Empty for core / the reference backend.
-    extra_egglog: String,
-    cleanups: String,
-    /// Names of op kinds that are eligible for cleanup (cleanup() == true).
-    /// Used by the Rust post-processing pass to safely strip HLIR ops only
-    /// when an alternative survives in the same eclass.
-    pub(crate) cleanable_op_names: FxHashSet<String>,
-    late_program: String,
-    rewrites: String,
-    late_phases: Vec<EgglogSchedulePhase>,
-    late_postprocesses: Vec<EGraphPostprocess>,
-}
-
-impl OpTextParts {
-    pub(crate) fn with_extra_egglog(mut self, extra_egglog: String) -> Self {
-        self.extra_egglog = extra_egglog;
-        self
-    }
-
-    pub fn new(ops: &[Arc<Box<dyn EgglogOp>>], cleanup: bool) -> Self {
-        Self::new_with_late_passes(ops, cleanup, &[])
-    }
-
-    pub fn new_with_late_passes(
-        ops: &[Arc<Box<dyn EgglogOp>>],
-        cleanup: bool,
-        late_passes: &[LateEgglogPass],
-    ) -> Self {
-        let cleanable_op_names: FxHashSet<String> = ops
-            .iter()
-            .filter(|op| op.cleanup())
-            .map(|op| op.sort().name.to_string())
-            .collect();
-        let mut seen_declarations = FxHashSet::default();
-        let op_declarations = ops
-            .iter()
-            .flat_map(|op| op.egglog_declarations())
-            .filter(|declaration| seen_declarations.insert(declaration.clone()))
-            .join("\n");
-        Self {
-            op_defs: op_defs_string(ops),
-            op_declarations,
-            // Default empty; the backend's Runtime::extra_egglog() is spliced in
-            // by the Rt-aware callers (build_search_space) after construction.
-            extra_egglog: String::new(),
-            // The egglog `cleanup` ruleset deletes HLIR ops unconditionally,
-            // even when no kernel rewrite fired in their eclass. On large
-            // graphs (e.g. YOLO v11) that produces empty eclasses and the
-            // post-processing cascade panics with "No valid graphs present".
-            // We always emit an empty cleanup ruleset and instead do
-            // conditional cleanup in Rust after egglog finishes.
-            cleanups: String::new(),
-            rewrites: ops
-                .iter()
-                .flat_map(|o| o.rewrites())
-                .map(|r| r.to_egglog_string())
-                .join("\n"),
-            cleanable_op_names: if cleanup {
-                cleanable_op_names
-            } else {
-                FxHashSet::default()
-            },
-            late_program: late_passes.iter().map(|p| p.program.as_str()).join("\n"),
-            late_phases: late_passes
-                .iter()
-                .enumerate()
-                .filter_map(|(i, pass)| {
-                    let schedule = normalize_late_schedule(&pass.schedule);
-                    (!schedule.is_empty()).then(|| EgglogSchedulePhase {
-                        name: format!("late pass {:02}", i + 1),
-                        schedule,
-                    })
-                })
-                .collect(),
-            late_postprocesses: late_passes
-                .iter()
-                .filter_map(|pass| pass.postprocess.clone())
-                .collect(),
-        }
-    }
 }
 
 fn full_egglog_with(program: &str, parts: &OpTextParts) -> String {

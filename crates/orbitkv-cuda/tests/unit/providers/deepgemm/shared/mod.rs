@@ -1,3 +1,4 @@
+use super::super::tests::device_selection;
 use super::*;
 use half::bf16;
 use orbitkv_compiler::op::CustomOp;
@@ -8,6 +9,7 @@ use orbitkv_compiler::{
 
 mod benchmark;
 mod replay;
+mod selection_rules;
 
 #[derive(Default, Debug)]
 struct TestDeepGemm<const PREQUANTIZED: bool>;
@@ -25,6 +27,9 @@ impl<const PREQUANTIZED: bool> EgglogOp for TestDeepGemm<PREQUANTIZED> {
             crate::target::DECLARATIONS.to_owned(),
         ]
     }
+    fn egglog_primitives(&self) -> Vec<EgglogPrimitive> {
+        DeepGemmImpl::<PREQUANTIZED>::default().egglog_primitives()
+    }
     fn cleanup(&self) -> bool {
         false
     }
@@ -40,7 +45,10 @@ struct RewriteRuntime;
 impl Runtime for RewriteRuntime {
     type Ops = (TestDeepGemm<false>, TestDeepGemm<true>, BlockScaledQuantize);
     fn extra_egglog() -> String {
-        crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts()
+        format!(
+            "{}\n(set (cuda-target-sm-count) 78)",
+            crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts()
+        )
     }
     type CompileArg = ();
     type ExecReturn = ();
@@ -128,11 +136,15 @@ fn shared_quantization_is_opt_in_and_keeps_combined_candidates() {
         let egraph = graph.egraph().unwrap();
         assert_eq!(
             count_operations(egraph, "DeepGemm"),
-            2 * jit::SEARCH_VARIANTS
+            2 * selection::SEARCH_VARIANTS
         );
         assert_eq!(
             count_operations(egraph, "DeepGemmPrequantized"),
-            if enabled { 2 * jit::SEARCH_VARIANTS } else { 0 }
+            if enabled {
+                2 * selection::SEARCH_VARIANTS
+            } else {
+                0
+            }
         );
         assert_eq!(
             count_operations(egraph, "BlockScaledQuantize"),
@@ -219,8 +231,11 @@ fn shared_buffers_are_fully_accounted_and_have_no_hidden_scratch() {
     };
     let gemm = PrequantizedDeepGemm {
         rows: 3.into(),
-        output_features: 128,
-        input_features: 256,
+        selection: Selection {
+            row_limit: 3,
+            config: tiling::candidates(3, 128, 256, 78)[0],
+        },
+        prepared: Arc::new(OnceLock::new()),
         ..Default::default()
     };
     let bytes = PackedActivationLayout::new(3, 256).unwrap().total_bytes;
@@ -363,14 +378,13 @@ fn shared_fp8_fanout_matches_combined_on_sm90() {
             let weight = graph.tensor((n, k)).as_dtype(DType::F8E4M3).persist();
             let scales = graph.tensor((n.div_ceil(BLOCK), k / BLOCK)).persist();
             weights.push((weight, scales, n));
-            for variant in 0..jit::SEARCH_VARIANTS {
+            for variant in 0..selection::SEARCH_VARIANTS {
                 let combined = graph
                     .custom_op(
                         DeepGemm {
                             rows: m.into(),
-                            output_features: n,
-                            input_features: k,
-                            variant,
+                            selection: device_selection(&stream, m, n, k, variant),
+                            prepared: Arc::new(OnceLock::new()),
                             provider: provider.clone(),
                             scratch: Arc::new(Mutex::new(None)),
                         },
@@ -383,9 +397,8 @@ fn shared_fp8_fanout_matches_combined_on_sm90() {
                     .custom_op(
                         PrequantizedDeepGemm {
                             rows: m.into(),
-                            output_features: n,
-                            input_features: k,
-                            variant,
+                            selection: device_selection(&stream, m, n, k, variant),
+                            prepared: Arc::new(OnceLock::new()),
                             provider: provider.clone(),
                             scratch: Arc::new(Mutex::new(None)),
                         },

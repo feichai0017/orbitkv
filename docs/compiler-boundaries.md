@@ -24,14 +24,14 @@ the table below assigns compiler responsibilities within that structure.
 | CUDA evaluation and deployment ranking | `orbitkv-cuda/src/search.rs` | Actual device measurements plus resource checks |
 | Search evidence | `orbitkv-cuda/src/search/trace.rs` | Candidate program identity, full operation manifest, outcomes and scores |
 | CPU stage attribution | `orbitkv-tracing/src/stages.rs`, exposed by executor `diagnostics.rs` | Buffered synchronous wall spans; explicit completion, no added device synchronization |
-| FP8 numerical/storage ABI | `host/deepgemm/contract.rs` | Block geometry, scale stride, alignment, checked sizes, quantizer source |
-| Captured scratch ownership | `host/deepgemm/scratch.rs` | Exact allocation owners retained until graph retirement |
-| Provider tile legality and initial ordering | `host/deepgemm/tiling.rs` | Supported device architecture, dimensions, pinned-provider constraints |
-| Source generation/loading | `host/deepgemm/jit.rs` | Contract, tile configuration and content-addressed provider identity |
+| FP8 numerical/storage ABI | `providers/deepgemm/contract.rs` | Block geometry, scale stride, alignment, checked sizes, quantizer source |
+| Captured scratch ownership | `providers/deepgemm/scratch.rs` | Exact allocation owners retained until graph retirement |
+| Egglog scalar extensions | `orbitkv-compiler/src/egglog_utils/primitives.rs` | Stateless typed functions; configuration comes from scalar facts; no device queries, graph traversal or hidden state |
+| Explicit provider selections | `providers/deepgemm/selection.rs` | Complete tile, row bound, static dimensions and actual SM count; rank exists only during candidate generation |
+| Provider tile legality and initial ordering | `providers/deepgemm/tiling.rs` | Supported device architecture, dimensions, pinned-provider constraints |
+| Source generation/loading | `providers/deepgemm/jit.rs` | Contract, tile configuration and content-addressed provider identity |
 
-The CUDA provider paths in the last rows are relative to
-`crates/orbitkv-cuda/src`. Existing public decoder entry
-points and the tuning JSON representation remain compatible with this layout.
+CUDA provider paths in this table are relative to `crates/orbitkv-cuda/src`.
 
 The profiling fixture stores each input binding together with its maximum byte
 capacity. Compiler setup no longer scans node IDs to guess which allocation
@@ -58,10 +58,37 @@ Three kinds of values have different owners:
   assumptions. Those assumptions only order candidates; they are not measured
   device properties or a global optimum claim.
 
-Provider identity covers the rendered quantizer and tile-selection source as
-well as the wrapper/dependencies. A changed mapping from variant index to tile
-configuration must invalidate an old schedule. Old source-bound artifacts are
-therefore expected to reject this provider refactor and require recompilation.
+DeepGEMM rules call a pure scalar primitive with the bucket's row upper bound,
+static N/K dimensions, actual SM count and a candidate rank. The result is an
+explicit tile descriptor in the egraph. Extraction validates that descriptor;
+`prepare_compilation` validates the target and loads exactly that native library.
+`execute` accepts only rows in the recorded range and a prepared handle. It does
+not re-rank tiles, invoke NVCC or load another library. A dynamic expression with
+no finite supported bound, or a target with no SM-count fact, admits no DeepGEMM
+candidate. Constant shapes do not require interval analysis.
+
+Provider identity includes the descriptor schema, scalar selection/legality
+source, rewrite text, rendered quantizer and wrapper/dependencies. Prior ordinal
+schedules must be regenerated. Prepared handles and scratch ownership are
+excluded from semantic fingerprints; preparing an operation cannot change its
+selected program identity.
+
+FlashAttention-3 rules similarly require an explicit context-page capacity,
+proved by a constant shape or the bucket's upper bound. Its page-table stride,
+scratch and native launch bound use that capacity; GPU CSR and last-page metadata
+provide the actual sequence lengths. Context growth within a bucket therefore
+does not change its capture key or prepared plan. The page-index allocation must
+back the recorded capacity, while its logical length may be smaller. Query and
+request counts remain capture dimensions. The plan and rewrite sources are part
+of the provider identity, and captures retain their scratch owner until retirement.
+The runtime's input descriptors preserve backing capacity through resolution and
+caching; changing logical contents must not shrink that physical-capacity fact.
+
+Local decoder artifacts use buffered streaming JSON for file input/output and
+atomic publication without overwriting an existing file. Their size follows the
+selected graph and embedded CUDA images; the engine does not impose a fixed
+64 MiB file ceiling. Schema, image hashes, execution environment and selected
+schedule validation remain mandatory.
 
 The executor still uses its named, conservative single-active-graph deployment
 default. Making several graphs resident needs aggregate accounting for captured
