@@ -24,6 +24,8 @@ use crate::{
 };
 use orbitkv::{EngineFixedStatePlan, StatePoolIdentity};
 
+mod output;
+pub use output::DecoderOutputRows;
 mod runtime_input;
 use runtime_input::{validate_stateful_step, validate_step};
 mod artifact;
@@ -335,6 +337,7 @@ impl DecoderGraph {
         plan: &ExecutorPlan,
         arenas: &[ExecutorArena],
         fixed_state_registrations: &[FixedStateArenaRegistration],
+        output_rows: DecoderOutputRows,
     ) -> Result<Self, DecoderError> {
         let topology = DecoderTopology::compile(config, plan)?;
         let (dimensions, class_dimensions) = validate_plan(config, plan, arenas, &topology)?;
@@ -374,6 +377,7 @@ impl DecoderGraph {
             config,
             &format!("{}.norm.weight", config.tensor_prefix),
         );
+        let hidden = output_rows.select(&hidden, &inputs.query_indptr);
         let normalized = norm.forward(&hidden);
         let lm_head = if config.tied_embeddings {
             embedding
@@ -520,7 +524,7 @@ impl CompiledDecoder {
     pub fn execute(&mut self, step: DecoderStep<'_>) -> Result<DecoderStepOutput, DecoderError> {
         self.execute_graph(step)?;
         Ok(DecoderStepOutput {
-            token_ids: self.read_sampled_tokens(step.tokens.len())?,
+            token_ids: self.read_sampled_tokens(step)?,
         })
     }
 
@@ -565,7 +569,7 @@ impl CompiledDecoder {
         )?;
         let fixed_states = pending.wait()?;
         Ok(StatefulDecoderStepOutput {
-            token_ids: self.read_sampled_tokens(step.tokens.len())?,
+            token_ids: self.read_sampled_tokens(step)?,
             fixed_states,
         })
     }
@@ -584,18 +588,10 @@ impl CompiledDecoder {
         states: &[DecoderFixedStateStep<'_>],
     ) -> Result<StatefulDecoderDiagnosticOutput, DecoderError> {
         let output = self.execute_with_fixed_states(step, states)?;
-        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
-        let expected = step
-            .tokens
-            .len()
-            .checked_mul(self.vocabulary_size)
-            .ok_or(DecoderError::InputCapacity)?;
-        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
-            return Err(DecoderError::InvalidGeometry("logits output"));
-        }
+        let logits = self.read_logits(step)?;
         Ok(StatefulDecoderDiagnosticOutput {
             token_ids: output.token_ids,
-            logits: logits.into_boxed_slice(),
+            logits,
             fixed_states: output.fixed_states,
         })
     }
@@ -618,7 +614,7 @@ impl CompiledDecoder {
         let signature = DecodeCaptureSignature::from_step(step)?;
         self.captured_decode = None;
         self.execute_graph(step)?;
-        let token_ids = self.read_sampled_tokens(step.tokens.len())?;
+        let token_ids = self.read_sampled_tokens(step)?;
         let execution = self.runtime.capture_execution(&self.graph.dyn_map)?;
         self.captured_decode = Some(CapturedDecode {
             signature,
@@ -638,18 +634,10 @@ impl CompiledDecoder {
         step: DecoderStep<'_>,
     ) -> Result<DecoderDiagnosticOutput, DecoderError> {
         let output = self.capture_decode(step)?;
-        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
-        let expected = step
-            .tokens
-            .len()
-            .checked_mul(self.vocabulary_size)
-            .ok_or(DecoderError::InputCapacity)?;
-        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
-            return Err(DecoderError::InvalidGeometry("logits output"));
-        }
+        let logits = self.read_logits(step)?;
         Ok(DecoderDiagnosticOutput {
             token_ids: output.token_ids,
-            logits: logits.into_boxed_slice(),
+            logits,
         })
     }
 
@@ -697,7 +685,7 @@ impl CompiledDecoder {
             .execution
             .launch()?;
         Ok(DecoderStepOutput {
-            token_ids: self.read_sampled_tokens(step.tokens.len())?,
+            token_ids: self.read_sampled_tokens(step)?,
         })
     }
 
@@ -712,18 +700,10 @@ impl CompiledDecoder {
         step: DecoderStep<'_>,
     ) -> Result<DecoderDiagnosticOutput, DecoderError> {
         let output = self.replay_decode(step)?;
-        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
-        let expected = step
-            .tokens
-            .len()
-            .checked_mul(self.vocabulary_size)
-            .ok_or(DecoderError::InputCapacity)?;
-        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
-            return Err(DecoderError::InvalidGeometry("logits output"));
-        }
+        let logits = self.read_logits(step)?;
         Ok(DecoderDiagnosticOutput {
             token_ids: output.token_ids,
-            logits: logits.into_boxed_slice(),
+            logits,
         })
     }
 
@@ -739,20 +719,9 @@ impl CompiledDecoder {
         step: DecoderStep<'_>,
     ) -> Result<DecoderDiagnosticOutput, DecoderError> {
         self.execute_graph(step)?;
-        let token_ids = self.read_sampled_tokens(step.tokens.len())?;
-        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
-        let expected = step
-            .tokens
-            .len()
-            .checked_mul(self.vocabulary_size)
-            .ok_or(DecoderError::InputCapacity)?;
-        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
-            return Err(DecoderError::InvalidGeometry("logits output"));
-        }
-        Ok(DecoderDiagnosticOutput {
-            token_ids,
-            logits: logits.into_boxed_slice(),
-        })
+        let token_ids = self.read_sampled_tokens(step)?;
+        let logits = self.read_logits(step)?;
+        Ok(DecoderDiagnosticOutput { token_ids, logits })
     }
 
     fn execute_graph(&mut self, step: DecoderStep<'_>) -> Result<(), DecoderError> {
@@ -857,25 +826,6 @@ impl CompiledDecoder {
             ));
         }
         Ok(())
-    }
-
-    fn read_sampled_tokens(&self, rows: usize) -> Result<Box<[u32]>, DecoderError> {
-        let raw = self.runtime.get_i32(self.decoder.outputs.sampled_tokens);
-        if raw.len() < rows {
-            return Err(DecoderError::InvalidGeometry("sampled token output"));
-        }
-        raw[..rows]
-            .iter()
-            .map(|&token| {
-                u32::try_from(token)
-                    .ok()
-                    .filter(|&token| {
-                        token < u32::try_from(self.vocabulary_size).unwrap_or(u32::MAX)
-                    })
-                    .ok_or(DecoderError::InvalidGeometry("sampled token output"))
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Vec::into_boxed_slice)
     }
 
     /// Returns stable persistent cache bindings for token-attention layers.

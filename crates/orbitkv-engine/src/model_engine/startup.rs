@@ -64,6 +64,7 @@ pub(super) fn initialize_decoder(
         config.device_index,
         &weights,
         DecoderCompileConfig {
+            output_rows: orbitkv_executor::model::DecoderOutputRows::AllTokens,
             maximum_query_tokens: config.maximum_batch_tokens,
             representative_prefill_tokens: config.representative_prefill_tokens,
             maximum_batch_size: config.maximum_active_requests,

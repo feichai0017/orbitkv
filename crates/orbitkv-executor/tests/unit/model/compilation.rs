@@ -18,6 +18,7 @@ pub(super) fn export_saturation_fixture(
         return;
     };
     let compile = DecoderCompileConfig {
+        output_rows: crate::model::DecoderOutputRows::AllTokens,
         maximum_query_tokens: 32,
         representative_prefill_tokens: 32,
         maximum_batch_size: 8,

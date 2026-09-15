@@ -63,6 +63,7 @@ pub(super) fn prepare_decoder_compilation(
                 plan,
                 storage.token_arenas,
                 &fixed_state_registrations,
+                compile.output_rows,
             )
         })?;
     let page_tokens = usize::try_from(plan.page_tokens)

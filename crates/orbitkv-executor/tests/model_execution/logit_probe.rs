@@ -2,7 +2,8 @@
 
 use super::*;
 use orbitkv_executor::model::{
-    DecoderFixedStateStep, DecoderStorage, DecoderTuningProfile, StatefulDecoderDiagnosticOutput,
+    DecoderFixedStateStep, DecoderOutputRows, DecoderStorage, DecoderTuningProfile,
+    StatefulDecoderDiagnosticOutput,
 };
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +41,13 @@ struct Case {
 }
 
 impl Probe {
+    fn output_row_count(&self, query_tokens: usize, requests: usize) -> usize {
+        match self.compile.output_rows {
+            DecoderOutputRows::AllTokens => query_tokens,
+            DecoderOutputRows::LastTokenPerRequest => requests,
+        }
+    }
+
     fn validate_cases(&self, vocabulary_size: usize) -> Result<(), &'static str> {
         if self.schema != SCHEMA || self.cases.is_empty() {
             return Err("unsupported probe schema or empty cases");
@@ -96,8 +104,24 @@ fn environment_path(name: &str) -> PathBuf {
 
 #[test]
 #[ignore = "requires a local checkpoint, an existing schedule, a probe manifest and CUDA"]
-#[allow(clippy::too_many_lines)]
 fn decoder_manifest_logits_and_drain() {
+    run_probe(ScheduleSource::Replay);
+}
+
+#[test]
+#[ignore = "requires a local checkpoint, a fresh schedule path, a probe manifest and CUDA"]
+fn decoder_manifest_compile_logits_and_drain() {
+    run_probe(ScheduleSource::Compile);
+}
+
+#[derive(Clone, Copy)]
+enum ScheduleSource {
+    Replay,
+    Compile,
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_probe(source: ScheduleSource) {
     let stage_trace = orbitkv_executor::diagnostics::install_stage_trace_from_env().unwrap();
     let probe: Probe = serde_json::from_slice(
         &std::fs::read(environment_path("ORBITKV_LOGIT_PROBE_MANIFEST")).unwrap(),
@@ -124,8 +148,19 @@ fn decoder_manifest_logits_and_drain() {
             kv_dtype_bytes: probe.kv_dtype_bytes,
         },
     );
-    let artifact_bytes = std::fs::read(environment_path("ORBITKV_DECODER_ARTIFACT")).unwrap();
-    let artifact = DecoderArtifact::from_bytes(&artifact_bytes).unwrap();
+    let artifact_path = environment_path("ORBITKV_DECODER_ARTIFACT");
+    let artifact = match source {
+        ScheduleSource::Replay => {
+            Some(DecoderArtifact::from_bytes(&std::fs::read(&artifact_path).unwrap()).unwrap())
+        }
+        ScheduleSource::Compile => {
+            assert!(
+                !artifact_path.exists(),
+                "compile probe requires a fresh schedule path"
+            );
+            None
+        }
+    };
     let tuning = DecoderTuningProfile::from_json(
         &std::fs::read(environment_path("ORBITKV_TUNING_PROFILE")).unwrap(),
     )
@@ -133,7 +168,7 @@ fn decoder_manifest_logits_and_drain() {
     let context = orbitkv_cuda::cudarc::driver::CudaContext::new(probe.device_index).unwrap();
     let stream = context.new_stream().unwrap();
     let fixed_states = fixed_state_identities(&harness.session);
-    let (mut decoder, _) = CompiledDecoder::compile_or_load_with_tuning(
+    let (mut decoder, selected) = CompiledDecoder::compile_or_load_with_tuning(
         &config,
         &harness.executor_plan,
         DecoderStorage::new(&harness.arenas, &fixed_states),
@@ -141,9 +176,17 @@ fn decoder_manifest_logits_and_drain() {
         &weight_files(&probe.model_directory),
         probe.compile,
         &tuning,
-        Some(&artifact),
+        artifact.as_ref(),
     )
-    .expect("strict replay of the supplied schedule must succeed");
+    .expect("probe compilation or strict schedule replay must succeed");
+    if matches!(source, ScheduleSource::Compile) {
+        use std::io::Write;
+        std::fs::File::create_new(&artifact_path)
+            .unwrap()
+            .write_all(&selected.to_bytes().unwrap())
+            .unwrap();
+    }
+    let artifact_bytes = std::fs::read(&artifact_path).unwrap();
     let graph_cache_capacity = probe
         .graph_cache_capacity
         .unwrap_or(orbitkv_executor::model::DEFAULT_GRAPH_CACHE_CAPACITY);
@@ -166,6 +209,7 @@ fn decoder_manifest_logits_and_drain() {
     let trace = serde_json::json!({
         "schema": SCHEMA, "vocabulary_size": config.vocabulary_size,
         "teacher_forced": true, "cases": traces, "batches": submissions,
+        "output_rows": probe.compile.output_rows,
         "graph_cache_capacity": graph_cache_capacity, "preparation": preparation,
         "final_graph_cache": decoder.graph_cache_stats(),
     });
@@ -193,6 +237,7 @@ fn manifest_rejects_ambiguous_or_unrepresentable_cases_before_device_execution()
         kv_dtype_bytes: 2,
         page_counts: vec![1],
         compile: DecoderCompileConfig {
+            output_rows: orbitkv_executor::model::DecoderOutputRows::AllTokens,
             maximum_query_tokens: 2,
             representative_prefill_tokens: 2,
             maximum_batch_size: 1,

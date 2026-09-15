@@ -87,8 +87,9 @@ pub(super) fn run(
                 .execute_with_fixed_states_and_logits(step, &states)
                 .unwrap_or_else(|error| panic!("submission {batch_index}: {error:?}"))
         };
-        assert_eq!(output.logits.len(), tokens.len() * vocabulary);
-        assert_eq!(output.token_ids.len(), tokens.len());
+        let output_rows = probe.output_row_count(tokens.len(), queries.len());
+        assert_eq!(output.logits.len(), output_rows * vocabulary);
+        assert_eq!(output.token_ids.len(), output_rows);
         write_logits(probe, queries, &output, &mut traces, vocabulary, directory);
         complete_with_fixed_states(
             &mut harness.session,
@@ -135,7 +136,7 @@ fn write_logits(
 ) {
     let mut row_end = 0;
     for query in queries {
-        row_end += query.end - query.start;
+        row_end += probe.output_row_count(query.end - query.start, 1);
         let Some(step) = query.output_step else {
             continue;
         };

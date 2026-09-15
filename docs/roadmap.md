@@ -45,12 +45,28 @@ The [serving rerun](../results/qwen3.8-27b-fp8-h20-20260915-regions/README.md)
 records C8 throughput changes alongside output variation and C1 tail latency;
 it does not pass the performance-promotion gate.
 
+The first upstream-inspired work elimination is available as an artifact-bound
+decoder output policy: select request-final hidden rows before normalization and
+LM-head projection. Isolated checkpoint projection preserves complete logits,
+but independently searched full programs still exceed the existing equivalence
+gate. Serving therefore retains all-token projection pending qualification.
+
+FP8 preparation now uses one warp per activation group. Layer-boundary probes
+identified a separate numerical defect: rounded division changed scale bits and
+FP8 midpoint decisions relative to the independent Torch/DeepGEMM reference.
+The shared and combined providers now use explicit F32 reciprocal/multiply
+rounding; frozen external bits reject the old implementation and accept the
+new one. First-layer QKV and Z projections now match exactly on the measured
+input. Full-model error remains above the unchanged gate, with convolution,
+gated normalization and residual/MLP boundaries requiring further diagnosis.
+These checks establish the repaired quantization contract, not C8 acceptance.
+
 ## Next milestones
 
 | Priority | Deliverable | Acceptance |
 | --- | --- | --- |
-| 1. Input and concurrent correctness | Locate the first layer/operation divergence in shape-dependent and long-history logits; finish HTTP tokenizer parity | Identify the violated numerical/selection/state contract with independent references; preserve tolerances and test changing batches, state reuse and tokenize/detokenize parity |
-| 2. Profile-driven regions | Share FP8 input preparation; reduce gather/cast and recurrent-state movement; qualify normalization/partial-RoPE regions; compare coordinate and connected search at the same budget | Independent operator references, full-model logits, ragged prefill/decode and drain pass; complete-workload measurements improve over the existing composition |
+| 1. Input and concurrent correctness | Resolve remaining convolution, recurrence, normalization and MLP rounding/selection boundaries; finish HTTP tokenizer parity | Independent same-input operator probes and unchanged full-model gates pass for serial, changing batches, state reuse and tokenize/detokenize parity |
+| 2. Profile-driven regions | Qualify request-final projection and shared FP8 preparation; reduce gather/cast and recurrent-state movement; qualify normalization/partial-RoPE regions; compare coordinate and connected search at the same budget | Independent operator references, full-model logits, ragged prefill/decode and drain pass; complete-workload measurements improve over the existing composition |
 | 3. Joint state and compute plans | Search multiple legal state realizations under one device-memory budget | Include KV, fixed state, workspace and resident graphs; validate layout transitions and count movement/preparation costs in the measured objective |
 | 4. Wider workload coverage | Longer prefill/context, concurrency and memory pressure; shared-prefix and cancellation traces | Find actual capacity and tail-latency limits, preserve correctness under admission pressure, record all failures and memory budgets |
 

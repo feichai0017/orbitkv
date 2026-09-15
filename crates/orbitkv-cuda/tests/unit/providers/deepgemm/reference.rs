@@ -121,7 +121,7 @@ impl HostOp for BlockScaledLinearReference {
                 .arg(&k)
                 .launch(LaunchConfig {
                     grid_dim: (((k + BLOCK as i32 - 1) / BLOCK as i32) as u32, m as u32, 1),
-                    block_dim: (BLOCK as u32, 1, 1),
+                    block_dim: (super::contract::QUANTIZER_THREADS as u32, 1, 1),
                     shared_mem_bytes: 0,
                 })?;
             stream

@@ -5,21 +5,32 @@
 extern "C" __global__ void block_scaled_quantize(
     __nv_fp8_e4m3* output, float* scales, const __nv_bfloat16* input, int m, int k) {
     using namespace orbitkv_fp8;
-    __shared__ float maxima[kScaleBlock];
+    static_assert(kQuantizerThreads == 32, "quantizer reduction requires one CUDA warp");
+    static_assert(kScaleBlock % kQuantizerThreads == 0, "whole values per lane");
+    constexpr int kValuesPerLane = kScaleBlock / kQuantizerThreads;
     int row = blockIdx.y;
     int k_block = blockIdx.x;
-    int column = k_block * kScaleBlock + threadIdx.x;
-    float value = __bfloat162float(input[(long long)row * k + column]);
-    maxima[threadIdx.x] = fabsf(value);
-    __syncthreads();
-    for (int offset = kScaleBlock / 2; offset > 0; offset >>= 1) {
-        if (threadIdx.x < offset) maxima[threadIdx.x] = fmaxf(maxima[threadIdx.x], maxima[threadIdx.x + offset]);
-        __syncthreads();
+    long long base = (long long)row * k + k_block * kScaleBlock + threadIdx.x;
+    float values[kValuesPerLane];
+    float maximum = 0.0f;
+    #pragma unroll
+    for (int i = 0; i < kValuesPerLane; ++i) {
+        values[i] = __bfloat162float(input[base + i * kQuantizerThreads]);
+        maximum = fmaxf(maximum, fabsf(values[i]));
     }
-    float scale = fmaxf(maxima[0], kQuantizationAmaxFloor) / kFp8MaxFinite;
+    const unsigned mask = __activemask();
+    #pragma unroll
+    for (int offset = kQuantizerThreads / 2; offset > 0; offset >>= 1)
+        maximum = fmaxf(maximum, __shfl_xor_sync(mask, maximum, offset));
+    // These F32 roundings are part of the quantization contract. Replacing
+    // either product with division changes FP8 codes near a midpoint.
+    float scale = __fmul_rn(fmaxf(maximum, kQuantizationAmaxFloor), kFp8InverseMaxFinite);
+    float inverse_scale = __frcp_rn(scale);
     int scale_rows = aligned_scale_rows(m);
     if (threadIdx.x == 0) scales[(long long)k_block * scale_rows + row] = scale;
     if (row == 0 && threadIdx.x < scale_rows - m)
         scales[(long long)k_block * scale_rows + m + threadIdx.x] = 0.0f;
-    output[(long long)row * k + column] = (__nv_fp8_e4m3)(value / scale);
+    #pragma unroll
+    for (int i = 0; i < kValuesPerLane; ++i)
+        output[base + i * kQuantizerThreads] = (__nv_fp8_e4m3)(__fmul_rn(values[i], inverse_scale));
 }
