@@ -1,8 +1,8 @@
 # Model support
 
-The supported model is **Qwen3.8-27B-FP8**, for text inference on one NVIDIA H20.
-Support refers to this checkpoint and the tested workload below; it does not
-cover every Qwen3.8 size, precision or modality.
+The current execution target is **Qwen3.8-27B-FP8**, for experimental text inference
+on one NVIDIA H20. The tested workload below does not cover every Qwen3.8 size,
+precision or modality. Extended numerical qualification remains open.
 
 ## Verified checkpoint
 
@@ -35,8 +35,11 @@ These are measured bounds, not a long-context or maximum-capacity claim.
 Numerical preflight uses an independent full-vocabulary, teacher-forced reference
 and checks token-KV plus recurrent/convolution state drain. Its exact artifact,
 prompts, steps and tolerances are recorded with the results. A passing probe
-does not establish arbitrary-prompt equivalence. Generated text differences
-across batches or engines are reported separately and require logit diagnosis.
+does not establish arbitrary-prompt equivalence. A wider 16-history, 64-step probe
+exceeds the existing reference-error gate, and changing batch shapes can change
+selected tokens. The retained-graph CSR reuse regression is fixed; these wider
+numerical failures remain open. Generated text differences across batches or
+engines are reported separately and require logit diagnosis.
 The HTTP tokenizer has a measured token-count difference from the Python
 baselines on synthetic text. Current cross-engine measurements use token-ID
 requests; text-tokenizer parity remains a qualification item.

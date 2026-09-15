@@ -3,9 +3,9 @@ export const models = [
     name: "Qwen3.8 27B",
     precision: "Block FP8",
     attention: "Full + Gated DeltaNet",
-    status: "Bounded text inference",
+    status: "Experimental text inference",
     scope:
-      "Verified official checkpoint · one NVIDIA H20 · text inference through C8. Vision and MTP are outside this scope.",
+      "Verified official checkpoint · one NVIDIA H20 · C1/C8 measurements. Extended numerical consistency remains under qualification.",
     path: "docs/capability-matrix.md",
   },
 ];

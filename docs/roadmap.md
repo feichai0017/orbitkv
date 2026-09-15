@@ -30,14 +30,26 @@ candidate GPU measurements and deployment finalist checks remain authoritative.
 The dependency workload profile opts into three changes per attempt. This adds
 search coverage, not a promise that existing kernels become faster.
 
+Numerical probes now accept explicit submission and lifetime plans for different
+request histories, chunked prompts and reordered rows. Gather/cast regions retain
+the original views and conversion boundaries while avoiding an intermediate.
+Retained FlashInfer graphs now validate the query and page segmentation consumed
+by their prepared plans: unchanged shapes and addresses do not prove unchanged
+CSR contents. The regression covers changed query/KV segmentation, bucket reuse
+and reuse without replanning when metadata is identical. Full-model C8 replay
+with multiple resident buckets matches single-bucket residency on the measured
+teacher-forced histories. These checks do not close the C8 gate: shape-dependent
+output variation and longer-history reference errors still require diagnosis
+before promotion. Wider region candidates follow that numerical diagnosis.
+
 ## Next milestones
 
 | Priority | Deliverable | Acceptance |
 | --- | --- | --- |
-| 1. Input and concurrent correctness | Resolve HTTP tokenizer differences; reproduce C8 text variation with identical teacher-forced histories and recorded batch geometry | Tokenize/detokenize parity against the checkpoint reference; identify the violated numerical/selection/state contract or prove measured near-tie behavior; preserve tolerances and test changing batches and state reuse |
-| 2. Profile-driven regions | Reduce measured FP8 preparation, gather/cast and recurrent-state movement; check normalization/partial-RoPE region coverage; compare coordinate and connected search at the same budget | Independent operator references, full-model logits, ragged prefill/decode and drain pass; complete-workload measurements improve over the existing composition |
-| 3. Wider workload coverage | Longer prefill/context, concurrency and memory pressure; shared-prefix and cancellation traces | Find actual capacity and tail-latency limits, preserve correctness under admission pressure, record all failures and memory budgets |
-| 4. Joint state and compute plans | Search multiple legal state realizations under one device-memory budget | Include KV, fixed state, workspace and resident graphs; validate layout transitions and count movement/preparation costs in the measured objective |
+| 1. Input and concurrent correctness | Locate the first layer/operation divergence in shape-dependent and long-history logits; finish HTTP tokenizer parity | Identify the violated numerical/selection/state contract with independent references; preserve tolerances and test changing batches, state reuse and tokenize/detokenize parity |
+| 2. Profile-driven regions | Share FP8 input preparation; reduce gather/cast and recurrent-state movement; qualify normalization/partial-RoPE regions; compare coordinate and connected search at the same budget | Independent operator references, full-model logits, ragged prefill/decode and drain pass; complete-workload measurements improve over the existing composition |
+| 3. Joint state and compute plans | Search multiple legal state realizations under one device-memory budget | Include KV, fixed state, workspace and resident graphs; validate layout transitions and count movement/preparation costs in the measured objective |
+| 4. Wider workload coverage | Longer prefill/context, concurrency and memory pressure; shared-prefix and cancellation traces | Find actual capacity and tail-latency limits, preserve correctness under admission pressure, record all failures and memory budgets |
 
 ## Compiler direction
 

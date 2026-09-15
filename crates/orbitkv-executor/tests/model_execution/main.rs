@@ -384,6 +384,11 @@ fn release_and_drain(session: &mut RuntimeSession, request_id: EngineRequestId) 
 }
 
 fn release_requests_and_drain(session: &mut RuntimeSession, request_ids: &[EngineRequestId]) {
+    release_requests(session, request_ids);
+    assert_session_drained(session);
+}
+
+fn release_requests(session: &mut RuntimeSession, request_ids: &[EngineRequestId]) {
     let release = session
         .prepare_release_batch(request_ids)
         .expect("prepare release");
@@ -405,6 +410,9 @@ fn release_requests_and_drain(session: &mut RuntimeSession, request_ids: &[Engin
         }),
         Ok(EngineReleaseOutcome::Completed)
     );
+}
+
+fn assert_session_drained(session: &RuntimeSession) {
     let stats = session.stats();
     assert_eq!(stats.active_requests, 0);
     assert_eq!(stats.active_snapshots, 0);

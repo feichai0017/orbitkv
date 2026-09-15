@@ -4,6 +4,7 @@
 //! that can be executed like any other HostOp.
 
 mod captured_host;
+mod flashinfer;
 mod operation;
 use captured_host::{CompiledCapturedHost, PreparedHostCapture};
 mod profile;
@@ -164,55 +165,6 @@ struct CompiledFlashInferDecode {
     ptrs: Option<FlashInferPointers>,
     signature: Option<FlashInferCaptureSignature>,
     recapture_count: usize,
-}
-
-impl CompiledFlashInferDecode {
-    fn new(node: NodeIndex, inputs: Vec<NodeIndex>, host_op: Arc<Box<dyn HostOp>>) -> Self {
-        Self {
-            node,
-            inputs,
-            host_op,
-            entry_node: None,
-            exit_node: None,
-            captured_nodes: Vec::new(),
-            prepared: None,
-            ptrs: None,
-            signature: None,
-            recapture_count: 0,
-        }
-    }
-
-    fn flashinfer(&self) -> &FlashInferAttention {
-        self.host_op
-            .as_ref()
-            .as_ref()
-            .as_any()
-            .downcast_ref::<FlashInferAttention>()
-            .expect("CompiledFlashInferDecode only stores FlashInfer host ops")
-    }
-
-    fn enqueue_prepared(
-        &self,
-        stream: &Arc<CudaStream>,
-        buffers: &FxHashMap<NodeIndex, DeviceBuffer>,
-        dyn_map: &DynMap,
-    ) -> anyhow::Result<()> {
-        let prepared = self
-            .prepared
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("FlashInfer step is not prepared"))?;
-        let resolved =
-            self.flashinfer()
-                .resolve_for_graph(self.node, &self.inputs, buffers, dyn_map)?;
-        let signature = resolved.signature_for_graph_plan(prepared.plan_c());
-        anyhow::ensure!(
-            self.signature
-                .as_ref()
-                .is_some_and(|old| old.spec == signature.spec),
-            "FlashInfer shape changed after warmup"
-        );
-        prepared.enqueue(stream, signature.ptrs, true)
-    }
 }
 
 struct PendingFlashInferDecodeRecapture {
@@ -2388,6 +2340,16 @@ impl CudaGraphOp {
         if state.cuda_graph.is_none() || state.cuda_graph_exec.is_none() {
             return Ok(false);
         }
+        // A fixed shape/address does not prove that a host-planned CSR
+        // segmentation is unchanged. The full path checks its current values
+        // against the exact prepared plan, sharing reads across its users.
+        if state
+            .flashinfer_ops
+            .iter()
+            .any(CompiledFlashInferDecode::has_runtime_metadata)
+        {
+            return Ok(false);
+        }
         let changed_dyn_vars = dyn_map
             .keys()
             .chain(state.last_dyn_values.keys())
@@ -2906,7 +2868,9 @@ impl CudaGraphOp {
 
         // Check if we need to update the graph
         let buffer_ptrs_changed = current_buffer_ptrs != state.last_buffer_ptrs;
-        let needs_update = dyn_map_changed || buffer_ptrs_changed;
+        let metadata_changed =
+            flashinfer::changed_metadata(&state, stream, dyn_map_changed || buffer_ptrs_changed)?;
+        let needs_update = dyn_map_changed || buffer_ptrs_changed || !metadata_changed.is_empty();
 
         if needs_update {
             // Kernel argument values contain buffer pointers and the stable
@@ -3231,7 +3195,6 @@ impl CudaGraphOp {
                             .resolve_for_graph(op.node, &op.inputs, buffers, dyn_map)?
                     };
                     profile.cublaslt_resolve += timer.elapsed();
-                    let explicit_indptr = resolved.has_explicit_indptr();
                     let current_c = resolved.current_c();
                     let old_plan_c = state.flashinfer_ops[idx]
                         .prepared
@@ -3239,14 +3202,16 @@ impl CudaGraphOp {
                         .map(|prepared| prepared.plan_c());
                     let plan_c = resolved.graph_plan_capacity(old_plan_c);
                     let signature = resolved.signature_for_graph_plan(plan_c);
-                    let needs_recapture = explicit_indptr
+                    let needs_recapture = metadata_changed.contains(&idx)
                         || state.flashinfer_ops[idx].signature != Some(signature.clone());
                     if needs_recapture {
                         self.ensure_graph_mutation_allowed("FlashInfer capture signature changed")?;
                         let needs_prepare = state.flashinfer_ops[idx]
                             .signature
                             .as_ref()
-                            .is_none_or(|old| explicit_indptr || old.spec != signature.spec);
+                            .is_none_or(|old| {
+                                metadata_changed.contains(&idx) || old.spec != signature.spec
+                            });
                         let prepared = if needs_prepare {
                             let step = state.flashinfer_step_indices[idx];
                             remove_flashinfer_prepare_cache_user(&mut prepared_cache_plan, step);

@@ -1,0 +1,12 @@
+{includes}
+{dyn_defines}
+extern "C" __global__ void gather_cast(
+    {output_dtype}* output, const int* indices,
+    const {input_dtype}* data{dyn_parameter}
+) {{
+    long long const_z = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (const_z >= {size}) return;
+    const long long output_index = const_z;
+    const_z = indices[{index_address}];
+    output[output_index] = ({output_dtype})data[{data_address}];
+}}
