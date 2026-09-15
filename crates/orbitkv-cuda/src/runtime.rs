@@ -57,10 +57,8 @@ use budget::{
     materialized_bucket_evictions, search_cache_under_pressure, search_candidate_node_limit,
 };
 
-pub enum CudaInput {
-    Buffer { buf: CudaSlice<u8>, len: usize },
-    Ptr(u64),
-}
+mod input;
+pub use input::CudaInput;
 
 /// Input facts that can change hard-resource accounting. Payload bytes and
 /// pointer identity are deliberately excluded: replacing data or a pointer at
@@ -117,31 +115,6 @@ fn device_ranges_overlap(a_ptr: u64, a_bytes: usize, b_ptr: u64, b_bytes: usize)
 
 fn should_consume_hlir_input(is_external_pointer: bool, preserved_for_output: bool) -> bool {
     !preserved_for_output && !is_external_pointer
-}
-
-impl CudaInput {
-    fn from_bytes(stream: &Arc<CudaStream>, bytes: &[u8]) -> Self {
-        Self::from_bytes_with_capacity(stream, bytes, bytes.len())
-    }
-
-    fn from_bytes_with_capacity(stream: &Arc<CudaStream>, bytes: &[u8], capacity: usize) -> Self {
-        assert!(capacity >= bytes.len());
-        if capacity == bytes.len() {
-            return CudaInput::Buffer {
-                buf: stream.clone_htod(bytes).unwrap(),
-                len: bytes.len(),
-            };
-        }
-        let mut buf = stream.alloc_zeros::<u8>(capacity).unwrap();
-        if !bytes.is_empty() {
-            let mut view = buf.slice_mut(..bytes.len());
-            stream.memcpy_htod(bytes, &mut view).unwrap();
-        }
-        CudaInput::Buffer {
-            buf,
-            len: bytes.len(),
-        }
-    }
 }
 
 /// Executable operation in the runtime graph.
@@ -1511,18 +1484,12 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
                 return Some(buf);
             }
 
-            if let Some(hlir_node) = bucket.llir_to_hlir.get(&node) {
-                match hlir_buffers.get(hlir_node) {
-                    Some(CudaInput::Buffer { buf, len }) => {
-                        return Some(DeviceBuffer::new(buf.device_ptr(stream).0, *len));
-                    }
-                    Some(CudaInput::Ptr(_)) => {
-                        if let Some(ext) = external_buffers.get(hlir_node) {
-                            return Some(DeviceBuffer::new(ext.device_ptr(stream).0, ext.len()));
-                        }
-                    }
-                    None => {}
-                }
+            if let Some(hlir_node) = bucket.llir_to_hlir.get(&node)
+                && let Some(buffer) = hlir_buffers
+                    .get(hlir_node)
+                    .and_then(|input| input.device_buffer(stream, external_buffers.get(hlir_node)))
+            {
+                return Some(buffer);
             }
 
             let alias_target = bucket.output_alias_map.get(&node)?;
@@ -1980,20 +1947,11 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
             return DeviceBuffer::new(ext.device_ptr(&self.cuda_stream).0, ext.len());
         }
         if let Some(hlir_node) = bucket.llir_to_hlir.get(&data_id) {
-            match self
-                .hlir_buffers
+            self.hlir_buffers
                 .get(hlir_node)
                 .expect("Cannot find input tensor in runtime!")
-            {
-                CudaInput::Buffer { buf, len } => {
-                    DeviceBuffer::new(buf.device_ptr(&self.cuda_stream).0, *len)
-                }
-                CudaInput::Ptr(_) => self
-                    .external_buffers
-                    .get(hlir_node)
-                    .map(|ext| DeviceBuffer::new(ext.device_ptr(&self.cuda_stream).0, ext.len()))
-                    .expect("Cannot read raw pointer input — no external_buffers entry for node"),
-            }
+                .device_buffer(&self.cuda_stream, self.external_buffers.get(hlir_node))
+                .expect("Cannot read raw pointer input — no external_buffers entry for node")
         } else {
             Self::bucket_buffer(bucket, &self.cuda_stream, &data_id)
                 .expect("Cannot find tensor in runtime!")
@@ -3670,25 +3628,14 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
             let hlir_nodes = hlir_nodes.into_iter().unique().collect_vec();
             let collect_hlir_time = timer.elapsed();
             let timer = std::time::Instant::now();
-            let to_process: Vec<(NodeIndex, u64, usize)> = hlir_nodes
+            let to_process: Vec<(NodeIndex, DeviceBuffer)> = hlir_nodes
                 .iter()
                 .filter_map(|hlir_node| {
                     bucket.hlir_to_all_llir.get(hlir_node)?;
                     let input = self.hlir_buffers.get(hlir_node)?;
-                    let (ptr, len) = match input {
-                        CudaInput::Buffer { buf, len } => {
-                            (buf.device_ptr(&self.cuda_stream).0, *len)
-                        }
-                        CudaInput::Ptr(p) => {
-                            let len = self
-                                .external_buffers
-                                .get(hlir_node)
-                                .map(|buf| buf.len())
-                                .unwrap_or(0);
-                            (*p, len)
-                        }
-                    };
-                    Some((*hlir_node, ptr, len))
+                    let buffer = input
+                        .device_buffer(&self.cuda_stream, self.external_buffers.get(hlir_node))?;
+                    Some((*hlir_node, buffer))
                 })
                 .collect();
             (
@@ -3702,14 +3649,14 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
         let timer = std::time::Instant::now();
         let bucket = &mut self.compiled_buckets[bucket_idx];
         let to_process_count = to_process.len();
-        for (hlir_node, ptr, len) in to_process {
+        for (hlir_node, buffer) in to_process {
             let llir_nodes = bucket
                 .hlir_to_all_llir
                 .get(&hlir_node)
                 .cloned()
                 .unwrap_or_default();
             for llir_node in llir_nodes {
-                Self::cache_bucket_device_buffer(bucket, llir_node, DeviceBuffer::new(ptr, len));
+                Self::cache_bucket_device_buffer(bucket, llir_node, buffer);
             }
         }
         bucket.hlir_synced = true;
@@ -5457,9 +5404,8 @@ impl<O: IntoEgglogOp> Runtime for CudaRuntimeImpl<O> {
     type Ops = (crate::target::CudaTargetFacts, O);
 
     fn compilation_facts(&self) -> String {
-        crate::target::CudaTarget::from_context(self.cuda_stream.context())
+        crate::target::CudaTarget::compiler_facts_from_context(self.cuda_stream.context())
             .expect("query execution CUDA target")
-            .compiler_facts()
     }
     type CompileArg = Arc<CudaStream>;
     type ExecReturn = ();

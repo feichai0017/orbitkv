@@ -58,7 +58,7 @@ pub struct FlashAttention {
     head_dim: usize,
     page_size: usize,
     query_tokens: Expression,
-    context_pages: Expression,
+    context_page_capacity: usize,
     requests: Expression,
     dtype: DType,
     scale: f64,
@@ -75,7 +75,7 @@ impl std::fmt::Debug for FlashAttention {
             head_dim,
             page_size,
             query_tokens,
-            context_pages,
+            context_page_capacity,
             requests,
             dtype,
             scale,
@@ -90,7 +90,7 @@ impl std::fmt::Debug for FlashAttention {
             .field("head_dim", head_dim)
             .field("page_size", page_size)
             .field("query_tokens", query_tokens)
-            .field("context_pages", context_pages)
+            .field("context_page_capacity", context_page_capacity)
             .field("requests", requests)
             .field("dtype", dtype)
             .field("scale", scale)
@@ -148,11 +148,11 @@ impl FlashAttention {
         {
             return Ok(Arc::clone(prepared));
         }
-        let _ = jit::ensure_compiled(
+        let library = jit::ensure_compiled(
             crate::target::CudaTarget::from_context(stream.context())?,
             self.config(),
         )?;
-        let prepared = Arc::new(Prepared::new(plan, stream)?);
+        let prepared = Arc::new(Prepared::new(plan, library, stream)?);
         *cached = Some(Arc::clone(&prepared));
         Ok(prepared)
     }
@@ -169,7 +169,7 @@ impl EgglogOp for FlashAttention {
                 ("head_dim", EXPRESSION),
                 ("page_size", EXPRESSION),
                 ("query_tokens", EXPRESSION),
-                ("context_pages", EXPRESSION),
+                ("context_page_capacity", EXPRESSION),
                 ("requests", EXPRESSION),
                 ("dtype", DTYPE),
                 ("scale", F64),
@@ -193,10 +193,17 @@ impl EgglogOp for FlashAttention {
             return vec![];
         };
         let mut rules = CAPABILITIES.eligibility_rules();
-        rules.push(Rule::raw(
-            include_str!("flashattention/paged_attention.egg")
-                .replace("@PROVIDER_IDENTITY@", &provider),
-        ));
+        for (name, bound) in [
+            ("constant", "(= ?ctx (MNum ?capacity))"),
+            ("bounded", "(= ?capacity (upper ?ctx))"),
+        ] {
+            rules.push(Rule::raw(
+                include_str!("flashattention/paged_attention.egg")
+                    .replace("@PROVIDER_IDENTITY@", &provider)
+                    .replace("@CONTEXT_BOUND@", bound)
+                    .replace("@BOUND_NAME@", name),
+            ));
+        }
         rules
     }
 
@@ -222,7 +229,9 @@ impl EgglogOp for FlashAttention {
         let head_dim = expression(2).to_usize().unwrap();
         let page_size = expression(3).to_usize().unwrap();
         let query_tokens = expression(4);
-        let context_pages = expression(5);
+        let context_page_capacity = expression(5)
+            .to_usize()
+            .expect("FlashAttention requires an explicit page capacity; rebuild the schedule");
         let requests = expression(6);
         let scalar = |index: usize| {
             egraph.enodes[fields[index]]
@@ -237,7 +246,7 @@ impl EgglogOp for FlashAttention {
             head_dim,
             page_size,
             query_tokens,
-            context_pages,
+            context_page_capacity,
             requests,
             dtype: extract_dtype(egraph, fields[7]),
             scale: scalar(8),
@@ -293,7 +302,7 @@ impl HostOp for FlashAttention {
         Some(7)
     }
     fn cuda_graph_capture_dyn_dims(&self) -> Vec<Symbol> {
-        let mut symbols = [self.query_tokens, self.context_pages, self.requests]
+        let mut symbols = [self.query_tokens, self.requests]
             .into_iter()
             .flat_map(|expression| expression.to_symbols())
             .collect::<Vec<_>>();

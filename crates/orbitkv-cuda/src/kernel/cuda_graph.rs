@@ -404,6 +404,8 @@ impl CudaGraphHandle {
 
     /// Instantiates the graph, creating an executable graph.
     pub fn instantiate(&self) -> Result<CudaGraphExecHandle, DriverError> {
+        let _stage =
+            tracing::info_span!(target: "orbitkv::stage", "cuda.graph.instantiate").entered();
         self.ctx.bind_to_thread()?;
         let mut graph_exec = MaybeUninit::uninit();
         unsafe {

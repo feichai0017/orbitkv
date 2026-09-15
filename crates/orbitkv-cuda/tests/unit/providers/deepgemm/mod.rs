@@ -6,6 +6,7 @@ use orbitkv_compiler::{
 };
 
 mod capture;
+mod preparation;
 mod reference;
 use reference::BlockScaledLinearReference;
 
@@ -145,7 +146,7 @@ fn deepgemm_candidates_share_reference_eclass() {
         (Some(crate::target::CudaTarget { major: 8, minor: 0 }), 0),
         (
             Some(crate::target::CudaTarget { major: 9, minor: 0 }),
-            jit::SEARCH_VARIANTS,
+            selection::SEARCH_VARIANTS,
         ),
         (
             Some(crate::target::CudaTarget {
@@ -156,9 +157,12 @@ fn deepgemm_candidates_share_reference_eclass() {
         ),
     ] {
         graph.build_search_space::<crate::runtime::CudaRuntime>(
-            CompileOptions::default().compiler_facts(
-                target.map_or_else(String::new, crate::target::CudaTarget::compiler_facts),
-            ),
+            CompileOptions::default().compiler_facts(target.map_or_else(String::new, |target| {
+                format!(
+                    "{}\n(set (cuda-target-sm-count) 78)",
+                    target.compiler_facts()
+                )
+            })),
         );
         let count = graph
             .egraph()
@@ -226,9 +230,8 @@ fn deepgemm_candidate_executes_on_sm90() {
         .custom_op(
             DeepGemm {
                 rows: 1.into(),
-                output_features: 128,
-                input_features: 128,
-                variant: 0,
+                selection: device_selection(&stream, 1, 128, 128, 0),
+                prepared: Arc::new(OnceLock::new()),
                 provider: jit::provider_identity().unwrap(),
                 scratch: Arc::new(Mutex::new(None)),
             },
@@ -280,9 +283,8 @@ fn deepgemm_matches_independent_reference_on_sm90() {
         .custom_op(
             DeepGemm {
                 rows: m.into(),
-                output_features: n,
-                input_features: k,
-                variant: 0,
+                selection: device_selection(&stream, m, n, k, 0),
+                prepared: Arc::new(OnceLock::new()),
                 provider: jit::provider_identity().unwrap(),
                 scratch: Arc::new(Mutex::new(None)),
             },
@@ -357,7 +359,7 @@ fn deepgemm_large_shapes_match_across_all_variants_on_sm90() {
         (4, 5_120, 6_144),
     ] {
         let mut reference = None;
-        for variant in 0..jit::SEARCH_VARIANTS {
+        for variant in 0..selection::SEARCH_VARIANTS {
             let stream = context.default_stream();
             let mut graph = Graph::default();
             let input = graph.tensor((m, k)).as_dtype(DType::Bf16);
@@ -367,9 +369,8 @@ fn deepgemm_large_shapes_match_across_all_variants_on_sm90() {
                 .custom_op(
                     DeepGemm {
                         rows: m.into(),
-                        output_features: n,
-                        input_features: k,
-                        variant,
+                        selection: device_selection(&stream, m, n, k, variant),
+                        prepared: Arc::new(OnceLock::new()),
                         provider: jit::provider_identity().unwrap(),
                         scratch: Arc::new(Mutex::new(None)),
                     },
@@ -417,5 +418,24 @@ fn deepgemm_large_shapes_match_across_all_variants_on_sm90() {
 impl<const PREQUANTIZED: bool> CustomOp for DeepGemmImpl<PREQUANTIZED> {
     fn to_llir_op(&self) -> LLIROp {
         LLIROp::new::<dyn HostOp>(Box::new(self.clone()) as Box<dyn HostOp>)
+    }
+}
+
+pub(super) fn device_selection(
+    stream: &CudaStream,
+    m: usize,
+    n: usize,
+    k: usize,
+    rank: usize,
+) -> Selection {
+    let sms = stream
+        .context()
+        .attribute(
+            cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
+        )
+        .unwrap() as usize;
+    Selection {
+        row_limit: m,
+        config: tiling::candidates(m, n, k, sms)[rank],
     }
 }

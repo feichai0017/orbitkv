@@ -254,6 +254,7 @@ impl FlashInferLib {
     /// # Safety
     /// The .so must be a valid FlashInfer wrapper compiled from wrapper.cu.
     unsafe fn load(path: &Path) -> Result<Self, libloading::Error> {
+        let _stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.load", provider = "flashinfer", path = %path.display()).entered();
         let lib = unsafe { libloading::Library::new(path)? };
         let plan: PlanFn = unsafe { *lib.get::<PlanFn>(b"flashinfer_batch_decode_plan\0")? };
         let run: RunFn = unsafe { *lib.get::<RunFn>(b"flashinfer_batch_decode_run\0")? };

@@ -44,7 +44,7 @@ impl Plan {
         };
         let query_tokens = resolve(op.query_tokens)?;
         let requests = resolve(op.requests)?;
-        let context_pages = resolve(op.context_pages)?;
+        let context_pages = op.context_page_capacity;
         let geometry_ok = query_tokens > 0
             && requests > 0
             && query_tokens >= requests
@@ -114,10 +114,15 @@ pub(super) struct Prepared {
     _scratch: CudaSlice<u8>,
     scratch_ptr: u64,
     num_sm: i32,
+    library: &'static jit::Library,
 }
 
 impl Prepared {
-    pub fn new(plan: Plan, stream: &Arc<CudaStream>) -> anyhow::Result<Self> {
+    pub fn new(
+        plan: Plan,
+        library: &'static jit::Library,
+        stream: &Arc<CudaStream>,
+    ) -> anyhow::Result<Self> {
         let capability = stream.context().compute_capability()?;
         anyhow::ensure!(
             capability == (9, 0),
@@ -139,6 +144,7 @@ impl Prepared {
             plan,
             stream_key: stream.cu_stream() as usize,
             num_sm,
+            library,
         })
     }
 
@@ -192,7 +198,10 @@ impl Prepared {
             "FlashAttention K/V storage must contain equal complete pages"
         );
         anyhow::ensure!(
-            indices.len() == p.context_pages * size_of::<i32>()
+            !indices.is_empty()
+                && indices.len().is_multiple_of(size_of::<i32>())
+                && indices.len() <= p.context_pages * size_of::<i32>()
+                && indices.capacity() >= p.context_pages * size_of::<i32>()
                 && qptr.len() == (p.requests + 1) * size_of::<i32>()
                 && pptr.len() == qptr.len()
                 && last.len() == p.requests * size_of::<i32>(),
@@ -228,15 +237,11 @@ impl Prepared {
             scale: op.scale as f32,
             window_left: op.window_left as i32,
         };
-        let library = jit::ensure_compiled(
-            crate::target::CudaTarget::from_context(stream.context())?,
-            op.config(),
-        )?;
-        let result = unsafe { (library.run)(&arguments, stream.cu_stream().cast()) };
+        let result = unsafe { (self.library.run)(&arguments, stream.cu_stream().cast()) };
         anyhow::ensure!(
             result == 0,
             "FlashAttention execution failed: {}",
-            library.error()
+            self.library.error()
         );
         Ok(())
     }

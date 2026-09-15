@@ -8,12 +8,14 @@
 //!
 //! `contract` owns the versioned numeric/storage ABI, `shared` exposes its
 //! graph-owned intermediate, and `scratch` retains private capture resources.
-//! `tiling` defines SM90 legality and candidate ordering; `jit` renders and
-//! loads those kernels. Graph equivalences remain in egglog below.
+//! `tiling` defines SM90 legality and candidate ordering; `selection` exposes
+//! explicit, bounded tile descriptors to egglog. `jit` prepares their native
+//! libraries before execution. Graph equivalences remain in egglog below.
 
 mod contract;
 pub mod jit;
 mod scratch;
+mod selection;
 mod shared;
 mod tiling;
 pub use shared::BlockScaledQuantize;
@@ -23,7 +25,7 @@ pub use shared::BlockScaledQuantize;
 /// The existing combined provider remains selectable when this is enabled.
 pub const SHARED_QUANTIZATION_COMPILER_FACT: &str = "(enable-shared-fp8-quantization)";
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use cudarc::driver::{CudaFunction, CudaModule, CudaStream, LaunchConfig, PushKernelArg};
 use orbitkv_compiler::{
@@ -31,8 +33,9 @@ use orbitkv_compiler::{
     egglog_utils::{
         SerializedEGraph,
         api::{Rule, SortDef, sort},
-        base::{EXPRESSION, I64, OP_KIND},
+        base::{EXPRESSION, OP_KIND, STRING},
         extract_expr,
+        primitives::EgglogPrimitive,
     },
     op::{EgglogOp, LLIROp},
     prelude::{ENodeId, Expression, FxHashMap, NodeIndex},
@@ -53,6 +56,7 @@ use orbitkv_ops::ops::linear::BLOCK_SCALED_LINEAR_DECLARATIONS;
 #[cfg(test)]
 use orbitkv_ops::ops::linear::{BlockScaledLinearSpec, block_scaled_linear};
 use scratch::Scratch;
+use selection::{Selection, TileCandidate};
 
 fn validate_buffers<const PREQUANTIZED: bool>(
     self_node: NodeIndex,
@@ -117,13 +121,11 @@ fn validate_buffer_lengths<const PREQUANTIZED: bool>(
     Ok(())
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct DeepGemmImpl<const PREQUANTIZED: bool> {
     rows: Expression,
-    output_features: usize,
-    input_features: usize,
-    variant: usize,
+    selection: Selection,
+    prepared: Arc<OnceLock<&'static jit::Library>>,
     provider: String,
     scratch: Arc<Mutex<Option<Arc<Scratch>>>>,
 }
@@ -135,9 +137,7 @@ impl<const PREQUANTIZED: bool> std::fmt::Debug for DeepGemmImpl<PREQUANTIZED> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct(Self::op_name())
             .field("rows", &self.rows)
-            .field("output_features", &self.output_features)
-            .field("input_features", &self.input_features)
-            .field("variant", &self.variant)
+            .field("selection", &self.selection)
             .field("provider", &self.provider)
             .finish()
     }
@@ -147,9 +147,8 @@ impl<const PREQUANTIZED: bool> Default for DeepGemmImpl<PREQUANTIZED> {
     fn default() -> Self {
         Self {
             rows: Expression::default(),
-            output_features: 0,
-            input_features: 0,
-            variant: 0,
+            selection: Selection::default(),
+            prepared: Arc::new(OnceLock::new()),
             provider: String::new(),
             scratch: Arc::new(Mutex::new(None)),
         }
@@ -163,10 +162,8 @@ impl<const PREQUANTIZED: bool> EgglogOp for DeepGemmImpl<PREQUANTIZED> {
             Self::op_name(),
             &[
                 ("rows", EXPRESSION),
-                ("output_features", EXPRESSION),
-                ("input_features", EXPRESSION),
-                ("variant", I64),
-                ("provider", orbitkv_compiler::egglog_utils::base::STRING),
+                ("selection", STRING),
+                ("provider", STRING),
             ],
         )
     }
@@ -180,6 +177,10 @@ impl<const PREQUANTIZED: bool> EgglogOp for DeepGemmImpl<PREQUANTIZED> {
             BLOCK_SCALED_LINEAR_DECLARATIONS.to_owned(),
             crate::target::DECLARATIONS.to_owned(),
         ]
+    }
+
+    fn egglog_primitives(&self) -> Vec<EgglogPrimitive> {
+        vec![EgglogPrimitive::new::<TileCandidate>()]
     }
 
     fn rewrites(&self) -> Vec<Rule> {
@@ -203,35 +204,27 @@ impl<const PREQUANTIZED: bool> EgglogOp for DeepGemmImpl<PREQUANTIZED> {
     ) -> (LLIROp, Vec<&'a ENodeId>) {
         assert_eq!(
             kind_children.len(),
-            5,
-            "DeepGEMM schedule lacks provider identity; rebuild the selected schedule"
+            3,
+            "DeepGEMM schedule lacks an explicit tile; rebuild the selected schedule"
         );
-        let integer = |node: &ENodeId| {
-            egraph.enodes[node]
-                .0
-                .replace('\"', "")
-                .parse::<usize>()
-                .unwrap()
+        let string = |node: &ENodeId| {
+            serde_json::from_str::<String>(&egraph.enodes[node].0)
+                .expect("DeepGEMM string metadata")
         };
-        let provider = egraph.enodes[kind_children[4]].0.replace('\"', "");
+        let provider = string(kind_children[2]);
         let current_provider = jit::provider_identity().unwrap_or_else(|error| panic!("{error}"));
         crate::providers::provider_source::validate_provider_identity(&provider, &current_provider)
             .unwrap_or_else(|error| panic!("{error}"));
-        let output_features = extract_expr(egraph, kind_children[1], expr_cache)
-            .unwrap()
-            .exec(&Default::default())
-            .unwrap();
-        let input_features = extract_expr(egraph, kind_children[2], expr_cache)
-            .unwrap()
-            .exec(&Default::default())
-            .unwrap();
-        let variant = integer(kind_children[3]);
+        let selection: Selection = serde_json::from_str(&string(kind_children[1]))
+            .expect("DeepGEMM explicit tile descriptor");
+        selection
+            .validate()
+            .unwrap_or_else(|error| panic!("{error}"));
         (
             LLIROp::new::<dyn HostOp>(Box::new(Self {
                 rows: extract_expr(egraph, kind_children[0], expr_cache).unwrap(),
-                output_features,
-                input_features,
-                variant,
+                selection,
+                prepared: Arc::new(OnceLock::new()),
                 provider,
                 scratch: Arc::new(Mutex::new(None)),
             }) as Box<dyn HostOp>),
@@ -265,8 +258,16 @@ impl<const PREQUANTIZED: bool> DeepGemmImpl<PREQUANTIZED> {
         } else {
             ("", String::new(), "?x")
         };
-        (0..jit::SEARCH_VARIANTS)
-            .map(|variant| {
+        // Constants work without interval analysis. Dynamic expressions must
+        // have an explicit finite bucket bound; missing bounds admit no tile.
+        [
+            ("constant", "(= ?m (MNum ?row_limit))"),
+            ("bounded", "(= ?row_limit (upper ?m))"),
+        ]
+        .into_iter()
+        .flat_map(|(bound_name, row_bound)| {
+            let prepare = &prepare;
+            (0..selection::SEARCH_VARIANTS).map(move |rank| {
                 Rule::raw(format!(
                     include_str!("deepgemm/provider_rewrite.egg.in"),
                     BLOCK = BLOCK,
@@ -275,10 +276,13 @@ impl<const PREQUANTIZED: bool> DeepGemmImpl<PREQUANTIZED> {
                     name = name,
                     prepare = prepare,
                     provider = provider,
-                    variant = variant,
+                    rank = rank,
+                    row_bound = row_bound,
+                    bound_name = bound_name,
                 ))
             })
-            .collect()
+        })
+        .collect()
     }
 
     fn dimensions(
@@ -289,7 +293,11 @@ impl<const PREQUANTIZED: bool> DeepGemmImpl<PREQUANTIZED> {
             .rows
             .exec(dyn_map)
             .ok_or_else(|| anyhow::anyhow!("unresolved DeepGEMM row dimension"))?;
-        Ok((rows, self.output_features, self.input_features))
+        Ok((
+            rows,
+            self.selection.config.output_features,
+            self.selection.config.input_features,
+        ))
     }
 }
 
@@ -304,12 +312,27 @@ impl<const PREQUANTIZED: bool> HostOp for DeepGemmImpl<PREQUANTIZED> {
         dyn_map: &orbitkv_compiler::prelude::DynMap,
     ) -> anyhow::Result<()> {
         stream.context().bind_to_thread()?;
-        let (m, n, k) = self.dimensions(dyn_map)?;
-        let config = jit::Config::for_variant(stream, m, n, k, self.variant)?;
-        let _ = jit::ensure_compiled(
-            crate::target::CudaTarget::from_context(stream.context())?,
-            config,
-        )?;
+        self.selection.validate()?;
+        let (m, _, _) = self.dimensions(dyn_map)?;
+        self.selection.validate_rows(m)?;
+        let config = self.selection.config;
+        let target = crate::target::CudaTarget::from_context(stream.context())?;
+        target.hopper_architecture()?;
+        let num_sms = usize::try_from(stream.context().attribute(
+            cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
+        )?)?;
+        anyhow::ensure!(
+            config.num_sms == num_sms,
+            "DeepGEMM selected SM count {} differs from execution device {num_sms}; rebuild the schedule",
+            config.num_sms
+        );
+        if self.prepared.get().is_none() {
+            let _stage = tracing::info_span!(target: "orbitkv::stage", "cuda.deepgemm.prepare", row_limit = self.selection.row_limit, config = ?config).entered();
+            let library = jit::ensure_compiled(target, config)?;
+            // Racing preparation can only install the same globally cached
+            // library for this immutable descriptor.
+            let _ = self.prepared.set(library);
+        }
         Ok(())
     }
 
@@ -326,12 +349,13 @@ impl<const PREQUANTIZED: bool> HostOp for DeepGemmImpl<PREQUANTIZED> {
         if m == 0 {
             return Ok(());
         }
+        self.selection.validate_rows(m)?;
         validate_buffers::<PREQUANTIZED>(self_node, inputs, buffers, m, n, k)?;
-        let config = jit::Config::for_variant(stream, m, n, k, self.variant)?;
-        let library = jit::ensure_compiled(
-            crate::target::CudaTarget::from_context(stream.context())?,
-            config,
-        )?;
+        let library = self.prepared.get().ok_or_else(|| {
+            anyhow::anyhow!(
+                "DeepGEMM kernel is not prepared; call prepare_compilation before execution"
+            )
+        })?;
         let status = if PREQUANTIZED {
             let layout =
                 PackedActivationLayout::new(m, k).map_err(|error| anyhow::anyhow!(error))?;
@@ -366,8 +390,8 @@ impl<const PREQUANTIZED: bool> HostOp for DeepGemmImpl<PREQUANTIZED> {
         };
         if status != 0 {
             anyhow::bail!(
-                "DeepGEMM launch failed for M={m}, N={n}, K={k}, variant={}: {}",
-                self.variant,
+                "DeepGEMM launch failed for M={m}, N={n}, K={k}, tile={:?}: {}",
+                self.selection.config,
                 library.last_error()
             );
         }
@@ -375,7 +399,7 @@ impl<const PREQUANTIZED: bool> HostOp for DeepGemmImpl<PREQUANTIZED> {
     }
 
     fn output_size(&self) -> Expression {
-        self.rows * self.output_features
+        self.rows * self.selection.config.output_features
     }
 
     fn output_bytes(&self) -> Expression {
@@ -433,11 +457,11 @@ impl<const PREQUANTIZED: bool> HostOp for DeepGemmImpl<PREQUANTIZED> {
                     name: "DeepGEMM dimensions",
                 })?;
         validate_buffer_lengths::<PREQUANTIZED>(self_node, inputs, buffer_lengths, m, n, k)?;
-        jit::Config::validate_shape(m, n, k, self.variant).map_err(|_| {
-            ResourceViolation::HostResourcePlanning {
+        self.selection
+            .validate_rows(m)
+            .map_err(|_| ResourceViolation::HostResourcePlanning {
                 name: "DeepGEMM SM90 1D2D legality",
-            }
-        })?;
+            })?;
         if PREQUANTIZED {
             // The packed result belongs to the graph arena, stays live until
             // its last consumer, and is already included in arena accounting.
@@ -466,22 +490,7 @@ impl<const PREQUANTIZED: bool> HostOp for DeepGemmImpl<PREQUANTIZED> {
     }
 
     fn stats_name(&self) -> Option<&'static str> {
-        if PREQUANTIZED {
-            return Some(match self.variant {
-                0 => "DeepGemmPrequantizedV0",
-                1 => "DeepGemmPrequantizedV1",
-                2 => "DeepGemmPrequantizedV2",
-                3 => "DeepGemmPrequantizedV3",
-                _ => "DeepGemmPrequantized",
-            });
-        }
-        Some(match self.variant {
-            0 => "DeepGemmV0",
-            1 => "DeepGemmV1",
-            2 => "DeepGemmV2",
-            3 => "DeepGemmV3",
-            _ => "DeepGemm",
-        })
+        Some(Self::op_name())
     }
 }
 

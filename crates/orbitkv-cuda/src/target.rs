@@ -27,6 +27,19 @@ impl CudaTarget {
         )
     }
 
+    /// Full device facts for shape-dependent kernel choices. Architecture alone
+    /// does not describe occupancy; no SM count is inferred from a GPU name.
+    pub fn compiler_facts_from_context(context: &CudaContext) -> Result<String, DriverError> {
+        let target = Self::from_context(context)?;
+        let sm_count = context.attribute(
+            cudarc::driver::sys::CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
+        )?;
+        Ok(format!(
+            "{}\n(set (cuda-target-sm-count) {sm_count})",
+            target.compiler_facts()
+        ))
+    }
+
     pub(crate) fn hopper_architecture(self) -> anyhow::Result<&'static str> {
         anyhow::ensure!(
             self == Self { major: 9, minor: 0 },

@@ -215,6 +215,12 @@ pub trait EgglogOp: Debug {
         vec![]
     }
 
+    /// Pure scalar functions used by this operation's egglog rules. Shared
+    /// definitions are registered once, before parsing any rules or facts.
+    fn egglog_primitives(&self) -> Vec<crate::egglog_utils::primitives::EgglogPrimitive> {
+        vec![]
+    }
+
     fn rewrites(&self) -> Vec<crate::egglog_utils::api::Rule> {
         vec![]
     }

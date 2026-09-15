@@ -135,3 +135,25 @@ workloads, independent correctness, adequate repeated samples and confidence
 bounds exceeding both tuned baselines without P95 TTFT/TPOT regressions.
 State-policy and external-tier ablations must hold compute semantics fixed and
 include lifecycle, transfer and overlap costs respectively.
+
+## Preparation attribution
+
+`ORBITKV_STAGE_TRACE` reports synchronous CPU wall spans, not GPU kernel time.
+For provider diagnosis, keep these phases separate:
+
+| Span | Scope |
+| --- | --- |
+| `cuda.provider.jit` | Native cache lookup and optional build, with provider, content key and `cache_hit` |
+| `cuda.provider.compile` | Actual native compiler process; absent on a cache hit |
+| `cuda.provider.load` | Shared-library loading and symbol resolution |
+| `cuda.deepgemm.prepare` | Exact selected tile and admitted row limit, prepared before execution |
+| `cuda.provider.plan` | FlashInfer planner, including its staging and metadata-copy completion |
+| `cuda.provider.capture` | Provider calls captured into CUDA graphs |
+| `cuda.graph.instantiate` | Driver creation of the executable graph |
+
+Span durations include nested spans and must not be added together as independent
+costs. Record cache contents, readiness and request boundaries when testing first
+use. Traced runs diagnose preparation; use separate untraced runs for published
+serving timing. A warm disk cache is not evidence that request-time compilation
+is impossible: verify the selected descriptor and the execution preparation
+contract as well.

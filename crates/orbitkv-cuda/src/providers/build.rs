@@ -31,7 +31,7 @@ pub(crate) struct NativeBuild<'a> {
 
 impl NativeBuild<'_> {
     pub fn compile(self) -> Result<PathBuf> {
-        let stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.jit", provider = %self.provider, cache_hit = tracing::field::Empty);
+        let stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.jit", provider = %self.provider, cache_hit = tracing::field::Empty, key = tracing::field::Empty);
         let _entered = stage.enter();
         let compiler = native_compiler()?;
         let mut identity_arguments = self.arguments.clone();
@@ -43,6 +43,7 @@ impl NativeBuild<'_> {
             self.source,
             &identity_arguments,
         );
+        stage.record("key", &key);
         let cache = library_cache(self.provider);
         std::fs::create_dir_all(&cache)?;
         let directory = cache.join(&key);
@@ -64,7 +65,9 @@ impl NativeBuild<'_> {
             .args(&self.link_arguments)
             .arg("-o")
             .arg(&output_library);
-        run_compiler(&mut command, compile_timeout()?)
+        let timeout = compile_timeout()?;
+        tracing::info_span!(target: "orbitkv::stage", "cuda.provider.compile", provider = %self.provider, key = %key)
+            .in_scope(|| run_compiler(&mut command, timeout))
             .with_context(|| format!("{} native compilation failed", self.provider))?;
         ensure!(
             output_library

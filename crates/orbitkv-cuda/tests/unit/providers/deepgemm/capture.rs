@@ -11,6 +11,7 @@ fn block_scaled_graph_rebuild_retires_scratch_after_dynamic_row_growth() {
     let max_rows = 24usize;
     for (reference, resident) in [(false, false), (true, false), (false, true), (true, true)] {
         let shared_scratch = Arc::new(Mutex::new(None));
+        let shared_prepared = Arc::new(OnceLock::new());
         let mut graph = Graph::default();
         graph.set_dim('s', 4);
         let input = graph.tensor(('s', width)).as_dtype(DType::Bf16).persist();
@@ -37,9 +38,8 @@ fn block_scaled_graph_rebuild_retires_scratch_after_dynamic_row_growth() {
             graph.custom_op(
                 DeepGemm {
                     rows: 's'.into(),
-                    output_features: width,
-                    input_features: width,
-                    variant: 0,
+                    selection: device_selection(&stream, max_rows, width, width, 0),
+                    prepared: shared_prepared.clone(),
                     provider: jit::provider_identity().unwrap(),
                     scratch: shared_scratch.clone(),
                 },
@@ -65,6 +65,8 @@ fn block_scaled_graph_rebuild_retires_scratch_after_dynamic_row_growth() {
                 .search_graph_limit(1)
                 .dim_buckets('s', &[DimBucket::new(1, max_rows).representative(4)]),
         );
+        let initial_library = shared_prepared.get().copied();
+        assert_eq!(initial_library.is_some(), !reference);
         if resident {
             runtime.begin_cuda_graph_preparation(&['s'.into()]);
         }
@@ -95,6 +97,10 @@ fn block_scaled_graph_rebuild_retires_scratch_after_dynamic_row_growth() {
                 );
             }
             if !reference {
+                assert!(
+                    std::ptr::eq(*shared_prepared.get().unwrap(), initial_library.unwrap()),
+                    "interior shapes must retain the prepared library"
+                );
                 if let Some(owner) = &first_owner {
                     if rows >= 12 {
                         assert_eq!(

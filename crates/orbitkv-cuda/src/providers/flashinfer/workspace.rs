@@ -47,6 +47,7 @@ pub(super) fn with_plan_staging<T>(
     stream: &Arc<CudaStream>,
     plan: impl FnOnce(*mut std::ffi::c_void) -> T,
 ) -> anyhow::Result<T> {
+    let _stage = tracing::info_span!(target: "orbitkv::stage", "cuda.provider.plan", provider = "flashinfer").entered();
     let mut staging = PLAN_STAGING
         .lock()
         .map_err(|_| anyhow::anyhow!("FlashInfer plan staging lock poisoned"))?;
