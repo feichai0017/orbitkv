@@ -1,0 +1,2767 @@
+{
+  "schema": 1,
+  "prior_attempts": "../qwen3.8-27b-fp8-h20-20260915/attempts.json",
+  "diagnostic_attempts": [
+    {
+      "name": "prior-runtime",
+      "scope": "Instrumented diagnostic run; excluded from the untraced performance table.",
+      "raw_directory": "/workspace/orbitkv/.qualification/prepared-providers-20260915/before",
+      "stage_trace_sha256": "65b30e0d423693ee929d9ce1029ec63046946fc5005f5b2f9194f7550d3e7a4e",
+      "session": {
+        "server": "orbitkv",
+        "epoch": 1,
+        "ready_seconds": 23.028018850833178,
+        "shutdown": {
+          "returncode": 0,
+          "forced": false
+        },
+        "observations": [
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/short-c1.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "1",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/before/epoch-001/orbitkv/short-c1",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.6237649007464711,
+              "output_throughput": 39.92095364777415,
+              "median_ttft_ms": 30.946942046284676,
+              "p95_ttft_ms": 62.71371804177761,
+              "p99_ttft_ms": 136.40030734241003,
+              "median_tpot_ms": 24.729652685068903,
+              "p95_tpot_ms": 25.187191169058522,
+              "p99_tpot_ms": 25.23796982057984,
+              "median_itl_ms": 24.101801216602325,
+              "p95_itl_ms": 31.54250606894493,
+              "p99_itl_ms": 36.212715692818094,
+              "median_e2el_ms": 1589.0471041202545,
+              "p95_e2el_ms": 1645.4502502456307,
+              "p99_e2el_ms": 1702.3989679291844
+            },
+            "generated_texts_sha256": "59fa4123b3bbf7ca60da02b00c9deb0a1409e52bdb36937c8076119d4d3dd1ce",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "short-c1",
+            "input_lengths": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 33,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2007670784,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37412143104,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/short-c1/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/short-c8.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "8",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/before/epoch-001/orbitkv/short-c8",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 2.9989095574595637,
+              "output_throughput": 191.93021167741207,
+              "median_ttft_ms": 243.63572895526886,
+              "p95_ttft_ms": 270.6288620829582,
+              "p99_ttft_ms": 271.0079923272133,
+              "median_tpot_ms": 38.39884423429057,
+              "p95_tpot_ms": 38.70872187886446,
+              "p99_tpot_ms": 38.70997410858908,
+              "median_itl_ms": 34.30931642651558,
+              "p95_itl_ms": 41.97893068194389,
+              "p99_itl_ms": 140.42853020131588,
+              "median_e2el_ms": 2662.2239351272583,
+              "p95_e2el_ms": 2671.2303403764963,
+              "p99_e2el_ms": 2671.51406891644
+            },
+            "generated_texts_sha256": "240410a46b7b8605a652c0ffbbd401dd1c0df746c00ec3744807ee5b53368b9d",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "short-c8",
+            "input_lengths": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 13,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2007670784,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37345034240,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/short-c8/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/context-c1.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "1",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/before/epoch-001/orbitkv/context-c1",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.3140459403681132,
+              "output_throughput": 40.197880367118486,
+              "median_ttft_ms": 45.69815844297409,
+              "p95_ttft_ms": 47.51594364643097,
+              "p99_ttft_ms": 48.8264799118042,
+              "median_tpot_ms": 24.654835682567647,
+              "p95_tpot_ms": 24.944993997300703,
+              "p99_tpot_ms": 25.216617326684826,
+              "median_itl_ms": 24.16500635445118,
+              "p95_itl_ms": 31.522723473608494,
+              "p99_itl_ms": 33.133682534098625,
+              "median_e2el_ms": 3176.858000457287,
+              "p95_e2el_ms": 3214.1542406752706,
+              "p99_e2el_ms": 3249.3143105879426
+            },
+            "generated_texts_sha256": "2ab749ba35fdeabf282f99467282d881592e674c1eb809f0c10f2d632c96331f",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "context-c1",
+            "input_lengths": [
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 57,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2004639744,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37412143104,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/context-c1/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/context-c8.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "8",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/before/epoch-001/orbitkv/context-c8",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.30761867590883357,
+              "output_throughput": 39.3751905163307,
+              "median_ttft_ms": 21339.968333020806,
+              "p95_ttft_ms": 42664.96179345995,
+              "p99_ttft_ms": 42665.08202124387,
+              "median_tpot_ms": 36.26064636458562,
+              "p95_tpot_ms": 36.796869710087776,
+              "p99_tpot_ms": 36.79950105569025,
+              "median_itl_ms": 34.33472290635109,
+              "p95_itl_ms": 41.96177665144205,
+              "p99_itl_ms": 81.93882059305905,
+              "median_e2el_ms": 25989.172089844942,
+              "p95_e2el_ms": 47270.099646411836,
+              "p99_e2el_ms": 47270.13403903693
+            },
+            "generated_texts_sha256": "af1f1336d8f21d29af3e7ad63abb777161d36a8c0c9694ebb3bac141ef7e0476",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "context-c8",
+            "input_lengths": [
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 59,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2007252992,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37378588672,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/context-c8/benchmark.json"
+          }
+        ],
+        "startup": {
+          "elapsed": {
+            "secs": 21,
+            "nanos": 297420021
+          },
+          "preparation": {
+            "elapsed": {
+              "secs": 0,
+              "nanos": 906095486
+            },
+            "compiled_buckets": 10,
+            "buckets": [
+              {
+                "bucket_index": 9,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 10287389
+                },
+                "graph_builds": 0
+              },
+              {
+                "bucket_index": 0,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 1
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 113478007
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 1,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 4
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 86626685
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 2,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 81733468
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 3,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 80568824
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 4,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 2,
+                  "s": 4
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 90615255
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 5,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 2,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 131476930
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 6,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 90083002
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 7,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 8,
+                  "s": 8
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 130359880
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 8,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 8,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 90683936
+                },
+                "graph_builds": 1
+              }
+            ],
+            "cache": {
+              "graph_builds": 10,
+              "materialized_graphs": 10
+            }
+          }
+        },
+        "state_drain": {
+          "stats": {
+            "manager": {
+              "active_requests": 0,
+              "active_snapshots": 0,
+              "active_prefixes": 0,
+              "evicted_prefixes": 0,
+              "prepared_steps": 0,
+              "submitted_steps": 0,
+              "free_pages": 256,
+              "reserved_pages": 0,
+              "writing_pages": 0,
+              "active_pages": 0,
+              "retiring_pages": 0,
+              "quarantined_pages": 0,
+              "exhausted_pages": 0,
+              "pending_reclamations": 0,
+              "total_request_page_refs": 0,
+              "total_prefix_page_refs": 0,
+              "total_reader_pins": 0
+            },
+            "queued_requests": 0,
+            "active_requests": 0,
+            "admitted_requests": 64,
+            "completed_requests": 64,
+            "cancelled_requests": 0,
+            "model_dispatches": 3460,
+            "multi_request_dispatches": 388,
+            "mixed_phase_dispatches": 4,
+            "maximum_observed_batch_size": 8
+          },
+          "fixed_states": [
+            [
+              1,
+              {
+                "identity": {
+                  "engine_epoch": 1,
+                  "pool_epoch": 3,
+                  "byte_count": 150994944,
+                  "pool_id": 2,
+                  "slot_count": 16
+                },
+                "free_slots": 16,
+                "reserved_slots": 0,
+                "copying_slots": 0,
+                "live_slots": 0,
+                "retiring_slots": 0,
+                "quarantined_slots": 0,
+                "active_owners": 0,
+                "pending_transitions": 0,
+                "pending_retirements": 0
+              }
+            ],
+            [
+              2,
+              {
+                "identity": {
+                  "engine_epoch": 1,
+                  "pool_epoch": 4,
+                  "byte_count": 2949120,
+                  "pool_id": 3,
+                  "slot_count": 16
+                },
+                "free_slots": 16,
+                "reserved_slots": 0,
+                "copying_slots": 0,
+                "live_slots": 0,
+                "retiring_slots": 0,
+                "quarantined_slots": 0,
+                "active_owners": 0,
+                "pending_transitions": 0,
+                "pending_retirements": 0
+              }
+            ]
+          ],
+          "decoder_graph_builds": 22,
+          "materialized_decoder_graphs": 10
+        }
+      }
+    },
+    {
+      "name": "explicit-tiles-before-attention-capacity",
+      "scope": "Instrumented diagnostic run; excluded from the untraced performance table.",
+      "raw_directory": "/workspace/orbitkv/.qualification/prepared-providers-20260915/after-traced",
+      "stage_trace_sha256": "050ddda19bbff6abf97605267434311d40dc9be53f2bd85d1dcdf532b7e41a81",
+      "session": {
+        "server": "orbitkv",
+        "epoch": 1,
+        "ready_seconds": 23.028104349970818,
+        "shutdown": {
+          "returncode": 0,
+          "forced": false
+        },
+        "observations": [
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/short-c1.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "1",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/after-traced/epoch-001/orbitkv/short-c1",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.4945597183069568,
+              "output_throughput": 31.651821971645234,
+              "median_ttft_ms": 30.5939931422472,
+              "p95_ttft_ms": 61.90184969455004,
+              "p99_ttft_ms": 136.49614993482822,
+              "median_tpot_ms": 31.470897533590836,
+              "p95_tpot_ms": 31.69377241283655,
+              "p99_tpot_ms": 31.71081433870963,
+              "median_itl_ms": 24.333659559488297,
+              "p95_itl_ms": 113.3345514535904,
+              "p99_itl_ms": 117.15164698660372,
+              "median_e2el_ms": 2014.5807527005672,
+              "p95_e2el_ms": 2054.3483244255185,
+              "p99_e2el_ms": 2115.8170649781823
+            },
+            "generated_texts_sha256": "27b7b8330e5728a811b2caa296a4caefc4653fbb51fd6ef4e7d91dbc3a975807",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "short-c1",
+            "input_lengths": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 40,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 1952432128,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37143707648,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/short-c1/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/short-c8.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "8",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/after-traced/epoch-001/orbitkv/short-c8",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 3.0809245321645933,
+              "output_throughput": 197.17917005853397,
+              "median_ttft_ms": 189.68191742897034,
+              "p95_ttft_ms": 190.57469815015793,
+              "p99_ttft_ms": 191.55141562223434,
+              "median_tpot_ms": 39.13619969454077,
+              "p95_tpot_ms": 39.2246985926278,
+              "p99_tpot_ms": 39.22538585546944,
+              "median_itl_ms": 34.5199890434742,
+              "p95_itl_ms": 42.20291208475828,
+              "p99_itl_ms": 146.68937008827925,
+              "median_e2el_ms": 2595.269540324807,
+              "p95_e2el_ms": 2660.8294108882546,
+              "p99_e2el_ms": 2660.9611185267568
+            },
+            "generated_texts_sha256": "1bc0abe0be1f65796f22ff80e7445fbf21f0ba4f14df667ff5e15afdd419cef6",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "short-c8",
+            "input_lengths": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 13,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 1946607616,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37143707648,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/short-c8/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/context-c1.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "1",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/after-traced/epoch-001/orbitkv/context-c1",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.25812591686659464,
+              "output_throughput": 33.040117358924114,
+              "median_ttft_ms": 75.76903887093067,
+              "p95_ttft_ms": 76.75085123628378,
+              "p99_ttft_ms": 78.7934584543109,
+              "median_tpot_ms": 29.963319725173665,
+              "p95_tpot_ms": 30.229557378906904,
+              "p99_tpot_ms": 30.269367168620818,
+              "median_itl_ms": 24.35336820781231,
+              "p95_itl_ms": 108.12330301851034,
+              "p99_itl_ms": 116.45804710686204,
+              "median_e2el_ms": 3881.152082234621,
+              "p95_e2el_ms": 3914.9118028581142,
+              "p99_e2el_ms": 3920.0365476310253
+            },
+            "generated_texts_sha256": "01fe8a7df740abf422c532b9d3062e7f009b81dacbf08cedd3d380964239f9e2",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "context-c1",
+            "input_lengths": [
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 68,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2068647936,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37143707648,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/context-c1/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/context-c8.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "8",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/after-traced/epoch-001/orbitkv/context-c8",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 1.6460586233061993,
+              "output_throughput": 210.69550378319352,
+              "median_ttft_ms": 212.5839740037918,
+              "p95_ttft_ms": 318.07918660342693,
+              "p99_ttft_ms": 318.3101113885641,
+              "median_tpot_ms": 36.293986216774144,
+              "p95_tpot_ms": 37.00283416876878,
+              "p99_tpot_ms": 37.33124639252274,
+              "median_itl_ms": 34.51809845864773,
+              "p95_itl_ms": 42.20807459205389,
+              "p99_itl_ms": 83.54163832962513,
+              "median_e2el_ms": 4841.826943680644,
+              "p95_e2el_ms": 4927.839019335806,
+              "p99_e2el_ms": 4928.052284009755
+            },
+            "generated_texts_sha256": "aa50979ad7b7ef37708b0a7f6b421b44f04f93a4658af751fbc754e440fc5416",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "context-c8",
+            "input_lengths": [
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 18,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2080522240,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37311479808,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/context-c8/benchmark.json"
+          }
+        ],
+        "startup": {
+          "elapsed": {
+            "secs": 21,
+            "nanos": 468844343
+          },
+          "preparation": {
+            "elapsed": {
+              "secs": 1,
+              "nanos": 15094688
+            },
+            "compiled_buckets": 10,
+            "buckets": [
+              {
+                "bucket_index": 9,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 4058178
+                },
+                "graph_builds": 0
+              },
+              {
+                "bucket_index": 0,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 1
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 75597342
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 1,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 4
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 93310013
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 2,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 94363063
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 3,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 95497456
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 4,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 2,
+                  "s": 4
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 150417514
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 5,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 2,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 105578570
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 6,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 101891005
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 7,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 8,
+                  "s": 8
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 148983417
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 8,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 8,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 145262647
+                },
+                "graph_builds": 1
+              }
+            ],
+            "cache": {
+              "graph_builds": 10,
+              "materialized_graphs": 10
+            }
+          }
+        },
+        "state_drain": {
+          "stats": {
+            "manager": {
+              "active_requests": 0,
+              "active_snapshots": 0,
+              "active_prefixes": 0,
+              "evicted_prefixes": 0,
+              "prepared_steps": 0,
+              "submitted_steps": 0,
+              "free_pages": 256,
+              "reserved_pages": 0,
+              "writing_pages": 0,
+              "active_pages": 0,
+              "retiring_pages": 0,
+              "quarantined_pages": 0,
+              "exhausted_pages": 0,
+              "pending_reclamations": 0,
+              "total_request_page_refs": 0,
+              "total_prefix_page_refs": 0,
+              "total_reader_pins": 0
+            },
+            "queued_requests": 0,
+            "active_requests": 0,
+            "admitted_requests": 64,
+            "completed_requests": 64,
+            "cancelled_requests": 0,
+            "model_dispatches": 3460,
+            "multi_request_dispatches": 384,
+            "mixed_phase_dispatches": 4,
+            "maximum_observed_batch_size": 8
+          },
+          "fixed_states": [
+            [
+              1,
+              {
+                "identity": {
+                  "engine_epoch": 1,
+                  "pool_epoch": 3,
+                  "byte_count": 150994944,
+                  "pool_id": 2,
+                  "slot_count": 16
+                },
+                "free_slots": 16,
+                "reserved_slots": 0,
+                "copying_slots": 0,
+                "live_slots": 0,
+                "retiring_slots": 0,
+                "quarantined_slots": 0,
+                "active_owners": 0,
+                "pending_transitions": 0,
+                "pending_retirements": 0
+              }
+            ],
+            [
+              2,
+              {
+                "identity": {
+                  "engine_epoch": 1,
+                  "pool_epoch": 4,
+                  "byte_count": 2949120,
+                  "pool_id": 3,
+                  "slot_count": 16
+                },
+                "free_slots": 16,
+                "reserved_slots": 0,
+                "copying_slots": 0,
+                "live_slots": 0,
+                "retiring_slots": 0,
+                "quarantined_slots": 0,
+                "active_owners": 0,
+                "pending_transitions": 0,
+                "pending_retirements": 0
+              }
+            ]
+          ],
+          "decoder_graph_builds": 225,
+          "materialized_decoder_graphs": 10
+        }
+      }
+    },
+    {
+      "name": "capacity-descriptor-bug",
+      "scope": "Instrumented diagnostic run; excluded from the untraced performance table.",
+      "raw_directory": "/workspace/orbitkv/.qualification/prepared-providers-20260915/bounded-attention/after-traced",
+      "stage_trace_sha256": "8b31b7d6e8f902f3c551fbc1f167b0bc6a6c422a20809dab6a6b9eb0cd2c6346",
+      "session": {
+        "server": "orbitkv",
+        "epoch": 1,
+        "ready_seconds": 22.528236631304026,
+        "shutdown": {
+          "returncode": 0,
+          "forced": false
+        },
+        "observations": [
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/short-c1.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "1",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/bounded-attention/after-traced/epoch-001/orbitkv/short-c1",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.6298876653684984,
+              "output_throughput": 40.3128105835839,
+              "median_ttft_ms": 30.310804024338722,
+              "p95_ttft_ms": 44.85671408474445,
+              "p99_ttft_ms": 79.21916879713534,
+              "median_tpot_ms": 24.64463073937666,
+              "p95_tpot_ms": 24.814904608305486,
+              "p99_tpot_ms": 24.94856742107206,
+              "median_itl_ms": 24.03811179101467,
+              "p95_itl_ms": 31.44869841635227,
+              "p99_itl_ms": 32.49855998903512,
+              "median_e2el_ms": 1582.8462596982718,
+              "p95_e2el_ms": 1608.0839736387134,
+              "p99_e2el_ms": 1650.9565701708198
+            },
+            "generated_texts_sha256": "f778b1c0329fb903648dfd2388de14696f9e88c8bac41c8b4e9fe23e4b40723e",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "short-c1",
+            "input_lengths": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 33,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2012512256,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 38227935232,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/short-c1/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/short-c8.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "8",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/bounded-attention/after-traced/epoch-001/orbitkv/short-c8",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 2.8371574538058053,
+              "output_throughput": 181.57807704357154,
+              "median_ttft_ms": 329.84899543225765,
+              "p95_ttft_ms": 340.20295459777117,
+              "p99_ttft_ms": 340.2704680338502,
+              "median_tpot_ms": 39.46352646582656,
+              "p95_tpot_ms": 39.472521726219426,
+              "p99_tpot_ms": 39.47442754925716,
+              "median_itl_ms": 34.601058810949326,
+              "p95_itl_ms": 42.635888047516346,
+              "p99_itl_ms": 162.0573483407497,
+              "median_e2el_ms": 2813.750971108675,
+              "p95_e2el_ms": 2826.312200166285,
+              "p99_e2el_ms": 2826.3299675658345
+            },
+            "generated_texts_sha256": "e17e9de220df870c9758ee5416754f25a6b2c8358af3aed5d4b5bfed6224fea8",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "short-c8",
+            "input_lengths": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 14,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2014392320,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 38227935232,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/short-c8/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/context-c1.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "1",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/bounded-attention/after-traced/epoch-001/orbitkv/context-c1",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.3025837375857722,
+              "output_throughput": 38.73071841097884,
+              "median_ttft_ms": 77.00452208518982,
+              "p95_ttft_ms": 78.08942254632711,
+              "p99_ttft_ms": 79.83577083796263,
+              "median_tpot_ms": 25.425580953519177,
+              "p95_tpot_ms": 25.522736722500774,
+              "p99_tpot_ms": 25.568186701458743,
+              "median_itl_ms": 24.004748091101646,
+              "p95_itl_ms": 31.360101699829098,
+              "p99_itl_ms": 90.20509384572502,
+              "median_e2el_ms": 3306.1947859823704,
+              "p95_e2el_ms": 3318.6216857284307,
+              "p99_e2el_ms": 3324.0874599665403
+            },
+            "generated_texts_sha256": "fe7a5a8bf4b74966428605c20427ee9b6828353ab0277cee10980f45fd3fc329",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "context-c1",
+            "input_lengths": [
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 59,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2018189312,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 38261489664,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/context-c1/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/context-c8.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "8",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/bounded-attention/after-traced/epoch-001/orbitkv/context-c8",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 1.5910841223057237,
+              "output_throughput": 203.65876765513264,
+              "median_ttft_ms": 279.2403642088175,
+              "p95_ttft_ms": 465.7362038269639,
+              "p99_ttft_ms": 465.7963501289487,
+              "median_tpot_ms": 37.219754060891674,
+              "p95_tpot_ms": 37.3264016348898,
+              "p99_tpot_ms": 37.32671954001733,
+              "median_itl_ms": 34.622689709067345,
+              "p95_itl_ms": 42.86994058638811,
+              "p99_itl_ms": 93.50492231547653,
+              "median_e2el_ms": 5012.885684147477,
+              "p95_e2el_ms": 5157.097803428769,
+              "p99_e2el_ms": 5157.22261108458
+            },
+            "generated_texts_sha256": "a0afa44e74800560da3056800de3974b11d0ab07e32a83fd1c07b099022825a0",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "context-c8",
+            "input_lengths": [
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 18,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2020061184,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 38295044096,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/context-c8/benchmark.json"
+          }
+        ],
+        "startup": {
+          "elapsed": {
+            "secs": 21,
+            "nanos": 159489689
+          },
+          "preparation": {
+            "elapsed": {
+              "secs": 1,
+              "nanos": 110908812
+            },
+            "compiled_buckets": 10,
+            "buckets": [
+              {
+                "bucket_index": 9,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 10792413
+                },
+                "graph_builds": 0
+              },
+              {
+                "bucket_index": 0,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 1
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 104959956
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 1,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 4
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 115608712
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 2,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 116669346
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 3,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 113641515
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 4,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 2,
+                  "s": 4
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 127626693
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 5,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 2,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 134299382
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 6,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 123359507
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 7,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 8,
+                  "s": 8
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 133605073
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 8,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 8,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 130200467
+                },
+                "graph_builds": 1
+              }
+            ],
+            "cache": {
+              "graph_builds": 10,
+              "materialized_graphs": 10
+            }
+          }
+        },
+        "state_drain": {
+          "stats": {
+            "manager": {
+              "active_requests": 0,
+              "active_snapshots": 0,
+              "active_prefixes": 0,
+              "evicted_prefixes": 0,
+              "prepared_steps": 0,
+              "submitted_steps": 0,
+              "free_pages": 256,
+              "reserved_pages": 0,
+              "writing_pages": 0,
+              "active_pages": 0,
+              "retiring_pages": 0,
+              "quarantined_pages": 0,
+              "exhausted_pages": 0,
+              "pending_reclamations": 0,
+              "total_request_page_refs": 0,
+              "total_prefix_page_refs": 0,
+              "total_reader_pins": 0
+            },
+            "queued_requests": 0,
+            "active_requests": 0,
+            "admitted_requests": 64,
+            "completed_requests": 64,
+            "cancelled_requests": 0,
+            "model_dispatches": 3460,
+            "multi_request_dispatches": 388,
+            "mixed_phase_dispatches": 4,
+            "maximum_observed_batch_size": 8
+          },
+          "fixed_states": [
+            [
+              1,
+              {
+                "identity": {
+                  "engine_epoch": 1,
+                  "pool_epoch": 3,
+                  "byte_count": 150994944,
+                  "pool_id": 2,
+                  "slot_count": 16
+                },
+                "free_slots": 16,
+                "reserved_slots": 0,
+                "copying_slots": 0,
+                "live_slots": 0,
+                "retiring_slots": 0,
+                "quarantined_slots": 0,
+                "active_owners": 0,
+                "pending_transitions": 0,
+                "pending_retirements": 0
+              }
+            ],
+            [
+              2,
+              {
+                "identity": {
+                  "engine_epoch": 1,
+                  "pool_epoch": 4,
+                  "byte_count": 2949120,
+                  "pool_id": 3,
+                  "slot_count": 16
+                },
+                "free_slots": 16,
+                "reserved_slots": 0,
+                "copying_slots": 0,
+                "live_slots": 0,
+                "retiring_slots": 0,
+                "quarantined_slots": 0,
+                "active_owners": 0,
+                "pending_transitions": 0,
+                "pending_retirements": 0
+              }
+            ]
+          ],
+          "decoder_graph_builds": 21,
+          "materialized_decoder_graphs": 10
+        }
+      }
+    },
+    {
+      "name": "final-capacity-plan",
+      "scope": "Instrumented diagnostic run; excluded from the untraced performance table.",
+      "raw_directory": "/workspace/orbitkv/.qualification/prepared-providers-20260915/prepared-inputs/after-traced",
+      "stage_trace_sha256": "08deadf7e94023dbd9d5feb62d476b509bf8abbc8debb97fb045d1de1558b71a",
+      "session": {
+        "server": "orbitkv",
+        "epoch": 1,
+        "ready_seconds": 22.527623407542706,
+        "shutdown": {
+          "returncode": 0,
+          "forced": false
+        },
+        "observations": [
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/short-c1.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "1",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/prepared-inputs/after-traced/epoch-001/orbitkv/short-c1",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.6263807431352173,
+              "output_throughput": 40.08836756065391,
+              "median_ttft_ms": 31.029976904392242,
+              "p95_ttft_ms": 38.94302621483803,
+              "p99_ttft_ms": 57.68252089619635,
+              "median_tpot_ms": 24.806851491568583,
+              "p95_tpot_ms": 24.98189528428373,
+              "p99_tpot_ms": 25.15110144657748,
+              "median_itl_ms": 24.20414425432682,
+              "p95_itl_ms": 31.53402041643858,
+              "p99_itl_ms": 32.329957447946065,
+              "median_e2el_ms": 1593.9389951527119,
+              "p95_e2el_ms": 1612.6227965578437,
+              "p99_e2el_ms": 1642.1659855172038
+            },
+            "generated_texts_sha256": "e0a09a487181ce00bd3700a3465cf9a737aaf0c47504ebc6b54cae9f16347c29",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "short-c1",
+            "input_lengths": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 33,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2017079296,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37684772864,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/short-c1/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/short-c8.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "8",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/prepared-inputs/after-traced/epoch-001/orbitkv/short-c8",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 3.1104929922626616,
+              "output_throughput": 199.07155150481034,
+              "median_ttft_ms": 185.81372871994972,
+              "p95_ttft_ms": 187.58964724838734,
+              "p99_ttft_ms": 190.52667953073978,
+              "median_tpot_ms": 38.511721092084095,
+              "p95_tpot_ms": 38.71453473610537,
+              "p99_tpot_ms": 38.9955309707494,
+              "median_itl_ms": 34.04830954968929,
+              "p95_itl_ms": 42.03364625573158,
+              "p99_itl_ms": 151.4555063098669,
+              "median_e2el_ms": 2570.9492955356836,
+              "p95_e2el_ms": 2626.1898586526513,
+              "p99_e2el_ms": 2647.162035293877
+            },
+            "generated_texts_sha256": "1bc0abe0be1f65796f22ff80e7445fbf21f0ba4f14df667ff5e15afdd419cef6",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "short-c8",
+            "input_lengths": [
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4,
+              4
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 13,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2018414592,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37718327296,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/short-c8/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/context-c1.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "1",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/prepared-inputs/after-traced/epoch-001/orbitkv/context-c1",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 0.3005115826813583,
+              "output_throughput": 38.46548258321386,
+              "median_ttft_ms": 76.56377740204334,
+              "p95_ttft_ms": 78.46473902463913,
+              "p99_ttft_ms": 79.8228308558464,
+              "median_tpot_ms": 25.620719755259085,
+              "p95_tpot_ms": 25.684457814951582,
+              "p99_tpot_ms": 25.701487483823392,
+              "median_itl_ms": 24.138763546943665,
+              "p95_itl_ms": 31.28641154617071,
+              "p99_itl_ms": 94.98348910361527,
+              "median_e2el_ms": 3330.3951863199472,
+              "p95_e2el_ms": 3338.5586449876428,
+              "p99_e2el_ms": 3340.7547863200307
+            },
+            "generated_texts_sha256": "88b3019de926050695e5b8abdc16cdb4e5dae90247f440a178c1aef51f59dd10",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "context-c1",
+            "input_lengths": [
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 60,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2022588416,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37718327296,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/context-c1/benchmark.json"
+          },
+          {
+            "client_command": [
+              "/workspace/orbitkv/.qualification/vllm-runtime/bin/vllm",
+              "bench",
+              "serve",
+              "--backend",
+              "openai",
+              "--base-url",
+              "http://127.0.0.1:8010",
+              "--endpoint",
+              "/v1/completions",
+              "--model",
+              "qwen38-27b-fp8",
+              "--tokenizer",
+              "/workspace/models/qwen3.8-27b-fp8",
+              "--dataset-name",
+              "timed_trace",
+              "--dataset-path",
+              "/workspace/orbitkv/benchmarks/traces/context-c8.jsonl",
+              "--timed-trace-chunk-hash-size",
+              "1",
+              "--no-self-timed",
+              "--num-prompts",
+              "16",
+              "--max-concurrency",
+              "8",
+              "--request-rate",
+              "inf",
+              "--seed",
+              "0",
+              "--percentile-metrics",
+              "ttft,tpot,itl,e2el",
+              "--metric-percentiles",
+              "95,99",
+              "--ignore-eos",
+              "--extra-body",
+              "{\"temperature\":0}",
+              "--save-result",
+              "--save-detailed",
+              "--result-dir",
+              "/workspace/orbitkv/.qualification/prepared-providers-20260915/prepared-inputs/after-traced/epoch-001/orbitkv/context-c8",
+              "--result-filename",
+              "benchmark.json",
+              "--num-warmups",
+              "0",
+              "--ready-check-timeout-sec",
+              "0"
+            ],
+            "client_environment": {
+              "PYTHONHASHSEED": "0"
+            },
+            "reported_completed": 16,
+            "reported_failed": 0,
+            "metrics": {
+              "request_throughput": 1.6366947373282015,
+              "output_throughput": 209.4969263780098,
+              "median_ttft_ms": 232.38183930516243,
+              "p95_ttft_ms": 403.0808862298727,
+              "p99_ttft_ms": 403.1921487301588,
+              "median_tpot_ms": 36.368462396418956,
+              "p95_tpot_ms": 36.57689612124145,
+              "p99_tpot_ms": 36.57999109828801,
+              "median_itl_ms": 34.065425395965576,
+              "p95_itl_ms": 41.871969401836395,
+              "p99_itl_ms": 85.43505292385817,
+              "median_e2el_ms": 4870.576441287994,
+              "p95_e2el_ms": 5021.964341402054,
+              "p99_e2el_ms": 5022.212973237038
+            },
+            "generated_texts_sha256": "8ec11ad5c548a30704a63f44661d27d044540d5dfad8f0c864a2bef53989b875",
+            "server": "orbitkv",
+            "epoch": 1,
+            "profile": "context-c8",
+            "input_lengths": [
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32,
+              32
+            ],
+            "memory": {
+              "method": "periodic process RSS and nvidia-smi after server readiness",
+              "interval_seconds": 1.0,
+              "sample_count": 18,
+              "sampled_max_gpu_bytes": null,
+              "sampled_max_host_rss_bytes": 2024468480,
+              "device_index": 0,
+              "sampled_max_device_gpu_bytes": 37751881728,
+              "errors": [
+                "GPU process memory unavailable"
+              ]
+            },
+            "result": "epoch-001/orbitkv/context-c8/benchmark.json"
+          }
+        ],
+        "startup": {
+          "elapsed": {
+            "secs": 20,
+            "nanos": 820856574
+          },
+          "preparation": {
+            "elapsed": {
+              "secs": 0,
+              "nanos": 972150844
+            },
+            "compiled_buckets": 10,
+            "buckets": [
+              {
+                "bucket_index": 9,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 10562215
+                },
+                "graph_builds": 0
+              },
+              {
+                "bucket_index": 0,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 1
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 104408571
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 1,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 4
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 84623955
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 2,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 2,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 80025348
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 3,
+                "dimensions": {
+                  "b": 1,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 120367257
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 4,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 2,
+                  "s": 4
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 126261456
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 5,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 2,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 132544919
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 6,
+                "dimensions": {
+                  "b": 2,
+                  "c_0": 16,
+                  "s": 256
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 91176918
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 7,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 8,
+                  "s": 8
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 130216312
+                },
+                "graph_builds": 1
+              },
+              {
+                "bucket_index": 8,
+                "dimensions": {
+                  "b": 8,
+                  "c_0": 8,
+                  "s": 32
+                },
+                "elapsed": {
+                  "secs": 0,
+                  "nanos": 91839871
+                },
+                "graph_builds": 1
+              }
+            ],
+            "cache": {
+              "graph_builds": 10,
+              "materialized_graphs": 10
+            }
+          }
+        },
+        "state_drain": {
+          "stats": {
+            "manager": {
+              "active_requests": 0,
+              "active_snapshots": 0,
+              "active_prefixes": 0,
+              "evicted_prefixes": 0,
+              "prepared_steps": 0,
+              "submitted_steps": 0,
+              "free_pages": 256,
+              "reserved_pages": 0,
+              "writing_pages": 0,
+              "active_pages": 0,
+              "retiring_pages": 0,
+              "quarantined_pages": 0,
+              "exhausted_pages": 0,
+              "pending_reclamations": 0,
+              "total_request_page_refs": 0,
+              "total_prefix_page_refs": 0,
+              "total_reader_pins": 0
+            },
+            "queued_requests": 0,
+            "active_requests": 0,
+            "admitted_requests": 64,
+            "completed_requests": 64,
+            "cancelled_requests": 0,
+            "model_dispatches": 3460,
+            "multi_request_dispatches": 386,
+            "mixed_phase_dispatches": 4,
+            "maximum_observed_batch_size": 8
+          },
+          "fixed_states": [
+            [
+              1,
+              {
+                "identity": {
+                  "engine_epoch": 1,
+                  "pool_epoch": 3,
+                  "byte_count": 150994944,
+                  "pool_id": 2,
+                  "slot_count": 16
+                },
+                "free_slots": 16,
+                "reserved_slots": 0,
+                "copying_slots": 0,
+                "live_slots": 0,
+                "retiring_slots": 0,
+                "quarantined_slots": 0,
+                "active_owners": 0,
+                "pending_transitions": 0,
+                "pending_retirements": 0
+              }
+            ],
+            [
+              2,
+              {
+                "identity": {
+                  "engine_epoch": 1,
+                  "pool_epoch": 4,
+                  "byte_count": 2949120,
+                  "pool_id": 3,
+                  "slot_count": 16
+                },
+                "free_slots": 16,
+                "reserved_slots": 0,
+                "copying_slots": 0,
+                "live_slots": 0,
+                "retiring_slots": 0,
+                "quarantined_slots": 0,
+                "active_owners": 0,
+                "pending_transitions": 0,
+                "pending_retirements": 0
+              }
+            ]
+          ],
+          "decoder_graph_builds": 18,
+          "materialized_decoder_graphs": 10
+        }
+      }
+    }
+  ],
+  "rejected_preflight": {
+    "status": "failed",
+    "reason": "Candidate profiling rejected FlashAttention CSR descriptors because the runtime lost backing input capacity. Numerical parity and drain passed, but the strict panic-free trace gate failed; this artifact is excluded. Fixed in runtime input descriptors and covered by a red/green bounded-context search regression.",
+    "result_sha256": "ed22c988cd747f581609f048393150a86dd55383b69dce37a0db49d67cdac786",
+    "input_identity": {
+      "binary": {
+        "bytes": 19944328,
+        "path": "/workspace/orbitkv/.qualification/prepared-providers-20260915/bounded-attention/model-qualified",
+        "sha256": "67a8d3eab0613c90c7c25ecdcedcf30bcfc3ed559c962c39cc7e6e5e5c91e265"
+      },
+      "model": [
+        {
+          "bytes": 51350,
+          "path": "/workspace/models/qwen3.8-27b-fp8/config.json",
+          "sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc"
+        },
+        {
+          "bytes": 137335,
+          "path": "/workspace/models/qwen3.8-27b-fp8/model.safetensors.index.json",
+          "sha256": "f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2"
+        },
+        {
+          "bytes": 65249,
+          "path": "/workspace/models/qwen3.8-27b-fp8/README.md",
+          "sha256": "a247d876f5398eed9ae898f32a984083552de57237b5e20714657e1675e26d2e"
+        }
+      ],
+      "oracle": [
+        {
+          "bytes": 993280,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/prefill-last.f32",
+          "sha256": "f9c956e374b36648cc4e5bba0a9743f36ff8007059372e5d8cf1f47ae35728d8"
+        },
+        {
+          "bytes": 993280,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode.f32",
+          "sha256": "12117266c12a5f43273b3e04a990737b092e52530aa48f700ab5e3f7a26887c0"
+        },
+        {
+          "bytes": 993280,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-2.f32",
+          "sha256": "3da428b9b66f10eb312545b5ddac4a8eab0ae8c419e355ee943acf99442dabef"
+        },
+        {
+          "bytes": 993280,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-3.f32",
+          "sha256": "2c99df81e22d3ff7f06a90a460fc2409f668fe361bc44de492cce788f9c82d9a"
+        },
+        {
+          "bytes": 993280,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-4.f32",
+          "sha256": "ca01f6c57c2cfe46a7d2a3e085a313e31e112ec2c3c1a248ab1bad5d9d91332c"
+        },
+        {
+          "bytes": 993280,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-5.f32",
+          "sha256": "cf7f66b0a1ac34012c817b02c2e966ac52399dbc6dad23bbd248d011d4b81c58"
+        },
+        {
+          "bytes": 993280,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-6.f32",
+          "sha256": "ebb677f0dae674a26ed4fcb2c0cf8f0b17bd64d7ffd9294821830445c8a3a2a1"
+        },
+        {
+          "bytes": 993280,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-7.f32",
+          "sha256": "956101bab707008994b3267dfa33416b09be54604c9c2df72f73a9369e44875b"
+        },
+        {
+          "bytes": 342,
+          "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/metadata.json",
+          "sha256": "1eb065aaa6d4bb06e4ef632b714053ea9e2f0e90e51097568220bf3028ab938c"
+        }
+      ],
+      "replay_artifact": null,
+      "stage_metrics": {
+        "bytes": 8024,
+        "path": "/workspace/orbitkv/tools/stage_metrics.py",
+        "sha256": "916fb39856ad20f40433d0f1d0ebf8b4f6ca1890456ef663c80bda7625ca5128"
+      },
+      "stage_summarizer": {
+        "bytes": 6104,
+        "path": "/workspace/orbitkv/tools/summarize_stage_trace.py",
+        "sha256": "fd9840911694a8884ed8fbb33ae67e1a34ae462ae5b48d4be5cfeb84dd71c78e"
+      },
+      "tuning_profile": {
+        "bytes": 295,
+        "path": "/workspace/orbitkv/benchmarks/hotspot-search.json",
+        "sha256": "2757e88039b2031fdd2c39d4a3af26537de7c3883beadb2f0d6cca0070a50440"
+      }
+    },
+    "phases": [
+      {
+        "artifact_after": {
+          "bytes": 48079282,
+          "path": "/workspace/orbitkv/.qualification/prepared-providers-20260915/bounded-attention/validated-b8/decoder.json",
+          "sha256": "9ca32919fbf686421776eb8cb5b36741abdc1f57cbb52d7c77cbc020196696b0"
+        },
+        "error": "unexpected or panicking stage record",
+        "exit_code": 0,
+        "phase": "cold-search",
+        "status": "failed"
+      }
+    ]
+  }
+}

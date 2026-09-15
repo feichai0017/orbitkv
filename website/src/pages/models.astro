@@ -80,7 +80,9 @@ const inputRange = (values: number[]) =>
             </h3>
             <p>
               {report.hardware.count} × {report.hardware.name} ·{" "}
-              <time datetime={report.measured_at}>{report.measured_at}</time>
+              <time datetime={report.measured_at}>
+                {report.measured_at.split("T")[0]}
+              </time>
             </p>
           </div>
           {report.comparison && (
@@ -91,6 +93,9 @@ const inputRange = (values: number[]) =>
                 .join(" · ")}
               .
             </p>
+          )}
+          {report.comparison?.note && (
+            <p class="reading-copy">{report.comparison.note}</p>
           )}
           <div
             class="table-scroll"
