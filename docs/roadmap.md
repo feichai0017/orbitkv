@@ -41,6 +41,9 @@ with multiple resident buckets matches single-bucket residency on the measured
 teacher-forced histories. These checks do not close the C8 gate: shape-dependent
 output variation and longer-history reference errors still require diagnosis
 before promotion. Wider region candidates follow that numerical diagnosis.
+The [serving rerun](../results/qwen3.8-27b-fp8-h20-20260915-regions/README.md)
+records C8 throughput changes alongside output variation and C1 tail latency;
+it does not pass the performance-promotion gate.
 
 ## Next milestones
 
