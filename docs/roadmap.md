@@ -60,6 +60,9 @@ new one. First-layer QKV and Z projections now match exactly on the measured
 input. Full-model error remains above the unchanged gate, with convolution,
 gated normalization and residual/MLP boundaries requiring further diagnosis.
 These checks establish the repaired quantization contract, not C8 acceptance.
+The [FP8 serving rerun](../results/qwen3.8-27b-fp8-h20-20260915-fp8/README.md)
+records similar throughput and a C8 P95 TTFT regression. Keep the numerical and
+tail-latency gates open; do not promote the isolated kernel timing as a model win.
 
 ## Next milestones
 

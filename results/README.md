@@ -3,6 +3,10 @@
 Current model: **Qwen3.8-27B-FP8 on one NVIDIA H20**.
 [Support and checkpoint identity](../docs/capability-matrix.md) define the scope.
 
+- [FP8-preparation rerun](qwen3.8-27b-fp8-h20-20260915-fp8/README.md):
+  repaired quantization rounding; model throughput is similar and C8 tail
+  latency regresses. Numerical qualification remains open; request-final
+  projection is not enabled in serving.
 - [Attention-plan and gather/cast rerun](qwen3.8-27b-fp8-h20-20260915-regions/README.md):
   new OrbitKV serving measurements; wider numerical qualification remains open.
   vLLM and SGLang rows retain the earlier baseline.
