@@ -1,0 +1,48 @@
+(rule
+    ((= ?gather (Op (Gather ?shape ?indices_stride ?data_shape ?data_stride)
+        (ICons ?indices (ICons ?data ?tail)))))
+    ((gather-cast-shape ?shape))
+    :ruleset kernel_specialize
+    :name "gather cast shape witness")
+(rule
+    ((gather-cast-shape (ECons ?head ?tail)))
+    ((gather-cast-shape ?tail))
+    :ruleset kernel_specialize)
+(rule
+    ((gather-cast-shape (ENil)))
+    ((set (gather-cast-elements (ENil)) (MNum 1)))
+    :ruleset kernel_specialize)
+(rule
+    ((gather-cast-shape ?shape) (= ?shape (ECons ?head ?tail))
+     (= ?tail_size (gather-cast-elements ?tail)))
+    ((set (gather-cast-elements ?shape) (MMul ?head ?tail_size)))
+    :ruleset kernel_specialize)
+
+; Cast addresses a physical span. A sliced view may cast only a prefix of
+; the dense gather result; retain that exact span rather than the full shape.
+(rule
+    ((= ?out (Op (Cast ?size ?to) (ICons ?gather (INil))))
+     (= ?gather (Op (Gather ?shape ?indices_stride ?data_shape ?data_stride)
+        (ICons ?indices (ICons ?data ?tail))))
+     (= ?from (dtype ?data)) (gather-cast-types ?from ?to))
+    ((let ?candidate (Op
+        (KernelGatherCast ?size ?shape ?indices_stride ?data_shape ?data_stride ?from ?to)
+        (ICons ?indices (ICons ?data (INil)))))
+     (union ?out ?candidate) (set (dtype ?candidate) ?to))
+    :ruleset kernel_specialize
+    :name "cast gathered elements at the store")
+
+; A cast preserves the source view. Keep every source/index stride so a
+; sliced or transposed input selects the same physical values.
+(rule
+    ((= ?out (Op (Gather ?shape ?indices_stride ?data_shape ?data_stride)
+        (ICons ?indices (ICons ?converted ?tail))))
+     (= ?converted (Op (Cast ?span ?to) (ICons ?data (INil))))
+     (= ?from (dtype ?data)) (gather-cast-types ?from ?to)
+     (= ?size (gather-cast-elements ?shape)))
+    ((let ?candidate (Op
+        (KernelGatherCast ?size ?shape ?indices_stride ?data_shape ?data_stride ?from ?to)
+        (ICons ?indices (ICons ?data (INil)))))
+     (union ?out ?candidate) (set (dtype ?candidate) ?to))
+    :ruleset kernel_specialize
+    :name "cast only selected gather loads")

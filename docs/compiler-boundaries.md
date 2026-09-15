@@ -174,6 +174,15 @@ semantics live in `orbitkv_ops::ops`, with CUDA providers supplying egglog
 implementations. See [checkpoint import](checkpoint-import.md) for admitted
 formats, extension rules and the current artifact migration.
 
+A retained attention graph also has a planning-content contract. FlashInfer's
+explicit CSR plans depend on query and page segmentation, even when buffer
+addresses, lengths and dynamic dimensions stay unchanged. Materialization
+compares those contents with the prepared plan and replans affected captures.
+Identical metadata retains the existing capture. Snapshots are shared across
+users within one materialization and expire before the next execution; current
+device-backed inputs require a synchronized read. Outer decode captures remain
+guarded by the executor's exact query/page-indptr signature.
+
 ## Extending the compiler
 
 Add model structure to the configuration/topology layer. Add an operation's
@@ -183,8 +192,30 @@ programs and reports evidence; it must not rewrite a selected LLIR to force a
 particular backend. Keep model/device examples in benchmark manifests and test
 fixtures rather than production selection branches.
 
+`KernelGatherCast` is one such region: egglog can replace either
+`cast(gather(indices, data))` or `gather(indices, cast(data))`. Its addressing
+retains source/index views and the cast's physical span; the CUDA kernel performs
+the same conversion once per selected element. The original composition remains
+available, including when other consumers share its intermediate. Current
+admission covers BF16/F16 to FP32 and the reverse conversions. It does not change
+reduction order or absorb an external provider call.
+
 For numerical diagnostics, [logit_probe.py](../tools/logit_probe.py) accepts
 manifest-driven inputs and compares full-vocabulary teacher-forced traces.
+The executor's `model_execution` logit probe also accepts optional `batches`, an
+array of submissions containing `{ "case": "case-id", "tokens": count }` queries.
+Queries consume the next tokens from that case's fixed history; they can chunk
+prefill, mix requests, change row order and reuse completed requests' state slots.
+The complete plan is validated before CUDA execution. Traces retain both logical
+output steps and actual per-submission tokens, positions and releases. An omitted
+plan executes cases sequentially, chunking prompts to the configured capacity.
+Optional `graph_cache_capacity` and `prepare_execution` reproduce deployment
+residency and startup preparation; the trace records the effective capacity,
+preparation report and final graph counters. They default to the decoder's
+minimal residency and on-demand preparation, independently of environment knobs
+used by other test harnesses.
+Use the same schedule artifact and histories to compare reordered batches;
+compare changing shapes and independent-reference errors separately.
 It reports actual selected tokens separately from a canonical lowest-index
 argmax: OrbitKV compiler's current `argmax`/`argmin` contract chooses the highest index on
 ties. A different sampling tie policy is a semantic compatibility change, not

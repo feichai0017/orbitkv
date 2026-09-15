@@ -61,9 +61,10 @@ explicitly before model compilation.
 
 ## Models and performance
 
-**Qwen3.8-27B-FP8**: verified text inference on one NVIDIA H20, with Full
+**Qwen3.8-27B-FP8**: experimental text inference on one NVIDIA H20, with Full
 attention and Gated DeltaNet state. Local weights, configuration and tokenizer
-match the official checkpoint revision. Vision and MTP are outside this scope.
+match the official checkpoint revision. Extended numerical consistency remains
+under qualification. Vision and MTP are outside this scope.
 
 See [models and measured performance](https://feichai0017.github.io/orbitkv/models/)
 and [reproducible model reports](results/README.md). Measurements state the

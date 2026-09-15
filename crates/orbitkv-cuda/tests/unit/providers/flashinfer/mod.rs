@@ -5,6 +5,7 @@ use itertools::Itertools;
 mod buckets;
 mod capture;
 mod geometry;
+mod residency;
 
 #[test]
 fn resource_signature_depends_only_on_kv_lengths() {

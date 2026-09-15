@@ -3,7 +3,9 @@ pub mod jit;
 
 use std::sync::{Arc, Mutex};
 
+mod metadata;
 mod workspace;
+pub(crate) use metadata::FlashInferMetadataCache;
 pub(crate) use workspace::resident_shared_device_memory_allocations;
 pub use workspace::shared_device_memory_allocation;
 use workspace::{FLOAT_WORKSPACE_SIZE, INT_WORKSPACE_SIZE, PlanWorkspace, with_plan_staging};

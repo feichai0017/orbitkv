@@ -7,6 +7,7 @@ pub mod argmax;
 pub mod conv2d;
 pub mod cuda_graph;
 pub mod fusion;
+pub mod gather_cast;
 pub mod gemv;
 pub mod generic_matmul;
 pub mod hlir;
@@ -36,6 +37,7 @@ pub use sequence_state::{
 
 pub type Ops = (
     hlir::Ops,
+    gather_cast::KernelGatherCast,
     argmax::KernelArgmax,
     gemv::KernelGemv,
     rms_norm::KernelRMSNorm,
