@@ -3,6 +3,9 @@
 Current model: **Qwen3.8-27B-FP8 on one NVIDIA H20**.
 [Support and checkpoint identity](../docs/capability-matrix.md) define the scope.
 
+- [Prepared-execution rerun](qwen3.8-27b-fp8-h20-20260915-prepared/README.md):
+  new OrbitKV measurements after provider preparation and capacity fixes;
+  vLLM and SGLang rows retain the earlier baseline.
 - [Three-engine comparison](qwen3.8-27b-fp8-h20-20260915/README.md):
   OrbitKV, vLLM and SGLang measured with one `vllm bench serve` client.
 - [Initial serving baseline](qwen3.8-27b-fp8-h20-20260914/README.md):

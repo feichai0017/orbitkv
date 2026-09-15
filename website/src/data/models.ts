@@ -21,6 +21,7 @@ export interface PerformanceReport {
   comparison?: {
     client: string;
     engines: { name: string; version: string }[];
+    note?: string;
   };
   workloads: {
     name: string;
