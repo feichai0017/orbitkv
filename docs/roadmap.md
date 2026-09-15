@@ -23,12 +23,19 @@ resource-lifetime tests cover these contracts. Model reports retain the
 intermediate C1 regression and the final untraced measurements; removing native
 first-use stalls does not establish a general throughput improvement.
 
+Compiler preparation now separates reusable definitions/query plans, model
+facts and independent bucket interval analysis. Hotspot search can enumerate
+bounded connected dependency choices and records every changed binding; full
+candidate GPU measurements and deployment finalist checks remain authoritative.
+The dependency workload profile opts into three changes per attempt. This adds
+search coverage, not a promise that existing kernels become faster.
+
 ## Next milestones
 
 | Priority | Deliverable | Acceptance |
 | --- | --- | --- |
 | 1. Input and concurrent correctness | Resolve HTTP tokenizer differences; reproduce C8 text variation with identical teacher-forced histories and recorded batch geometry | Tokenize/detokenize parity against the checkpoint reference; identify the violated numerical/selection/state contract or prove measured near-tie behavior; preserve tolerances and test changing batches and state reuse |
-| 2. Profile-driven regions | Improve expensive recurrent, normalization/gating or projection regions through equivalent egglog candidates | Independent operator references, full-model logits, ragged prefill/decode and drain pass; complete-workload measurements improve over the existing composition |
+| 2. Profile-driven regions | Reduce measured FP8 preparation, gather/cast and recurrent-state movement; check normalization/partial-RoPE region coverage; compare coordinate and connected search at the same budget | Independent operator references, full-model logits, ragged prefill/decode and drain pass; complete-workload measurements improve over the existing composition |
 | 3. Wider workload coverage | Longer prefill/context, concurrency and memory pressure; shared-prefix and cancellation traces | Find actual capacity and tail-latency limits, preserve correctness under admission pressure, record all failures and memory budgets |
 | 4. Joint state and compute plans | Search multiple legal state realizations under one device-memory budget | Include KV, fixed state, workspace and resident graphs; validate layout transitions and count movement/preparation costs in the measured objective |
 
@@ -49,6 +56,11 @@ first-use stalls does not establish a general throughput improvement.
 
 See [joint compilation](joint-compilation.md) for the design and
 [compiler boundaries](compiler-boundaries.md) for current extension points.
+Further cold-compilation work should measure repeated generated-module
+compilation and specialization plans after definition reuse, preserving the
+graph/trial budget and all correctness checks. A reusable module-image cache
+must bind source, target and compiler identity, bound host memory, and keep
+strict artifact completeness checks.
 
 ## Performance and release gates
 

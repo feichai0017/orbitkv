@@ -55,9 +55,8 @@ The snapshot digest is deliberately separate from the selected program identity.
 
 `CompileOptions::hotspot_candidates(n)` adds a bounded local phase after a
 measured executable seed. OrbitKV exposes the same artifact-bound field in
-`DecoderTuningProfile`. Zero is the default. Adding this field changes the
-artifact-bound tuning digest, including the zero/default policy; regenerate
-older decoder artifacts before loading them with this version. The
+`DecoderTuningProfile`. Zero is the default. All search policies participate in
+the artifact-bound tuning digest, including their default values. The
 [hotspot workload profile](../benchmarks/hotspot-search.json) requests 32 local
 attempts, one initial seed and two deployment finalists, with eight measured
 graphs per bucket supplied by the qualification runner.
@@ -77,12 +76,26 @@ choices. Repeated uses of a shared choice accumulate cost. This metadata is
 excluded from program identities and executable artifacts.
 
 Starting from measured parents, search visits the highest-cost reachable choice
-and enumerates its other admitted nodes in snapshot order. A neighbor changes
-exactly one binding. All other bindings, including choices in newly reachable
-dependencies, retain the parent's values. The extractor does not repair an
-invalid neighbor by changing unrelated decisions. Cycle, state-alias, layout and
-resource checks still apply to the complete result. Shared e-classes can affect
-multiple operations; a single binding change is not necessarily one kernel change.
+and enumerates its other admitted nodes in snapshot order.
+`hotspot_max_changes` bounds the number of changed bindings in one proposal;
+one is the default coordinate policy. Larger values also enumerate connected
+producer dependencies, walking through immutable metadata and stopping at the
+next mutable decision. A changed choice can expose a previously unreachable
+dependency. Unchanged bindings always retain the parent's saved values.
+
+Enumeration is lazy: an anchor proposal is followed by its dependency
+combinations, then the next anchor alternative. It does not materialize a
+Cartesian product. Cycles in dependency traversal terminate at visited classes;
+the extractor and runtime still reject cyclic programs, invalid aliases, layouts
+and resource requirements. No proposal repairs unrelated decisions. Shared
+e-classes can affect multiple operations; a binding change is not necessarily
+one kernel change. The [dependency profile](../benchmarks/dependency-search.json)
+allows three connected changes within the same 32-attempt local allowance.
+
+Search trace schema 3 records `targeted_mutation`: the measured parent, anchor
+cost and every class/from/to binding. This replaces the single `targeted_choice`
+record. The width is part of the decoder tuning digest; regenerate artifacts
+whose saved tuning identity predates this field.
 
 A measured improvement can become the next parent immediately. Rejected,
 cyclic and duplicate neighbors consume the local attempt allowance, while
@@ -91,11 +104,13 @@ measurement budget. Once local exploration is exhausted, ordinary coverage and
 genetic exploration continue within the remaining budget. No implementation
 family receives a preference in Rust.
 
-This is coordinate exploration over an existing egraph. It does not guarantee a
-global optimum, jointly repair a dependency closure, add fusion rules, or create
-a whole-model megakernel. Fresh-snapshot identity and measurement noise still
-affect the search. Multi-choice regions and joint KV-layout alternatives remain
-separate compiler work.
+This explores existing egraph alternatives. Connected changes can cross a
+coordinate valley where each individual change loses, but the combination wins.
+They do not create new kernel algorithms or prove a global optimum. Consumer
+fanout groups outside the selected dependency paths, new region rewrites and
+joint KV-layout alternatives remain separate work. Fresh-snapshot identity and
+measurement noise still affect selection; the complete GPU measurement decides
+fitness, including deployment-mode remeasurement of finalists.
 
 ## State constraints before preparation
 
@@ -113,9 +128,9 @@ leaves the current executable intact.
 
 This reuses existing operation contracts and does not rewrite LLIR, force a
 provider, or remove alternatives from egglog. It saves preparation of rejected
-graphs; local exploration now preserves the remaining parent bindings, while
-state-compatible dependency-closure generation remains further work. Optional aliases still permit
-materializing implementations, and mutation-order checks remain mandatory.
+graphs; local exploration preserves every binding outside its recorded connected
+proposal. Optional aliases still permit materializing implementations, and
+mutation-order checks remain mandatory.
 
 ## Searchable activation preparation
 

@@ -25,7 +25,7 @@ pub mod genetic;
 pub mod lattice;
 pub mod packed;
 pub(crate) mod profile;
-pub use profile::{ProfiledRegion, TargetedChoice};
+pub use profile::{ChoiceChange, ProfiledRegion, TargetedMutation};
 #[cfg(test)]
 #[path = "../tests/unit/search/mod.rs"]
 mod tests;

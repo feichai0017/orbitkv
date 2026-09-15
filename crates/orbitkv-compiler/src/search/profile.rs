@@ -15,13 +15,20 @@ pub struct ProfiledRegion {
     pub cost: f64,
 }
 
-/// Exact snapshot-local decision that produced a local neighbor.
+/// One changed binding in an immutable search snapshot.
 #[derive(Debug, Clone)]
-pub struct TargetedChoice {
-    pub parent: CandidateId,
+pub struct ChoiceChange {
     pub class: String,
     pub from: String,
     pub to: String,
+}
+
+/// Connected decision changes proposed from one measured parent. These are
+/// extraction choices, not edits to an extracted program.
+#[derive(Debug, Clone)]
+pub struct TargetedMutation {
+    pub parent: CandidateId,
+    pub changes: Vec<ChoiceChange>,
     pub cost: f64,
 }
 
@@ -31,6 +38,7 @@ pub(crate) struct ChoiceSite(pub(crate) u32);
 pub(crate) struct ParentProfile {
     pub id: CandidateId,
     pub costs: Vec<(ChoiceSite, f64)>,
+    pub neighborhood: crate::egglog_utils::neighborhood::Neighborhood,
 }
 
 pub(crate) fn aggregate_costs(

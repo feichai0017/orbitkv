@@ -90,6 +90,8 @@ pub struct DecoderTuningProfile {
     /// duplicate programs. Zero disables runtime hotspot feedback. Independent
     /// of the measured-graph budget so invalid neighbors cannot exhaust it.
     pub hotspot_candidates: usize,
+    /// Maximum connected extraction bindings changed in one local attempt.
+    pub hotspot_max_changes: std::num::NonZeroUsize,
     /// Repeated measurements per candidate; must be nonzero.
     pub trials: usize,
     /// Cooperative search limit; synchronous compiler calls cannot be preempted.
@@ -109,6 +111,7 @@ impl Default for DecoderTuningProfile {
             keep_best: DEFAULT_RETAINED_CANDIDATES,
             initial_candidates: DEFAULT_INITIAL_CANDIDATES,
             hotspot_candidates: 0,
+            hotspot_max_changes: std::num::NonZeroUsize::MIN,
             trials: DEFAULT_PROFILING_TRIALS,
             search_time_limit_ms: None,
             maximum_buckets: DEFAULT_MAXIMUM_BUCKETS,

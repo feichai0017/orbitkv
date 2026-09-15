@@ -79,6 +79,7 @@ pub(in crate::model) fn decoder_compile_options(
         .search_graph_limit(compile.search_graphs)
         .initial_population(tuning.initial_candidates)
         .hotspot_candidates(tuning.hotspot_candidates)
+        .hotspot_max_changes(tuning.hotspot_max_changes)
         .keep_best(tuning.keep_best)
         .trials(tuning.trials);
     let mut combinations = query

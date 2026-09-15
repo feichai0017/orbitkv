@@ -14,7 +14,9 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::time::Instant;
 
-use super::profile::{ChoiceSite, ParentProfile, ProfiledRegion, TargetedChoice, aggregate_costs};
+use super::profile::{
+    ChoiceSite, ParentProfile, ProfiledRegion, TargetedMutation, aggregate_costs,
+};
 use colored::Colorize;
 use rand::RngCore;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -55,7 +57,7 @@ pub enum SamplingOrigin {
 pub struct Candidate<M> {
     pub id: CandidateId,
     pub sampling: SamplingOrigin,
-    pub targeted_choice: Option<TargetedChoice>,
+    pub targeted_mutation: Option<TargetedMutation>,
     /// Separate diagnostic execution, never the whole-program ranking metric.
     pub profile: Vec<ProfiledRegion>,
     origins: Vec<std::sync::Arc<[ChoiceSite]>>,
@@ -147,7 +149,7 @@ pub struct GeneticSearch<'a, M> {
 
     // Evolving phase.
     pending: VecDeque<IndexedChoiceSet>,
-    pending_targets: FxHashMap<u64, TargetedChoice>,
+    pending_targets: FxHashMap<u64, TargetedMutation>,
     parent_profiles: FxHashMap<u64, ParentProfile>,
     hotspot_attempts: usize,
     generation_open: bool,
@@ -442,7 +444,7 @@ impl<'a, M: PartialOrd + Clone + Debug> GeneticSearch<'a, M> {
     ) -> Candidate<M> {
         let id = CandidateId(self.next_id);
         self.next_id += 1;
-        let targeted_choice = self.pending_targets.remove(&genome.fingerprint());
+        let targeted_mutation = self.pending_targets.remove(&genome.fingerprint());
         self.outstanding = Some((id, genome));
         // Losers are the most expensive candidates to evaluate: a candidate
         // whose running metric is already `factor ×` worse than the best can
@@ -451,7 +453,7 @@ impl<'a, M: PartialOrd + Clone + Debug> GeneticSearch<'a, M> {
         Candidate {
             id,
             sampling: self.generation_sampling,
-            targeted_choice,
+            targeted_mutation,
             profile: Vec::new(),
             origins,
             llir,
@@ -501,6 +503,7 @@ impl<'a, M: PartialOrd + Clone + Debug> GeneticSearch<'a, M> {
                 ParentProfile {
                     id: candidate.id,
                     costs,
+                    neighborhood: Default::default(),
                 },
             );
         }
@@ -710,22 +713,23 @@ impl<'a, M: PartialOrd + Clone + Debug> GeneticSearch<'a, M> {
         // the finite local allowance and cannot displace a valid parent.
         if self.hotspot_attempts < options.hotspot_candidates {
             for (_, genome) in &self.parents {
-                let Some(profile) = self.parent_profiles.get(&genome.fingerprint()) else {
+                let Some(profile) = self.parent_profiles.get_mut(&genome.fingerprint()) else {
                     continue;
                 };
-                if let Some(neighbor) =
-                    self.extractor
-                        .local_neighbor(genome, &profile.costs, &mut self.prev_selected)
-                {
+                if let Some(neighbor) = profile.neighborhood.next(
+                    &mut self.extractor,
+                    genome,
+                    &profile.costs,
+                    options.hotspot_max_changes.get(),
+                ) {
                     self.hotspot_attempts += 1;
+                    self.prev_selected.insert(neighbor.genome.fingerprint());
                     self.generation_sampling = SamplingOrigin::Hotspot;
                     self.pending_targets.insert(
                         neighbor.genome.fingerprint(),
-                        TargetedChoice {
+                        TargetedMutation {
                             parent: profile.id,
-                            class: neighbor.class,
-                            from: neighbor.from,
-                            to: neighbor.to,
+                            changes: neighbor.changes,
                             cost: neighbor.cost,
                         },
                     );

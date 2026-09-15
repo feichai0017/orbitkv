@@ -166,9 +166,12 @@ pub struct CompileOptions {
     pub initial_population: usize,
     /// Maximum local neighbor attempts per bucket, including duplicates and
     /// rejections. After an executable seed, runtime profiles order existing
-    /// choices by cost. Each neighbor changes one choice of a measured parent.
+    /// choices by cost. Neighbors change connected choices of a measured parent.
     /// Zero disables this phase; whole-program measurements still bound limit.
     pub hotspot_candidates: usize,
+    /// Maximum changed bindings in a hotspot proposal. One performs coordinate
+    /// exploration; larger values also enumerate connected dependency choices.
+    pub hotspot_max_changes: std::num::NonZeroUsize,
     /// Number of mutations applied to each offspring (default: 10)
     pub mutations: usize,
     /// Number of profiling trials per candidate (default: 3)
@@ -267,6 +270,11 @@ impl CompileOptions {
     /// Bound profile-directed neighbor attempts before broad genetic exploration.
     pub fn hotspot_candidates(mut self, attempts: usize) -> Self {
         self.hotspot_candidates = attempts;
+        self
+    }
+
+    pub fn hotspot_max_changes(mut self, changes: std::num::NonZeroUsize) -> Self {
+        self.hotspot_max_changes = changes;
         self
     }
 
@@ -414,6 +422,7 @@ impl Default for CompileOptions {
             generation_size: 10,
             initial_population: 1,
             hotspot_candidates: 0,
+            hotspot_max_changes: std::num::NonZeroUsize::MIN,
             mutations: 10,
             trials: 3,
             keep_best: 1,

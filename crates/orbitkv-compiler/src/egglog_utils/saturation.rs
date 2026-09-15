@@ -7,14 +7,19 @@ use super::{
     print_serialized_shape_with_log, run_schedule_phase, stage_report, trace_stage_report,
 };
 use colored::Colorize;
-use egglog::{EGraph, ast::Span, prelude::RustSpan, var};
+use egglog::{
+    EGraph,
+    ast::{Command, Span},
+    prelude::RustSpan,
+    var,
+};
 use egglog_reports::ReportLevel;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::Instant;
 use tracing::trace;
 
-/// A model-local template. No bucket facts or saturation results enter this
-/// e-graph. Forking copies the rule database, graph and backend facts while
+/// A model-local template. No bucket facts or model saturation results enter
+/// this e-graph. Forking copies initialized rule plans, graph and backend facts while
 /// preserving independent unions, analyses and rule execution state.
 ///
 /// This is intentionally not a global cache: callers bind one operation table,
@@ -33,6 +38,16 @@ impl<'a> PreparedEgglog<'a> {
         interval_analysis: bool,
         log: bool,
     ) -> Result<Self, egglog::Error> {
+        Self::prepare(program, parts, interval_analysis, log, true)
+    }
+
+    fn prepare(
+        program: &str,
+        parts: &'a OpTextParts,
+        interval_analysis: bool,
+        log: bool,
+        bootstrap: bool,
+    ) -> Result<Self, egglog::Error> {
         let _stage =
             tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.egglog.prepare")
                 .entered();
@@ -49,7 +64,7 @@ impl<'a> PreparedEgglog<'a> {
         let started = Instant::now();
         let code =
             tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.egglog.setup_text")
-                .in_scope(|| egglog_setup_with_options(program, parts, interval_analysis));
+                .in_scope(|| egglog_setup_with_options("", parts, interval_analysis));
         let mut template = EGraph::default();
         for primitive in &parts.primitives {
             template.add_primitive(primitive.clone());
@@ -62,8 +77,27 @@ impl<'a> PreparedEgglog<'a> {
         let commands =
             tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.egglog.parse")
                 .in_scope(|| template.parser.get_program_from_string(None, &code))?;
+        let rulesets = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::AddRuleset(_, name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.egglog.setup_run")
             .in_scope(|| template.run_program(commands))?;
+        if bootstrap {
+            let _stage = tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.egglog.definition_bootstrap").entered();
+            // egglog builds and caches query plans on first ruleset execution.
+            // Initialize them on definitions, before introducing model data.
+            // Each declared ruleset runs once; no model specialization, interval
+            // narrowing or cleanup can leak from one bucket to another.
+            for ruleset in rulesets {
+                template.step_rules(&ruleset)?;
+            }
+        }
+        tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.egglog.model_facts")
+            .in_scope(|| template.parse_and_run_program(None, program))?;
         if log {
             eprintln!(
                 "   Egglog setup {} | {} bytes | {} tuples",

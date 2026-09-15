@@ -132,7 +132,7 @@ fn local_search_measures_gemm_alternatives_without_losing_persistent_state() {
             candidate["sampling"] == "Hotspot"
                 && candidate["status"] == "measured"
                 && direct.iter().any(|parent| {
-                    parent["candidate"] == candidate["targeted_choice"]["parent"]
+                    parent["candidate"] == candidate["targeted_mutation"]["parent"]
                         && parent["status"] == "measured"
                         && family(parent) != family(candidate)
                 })
@@ -159,15 +159,17 @@ fn local_search_measures_gemm_alternatives_without_losing_persistent_state() {
         }
         if candidate["sampling"] == "Hotspot" {
             assert!(
-                candidate["targeted_choice"]["cost_seconds"]
+                candidate["targeted_mutation"]["cost_seconds"]
                     .as_f64()
                     .unwrap()
                     > 0.0
             );
-            assert_ne!(
-                candidate["targeted_choice"]["from"],
-                candidate["targeted_choice"]["to"]
-            );
+            for change in candidate["targeted_mutation"]["changes"]
+                .as_array()
+                .unwrap()
+            {
+                assert_ne!(change["from"], change["to"]);
+            }
         }
     }
 }

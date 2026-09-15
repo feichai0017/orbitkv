@@ -91,20 +91,22 @@ impl Graph {
             .map(|(id, op)| op.compiler_facts(id))
             .filter(|facts| !facts.is_empty())
             .join("\n");
-        let extra_egglog = [
-            Rt::extra_egglog(),
-            custom_op_declarations,
-            options.compiler_facts.clone(),
-            custom_op_facts,
-        ]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .join("\n");
+        let extra_egglog = [Rt::extra_egglog(), custom_op_declarations]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .join("\n");
 
         drop(declarations_stage);
         let (program, root) =
             tracing::info_span!(target: "orbitkv::stage", "orbitkv.compiler.hlir.serialize")
                 .in_scope(|| hlir_to_egglog(self));
+        // Definitions can initialize query plans before any model, target or
+        // state facts exist. Those facts enter the model template exactly once;
+        // interval assumptions are added only to independent bucket instances.
+        let program = [options.compiler_facts.clone(), custom_op_facts, program]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .join("\n");
         let op_parts = OpTextParts::new_with_late_passes(&ops, Rt::CLEANUP_HLIR, &late_passes)
             .with_extra_egglog(extra_egglog);
         let use_interval_analysis = !self.dim_intervals.is_empty() || !dim_buckets.is_empty();
