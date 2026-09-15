@@ -81,5 +81,19 @@ fn prepared_and_fresh_runs_preserve_choices_and_late_passes() {
             fresh_report.full.num_matches_per_rule
         );
         assert_eq!(report.phases.len(), fresh_report.phases.len());
+        let unprimed =
+            PreparedEgglog::prepare(&format!("{PROGRAM}\n{bounds}"), &parts, true, false, false)
+                .unwrap();
+        let (unprimed, _) = saturate(
+            unprimed.template,
+            "output",
+            &parts,
+            true,
+            false,
+            Instant::now(),
+        )
+        .unwrap();
+        assert_eq!(shared.enodes, unprimed.enodes);
+        assert_eq!(shared.eclasses, unprimed.eclasses);
     }
 }

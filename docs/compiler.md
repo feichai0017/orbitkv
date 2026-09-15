@@ -43,6 +43,14 @@ executes the result; `runtime/residency.rs` owns bounded graph preparation and
 residency policy, and `artifact.rs` saves generated modules. The dynamic backend
 reuses this foundation with runtime operation registration.
 
+Egglog preparation has three scopes. Registered definitions initialize their
+query plans before model data is introduced; model and backend facts are then
+loaded once into a template. Each bucket clones that template and adds only its
+own interval assumptions. Definition bootstrap runs each declared ruleset once
+without the model program. All bucket main/late schedules and fixed-point gates
+remain in place. The template is local to one compilation, so different models,
+targets and state facts cannot share stale results through a process-global cache.
+
 ## Two implemented execution levels
 
 `providers::HostOp` describes an operation launched by host code. The computation

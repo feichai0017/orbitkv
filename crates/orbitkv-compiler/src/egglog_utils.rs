@@ -20,7 +20,7 @@ pub mod api;
 pub mod base;
 mod diagnostics;
 mod eligibility;
-mod neighborhood;
+pub(crate) mod neighborhood;
 mod op_text;
 pub use op_text::OpTextParts;
 pub mod primitives;

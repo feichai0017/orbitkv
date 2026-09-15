@@ -110,7 +110,7 @@ The parent directory must exist. A trace is created only for a fresh search;
 strict schedule replay does not fabricate candidate measurements. Existing
 files are never overwritten, and requested trace write failures are surfaced.
 
-Schema 2 is JSON Lines:
+Schema 3 is JSON Lines:
 
 | Event | Evidence |
 | --- | --- |
@@ -145,9 +145,10 @@ generations. GPU timing noise and time budgets can change rankings and stopping
 points. [Search coverage](search-coverage.md) describes the scope of the initial
 exploration policy and its regression checks.
 
-Schema 2 adds `targeted_choice` and `profile_regions` to direct records. The
-former names the exact snapshot e-class, old/new e-node and measured parent;
-the latter gives source LLIR node IDs and CUDA event costs in seconds. A fused
+Direct records include `targeted_mutation` and `profile_regions`. The former
+names the measured parent and every changed snapshot e-class with its old/new
+e-node; the latter gives source LLIR node IDs and CUDA event costs in seconds.
+`hotspot_max_changes` in `search_started` bounds the proposal width. A fused
 region's cost is apportioned across its distinct mutable choices for scheduling
 exploration. These diagnostic costs never replace `device_duration_ns` or the
 final deployment score. Disabled hotspot search emits no region measurements.

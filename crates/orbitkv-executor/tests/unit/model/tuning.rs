@@ -17,6 +17,18 @@ fn compile_fixture() -> DecoderCompileConfig {
 }
 
 #[test]
+fn dependency_width_must_be_positive_and_defaults_to_coordinate_search() {
+    assert!(DecoderTuningProfile::from_json(br#"{"hotspot_max_changes":0}"#).is_err());
+    assert_eq!(
+        DecoderTuningProfile::from_json(b"{}")
+            .unwrap()
+            .hotspot_max_changes
+            .get(),
+        1
+    );
+}
+
+#[test]
 fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
     let config = test_config(4);
     let plan = hybrid_executor_plan();
@@ -37,6 +49,10 @@ fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
     };
     let original = identity(&DecoderTuningProfile::default());
     for tuning in [
+        DecoderTuningProfile {
+            hotspot_max_changes: std::num::NonZeroUsize::new(3).unwrap(),
+            ..Default::default()
+        },
         DecoderTuningProfile {
             hotspot_candidates: 16,
             ..Default::default()
@@ -85,6 +101,7 @@ fn tuning_buckets_supply_valid_ragged_metadata_and_cover_feasible_intervals() {
         keep_best: 3,
         initial_candidates: 4,
         hotspot_candidates: 16,
+        hotspot_max_changes: std::num::NonZeroUsize::new(3).unwrap(),
         search_time_limit_ms: Some(5000),
         ..Default::default()
     };
@@ -92,6 +109,7 @@ fn tuning_buckets_supply_valid_ragged_metadata_and_cover_feasible_intervals() {
     assert_eq!(options.keep_best, 3);
     assert_eq!(options.initial_population, 4);
     assert_eq!(options.hotspot_candidates, 16);
+    assert_eq!(options.hotspot_max_changes.get(), 3);
     assert_eq!(options.search_time_limit, std::time::Duration::from_secs(5));
     let profiles = options.bucket_representatives.as_ref().unwrap();
     let inputs = representative::RepresentativeInputs::new(&decoder, compile, 16);

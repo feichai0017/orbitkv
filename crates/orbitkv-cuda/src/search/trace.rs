@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 
 use crate::providers::HostOp;
 
-const TRACE_SCHEMA_VERSION: u32 = 2;
+const TRACE_SCHEMA_VERSION: u32 = 3;
 const TRACE_ENVIRONMENT_VARIABLE: &str = "ORBITKV_SEARCH_TRACE";
 
 pub(super) struct SearchTrace<W: Write = BufWriter<File>> {
@@ -52,6 +52,7 @@ impl SearchTrace {
             "keep_best": options.keep_best,
             "initial_population": options.initial_population,
             "hotspot_candidates": options.hotspot_candidates,
+            "hotspot_max_changes": options.hotspot_max_changes,
             "sampling_order": "sorted snapshot class/node IDs; fresh saturation is not canonicalized",
             "trials": options.trials,
             "search_time_limit_ns": finite_budget(options.search_time_limit),
@@ -171,9 +172,11 @@ impl<W: Write> SearchTrace<W> {
             "event": "direct", "program": program, "bucket": ctx.index,
             "candidate": format!("{:?}", candidate.id),
             "sampling": format!("{:?}", candidate.sampling),
-            "targeted_choice": candidate.targeted_choice.as_ref().map(|choice| json!({
-                "parent": format!("{:?}", choice.parent), "class": choice.class,
-                "from": choice.from, "to": choice.to, "cost_seconds": choice.cost,
+            "targeted_mutation": candidate.targeted_mutation.as_ref().map(|mutation| json!({
+                "parent": format!("{:?}", mutation.parent), "cost_seconds": mutation.cost,
+                "changes": mutation.changes.iter().map(|change| json!({
+                    "class": change.class, "from": change.from, "to": change.to,
+                })).collect::<Vec<_>>(),
             })),
             "profile_regions": candidate.profile.iter().map(|region| json!({
                 "nodes": region.nodes.iter().map(|node| node.index()).collect::<Vec<_>>(),
