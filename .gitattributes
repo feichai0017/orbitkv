@@ -1,2 +1,2 @@
-results/**/*.log -whitespace
-results/**/*.patch -whitespace
+*.cu linguist-language=C++
+*.cuh linguist-language=C++

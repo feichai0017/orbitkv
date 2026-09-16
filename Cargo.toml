@@ -1,39 +1,20 @@
-[workspace]
-members = [
-    "crates/orbitkv",
-    "crates/orbitkv-compiler",
-    "crates/orbitkv-cuda",
-    "crates/orbitkv-engine",
-    "crates/orbitkv-executor",
-    "crates/orbitkv-ops",
-    "crates/orbitkv-tracing",
-]
-# The CUDA backend's device tests require a CUDA toolchain and a GPU.
-default-members = [
-    "crates/orbitkv",
-    "crates/orbitkv-compiler",
-    "crates/orbitkv-engine",
-    "crates/orbitkv-executor",
-    "crates/orbitkv-ops",
-    "crates/orbitkv-tracing",
-]
-resolver = "3"
-
-[workspace.package]
-authors = ["feichai"]
+[package]
+name = "orbitkv-compiler"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
+license = "MIT"
 repository = "https://github.com/feichai0017/orbitkv"
+description = "Compiler and kernel toolchain for stateful hybrid inference"
 
-[workspace.dependencies]
-orbitkv = { path = "crates/orbitkv" }
-orbitkv-compiler = { path = "crates/orbitkv-compiler" }
-orbitkv-cuda = { path = "crates/orbitkv-cuda" }
-orbitkv-engine = { path = "crates/orbitkv-engine" }
-orbitkv-executor = { path = "crates/orbitkv-executor" }
-orbitkv-ops = { path = "crates/orbitkv-ops" }
-orbitkv-tracing = { path = "crates/orbitkv-tracing" }
+[dependencies]
+kern-manifest = { git = "https://github.com/pegainfer-project/kern", rev = "05df6d9cf8233b2438a7a584ce4ed7a0666abf53" }
+serde = { version = "1", features = ["derive"] }
 
-[patch.crates-io]
-candle-kernels = { git = "https://github.com/huggingface/candle.git", rev = "a0dbd8b8aef6bde9adca3e8ad90791609d64974b" }
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

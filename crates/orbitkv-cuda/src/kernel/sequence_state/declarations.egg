@@ -1,3 +1,0 @@
-(relation packed-convolution-op (i64))
-(relation packed-delta-scan-op (i64))
-(relation packed-delta-scan-geometry (i64 Expression Expression i64 i64 i64 i64 f64 i64 i64))

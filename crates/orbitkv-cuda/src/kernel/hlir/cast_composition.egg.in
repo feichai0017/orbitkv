@@ -1,8 +1,0 @@
-(rule (
-                    (= ?c (Op (Constant ?val) (INil)))
-                    (= ?cast (Op (Cast ?size ({dt})) (ICons ?c (INil))))
-                 ) (
-                    (let ?kc (Op (KernelConstant ?val ({dt})) (INil)))
-                    (union ?cast ?kc)
-                    (set (dtype ?kc) ({dt}))
-                 ) :ruleset kernel_lower :name "kernel-constant-cast-{dt}")

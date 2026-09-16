@@ -1,7 +1,0 @@
-(relation generic_matmul_exact_2d
-        (IR Expression Expression Expression DType))
-     (relation generic_matmul_exact_3d
-        (IR Expression Expression Expression Expression DType))
-     (relation low_precision_matmul_dtype (DType))
-     (low_precision_matmul_dtype (F16))
-     (low_precision_matmul_dtype (Bf16))

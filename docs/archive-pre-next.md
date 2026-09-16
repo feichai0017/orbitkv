@@ -1,10 +1,10 @@
 # Pre-Next archive record
 
-This branch preserves the complete non-ignored working tree immediately before
-the OrbitKV Next reset on 2026-09-17.
+The archive branch below preserves the complete non-ignored working tree
+immediately before the OrbitKV Next reset on 2026-09-17.
 
 - Archive branch: `archive-orbitkv-pre-next-20260917`
-- Original base: `1f6c144d440ff0208db454c95669aecbc6623ea9`
+- Original base: `1f6c14409d853d27d87d2651d21eccd01035c2c9`
 - Working-tree snapshot commit: `0e8bdd62db324fbc5168047db26dc141202c3665`
 - Snapshot tree: `f77ee2f903f2206fb62c0dfe7b20bae96bca9a00`
 - Snapshot scope: 75 previously tracked changes/deletions plus all 30
@@ -24,5 +24,5 @@ The tracked `results/` directory remains in the archive branch. No ignored file
 was deleted as part of creating this archive.
 
 To inspect or restore the source snapshot, use the archive branch or the exact
-commit above. Do not base new implementation work on this branch; the active
-Next line has a deliberately independent build graph.
+commit above. New implementation work belongs on the active Next line, whose
+build graph is deliberately independent.
