@@ -18,6 +18,7 @@ pub use egraph_serialize::{ClassId, NodeId};
 
 pub mod api;
 pub mod base;
+mod choice_cycles;
 mod diagnostics;
 mod eligibility;
 pub(crate) mod neighborhood;
@@ -189,6 +190,9 @@ fn op_defs_string(ops: &[Arc<Box<dyn EgglogOp>>]) -> String {
         )
     )
     (function dtype (IR) DType :merge new)
+    ; Lower values win deterministic Default extraction. Rewrites attach this
+    ; fact to concrete OpKind terms; Tune ignores it and measures all candidates.
+    (function default-priority (OpKind) i64 :merge old)
     "
     )
 }
@@ -1934,13 +1938,37 @@ impl<'a> LlirExtractor<'a> {
             sampling::ChoicePools::new(self.egraph, self.choice_eligibility.as_ref())
         });
         let mut choices = pools.random(rng);
-        repair_choice_cycles(
+        choice_cycles::random(
             self.egraph,
             &mut choices,
             rng,
             self.choice_eligibility.as_ref(),
         );
         self.index_choice_set(&choices)
+    }
+
+    /// Bounded deterministic candidates for the production default compiler.
+    /// Rewrites declare semantic priority tiers; each fallback disables one
+    /// tier without perturbing unrelated e-classes.
+    pub fn stable_indexed_generation(&self, size: usize) -> Vec<IndexedChoiceSet> {
+        let pools = self.sampling_pools.get_or_init(|| {
+            sampling::ChoicePools::new(self.egraph, self.choice_eligibility.as_ref())
+        });
+        let mut previous = FxHashSet::default();
+        let mut generation = Vec::with_capacity(size);
+        for round in 0..size.min(pools.stable_count()) {
+            let mut choices = pools.stable(round);
+            choice_cycles::deterministic(
+                self.egraph,
+                &mut choices,
+                self.choice_eligibility.as_ref(),
+            );
+            let genome = self.index_choice_set(&choices);
+            if previous.insert(genome.hash) {
+                generation.push(genome);
+            }
+        }
+        generation
     }
 
     /// Draw from shuffled per-class cycles. This covers admitted spellings,
@@ -1960,7 +1988,7 @@ impl<'a> LlirExtractor<'a> {
                 break;
             }
             let mut choices = self.sampling_pools.get_mut().unwrap().coverage(rng);
-            repair_choice_cycles(
+            choice_cycles::random(
                 self.egraph,
                 &mut choices,
                 rng,
@@ -2526,101 +2554,6 @@ fn cyclic_choice_components<'a>(
     Ok(cyclic)
 }
 
-fn repair_choice_cycles<'a>(
-    egraph: &'a SerializedEGraph,
-    choices: &mut EGraphChoiceSet<'a>,
-    rng: &mut (impl Rng + ?Sized),
-    eligibility: Option<&eligibility::ChoiceEligibility<'_>>,
-) {
-    // Repair only the reachable selected term. Unreachable eclasses still need
-    // entries for a complete genome, but cycles among those entries cannot
-    // appear in the extracted LLIR and should not narrow the search space.
-    for _ in 0..128 {
-        let Ok(reachable) = reachable_choice_nodes(egraph, choices) else {
-            return;
-        };
-        let Ok(mut components) = cyclic_choice_components(egraph, choices, &reachable) else {
-            return;
-        };
-        if components.is_empty() {
-            return;
-        }
-
-        for component in &mut components {
-            component.sort_unstable_by(|left, right| left.as_ref().cmp(right.as_ref()));
-        }
-        components.sort_unstable_by(|left, right| left[0].as_ref().cmp(right[0].as_ref()));
-        let mut repairs = Vec::new();
-        for component in components {
-            crate::mask_events::CHOICE_CYCLE_REPAIR.record();
-            let component_set: FxHashSet<&NodeId> = component.iter().copied().collect();
-            for selected_node in component {
-                let Some(class) = egraph.node_to_class.get(selected_node) else {
-                    continue;
-                };
-                let Some((label, alternatives)) = egraph.eclasses.get(class) else {
-                    continue;
-                };
-                let dependency_score = |candidate: &NodeId| {
-                    let mut blocked_classes = FxHashSet::default();
-                    for child_class in &egraph.enodes[candidate].1 {
-                        let Some((child_label, _)) = egraph.eclasses.get(child_class) else {
-                            continue;
-                        };
-                        if is_search_choice_eclass(child_label)
-                            && (child_class == class
-                                || choices
-                                    .get(child_class)
-                                    .is_some_and(|node| component_set.contains(*node)))
-                        {
-                            blocked_classes.insert(child_class);
-                        }
-                    }
-                    blocked_classes.len()
-                };
-                let selected_score = dependency_score(selected_node);
-                let mut class_repairs = Vec::new();
-                let mut class_best_reduction = 0usize;
-                for alternative in alternatives {
-                    if alternative == selected_node
-                        || eligibility.is_some_and(|eligibility| !eligibility.allows(alternative))
-                        || (label == "OpKind" && !opkind_metadata_consistent(egraph, alternative))
-                    {
-                        continue;
-                    }
-                    let alternative_score = dependency_score(alternative);
-                    let reduction = selected_score.saturating_sub(alternative_score);
-                    if reduction == 0 {
-                        continue;
-                    }
-                    if reduction > class_best_reduction {
-                        class_best_reduction = reduction;
-                        class_repairs.clear();
-                    }
-                    if reduction == class_best_reduction {
-                        class_repairs.push((class, alternative));
-                    }
-                }
-                class_repairs.sort_unstable_by(|left, right| left.1.as_ref().cmp(right.1.as_ref()));
-                if !class_repairs.is_empty() {
-                    repairs.push(class_repairs[rng.random_range(0..class_repairs.len())]);
-                }
-            }
-        }
-
-        if repairs.is_empty() {
-            return;
-        }
-        // Each selected node belongs to exactly one eclass, and SCCs are
-        // disjoint, so these class-local repairs can be applied together.
-        // This removes a cyclic frontier per round without conflating
-        // downstream nodes blocked by a cycle with the cycle itself.
-        for (class, alternative) in repairs {
-            choices.insert(class, alternative);
-        }
-    }
-}
-
 fn extractor_list_len(egraph: &SerializedEGraph, eclass_id: &ClassId) -> Option<usize> {
     let mut len = 0usize;
     let mut cur_eclass: ClassId = eclass_id.clone();
@@ -2743,7 +2676,7 @@ fn random_initial_choice_with_eligibility<'a>(
     eligibility: Option<&eligibility::ChoiceEligibility<'_>>,
 ) -> EGraphChoiceSet<'a> {
     let mut choices = sampling::ChoicePools::new(egraph, eligibility).random(rng);
-    repair_choice_cycles(egraph, &mut choices, rng, eligibility);
+    choice_cycles::random(egraph, &mut choices, rng, eligibility);
     choices
 }
 
@@ -2878,73 +2811,6 @@ pub fn extract_generation<'a>(
         prev_selected,
         rng,
     )
-}
-
-pub fn extract_reachable_generation<'a>(
-    egraph: &'a SerializedEGraph,
-    base: &EGraphChoiceSet<'a>,
-    generation_size: usize,
-    mutations_per_generation: usize,
-    prev_selected: &mut FxHashSet<u64>,
-    rng: &mut (impl Rng + ?Sized),
-) -> Vec<EGraphChoiceSet<'a>> {
-    let mutable_classes = reachable_mutable_choice_classes(egraph, base);
-    extract_generation_from_classes(
-        egraph,
-        base,
-        &mutable_classes,
-        generation_size,
-        mutations_per_generation,
-        prev_selected,
-        rng,
-    )
-}
-
-fn reachable_mutable_choice_classes<'a>(
-    egraph: &'a SerializedEGraph,
-    choices: &EGraphChoiceSet<'a>,
-) -> Vec<&'a ClassId> {
-    let mut reachable = FxHashSet::default();
-    let mut class_seen = FxHashSet::default();
-    let mut mutable_classes = Vec::new();
-    let Some(root) = egraph.roots.first() else {
-        return mutable_classes;
-    };
-    let Some(root_choice) = choices.get(root) else {
-        return mutable_classes;
-    };
-    if let Some((label, enodes)) = egraph.eclasses.get(root)
-        && is_search_choice_eclass(label)
-        && enodes.len() > 1
-        && class_seen.insert(root)
-    {
-        mutable_classes.push(root);
-    }
-
-    let mut stack = vec![*root_choice];
-    while let Some(node) = stack.pop() {
-        if !reachable.insert(node) {
-            continue;
-        }
-        let Some((_, children)) = egraph.enodes.get(node) else {
-            continue;
-        };
-        for child_class in children {
-            let Some((label, enodes)) = egraph.eclasses.get(child_class) else {
-                continue;
-            };
-            if is_search_choice_eclass(label) {
-                if enodes.len() > 1 && class_seen.insert(child_class) {
-                    mutable_classes.push(child_class);
-                }
-                if let Some(chosen_node) = choices.get(child_class) {
-                    stack.push(*chosen_node);
-                }
-            }
-        }
-    }
-
-    mutable_classes
 }
 
 fn extract_generation_from_classes<'a>(

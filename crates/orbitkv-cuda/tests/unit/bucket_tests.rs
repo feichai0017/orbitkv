@@ -27,6 +27,48 @@ fn bucket_options(buckets: &[DimBucket]) -> CompileOptions {
 }
 
 #[test]
+#[ignore = "requires CUDA; validates deterministic default lowering and replay"]
+fn default_policy_compiles_without_profiling_and_replays_schedule() {
+    let stream = get_cuda_stream().expect("CUDA device is required");
+    let (mut graph, input, output) = build_dynamic_add_graph();
+    let options = bucket_options(&[DimBucket::new(1, 1), DimBucket::new(2, 4).representative(3)])
+        .compile_policy(CompilePolicy::Default);
+    graph.set_dim('s', 1);
+    let mut runtime = CudaRuntime::initialize(stream.clone());
+    runtime.set_data_with_capacity(input, vec![1.0_f32; 4], 4 * 4 * size_of::<f32>());
+    runtime = graph.compile(runtime, options.clone());
+    assert_eq!(runtime.compiled_bucket_count(), 2);
+    assert!(graph.selected_schedule().is_some());
+    assert!(!runtime.debug_has_profiled_candidate());
+
+    for (s, values) in [
+        (1, vec![1.0_f32, 2.0, 3.0, 4.0]),
+        (3, (0..12).map(|value| value as f32).collect::<Vec<_>>()),
+    ] {
+        graph.set_dim('s', s);
+        let expected = values.iter().map(|value| value * 2.0).collect::<Vec<_>>();
+        runtime.set_data(input, values);
+        runtime.execute(&graph.dyn_map);
+        assert_eq!(runtime.get_f32(output), expected);
+    }
+
+    let schedule = graph.selected_schedule().unwrap().clone();
+    let (mut replay_graph, replay_input, replay_output) = build_dynamic_add_graph();
+    replay_graph.prepare_selected_schedule(&options);
+    replay_graph.install_selected_schedule(schedule);
+    replay_graph.set_dim('s', 3);
+    let mut replay = CudaRuntime::initialize(stream);
+    replay.set_data_with_capacity(replay_input, vec![0.0_f32; 12], 4 * 4 * size_of::<f32>());
+    replay_graph.load_selected_schedule(&mut replay).unwrap();
+    let values = (0..12).map(|value| value as f32 + 1.0).collect::<Vec<_>>();
+    let expected = values.iter().map(|value| value * 2.0).collect::<Vec<_>>();
+    replay.set_data(replay_input, values);
+    replay.execute(&replay_graph.dyn_map);
+    assert_eq!(replay.get_f32(replay_output), expected);
+    assert!(!replay.debug_has_profiled_candidate());
+}
+
+#[test]
 fn warmup_generated_kernel_preserves_dynamic_bucket_values() {
     let Some(stream) = get_cuda_stream() else {
         return;

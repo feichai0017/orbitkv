@@ -14,7 +14,7 @@ use orbitkv::{
 use orbitkv_compiler::{
     dtype::DType,
     op::Runtime,
-    prelude::{CompileOptions, Expression, Graph, ToId},
+    prelude::{CompileOptions, Expression, Graph, GraphTensor, ToId},
 };
 use orbitkv_cuda::kernel::sequence_state::{
     PackedConvolutionPlan, PackedConvolutionSpec, PackedDeltaScanPlan, PackedDeltaScanSpec,
@@ -30,6 +30,12 @@ use orbitkv_executor::{
 const STATE_ID: u16 = 1;
 const STATE_BYTES: u64 = 64;
 
+#[derive(Clone, Copy)]
+enum StateKernel {
+    Elementwise,
+    Packed,
+}
+
 struct TestControlPlane {
     session: RuntimeSession,
     executor_plan: ExecutorPlan,
@@ -43,6 +49,7 @@ struct RecurrentExecution {
     binding: orbitkv_executor::FixedStateRuntimeBinding,
     graph_binding: FixedStateGraphBinding,
     inputs: [orbitkv_compiler::prelude::GraphTensor; 5],
+    packed_indptr: Option<GraphTensor>,
     value_output: orbitkv_compiler::prelude::GraphTensor,
 }
 
@@ -210,6 +217,9 @@ fn execute_step(
         .upload_destination_slots(&mut execution.runtime, &[execution.graph_binding])
         .expect("upload manager destination slot");
     seed_recurrent_inputs(&mut execution.runtime, &execution.inputs);
+    if let Some(indptr) = execution.packed_indptr {
+        execution.runtime.set_data(indptr, vec![0_i32, 1]);
+    }
     let evidence = ready
         .complete_after(
             &mut execution.runtime,
@@ -242,6 +252,7 @@ fn recurrent_execution(
     control: &TestControlPlane,
     state_arenas: &FixedStateDeviceArenas,
     stream: std::sync::Arc<orbitkv_cuda::cudarc::driver::CudaStream>,
+    kernel: StateKernel,
 ) -> RecurrentExecution {
     let registration = control
         .executor_plan
@@ -270,8 +281,8 @@ fn recurrent_execution(
         .named_tensor("update_gate", (1, 1))
         .as_dtype(DType::F32);
     let previous_state = state_graph.layer_state(0, geometry).unwrap();
-    let recurrent = gated_delta_step(
-        GatedDeltaStepInputs {
+    let (values, next_state, packed_indptr) = recurrent_outputs(
+        &GatedDeltaStepInputs {
             query,
             key,
             value,
@@ -281,22 +292,26 @@ fn recurrent_execution(
             batch_size: 1.into(),
         },
         geometry,
-    )
-    .expect("build gated-delta semantics");
+        kernel,
+    );
     state_graph
-        .commit_layer(0, geometry, recurrent.next_state)
+        .commit_layer(0, geometry, next_state)
         .expect("commit recurrent state");
-    let value_output = recurrent.values.output();
+    let value_output = values.output();
     let graph_binding = state_graph.finish();
     let mut runtime = CudaRuntime::initialize(stream);
     let inputs = [query, key, value, log_decay, update_gate];
     seed_recurrent_inputs(&mut runtime, &inputs);
+    if let Some(indptr) = packed_indptr {
+        runtime.set_data(indptr, vec![0_i32, 1]);
+    }
     graph_binding
         .seed_destination_slots(&mut runtime, 1, 1)
         .expect("seed slot metadata");
     let compile_scratch = graph_binding
         .allocate_compile_scratch(&mut runtime, FixedStateWritePolicy::RequiredInPlace);
     runtime = graph.compile(runtime, CompileOptions::default().search_graph_limit(8));
+    println!("state arena kernels: {:?}", runtime.kernel_names());
     let binding = state_arenas
         .bind_graph_state(
             &mut runtime,
@@ -306,13 +321,59 @@ fn recurrent_execution(
         .expect("bind OrbitKV arena to OrbitKV");
     drop(compile_scratch);
     seed_recurrent_inputs(&mut runtime, &inputs);
+    if let Some(indptr) = packed_indptr {
+        runtime.set_data(indptr, vec![0_i32, 1]);
+    }
     RecurrentExecution {
         graph,
         runtime,
         binding,
         graph_binding,
         inputs,
+        packed_indptr,
         value_output,
+    }
+}
+
+fn recurrent_outputs(
+    inputs: &GatedDeltaStepInputs,
+    geometry: GatedDeltaGeometry,
+    kernel: StateKernel,
+) -> (GraphTensor, GraphTensor, Option<GraphTensor>) {
+    match kernel {
+        StateKernel::Elementwise => {
+            let recurrent =
+                gated_delta_step(*inputs, geometry).expect("build gated-delta semantics");
+            (recurrent.values, recurrent.next_state, None)
+        }
+        StateKernel::Packed => {
+            let indptr = inputs
+                .query
+                .graph()
+                .named_tensor("indptr", 2)
+                .as_dtype(DType::Int);
+            let recurrent = packed_delta_scan(
+                PackedDeltaScanPlan {
+                    query: inputs.query,
+                    key: inputs.key,
+                    value: inputs.value,
+                    log_decay: inputs.log_decay,
+                    update_gate: inputs.update_gate,
+                    state: inputs.previous_state,
+                    query_indptr: indptr,
+                },
+                PackedDeltaScanSpec {
+                    key_heads: geometry.key_heads,
+                    value_heads: geometry.value_heads,
+                    key_width: geometry.key_width,
+                    value_width: geometry.value_width,
+                    normalization_epsilon: geometry.normalization_epsilon,
+                    round_normalized_qk_to_bf16: false,
+                    round_final_state_to_bf16: false,
+                },
+            );
+            (recurrent.values, recurrent.state, Some(indptr))
+        }
     }
 }
 
@@ -386,6 +447,8 @@ fn packed_state_kernels_match_ragged_sequence_references_on_h20() {
             key_width: 1,
             value_width: 1,
             normalization_epsilon: 1e-6,
+            round_normalized_qk_to_bf16: false,
+            round_final_state_to_bf16: false,
         },
     );
     let recurrent_values = recurrent.values.output();
@@ -529,6 +592,9 @@ fn packed_convolution_reference(
                 value = input[token * CHANNELS + channel]
                     .to_f32()
                     .mul_add(weights[weight_base + HISTORY_WIDTH].to_f32(), value);
+                // The independent operation sequence is BF16 conv1d followed
+                // by SiLU, so its materialized convolution output rounds here.
+                value = bf16::from_f32(value).to_f32();
                 values[token * CHANNELS + channel] = bf16::from_f32(value / (1.0 + (-value).exp()));
                 history[history_base] = history[history_base + 1];
                 history[history_base + 1] = input[token * CHANNELS + channel];
@@ -619,6 +685,16 @@ fn assert_f32_close(actual: &[f32], expected: &[f32], tolerance: f32) {
 #[test]
 #[ignore = "requires a CUDA device"]
 fn fixed_state_arena_preserves_address_and_event_order_across_steps() {
+    check_state_arena_across_steps(StateKernel::Elementwise);
+}
+
+#[test]
+#[ignore = "requires a CUDA device"]
+fn packed_delta_state_arena_preserves_address_and_event_order_across_steps() {
+    check_state_arena_across_steps(StateKernel::Packed);
+}
+
+fn check_state_arena_across_steps(kernel: StateKernel) {
     let mut control = control_plane();
     let context = CudaContext::new(0).expect("CUDA context");
     context.bind_to_thread().expect("bind CUDA context");
@@ -631,7 +707,7 @@ fn fixed_state_arena_preserves_address_and_event_order_across_steps() {
     .expect("allocate stable state arena");
     assert_eq!(state_arenas.arena_count(), 1);
 
-    let mut execution = recurrent_execution(&control, &state_arenas, stream);
+    let mut execution = recurrent_execution(&control, &state_arenas, stream, kernel);
 
     let request_id = EngineRequestId(9);
     control

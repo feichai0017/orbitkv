@@ -22,7 +22,11 @@ use orbitkv_compiler::{
 use crate::compile_module_image_for_current_device;
 use crate::kernel::KernelOp;
 
-const TPB: usize = 1024;
+// Match the decomposed Mul + KernelSumReduce execution geometry. The norm's
+// square-and-reduce contraction is also in GenericMatmul's e-class, so all
+// three implementations preserve the same explicit product rounding, Kahan
+// accumulation, and reduction tree.
+const TPB: usize = 256;
 
 #[derive(Debug, Clone)]
 pub struct RMSNormKernel {

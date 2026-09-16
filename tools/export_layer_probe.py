@@ -48,7 +48,7 @@ def main() -> None:
         setattr(config, key, value)
     device = f"cuda:{probe['device_index']}"
     args.output_dir.mkdir(parents=True, exist_ok=False)
-    records, stack, handles, originals = {}, [], [], []
+    records, call_counts, stack, handles, originals = {}, {}, [], [], []
 
     def keep(name, value):
         if isinstance(value, torch.Tensor):
@@ -66,15 +66,37 @@ def main() -> None:
         assert stack.pop() == name
 
     def wrap(original, operation):
+        try:
+            signature = inspect.signature(original)
+        except (TypeError, ValueError):
+            signature = None
+
         @functools.wraps(original)
         def invoke(*inputs, **kwargs):
             scope = stack[-1] if stack else None
             if scope:
-                for key, value in inspect.signature(original).bind_partial(*inputs, **kwargs).arguments.items():
-                    keep(f"{scope}.{operation}.input.{key}", value)
+                call = call_counts.get((scope, operation), 0)
+                call_counts[(scope, operation)] = call + 1
+                prefix = f"{scope}.{operation}" if call == 0 else f"{scope}.{operation}.call.{call}"
+                arguments = (
+                    signature.bind_partial(*inputs, **kwargs).arguments.items()
+                    if signature is not None
+                    else [(f"arg{index}", value) for index, value in enumerate(inputs)]
+                    + list(kwargs.items())
+                )
+                for key, value in arguments:
+                    keep(f"{prefix}.input.{key}", value)
             result = original(*inputs, **kwargs)
             if scope:
-                keep(f"{scope}.{operation}.output", result)
+                keep(f"{prefix}.output", result)
+                arguments = (
+                    signature.bind_partial(*inputs, **kwargs).arguments.items()
+                    if signature is not None
+                    else [(f"arg{index}", value) for index, value in enumerate(inputs)]
+                    + list(kwargs.items())
+                )
+                for key, value in arguments:
+                    keep(f"{prefix}.input_after.{key}", value)
             return result
         return invoke
 
@@ -98,14 +120,24 @@ def main() -> None:
         if not handles:
             raise ValueError("module pattern matched no reference modules")
         tokens, cache = case["prompt_token_ids"], None
+        submissions = []
         with torch.inference_mode():
             for step in range(args.steps):
                 records.clear()
+                call_counts.clear()
                 result = model(input_ids=torch.tensor([tokens], device=device), past_key_values=cache, use_cache=True)
+                cache = result.past_key_values
+                for layer, layer_cache in enumerate(cache.layers):
+                    for state_name in ("conv_states", "recurrent_states"):
+                        state = getattr(layer_cache, state_name, None)
+                        if state is not None:
+                            keep(f"cache.layers.{layer}.{state_name}", state)
                 keep("logits", result.logits)
                 save_file(records, args.output_dir / f"step-{step}.safetensors")
+                submissions.append({"step": step, "input_token_ids": list(tokens),
+                                    "tensors": {name: {"dtype": str(tensor.dtype), "shape": list(tensor.shape)}
+                                                for name, tensor in records.items()}})
                 print(json.dumps({"step": step, "tensors": len(records)}), flush=True)
-                cache = result.past_key_values
                 tokens = [case["continuation_token_ids"][step]]
     finally:
         for handle in handles:
@@ -116,7 +148,8 @@ def main() -> None:
         "model_directory": probe["model_directory"], "case": case,
         "torch": torch.__version__, "transformers": transformers.__version__,
         "module_pattern": args.module_pattern, "functions": args.function,
-        "steps": args.steps, "inputs": [identity(args.manifest), identity(args.oracle_metadata), identity(Path(__file__))],
+        "steps": args.steps, "submissions": submissions,
+        "inputs": [identity(args.manifest), identity(args.oracle_metadata), identity(Path(__file__))],
         "scope": "Hooks retain original reference computations; an optional DeepGEMM adapter shares the external GEMM library.",
     }, indent=2) + "\n")
 

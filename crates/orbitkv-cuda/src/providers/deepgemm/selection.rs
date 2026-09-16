@@ -14,8 +14,12 @@ use serde::{Deserialize, Serialize};
 
 use super::tiling::{Config, candidates};
 
-/// Search breadth, not a claim that the heuristic finds the optimal tile.
-pub(super) const SEARCH_VARIANTS: usize = 4;
+/// A single tile family keeps one block-scaled linear e-class numerically
+/// deterministic across workload buckets. DeepGEMM tile shapes may round the
+/// same FP8 contraction differently, so additional tiles require distinct
+/// numerical contracts rather than aliases in this exact e-class.
+pub(super) const SEARCH_VARIANTS: usize = 1;
+const CANONICAL_SELECTION_ROWS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -65,7 +69,7 @@ impl Primitive for TileCandidate {
         if *rank >= SEARCH_VARIANTS {
             return None;
         }
-        let config = *candidates(*row_limit, *n, *k, *num_sms).get(*rank)?;
+        let config = *candidates(CANONICAL_SELECTION_ROWS, *n, *k, *num_sms).get(*rank)?;
         let selection = Selection {
             row_limit: *row_limit,
             config,

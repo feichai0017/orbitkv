@@ -1,3 +1,4 @@
+use orbitkv_compiler::{egglog_utils::LlirExtractor, search::unroll_packed_llir};
 use orbitkv_compiler::{op::CustomOp, prelude::*};
 
 use super::{convolution::PackedConvolutionKernel, delta_scan::PackedDeltaScanKernel, *};
@@ -9,6 +10,8 @@ use crate::{
         ForcedExtractionConfig, llir_kernel_names, try_extract_forced_op_llir_where,
     },
 };
+
+mod device;
 
 fn convolution_spec() -> PackedConvolutionSpec {
     PackedConvolutionSpec {
@@ -24,6 +27,8 @@ fn delta_spec() -> PackedDeltaScanSpec {
         key_width: 2,
         value_width: 1,
         normalization_epsilon: 1e-6,
+        round_normalized_qk_to_bf16: false,
+        round_final_state_to_bf16: false,
     }
 }
 
@@ -126,8 +131,12 @@ fn production_sources_compile_with_static_and_dynamic_geometry() {
             requests,
             spec: delta_spec(),
         };
+        let registers = KernelDeltaRegisters::from_scan(scan.clone());
         assert_eq!(convolution.compiler_facts(4), "(packed-convolution-op 4)");
-        assert_eq!(scan.compiler_facts(7), "(packed-delta-scan-op 7)");
+        assert!(
+            scan.compiler_facts(7)
+                .starts_with("(packed-delta-scan-op 7)\n(packed-delta-scan-geometry 7 ")
+        );
         for (source, entry, input_count, op) in [
             (
                 convolution.source(),
@@ -140,6 +149,12 @@ fn production_sources_compile_with_static_and_dynamic_geometry() {
                 "packed_delta_scan",
                 7,
                 &scan as &dyn KernelOp,
+            ),
+            (
+                registers.source(),
+                "packed_delta_registers",
+                7,
+                &registers as &dyn KernelOp,
             ),
         ] {
             assert!(!source.contains('@'));
@@ -226,6 +241,56 @@ fn joint_no_copy(graph: &Graph) -> LLIRGraph {
         },
     )
     .expect("both state commits must be reachable in one extracted program")
+}
+
+fn default_llirs(graph: &Graph) -> Vec<LLIRGraph> {
+    let space = graph.search_space().expect("search space was built");
+    let bucket = space.buckets.first().expect("one unbucketed search space");
+    let mut extractor = LlirExtractor::new(&bucket.egraph, &space.ops);
+    extractor
+        .stable_indexed_generation(8)
+        .into_iter()
+        .map(|genome| {
+            unroll_packed_llir(extractor.extract_indexed_packed(&genome, &space.custom_ops))
+        })
+        .collect()
+}
+
+#[test]
+fn default_priority_fallback_changes_state_commit_without_changing_scan() {
+    let normal = default_llirs(&slotted_graph(false));
+    assert_eq!(
+        normal.len(),
+        4,
+        "baseline plus three present priority tiers"
+    );
+    let baseline_names = llir_kernel_names(&normal[0]);
+    assert_eq!(
+        baseline_names
+            .iter()
+            .filter(|&&name| name == "ScatterNoCopy")
+            .count(),
+        2
+    );
+    assert!(baseline_names.contains(&"PackedDeltaRegisters"));
+    plan_static_llir_resources(&normal[0], &slotted_graph(false).dyn_map).unwrap();
+
+    let observed_graph = slotted_graph(true);
+    let observed = default_llirs(&observed_graph);
+    let rejected_names = llir_kernel_names(&observed[0]);
+    assert_eq!(
+        rejected_names
+            .iter()
+            .filter(|&&name| name == "ScatterNoCopy")
+            .count(),
+        2
+    );
+    assert!(plan_static_llir_resources(&observed[0], &observed_graph.dyn_map).is_err());
+
+    let fallback_names = llir_kernel_names(&observed[1]);
+    assert!(!fallback_names.contains(&"ScatterNoCopy"));
+    assert!(fallback_names.contains(&"PackedDeltaRegisters"));
+    plan_static_llir_resources(&observed[1], &observed_graph.dyn_map).unwrap();
 }
 
 #[test]

@@ -693,7 +693,7 @@ fn elementwise_init_expr(expr: &str, dtype: DType, cuda_ty: &str) -> String {
 }
 
 /// `locals` are already widened to compute form by `elementwise_value`.
-fn elementwise_body(op: &str, locals: &[&str]) -> String {
+fn elementwise_body(op: &str, locals: &[&str], dtype: DType) -> String {
     let a = || locals[0].to_string();
     let b = || locals[1].to_string();
     match op {
@@ -713,6 +713,12 @@ fn elementwise_body(op: &str, locals: &[&str]) -> String {
         // Dtype conversion happens in the widen (input) / round (store)
         // helpers, so the cast body is the identity.
         "Cast" => a(),
+        // A fused region is unioned with a graph whose elementwise nodes are
+        // separate kernels. Preserve each F32 node's rounding boundary so
+        // NVRTC cannot reassociate a Mul -> Add chain into an FMA merely
+        // because the compiler selected a larger region in another bucket.
+        "Add" if dtype == DType::F32 => format!("__fadd_rn({}, {})", a(), b()),
+        "Mul" if dtype == DType::F32 => format!("__fmul_rn({}, {})", a(), b()),
         "Add" => format!("{} + {}", a(), b()),
         "Mul" => format!("{} * {}", a(), b()),
         other => panic!("region_codegen: unknown elementwise op {other}"),
@@ -1143,7 +1149,7 @@ pub(crate) fn region_kernel_source(
         let inputs_ref: Vec<&str> = input_locals.iter().map(|s| s.as_str()).collect();
 
         let elem_ty = cuda_dtype(elem_dtype);
-        let expr = elementwise_body(elem_name, &inputs_ref);
+        let expr = elementwise_body(elem_name, &inputs_ref, elem_dtype);
         let expr = elementwise_init_expr(&expr, elem_dtype, elem_ty);
         body.push_str(&format!(
             "        {elem_ty} {name} = {expr};\n",

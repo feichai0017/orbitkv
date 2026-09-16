@@ -10,6 +10,5 @@ extern "C" __global__ void swiglu_k(
     const {ty}* xr = x + row * (2 * I);
     float g = (float)xr[col];
     float u = (float)xr[I + col];
-    float silu = g / (1.0f + expf(-g));
-    out[row * I + col] = ({ty})(silu * u);
+    {body}
 }}

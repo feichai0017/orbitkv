@@ -26,6 +26,10 @@ use orbitkv::{EngineFixedStatePlan, StatePoolIdentity};
 
 mod output;
 pub use output::DecoderOutputRows;
+mod layer_graph;
+#[cfg(test)]
+use layer_graph::DecoderLayerDiagnosticBoundary;
+use layer_graph::DecoderLayerGraphBuilder;
 mod runtime_input;
 use runtime_input::{validate_stateful_step, validate_step};
 mod artifact;
@@ -40,7 +44,9 @@ pub use residency::{
     PreparedDecoderBucket,
 };
 mod tuning;
-pub use tuning::{DecoderCompileConfig, DecoderTuningProfile};
+pub use tuning::{
+    AttentionProviderPolicy, CompilePolicy, DecoderCompileConfig, DecoderTuningProfile,
+};
 mod config;
 mod import;
 pub use config::{
@@ -202,6 +208,8 @@ pub struct DecoderOutputs {
     pub sampled_tokens: GraphTensor,
     cache: Vec<DecoderCacheState>,
     fixed_states: Box<[FixedStateGraphResource]>,
+    #[cfg(test)]
+    layer_hidden: Option<(usize, GraphTensor)>,
 }
 
 #[derive(Clone, Copy)]
@@ -247,6 +255,12 @@ pub struct StatefulDecoderDiagnosticOutput {
     pub fixed_states: Box<[FixedStateExecutionEvidence]>,
 }
 
+#[cfg(test)]
+pub(crate) struct DecoderLayerDiagnosticOutput {
+    pub(crate) hidden: Box<[f32]>,
+    pub(crate) fixed_states: Box<[FixedStateExecutionEvidence]>,
+}
+
 /// Persistent K/V update behavior selected for one dynamic-shape bucket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CacheUpdateBucket {
@@ -289,16 +303,6 @@ struct DecoderClassDimensions {
     cache_slots: usize,
 }
 
-struct DecoderLayerGraphBuilder<'a> {
-    graph: &'a mut Graph,
-    config: &'a DecoderConfig,
-    weights: DecoderWeightFeatures,
-    plan: &'a ExecutorPlan,
-    inputs: &'a DecoderInputs,
-    dimensions: DecoderDimensions,
-    class_dimensions: &'a [DecoderClassDimensions],
-}
-
 impl DecoderGraph {
     /// Returns the persistent K/V inputs for every token-attention layer.
     ///
@@ -339,6 +343,63 @@ impl DecoderGraph {
         fixed_state_registrations: &[FixedStateArenaRegistration],
         output_rows: DecoderOutputRows,
     ) -> Result<Self, DecoderError> {
+        Self::build_impl(
+            graph,
+            config,
+            weights,
+            plan,
+            arenas,
+            fixed_state_registrations,
+            output_rows,
+            #[cfg(test)]
+            None,
+            #[cfg(test)]
+            DecoderLayerDiagnosticBoundary::Output,
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    fn build_with_layer_output(
+        graph: &mut Graph,
+        config: &DecoderConfig,
+        weights: DecoderWeightFeatures,
+        plan: &ExecutorPlan,
+        arenas: &[ExecutorArena],
+        fixed_state_registrations: &[FixedStateArenaRegistration],
+        output_rows: DecoderOutputRows,
+        layer: usize,
+        boundary: DecoderLayerDiagnosticBoundary,
+    ) -> Result<Self, DecoderError> {
+        Self::build_impl(
+            graph,
+            config,
+            weights,
+            plan,
+            arenas,
+            fixed_state_registrations,
+            output_rows,
+            Some(layer),
+            boundary,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_impl(
+        graph: &mut Graph,
+        config: &DecoderConfig,
+        weights: DecoderWeightFeatures,
+        plan: &ExecutorPlan,
+        arenas: &[ExecutorArena],
+        fixed_state_registrations: &[FixedStateArenaRegistration],
+        output_rows: DecoderOutputRows,
+        #[cfg(test)] diagnostic_layer: Option<usize>,
+        #[cfg(test)] diagnostic_boundary: DecoderLayerDiagnosticBoundary,
+    ) -> Result<Self, DecoderError> {
+        #[cfg(test)]
+        if diagnostic_layer.is_some_and(|layer| layer >= config.layers) {
+            return Err(DecoderError::InvalidGeometry("diagnostic layer"));
+        }
         let topology = DecoderTopology::compile(config, plan)?;
         let (dimensions, class_dimensions) = validate_plan(config, plan, arenas, &topology)?;
         let inputs = decoder_inputs(graph, &class_dimensions, dimensions);
@@ -362,7 +423,7 @@ impl DecoderGraph {
                 )
             })
             .transpose()?;
-        let (hidden, cache) = DecoderLayerGraphBuilder {
+        let layers = DecoderLayerGraphBuilder {
             graph,
             config,
             weights,
@@ -370,8 +431,34 @@ impl DecoderGraph {
             inputs: &inputs,
             dimensions,
             class_dimensions: &class_dimensions,
+            #[cfg(test)]
+            diagnostic_boundary,
         }
-        .build(&topology, &mut fixed_state, hidden)?;
+        .build(
+            &topology,
+            &mut fixed_state,
+            hidden,
+            #[cfg(test)]
+            diagnostic_layer,
+        )?;
+        #[cfg(test)]
+        if let Some(layer_hidden) = layers.layer_hidden {
+            return Ok(Self {
+                inputs,
+                outputs: DecoderOutputs {
+                    logits: layer_hidden.1,
+                    sampled_tokens: layer_hidden.1,
+                    cache: layers.cache,
+                    fixed_states: fixed_state.map_or_else(
+                        || Vec::new().into_boxed_slice(),
+                        |states| Vec::from(states.finish().resources()).into_boxed_slice(),
+                    ),
+                    layer_hidden: Some(layer_hidden),
+                },
+                class_dimensions,
+            });
+        }
+        let hidden = layers.hidden;
         let norm = DecoderNorm::new(
             graph,
             config,
@@ -397,119 +484,16 @@ impl DecoderGraph {
             outputs: DecoderOutputs {
                 logits,
                 sampled_tokens,
-                cache,
+                cache: layers.cache,
                 fixed_states: fixed_state.map_or_else(
                     || Vec::new().into_boxed_slice(),
                     |states| Vec::from(states.finish().resources()).into_boxed_slice(),
                 ),
+                #[cfg(test)]
+                layer_hidden: None,
             },
             class_dimensions,
         })
-    }
-}
-
-impl DecoderLayerGraphBuilder<'_> {
-    fn build(
-        &mut self,
-        topology: &DecoderTopology,
-        fixed_state: &mut Option<GatedDeltaStateGraph>,
-        mut hidden: GraphTensor,
-    ) -> Result<(GraphTensor, Vec<DecoderCacheState>), DecoderError> {
-        let mut cache = Vec::with_capacity(topology.token_layers().len());
-        for layer_index in 0..self.config.layers {
-            let layer = u32::try_from(layer_index)
-                .map_err(|_| DecoderError::InvalidGeometry("layer index"))?;
-            match topology
-                .layer(layer_index)
-                .ok_or(DecoderError::UnsupportedPlan)?
-            {
-                topology::DecoderLayerState::TokenKv { class_id } => {
-                    let (next, state) = self.token_layer(layer, class_id, &hidden)?;
-                    hidden = next;
-                    cache.push(state);
-                }
-                topology::DecoderLayerState::GatedDelta { .. } => {
-                    let envelope = DecoderLayerEnvelope::new(self.graph, self.config, layer_index);
-                    let normalized = envelope.state_input(&hidden);
-                    let state_output = fixed_state
-                        .as_mut()
-                        .ok_or(DecoderError::UnsupportedPlan)?
-                        .apply_packed_core(
-                        self.graph,
-                        self.config,
-                        layer,
-                        &normalized,
-                        self.inputs.query_indptr,
-                    )?;
-                    hidden = envelope.finish(&hidden, state_output);
-                }
-            }
-        }
-        Ok((hidden, cache))
-    }
-
-    fn token_layer(
-        &mut self,
-        layer: u32,
-        class_id: u16,
-        hidden: &GraphTensor,
-    ) -> Result<(GraphTensor, DecoderCacheState), DecoderError> {
-        let class = self
-            .plan
-            .classes
-            .get(usize::from(class_id))
-            .filter(|class| class.class_id == class_id)
-            .ok_or(DecoderError::UnsupportedPlan)?;
-        let dimensions = self
-            .class_dimensions
-            .get(usize::from(class_id))
-            .filter(|dimensions| dimensions.class_id == class_id)
-            .ok_or(DecoderError::UnsupportedPlan)?;
-        let inputs = self
-            .inputs
-            .classes
-            .get(usize::from(class_id))
-            .filter(|inputs| inputs.class_id == class_id)
-            .ok_or(DecoderError::UnsupportedPlan)?;
-        let cache = |graph: &mut Graph, component: &str| {
-            graph
-                .named_tensor(
-                    format!("kv.{layer}.{component}"),
-                    (dimensions.cache_slots, self.dimensions.kv_width),
-                )
-                .persist()
-                .as_dtype(DType::Bf16)
-        };
-        let key = cache(self.graph, "key");
-        let value = cache(self.graph, "value");
-        let block = TokenAttentionLayer::new(self.graph, self.config, self.weights, layer as usize);
-        let (hidden, key_update, value_update) = block.forward(
-            &TokenAttentionInputs {
-                hidden,
-                positions: &self.inputs.positions,
-                write_slots: &inputs.write_slots,
-                metadata: &inputs.attention,
-                k_cache: &key,
-                v_cache: &value,
-            },
-            class,
-            self.config,
-            self.dimensions,
-            *dimensions,
-        )?;
-        Ok((
-            hidden,
-            DecoderCacheState {
-                binding: KvCacheBinding {
-                    class_id,
-                    layer,
-                    key,
-                    value,
-                },
-                key_update: key_update.output(),
-                value_update: value_update.output(),
-            },
-        ))
     }
 }
 
@@ -593,6 +577,70 @@ impl CompiledDecoder {
             token_ids: output.token_ids,
             logits,
             fixed_states: output.fixed_states,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn execute_with_fixed_states_and_layer_outputs(
+        &mut self,
+        step: DecoderStep<'_>,
+        states: &[DecoderFixedStateStep<'_>],
+    ) -> Result<DecoderLayerDiagnosticOutput, DecoderError> {
+        validate_stateful_step(step, states)?;
+        validate_step(
+            step,
+            self.compile,
+            &self.decoder.class_dimensions,
+            self.page_tokens,
+            self.vocabulary_size,
+        )?;
+        let Some((_, hidden)) = self.decoder.outputs.layer_hidden else {
+            return Err(DecoderError::UnsupportedExecution(
+                "decoder layer-output diagnostics",
+            ));
+        };
+        let prepared = self
+            .fixed_state
+            .as_ref()
+            .ok_or(DecoderError::UnsupportedExecution(
+                "fixed-state decoder step",
+            ))?
+            .arenas
+            .prepare_batch(states.iter().map(|state| (state.request_id, state.states)))?;
+        self.prepare_graph(step)?;
+        let initialized = prepared.initialize()?;
+        let fixed_state = self
+            .fixed_state
+            .as_ref()
+            .ok_or(DecoderError::UnsupportedExecution(
+                "fixed-state decoder step",
+            ))?;
+        let ready =
+            initialized.upload_destination_slots(&mut self.runtime, &fixed_state.graph_bindings)?;
+        self.validate_input_allocations()?;
+        let pending = ready.complete_after(
+            &mut self.runtime,
+            &self.graph,
+            &fixed_state.runtime_bindings,
+        )?;
+        let hidden = match hidden.dtype {
+            DType::Bf16 => self
+                .runtime
+                .get_bf16(hidden)
+                .into_iter()
+                .map(half::bf16::to_f32)
+                .collect::<Vec<_>>(),
+            DType::F32 => self.runtime.get_f32(hidden),
+            _ => {
+                return Err(DecoderError::UnsupportedExecution(
+                    "decoder layer-output diagnostic dtype",
+                ));
+            }
+        }
+        .into_boxed_slice();
+        Ok(DecoderLayerDiagnosticOutput {
+            hidden,
+            fixed_states: pending.wait()?,
         })
     }
 
@@ -1121,7 +1169,7 @@ fn decoder_inputs(
 }
 
 mod block;
-use block::{DecoderLayerEnvelope, DecoderNorm, TokenAttentionInputs, TokenAttentionLayer};
+use block::DecoderNorm;
 
 fn token_embedding(table: &GraphTensor, tokens: &GraphTensor, hidden: usize) -> GraphTensor {
     let count = tokens.dims1();

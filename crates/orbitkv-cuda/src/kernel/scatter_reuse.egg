@@ -55,6 +55,8 @@
       ((let ?nocopy (Op (KernelScatterNoCopy ?ds ?dst ?is ?istr ?ss ?os ?dt)
                        (ICons ?dest (ICons ?indexes (ICons ?src (INil))))))
        (union ?scatter ?nocopy)
-       (set (dtype ?nocopy) ?dty))
+       (set (dtype ?nocopy) ?dty)
+       (set (default-priority
+          (KernelScatterNoCopy ?ds ?dst ?is ?istr ?ss ?os ?dt)) 10))
       :ruleset cuda_scatter_reuse
       :name "scatter to scatter-no-copy with exclusive destination")

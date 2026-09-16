@@ -84,6 +84,9 @@
             (ICons ?next (INil))))))
         (union ?commit ?in_place)
         (set (dtype ?in_place) (F32))
+        (set (default-priority
+            (KernelScatterNoCopy ?arena_shape ?arena_stride ?index_shape
+                ?index_stride ?source_stride ?arena_out_stride (F32))) 10)
     )
     :ruleset kernel_specialize
     :name "commit delta state to gathered arena slots"

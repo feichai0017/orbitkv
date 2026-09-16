@@ -107,19 +107,23 @@ impl AttentionProviderCapabilities {
     /// Equal query/request expressions prove decode-only eligibility for the
     /// semantic contract, which requires nonempty queries for each request.
     pub(crate) fn eligibility_rules(&self) -> Vec<Rule> {
-        let mut rules = vec![
-            Rule::raw(format!(
-                include_str!("attention/target.egg.in"),
-                provider = self.name,
-                minimum_major = self.compute_majors.start(),
-                maximum_major = self.compute_majors.end(),
-            )),
-            Rule::raw(format!(
-                include_str!("attention/causal_window.egg.in"),
-                i32::MAX,
-                self.name,
-            )),
-        ];
+        let mut rules = ["all", self.name]
+            .map(|policy| {
+                Rule::raw(format!(
+                    include_str!("attention/target.egg.in"),
+                    provider = self.name,
+                    policy = policy,
+                    minimum_major = self.compute_majors.start(),
+                    maximum_major = self.compute_majors.end(),
+                ))
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        rules.push(Rule::raw(format!(
+            include_str!("attention/causal_window.egg.in"),
+            i32::MAX,
+            self.name,
+        )));
         for (index, kernel) in self.kernels.iter().enumerate() {
             for &(query_key_dim, value_dim) in kernel.head_dimensions {
                 let page_guard = match kernel.page_sizes {

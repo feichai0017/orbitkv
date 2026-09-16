@@ -1,4 +1,5 @@
 {
+  "compile_policy": "tune",
   "batch_sizes": [
     1,
     8
@@ -15,5 +16,6 @@
   "search_time_limit_ms": 1800000,
   "maximum_buckets": 16,
   "enable_shared_fp8_quantization": false,
+  "attention_provider": "flashattention",
   "hotspot_candidates": 32
 }

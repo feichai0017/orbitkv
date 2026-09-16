@@ -28,6 +28,9 @@
             (ICons ?arena (ICons ?indices (ICons ?next_history (INil))))))
         (union ?commit ?in_place)
         (set (dtype ?in_place) (Bf16))
+        (set (default-priority
+            (KernelScatterNoCopy ?arena_shape ?arena_stride ?index_shape
+                ?index_stride ?source_stride ?arena_out_stride (Bf16))) 10)
     )
     :ruleset kernel_specialize
     :name "commit packed convolution state to selected arena slots"
@@ -65,6 +68,9 @@
             (ICons ?arena (ICons ?indices (ICons ?next_state (INil))))))
         (union ?commit ?in_place)
         (set (dtype ?in_place) (F32))
+        (set (default-priority
+            (KernelScatterNoCopy ?arena_shape ?arena_stride ?index_shape
+                ?index_stride ?source_stride ?arena_out_stride (F32))) 10)
     )
     :ruleset kernel_specialize
     :name "commit packed recurrent state to selected arena slots"

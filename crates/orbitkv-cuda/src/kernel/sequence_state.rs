@@ -11,7 +11,11 @@ use orbitkv_compiler::{
 };
 
 mod convolution;
+mod delta_gather;
+mod delta_registers;
 mod delta_scan;
+pub use delta_gather::KernelDeltaGather;
+pub use delta_registers::KernelDeltaRegisters;
 #[cfg(test)]
 #[path = "../../tests/unit/kernel/sequence_state/mod.rs"]
 mod tests;

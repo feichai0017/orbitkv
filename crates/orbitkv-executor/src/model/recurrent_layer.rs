@@ -332,7 +332,11 @@ impl GatedDeltaCore {
                 key,
                 value,
                 log_decay,
-                update_gate: projection.update_gate_logits.sigmoid(),
+                update_gate: projection
+                    .update_gate_logits
+                    .sigmoid()
+                    .cast(DType::Bf16)
+                    .cast(DType::F32),
                 state: *previous_recurrent_state,
                 query_indptr,
             },
@@ -342,12 +346,27 @@ impl GatedDeltaCore {
                 key_width: self.geometry.key_width,
                 value_width: self.geometry.value_width,
                 normalization_epsilon: 1e-6,
+                round_normalized_qk_to_bf16: true,
+                // The checkpoint declares mamba_ssm_dtype=float32 and the
+                // manager allocates four bytes per recurrent-state element.
+                // Rounding here would add an artificial BF16 boundary after
+                // every submission, making 2+2 prompt chunks differ from a
+                // single four-token prefill.
+                round_final_state_to_bf16: false,
             },
         );
-        let values = recurrent.values.std_norm(2, self.normalization_epsilon)
+        let normalized = recurrent
+            .values
+            .cast(DType::Bf16)
+            .cast(DType::F32)
+            .std_norm(2, self.normalization_epsilon)
+            .cast(DType::Bf16);
+        let weighted = normalized
             * self
                 .output_norm
-                .expand_lhs([tokens, Expression::from(self.geometry.value_heads)])
+                .cast(DType::Bf16)
+                .expand_lhs([tokens, Expression::from(self.geometry.value_heads)]);
+        let values = weighted.cast(DType::F32)
             * projection
                 .output_gate
                 .split_dims(1, self.geometry.value_width)

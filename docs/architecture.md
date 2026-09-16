@@ -3,7 +3,7 @@
 OrbitKV is a state-aware inference engine in Rust. It combines a standalone
 state manager, an integrated tensor compiler, a CUDA backend and an optional
 OpenAI-compatible server. [Qwen3.8-27B-FP8](capability-matrix.md) is the current
-validated model on one H20.
+experimental text target on one H20; full numerical qualification remains open.
 
 ## Workspace boundaries
 
@@ -28,7 +28,7 @@ in this repository; see [maintenance](compiler-maintenance.md) and
    quantization and tensor metadata. Unsupported or contradictory inputs fail
    before weight loading. Topology assigns each layer to token KV or a matching
    recurrent/convolution state pair.
-2. **Compile state.** The manager derives a `RuntimeManifest`. Stable arena
+2. **Plan state.** The manager derives a `RuntimeManifest`. Stable arena
    registrations join backend-neutral `StateLayoutFacts` to produce compiler
    facts and typed bindings. Persistent writes must alias their registered state.
 3. **Build the graph.** Portable attention, block-scaled linear and recurrent
@@ -47,6 +47,66 @@ in this repository; see [maintenance](compiler-maintenance.md) and
 The [compiler](compiler.md), [search policy](search-coverage.md),
 [weight loader](weight-loading.md) and [artifact contract](module-artifacts.md)
 describe these boundaries in detail.
+
+## Simplification target
+
+Keep one execution path and two compilation policies: a deterministic default
+and explicit measured tuning. The first implementation now exists:
+`CompilePolicy::Default` takes a bounded, stable extraction sequence, applies
+the normal alias/provider/resource checks, validates the retained bucket set and
+emits the same replayable artifact without executing candidates for ranking.
+`CompilePolicy::Tune` retains the existing whole-program measured search while
+the replacement is qualified. A one-candidate Tune budget is deliberately not
+treated as Default.
+
+```mermaid
+flowchart LR
+    M[Model and tensor semantics] --> G[Semantic graph]
+    S[State plan and arena bindings] --> G
+    G --> E[Guarded egglog lowering and region alternatives]
+    E --> D[Deterministic default selection]
+    D --> A[Validated execution artifact]
+    D --> T[Optional local tuning]
+    T --> A
+    A --> R[One CUDA runtime]
+```
+
+The state manager supplies legal layouts, bindings and lifetime constraints; it
+does not need a second GPU compiler or an online layout search. Egglog derives
+implementation alternatives from explicit legality rules. Generated pointwise/normalization
+regions and mature GEMM, attention and recurrent kernels share the backend.
+Both policies reuse the same lowering, resource/alias validation, capture,
+module cache and artifact loader. The policy is serialized in the executor
+tuning profile and therefore enters artifact identity. The stable default has a
+fixed eight-candidate legality fallback per bucket; this is not a performance
+search and stops at the first aggregate-valid bucket set. Reusable provider
+preparation occurs before readiness; runtime metadata/capture refresh follows
+the existing dependency contracts.
+
+The generic compiler keeps `CompileOptions::default()` on Tune for compatibility
+with existing low-level callers. Decoder profiles default to Default. Published
+serving remains explicitly Tune until the deterministic Qwen artifact passes
+the unchanged serial, C8 and changing-batch gates.
+
+The [search policy](search-coverage.md#simplification-target) owns the rollout and
+acceptance criteria. Keep the seven crate boundaries: removing unused builders
+and duplicate search code reduces maintenance without combining state ownership,
+model semantics, device execution and request scheduling in one component.
+
+Production model construction now keeps layer traversal in `model/layer_graph.rs`
+and compilation lifecycle steps in `model/compiler.rs`. Attention and MLP math
+have one shared implementation; test builds may retain named intermediate
+boundaries, while release builds contain neither the diagnostic boundary enum nor
+the observed tensors and branches. This keeps the numerical probes available
+without turning them into production execution policy.
+
+Cleanup follows an evidence rule: retain state ownership and lifecycle proofs,
+portable operator semantics, guarded egglog alternatives, mature provider
+adapters, deterministic Default selection, strict artifacts and the CUDA runtime.
+Remove duplicate model wrappers, unreachable helpers and test instrumentation
+from release builds. The existing measured Tune implementation stays only as a
+temporary comparison arm until local tuning and a complete Default artifact are
+qualified; code that still supplies that comparison is not classified as dead.
 
 ## Request execution
 

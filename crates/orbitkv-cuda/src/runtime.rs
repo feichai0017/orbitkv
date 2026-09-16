@@ -5501,7 +5501,7 @@ impl<O: IntoEgglogOp> Runtime for CudaRuntimeImpl<O> {
         options: &CompileOptions,
         rng: &mut dyn orbitkv_compiler::prelude::RngCore,
     ) {
-        self.search_and_load(space, dyn_map, options, rng);
+        self.compile_and_load(space, dyn_map, options, rng);
     }
 
     fn selected_schedule(&self) -> Option<orbitkv_compiler::graph::SelectedSchedule> {
@@ -6052,6 +6052,11 @@ impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
             })
             .collect_vec();
         Self::aggregate_host_device_memory(&plans, &[]).unwrap().0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_has_profiled_candidate(&self) -> bool {
+        self.last_profile_device_duration.is_some()
     }
 
     #[cfg(test)]

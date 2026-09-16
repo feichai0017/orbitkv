@@ -2,3 +2,5 @@
 (relation cuda-attention-causal-window (AttentionMask f64))
 (relation cuda-attention-provider (String String i64 f64))
 (relation cuda-attention-target (String))
+(function cuda-attention-policy () String :merge new)
+(set (cuda-attention-policy) "all")

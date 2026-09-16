@@ -8,6 +8,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::{Duration, Instant};
 
+use orbitkv_compiler::egglog_utils::LlirExtractor;
 use orbitkv_compiler::graph::CompileOptions;
 use orbitkv_compiler::op::IntoEgglogOp;
 use orbitkv_compiler::prelude::*;
@@ -22,6 +23,114 @@ mod trace;
 use trace::SearchTrace;
 
 impl<O: IntoEgglogOp> CudaRuntimeImpl<O> {
+    const DEFAULT_EXTRACTION_ATTEMPTS: usize = 8;
+
+    pub(crate) fn compile_and_load(
+        &mut self,
+        space: &SearchSpace,
+        dyn_map: &DynMap,
+        options: &CompileOptions,
+        rng: &mut dyn orbitkv_compiler::prelude::RngCore,
+    ) {
+        match options.policy {
+            orbitkv_compiler::graph::CompilePolicy::Default => {
+                self.default_and_load(space, dyn_map, options);
+            }
+            orbitkv_compiler::graph::CompilePolicy::Tune => {
+                self.search_and_load(space, dyn_map, options, rng);
+            }
+        }
+    }
+
+    /// Deterministic production lowering. It tries a bounded stable sequence
+    /// and applies the same per-bucket and aggregate CUDA legality/resource
+    /// checks as tuned finalists, but never profiles or ranks candidates.
+    fn default_and_load(
+        &mut self,
+        space: &SearchSpace,
+        dyn_map: &DynMap,
+        options: &CompileOptions,
+    ) {
+        let _stage = tracing::info_span!(target: "orbitkv::stage", "cuda.default_lower").entered();
+        let eligibility = space
+            .custom_ops
+            .iter()
+            .map(|op| {
+                op.is_lowered()
+                    && op
+                        .to_dialect::<dyn crate::providers::HostOp>()
+                        .is_none_or(|host| host.deployment_eligible())
+            })
+            .collect::<Vec<_>>();
+        let contexts = space.bucket_contexts(dyn_map);
+        let started_at = Instant::now();
+        let mut finalists = Vec::with_capacity(contexts.len());
+        for ctx in &contexts {
+            let mut extractor = LlirExtractor::new(ctx.egraph(), &space.ops);
+            extractor
+                .set_custom_op_eligibility(&eligibility)
+                .unwrap_or_else(|reason| {
+                    panic!("default CUDA lowering is not executable: {reason}")
+                });
+            let ranked = extractor
+                .stable_indexed_generation(Self::DEFAULT_EXTRACTION_ATTEMPTS)
+                .into_iter()
+                .enumerate()
+                .collect();
+            finalists.push(Finalists::new(ranked, space, ctx, options, started_at));
+        }
+        let mut lattice = BucketLattice::new(
+            finalists,
+            |ranks: &[usize]| ranks.iter().copied().sum(),
+            options,
+            started_at,
+        );
+        loop {
+            let Some(set) = lattice.next(&mut |pending, ctx| {
+                self.compile_and_validate_finalist_candidate(&pending.llir, &pending.dyn_map, ctx)
+                    .map(|_| ())
+            }) else {
+                panic!(
+                    "default CUDA lowering failed: {}",
+                    lattice.failure_message()
+                );
+            };
+            let refs = lattice.llirs(&set);
+            let validated = self.compile_and_validate_bucket_set(&space.dim_buckets, &refs);
+            drop(refs);
+            match validated {
+                Ok(validated) => {
+                    let selected = lattice.select_with_genomes(set);
+                    self.selected_schedule =
+                        orbitkv_compiler::graph::SelectedSchedule::from_search(space, &selected);
+                    self.install_validated_bucket_set(&space.dim_buckets, validated)
+                        .unwrap_or_else(|error| {
+                            panic!("failed to install default CUDA program: {error}")
+                        });
+                    if options.search_log_enabled() {
+                        println!(
+                            "   Default  selected {} deterministic bucket program(s) without GPU timing",
+                            selected.len()
+                        );
+                    }
+                    return;
+                }
+                Err(error) => lattice.reject(
+                    set,
+                    format!("aggregate bucket resource reject: {error}"),
+                    &mut |pending, ctx| {
+                        self.compile_and_validate_finalist_candidate(
+                            &pending.llir,
+                            &pending.dyn_map,
+                            ctx,
+                        )
+                        .map(|_| ())
+                    },
+                ),
+            }
+        }
+    }
+
     pub(crate) fn search_and_load(
         &mut self,
         space: &SearchSpace,

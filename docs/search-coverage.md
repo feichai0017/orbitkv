@@ -6,6 +6,47 @@ resource contracts, prepares them and measures executable graphs on the GPU.
 Deployment-mode measurement chooses among retained finalists. Neither sampling
 nor the executor rewrites extracted LLIR to force a provider.
 
+## Simplification target
+
+Status: first implementation is present. Decoder profiles default to
+`CompilePolicy::Default`; existing benchmark/search profiles explicitly select
+`CompilePolicy::Tune`. Generic `CompileOptions::default()` remains Tune during
+the migration so existing compiler tests and non-model callers do not silently
+change behavior.
+
+| Policy | Intended work | Shared output |
+| --- | --- | --- |
+| Default | Up to eight deterministic diagonal extractions per bucket, stable cycle repair, existing custom-op admission, per-bucket legality checks and aggregate retained-resource validation; first legal set wins, with no candidate execution or GPU timing | Validated `SelectedSchedule`, module images and the existing runtime |
+| Tune | Existing measured whole-program search, including initial coverage, hotspot exploration, mutation, deployment reranking and bucket-lattice fallback | The same artifact and installation path |
+
+The default selector must resolve equivalent choices from semantic structure and
+explicit rule facts, rather than incidental e-class IDs, checkpoint names or a
+Rust graph-replacement pass. Tuning can change a connected group such as shared
+FP8 preparation plus its consumers; it must preserve unrelated decisions. Local
+operator timing only prioritizes trials. Accept a winner on the complete CUDA
+Graph deployment, including conversions, copies and provider preparation costs
+where they recur during execution. Cold compilation remains a separate metric.
+
+The first migration step is complete: stable extraction, aggregate validation,
+artifact generation/replay and an H20 two-bucket smoke pass without a profiling
+duration. Next qualify a complete Qwen default artifact, then add a local-only
+Tune policy that starts from that artifact instead of population search. Existing
+whole-program Tune remains the explicit comparison arm until the replacement
+covers its useful cases; only then remove population/restart machinery.
+
+Keep numerical contracts, required aliases, mutation ordering, physical-layout
+checks, resource limits, aggregate bucket admission and strict artifact checks.
+State planning continues to select one validated persistent realization. General
+KV-layout search and persistent megakernels are outside this simplification.
+
+Bucket construction now always splits the singleton request interval from larger
+batches, including when the tuning profile omits explicit batch breakpoints. This
+prevents the known `query_tokens=1, requests=[1,8]` upper geometry. General
+relational interval constraints remain future work; the feasible correlated
+representatives and provider/resource checks continue to fail closed.
+
+The sections below describe the implementation that exists today.
+
 ## Stable snapshot order
 
 The sampler sorts class IDs and each class's admitted node IDs before consuming

@@ -8,6 +8,7 @@ use orbitkv::{
 };
 
 mod compilation;
+mod layer_trace;
 mod tuning;
 
 #[test]

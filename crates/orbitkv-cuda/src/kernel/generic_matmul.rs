@@ -89,6 +89,8 @@ impl EgglogOp for GenericMatmul {
             // GenericMatmul e-class is therefore the witness that this contraction
             // has the backend matmul accumulator contract. A future first-class
             // contraction marker could make that provenance explicit.
+            // For F32, GenericMatmul deliberately preserves the decomposed
+            // path's explicit product rounding and Kahan accumulation.
             //
             // Both forms must be covered because cleanup can observe either the
             // original HLIR Sum or its CUDA KernelSum lowering depending on rule

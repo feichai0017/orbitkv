@@ -4,6 +4,8 @@ use orbitkv_cuda::runtime::CudaRuntime;
 
 use super::*;
 
+mod packed;
+
 fn class() -> FixedStateClass {
     FixedStateClass {
         state_id: 4,

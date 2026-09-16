@@ -152,3 +152,113 @@ fn indexed_coverage_uses_the_same_genomes_after_map_reallocation() {
         .collect::<Vec<_>>();
     assert_eq!(named_a, named_b);
 }
+
+#[test]
+fn stable_generation_ignores_map_and_candidate_order() {
+    let graph = fixture(false);
+    let reordered = fixture(true);
+    let first = LlirExtractor::new(&graph, &[]).stable_indexed_generation(8);
+    let second = LlirExtractor::new(&reordered, &[]).stable_indexed_generation(8);
+    let named_first = first
+        .iter()
+        .map(|genome| LlirExtractor::new(&graph, &[]).named_choices(genome))
+        .collect::<Vec<_>>();
+    let named_second = second
+        .iter()
+        .map(|genome| LlirExtractor::new(&reordered, &[]).named_choices(genome))
+        .collect::<Vec<_>>();
+    assert_eq!(named_first, named_second);
+    assert_eq!(
+        named_first.len(),
+        1,
+        "undeclared choices stay on one baseline"
+    );
+}
+
+fn priority_fixture(reverse: bool) -> SerializedEGraph {
+    let mut graph = fixture(reverse);
+    for (site, priority) in [(0, 10_i64), (1, 20_i64)] {
+        let kind_class = ClassId::from(format!("kind-{site}"));
+        let preferred_kind = NodeId::from(format!("kind-{site}-preferred"));
+        let fallback_kind = NodeId::from(format!("kind-{site}-fallback"));
+        graph
+            .enodes
+            .insert(preferred_kind.clone(), ("Preferred".into(), vec![]));
+        graph
+            .enodes
+            .insert(fallback_kind.clone(), ("Fallback".into(), vec![]));
+        graph
+            .node_to_class
+            .insert(preferred_kind.clone(), kind_class.clone());
+        graph
+            .node_to_class
+            .insert(fallback_kind.clone(), kind_class.clone());
+        graph.eclasses.insert(
+            kind_class.clone(),
+            ("OpKind".into(), vec![preferred_kind, fallback_kind]),
+        );
+
+        let class = ClassId::from(format!("site-{site}"));
+        let preferred = NodeId::from(format!("node-{site}-preferred-op"));
+        let fallback = NodeId::from(format!("node-{site}-fallback-op"));
+        graph
+            .enodes
+            .insert(preferred.clone(), ("Op".into(), vec![kind_class.clone()]));
+        graph
+            .enodes
+            .insert(fallback.clone(), ("Input".into(), vec![]));
+        graph.node_to_class.insert(preferred.clone(), class.clone());
+        graph.node_to_class.insert(fallback.clone(), class.clone());
+        graph
+            .eclasses
+            .insert(class, ("IR".into(), vec![fallback, preferred]));
+
+        let value_class = ClassId::from(format!("priority-value-{site}"));
+        let value = NodeId::from(priority.to_string());
+        graph
+            .enodes
+            .insert(value.clone(), (priority.to_string(), vec![]));
+        graph
+            .node_to_class
+            .insert(value.clone(), value_class.clone());
+        graph
+            .eclasses
+            .insert(value_class.clone(), ("i64".into(), vec![value]));
+        let fact = NodeId::from(format!("priority-fact-{site}"));
+        graph
+            .enodes
+            .insert(fact.clone(), ("default-priority".into(), vec![kind_class]));
+        graph.node_to_class.insert(fact, value_class);
+    }
+    graph
+}
+
+#[test]
+fn stable_generation_disables_declared_priority_tiers_only() {
+    let graph = priority_fixture(false);
+    let reordered = priority_fixture(true);
+    let first = LlirExtractor::new(&graph, &[]).stable_indexed_generation(8);
+    let second = LlirExtractor::new(&reordered, &[]).stable_indexed_generation(8);
+    let named = |graph: &SerializedEGraph, generation: &[crate::egglog_utils::IndexedChoiceSet]| {
+        generation
+            .iter()
+            .map(|genome| {
+                LlirExtractor::new(graph, &[])
+                    .named_choices(genome)
+                    .into_iter()
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = named(&graph, &first);
+    let second = named(&reordered, &second);
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 3, "baseline plus two declared fallback tiers");
+    assert_eq!(first[0]["site-0"], "node-0-preferred-op");
+    assert_eq!(first[0]["site-1"], "node-1-preferred-op");
+    assert_eq!(first[1]["site-0"], "node-0-fallback-op");
+    assert_eq!(first[1]["site-1"], "node-1-preferred-op");
+    assert_eq!(first[2]["site-0"], "node-0-fallback-op");
+    assert_eq!(first[2]["site-1"], "node-1-fallback-op");
+    assert_eq!(first[0]["site-2"], first[2]["site-2"]);
+}

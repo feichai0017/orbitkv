@@ -1,4 +1,5 @@
 {
+  "compile_policy": "tune",
   "batch_sizes": [1, 4, 8],
   "prefill_tokens": [8, 32, 128],
   "context_pages": [],

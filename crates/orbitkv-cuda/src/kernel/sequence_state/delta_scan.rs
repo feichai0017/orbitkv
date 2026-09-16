@@ -3,8 +3,13 @@ use std::sync::Arc;
 use cudarc::driver::{CudaFunction, CudaModule, CudaSlice, CudaStream};
 use orbitkv_compiler::{
     dtype::DType,
+    egglog_utils::{
+        api::SortClass,
+        base::{EXPRESSION, F64, I64},
+        extract_expr,
+    },
     op::{CustomOp, LLIROp},
-    prelude::{Expression, FxHashMap, FxHashSet, GraphTensor, Symbol},
+    prelude::{ENodeId, Expression, FxHashMap, FxHashSet, GraphTensor, SerializedEGraph, Symbol},
 };
 
 use super::{THREADS, compile_kernel, contiguous, render_source};
@@ -21,13 +26,15 @@ pub struct PackedDeltaScanPlan {
     pub query_indptr: GraphTensor,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PackedDeltaScanSpec {
     pub key_heads: usize,
     pub value_heads: usize,
     pub key_width: usize,
     pub value_width: usize,
     pub normalization_epsilon: f32,
+    pub round_normalized_qk_to_bf16: bool,
+    pub round_final_state_to_bf16: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -36,12 +43,24 @@ pub struct PackedDeltaScanOutput {
     pub state: GraphTensor,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct PackedDeltaScanKernel {
     pub tokens: Expression,
     pub requests: Expression,
     pub spec: PackedDeltaScanSpec,
 }
+
+pub(super) const GEOMETRY_FIELDS: [(&str, SortClass); 9] = [
+    ("tokens", EXPRESSION),
+    ("requests", EXPRESSION),
+    ("key_heads", I64),
+    ("value_heads", I64),
+    ("key_width", I64),
+    ("value_width", I64),
+    ("epsilon", F64),
+    ("round_qk", I64),
+    ("round_state", I64),
+];
 
 impl CustomOp for PackedDeltaScanKernel {
     fn to_llir_op(&self) -> LLIROp {
@@ -49,7 +68,18 @@ impl CustomOp for PackedDeltaScanKernel {
     }
 
     fn compiler_facts(&self, custom_op_id: usize) -> String {
-        format!("(packed-delta-scan-op {custom_op_id})")
+        format!(
+            "(packed-delta-scan-op {custom_op_id})\n(packed-delta-scan-geometry {custom_op_id} {} {} {} {} {} {} {:?} {} {})",
+            self.tokens.to_egglog(),
+            self.requests.to_egglog(),
+            self.spec.key_heads,
+            self.spec.value_heads,
+            self.spec.key_width,
+            self.spec.value_width,
+            f64::from(self.spec.normalization_epsilon),
+            i64::from(self.spec.round_normalized_qk_to_bf16),
+            i64::from(self.spec.round_final_state_to_bf16),
+        )
     }
 }
 
@@ -139,6 +169,27 @@ pub fn packed_delta_scan(
 }
 
 impl PackedDeltaScanKernel {
+    pub(super) fn extract_geometry<'a>(
+        egraph: &'a SerializedEGraph,
+        children: &[&'a ENodeId],
+        expressions: &mut FxHashMap<&'a ENodeId, Expression>,
+    ) -> Self {
+        let number = |index: usize| egraph.enodes[children[index]].0.parse::<usize>().unwrap();
+        Self {
+            tokens: extract_expr(egraph, children[0], expressions).unwrap(),
+            requests: extract_expr(egraph, children[1], expressions).unwrap(),
+            spec: PackedDeltaScanSpec {
+                key_heads: number(2),
+                value_heads: number(3),
+                key_width: number(4),
+                value_width: number(5),
+                normalization_epsilon: egraph.enodes[children[6]].0.parse::<f64>().unwrap() as f32,
+                round_normalized_qk_to_bf16: number(7) != 0,
+                round_final_state_to_bf16: number(8) != 0,
+            },
+        }
+    }
+
     pub(super) fn source(&self) -> String {
         let variables = self.all_dyn_vars();
         let (defines, _) = generate_dyn_dims_defines(&variables);
@@ -165,6 +216,14 @@ impl PackedDeltaScanKernel {
                 (
                     "@NORMALIZATION_EPSILON@",
                     format!("{:e}f", self.spec.normalization_epsilon),
+                ),
+                (
+                    "@ROUND_NORMALIZED_QK_TO_BF16@",
+                    self.spec.round_normalized_qk_to_bf16.to_string(),
+                ),
+                (
+                    "@ROUND_FINAL_STATE_TO_BF16@",
+                    self.spec.round_final_state_to_bf16.to_string(),
                 ),
             ],
         )

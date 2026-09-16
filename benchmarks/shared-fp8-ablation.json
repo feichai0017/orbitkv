@@ -1,4 +1,5 @@
 {
+  "compile_policy": "tune",
   "keep_best": 1,
   "enable_shared_fp8_quantization": true
 }

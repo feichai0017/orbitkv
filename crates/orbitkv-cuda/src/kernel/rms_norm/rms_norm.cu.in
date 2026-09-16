@@ -17,25 +17,15 @@ extern "C" __global__ void rms_norm_k(
     {ty}* yr = out + row * COLS;
 
     float partial = 0.0f;
-#if {cols} % 8 == 0
-    {{
-        const uint4* xv = (const uint4*)xr;
-        for (int c = tid; c < COLS / 8; c += {TPB}) {{
-            uint4 chunk = xv[c];
-            const {ty}* xe = (const {ty}*)&chunk;
-            #pragma unroll
-            for (int e = 0; e < 8; e++) {{
-                float v = (float)xe[e];
-                partial += v * v;
-            }}
-        }}
-    }}
-#else
+    float comp = 0.0f;
     for (int i = tid; i < COLS; i += {TPB}) {{
         float v = (float)xr[i];
-        partial += v * v;
+        float product = __fmul_rn(v, v);
+        float y = __fsub_rn(product, comp);
+        float next = __fadd_rn(partial, y);
+        comp = __fsub_rn(__fsub_rn(next, partial), y);
+        partial = next;
     }}
-#endif
 
     #pragma unroll
     for (int s = WARP_SIZE / 2; s > 0; s /= 2) {{
@@ -54,13 +44,16 @@ extern "C" __global__ void rms_norm_k(
             block_sum += __shfl_down_sync(FULL_MASK, block_sum, s);
         }}
         if (tid == 0) {{
-            warp_sums[0] = rsqrtf(block_sum / (float)COLS + {eps:.10}f);
+            float mean = block_sum * (1.0f / (float)COLS);
+            float variance = mean + {eps:.10}f;
+            warp_sums[0] = 1.0f / sqrtf(variance);
         }}
     }}
     __syncthreads();
     float rinv = warp_sums[0];
 
     for (int i = tid; i < COLS; i += {TPB}) {{
-        yr[i] = ({ty})((float)xr[i] * rinv * w[i]);
+        float normalized = __fmul_rn((float)xr[i], rinv);
+        yr[i] = ({ty})__fmul_rn(normalized, w[i]);
     }}
 }}

@@ -221,6 +221,122 @@ fn flashinfer_is_a_provider_for_paged_attention() {
 }
 
 #[test]
+fn compiler_search_admits_both_sixteen_bit_decode_families() {
+    let mut graph = Graph::default();
+    let query_tokens = Expression::from('s');
+    let request_count = Expression::from('b');
+    attention(
+        AttentionInputs {
+            query: graph.tensor((query_tokens, 24, 256)).as_dtype(DType::Bf16),
+            query_indptr: graph.tensor(request_count + 1).as_dtype(DType::Int),
+            kv: KvView::Paged(PagedKvView {
+                state_class_id: 3,
+                key: graph.tensor((8, 16, 4, 256)).as_dtype(DType::Bf16),
+                value: graph.tensor((8, 16, 4, 256)).as_dtype(DType::Bf16),
+                page_size: 16,
+                layout: PagedKvLayout::TokenMajor,
+                page_indices: graph.tensor('c').as_dtype(DType::Int),
+                page_indptr: graph.tensor(request_count + 1).as_dtype(DType::Int),
+                last_page_len: graph.tensor(request_count).as_dtype(DType::Int),
+            }),
+        },
+        AttentionSpec {
+            query_heads: 24,
+            kv_heads: 4,
+            query_key_dim: 256,
+            value_dim: 256,
+            dtype: DType::Bf16,
+            scale: 0.0625,
+            mask: AttentionMask::Causal,
+        },
+    )
+    .unwrap();
+    graph.set_dim('s', 1);
+    graph.set_dim('b', 1);
+    graph.set_dim('c', 1);
+    graph.build_search_space::<CudaRuntime>(
+        CompileOptions::default()
+            .compiler_facts(crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts()),
+    );
+    let egraph = graph.egraph().unwrap();
+    let algorithms = egraph
+        .enodes
+        .values()
+        .filter(|(label, _)| label.starts_with('\"'))
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    assert!(algorithms.contains(&"\"tensor-core\""));
+    assert!(algorithms.contains(&"\"cuda-core-decode\""));
+}
+
+#[test]
+fn compiler_facts_can_restrict_attention_provider_candidates() {
+    let candidates = |policy: &str| {
+        let mut graph = Graph::default();
+        let query_tokens = Expression::from('s');
+        let request_count = Expression::from('b');
+        attention(
+            AttentionInputs {
+                query: graph.tensor((query_tokens, 24, 256)).as_dtype(DType::Bf16),
+                query_indptr: graph.tensor(request_count + 1).as_dtype(DType::Int),
+                kv: KvView::Paged(PagedKvView {
+                    state_class_id: 3,
+                    key: graph.tensor((8, 16, 4, 256)).as_dtype(DType::Bf16),
+                    value: graph.tensor((8, 16, 4, 256)).as_dtype(DType::Bf16),
+                    page_size: 16,
+                    layout: PagedKvLayout::TokenMajor,
+                    page_indices: graph.tensor('c').as_dtype(DType::Int),
+                    page_indptr: graph.tensor(request_count + 1).as_dtype(DType::Int),
+                    last_page_len: graph.tensor(request_count).as_dtype(DType::Int),
+                }),
+            },
+            AttentionSpec {
+                query_heads: 24,
+                kv_heads: 4,
+                query_key_dim: 256,
+                value_dim: 256,
+                dtype: DType::Bf16,
+                scale: 0.0625,
+                mask: AttentionMask::Causal,
+            },
+        )
+        .unwrap();
+        graph.set_dim('s', 1);
+        graph.set_dim('b', 1);
+        graph.set_dim('c', 1);
+        graph.build_search_space::<CudaRuntime>(
+            CompileOptions::default()
+                .dim_buckets(
+                    'c',
+                    &[orbitkv_compiler::prelude::DimBucket::new(1, 8).representative(1)],
+                )
+                .compiler_facts(format!(
+                    "{}\n(set (cuda-attention-policy) \"{policy}\")",
+                    crate::target::CudaTarget { major: 9, minor: 0 }.compiler_facts(),
+                )),
+        );
+        graph
+            .egraph()
+            .unwrap()
+            .enodes
+            .values()
+            .filter(|(label, _)| matches!(label.as_str(), "FlashAttention" | "FlashInferAttention"))
+            .map(|(label, _)| label.clone())
+            .collect::<Vec<_>>()
+    };
+    let flashattention = candidates("flashattention");
+    assert!(flashattention.iter().any(|name| name == "FlashAttention"));
+    assert!(
+        !flashattention
+            .iter()
+            .any(|name| name == "FlashInferAttention")
+    );
+    let flashinfer = candidates("flashinfer");
+    assert!(flashinfer.iter().any(|name| name == "FlashInferAttention"));
+    assert!(!flashinfer.iter().any(|name| name == "FlashAttention"));
+}
+
+#[test]
 fn search_profiles_available_attention_algorithms() {
     if !crate::tests::utilities::gpu_supports_flashinfer() {
         return;

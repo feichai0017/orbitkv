@@ -150,8 +150,25 @@ impl DimBucket {
 ///     .mutations(40)
 ///     .trials(15);
 /// ```
+/// How a backend chooses one executable program from a saturated search space.
+///
+/// `Default` is the production-oriented deterministic path: it selects the
+/// first stable, legal program without device timing. `Tune` retains the
+/// measured multi-candidate search for explicit offline experiments.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompilePolicy {
+    #[default]
+    Default,
+    Tune,
+}
+
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
+    /// Program-selection policy. Generic compiler callers retain the historical
+    /// tuned behavior through `CompileOptions::default`; model compilation sets
+    /// this explicitly from its artifact-bound tuning profile.
+    pub policy: CompilePolicy,
     /// Maximum number of graphs to evaluate during search.
     pub limit: usize,
     /// Maximum wall-clock time to spend searching.
@@ -247,6 +264,12 @@ fn checked_dim(dimension: impl Into<Symbol>) -> Symbol {
 }
 
 impl CompileOptions {
+    /// Select deterministic default lowering or measured offline tuning.
+    pub fn compile_policy(mut self, policy: CompilePolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
     /// Record runtime candidate identities, measurements, and selection decisions.
     /// The runtime defines the trace schema. CUDA also accepts the diagnostic
     /// environment variable `ORBITKV_SEARCH_TRACE` when this option is absent.
@@ -417,6 +440,7 @@ impl CompileOptions {
 impl Default for CompileOptions {
     fn default() -> Self {
         Self {
+            policy: CompilePolicy::Tune,
             limit: 100,
             search_time_limit: std::time::Duration::MAX,
             generation_size: 10,

@@ -4,6 +4,7 @@
 //! Representative device metadata is shared with startup in `model::representative`.
 //! The public JSON policy stays independent of CUDA allocation details.
 
+pub use orbitkv_compiler::graph::CompilePolicy;
 use serde::{Deserialize, Serialize};
 
 use super::{DecoderError, DecoderOutputRows};
@@ -26,6 +27,29 @@ const DEFAULT_MAXIMUM_BUCKETS: usize = 32;
 
 // The current attention and fixed-state metadata ABI uses i32 indices.
 const PROFILE_INDEX_BYTES: usize = std::mem::size_of::<i32>();
+
+/// Attention-provider families admitted into the compiler search space.
+/// This policy is model-independent and serialized into decoder artifacts.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum AttentionProviderPolicy {
+    #[serde(rename = "all")]
+    #[default]
+    All,
+    #[serde(rename = "flashattention")]
+    FlashAttention,
+    #[serde(rename = "flashinfer")]
+    FlashInfer,
+}
+
+impl AttentionProviderPolicy {
+    pub(super) const fn compiler_fact(self) -> Option<&'static str> {
+        match self {
+            Self::All => None,
+            Self::FlashAttention => Some("(set (cuda-attention-policy) \"flashattention\")"),
+            Self::FlashInfer => Some("(set (cuda-attention-policy) \"flashinfer\")"),
+        }
+    }
+}
 
 /// Dynamic-shape and search policy for one compiled decoder executable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -78,6 +102,9 @@ impl DecoderCompileConfig {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DecoderTuningProfile {
+    /// Deterministic production lowering by default; measured whole-program
+    /// tuning is an explicit offline policy.
+    pub compile_policy: CompilePolicy,
     pub batch_sizes: Vec<usize>,
     pub prefill_tokens: Vec<usize>,
     pub context_pages: Vec<usize>,
@@ -101,11 +128,13 @@ pub struct DecoderTuningProfile {
     /// filtering. This bounds planning work as well as the number of profiles.
     pub maximum_buckets: usize,
     pub enable_shared_fp8_quantization: bool,
+    pub attention_provider: AttentionProviderPolicy,
 }
 
 impl Default for DecoderTuningProfile {
     fn default() -> Self {
         Self {
+            compile_policy: CompilePolicy::Default,
             batch_sizes: Vec::new(),
             prefill_tokens: Vec::new(),
             context_pages: Vec::new(),
@@ -117,6 +146,7 @@ impl Default for DecoderTuningProfile {
             search_time_limit_ms: None,
             maximum_buckets: DEFAULT_MAXIMUM_BUCKETS,
             enable_shared_fp8_quantization: false,
+            attention_provider: AttentionProviderPolicy::All,
         }
     }
 }

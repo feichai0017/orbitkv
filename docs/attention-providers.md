@@ -154,27 +154,54 @@ Candidate membership follows semantics and storage ABI, not a library name:
 | Indexed sparse attention | Kernels accepting the exact index, cache-encoding and visibility contracts | Not admitted |
 | Recurrent/linear attention such as GDN | Scan/recurrent algorithms and convolution/norm/gate regions | Separate state-transition operations, not softmax-attention equivalents |
 
-FlashMLA now includes several families: dense MLA decode, sparse prefill/decode,
-and SM100 dense MHA prefill. Its documented requirements include CUDA 12.8+
-(12.9+ for SM100); device and geometry support vary by kernel. Consequently,
-the SM100 MHA implementation does not supply an H20 GQA replacement. See the
-upstream [support matrix and APIs](https://github.com/deepseek-ai/FlashMLA#requirements).
+## Next backend integrations
 
-Integrate the first FlashMLA implementation when these prerequisites are ready:
+Status: planned adapters, not registered providers. The integration order is
+FLA-derived GDN forward kernels for Qwen, then KDA and sparse/latent attention
+for GLM, followed by DeepSeek's additional contracts. Neither integration waits
+for general KV-layout search or a whole-model megakernel.
 
-1. A normalized MLA calculation and explicit latent/positional cache components,
-   with matching state byte geometry and read/write semantics.
-2. A pinned native adapter for a supported kernel, including its block/index
-   metadata, scheduler preparation, workspace, output/LSE convention and target.
-3. Independent numeric and next-state tests, followed by strict artifact replay,
-   mixed phase transitions and final state drain.
+| Library and reviewed revision | First useful slice | Admission gate |
+| --- | --- | --- |
+| [Flash Linear Attention](https://github.com/fla-org/flash-linear-attention/tree/f470469e3192112814df229a4221454a195666a6), `f470469e3192112814df229a4221454a195666a6` | FLA-derived, SGLang-adapted packed GDN decode with state-slot indexing; then chunk prefill and KDA | Exact transition, BF16/materialization and state-layout contracts; explicit slot effects; reordered/ragged batches, reuse and capture tests |
+| [FlashMLA](https://github.com/deepseek-ai/FlashMLA/tree/07a1089857b63e74e3133630c02b083b75e8d4b2), `07a1089857b63e74e3133630c02b083b75e8d4b2` | A compatible H20 sparse/latent forward path during GLM bring-up | Latent KV binding, projection/index semantics, dtype/geometry/target checks, prepared metadata and captured workspace ownership |
 
-An isolated MLA operator witness can establish these contracts before an entire
-MoE or multi-device decoder is ready. Dense prefill may use an expanded form and
-decode a latent form, provided their equivalence and shared persistent ABI or
-explicit conversion are validated. The current 27B GQA/GDN workload does not
-justify adding a latent-attention dependency by itself.
+These revisions are research pins, not entries in the active provider lock.
+Add a provider entry only with its implemented adapter, declared dependencies
+and tests. Both upstream projects use MIT licenses; retain file-level provenance.
 
-After this boundary, use current workload traces to prioritize quantized
-projection preparation, GDN/generated regions and compile/search cost. New
-attention families and megakernels need their own measured motivation.
+FLA's public entry points combine Torch tensors, Triton kernels and Python
+orchestration. Use only the required inference forward kernels. A selected
+kernel can be ported to CUDA, or built offline into a module plus explicit
+specialization/launch/workspace metadata for the existing runtime; the latter
+route still needs a working build-and-load proof. Do not add a Python serving
+runtime or a generic multi-DSL framework as a prerequisite.
+
+The [SGLang packed GDN kernel](https://github.com/sgl-project/sglang/blob/095ec6c997bfdd25d3864cb0ce77a6562a934b96/python/sglang/kernels/ops/attention/fla/fused_recurrent.py)
+is the first serving reference: state pool and request slot IDs allow direct
+state updates instead of gather/update/scatter. Upstream
+[GDN chunk](https://github.com/fla-org/flash-linear-attention/blob/f470469e3192112814df229a4221454a195666a6/fla/ops/gated_delta_rule/chunk.py)
+returns explicit final states; it is not a drop-in indexed-pool ABI. The lower-level
+[KDA recurrent kernel](https://github.com/fla-org/flash-linear-attention/blob/f470469e3192112814df229a4221454a195666a6/fla/ops/kda/fused_recurrent.py)
+already supports state-slot indices and in-place updates. GDN and KDA require
+separate transition semantics; they do not become variants of scaled dot-product
+`AttentionSpec`. Keep their reference paths until the replacement passes the
+unchanged model gate.
+
+FlashMLA's [public interface](https://github.com/deepseek-ai/FlashMLA/blob/07a1089857b63e74e3133630c02b083b75e8d4b2/flash_mla/flash_mla_interface.py)
+uses Torch/ATen and needs a native adapter. Calling `get_mla_metadata()` alone
+does not prepare the decode scheduler: metadata is populated on the first decode
+call. Preparation must finish before capture/readiness and retained plans must
+validate the shape and length dependencies that allow reuse. The binding needs
+explicit latent cache and any positional components required by the model. GLM
+also needs its own absorbed projection, no-RoPE layout and compressed-index
+semantics; a generic MLA adapter does not qualify the complete model. An isolated
+operator fixture can establish this ABI while MoE and offload work proceeds.
+
+The [reviewed FlashMLA support matrix](https://github.com/deepseek-ai/FlashMLA/blob/07a1089857b63e74e3133630c02b083b75e8d4b2/README.md)
+includes V4.1 kernels, but **V4.1 sparse decode requires SM100**. SM90 supports
+V4.1 sparse prefill and older decode formats; the
+[SM90 decode implementation](https://github.com/deepseek-ai/FlashMLA/blob/07a1089857b63e74e3133630c02b083b75e8d4b2/csrc/api/sparse_decode.cpp)
+does not admit the V4.1 format. DeepSeek-V4.1-Flash on H20 therefore needs a
+separately validated Hopper decode implementation or new upstream support.
+CPU weight offload does not remove that kernel requirement.

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import array
 import hashlib
+import heapq
 import importlib
 import inspect
 import json
@@ -50,7 +51,8 @@ def read_row(path, vocabulary):
 
 def top_tokens(row, count):
     return [{"token_id": index, "logit": row[index]}
-            for index in sorted(range(len(row)), key=lambda index: (-row[index], index))[:count]]
+            for index in heapq.nsmallest(count, range(len(row)),
+                                        key=lambda index: (-row[index], index))]
 
 
 def compare_rows(reference, candidate, top_count):

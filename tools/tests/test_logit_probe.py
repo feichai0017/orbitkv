@@ -2,6 +2,7 @@ import importlib.util
 import json
 import math
 from pathlib import Path
+import random
 import struct
 import tempfile
 import unittest
@@ -12,6 +13,30 @@ SPEC.loader.exec_module(PROBE)
 
 
 class LogitProbeTests(unittest.TestCase):
+    def test_top_tokens_matches_independent_full_sort(self):
+        rng = random.Random(319)
+        rows = [
+            [],
+            [1.0],
+            [2.0, -3.0, 2.0, 1.0, 2.0, -3.0],
+            [-0.0, 0.0, -0.0, 0.0, -1.0, 0.0],
+            [rng.uniform(-100.0, 100.0) for _ in range(1024)],
+            [float(rng.randrange(-8, 9)) for _ in range(1024)],
+        ]
+        for row in rows:
+            ordered = sorted(enumerate(row), key=lambda item: (-item[1], item[0]))
+            for count in (2, 5, len(row) + 3):
+                with self.subTest(vocabulary=len(row), count=count, first=row[:6]):
+                    expected = [{"token_id": index, "logit": value}
+                                for index, value in ordered[:count]]
+                    actual = PROBE.top_tokens(row, count)
+                    self.assertEqual(actual, expected)
+                    # Numeric equality alone cannot distinguish signed zero.
+                    self.assertEqual(
+                        [struct.pack("<d", item["logit"]) for item in actual],
+                        [struct.pack("<d", item["logit"]) for item in expected],
+                    )
+
     def test_comparison_reports_actual_winner_margin_and_error(self):
         result = PROBE.compare_rows([1.0, 1.125, -5.0], [1.25, 1.125, -4.5], 2)
         self.assertFalse(result["argmax_equal"])

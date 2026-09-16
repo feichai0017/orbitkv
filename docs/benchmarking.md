@@ -14,6 +14,22 @@ commands: different engines need different configuration flags and may reserve
 different amounts of memory. Record those differences rather than treating
 similarly named flags as proof of identical behavior.
 
+For CPU-offloaded models, also fix host-memory and CPU-core budgets, NUMA
+placement, the weight quantization contract and the storage/cache conditions.
+Engines may use different residency/prefetch policies within the same budget;
+record those policies rather than forcing an identical implementation. Include
+weight fetches, conversions, cache misses, CPU work and H2D dependencies in
+end-to-end request timing. Record host/device memory, transferred bytes and
+measured transfer bandwidth separately where available; a PCIe link rating is
+not a bandwidth measurement. Cold storage, warm host weights and GPU-resident
+execution are different workloads and must not be combined into one speedup.
+
+Checkpoint loading, completed inference, numerical qualification and a measured
+performance advantage are separate milestones. If a baseline cannot run the
+same model, precision or resource budget, report that gap without assigning a
+speedup ratio. A change in quantization is a quality/capacity tradeoff requiring
+its own qualification, not an engine-only performance improvement.
+
 [model-serving.json](../benchmarks/model-serving.json) defines the current bounded
 matrix: input lengths 4/32, output lengths 64/128, C1/C8 and 16 requests per run.
 The [frozen traces](../benchmarks/traces/) use the official `timed_trace` dataset:

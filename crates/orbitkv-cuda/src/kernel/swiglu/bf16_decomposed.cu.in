@@ -1,0 +1,11 @@
+// Preserve the matched BF16 graph, including its BF16 log2(e) constant.
+const __nv_bfloat16 negative = __float2bfloat16_rn(__fmul_rn(g, -1.0f));
+const __nv_bfloat16 log2e = __float2bfloat16_rn(1.442695f);
+const __nv_bfloat16 scaled = __float2bfloat16_rn(
+    __fmul_rn((float)negative, (float)log2e));
+const __nv_bfloat16 exponential = __float2bfloat16_rn(exp2f((float)scaled));
+const __nv_bfloat16 denominator = __float2bfloat16_rn(
+    __fadd_rn((float)exponential, 1.0f));
+const __nv_bfloat16 sigmoid = __float2bfloat16_rn(1.0f / (float)denominator);
+const __nv_bfloat16 silu = __float2bfloat16_rn(__fmul_rn(g, (float)sigmoid));
+out[row * I + col] = __float2bfloat16_rn(__fmul_rn((float)silu, u));

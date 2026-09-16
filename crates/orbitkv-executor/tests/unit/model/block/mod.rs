@@ -1,5 +1,7 @@
 use orbitkv_compiler::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
 
+mod checkpoint;
+
 #[test]
 fn gated_query_projection_deinterleaves_each_head() {
     let mut graph = Graph::new();

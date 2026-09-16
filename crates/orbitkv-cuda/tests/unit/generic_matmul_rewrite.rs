@@ -88,6 +88,69 @@ fn generic_matmul_executes_noncontiguous_merged_head_projection() {
 }
 
 #[test]
+#[ignore = "requires CUDA; compares exact F32 contraction implementations"]
+fn generic_matmul_is_bit_exact_to_materialized_mul_sum() {
+    const M: usize = 4;
+    const N: usize = 7;
+    const K: usize = 513;
+    let stream = get_cuda_stream().expect("CUDA device required for GenericMatmul parity test");
+    let mut cx = Graph::default();
+    let lhs = cx.tensor((M, K));
+    let rhs = cx.tensor((N, K));
+    let output = lhs.matmul(rhs.t()).output();
+    cx.build_search_space::<CudaRuntime>(CompileOptions::default());
+
+    let generic = extract_forced_kernel_llir_with_config(
+        &cx,
+        "GenericMatmul",
+        "GenericMatmul",
+        ForcedExtractionConfig::new(0x4d47_454d)
+            .attempts_per_node(256)
+            .node_seed_stride(1 << 16),
+        false,
+    );
+    let decomposed = extract_forced_kernel_llir_with_config(
+        &cx,
+        "KernelSum",
+        "SumReduce",
+        ForcedExtractionConfig::new(0x5355_4d52)
+            .attempts_per_node(256)
+            .node_seed_stride(1 << 16),
+        false,
+    );
+    assert!(llir_kernel_names(&decomposed).contains(&"Mul"));
+
+    let values = |count: usize, salt: usize| {
+        (0..count)
+            .map(|index| {
+                let bits = index
+                    .wrapping_mul(1_664_525)
+                    .wrapping_add(salt.wrapping_mul(1_013_904_223));
+                let sign = if bits & 1 == 0 { 1.0 } else { -1.0 };
+                let exponent = i32::try_from((bits >> 1) % 19).unwrap() - 10;
+                let mantissa = 1.0 + ((bits >> 9) & 0x3ff) as f32 / 1024.0;
+                sign * mantissa * 2.0_f32.powi(exponent)
+            })
+            .collect::<Vec<_>>()
+    };
+    let lhs_values = values(M * K, 11);
+    let rhs_values = values(N * K, 29);
+    let run = |llir: &LLIRGraph| {
+        let mut runtime = CudaRuntime::initialize(stream.clone());
+        runtime.set_data(lhs, lhs_values.clone());
+        runtime.set_data(rhs, rhs_values.clone());
+        runtime.load_llir(llir);
+        runtime.execute(&cx.dyn_map);
+        runtime
+            .get_f32(output)
+            .into_iter()
+            .map(f32::to_bits)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(run(&generic), run(&decomposed));
+}
+
+#[test]
 fn generic_matmul_fp8_fallback_accumulates_and_outputs_f32() {
     const K: usize = 17;
     let Some(stream) = get_cuda_stream() else {

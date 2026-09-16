@@ -56,6 +56,46 @@ fn dependency_width_must_be_positive_and_defaults_to_coordinate_search() {
 }
 
 #[test]
+fn attention_provider_policy_uses_registry_names_and_defaults_to_all() {
+    assert_eq!(
+        DecoderTuningProfile::from_json(b"{}")
+            .unwrap()
+            .attention_provider,
+        AttentionProviderPolicy::All
+    );
+    assert_eq!(
+        DecoderTuningProfile::from_json(br#"{"attention_provider":"flashattention"}"#)
+            .unwrap()
+            .attention_provider,
+        AttentionProviderPolicy::FlashAttention
+    );
+    assert_eq!(
+        DecoderTuningProfile::from_json(br#"{"attention_provider":"flashinfer"}"#)
+            .unwrap()
+            .attention_provider,
+        AttentionProviderPolicy::FlashInfer
+    );
+    assert!(DecoderTuningProfile::from_json(br#"{"attention_provider":"unknown"}"#).is_err());
+}
+
+#[test]
+fn compile_policy_defaults_to_deterministic_and_accepts_explicit_tune() {
+    assert_eq!(
+        DecoderTuningProfile::from_json(b"{}")
+            .unwrap()
+            .compile_policy,
+        CompilePolicy::Default
+    );
+    assert_eq!(
+        DecoderTuningProfile::from_json(br#"{"compile_policy":"tune"}"#)
+            .unwrap()
+            .compile_policy,
+        CompilePolicy::Tune
+    );
+    assert!(DecoderTuningProfile::from_json(br#"{"compile_policy":"random"}"#).is_err());
+}
+
+#[test]
 fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
     let config = test_config(4);
     let plan = hybrid_executor_plan();
@@ -104,6 +144,18 @@ fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
             enable_shared_fp8_quantization: true,
             ..Default::default()
         },
+        DecoderTuningProfile {
+            attention_provider: AttentionProviderPolicy::FlashAttention,
+            ..Default::default()
+        },
+        DecoderTuningProfile {
+            attention_provider: AttentionProviderPolicy::FlashInfer,
+            ..Default::default()
+        },
+        DecoderTuningProfile {
+            compile_policy: CompilePolicy::Tune,
+            ..Default::default()
+        },
     ] {
         assert_ne!(identity(&tuning), original);
     }
@@ -134,6 +186,7 @@ fn tuning_buckets_supply_valid_ragged_metadata_and_cover_feasible_intervals() {
         ..Default::default()
     };
     let options = tuning::decoder_compile_options(&decoder, compile, &tuning, 16).unwrap();
+    assert_eq!(options.policy, CompilePolicy::Default);
     assert_eq!(options.keep_best, 3);
     assert_eq!(options.initial_population, 4);
     assert_eq!(options.hotspot_candidates, 16);
@@ -300,7 +353,14 @@ fn tuning_obeys_caller_budget_without_an_unrelated_global_ceiling() {
     };
     let options = tuning::decoder_compile_options(&decoder, compile, &tuning, 16).unwrap();
     assert_eq!(options.limit, 1);
-    assert_eq!(options.bucket_representatives.as_ref().unwrap().len(), 2);
+    assert_eq!(options.bucket_representatives.as_ref().unwrap().len(), 3);
+    assert_eq!(
+        options.dim_buckets[&Symbol::from('b')]
+            .iter()
+            .map(|bucket| (bucket.min, bucket.max))
+            .collect::<Vec<_>>(),
+        vec![(1, 1), (2, 4)]
+    );
     assert!(tuning::decoder_compile_options(&decoder, compile, &tuning, 0).is_err());
 }
 

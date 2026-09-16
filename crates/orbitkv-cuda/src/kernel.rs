@@ -18,6 +18,7 @@ pub mod recurrent_state;
 pub mod rms_norm;
 pub mod rope;
 pub mod sequence_state;
+pub mod silu_mul;
 pub mod swiglu;
 pub mod topk;
 
@@ -45,10 +46,13 @@ pub type Ops = (
     rope::RoPEScatterKernel,
     rope::KernelRoPE,
     swiglu::KernelSwiglu,
+    silu_mul::KernelSiluMul,
     topk::KernelStableSortIdx,
     quant_f8::KernelQuantF8,
     recurrent_state::KernelDeltaStateUpdate,
     sequence_state::SequenceStateRules,
+    sequence_state::KernelDeltaRegisters,
+    sequence_state::KernelDeltaGather,
     other_ops::Ops,
     conv2d::KernelConv2D,
     GenericMatmul,

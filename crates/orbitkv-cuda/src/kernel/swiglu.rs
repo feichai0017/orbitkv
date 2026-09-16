@@ -3,9 +3,10 @@
 //! `out[r, c] = silu(x[r, c]) * x[r, I + c]` for `x (rows, 2I)`. Avoids the
 //! offset-slice problem (tensors don't have offsets, so `x[:, I:]` lowers to
 //! a Gather materialization) by indexing the second half inside the kernel,
-//! and replaces gather + swish/mul region with one launch. F32 math, storage
-//! dtype in/out — same compute precision as the widened decomposed chain,
-//! rounded once at the store.
+//! and replaces gather + swish/mul region with one launch. The explicit custom
+//! operation computes SiLU in F32 and rounds once at the output store. The
+//! searchable BF16 decomposition preserves its constants and every operation's
+//! BF16 rounding boundary instead.
 
 use std::sync::Arc;
 
@@ -20,11 +21,21 @@ use crate::kernel::KernelOp;
 
 const TPB: usize = 256;
 
+/// Distinct arithmetic contracts; these are not interchangeable candidates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwigluArithmetic {
+    /// F32 SiLU and multiplication, rounded only at the output store.
+    StoreOnce,
+    /// BF16 constants and rounding after each operation of the matched graph.
+    Bf16Decomposed,
+}
+
 #[derive(Debug, Clone)]
 pub struct SwigluKernel {
     pub rows: Expression,
     pub intermediate: usize,
     pub dtype: DType,
+    pub arithmetic: SwigluArithmetic,
 }
 
 impl KernelOp for SwigluKernel {
@@ -54,6 +65,7 @@ impl KernelOp for SwigluKernel {
             i = i,
             includes = includes,
             ty = ty,
+            body = self.element_body(),
         );
 
         let (module, func) = if let Some((m, f)) = compile_cache.get(&kernel) {
@@ -110,7 +122,25 @@ impl KernelOp for SwigluKernel {
     }
 
     fn kernel_name(&self) -> &'static str {
-        "Swiglu"
+        match self.arithmetic {
+            SwigluArithmetic::StoreOnce => "Swiglu",
+            SwigluArithmetic::Bf16Decomposed => "SwigluBf16Decomposed",
+        }
+    }
+}
+
+impl SwigluKernel {
+    fn element_body(&self) -> String {
+        match self.arithmetic {
+            SwigluArithmetic::StoreOnce => format!(
+                "float silu = g / (1.0f + expf(-g));\n    out[row * I + col] = ({ty})(silu * u);",
+                ty = crate::cuda_dtype(self.dtype),
+            ),
+            SwigluArithmetic::Bf16Decomposed => {
+                assert_eq!(self.dtype, DType::Bf16);
+                include_str!("swiglu/bf16_decomposed.cu.in").to_owned()
+            }
+        }
     }
 }
 
@@ -124,6 +154,9 @@ impl CustomOp for SwigluCustom {
 }
 
 /// `silu(x[:, :I]) * x[:, I:]` for a fused `(rows, 2I)` gate_up projection.
+///
+/// SiLU and multiplication compute in F32, with one rounding at the output
+/// store. A noncontiguous input view is materialized before the custom operation.
 pub fn fused_swiglu(x: GraphTensor, intermediate: usize) -> GraphTensor {
     let x_dims = x.dims();
     assert_eq!(
@@ -141,20 +174,24 @@ pub fn fused_swiglu(x: GraphTensor, intermediate: usize) -> GraphTensor {
         rows,
         intermediate,
         dtype: x.dtype,
+        arithmetic: SwigluArithmetic::StoreOnce,
+    };
+    let x = if x.shape.is_contiguous() {
+        x
+    } else {
+        x.gather(x.graph().iota('z', x.dims()))
     };
     let cx = unsafe { &mut *x.graph_ref };
     cx.custom_op(SwigluCustom(kern), vec![x], (rows, intermediate), x.dtype)
 }
 
 // ═══════════════════════════════════════════════════════════
-// Egglog-matched fused SwiGLU (+quant): the pure-HLIR spelling
+// Egglog-matched BF16 SwiGLU: the pure-HLIR spelling
 //   gate = x[:, :I] (view), up = x[:, I:] (offset slice → Gather)
 //   silu = gate · recip(1 + exp2(gate · (−1) · log2e))
 //   out  = silu · up                       [bf16]
-//   q    = cast_f8(out_f32 · recip(scale)) [quant variant]
-// re-fused into the existing one-kernel implementations. Constants are
-// matched as raw Cast(Bf16)(Constant v) chains — the `const_like` relation
-// lives in the FlashInfer host-op egg, which loads after kernel ops.
+// Every operation above has BF16 output. The rule must preserve those rounding
+// boundaries, and prove the exact row layout before dropping view addressing.
 // ═══════════════════════════════════════════════════════════
 
 use orbitkv_compiler::{
@@ -170,45 +207,7 @@ use orbitkv_compiler::{
 /// Structural SwiGLU proof shared by generated-kernel rules.
 #[doc(hidden)]
 pub fn swiglu_chain_atoms() -> &'static str {
-    "
-                    ; silu(gate): gate is the (rows, I) start-0 view of x
-                    (= ?ng (Op (Mul ?ng_sh
-                        (ECons (MMul (MIter) ?e_2i) (ECons (MIter) (ENil)))
-                        ?ng_b ?ng_o)
-                        (ICons ?x (ICons ?negb (INil)))))
-                    (= ?negb (Op (Cast ?nb_size (Bf16)) (ICons ?negc (INil))))
-                    (= ?negc (Op (Constant -1.000000) (INil)))
-                    (= ?sc (Op (Mul ?sc_sh ?sc_a ?sc_b ?sc_o)
-                        (ICons ?ng (ICons ?l2eb (INil)))))
-                    (= ?l2eb (Op (Cast ?l2eb_size (Bf16)) (ICons ?l2ec (INil))))
-                    (= ?l2ec (Op (Constant 1.442695) (INil)))
-                    (= ?ex (Op (Exp2 ?ex_sh ?ex_in ?ex_out) (ICons ?sc (INil))))
-                    (= ?pl1 (Op (Add ?p1_sh ?p1_a ?p1_b ?p1_o)
-                        (ICons ?ex (ICons ?oneb (INil)))))
-                    (= ?oneb (Op (Cast ?ob_size (Bf16)) (ICons ?onec (INil))))
-                    (= ?onec (Op (Constant 1.000000) (INil)))
-                    (= ?sig (Op (Recip ?sg_sh ?sg_in ?sg_out) (ICons ?pl1 (INil))))
-                    (= ?silu (Op (Mul ?si_sh
-                        (ECons (MMul (MIter) ?e_2i2) (ECons (MIter) (ENil)))
-                        ?si_b ?si_o)
-                        (ICons ?x2 (ICons ?sig (INil)))))
-                    (= ?x ?x2)
-
-                    ; · up, where up is the offset-slice gather of x
-                    (= ?out (Op (Mul ?o_sh ?o_a ?o_b ?o_o)
-                        (ICons ?silu (ICons ?up (INil)))))
-                    (= ?o_sh (ECons ?rows (ECons ?i (ENil))))
-                    (= ?up (Op (Gather ?up_osh ?up_ostr ?up_dsh
-                        (ECons (MMul (MIter) ?e_2i3) (ECons (MIter) (ENil))))
-                        (ICons ?upidx (ICons ?x3 (INil)))))
-                    (= ?x ?x3)
-                    (= ?upidx (Op (Iota
-                        (MAdd (MAdd (MMod (MIter) ?e_i) ?e_i)
-                              (MMul (MDiv (MIter) ?e_i) ?e_2i4))
-                        ?up_range) (INil)))
-                    (= ?i ?e_i)
-
-                    (= (Bf16) (dtype ?x))"
+    include_str!("swiglu/bf16_match.egg")
 }
 
 #[derive(Default, Debug, Clone)]
@@ -224,10 +223,27 @@ impl EgglogOp for KernelSwiglu {
     }
 
     fn rewrites(&self) -> Vec<Rule> {
-        vec![Rule::raw(format!(
-            include_str!("swiglu/swiglu_rewrite.egg.in"),
-            swiglu_chain_atoms()
-        ))]
+        // Static arithmetic has already been folded before this ruleset. Use
+        // integer equality for that range, while symbolic rows retain MMul.
+        [
+            ("symbolic rows", "(= ?up_range (MMul ?rows ?i))"),
+            (
+                "static rows",
+                "(= ?rows (MNum ?row_count))
+                 (= ?up_range (MNum ?element_count))
+                 (= ?element_count (* ?row_count ?width))",
+            ),
+        ]
+        .into_iter()
+        .map(|(variant, range_proof)| {
+            Rule::raw(format!(
+                include_str!("swiglu/swiglu_rewrite.egg.in"),
+                chain = swiglu_chain_atoms(),
+                range_proof = range_proof,
+                variant = variant,
+            ))
+        })
+        .collect()
     }
 
     fn cleanup(&self) -> bool {
@@ -248,6 +264,7 @@ impl EgglogOp for KernelSwiglu {
             rows: out_shape[0],
             intermediate: out_shape[1].to_usize().expect("swiglu I must be static"),
             dtype: DType::Bf16,
+            arithmetic: SwigluArithmetic::Bf16Decomposed,
         };
         (
             LLIROp::new::<dyn KernelOp>(Box::new(kern) as Box<dyn KernelOp>),
@@ -255,3 +272,7 @@ impl EgglogOp for KernelSwiglu {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/kernel/swiglu/mod.rs"]
+mod tests;

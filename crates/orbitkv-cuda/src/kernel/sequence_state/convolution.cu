@@ -43,6 +43,8 @@ extern "C" __global__ void packed_causal_convolution(
             __bfloat162float(weights[weight_base + history_width]),
             value
         );
+        // Convolution materializes BF16 before SiLU; fusion must retain that rounding.
+        value = __bfloat162float(__float2bfloat16_rn(value));
         output[static_cast<long long>(token) * @CHANNELS@ + channel] =
             __float2bfloat16(value / (1.0f + expf(-value)));
         for (long long offset = 0; offset + 1 < history_width; ++offset) {

@@ -13,6 +13,8 @@ use orbitkv_cuda::{
     runtime::CudaRuntime,
 };
 
+#[cfg(test)]
+use super::DecoderLayerDiagnosticBoundary;
 use super::{
     CompiledDecoder, CompiledFixedState, DecoderArtifact, DecoderCompilation, DecoderCompileConfig,
     DecoderConfig, DecoderError, DecoderGraph, DecoderStorage, DecoderTuningProfile,
@@ -32,6 +34,33 @@ pub(super) fn prepare_decoder_compilation(
     weight_files: &[PathBuf],
     compile: DecoderCompileConfig,
     tuning: &DecoderTuningProfile,
+) -> Result<DecoderCompilation, DecoderError> {
+    prepare_decoder_compilation_impl(
+        config,
+        plan,
+        storage,
+        stream,
+        weight_files,
+        compile,
+        tuning,
+        #[cfg(test)]
+        None,
+        #[cfg(test)]
+        DecoderLayerDiagnosticBoundary::Output,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_decoder_compilation_impl(
+    config: &DecoderConfig,
+    plan: &ExecutorPlan,
+    storage: DecoderStorage<'_>,
+    stream: &Arc<CudaStream>,
+    weight_files: &[PathBuf],
+    compile: DecoderCompileConfig,
+    tuning: &DecoderTuningProfile,
+    #[cfg(test)] diagnostic_layer: Option<usize>,
+    #[cfg(test)] diagnostic_boundary: DecoderLayerDiagnosticBoundary,
 ) -> Result<DecoderCompilation, DecoderError> {
     let _stage = tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.prepare").entered();
     compile.validate()?;
@@ -53,46 +82,24 @@ pub(super) fn prepare_decoder_compilation(
         compiler_facts.digest(),
         tuning,
     )?;
-    let mut graph = Graph::default();
-    let decoder =
-        tracing::info_span!(target: "orbitkv::stage", "orbitkv.graph.build").in_scope(|| {
-            DecoderGraph::build(
-                &mut graph,
-                config,
-                weights,
-                plan,
-                storage.token_arenas,
-                &fixed_state_registrations,
-                compile.output_rows,
-            )
-        })?;
+    let (mut graph, decoder) = build_decoder_graph(
+        config,
+        weights,
+        plan,
+        storage.token_arenas,
+        &fixed_state_registrations,
+        compile.output_rows,
+        #[cfg(test)]
+        diagnostic_layer.zip(Some(diagnostic_boundary)),
+    )?;
     let page_tokens = usize::try_from(plan.page_tokens)
         .map_err(|_| DecoderError::InvalidGeometry("page tokens"))?;
     if page_tokens > i32::MAX as usize {
         return Err(DecoderError::InvalidGeometry("backend index range"));
     }
     let mut options = decoder_compile_options(&decoder, compile, tuning, page_tokens)?;
-    let mut facts = compiler_facts.egglog().to_owned();
-    if tuning.enable_shared_fp8_quantization {
-        facts.push('\n');
-        facts.push_str(orbitkv_cuda::providers::deepgemm::SHARED_QUANTIZATION_COMPILER_FACT);
-    }
-    options = options.compiler_facts(facts);
-    if options
-        .bucket_representatives
-        .as_ref()
-        .unwrap()
-        .iter()
-        .any(|dims| {
-            fixed_state_registrations.iter().any(|state| {
-                dims[&orbitkv_compiler::prelude::Symbol::from('b')] > state.slot_count as usize
-            })
-        })
-    {
-        return Err(DecoderError::InvalidGeometry(
-            "tuning fixed-state slot capacity",
-        ));
-    }
+    options = install_compiler_facts(options, compiler_facts.egglog(), tuning);
+    validate_fixed_state_capacity(&options, &fixed_state_registrations)?;
     let representative = options.bucket_representatives.as_ref().unwrap()[0].clone();
     for (&dim, &value) in &representative {
         graph.set_dim(dim, value);
@@ -127,6 +134,132 @@ pub(super) fn prepare_decoder_compilation(
         identity,
         page_tokens,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_decoder_graph(
+    config: &DecoderConfig,
+    weights: super::DecoderWeightFeatures,
+    plan: &ExecutorPlan,
+    arenas: &[crate::ExecutorArena],
+    fixed_states: &[crate::FixedStateArenaRegistration],
+    output_rows: super::DecoderOutputRows,
+    #[cfg(test)] diagnostic: Option<(usize, DecoderLayerDiagnosticBoundary)>,
+) -> Result<(Graph, DecoderGraph), DecoderError> {
+    let mut graph = Graph::default();
+    let decoder =
+        tracing::info_span!(target: "orbitkv::stage", "orbitkv.graph.build").in_scope(|| {
+            #[cfg(test)]
+            if let Some((layer, boundary)) = diagnostic {
+                return DecoderGraph::build_with_layer_output(
+                    &mut graph,
+                    config,
+                    weights,
+                    plan,
+                    arenas,
+                    fixed_states,
+                    output_rows,
+                    layer,
+                    boundary,
+                );
+            }
+            DecoderGraph::build(
+                &mut graph,
+                config,
+                weights,
+                plan,
+                arenas,
+                fixed_states,
+                output_rows,
+            )
+        })?;
+    Ok((graph, decoder))
+}
+
+fn install_compiler_facts(
+    options: orbitkv_compiler::prelude::CompileOptions,
+    base: &str,
+    tuning: &DecoderTuningProfile,
+) -> orbitkv_compiler::prelude::CompileOptions {
+    let mut facts = base.to_owned();
+    if tuning.enable_shared_fp8_quantization {
+        facts.push('\n');
+        facts.push_str(orbitkv_cuda::providers::deepgemm::SHARED_QUANTIZATION_COMPILER_FACT);
+    }
+    if let Some(provider_fact) = tuning.attention_provider.compiler_fact() {
+        facts.push('\n');
+        facts.push_str(provider_fact);
+    }
+    options.compiler_facts(facts)
+}
+
+fn validate_fixed_state_capacity(
+    options: &orbitkv_compiler::prelude::CompileOptions,
+    states: &[crate::FixedStateArenaRegistration],
+) -> Result<(), DecoderError> {
+    let batch = Symbol::from('b');
+    let exceeds = options
+        .bucket_representatives
+        .as_ref()
+        .expect("decoder options always have explicit representatives")
+        .iter()
+        .any(|dims| {
+            states
+                .iter()
+                .any(|state| dims[&batch] > state.slot_count as usize)
+        });
+    if exceeds {
+        return Err(DecoderError::InvalidGeometry(
+            "tuning fixed-state slot capacity",
+        ));
+    }
+    Ok(())
+}
+
+fn select_or_replay_schedule(
+    mut graph: Graph,
+    mut runtime: CudaRuntime,
+    options: orbitkv_compiler::prelude::CompileOptions,
+    identity: String,
+    search_seed: u64,
+    artifact: Option<&DecoderArtifact>,
+) -> Result<(Graph, CudaRuntime, DecoderArtifact), DecoderError> {
+    let selected = if let Some(artifact) = artifact {
+        let _stage =
+            tracing::info_span!(target: "orbitkv::stage", "orbitkv.schedule.replay").entered();
+        graph.prepare_selected_schedule(&options);
+        graph.install_selected_schedule(artifact.schedule.clone());
+        runtime
+            .load_selected_schedule_with_modules(&graph, &artifact.cuda_modules)
+            .map_err(DecoderError::Artifact)?;
+        let installed_environment = runtime
+            .execution_environment()
+            .map_err(|error| DecoderError::Artifact(format!("{error:#}")))?;
+        artifact
+            .environment
+            .validate_against(&installed_environment)
+            .map_err(|error| DecoderError::Artifact(error.to_string()))?;
+        artifact.clone()
+    } else {
+        let mut rng = orbitkv_compiler::prelude::rand::rngs::SmallRng::seed_from_u64(search_seed);
+        runtime = graph.compile_with_rng(runtime, options, &mut rng);
+        let modules = runtime
+            .capture_module_artifact(&graph)
+            .map_err(DecoderError::Artifact)?;
+        let environment = runtime
+            .execution_environment()
+            .map_err(|error| DecoderError::Artifact(format!("{error:#}")))?;
+        new_artifact(
+            identity,
+            graph
+                .selected_schedule()
+                .cloned()
+                .ok_or_else(|| DecoderError::Artifact("selected schedule missing".into()))?,
+            modules,
+            environment,
+        )
+    };
+    Ok((graph, runtime, selected))
 }
 
 fn initialize_weight_runtime(
@@ -271,10 +404,64 @@ impl CompiledDecoder {
         tuning: &DecoderTuningProfile,
         artifact: Option<&DecoderArtifact>,
     ) -> Result<(Self, DecoderArtifact), DecoderError> {
+        Self::compile_or_load_with_tuning_impl(
+            config,
+            plan,
+            storage,
+            stream,
+            weight_files,
+            compile,
+            tuning,
+            artifact,
+            #[cfg(test)]
+            None,
+            #[cfg(test)]
+            DecoderLayerDiagnosticBoundary::Output,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn compile_or_load_with_tuning_impl(
+        config: &DecoderConfig,
+        plan: &ExecutorPlan,
+        storage: DecoderStorage<'_>,
+        stream: &std::sync::Arc<CudaStream>,
+        weight_files: &[std::path::PathBuf],
+        compile: DecoderCompileConfig,
+        tuning: &DecoderTuningProfile,
+        artifact: Option<&DecoderArtifact>,
+        #[cfg(test)] diagnostic_layer: Option<usize>,
+        #[cfg(test)] diagnostic_boundary: DecoderLayerDiagnosticBoundary,
+    ) -> Result<(Self, DecoderArtifact), DecoderError> {
         let _stage = tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.compile_or_load", replay = artifact.is_some()).entered();
         if let Some(artifact) = artifact {
             artifact.validate_for_device(stream.context())?;
         }
+        #[cfg(test)]
+        let prepared = if diagnostic_layer.is_some() {
+            prepare_decoder_compilation_impl(
+                config,
+                plan,
+                storage,
+                stream,
+                weight_files,
+                compile,
+                tuning,
+                diagnostic_layer,
+                diagnostic_boundary,
+            )
+        } else {
+            prepare_decoder_compilation(
+                config,
+                plan,
+                storage,
+                stream,
+                weight_files,
+                compile,
+                tuning,
+            )
+        }?;
+        #[cfg(not(test))]
         let prepared = prepare_decoder_compilation(
             config,
             plan,
@@ -285,7 +472,7 @@ impl CompiledDecoder {
             tuning,
         )?;
         let DecoderCompilation {
-            mut graph,
+            graph,
             decoder,
             mut runtime,
             mut persistent_cache,
@@ -301,44 +488,15 @@ impl CompiledDecoder {
                 "model, plan, arena, or compile identity changed".into(),
             ));
         }
-        let effective_artifact = if let Some(artifact) = artifact {
-            let _stage =
-                tracing::info_span!(target: "orbitkv::stage", "orbitkv.schedule.replay").entered();
-            graph.prepare_selected_schedule(&options);
-            graph.install_selected_schedule(artifact.schedule.clone());
-            runtime
-                .load_selected_schedule_with_modules(&graph, &artifact.cuda_modules)
-                .map_err(DecoderError::Artifact)?;
-            // Check declarations against the installed program as well: a
-            // missing provider in the serialized record cannot bypass admission.
-            let installed_environment = runtime
-                .execution_environment()
-                .map_err(|error| DecoderError::Artifact(format!("{error:#}")))?;
-            artifact
-                .environment
-                .validate_against(&installed_environment)
-                .map_err(|error| DecoderError::Artifact(error.to_string()))?;
-            artifact.clone()
-        } else {
-            let mut rng =
-                orbitkv_compiler::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
-            runtime = graph.compile_with_rng(runtime, options, &mut rng);
-            let modules = runtime
-                .capture_module_artifact(&graph)
-                .map_err(DecoderError::Artifact)?;
-            let environment = runtime
-                .execution_environment()
-                .map_err(|error| DecoderError::Artifact(format!("{error:#}")))?;
-            new_artifact(
-                identity,
-                graph
-                    .selected_schedule()
-                    .cloned()
-                    .ok_or_else(|| DecoderError::Artifact("selected schedule missing".into()))?,
-                modules,
-                environment,
-            )
-        };
+        let (graph, selected_runtime, effective_artifact) = select_or_replay_schedule(
+            graph,
+            runtime,
+            options,
+            identity,
+            compile.search_seed,
+            artifact,
+        )?;
+        runtime = selected_runtime;
         let _finalize_stage =
             tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.finalize").entered();
         let fixed_state = bind_fixed_state(
@@ -376,6 +534,34 @@ impl CompiledDecoder {
             },
             effective_artifact,
         ))
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn compile_with_layer_outputs_for_debug(
+        config: &DecoderConfig,
+        plan: &ExecutorPlan,
+        storage: DecoderStorage<'_>,
+        stream: &std::sync::Arc<CudaStream>,
+        weight_files: &[std::path::PathBuf],
+        compile: DecoderCompileConfig,
+        tuning: &DecoderTuningProfile,
+        layer: usize,
+        boundary: DecoderLayerDiagnosticBoundary,
+    ) -> Result<Self, DecoderError> {
+        let (decoder, _) = Self::compile_or_load_with_tuning_impl(
+            config,
+            plan,
+            storage,
+            stream,
+            weight_files,
+            compile,
+            tuning,
+            None,
+            Some(layer),
+            boundary,
+        )?;
+        Ok(decoder)
     }
 
     /// Builds and searches one decoder on a CUDA device selected by ordinal.

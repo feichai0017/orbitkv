@@ -205,7 +205,7 @@ fn singleton_region_deduplicates_repeated_fusion_start_inputs() {
     let (source, _) = region_kernel_source(region, &graph);
     assert!(source.contains("const float *in0"));
     assert!(!source.contains("in1"));
-    assert!(source.contains("v_0 + v_0"));
+    assert!(source.contains("__fadd_rn(v_0, v_0)"));
 }
 
 #[test]
@@ -299,4 +299,201 @@ fn region_kernel_source_is_nodeindex_invariant() {
     let (k2, p2) = region_source_and_producers(&g2);
     assert_eq!(k1, k2, "kernel source must not depend on NodeIndexes");
     assert_eq!(p1, p2, "input-slot → producer binding must match");
+    assert!(
+        k1.contains("__fmul_rn("),
+        "F32 fusion must preserve the standalone Mul rounding boundary"
+    );
+    assert!(
+        k1.contains("__fadd_rn("),
+        "F32 fusion must preserve the standalone Add rounding boundary"
+    );
+}
+
+#[test]
+#[ignore = "requires CUDA; validates exact F32 fusion semantics"]
+fn f32_mul_add_region_is_bit_exact_to_two_kernel_path() {
+    use cudarc::driver::{CudaContext, DevicePtr, LaunchConfig, PushKernelArg};
+    use orbitkv_compiler::hlir::Input;
+
+    const N: usize = 256;
+    let shape = vec![Expression::from(N)];
+    let strides = vec![Expression::from('z')];
+    let mut graph = LLIRGraph::default();
+    let inputs = [
+        graph.add_node(LLIROp::new::<Input>(Box::default())),
+        graph.add_node(LLIROp::new::<Input>(Box::default())),
+        graph.add_node(LLIROp::new::<Input>(Box::default())),
+    ];
+    let starts = inputs.map(|input| {
+        let start = graph.add_node(llir_of(FusionStart {
+            shape: shape.clone(),
+            strides: strides.clone(),
+            dtype: DType::F32,
+        }));
+        graph.add_edge(input, start, ());
+        start
+    });
+    let binary = |op: &str| CudaBinaryElementwise {
+        op: op.to_string(),
+        out_shape: shape.clone(),
+        a_stride: strides.clone(),
+        b_stride: strides.clone(),
+        out_stride: strides.clone(),
+        dtype: DType::F32,
+    };
+    let mul = graph.add_node(llir_of(binary("Mul")));
+    let add = graph.add_node(llir_of(binary("Add")));
+    let end = graph.add_node(llir_of(FusionEnd {
+        shape,
+        strides,
+        dtype: DType::F32,
+    }));
+    graph.add_edge(starts[0], mul, ());
+    graph.add_edge(starts[1], mul, ());
+    graph.add_edge(mul, add, ());
+    graph.add_edge(starts[2], add, ());
+    graph.add_edge(add, end, ());
+
+    let topo = toposort(&graph, None).unwrap();
+    let (units, _) = build_compile_units(&topo, &graph);
+    let region = units
+        .iter()
+        .find_map(|unit| match unit {
+            CompileUnit::Region(region) => Some(region),
+            CompileUnit::Single(_) => None,
+        })
+        .expect("Mul -> Add region must be fused");
+    let (fused_source, _) = region_kernel_source(region, &graph);
+    assert!(fused_source.contains("__fmul_rn("));
+    assert!(fused_source.contains("__fadd_rn("));
+
+    let context = CudaContext::new(0).expect("CUDA device is required");
+    let stream = context.new_stream().unwrap();
+    let compile = |source: &str, name: &str| {
+        let image = compile_module_image_for_current_device(stream.context(), source).unwrap();
+        let module = stream.context().load_module(image).unwrap();
+        module.load_function(name).unwrap()
+    };
+    let fused = compile(&fused_source, "fused_region_k");
+    let mul_kernel = compile(
+        r#"
+extern "C" __global__ void mul_k(float *out, const float *a, const float *b) {
+    long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < 256) out[i] = __fmul_rn(a[i], b[i]);
+}
+"#,
+        "mul_k",
+    );
+    let add_kernel = compile(
+        r#"
+extern "C" __global__ void add_k(float *out, const float *product, const float *c) {
+    long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < 256) out[i] = __fadd_rn(product[i], c[i]);
+}
+"#,
+        "add_k",
+    );
+    let fma_kernel = compile(
+        r#"
+extern "C" __global__ void fma_k(float *out, const float *a, const float *b, const float *c) {
+    long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < 256) out[i] = __fmaf_rn(a[i], b[i], c[i]);
+}
+"#,
+        "fma_k",
+    );
+
+    // The first lane is a known contraction discriminator:
+    // round((1 + 2^-23) * (1 - 2^-23)) - 1 == +0, while FMA yields -2^-46.
+    let mut host = [vec![0.0_f32; N], vec![0.0_f32; N], vec![0.0_f32; N]];
+    host[0][0] = f32::from_bits(1.0_f32.to_bits() + 1);
+    host[1][0] = f32::from_bits(1.0_f32.to_bits() - 1);
+    host[2][0] = -1.0;
+    let [left, right, offset] = &mut host;
+    for (i, ((left, right), offset)) in left.iter_mut().zip(right).zip(offset).enumerate().skip(1) {
+        let sign = if i & 1 == 0 { 1.0 } else { -1.0 };
+        *left = sign * (1.0 + (i % 31) as f32 / 32.0);
+        *right = (i % 17) as f32 / 16.0 - 0.5;
+        *offset = sign * (i % 13) as f32 / 64.0;
+    }
+    let device_inputs = host
+        .iter()
+        .map(|values| stream.clone_htod(values).unwrap())
+        .collect::<Vec<_>>();
+    let input_ptrs = region
+        .external_inputs
+        .iter()
+        .map(|producer| {
+            let slot = inputs.iter().position(|input| input == producer).unwrap();
+            device_inputs[slot].device_ptr(&stream).0
+        })
+        .collect::<Vec<_>>();
+    let fused_output = stream.alloc_zeros::<f32>(N).unwrap();
+    let product = stream.alloc_zeros::<f32>(N).unwrap();
+    let split_output = stream.alloc_zeros::<f32>(N).unwrap();
+    let fma_output = stream.alloc_zeros::<f32>(N).unwrap();
+    let cfg = LaunchConfig::for_num_elems(N as u32);
+    let fused_output_ptr = fused_output.device_ptr(&stream).0;
+    let product_ptr = product.device_ptr(&stream).0;
+    let split_output_ptr = split_output.device_ptr(&stream).0;
+    let fma_output_ptr = fma_output.device_ptr(&stream).0;
+    let a_ptr = device_inputs[0].device_ptr(&stream).0;
+    let b_ptr = device_inputs[1].device_ptr(&stream).0;
+    let c_ptr = device_inputs[2].device_ptr(&stream).0;
+
+    unsafe {
+        let mut launch = stream.launch_builder(&fused);
+        launch.arg(&fused_output_ptr);
+        for pointer in &input_ptrs {
+            launch.arg(pointer);
+        }
+        launch.launch(cfg).unwrap();
+
+        stream
+            .launch_builder(&mul_kernel)
+            .arg(&product_ptr)
+            .arg(&a_ptr)
+            .arg(&b_ptr)
+            .launch(cfg)
+            .unwrap();
+        stream
+            .launch_builder(&add_kernel)
+            .arg(&split_output_ptr)
+            .arg(&product_ptr)
+            .arg(&c_ptr)
+            .launch(cfg)
+            .unwrap();
+        stream
+            .launch_builder(&fma_kernel)
+            .arg(&fma_output_ptr)
+            .arg(&a_ptr)
+            .arg(&b_ptr)
+            .arg(&c_ptr)
+            .launch(cfg)
+            .unwrap();
+    }
+
+    let fused_bits = stream
+        .clone_dtoh(&fused_output)
+        .unwrap()
+        .into_iter()
+        .map(f32::to_bits)
+        .collect::<Vec<_>>();
+    let split_bits = stream
+        .clone_dtoh(&split_output)
+        .unwrap()
+        .into_iter()
+        .map(f32::to_bits)
+        .collect::<Vec<_>>();
+    let fma_bits = stream
+        .clone_dtoh(&fma_output)
+        .unwrap()
+        .into_iter()
+        .map(f32::to_bits)
+        .collect::<Vec<_>>();
+    assert_eq!(fused_bits, split_bits);
+    assert_ne!(
+        fma_bits[0], split_bits[0],
+        "fixture must detect contraction"
+    );
 }

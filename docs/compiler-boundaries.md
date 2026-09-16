@@ -1,9 +1,9 @@
 # Compiler boundaries and extension points
 
-The executor describes model semantics and the state-manager contract. OrbitKV compiler
-owns rewrite alternatives, candidate measurement, and deployment. A checkpoint
-name or a successful benchmark shape must not select an implementation in
-application code.
+The executor describes model semantics and the state-manager contract. Compiler
+core builds rewrite alternatives; the CUDA backend owns candidate measurement
+and deployment. A checkpoint name or a successful benchmark shape must not
+select an implementation in application code.
 
 ## Code layout
 

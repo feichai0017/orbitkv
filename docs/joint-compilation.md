@@ -4,6 +4,15 @@ Status: target design. This document separates existing integration points from
 proposed extensions; it does not claim that joint layout search or generated
 persistent execution is implemented.
 
+Delivery priority is governed by the [roadmap](roadmap.md): establish correct
+default execution, bring up the selected Flash models with explicit CPU weight offload,
+and qualify useful bounded generated regions. A bounded weight-residency and
+transfer policy is required for offload; a global placement search is not.
+Multiple state-realization search, external KV placement optimization and
+persistent execution are deferred until a measured workload justifies them.
+The stages below describe architectural dependencies, not prerequisites for
+bringing up another model.
+
 The goal is one native Rust inference process in which OrbitKV compiles and
 owns persistent state, OrbitKV compiler compiles equivalent compute implementations, and
 the executor selects a compatible state/compute deployment. The first acceptance

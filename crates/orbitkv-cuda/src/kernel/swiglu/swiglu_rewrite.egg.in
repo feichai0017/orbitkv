@@ -1,5 +1,6 @@
 (rule
-                ({}
+                ({chain}
+                    {range_proof}
                 )
                 (
                     (let ?ks (Op (KernelSwiglu ?o_sh) (ICons ?x (INil))))
@@ -7,5 +8,5 @@
                     (set (dtype ?ks) (Bf16))
                 )
                 :ruleset kernel_fuse_late
-                :name "kernel swiglu bf16"
+                :name "kernel swiglu bf16 {variant}"
             )

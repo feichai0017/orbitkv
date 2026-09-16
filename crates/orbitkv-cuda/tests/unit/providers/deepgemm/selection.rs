@@ -4,17 +4,12 @@ use super::*;
 fn descriptor_pins_a_tile_across_interior_rows() {
     let selection = Selection {
         row_limit: 256,
-        config: candidates(256, 5120, 5120, 78)[0],
+        config: candidates(CANONICAL_SELECTION_ROWS, 5120, 5120, 78)[0],
     };
     let encoded = serde_json::to_string(&selection).unwrap();
     let restored: Selection = serde_json::from_str(&encoded).unwrap();
     restored.validate().unwrap();
     assert_eq!(restored, selection);
-    assert_ne!(
-        candidates(1, 5120, 5120, 78)[0],
-        selection.config,
-        "the old rank would select a different tile"
-    );
     for rows in [1, 4, 8, 16, 32, 64, 128, 256] {
         restored.validate_rows(rows).unwrap();
         assert_eq!(restored.config, selection.config);
@@ -27,6 +22,28 @@ fn descriptor_pins_a_tile_across_interior_rows() {
     corrupted = restored;
     corrupted.config.num_sms = 0;
     assert!(corrupted.validate().is_err());
+}
+
+#[test]
+fn primitive_uses_one_numerical_tile_across_row_limits() {
+    let mut graph = orbitkv_compiler::egglog_utils::primitives::egglog::EGraph::default();
+    graph.add_primitive(
+        orbitkv_compiler::egglog_utils::primitives::EgglogPrimitive::new::<TileCandidate>(),
+    );
+    let expected_config = candidates(CANONICAL_SELECTION_ROWS, 5120, 17408, 78)[0];
+    for rows in [1, 4, 8, 32, 256] {
+        let selection = Selection {
+            row_limit: rows,
+            config: expected_config,
+        };
+        let literal = serde_json::to_string(&serde_json::to_string(&selection).unwrap()).unwrap();
+        graph
+            .parse_and_run_program(
+                None,
+                &format!("(check (= (deepgemm-tile-candidate {rows} 5120 17408 78 0) {literal}))"),
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -62,7 +79,7 @@ fn primitive_is_partial_and_returns_a_serializable_descriptor() {
     );
     let selection = Selection {
         row_limit: 32,
-        config: candidates(32, 128, 128, 78)[0],
+        config: candidates(CANONICAL_SELECTION_ROWS, 128, 128, 78)[0],
     };
     let literal = serde_json::to_string(&serde_json::to_string(&selection).unwrap()).unwrap();
     graph

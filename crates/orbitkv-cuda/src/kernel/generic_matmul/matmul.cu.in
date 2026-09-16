@@ -17,9 +17,16 @@ extern "C" {{
         long long iters = {k};
 
         float partial = 0.0f;
+        float comp = 0.0f;
         for (long long i = tid; i < iters; i += THREADS_PER_BLOCK) {{
             long long mul_idx = base_idx + {iter_offset};
-            partial += static_cast<float>(lhs[{lhs_idx}]) * static_cast<float>(rhs[{rhs_idx}]);
+            float product = __fmul_rn(
+                static_cast<float>(lhs[{lhs_idx}]),
+                static_cast<float>(rhs[{rhs_idx}]));
+            float y = __fsub_rn(product, comp);
+            float next = __fadd_rn(partial, y);
+            comp = __fsub_rn(__fsub_rn(next, partial), y);
+            partial = next;
         }}
 
         #pragma unroll

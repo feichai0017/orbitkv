@@ -76,6 +76,27 @@ pub(super) struct TokenAttentionInputs<'a> {
     pub(super) v_cache: &'a GraphTensor,
 }
 
+struct TokenAttentionBuild {
+    hidden: GraphTensor,
+    key_update: GraphTensor,
+    value_update: GraphTensor,
+    #[cfg(test)]
+    observed: Option<GraphTensor>,
+}
+
+struct ProjectedAttention {
+    q: GraphTensor,
+    k: GraphTensor,
+    value: GraphTensor,
+    output_gate: Option<GraphTensor>,
+}
+
+struct EnvelopeBuild {
+    output: GraphTensor,
+    #[cfg(test)]
+    observed: Option<GraphTensor>,
+}
+
 impl TokenAttentionLayer {
     pub(super) fn new(
         graph: &mut Graph,
@@ -141,7 +162,62 @@ impl TokenAttentionLayer {
         dimensions: DecoderDimensions,
         class_dimensions: DecoderClassDimensions,
     ) -> Result<(GraphTensor, GraphTensor, GraphTensor), DecoderError> {
+        self.forward_impl(
+            inputs,
+            class,
+            config,
+            dimensions,
+            class_dimensions,
+            #[cfg(test)]
+            None,
+        )
+        .map(|output| (output.hidden, output.key_update, output.value_update))
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn forward_with_diagnostic(
+        &self,
+        inputs: &TokenAttentionInputs<'_>,
+        class: &crate::AttentionClass,
+        config: &DecoderConfig,
+        dimensions: DecoderDimensions,
+        class_dimensions: DecoderClassDimensions,
+        diagnostic: Option<super::DecoderLayerDiagnosticBoundary>,
+    ) -> Result<(GraphTensor, GraphTensor, GraphTensor, Option<GraphTensor>), DecoderError> {
+        self.forward_impl(
+            inputs,
+            class,
+            config,
+            dimensions,
+            class_dimensions,
+            diagnostic,
+        )
+        .map(|output| {
+            (
+                output.hidden,
+                output.key_update,
+                output.value_update,
+                output.observed,
+            )
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn forward_impl(
+        &self,
+        inputs: &TokenAttentionInputs<'_>,
+        class: &crate::AttentionClass,
+        config: &DecoderConfig,
+        dimensions: DecoderDimensions,
+        class_dimensions: DecoderClassDimensions,
+        #[cfg(test)] diagnostic: Option<super::DecoderLayerDiagnosticBoundary>,
+    ) -> Result<TokenAttentionBuild, DecoderError> {
         let normalized = self.envelope.state_input(inputs.hidden);
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::AttentionNormalized) {
+            return Ok(diagnostic_attention(&normalized, inputs));
+        }
         let project = |weight: DecoderLinearWeight, bias: Option<GraphTensor>| {
             let output = weight.forward(&normalized);
             bias.map_or(output, |bias| bias.expand_lhs(&output.dims()[..1]) + output)
@@ -163,64 +239,80 @@ impl TokenAttentionLayer {
         if let Some(norm) = self.k_norm {
             k = qk_norm(&k, &norm, config);
         }
-        let rope_theta = match class.visibility {
-            crate::AttentionVisibility::Sliding { .. } => {
-                config.local_rope_theta.unwrap_or(config.rope_theta)
-            }
-            crate::AttentionVisibility::Full | crate::AttentionVisibility::Chunked { .. } => {
-                config.rope_theta
-            }
-        };
-        q = rotary(
-            &q,
-            inputs.positions,
-            rope_theta,
-            config.rotary_dimensions,
-            config.head_dim,
-        );
-        k = rotary(
-            &k,
-            inputs.positions,
-            rope_theta,
-            config.rotary_dimensions,
-            config.head_dim,
-        );
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::AttentionQ) {
+            return Ok(diagnostic_attention(&q, inputs));
+        }
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::AttentionK) {
+            return Ok(diagnostic_attention(&k, inputs));
+        }
         let value = project(self.v_weight, self.v_bias);
-        let key_update = scatter_rows(
-            k.merge_dims(1, 2),
-            *inputs.write_slots,
-            *inputs.k_cache,
-            config.kv_heads * config.head_dim,
-        );
-        let value_update = scatter_rows(
-            value,
-            *inputs.write_slots,
-            *inputs.v_cache,
-            config.kv_heads * config.head_dim,
-        );
-        let attention = paged_attention(
-            PagedAttentionInputs {
-                q,
-                k_cache: key_update,
-                v_cache: value_update,
-                query_tokens: dimensions.query_tokens,
-                context_pages: Expression::from(class_dimensions.context_pages),
-            },
-            *inputs.metadata,
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::AttentionV) {
+            return Ok(diagnostic_attention(&value, inputs));
+        }
+        let (attention, key_update, value_update) = paged_readout(
+            inputs,
             class,
-            AttentionGeometry {
-                query_heads: config.query_heads,
-                kv_heads: config.kv_heads,
-                head_dim: config.head_dim,
-                dtype: DType::Bf16,
-                softmax_scale: config.attention_softmax_scale,
+            config,
+            dimensions,
+            class_dimensions,
+            &ProjectedAttention {
+                q,
+                k,
+                value,
+                output_gate,
             },
         )?;
-        let attention = attention.transpose(0, 1).merge_dims(1, 2);
-        let attention = output_gate.map_or(attention, |gate| attention * gate.sigmoid());
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::AttentionReadout) {
+            return Ok(TokenAttentionBuild {
+                hidden: attention,
+                key_update,
+                value_update,
+                observed: Some(attention),
+            });
+        }
         let state_output = self.o_weight.forward(&attention);
-        let hidden = self.envelope.finish(inputs.hidden, state_output);
-        Ok((hidden, key_update, value_update))
+        #[cfg(test)]
+        if matches!(
+            diagnostic,
+            Some(super::DecoderLayerDiagnosticBoundary::AttentionReadoutAndProjected)
+        ) {
+            let values = attention.flatten().concat_along(state_output.flatten(), 0);
+            return Ok(TokenAttentionBuild {
+                hidden: values,
+                key_update,
+                value_update,
+                observed: Some(values),
+            });
+        }
+        #[cfg(test)]
+        if matches!(
+            diagnostic,
+            Some(super::DecoderLayerDiagnosticBoundary::AttentionProjected)
+        ) {
+            return Ok(TokenAttentionBuild {
+                hidden: state_output,
+                key_update,
+                value_update,
+                observed: Some(state_output),
+            });
+        }
+        let finished = self.envelope.finish_impl(
+            inputs.hidden,
+            &state_output,
+            #[cfg(test)]
+            diagnostic,
+        );
+        Ok(TokenAttentionBuild {
+            hidden: finished.output,
+            key_update,
+            value_update,
+            #[cfg(test)]
+            observed: finished.observed,
+        })
     }
 }
 
@@ -289,27 +381,197 @@ impl DecoderLayerEnvelope {
         self.input_norm.forward(hidden)
     }
 
-    pub(super) fn finish(
+    pub(super) fn finish(&self, residual: &GraphTensor, state_output: &GraphTensor) -> GraphTensor {
+        self.finish_impl(
+            residual,
+            state_output,
+            #[cfg(test)]
+            None,
+        )
+        .output
+    }
+
+    #[cfg(test)]
+    pub(super) fn finish_with_diagnostic(
         &self,
         residual: &GraphTensor,
-        mut state_output: GraphTensor,
-    ) -> GraphTensor {
+        state_output: &GraphTensor,
+        diagnostic: Option<super::DecoderLayerDiagnosticBoundary>,
+    ) -> (GraphTensor, Option<GraphTensor>) {
+        let output = self.finish_impl(residual, state_output, diagnostic);
+        (output.output, output.observed)
+    }
+
+    fn finish_impl(
+        &self,
+        residual: &GraphTensor,
+        state_output: &GraphTensor,
+        #[cfg(test)] diagnostic: Option<super::DecoderLayerDiagnosticBoundary>,
+    ) -> EnvelopeBuild {
+        let mut state_output = *state_output;
         if let Some(norm) = &self.post_state_norm {
             state_output = norm.forward(&state_output);
         }
         let hidden = *residual + state_output;
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::Residual) {
+            return diagnostic_envelope(&hidden);
+        }
         let normalized = self.feed_forward_norm.forward(&hidden);
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::FeedForwardNormalized) {
+            return diagnostic_envelope(&normalized);
+        }
         let gate = self.gate.forward(&normalized).cast(DType::F32);
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::Gate) {
+            return diagnostic_envelope(&gate);
+        }
         let up = self.up.forward(&normalized).cast(DType::F32);
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::Up) {
+            return diagnostic_envelope(&up);
+        }
         let activated = match self.activation {
             DecoderActivation::Silu => gate.swish(),
             DecoderActivation::GeluTanh => gelu_tanh(&gate),
-        };
-        let mut feed_forward = self.down.forward(&(activated * up).cast(DType::Bf16));
+        }
+        .cast(DType::Bf16)
+        .cast(DType::F32);
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::Activated) {
+            return diagnostic_envelope(&activated);
+        }
+        let product = (activated * up).cast(DType::Bf16);
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::Product) {
+            return diagnostic_envelope(&product);
+        }
+        let mut feed_forward = self.down.forward(&product);
         if let Some(norm) = &self.post_feed_forward_norm {
             feed_forward = norm.forward(&feed_forward);
         }
-        hidden + feed_forward
+        #[cfg(test)]
+        if diagnostic == Some(super::DecoderLayerDiagnosticBoundary::Down) {
+            return diagnostic_envelope(&feed_forward);
+        }
+        #[cfg(test)]
+        if matches!(
+            diagnostic,
+            Some(super::DecoderLayerDiagnosticBoundary::AddOperands)
+        ) {
+            let operands = hidden.flatten().concat_along(feed_forward.flatten(), 0);
+            return diagnostic_envelope(&operands);
+        }
+        let output = hidden + feed_forward;
+        #[cfg(test)]
+        if matches!(
+            diagnostic,
+            Some(super::DecoderLayerDiagnosticBoundary::AddOperandsAndOutput)
+        ) {
+            let values = hidden
+                .flatten()
+                .concat_along(feed_forward.flatten(), 0)
+                .concat_along(output.flatten(), 0);
+            return diagnostic_envelope(&values);
+        }
+        EnvelopeBuild {
+            output,
+            #[cfg(test)]
+            observed: matches!(
+                diagnostic,
+                Some(super::DecoderLayerDiagnosticBoundary::Output)
+            )
+            .then_some(output),
+        }
+    }
+}
+
+fn paged_readout(
+    inputs: &TokenAttentionInputs<'_>,
+    class: &crate::AttentionClass,
+    config: &DecoderConfig,
+    dimensions: DecoderDimensions,
+    class_dimensions: DecoderClassDimensions,
+    projected: &ProjectedAttention,
+) -> Result<(GraphTensor, GraphTensor, GraphTensor), DecoderError> {
+    let rope_theta = match class.visibility {
+        crate::AttentionVisibility::Sliding { .. } => {
+            config.local_rope_theta.unwrap_or(config.rope_theta)
+        }
+        crate::AttentionVisibility::Full | crate::AttentionVisibility::Chunked { .. } => {
+            config.rope_theta
+        }
+    };
+    let q = rotary(
+        &projected.q,
+        inputs.positions,
+        rope_theta,
+        config.rotary_dimensions,
+        config.head_dim,
+    );
+    let k = rotary(
+        &projected.k,
+        inputs.positions,
+        rope_theta,
+        config.rotary_dimensions,
+        config.head_dim,
+    );
+    let key_update = scatter_rows(
+        k.merge_dims(1, 2),
+        *inputs.write_slots,
+        *inputs.k_cache,
+        config.kv_heads * config.head_dim,
+    );
+    let value_update = scatter_rows(
+        projected.value,
+        *inputs.write_slots,
+        *inputs.v_cache,
+        config.kv_heads * config.head_dim,
+    );
+    let attention = paged_attention(
+        PagedAttentionInputs {
+            q,
+            k_cache: key_update,
+            v_cache: value_update,
+            query_tokens: dimensions.query_tokens,
+            context_pages: Expression::from(class_dimensions.context_pages),
+        },
+        *inputs.metadata,
+        class,
+        AttentionGeometry {
+            query_heads: config.query_heads,
+            kv_heads: config.kv_heads,
+            head_dim: config.head_dim,
+            dtype: DType::Bf16,
+            softmax_scale: config.attention_softmax_scale,
+        },
+    )?;
+    let attention = attention.transpose(0, 1).merge_dims(1, 2);
+    let attention = projected
+        .output_gate
+        .map_or(attention, |gate| attention * gate.sigmoid());
+    Ok((attention, key_update, value_update))
+}
+
+#[cfg(test)]
+fn diagnostic_attention(
+    output: &GraphTensor,
+    inputs: &TokenAttentionInputs<'_>,
+) -> TokenAttentionBuild {
+    TokenAttentionBuild {
+        hidden: *output,
+        key_update: *inputs.k_cache,
+        value_update: *inputs.v_cache,
+        observed: Some(*output),
+    }
+}
+
+#[cfg(test)]
+fn diagnostic_envelope(output: &GraphTensor) -> EnvelopeBuild {
+    EnvelopeBuild {
+        output: *output,
+        observed: Some(*output),
     }
 }
 

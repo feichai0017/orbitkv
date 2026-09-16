@@ -1,4 +1,5 @@
 {
+  "compile_policy": "tune",
   "batch_sizes": [
     1,
     8

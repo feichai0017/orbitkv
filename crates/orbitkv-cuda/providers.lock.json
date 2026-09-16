@@ -13,7 +13,8 @@
       "revision": "559d79fb6994a58b8a15b4b93bf13ccc16edf247",
       "markers": [
         "deep_gemm/include/deep_gemm",
-        "third-party/cutlass/include/cute"
+        "third-party/cutlass/include/cute",
+        "third-party/cutlass/include/cutlass/arch/synclog.hpp"
       ],
       "source_paths": [
         "deep_gemm/include",

@@ -55,10 +55,12 @@ pub(in crate::model) fn decoder_compile_options(
         compile.maximum_query_tokens,
     )?);
     let mut batch = dimension_buckets(&tuning.batch_sizes, 1, 1, compile.maximum_batch_size)?;
-    if !tuning.batch_sizes.is_empty() && batch[0].max > 1 {
+    if batch[0].max > 1 {
         let first = batch.remove(0);
-        // Preserve the singleton batch interval when explicit workload
-        // representatives would otherwise merge it into a larger interval.
+        // A one-token decode cannot contain more than one nonempty request.
+        // Preserve the singleton batch interval even when no workload list is
+        // supplied; otherwise the independent ranges admit impossible upper
+        // geometry such as s=1 with b=8 before representative filtering runs.
         let next_batch_size = first.min + 1;
         batch.insert(
             0,
@@ -74,6 +76,7 @@ pub(in crate::model) fn decoder_compile_options(
         compile.maximum_context_pages,
     )?;
     let mut options = CompileOptions::default()
+        .compile_policy(tuning.compile_policy)
         .dim_buckets('s', &query)
         .dim_buckets('b', &batch)
         .search_graph_limit(compile.search_graphs)
