@@ -3,6 +3,7 @@ use std::fs;
 use std::process::ExitCode;
 
 use kern_manifest::Verified;
+use orbitkv_compiler::compiler::provider::{DeepGemmSm90Capability, Fp8ProjectionShape, render_aot_source};
 use orbitkv_compiler::lower::Qwen38Fp8WeightPlan;
 use orbitkv_compiler::oracle::{ManifestInventory, Qwen38Fp8Checkpoint, Qwen38Oracle};
 
@@ -20,9 +21,14 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
-    if args.next().as_deref() != Some("oracle") {
-        return Err(usage().into());
+    match args.next().as_deref() {
+        Some("oracle") => run_oracle(args),
+        Some("provider") => run_provider(args),
+        _ => Err(usage().into()),
     }
+}
+
+fn run_oracle(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
     match args.next().as_deref() {
         Some("inspect") => {
             let path = args.next().unwrap_or_else(|| DEFAULT_ORACLE.into());
@@ -75,9 +81,51 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }))?
             );
         }
+        Some("provider-contract") => {
+            let path = args.next().ok_or_else(usage)?;
+            no_more(args)?;
+            let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+            let source = value
+                .pointer("/artifacts/source")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("qualification record has no artifacts.source")?;
+            let cubin = value
+                .pointer("/artifacts/cubin")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("qualification record has no artifacts.cubin")?;
+            let contract = value.get("contract").cloned().ok_or("qualification record has no contract")?;
+            let contract: orbitkv_compiler::compiler::provider::DeepGemmKernelContract =
+                serde_json::from_value(contract)?;
+            DeepGemmSm90Capability::h20().validate_contract(&contract)?;
+            contract.verify_artifacts(&fs::read(source)?, &fs::read(cubin)?)?;
+            println!("{}", serde_json::to_string_pretty(&contract)?);
+        }
         _ => return Err(usage().into()),
     }
     Ok(())
+}
+
+fn run_provider(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+    if args.next().as_deref() != Some("deepgemm-h20") {
+        return Err(usage().into());
+    }
+    let operation = args.next().ok_or_else(usage)?;
+    let rows = parse_u32(args.next(), "rows")?;
+    let output_features = parse_u32(args.next(), "output features")?;
+    let input_features = parse_u32(args.next(), "input features")?;
+    no_more(args)?;
+    let contract = DeepGemmSm90Capability::h20()
+        .preferred_candidate(rows, Fp8ProjectionShape { output_features, input_features })?;
+    match operation.as_str() {
+        "plan" => println!("{}", serde_json::to_string_pretty(&contract)?),
+        "source" => print!("{}", render_aot_source(&contract)?),
+        _ => return Err(usage().into()),
+    }
+    Ok(())
+}
+
+fn parse_u32(value: Option<String>, name: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    value.ok_or_else(usage)?.parse().map_err(|_| format!("invalid {name}").into())
 }
 
 fn no_more(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -85,5 +133,5 @@ fn no_more(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::er
 }
 
 fn usage() -> &'static str {
-    "usage: orbitkv oracle inspect [manifest]\n       orbitkv oracle validate [qwen38-bf16-manifest]\n       orbitkv oracle diff <candidate> [reference]\n       orbitkv oracle checkpoint <qwen38-fp8-model-dir>\n       orbitkv oracle weights <qwen38-fp8-model-dir>"
+    "usage: orbitkv oracle inspect [manifest]\n       orbitkv oracle validate [qwen38-bf16-manifest]\n       orbitkv oracle diff <candidate> [reference]\n       orbitkv oracle checkpoint <qwen38-fp8-model-dir>\n       orbitkv oracle weights <qwen38-fp8-model-dir>\n       orbitkv oracle provider-contract <qualification.json>\n       orbitkv provider deepgemm-h20 plan <rows> <output-features> <input-features>\n       orbitkv provider deepgemm-h20 source <rows> <output-features> <input-features>"
 }

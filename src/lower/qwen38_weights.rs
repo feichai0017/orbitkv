@@ -4,6 +4,7 @@ use std::fmt;
 use kern_manifest::types::{Buffer, BufferKind, DType, Dim, Placement, Segment, TensorSource};
 use serde::Serialize;
 
+use crate::compiler::provider::{Fp8ProjectionFamily, ProviderContractError};
 use crate::model::{LayerKind, Qwen38Contract};
 use crate::oracle::TensorContract;
 
@@ -208,6 +209,10 @@ impl Qwen38Fp8WeightPlan {
 
     pub fn fp8_buffers(&self) -> usize {
         self.bound.values().filter(|buffer| buffer.dtype == DType::Fp8E4m3).count()
+    }
+
+    pub fn fp8_projection_families(&self) -> Result<Vec<Fp8ProjectionFamily>, ProviderContractError> {
+        Fp8ProjectionFamily::from_weight_buffers(&self.bound)
     }
 
     fn gdn_layer(&mut self, physical: &str, checkpoint: &str) {

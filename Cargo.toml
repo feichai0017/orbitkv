@@ -75,6 +75,8 @@ needless_range_loop = "allow"
 kern-manifest.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
+hex.workspace = true
+sha2.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

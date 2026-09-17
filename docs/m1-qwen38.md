@@ -52,6 +52,29 @@ The physical FP8 weight plan keeps checkpoint BF16 inverse scales as raw bound
 buffers and emits separate F32 execution-scale buffers. This preserves the
 checkpoint contract while matching the expected low-precision provider ABI.
 
+## H20 FP8 projection contract
+
+The compiler now derives provider-neutral projection families from the weight
+plan. The 256 execution matrices collapse to five `[N,K]` families: 64 uses of
+`[34816,5120]`, 64 of `[5120,17408]`, 48 of `[16384,5120]`, 16 of
+`[14336,5120]`, and 64 of `[5120,6144]`. Provider selection receives these
+shapes and row limits, never a model name.
+
+The first capability is pinned to H20/SM90a, 78 SMs, DeepGEMM revision
+`559d79fb6994a58b8a15b4b93bf13ccc16edf247`, and numerical ABI
+`fp8-e4m3-row128-f32-kmajor-align4-rne-reciprocal-v2`. It validates the exact
+BF16 input, block-scaled E4M3 weight, F32 weight scale, packed activation scale,
+BF16 output, scratch, tile, cluster, thread, and shared-memory layouts for low
+latency row buckets 1, 2, 4, and 8. Legal candidates are not executable claims:
+only a content-addressed cubin with numerical evidence may become qualified.
+
+The initial GPU qualification slice covers the fused attention QKV projection
+at `M=8, N=14336, K=5120`. On the local H20 with CUDA 13.1 it passed patterned
+activation quantization and analytical block-scale output checks exactly, then
+measured about 0.050 ms median across 100 warm samples for combined BF16-to-FP8
+activation quantization plus GEMM. This is a kernel-level gate, not a
+decode-token or serving-performance claim.
+
 ## Commands
 
 Inspect or validate the BF16 executable oracle:
@@ -75,6 +98,36 @@ cargo run --locked --bin orbitkv -- oracle weights \
   /workspace/models/qwen3.8-27b-fp8
 ```
 
+Inspect a compiler-selected H20 provider contract or render its AOT source:
+
+```sh
+cargo run --locked --bin orbitkv -- \
+  provider deepgemm-h20 plan 8 14336 5120
+cargo run --locked --bin orbitkv -- \
+  provider deepgemm-h20 source 8 14336 5120
+```
+
+Rebuild and qualify that exact contract against a pinned DeepGEMM checkout:
+
+```sh
+python tools/qualify_deepgemm_h20.py \
+  --provider-dir /path/to/deepgemm-559d79f \
+  --output-dir /tmp/orbitkv-deepgemm-qualification \
+  --nvcc /usr/local/cuda-13.1/bin/nvcc
+```
+
+The qualification directory is disposable output. Its JSON records source,
+host-library, and deployable cubin SHA-256 digests; generated binaries are not
+checked into the repository.
+
+Re-admit a saved qualification record through the compiler contract validator.
+This also re-hashes the source and cubin named by the record:
+
+```sh
+cargo run --locked --bin orbitkv -- oracle provider-contract \
+  /tmp/orbitkv-deepgemm-qualification/qualification.json
+```
+
 Compare any candidate manifest structurally with the BF16 executable oracle:
 
 ```sh
@@ -89,14 +142,15 @@ once:
 
 1. derive activation, carry, input, output, and workspace buffers for
    `decode_batch`;
-2. define typed provider/kernel capabilities and exact op interfaces;
+2. extend the typed provider/kernel capability into the exact manifest op
+   interface using launch-private `bytes<128>` TMA descriptors;
 3. lower buffer/state/var arguments for every skeleton call;
 4. emit the load program for FP8 scale casts, A-log casts, norm transforms,
    RoPE, and fixed tables;
 5. construct a complete verified target-only manifest;
 6. compare it against the BF16 topology oracle and the FP8 checkpoint oracle;
-7. execute it through local `kern-runtime`, then expose it through
-   `kern-serve`.
+7. execute the qualified cubin through local `kern-runtime`, then expose it
+   through `kern-serve`.
 
 Only after this provider-composed FP8 decoder is correct do GDN fusion and
 persistent-island optimization begin.
