@@ -1,7 +1,6 @@
 use crate::ir::{
-    EffectKind, FullAttentionGeometry, GatedDeltaGeometry, ImplementationCandidate, Operation,
-    ProjectionRole, StateEffect, StateId, StateRegion, StateScope, StateSpec, Task, TaskGraph,
-    TaskId, ValueId,
+    EffectKind, FullAttentionGeometry, GatedDeltaGeometry, ImplementationCandidate, Operation, ProjectionRole,
+    StateEffect, StateId, StateRegion, StateScope, StateSpec, Task, TaskGraph, TaskId, ValueId,
 };
 
 const RECURRENT_STATE: StateId = StateId(0);
@@ -29,26 +28,14 @@ impl Qwen38Contract {
     pub const FP8_SCALE_COLUMNS: u16 = 128;
     pub const MTP_LAYERS: u8 = 1;
 
-    pub const GATED_DELTA: GatedDeltaGeometry = GatedDeltaGeometry {
-        key_heads: 16,
-        value_heads: 48,
-        key_width: 128,
-        value_width: 128,
-        convolution_width: 4,
-    };
+    pub const GATED_DELTA: GatedDeltaGeometry =
+        GatedDeltaGeometry { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, convolution_width: 4 };
 
-    pub const FULL_ATTENTION: FullAttentionGeometry = FullAttentionGeometry {
-        query_heads: 24,
-        kv_heads: 4,
-        head_width: 256,
-    };
+    pub const FULL_ATTENTION: FullAttentionGeometry =
+        FullAttentionGeometry { query_heads: 24, kv_heads: 4, head_width: 256 };
 
     pub const fn layer_kind(layer: u16) -> LayerKind {
-        if layer % 4 == 3 {
-            LayerKind::FullAttention
-        } else {
-            LayerKind::GatedDelta
-        }
+        if layer % 4 == 3 { LayerKind::FullAttention } else { LayerKind::GatedDelta }
     }
 
     pub const fn recurrent_bytes_per_layer() -> u64 {
@@ -99,9 +86,7 @@ impl Qwen38Contract {
 
         push_task(
             &mut tasks,
-            Operation::Projection {
-                role: ProjectionRole::Embedding,
-            },
+            Operation::Projection { role: ProjectionRole::Embedding },
             vec![hidden],
             ValueId(next_value),
             Vec::new(),
@@ -113,24 +98,13 @@ impl Qwen38Contract {
         for layer in 0..Self::LAYERS {
             let (operation, effects, candidates) = match Self::layer_kind(layer) {
                 LayerKind::GatedDelta => (
-                    Operation::GatedDeltaBlock {
-                        layer,
-                        geometry: Self::GATED_DELTA,
-                    },
+                    Operation::GatedDeltaBlock { layer, geometry: Self::GATED_DELTA },
                     vec![
                         effect(RECURRENT_STATE, layer, EffectKind::Read),
-                        effect(
-                            RECURRENT_STATE,
-                            layer,
-                            EffectKind::TentativeWrite { version: 0 },
-                        ),
+                        effect(RECURRENT_STATE, layer, EffectKind::TentativeWrite { version: 0 }),
                         effect(RECURRENT_STATE, layer, EffectKind::Commit { version: 0 }),
                         effect(CONVOLUTION_STATE, layer, EffectKind::Read),
-                        effect(
-                            CONVOLUTION_STATE,
-                            layer,
-                            EffectKind::TentativeWrite { version: 0 },
-                        ),
+                        effect(CONVOLUTION_STATE, layer, EffectKind::TentativeWrite { version: 0 }),
                         effect(CONVOLUTION_STATE, layer, EffectKind::Commit { version: 0 }),
                     ],
                     vec![
@@ -140,25 +114,12 @@ impl Qwen38Contract {
                     ],
                 ),
                 LayerKind::FullAttention => (
-                    Operation::FullAttentionBlock {
-                        layer,
-                        geometry: Self::FULL_ATTENTION,
-                    },
-                    vec![
-                        effect(TOKEN_KV, layer, EffectKind::Append),
-                        effect(TOKEN_KV, layer, EffectKind::Read),
-                    ],
+                    Operation::FullAttentionBlock { layer, geometry: Self::FULL_ATTENTION },
+                    vec![effect(TOKEN_KV, layer, EffectKind::Append), effect(TOKEN_KV, layer, EffectKind::Read)],
                     vec![ImplementationCandidate::ProviderGraph],
                 ),
             };
-            push_task(
-                &mut tasks,
-                operation,
-                vec![hidden],
-                ValueId(next_value),
-                effects,
-                candidates,
-            );
+            push_task(&mut tasks, operation, vec![hidden], ValueId(next_value), effects, candidates);
             hidden = ValueId(next_value);
             next_value += 1;
         }
@@ -175,9 +136,7 @@ impl Qwen38Contract {
         next_value += 1;
         push_task(
             &mut tasks,
-            Operation::Projection {
-                role: ProjectionRole::LanguageModelHead,
-            },
+            Operation::Projection { role: ProjectionRole::LanguageModelHead },
             vec![hidden],
             ValueId(next_value),
             Vec::new(),
@@ -195,11 +154,7 @@ impl Qwen38Contract {
 }
 
 fn effect(state: StateId, layer: u16, kind: EffectKind) -> StateEffect {
-    StateEffect {
-        state,
-        region: StateRegion::Layer(layer),
-        kind,
-    }
+    StateEffect { state, region: StateRegion::Layer(layer), kind }
 }
 
 fn push_task(
@@ -212,13 +167,5 @@ fn push_task(
 ) {
     let id = TaskId(tasks.len());
     let dependencies = id.0.checked_sub(1).map(TaskId).into_iter().collect();
-    tasks.push(Task {
-        id,
-        operation,
-        inputs,
-        outputs: vec![output],
-        dependencies,
-        state_effects,
-        candidates,
-    });
+    tasks.push(Task { id, operation, inputs, outputs: vec![output], dependencies, state_effects, candidates });
 }

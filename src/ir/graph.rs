@@ -46,60 +46,37 @@ impl TaskGraph {
 
         for (position, task) in self.tasks.iter().enumerate() {
             if task.id != TaskId(position) || !tasks.insert(task.id) {
-                return Err(GraphError(format!(
-                    "task {:?} is not in canonical topological order",
-                    task.id
-                )));
+                return Err(GraphError(format!("task {:?} is not in canonical topological order", task.id)));
             }
             if task.candidates.is_empty() {
-                return Err(GraphError(format!(
-                    "task {:?} has no implementation candidate",
-                    task.id
-                )));
+                return Err(GraphError(format!("task {:?} has no implementation candidate", task.id)));
             }
             for dependency in &task.dependencies {
                 if !tasks.contains(dependency) || *dependency == task.id {
-                    return Err(GraphError(format!(
-                        "task {:?} has non-prior dependency {:?}",
-                        task.id, dependency
-                    )));
+                    return Err(GraphError(format!("task {:?} has non-prior dependency {:?}", task.id, dependency)));
                 }
             }
             for input in &task.inputs {
                 if !values.contains(input) {
-                    return Err(GraphError(format!(
-                        "task {:?} reads unavailable value {:?}",
-                        task.id, input
-                    )));
+                    return Err(GraphError(format!("task {:?} reads unavailable value {:?}", task.id, input)));
                 }
             }
             for output in &task.outputs {
                 if !values.insert(*output) {
-                    return Err(GraphError(format!(
-                        "value {:?} has multiple producers",
-                        output
-                    )));
+                    return Err(GraphError(format!("value {:?} has multiple producers", output)));
                 }
             }
             let mut tentative_writes = BTreeSet::new();
             for effect in &task.state_effects {
                 let state = states.get(&effect.state).ok_or_else(|| {
-                    GraphError(format!(
-                        "task {:?} references unknown state {:?}",
-                        task.id, effect.state
-                    ))
+                    GraphError(format!("task {:?} references unknown state {:?}", task.id, effect.state))
                 })?;
                 match (state.scope, effect.kind) {
                     (StateScope::Immutable, EffectKind::Read | EffectKind::Lookup)
-                    | (
-                        StateScope::PerToken,
-                        EffectKind::Read | EffectKind::Append | EffectKind::Lookup,
-                    )
+                    | (StateScope::PerToken, EffectKind::Read | EffectKind::Append | EffectKind::Lookup)
                     | (
                         StateScope::PerSequence,
-                        EffectKind::Read
-                        | EffectKind::TentativeWrite { .. }
-                        | EffectKind::Commit { .. },
+                        EffectKind::Read | EffectKind::TentativeWrite { .. } | EffectKind::Commit { .. },
                     ) => {}
                     _ => {
                         return Err(GraphError(format!(
@@ -127,10 +104,7 @@ impl TaskGraph {
 
         for output in &self.outputs {
             if !values.contains(output) {
-                return Err(GraphError(format!(
-                    "graph output {:?} is unavailable",
-                    output
-                )));
+                return Err(GraphError(format!("graph output {:?} is unavailable", output)));
             }
         }
         Ok(())

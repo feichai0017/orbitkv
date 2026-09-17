@@ -7,8 +7,72 @@ license = "MIT"
 repository = "https://github.com/feichai0017/orbitkv"
 description = "Compiler and kernel toolchain for stateful hybrid inference"
 
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "crates/kern-manifest",
+    "crates/kern-pool",
+    "crates/kern-runtime",
+    "crates/kern-test",
+    "crates/kern-run",
+    "crates/kern-serve",
+]
+default-members = [
+    ".",
+    "crates/kern-manifest",
+    "crates/kern-pool",
+    "crates/kern-runtime",
+    "crates/kern-test",
+    "crates/kern-run",
+]
+
+[workspace.package]
+version = "0.2.3"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+kern-manifest = { path = "crates/kern-manifest" }
+kern-pool = { path = "crates/kern-pool" }
+kern-runtime = { path = "crates/kern-runtime" }
+kern-test = { path = "crates/kern-test" }
+kern-run = { path = "crates/kern-run" }
+
+# Serving stays an explicit build because it pulls in the PegaInfer/vLLM
+# frontend stack. Revisions are inherited from the imported kern baseline.
+pegainfer-frontend = { git = "https://github.com/pegainfer-project/pegainfer", rev = "139d925e8693dcff412b8501f8db09eb639d0ffd" }
+vllm-chat = { git = "https://github.com/vllm-project/vllm.git", rev = "89dbb2644552d6e473a7e97da0ce8f0aa8e32c9d" }
+
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+cudarc = { version = "=0.19.7", features = ["cuda-13000", "f16"] }
+half = "=2.7.1"
+hex = "0.4"
+libc = "0.2"
+memmap2 = "0.9"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+safetensors = "=0.8.0"
+serde_json = "1"
+sha2 = "0.11"
+thiserror = "2"
+tokenizers = "=0.23.2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+toml = "1.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ureq = "3"
+
+[workspace.lints.clippy]
+disallowed_types = "deny"
+dbg_macro = "deny"
+todo = "deny"
+type_complexity = "allow"
+needless_range_loop = "allow"
+
 [dependencies]
-kern-manifest = { git = "https://github.com/pegainfer-project/kern", rev = "05df6d9cf8233b2438a7a584ce4ed7a0666abf53" }
+kern-manifest.workspace = true
 serde = { version = "1", features = ["derive"] }
 
 [lints.rust]

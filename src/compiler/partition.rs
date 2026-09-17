@@ -33,13 +33,9 @@ impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidGraph(error) => write!(f, "invalid task graph: {error}"),
-            Self::NonContiguousGatedDeltaRun {
-                first_layer,
-                layers,
-            } => write!(
-                f,
-                "GDN run at layer {first_layer} has {layers} layers; baseline islands require 1..=3"
-            ),
+            Self::NonContiguousGatedDeltaRun { first_layer, layers } => {
+                write!(f, "GDN run at layer {first_layer} has {layers} layers; baseline islands require 1..=3")
+            }
         }
     }
 }
@@ -55,14 +51,8 @@ pub fn partition_baseline(graph: &TaskGraph) -> Result<ExecutionPlan, CompileErr
     let mut position = 0;
     while position < graph.tasks.len() {
         let task = &graph.tasks[position];
-        let Operation::GatedDeltaBlock {
-            layer: first_layer, ..
-        } = task.operation
-        else {
-            islands.push(ExecutionIsland {
-                kind: IslandKind::Provider,
-                tasks: vec![task.id],
-            });
+        let Operation::GatedDeltaBlock { layer: first_layer, .. } = task.operation else {
+            islands.push(ExecutionIsland { kind: IslandKind::Provider, tasks: vec![task.id] });
             position += 1;
             continue;
         };
@@ -80,22 +70,13 @@ pub fn partition_baseline(graph: &TaskGraph) -> Result<ExecutionPlan, CompileErr
             }
         }
         if run.is_empty() || run.len() > 3 {
-            return Err(CompileError::NonContiguousGatedDeltaRun {
-                first_layer,
-                layers: run.len(),
-            });
+            return Err(CompileError::NonContiguousGatedDeltaRun { first_layer, layers: run.len() });
         }
         islands.push(ExecutionIsland {
-            kind: IslandKind::StatefulGatedDelta {
-                first_layer,
-                layers: run.len() as u8,
-            },
+            kind: IslandKind::StatefulGatedDelta { first_layer, layers: run.len() as u8 },
             tasks: run,
         });
     }
 
-    Ok(ExecutionPlan {
-        model: graph.model.clone(),
-        islands,
-    })
+    Ok(ExecutionPlan { model: graph.model.clone(), islands })
 }

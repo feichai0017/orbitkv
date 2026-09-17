@@ -5,16 +5,18 @@ Status: proposed architecture for the reset implementation line. The companion
 
 ## Product definition
 
-OrbitKV Next is a lightweight compiler and kernel toolchain for recent model
-families whose decode path mixes dense or sparse attention, recurrent state,
-Mixture-of-Experts, residual-stream transforms, and native speculative heads.
-Its output is an optimized, verified inference program executed by `kern`.
+OrbitKV Next is a lightweight, source-integrated inference engine for recent
+model families whose decode path mixes dense or sparse attention, recurrent
+state, Mixture-of-Experts, residual-stream transforms, and native speculative
+heads. Its central differentiator is a compiler that produces optimized,
+verified inference programs for the imported `kern` execution layer.
 
-It is deliberately not a broad framework. It owns model lowering, execution-island
-selection, and new kernels. It targets the existing `kern` verified-program
-runtime rather than implementing another CUDA runtime. It does not initially own
-a general model frontend, distributed control plane, remote cache, training stack,
-or complete serving API.
+It is deliberately not a broad framework. The repository owns model lowering,
+execution-island selection, new kernels, runtime execution, KV/state management,
+and a narrow serving path. Model-specific complexity stays in the compiler and
+kernel layer; the imported runtime remains model-agnostic. The project does not
+initially own a general model frontend, distributed control plane, remote cache,
+training stack, or broad serving ecosystem.
 
 The implementation starts with three pinned model contracts in increasing order
 of systems difficulty:
@@ -29,8 +31,8 @@ projects.
 
 ## Execution substrate decision
 
-Use [`pegainfer-project/kern`](https://github.com/pegainfer-project/kern) as the
-initial execution substrate. The reviewed revision is
+Fork [`pegainfer-project/kern`](https://github.com/pegainfer-project/kern) into
+this workspace as the initial execution substrate. The imported revision is
 `05df6d9cf8233b2438a7a584ce4ed7a0666abf53`; its current manifest schema is v5.
 
 `kern` already provides the parts that should not distinguish this project:
@@ -66,13 +68,14 @@ model/state semantics
         -> kern verify / test / run / serve
 ```
 
-The first implementation consumes `kern-manifest` as a pinned dependency and
-emits artifacts executed by an unmodified `kern` release. Runtime extensions are
-allowed only when a required mechanism cannot be represented as an opaque op,
-state, buffer, program, peer mapping, or program variable. Such extensions should
-be proposed upstream before maintaining a private fork. Compiler-only state
-effects remain in the higher-level IR and may disappear after verification and
-lowering.
+The compiler consumes the local `kern-manifest` crate and emits artifacts
+executed by the local `kern-runtime` and `kern-serve` crates. Source ownership
+does not erase the abstraction boundary: runtime extensions are allowed only
+when a measured serving or state-management requirement cannot be represented
+as an opaque op, state, buffer, program, peer mapping, or program variable.
+Compiler-only state effects remain in the higher-level IR and may disappear
+after verification and lowering. Changes generally useful to `kern` should be
+kept upstreamable.
 
 ## Pinned model contracts
 
@@ -151,10 +154,10 @@ The models define a strict implementation order:
 | B | GLM-5.3 | KDA plus sparse MLA plus MoE plus mHC | New task/effect kinds, grouped-GEMM selection, expert placement, collectives, sparse-index carry |
 | C | DeepSeek-V4.1 | Cross-layer compressed state plus Engram plus FP4 plus DSpark | Producer/consumer state lowering, immutable lookup placement, versioned speculative commit |
 
-Every stage targets the same pinned, unmodified `kern` substrate and reuses the
-previous artifact lowering, memory-planning, task-dependency, and correctness
-machinery. A model may add task kinds and kernel families; it must not add
-model-specific launch or allocation machinery.
+Every stage targets the same shared execution substrate and reuses the previous
+artifact lowering, memory-planning, task-dependency, KV/state lifecycle, and
+correctness machinery. A model may add task kinds and kernel families; it must
+not add model-specific launch or allocation machinery.
 
 ## Ownership architecture
 
@@ -334,7 +337,7 @@ code shape only after reconciling model geometry and numerical semantics.
 
 | Source | Candidate | Decision | Reason |
 | --- | --- | --- | --- |
-| `kern` | Manifest v5, verifier, runtime, test harness, pool, CLI/serve | Direct dependency | Already provides the model-agnostic verified execution substrate |
+| `kern` | Manifest v5, verifier, runtime, test harness, pool, CLI/serve | Source fork | Imported at an exact revision so the complete engine can evolve in one workspace |
 | `kern` | Qwen3.8 and DFlash2 manifests/kernel packages | Reference baseline | Proves runtime expressiveness and supplies a parity/performance target for compiler output |
 | `kern` | DeepSeek-V4.1 generators, kernels, manifests, and EP4 evidence | Reference/Adapt | Rich implementation oracle; replace hand-authored generation with compiler lowering rather than copying it |
 | Current OrbitKV | Qwen3.8 config and FP8 weight mapping | Direct extract | Already matches the pinned checkpoint and current H20 path |
@@ -418,8 +421,7 @@ drop-in DeepSeek-V4.1 implementation.
 
 ## Repository shape
 
-Start with one compiler package and one native-kernel directory. `kern` remains
-an external pinned substrate:
+Keep one compiler package above the imported, separately owned execution crates:
 
 ```text
 src/
@@ -432,16 +434,24 @@ kernels/
   qwen38/
 tests/
 tools/
+crates/
+  kern-manifest/
+  kern-pool/
+  kern-runtime/
+  kern-test/
+  kern-run/
+  kern-serve/
 ```
 
 After Qwen succeeds, add `model/glm53` and then `model/deepseek_v41`. Split a
 kernel crate only when build dependencies or linkage make the split necessary.
-Do not create one crate per conceptual noun, and do not add a runtime crate while
-an unmodified `kern` can execute the output.
+Do not create one crate per conceptual noun. Modify an execution crate only when
+the manifest boundary cannot express a measured requirement; do not move model
+semantics or compiler policy into the runtime.
 
 ## Acceptance invariants
 
-- The same pinned, unmodified `kern` substrate executes all admitted models.
+- The same shared `kern` substrate executes all admitted models.
 - A model package cannot allocate device memory or launch a kernel directly.
 - A kernel cannot mutate persistent state without a declared effect.
 - Every dynamic dimension is bounded by an artifact bucket.

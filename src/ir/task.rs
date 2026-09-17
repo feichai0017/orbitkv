@@ -36,17 +36,9 @@ pub enum ProjectionRole {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Operation {
-    Projection {
-        role: ProjectionRole,
-    },
-    GatedDeltaBlock {
-        layer: u16,
-        geometry: GatedDeltaGeometry,
-    },
-    FullAttentionBlock {
-        layer: u16,
-        geometry: FullAttentionGeometry,
-    },
+    Projection { role: ProjectionRole },
+    GatedDeltaBlock { layer: u16, geometry: GatedDeltaGeometry },
+    FullAttentionBlock { layer: u16, geometry: FullAttentionGeometry },
     FinalNorm,
 }
 

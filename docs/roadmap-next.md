@@ -1,4 +1,4 @@
-# OrbitKV Next: a compiler and kernel toolchain for stateful hybrid inference
+# OrbitKV Next: a compiled engine for stateful hybrid inference
 
 Status: proposed reset charter. This document defines a new implementation line.
 It does not extend the current seven-crate engine and does not treat existing
@@ -8,11 +8,12 @@ The detailed three-model decomposition and component reuse decisions live in
 
 ## Decision
 
-Build a small, model-specialized compiler and kernel toolchain for new hybrid
-architectures, using `kern` as the execution substrate. The first target is
-`Qwen3.8-27B-FP8` on one NVIDIA H20. The compiler turns a typed, stateful decode
-graph into a small number of GPU execution islands and selects mature provider
-kernels where they remain the best boundary.
+Build a small, model-specialized inference engine for new hybrid architectures,
+using the imported `kern` source as its execution, state-management, and serving
+layer. The first target is `Qwen3.8-27B-FP8` on one NVIDIA H20. The engine's
+compiler turns a typed, stateful decode graph into a small number of GPU
+execution islands and selects mature provider kernels where they remain the
+best boundary.
 
 The project is not a general replacement for vLLM or SGLang. It exists to test
 and exploit one hypothesis:
@@ -117,7 +118,8 @@ kernel contracts.
 ## Architecture
 
 Keep one compiler crate until a kernel build boundary proves that a split is
-necessary. Target `kern` manifest v5 instead of adding another runtime. A target
+necessary. Target the local `kern` manifest v5 and extend the imported runtime
+only for measured cross-model requirements. A target
 layout is:
 
 ```text
@@ -291,8 +293,7 @@ new scheduler, allocator, or artifact format.
 
 The second Qwen checkpoint must reuse the same GDN task kinds and compiler passes
 while changing geometry. This proves family generality. GLM-5.3 must introduce a
-different state family while still targeting the pinned, unmodified `kern`
-substrate.
+different state family while still targeting the same shared `kern` substrate.
 
 Large MoE checkpoints, CPU weight offload, expert parallelism, and multi-node
 execution are postponed until the single-GPU compiler hypothesis is validated.
@@ -332,8 +333,9 @@ reimplement them. Avoid reproducing its later breadth before the first model
 wins. Preserve upstream licenses and exact source provenance for any adapted
 kernel.
 
-`kern` is the initial execution dependency rather than a design reference. Pin
-its schema/runtime release and emit its native manifest. Its existing Qwen3.8
+`kern` is the imported execution baseline rather than only a design reference.
+Preserve its upstream provenance, evolve its schema/runtime deliberately, and
+emit its native manifest. Its existing Qwen3.8
 and DeepSeek-V4.1 artifacts are baselines and executable oracles. The new work
 must automate model-to-program lowering and execution-island optimization; a
 handwritten manifest clone is not progress.
@@ -375,8 +377,9 @@ Microbenchmark wins must be reported separately from model and serving wins.
 
 - Save the complete current repository and uncommitted work under an explicit
   archive reference.
-- Create a clean implementation branch with one compiler crate, a pinned
-  `kern-manifest` dependency, and no old workspace members in its build graph.
+- Create a clean implementation branch with one compiler package and the
+  provenance-preserving `kern` execution crates, with no old OrbitKV workspace
+  members in its build graph.
 - Freeze the old roadmap and record the exact reusable source inventory.
 - Pin the Qwen3.8 checkpoint, H20 environment, vLLM/SGLang baselines, inputs, and
   correctness oracle.
@@ -387,8 +390,8 @@ Gate: a clean checkout can reproduce the baseline and no historical code is lost
 
 - Lower the Qwen model package into a `kern` manifest without handwritten
   per-layer calls.
-- Execute provider-based prefill and target-only decode through unmodified
-  `kern`.
+- Execute provider-based prefill and target-only decode through the shared
+  `kern` substrate without a model-private runtime path.
 - Use the substrate's fixed buffers, state allocations, and batch programs.
 - Pass serial, changing-batch, ragged, and multi-step state checks.
 
@@ -467,7 +470,7 @@ batch-dependent state divergence.
 - Validate layers and pruned fixtures on H20 before complete-model deployment.
 - Run the complete 305.78 GiB checkpoint only with an explicit multi-GPU or
   bounded-residency plan.
-- Reuse the pinned, unmodified `kern` substrate plus the Qwen-stage task effects,
+- Reuse the shared `kern` substrate plus the Qwen-stage task effects,
   compiler passes, artifact lowering, and test harness.
 
 Gate: complete inference is numerically qualified; model-specific code is
@@ -484,7 +487,7 @@ task implementations.
   Hopper implementation exists.
 
 Gate: the complete 475.24 GiB checkpoint passes a pinned reference and matched
-serving comparison on the same pinned, unmodified `kern` substrate and without
+serving comparison on the same shared `kern` substrate and without
 changing artifact semantics. This is the first credible claim that the compiler
 supports multiple new-model architecture families.
 
@@ -518,8 +521,8 @@ Claims must be earned in this order:
 7. DeepSeek-V4.1 reuses that path while adding CED, CSA2, Engram, FP4, and
    DSpark.
 
-Until level 4, describe the project as a Qwen3.8 compiler and kernel toolchain.
-At level 4, describe it as a GDN-family compiler. Only after level 6 describe it
-as a new-generation hybrid-model inference compiler; level 7 establishes that
-the architecture spans both recurrent and cross-layer compressed-state
-families.
+Until level 4, describe the project as a Qwen3.8 specialized inference engine.
+At level 4, its differentiator is a GDN-family compiler. Only after level 6
+describe it as a new-generation hybrid-model inference engine; level 7
+establishes that the architecture spans both recurrent and cross-layer
+compressed-state families.

@@ -8,7 +8,7 @@ a reproducible dependency.
 
 | Component | Revision or contract | Role |
 | --- | --- | --- |
-| `pegainfer-project/kern` | `05df6d9cf8233b2438a7a584ce4ed7a0666abf53` | Direct `kern-manifest` dependency and unmodified execution substrate |
+| `pegainfer-project/kern` | `05df6d9cf8233b2438a7a584ce4ed7a0666abf53` | Imported source baseline for manifest, pool, runtime, test, CLI, and serving |
 | Manifest | schema v5 | Sole emitted runtime artifact contract |
 
 ## Model contracts

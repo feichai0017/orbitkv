@@ -26,9 +26,7 @@ impl KernArtifact {
     /// Admit emitted JSON only after the pinned `kern-manifest` verifier has
     /// checked schema, references, launch bounds, ABI wiring, and dataflow.
     pub fn from_json(json: &str) -> Result<Self, LoweringError> {
-        Verified::from_json(json)
-            .map(|verified| Self { verified })
-            .map_err(|errors| LoweringError(errors.to_string()))
+        Verified::from_json(json).map(|verified| Self { verified }).map_err(|errors| LoweringError(errors.to_string()))
     }
 
     pub fn model(&self) -> &str {
