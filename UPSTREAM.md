@@ -13,6 +13,8 @@ The following directories are imported without modification from
 - `crates/kern-run`
 - `crates/kern-serve`
 - selected `examples` fixtures used by the imported Qwen/manifest tests
+- selected Qwen3.8/DFlash2 generator, oracle, capture, comparison, and kernel
+  sources under `tools/`
 - `schema`
 - `docs/kern-upstream` (selected architecture and operation documents)
 - `clippy.toml` and `rustfmt.toml`
@@ -21,7 +23,9 @@ The imported work is licensed under Apache-2.0. A verbatim copy is retained at
 `licenses/kern-Apache-2.0.txt`. Subsequent local modifications to imported files
 are part of OrbitKV Next and remain traceable from this baseline commit.
 
-Large model-specific generation tools, captured binaries, website assets, and
-historical experiment output were intentionally not bulk-imported. Individual
-kernels or generators may be imported later with their exact upstream path,
-revision, and applicable third-party notices.
+K3, DeepSeek-V4.1, captured binaries, website assets, and historical experiment
+output were intentionally not bulk-imported. Additional model kernels or
+generators may be imported later with their exact upstream path, revision, and
+applicable third-party notices. The imported Qwen Python generator is an
+executable oracle and migration input; production manifest generation will move
+into the Rust compiler rather than extending that handwritten generator.
