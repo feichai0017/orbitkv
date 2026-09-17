@@ -23,6 +23,11 @@ The imported work is licensed under Apache-2.0. A verbatim copy is retained at
 `licenses/kern-Apache-2.0.txt`. Subsequent local modifications to imported files
 are part of OrbitKV Next and remain traceable from this baseline commit.
 
+Local schema v6 extends the imported v5 format with scratch-backed TMA
+descriptors. It is implemented in `kern-manifest` and `kern-runtime`; v5
+artifacts remain accepted unchanged. This keeps provider-private activation
+packing out of model-level buffer interfaces.
+
 K3, DeepSeek-V4.1, captured binaries, website assets, and historical experiment
 output were intentionally not bulk-imported. Additional model kernels or
 generators may be imported later with their exact upstream path, revision, and

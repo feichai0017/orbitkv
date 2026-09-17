@@ -264,7 +264,7 @@ def resolve_constants(manifest):
     if not constants:
         return m
     schema = json.loads((pathlib.Path(__file__).resolve().parent.parent /
-                         "schema/manifest-v5.schema.json").read_text())
+                         "schema/manifest-v6.schema.json").read_text())
 
     def alternatives(s):
         if "$ref" in s:

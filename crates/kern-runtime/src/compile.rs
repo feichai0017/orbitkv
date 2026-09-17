@@ -4,6 +4,9 @@
 //! the dense vars. What execution replays is a flat launch list whose slots
 //! are either finished values or var-indexed expressions — no name lookups,
 //! no wiring, and no panics left for the hot path.
+//!
+//! OrbitKV change: lower schema-v6 TMA descriptors over implementation-private
+//! scratch without exposing scratch in the operation interface.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::CString;
@@ -453,9 +456,9 @@ fn compile_call(
                 }
                 LaunchArg::Pack { pack } => {
                     for f in &pack.fields {
-                        if let FieldSrc::Param { param } | FieldSrc::TensorMap { tensormap: TensorMap { param, .. } } =
-                            &f.src
-                        {
+                        if let FieldSrc::Param { param } = &f.src {
+                            touches_peer |= peer.get(*param).copied().unwrap_or(false);
+                        } else if let FieldSrc::TensorMap { tensormap: TensorMap { param: Some(param), .. } } = &f.src {
                             touches_peer |= peer.get(*param).copied().unwrap_or(false);
                         }
                     }
@@ -560,7 +563,7 @@ fn pack_plan(
                     pack.size
                 );
             }
-            maps.push((at, tensor_map_blob(t, vals, c, li)?));
+            maps.push((at, tensor_map_blob(t, vals, c, rop, li)?));
             continue;
         }
         let (slot, natural) = match &f.src {
@@ -595,27 +598,32 @@ fn pack_plan(
     Ok(PackPlan { size: pack.size as usize, fields, maps })
 }
 
-/// Encode a tensormap field over the call's finished pointer for its interface param.
-fn tensor_map_blob(t: &TensorMap, vals: &[Slot], c: &Call, li: usize) -> Result<TmaBlob> {
-    let Some(Slot::Const(rv)) = vals.get(t.param) else {
-        bail!(Manifest, "launch #{li}: tensormap over interface param #{} which is not a pointer", t.param);
+/// Encode a tensormap field over an interface pointer or private scratch.
+fn tensor_map_blob(t: &TensorMap, vals: &[Slot], c: &Call, rop: &ResolvedOp, li: usize) -> Result<TmaBlob> {
+    let (rv, target) = match (t.param, t.scratch.as_deref()) {
+        (Some(param), None) => {
+            let Some(Slot::Const(rv)) = vals.get(param) else {
+                bail!(Manifest, "launch #{li}: tensormap over interface param #{param} which is not a pointer");
+            };
+            let Some(buf) = c.args.get(param) else {
+                bail!(Manifest, "launch #{li}: malformed tensormap over interface param #{param}");
+            };
+            (*rv, format!("interface param #{param} ({buf})"))
+        }
+        (None, Some(scratch)) => {
+            let Some(buffer) = rop.scratch.get(scratch) else {
+                bail!(Manifest, "launch #{li}: tensormap over unknown scratch `{scratch}`");
+            };
+            (RVal { val: buffer.ptr, bytes: buffer.bytes }, format!("scratch `{scratch}`"))
+        }
+        _ => bail!(Manifest, "launch #{li}: tensormap must name exactly one of param or scratch"),
     };
-    let Some(buf) = c.args.get(t.param) else {
-        bail!(Manifest, "launch #{li}: malformed tensormap over interface param #{}", t.param);
-    };
-    let fp = span_footprint(t).ok_or_else(|| {
-        Error::Manifest(format!("launch #{li}: malformed tensormap over interface param #{}", t.param))
-    })?;
+    let fp =
+        span_footprint(t).ok_or_else(|| Error::Manifest(format!("launch #{li}: malformed tensormap over {target}")))?;
     if fp > rv.bytes {
-        bail!(
-            Manifest,
-            "launch #{li}: tensormap over interface param #{} addresses {fp} bytes but {buf} has {} bytes left",
-            t.param,
-            rv.bytes
-        );
+        bail!(Manifest, "launch #{li}: tensormap over {target} addresses {fp} bytes but has {} bytes left", rv.bytes);
     }
-    encode_tensor_map(t, *rv)
-        .map_err(|e| Error::Cuda(format!("launch #{li}: tensormap over interface param #{}: {e}", t.param)))
+    encode_tensor_map(t, rv).map_err(|e| Error::Cuda(format!("launch #{li}: tensormap over {target}: {e}")))
 }
 
 /// Bytes a tensormap addresses from its base; a spanning outermost dim
@@ -808,7 +816,8 @@ mod tests {
     #[test]
     fn span_footprint_counts_the_inner_slice_once() {
         let t = TensorMap {
-            param: 0,
+            param: Some(0),
+            scratch: None,
             dtype: TmaDType::Bf16,
             dims: vec![512, 64, 0],
             strides: vec![1152, 73728],

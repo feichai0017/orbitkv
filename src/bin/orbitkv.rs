@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use kern_manifest::Verified;
 use orbitkv_compiler::compiler::provider::{DeepGemmSm90Capability, Fp8ProjectionShape, render_aot_source};
-use orbitkv_compiler::lower::Qwen38Fp8WeightPlan;
+use orbitkv_compiler::lower::{Qwen38Fp8WeightPlan, lower_deepgemm_projection_probe};
 use orbitkv_compiler::oracle::{ManifestInventory, Qwen38Fp8Checkpoint, Qwen38Oracle};
 
 const DEFAULT_ORACLE: &str = "examples/qwen3.8-27b.json";
@@ -100,6 +100,30 @@ fn run_oracle(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std:
             contract.verify_artifacts(&fs::read(source)?, &fs::read(cubin)?)?;
             println!("{}", serde_json::to_string_pretty(&contract)?);
         }
+        Some("projection-manifest") => {
+            let path = args.next().ok_or_else(usage)?;
+            no_more(args)?;
+            let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+            let source = value
+                .pointer("/artifacts/source")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("qualification record has no artifacts.source")?;
+            let cubin = value
+                .pointer("/artifacts/cubin")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("qualification record has no artifacts.cubin")?;
+            let module_source = std::path::Path::new(cubin)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("qualification cubin has no UTF-8 file name")?;
+            let contract = value.get("contract").cloned().ok_or("qualification record has no contract")?;
+            let contract: orbitkv_compiler::compiler::provider::DeepGemmKernelContract =
+                serde_json::from_value(contract)?;
+            DeepGemmSm90Capability::h20().validate_contract(&contract)?;
+            contract.verify_artifacts(&fs::read(source)?, &fs::read(cubin)?)?;
+            let artifact = lower_deepgemm_projection_probe(&contract, module_source)?;
+            println!("{}", artifact.to_json());
+        }
         _ => return Err(usage().into()),
     }
     Ok(())
@@ -133,5 +157,5 @@ fn no_more(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::er
 }
 
 fn usage() -> &'static str {
-    "usage: orbitkv oracle inspect [manifest]\n       orbitkv oracle validate [qwen38-bf16-manifest]\n       orbitkv oracle diff <candidate> [reference]\n       orbitkv oracle checkpoint <qwen38-fp8-model-dir>\n       orbitkv oracle weights <qwen38-fp8-model-dir>\n       orbitkv oracle provider-contract <qualification.json>\n       orbitkv provider deepgemm-h20 plan <rows> <output-features> <input-features>\n       orbitkv provider deepgemm-h20 source <rows> <output-features> <input-features>"
+    "usage: orbitkv oracle inspect [manifest]\n       orbitkv oracle validate [qwen38-bf16-manifest]\n       orbitkv oracle diff <candidate> [reference]\n       orbitkv oracle checkpoint <qwen38-fp8-model-dir>\n       orbitkv oracle weights <qwen38-fp8-model-dir>\n       orbitkv oracle provider-contract <qualification.json>\n       orbitkv oracle projection-manifest <qualification.json>\n       orbitkv provider deepgemm-h20 plan <rows> <output-features> <input-features>\n       orbitkv provider deepgemm-h20 source <rows> <output-features> <input-features>"
 }

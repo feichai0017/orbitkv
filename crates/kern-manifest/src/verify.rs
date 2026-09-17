@@ -43,6 +43,9 @@
 //! the lie explicit and diffable. Cross-checking launch param layouts against
 //! `cuFuncGetParamInfo` is a load-time (phase 2) concern in the runtime
 //! crate, since it needs the CUDA driver.
+//!
+//! OrbitKV change: verify schema-v6 scratch-backed TMA sources and their
+//! implementation-local dataflow and bounds.
 
 use crate::types::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -172,8 +175,11 @@ fn diagnostics(m: &Manifest) -> Vec<String> {
     let mut used_groups: BTreeSet<String> = BTreeSet::new();
 
     // 1. format
-    if m.schema_version != SCHEMA_VERSION {
-        errs.push(format!("unsupported schema_version {} (this runtime reads {SCHEMA_VERSION})", m.schema_version));
+    if !(MIN_SCHEMA_VERSION..=SCHEMA_VERSION).contains(&m.schema_version) {
+        errs.push(format!(
+            "unsupported schema_version {} (this runtime reads {MIN_SCHEMA_VERSION} through {SCHEMA_VERSION})",
+            m.schema_version
+        ));
     }
 
     // 2. vars
@@ -385,7 +391,7 @@ fn diagnostics(m: &Manifest) -> Vec<String> {
     }
 
     // 6. ops: interface + implementation
-    // Per op: (interface param, footprint bytes, context) of every tensormap
+    // Per op: (interface param, footprint bytes, context) of every interface tensormap
     // pack field, checked against the bound buffer at each call (rule 7).
     let mut op_tensormaps: BTreeMap<&str, Vec<(usize, u64, String)>> = BTreeMap::new();
     for (oname, op) in &m.ops {
@@ -635,32 +641,68 @@ fn diagnostics(m: &Manifest) -> Vec<String> {
                                     group_ctx(rank, &mut errs, &mut used_groups, &fctx);
                                 }
                                 FieldSrc::TensorMap { tensormap: t } => {
-                                    let i = t.param;
-                                    let Some(iface) = op.params.get(i) else {
+                                    if t.scratch.is_some() && m.schema_version < 6 {
                                         errs.push(format!(
-                                            "{fctx}: interface param #{i} out of range ({} interface params)",
-                                            op.params.len()
+                                            "{fctx}: a scratch-backed tensormap requires schema_version 6"
                                         ));
-                                        continue;
-                                    };
-                                    let (ParamType::Buf { dir, .. } | ParamType::State { dir }) = iface else {
-                                        errs.push(format!(
-                                            "{fctx}: tensormap over interface param #{i} (`{iface}`), which is not a buffer or state"
-                                        ));
-                                        continue;
-                                    };
+                                    }
                                     for e in t.check() {
                                         errs.push(format!("{fctx}: {e}"));
                                     }
-                                    // The descriptor reads or writes per the
-                                    // interface direction; the kernel is
-                                    // trusted not to store through an `in`
-                                    // buffer's descriptor.
-                                    if matches!(dir, Dir::Out | Dir::InOut) {
-                                        iface_written[i] = true;
+                                    if let Some(i) = t.param {
+                                        let Some(iface) = op.params.get(i) else {
+                                            errs.push(format!(
+                                                "{fctx}: interface param #{i} out of range ({} interface params)",
+                                                op.params.len()
+                                            ));
+                                            continue;
+                                        };
+                                        let (ParamType::Buf { dir, .. } | ParamType::State { dir }) = iface else {
+                                            errs.push(format!(
+                                                "{fctx}: tensormap over interface param #{i} (`{iface}`), which is not a buffer or state"
+                                            ));
+                                            continue;
+                                        };
+                                        if matches!(dir, Dir::Out | Dir::InOut) {
+                                            iface_written[i] = true;
+                                        }
+                                        if let Some(fp) = t.footprint() {
+                                            op_tensormaps.entry(oname.as_str()).or_default().push((
+                                                i,
+                                                fp,
+                                                fctx.clone(),
+                                            ));
+                                        }
                                     }
-                                    if let Some(fp) = t.footprint() {
-                                        op_tensormaps.entry(oname.as_str()).or_default().push((i, fp, fctx.clone()));
+                                    if let Some(scratch) = t.scratch.as_deref() {
+                                        let Some((scratch, declaration)) = imp.scratch.get_key_value(scratch) else {
+                                            errs.push(format!("{fctx}: unknown scratch `{scratch}`"));
+                                            continue;
+                                        };
+                                        scratch_used.insert(scratch.as_str());
+                                        if !scratch_written.contains(scratch.as_str()) {
+                                            errs.push(format!(
+                                                "{fctx}: scratch `{scratch}` is read before any launch wrote it"
+                                            ));
+                                        }
+                                        let footprint_and_bytes = (
+                                            t.footprint(),
+                                            shaped_size(
+                                                &format!("op `{oname}` scratch `{scratch}`"),
+                                                declaration.dtype,
+                                                &declaration.shape,
+                                                &vars_max,
+                                                &mut used_vars,
+                                                &mut errs,
+                                            ),
+                                        );
+                                        if let (Some(fp), Some(bytes)) = footprint_and_bytes {
+                                            if fp > bytes {
+                                                errs.push(format!(
+                                                    "{fctx}: addresses {fp} bytes but scratch `{scratch}` has {bytes} bytes at var upper bounds"
+                                                ));
+                                            }
+                                        }
                                     }
                                 }
                                 FieldSrc::I32 { .. }

@@ -769,6 +769,45 @@ fn tensormap_binding_rules() {
 }
 
 #[test]
+fn tensormap_may_address_written_private_scratch() {
+    let mut v = tensormap_base();
+    v["schema_version"] = 6.into();
+    v["ops"]["tm"]["impl"]["scratch"] = serde_json::json!({"packed": {"dtype": "u8", "shape": [512]}});
+    let launches = v["ops"]["tm"]["impl"]["launches"].as_array_mut().unwrap();
+    launches.insert(
+        0,
+        serde_json::json!({
+            "module": "toy", "entry": "fill", "block": [32, 1, 1], "grid": [1, 1, 1],
+            "params": ["out buffer<u8>"], "args": [{"scratch": "packed"}]
+        }),
+    );
+    launches[1]["args"][1]["pack"]["fields"][0]["tensormap"] = serde_json::json!({
+        "scratch": "packed", "dtype": "u8", "dims": [128, 4],
+        "strides": [128], "box": [128, 4], "swizzle": 128
+    });
+    check(v.clone()).unwrap();
+
+    let mut old_schema = v.clone();
+    old_schema["schema_version"] = 5.into();
+    assert_err(old_schema, "a scratch-backed tensormap requires schema_version 6");
+
+    let mut read_before_write = v.clone();
+    read_before_write["ops"]["tm"]["impl"]["launches"].as_array_mut().unwrap().swap(0, 1);
+    assert_err(read_before_write, "scratch `packed` is read before any launch wrote it");
+
+    let mut both_sources = v.clone();
+    both_sources["ops"]["tm"]["impl"]["launches"][1]["args"][1]["pack"]["fields"][0]["tensormap"]["param"] = 1.into();
+    assert_err(both_sources, "exactly one of param or scratch must be set");
+
+    let mut no_source = v;
+    no_source["ops"]["tm"]["impl"]["launches"][1]["args"][1]["pack"]["fields"][0]["tensormap"]
+        .as_object_mut()
+        .unwrap()
+        .remove("scratch");
+    assert_err(no_source, "exactly one of param or scratch must be set");
+}
+
+#[test]
 fn cluster_divides_grid() {
     let mut v = tensormap_base();
     v["ops"]["tm"]["impl"]["launches"][0]["grid"] = serde_json::json!([3, 1, 1]);

@@ -4,7 +4,7 @@ use orbitkv_compiler::compiler::provider::{
     DEEPGEMM_REVISION, DeepGemmSm90Capability, Fp8ProjectionShape, HistoricalDeepGemmSourceEvidence,
     LOW_LATENCY_ROW_BUCKETS, PACKED_ACTIVATION_ABI, QualificationState, render_aot_source,
 };
-use orbitkv_compiler::lower::Qwen38Fp8WeightPlan;
+use orbitkv_compiler::lower::{Qwen38Fp8WeightPlan, lower_deepgemm_projection_probe};
 
 #[test]
 fn qwen38_fp8_weights_collapse_to_five_model_neutral_shape_families() {
@@ -95,14 +95,17 @@ fn qualification_state_only_advances_from_legal_with_real_measurements() {
 
     let source_sha = "1".repeat(64);
     let cubin_sha = "a".repeat(64);
-    assert!(contract.clone().record_benchmark(&source_sha, &cubin_sha, 0, 100).is_err());
-    assert!(contract.clone().record_benchmark(&source_sha, &cubin_sha, 10, 0).is_err());
-    assert!(contract.clone().record_benchmark("not-a-digest", &cubin_sha, 10, 100).is_err());
+    let entry = "_ZN9deep_gemm23sm90_fp8_gemm_1d2d_impl_test";
+    assert!(contract.clone().record_benchmark(&source_sha, &cubin_sha, entry, 0, 100).is_err());
+    assert!(contract.clone().record_benchmark(&source_sha, &cubin_sha, entry, 10, 0).is_err());
+    assert!(contract.clone().record_benchmark("not-a-digest", &cubin_sha, entry, 10, 100).is_err());
+    assert!(contract.clone().record_benchmark(&source_sha, &cubin_sha, "wrong", 10, 100).is_err());
     assert_eq!(
-        contract.record_benchmark(&source_sha, &cubin_sha, 123_456, 100).unwrap().qualification,
+        contract.record_benchmark(&source_sha, &cubin_sha, entry, 123_456, 100).unwrap().qualification,
         QualificationState::Benchmarked {
             source_sha256: source_sha,
             cubin_sha256: cubin_sha,
+            kernel_entry: entry.into(),
             median_nanoseconds: 123_456,
             samples: 100,
         }
@@ -119,11 +122,43 @@ fn qualified_artifact_hashes_are_verified_against_the_actual_bytes() {
     let source = render_aot_source(&legal).unwrap();
     let source_digest = hex::encode(Sha256::digest(source.as_bytes()));
     let empty_digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-    let contract = legal.record_benchmark(source_digest, empty_digest, 50_000, 100).unwrap();
+    let entry = "_ZN9deep_gemm23sm90_fp8_gemm_1d2d_impl_test";
+    let contract = legal.record_benchmark(source_digest, empty_digest, entry, 50_000, 100).unwrap();
 
     contract.verify_artifacts(source.as_bytes(), b"").unwrap();
     assert!(contract.verify_artifacts(b"tampered", b"").is_err());
     assert!(contract.verify_artifacts(source.as_bytes(), b"tampered").is_err());
+}
+
+#[test]
+fn a_qualified_contract_lowers_to_a_verified_projection_manifest() {
+    use sha2::{Digest, Sha256};
+
+    let legal = DeepGemmSm90Capability::h20()
+        .preferred_candidate(8, Fp8ProjectionShape { output_features: 14_336, input_features: 5_120 })
+        .unwrap();
+    let source = render_aot_source(&legal).unwrap();
+    let source_digest = hex::encode(Sha256::digest(source.as_bytes()));
+    let contract = legal
+        .record_benchmark(source_digest, "a".repeat(64), "_ZN9deep_gemm23sm90_fp8_gemm_1d2d_impl_test", 50_000, 100)
+        .unwrap();
+    let artifact = lower_deepgemm_projection_probe(&contract, "projection.cubin").unwrap();
+    let value: serde_json::Value = serde_json::from_str(&artifact.to_json()).unwrap();
+
+    assert_eq!(artifact.model(), "orbitkv-fp8-projection-probe");
+    assert_eq!(value["schema_version"], 6);
+    assert_eq!(value["programs"]["projection"]["graph"], true);
+    assert_eq!(value["programs"]["projection"]["batch"]["groups"], 8);
+    assert_eq!(value["modules"]["deepgemm"]["sha256"], "a".repeat(64));
+    assert_eq!(value["ops"]["fp8_projection"]["impl"]["launches"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        value["ops"]["fp8_projection"]["impl"]["launches"][1]["args"][5]["pack"]["fields"][0]["tensormap"]["scratch"],
+        "quantized_activation"
+    );
+    assert_eq!(
+        value["ops"]["fp8_projection"]["impl"]["launches"][1]["args"][8]["pack"]["fields"][0]["tensormap"]["scratch"],
+        "activation_scale"
+    );
 }
 
 #[test]

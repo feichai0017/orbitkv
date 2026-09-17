@@ -124,7 +124,13 @@ pub struct DeepGemmTile {
 pub enum QualificationState {
     Unqualified,
     Legal,
-    Benchmarked { source_sha256: String, cubin_sha256: String, median_nanoseconds: u64, samples: u32 },
+    Benchmarked {
+        source_sha256: String,
+        cubin_sha256: String,
+        kernel_entry: String,
+        median_nanoseconds: u64,
+        samples: u32,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -148,6 +154,7 @@ impl DeepGemmKernelContract {
         mut self,
         source_sha256: impl Into<String>,
         cubin_sha256: impl Into<String>,
+        kernel_entry: impl Into<String>,
         median_nanoseconds: u64,
         samples: u32,
     ) -> Result<Self, ProviderContractError> {
@@ -159,11 +166,20 @@ impl DeepGemmKernelContract {
         }
         let source_sha256 = source_sha256.into();
         let cubin_sha256 = cubin_sha256.into();
+        let kernel_entry = kernel_entry.into();
         validate_sha256(&source_sha256)?;
         validate_sha256(&cubin_sha256)?;
+        validate_kernel_entry(&kernel_entry)?;
         self.qualification =
-            QualificationState::Benchmarked { source_sha256, cubin_sha256, median_nanoseconds, samples };
+            QualificationState::Benchmarked { source_sha256, cubin_sha256, kernel_entry, median_nanoseconds, samples };
         Ok(self)
+    }
+
+    pub fn kernel_entry(&self) -> Result<&str, ProviderContractError> {
+        match &self.qualification {
+            QualificationState::Benchmarked { kernel_entry, .. } => Ok(kernel_entry),
+            _ => Err(ProviderContractError::new("kernel entry exists only after qualification")),
+        }
     }
 
     pub fn verify_artifacts(&self, source: &[u8], cubin: &[u8]) -> Result<(), ProviderContractError> {
@@ -182,6 +198,13 @@ impl DeepGemmKernelContract {
             return Err(ProviderContractError::new("cubin does not match the qualified SHA-256"));
         }
         Ok(())
+    }
+
+    pub fn cubin_sha256(&self) -> Result<&str, ProviderContractError> {
+        match &self.qualification {
+            QualificationState::Benchmarked { cubin_sha256, .. } => Ok(cubin_sha256),
+            _ => Err(ProviderContractError::new("cubin identity exists only after qualification")),
+        }
     }
 }
 
@@ -454,11 +477,17 @@ impl DeepGemmSm90Capability {
                 return Err(ProviderContractError::new("unqualified kernels cannot be admitted"));
             }
             QualificationState::Legal => {}
-            QualificationState::Benchmarked { source_sha256, cubin_sha256, median_nanoseconds, samples }
-                if *median_nanoseconds > 0
-                    && *samples > 0
-                    && validate_sha256(source_sha256).is_ok()
-                    && validate_sha256(cubin_sha256).is_ok() => {}
+            QualificationState::Benchmarked {
+                source_sha256,
+                cubin_sha256,
+                kernel_entry,
+                median_nanoseconds,
+                samples,
+            } if *median_nanoseconds > 0
+                && *samples > 0
+                && validate_sha256(source_sha256).is_ok()
+                && validate_sha256(cubin_sha256).is_ok()
+                && validate_kernel_entry(kernel_entry).is_ok() => {}
             QualificationState::Benchmarked { .. } => {
                 return Err(ProviderContractError::new("benchmark evidence must contain non-zero timing and samples"));
             }
@@ -603,6 +632,14 @@ fn validate_sha256(digest: &str) -> Result<(), ProviderContractError> {
         Ok(())
     } else {
         Err(ProviderContractError::new("artifact SHA-256 must be 64 lowercase hexadecimal characters"))
+    }
+}
+
+fn validate_kernel_entry(entry: &str) -> Result<(), ProviderContractError> {
+    if entry.starts_with("_ZN9deep_gemm23sm90_fp8_gemm_1d2d_impl") {
+        Ok(())
+    } else {
+        Err(ProviderContractError::new("kernel entry is not the pinned DeepGEMM SM90 1D2D implementation"))
     }
 }
 

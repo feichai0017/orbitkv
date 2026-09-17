@@ -36,6 +36,19 @@ def require_revision(root: pathlib.Path, revision: str, name: str) -> None:
         raise RuntimeError(f"{name} checkout is {actual}, expected {revision}")
 
 
+def kernel_entry(cubin: pathlib.Path, nvcc: pathlib.Path) -> str:
+    cuobjdump = nvcc.parent / "cuobjdump"
+    symbols = checked_output([str(cuobjdump), "--dump-elf-symbols", str(cubin)])
+    matches = [
+        line.split()[-1]
+        for line in symbols.splitlines()
+        if "STO_ENTRY" in line and "sm90_fp8_gemm_1d2d_impl" in line
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(f"expected one DeepGEMM entry in {cubin}, found {len(matches)}")
+    return matches[0]
+
+
 def build(
     repo: pathlib.Path,
     provider: pathlib.Path,
@@ -308,6 +321,7 @@ def main() -> None:
         "state": "benchmarked",
         "source_sha256": digest(source),
         "cubin_sha256": digest(cubin),
+        "kernel_entry": kernel_entry(cubin, args.nvcc.resolve()),
         **benchmark,
     }
     evidence.update(

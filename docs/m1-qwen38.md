@@ -120,6 +120,16 @@ The qualification directory is disposable output. Its JSON records source,
 host-library, and deployable cubin SHA-256 digests; generated binaries are not
 checked into the repository.
 
+The qualified contract now lowers to a schema-v6 two-launch op. Launch one
+quantizes BF16 activations into private FP8 and F32-scale scratch. Launch two
+passes four 128-byte TMA descriptors directly to the qualified DeepGEMM entry.
+Schema v6 adds TMA-over-private-scratch while retaining v5 compatibility, so
+these temporary planes do not leak into the model graph. The resulting probe
+has been loaded and executed by `kern-runtime` on the H20, with its output
+checked against an independent closed-form block-scale reference. The probe is
+also captured and replayed as one CUDA Graph, matching the intended
+`decode_batch` execution mode.
+
 Re-admit a saved qualification record through the compiler contract validator.
 This also re-hashes the source and cubin named by the record:
 
@@ -142,8 +152,8 @@ once:
 
 1. derive activation, carry, input, output, and workspace buffers for
    `decode_batch`;
-2. extend the typed provider/kernel capability into the exact manifest op
-   interface using launch-private `bytes<128>` TMA descriptors;
+2. reuse the now-verified FP8 projection manifest op across the five shape
+   families and four low-latency row buckets;
 3. lower buffer/state/var arguments for every skeleton call;
 4. emit the load program for FP8 scale casts, A-log casts, norm transforms,
    RoPE, and fixed tables;

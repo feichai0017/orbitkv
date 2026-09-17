@@ -214,7 +214,8 @@ immutable-lookup     resident table, not request-owned state
 
 Those facts should become a manifest/runtime mechanism only after Qwen proves a
 specific reuse or speculative-state requirement that v5 cannot express. Until
-then, schema v5 remains the compatibility boundary.
+then, the manifest remains the compatibility boundary. Schema v6 is currently
+the emitted format and the runtime continues to accept v5 artifacts.
 
 ### Host tier
 
@@ -250,7 +251,8 @@ M1 must not grow speculative distributed abstractions.
 ## Modification rules for the imported substrate
 
 Modify `kern-manifest` when a required, cross-model executable contract cannot
-be represented in schema v5.
+be represented in the current schema. The first such extension is schema v6's
+scratch-backed TMA descriptor for provider-private packed activations.
 
 Modify `kern-pool` for state ownership, page/slot/checkpoint, VMM, or host-tier
 mechanisms shared by model families.

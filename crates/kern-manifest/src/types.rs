@@ -1,4 +1,4 @@
-//! Manifest schema (format 5). Parsing is already strict: unknown fields,
+//! Manifest schema (formats 5 and 6). Parsing is already strict: unknown fields,
 //! duplicate names and malformed type strings are rejected at
 //! deserialization time. Semantic checks (references, dtypes, dataflow,
 //! bounds) live in [`crate::verify`]; what a serving loop needs to drive
@@ -18,6 +18,9 @@
 //!                            `fill` names the role a caller-facing one plays in a call
 //! topology.groups.<name>     a rank group and its size; the manifest is SPMD over it
 //! ```
+//!
+//! OrbitKV change: schema v6 adds TMA descriptors backed by
+//! implementation-private scratch while retaining v5 compatibility.
 
 use serde::de::{Error as DeError, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -28,7 +31,8 @@ use std::marker::PhantomData;
 use std::str::FromStr;
 
 /// The one format this crate reads and writes.
-pub(crate) const SCHEMA_VERSION: u32 = 5;
+pub(crate) const MIN_SCHEMA_VERSION: u32 = 5;
+pub(crate) const SCHEMA_VERSION: u32 = 6;
 
 /// Deserialize a JSON object into a map, rejecting duplicate keys (plain
 /// serde silently keeps the last one).
@@ -67,7 +71,8 @@ where
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
-    /// Wire-format version; must be `5`.
+    /// Wire-format version. This runtime accepts v5 and v6; v6 adds
+    /// scratch-backed TMA descriptors.
     pub schema_version: u32,
     /// Free-form model label, e.g. `"qwen3-4b"`.
     pub model: String,
@@ -1048,7 +1053,8 @@ impl Pack {
     }
 }
 
-/// A tiled TMA descriptor (`cuTensorMapEncodeTiled`) over the buffer bound to interface param `param`, e.g. `{"param": 5, "dtype": "u8", "dims": [3584, 1024], "strides": [3584], "box": [128, 96], "swizzle": 128}`.
+/// A tiled TMA descriptor over either an interface parameter or
+/// implementation-private scratch. Exactly one source is required.
 ///
 /// `dims` are in elements, innermost first; `strides` are the byte strides of
 /// `dims[1..]`; `box` is the smem tile in elements. Element strides are 1.
@@ -1058,8 +1064,14 @@ impl Pack {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TensorMap {
-    /// The interface buffer param the descriptor addresses (the call's offset is honoured).
-    pub param: usize,
+    /// The interface buffer param the descriptor addresses; the call's offset
+    /// is honoured. Mutually exclusive with `scratch`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub param: Option<usize>,
+    /// An implementation-private scratch buffer. Mutually exclusive with
+    /// `param`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scratch: Option<String>,
     /// Element type as TMA sees it; `u4` is 16 packed nibbles per 8 bytes (`CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN16B`).
     pub dtype: TmaDType,
     /// Global extent per dimension in elements, innermost first (1 to 5 dims); the outermost may be 0 (span the buffer).
@@ -1124,6 +1136,9 @@ impl TensorMap {
     /// swizzle alignment. Returns every violation.
     pub(crate) fn check(&self) -> Vec<String> {
         let mut errs = Vec::new();
+        if self.param.is_some() == self.scratch.is_some() {
+            errs.push("exactly one of param or scratch must be set".into());
+        }
         let n = self.dims.len();
         if !(1..=5).contains(&n) {
             errs.push(format!("dims has {n} entries, expected 1 to 5"));

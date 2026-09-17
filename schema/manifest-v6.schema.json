@@ -1,0 +1,1864 @@
+{
+  "$defs": {
+    "Arg": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "description": "A buffer plus an optional byte offset into it, e.g. the v slice of a fused qkv buffer.",
+          "properties": {
+            "buf": {
+              "description": "Buffer name, e.g. `\"qkv\"`.",
+              "type": "string"
+            },
+            "offset": {
+              "anyOf": [
+                {
+                  "description": "Byte offset added to the base pointer (default `0`), e.g. `4096`.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ],
+              "description": "Byte offset added to the base pointer (default `0`), e.g. `4096`."
+            }
+          },
+          "required": [
+            "buf"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A state plus an optional byte offset into it, e.g. one layer's region of a KV cache.",
+          "properties": {
+            "offset": {
+              "anyOf": [
+                {
+                  "description": "Byte offset added to the base pointer (default `0`), e.g. `65536`.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ],
+              "description": "Byte offset added to the base pointer (default `0`), e.g. `65536`."
+            },
+            "state": {
+              "description": "State name, e.g. `\"kv\"`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The current value of a var, e.g. `{\"var\": \"tokens\"}`.",
+          "properties": {
+            "var": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "var"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The value of a var expression, e.g. `{\"expr\": {\"mul\": [\"tokens\", 32]}}`.",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "expr"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A literal `i32`.",
+          "properties": {
+            "i32": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "i32"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A literal `i64`.",
+          "properties": {
+            "i64": {
+              "anyOf": [
+                {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "i64"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A literal `f32`.",
+          "properties": {
+            "f32": {
+              "anyOf": [
+                {
+                  "format": "float",
+                  "type": "number"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "f32"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A literal `u8`.",
+          "properties": {
+            "u8": {
+              "anyOf": [
+                {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "u8"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "This rank's index in the named topology group, a load-time constant, e.g. `{\"rank\": \"ep\"}`.",
+          "properties": {
+            "rank": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "rank"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "A call argument, e.g. `{\"buf\": \"hidden\"}`, `{\"state\": \"kv\", \"offset\": 65536}`, `{\"var\": \"tokens\"}`, `{\"i32\": 2560}`, `{\"rank\": \"ep\"}`."
+    },
+    "Batch": {
+      "additionalProperties": false,
+      "description": "The shape of one call of a program: up to `groups` sequences, each contributing `rows` rows, e.g. `{\"groups\": 256, \"rows\": 1}` (a decode step over a batch) or `{\"groups\": 1, \"rows\": \"tokens\"}` (a prefill chunk).",
+      "properties": {
+        "groups": {
+          "anyOf": [
+            {
+              "description": "Upper bound on the sequences one call covers; a caller with fewer pads up to a bucket, e.g. `256`.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Upper bound on the sequences one call covers; a caller with fewer pads up to a bucket, e.g. `256`."
+        },
+        "rows": {
+          "$ref": "#/$defs/Dim",
+          "description": "Rows per sequence: a constant the program's kernels are laid out for (`1` for a decode step, `8` for a speculative round — exact, not a bound), or the var whose value is the row count of the call (`\"tokens\"`: one sequence, as many rows as the chunk)."
+        },
+        "span": {
+          "description": "The var whose value is the length of the call's span: one of the sequences (rows `1` each) feeds a run of that many consecutive tokens, a row each, starting at the row the `span_at` fill names, e.g. `\"span\"` (a prompt chunk riding a decode step). Absent for a call whose sequences all feed `rows`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "groups",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "Bound": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "format": "int64",
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "format": "double",
+              "type": "number"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "$ref": "#/$defs/Expr"
+        }
+      ],
+      "description": "A domain bound: an integer, a float, or a var expression, e.g. `0`, `1e-6`, `\"tokens\"`."
+    },
+    "Buffer": {
+      "additionalProperties": false,
+      "description": "A typed tensor, e.g. `{\"dtype\": \"bf16\", \"shape\": [\"tokens\", 2560], \"kind\": \"workspace\"}`.",
+      "properties": {
+        "bind": {
+          "description": "`weight` buffers only: the checkpoint tensors laid end to end into this buffer, in order, e.g. `[{\"tensor\": \"q_proj.weight\"}, {\"tensor\": \"k_proj.weight\"}]`.",
+          "items": {
+            "$ref": "#/$defs/Segment"
+          },
+          "type": "array"
+        },
+        "domain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Domain"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional prior on the contents; the runtime rejects out-of-domain input writes and `kern test` synthesizes values from it."
+        },
+        "dtype": {
+          "$ref": "#/$defs/DType",
+          "description": "Element type, e.g. `\"bf16\"`."
+        },
+        "export": {
+          "description": "Allocate through the driver's virtual-memory API with a fabric-shareable handle so other ranks can map it; the address of every rank's copy lands in the `peer` buffers `of` it. e.g. `true`.",
+          "type": "boolean"
+        },
+        "fill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Fill"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`input` / `output` buffers only: the role a serving loop fills or reads it for, e.g. `\"token\"`; absent for one a harness stages by name."
+        },
+        "group": {
+          "description": "`peer` buffers only: the topology group the addresses are indexed by, e.g. `\"ep\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/BufferKind",
+          "description": "Who provides the buffer and how long its contents live."
+        },
+        "of": {
+          "description": "`peer` buffers only: the exported buffer or state whose per-rank base addresses this buffer holds, e.g. `\"flags\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "placement": {
+          "$ref": "#/$defs/Placement",
+          "description": "Immutable weights may reside in shared, GPU-addressable host memory."
+        },
+        "shape": {
+          "description": "Extents, constants or var names, e.g. `[\"tokens\", 2560]`.",
+          "items": {
+            "$ref": "#/$defs/Dim"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "dtype",
+        "shape",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "BufferKind": {
+      "description": "Who provides a buffer and how long its contents live.",
+      "oneOf": [
+        {
+          "const": "input",
+          "description": "Written by the runtime before each run, e.g. `token_ids`.",
+          "type": "string"
+        },
+        {
+          "const": "output",
+          "description": "Read back by the runtime after each run, e.g. `next_token`.",
+          "type": "string"
+        },
+        {
+          "const": "weight",
+          "description": "Assembled at load time from the checkpoint tensors its `bind` names, e.g. `model.embed_tokens.weight`.",
+          "type": "string"
+        },
+        {
+          "const": "workspace",
+          "description": "Runtime-owned scratch, dead between runs, e.g. `hidden`.",
+          "type": "string"
+        },
+        {
+          "const": "carry",
+          "description": "Written by one program and read by another, kept between runs, e.g. the `fc_out` hidden states a draft reads.",
+          "type": "string"
+        },
+        {
+          "const": "peer",
+          "description": "`u64[group size]` of device addresses: every group member's copy of the buffer or state named by `of` (`export`ed), this rank's own included. Filled by the runtime once the peers' handles are imported, read-only to ops.",
+          "type": "string"
+        }
+      ]
+    },
+    "Call": {
+      "additionalProperties": false,
+      "description": "One op call, e.g. `{\"label\": \"l0.attn\", \"op\": \"attn\", \"args\": [{\"buf\": \"q\"}, {\"state\": \"kv\"}, ...]}`.",
+      "properties": {
+        "args": {
+          "description": "One argument per interface param, in order.",
+          "items": {
+            "$ref": "#/$defs/Arg"
+          },
+          "type": "array"
+        },
+        "label": {
+          "description": "Human-readable name for diagnostics, e.g. `\"l0.attn\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "description": "Name of the op called, e.g. `\"attn\"`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "args"
+      ],
+      "type": "object"
+    },
+    "DType": {
+      "description": "Element type of a buffer or scratch, e.g. `\"bf16\"`.",
+      "enum": [
+        "bf16",
+        "f16",
+        "f32",
+        "fp8e4m3",
+        "fp8e8m0",
+        "i8",
+        "i32",
+        "u32",
+        "i64",
+        "u64",
+        "u8"
+      ],
+      "type": "string"
+    },
+    "Dim": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "One shape extent: a constant or a var name, e.g. `2560` or `\"tokens\"`."
+    },
+    "Domain": {
+      "additionalProperties": false,
+      "description": "A prior on a buffer's contents: bounds (`{\"min\": 0, \"max\": \"tokens\"}`) or an index into a buffer/state (`{\"index_into\": \"kv\", \"stride\": 16}`).",
+      "properties": {
+        "index_into": {
+          "description": "Buffer or state whose rows / token slots the elements index, e.g. `\"model.embed_tokens.weight\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bound"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Inclusive upper bound, a literal or a var expression, e.g. `\"tokens\"`."
+        },
+        "min": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bound"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Inclusive lower bound, e.g. `0`."
+        },
+        "monotone": {
+          "description": "Require a non-decreasing sequence, e.g. `cu_seqlens`.",
+          "type": "boolean"
+        },
+        "stride": {
+          "anyOf": [
+            {
+              "description": "Rows or token slots per index (default `1`), e.g. `16` for a paged KV block table.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Rows or token slots per index (default `1`), e.g. `16` for a paged KV block table."
+        }
+      },
+      "type": "object"
+    },
+    "Expr": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "description": "A constant, e.g. `64`.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "A constant, e.g. `64`."
+        },
+        {
+          "description": "A var by name, e.g. `\"tokens\"`.",
+          "type": "string"
+        },
+        {
+          "description": "`ceil(e / c)`, e.g. `{\"ceil_div\": [\"tokens\", 128]}`.",
+          "properties": {
+            "ceil_div": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/Expr"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "description": "Name of a numeric constant declared in constants.",
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "type": "array"
+            }
+          },
+          "required": [
+            "ceil_div"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`e * c`, e.g. `{\"mul\": [\"tokens\", 32]}`.",
+          "properties": {
+            "mul": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/Expr"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "description": "Name of a numeric constant declared in constants.",
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  ]
+                }
+              ],
+              "type": "array"
+            }
+          },
+          "required": [
+            "mul"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "A scalar expression: a constant, a var name, `{\"ceil_div\": [e, c]}` or `{\"mul\": [e, c]}`, e.g. `{\"ceil_div\": [\"tokens\", 128]}`."
+    },
+    "ExternLaunch": {
+      "additionalProperties": false,
+      "description": "A runtime built-in launch, e.g. `{\"entry\": \"extern:cublaslt_bf16_tn\"}`.",
+      "properties": {
+        "args": {
+          "description": "Where each launch param comes from (default: the op's params in order).",
+          "items": {
+            "$ref": "#/$defs/LaunchArg"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "entry": {
+          "description": "`extern:<name>`: `cublaslt_bf16_tn` (C = A·Wᵀ) or `cublaslt_bf16_tn_acc` (C += A·Wᵀ).",
+          "type": "string"
+        },
+        "params": {
+          "description": "This launch's own ABI when it differs from the op's params.",
+          "items": {
+            "$ref": "#/$defs/ParamType"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "entry"
+      ],
+      "type": "object"
+    },
+    "Field": {
+      "anyOf": [
+        {
+          "description": "The op's interface param: a pointer (with the call's offset) or a scalar.",
+          "properties": {
+            "param": {
+              "anyOf": [
+                {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "param"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A scratch buffer's pointer.",
+          "properties": {
+            "scratch": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scratch"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A literal `i32`.",
+          "properties": {
+            "i32": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "i32"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A literal `i64`.",
+          "properties": {
+            "i64": {
+              "anyOf": [
+                {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "i64"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A literal `f32`.",
+          "properties": {
+            "f32": {
+              "anyOf": [
+                {
+                  "format": "float",
+                  "type": "number"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "f32"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A literal `u8`.",
+          "properties": {
+            "u8": {
+              "anyOf": [
+                {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "u8"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The current value of a var.",
+          "properties": {
+            "var": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "var"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The value of a var expression.",
+          "properties": {
+            "expr": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "expr"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "This rank's index in the named topology group.",
+          "properties": {
+            "rank": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "rank"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A 128-byte TMA descriptor over an interface buffer or state, encoded\nat load time; sits at a 64-byte aligned offset (a bare `CUtensorMap`\nparam is a `bytes<128>` with this field at 0, a cute `TiledCopy` has\nits dynamic strides after it).",
+          "properties": {
+            "tensormap": {
+              "$ref": "#/$defs/TensorMap"
+            }
+          },
+          "required": [
+            "tensormap"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "One field of a `pack`: a byte offset plus where the value comes from, e.g. `{\"at\": 8, \"var\": \"tokens\"}`.",
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "description": "Byte offset of the field in the image.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Byte offset of the field in the image."
+        },
+        "width": {
+          "anyOf": [
+            {
+              "description": "Field width in bytes; defaults to the source's own width (8 for a\npointer or i64, 4 for i32 / f32 / var / expr, 1 for u8).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Field width in bytes; defaults to the source's own width (8 for a\npointer or i64, 4 for i32 / f32 / var / expr, 1 for u8)."
+        }
+      },
+      "required": [
+        "at"
+      ],
+      "type": "object"
+    },
+    "Fill": {
+      "description": "The role a caller-facing buffer plays in a call: what the serving loop writes into an input or reads from an output. A closed set; the runtime never reads it.",
+      "oneOf": [
+        {
+          "const": "token",
+          "description": "Input: the token ids fed, one per row (a buffer over the row axis) or each sequence's first (over the sequence axis: the anchor of a speculative round).",
+          "type": "string"
+        },
+        {
+          "const": "position",
+          "description": "Input: each row's position in its sequence.",
+          "type": "string"
+        },
+        {
+          "const": "valid",
+          "description": "Input: one for a real row, zero for serving bucket padding.",
+          "type": "string"
+        },
+        {
+          "const": "slot",
+          "description": "Input: each row's token slot in the paged states, from the sequence's lease.",
+          "type": "string"
+        },
+        {
+          "const": "seq_len",
+          "description": "Input: each sequence's length after this call (rows already in the state plus this call's).",
+          "type": "string"
+        },
+        {
+          "const": "cu_seqlens",
+          "description": "Input: exclusive prefix sums of rows per sequence, `groups + 1` entries.",
+          "type": "string"
+        },
+        {
+          "const": "span_at",
+          "description": "Input: the first row of the call's span (`batch.span`), one word; 0 when the call has none.",
+          "type": "string"
+        },
+        {
+          "const": "blocks",
+          "description": "Input: the tray batch's blocks — exclusive prefix sums of each member's rows in member order, `members + 1` entries, the last the tray's rows.",
+          "type": "string"
+        },
+        {
+          "const": "tokens",
+          "description": "Output: the tokens a call produced — one per sequence (`[groups]`) or one per row (`[groups, rows]`, the program's `rows`).",
+          "type": "string"
+        },
+        {
+          "const": "count",
+          "description": "Output: how many of a sequence's `tokens` the caller takes, per sequence; without one it takes one.",
+          "type": "string"
+        },
+        {
+          "const": "error",
+          "description": "Output: a one-word error flag of the collectives, read after every call; nonzero is a failed step.",
+          "type": "string"
+        }
+      ]
+    },
+    "Impl": {
+      "additionalProperties": false,
+      "description": "An op implementation: private scratch buffers and one or more launches in order.",
+      "properties": {
+        "launches": {
+          "description": "Launches in execution order.",
+          "items": {
+            "$ref": "#/$defs/Launch"
+          },
+          "type": "array"
+        },
+        "scratch": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Scratch"
+          },
+          "description": "Implementation-private buffers, e.g. `{\"pmax\": {\"dtype\": \"f32\", \"shape\": [1, 64]}}`.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "launches"
+      ],
+      "type": "object"
+    },
+    "KernelLaunch": {
+      "additionalProperties": false,
+      "description": "A device kernel launch, e.g. `{\"module\": \"argmax\", \"entry\": \"kern_argmax_partial_bf16\", \"block\": [1024, 1, 1], \"grid\": [1, 64, 1]}`.",
+      "properties": {
+        "args": {
+          "description": "Where each launch param comes from (default: the op's params in order), e.g. `[{\"param\": 0}, {\"scratch\": \"pmax\"}, {\"i32\": 64}]`.",
+          "items": {
+            "$ref": "#/$defs/LaunchArg"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "block": {
+          "description": "Threads per block, e.g. `[1024, 1, 1]`.",
+          "items": {
+            "anyOf": [
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Name of a numeric constant declared in constants.",
+                "minLength": 1,
+                "type": "string"
+              }
+            ]
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "cluster": {
+          "description": "Thread-block cluster shape, e.g. `[2, 1, 1]`; the grid must be a multiple of it on every axis. Launched with `cuLaunchKernelEx`.",
+          "items": {
+            "anyOf": [
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Name of a numeric constant declared in constants.",
+                "minLength": 1,
+                "type": "string"
+              }
+            ]
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "entry": {
+          "description": "Kernel symbol in the module, e.g. `\"kern_argmax_partial_bf16\"`.",
+          "type": "string"
+        },
+        "grid": {
+          "description": "Blocks per launch, as expressions, e.g. `[{\"ceil_div\": [\"tokens\", 128]}, 1, 1]`.",
+          "items": {
+            "$ref": "#/$defs/Expr"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "module": {
+          "description": "Name of a `modules` entry, e.g. `\"argmax\"`.",
+          "type": "string"
+        },
+        "params": {
+          "description": "This launch's own ABI when it differs from the op's params, e.g. `[\"in buffer<bf16>\", \"out buffer<f32>\", \"i32\"]`.",
+          "items": {
+            "$ref": "#/$defs/ParamType"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "pdl": {
+          "description": "Programmatic dependent launch, e.g. `true`: the kernel may start before the previous launch on the stream has finished, and it promises to execute `griddepcontrol.wait` before reading or writing anything that launch produces or consumes. Only reads of weights may precede the wait.",
+          "type": "boolean"
+        },
+        "shared_mem": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expr"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Dynamic shared memory in bytes, e.g. `{\"mul\": [\"tokens\", 512]}`."
+        }
+      },
+      "required": [
+        "module",
+        "entry",
+        "block",
+        "grid"
+      ],
+      "type": "object"
+    },
+    "Launch": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/KernelLaunch"
+        },
+        {
+          "$ref": "#/$defs/ExternLaunch"
+        }
+      ],
+      "description": "One launch of an implementation: a kernel entry in a pinned module, or a runtime built-in."
+    },
+    "LaunchArg": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "description": "Forward the op's param at this index.",
+          "properties": {
+            "param": {
+              "anyOf": [
+                {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "param"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Pass the named scratch buffer.",
+          "properties": {
+            "scratch": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scratch"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A literal `i32`.",
+          "properties": {
+            "i32": {
+              "anyOf": [
+                {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "i32"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A literal `i64`.",
+          "properties": {
+            "i64": {
+              "anyOf": [
+                {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "i64"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A literal `f32`.",
+          "properties": {
+            "f32": {
+              "anyOf": [
+                {
+                  "format": "float",
+                  "type": "number"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "f32"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A literal `u8`.",
+          "properties": {
+            "u8": {
+              "anyOf": [
+                {
+                  "format": "uint8",
+                  "maximum": 255,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "description": "Name of a numeric constant declared in constants.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "u8"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "This rank's index in the named topology group, a load-time constant.",
+          "properties": {
+            "rank": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "rank"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An aggregate assembled from fields at byte offsets, for a `bytes<n>` param.",
+          "properties": {
+            "pack": {
+              "$ref": "#/$defs/Pack"
+            }
+          },
+          "required": [
+            "pack"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "A launch argument: a forwarded op param, a scratch buffer, a literal, or this rank's index in a group, e.g. `{\"param\": 0}`, `{\"scratch\": \"pmax\"}`, `{\"i32\": 64}`, `{\"rank\": \"ep\"}`."
+    },
+    "Module": {
+      "additionalProperties": false,
+      "description": "A code artifact, e.g. `{\"source\": \"hf:kernels-community/activation/build/.../_activation.abi3.so\", \"sha256\": \"73748b54...\"}`.",
+      "properties": {
+        "sha256": {
+          "description": "Hex sha256 of the artifact bytes; the runtime matches modules by this.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Local file name (`argmax.cubin`) or registry ref (`hf:org/repo/path[@rev]`); a label, not the identity.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "Op": {
+      "additionalProperties": false,
+      "description": "An operator: the typed interface a call binds, plus the launches that implement it.",
+      "properties": {
+        "impl": {
+          "$ref": "#/$defs/Impl",
+          "description": "The implementation; swapping it leaves every call untouched."
+        },
+        "params": {
+          "description": "Interface params in call order, e.g. `[\"out buffer<bf16>\", \"in buffer<bf16>\"]`.",
+          "items": {
+            "$ref": "#/$defs/ParamType"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "params",
+        "impl"
+      ],
+      "type": "object"
+    },
+    "Pack": {
+      "additionalProperties": false,
+      "description": "An aggregate param image, e.g. `{\"size\": 24, \"fields\": [{\"at\": 0, \"param\": 3}, {\"at\": 8, \"i32\": 64}, {\"at\": 12, \"var\": \"tokens\"}]}`:\nthe bytes a kernel compiled from a struct-taking language (CUTLASS, the CuTe DSL) reads as one parameter.\n\nBytes no field covers are zero. A pointer field carries the bound buffer's\naddress (offset honoured), a scalar field its value in the field's width.",
+      "properties": {
+        "fields": {
+          "description": "The fields, each at its byte offset.",
+          "items": {
+            "$ref": "#/$defs/Field"
+          },
+          "type": "array"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "description": "Image size in bytes; equals the `bytes<n>` of the param it binds to.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Image size in bytes; equals the `bytes<n>` of the param it binds to."
+        }
+      },
+      "required": [
+        "size",
+        "fields"
+      ],
+      "type": "object"
+    },
+    "ParamType": {
+      "description": "One parameter: a scalar (`\"i32\"`, `\"i64\"`, `\"f32\"`, `\"u8\"`), a directional pointer (`\"in buffer<bf16>\"`, `\"out buffer<f32>\"`, `\"inout state\"`), or a launch-private `\"tensormap\"` (128-byte TMA descriptor) or `\"bytes<n>\"` (an n-byte aggregate filled by a `pack` launch arg).",
+      "pattern": "^(i32|i64|f32|u8|bytes<[1-9][0-9]*>|(in|out|inout) (state|buffer<(bf16|f16|f32|fp8e4m3|fp8e8m0|i8|i32|u32|i64|u64|u8)>))$",
+      "type": "string"
+    },
+    "Placement": {
+      "description": "Physical placement of a buffer; host placement is restricted to immutable weights.",
+      "enum": [
+        "device",
+        "host"
+      ],
+      "type": "string"
+    },
+    "Program": {
+      "additionalProperties": false,
+      "description": "A program: a straight-line call list plus, when a serving loop may drive it, the shape of one call.",
+      "properties": {
+        "batch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Batch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The shape of one call — `groups` sequences of `rows` rows each — for a program a serving loop drives; absent for one only a harness runs (a single layer under test, a barrier)."
+        },
+        "calls": {
+          "description": "The calls, in order, e.g. `[{\"op\": \"embedding\", \"args\": [...]}, ...]`.",
+          "items": {
+            "$ref": "#/$defs/Call"
+          },
+          "type": "array"
+        },
+        "graph": {
+          "description": "Driven through a CUDA graph: the runtime captures the call list at each var assignment the program is called with and replays it with one launch. For a program of fixed shape per call whose launches are many and short (a decode step, a speculative round); a program whose rows vary per call (a prefill chunk) runs launch by launch.",
+          "type": "boolean"
+        },
+        "once": {
+          "description": "Run once after load (after every peer is imported), never per step: a tray manifest's collective setup. Takes no per-call input.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "calls"
+      ],
+      "type": "object"
+    },
+    "Rows": {
+      "anyOf": [
+        {
+          "items": {
+            "anyOf": [
+              {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Name of a numeric constant declared in constants.",
+                "minLength": 1,
+                "type": "string"
+              }
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "group": {
+              "type": "string"
+            },
+            "ranges": {
+              "items": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "description": "Name of a numeric constant declared in constants.",
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "group",
+            "ranges"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "A row range of a checkpoint tensor: one range, or one per rank of a declared group (a table sharded across the group's devices, each rank loading its slice), e.g. `{\"group\": \"ep\", \"ranges\": [[0, 8], [8, 16]]}`."
+    },
+    "Scratch": {
+      "additionalProperties": false,
+      "description": "A private buffer of one implementation, sized like a workspace buffer.",
+      "properties": {
+        "dtype": {
+          "$ref": "#/$defs/DType",
+          "description": "Element type, e.g. `\"f32\"`."
+        },
+        "shape": {
+          "description": "Extents, constants or var names, e.g. `[\"tokens\", 8]`.",
+          "items": {
+            "$ref": "#/$defs/Dim"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "dtype",
+        "shape"
+      ],
+      "type": "object"
+    },
+    "Segment": {
+      "additionalProperties": false,
+      "description": "One piece of a weight buffer: a checkpoint tensor, or a rectangle of it, copied whole into the next bytes of the buffer. The tensor is read as a matrix `[rows, cols]` (its first axis by the product of the rest); `rows` / `cols` take a half-open range of it, e.g. `{\"tensor\": \"fc.weight\", \"cols\": [0, 5120]}`.",
+      "properties": {
+        "cols": {
+          "description": "Half-open column range `[from, to)` over the product of the remaining axes; every column when absent (a strided copy otherwise), e.g. `[5120, 10240]`.",
+          "items": {
+            "anyOf": [
+              {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Name of a numeric constant declared in constants.",
+                "minLength": 1,
+                "type": "string"
+              }
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "rows": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Rows"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Half-open row range `[from, to)` of the tensor's first axis, fixed or selected by a declared rank group; the whole axis when absent, e.g. `[0, 1024]`."
+        },
+        "tensor": {
+          "$ref": "#/$defs/TensorSource",
+          "description": "Tensor name in the safetensors header, e.g. `\"model.layers.0.self_attn.q_proj.weight\"`."
+        }
+      },
+      "required": [
+        "tensor"
+      ],
+      "type": "object"
+    },
+    "State": {
+      "additionalProperties": false,
+      "description": "Opaque persistent memory; the runtime provisions the bytes and hands the base pointer to `inout state` params. Exactly one of the three sizes is non-zero. States are always allocated through the driver's virtual-memory API with a fabric-shareable handle when the device has one, so a `peer` buffer may be `of` a state.",
+      "properties": {
+        "bytes": {
+          "anyOf": [
+            {
+              "description": "Fixed byte count independent of capacity and sequences, e.g. `4096`.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Fixed byte count independent of capacity and sequences, e.g. `4096`."
+        },
+        "bytes_per_seq": {
+          "anyOf": [
+            {
+              "description": "Bytes per sequence slot, one slot per live sequence — a recurrent conv/SSM state, e.g. `154140672`. The runtime starts with `seqs.max + 2` slots — slot 0 (never leased; kernels may read line index 0 as null), one per sequence, one for a batched caller's padding — and grows them out of the state budget as checkpoints keep the states of sleeping sequences.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Bytes per sequence slot, one slot per live sequence — a recurrent conv/SSM state, e.g. `154140672`. The runtime starts with `seqs.max + 2` slots — slot 0 (never leased; kernels may read line index 0 as null), one per sequence, one for a batched caller's padding — and grows them out of the state budget as checkpoints keep the states of sleeping sequences."
+        },
+        "bytes_per_token": {
+          "anyOf": [
+            {
+              "description": "Bytes per token slot, scaled by the capacity — a paged KV cache, e.g. `147456`.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Bytes per token slot, scaled by the capacity — a paged KV cache, e.g. `147456`."
+        }
+      },
+      "type": "object"
+    },
+    "TensorMap": {
+      "additionalProperties": false,
+      "description": "A tiled TMA descriptor over either an interface parameter or\nimplementation-private scratch. Exactly one source is required.\n\n`dims` are in elements, innermost first; `strides` are the byte strides of\n`dims[1..]`; `box` is the smem tile in elements. Element strides are 1.\nThe outermost dim may be 0: the descriptor then spans as many of that dim\nas the bound buffer holds past the call's offset (a paged cache whose\npage count is the runtime's, not the manifest's).",
+      "properties": {
+        "box": {
+          "description": "Box (smem tile) extent per dimension in elements, each 1..=256.",
+          "items": {
+            "anyOf": [
+              {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Name of a numeric constant declared in constants.",
+                "minLength": 1,
+                "type": "string"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "dims": {
+          "description": "Global extent per dimension in elements, innermost first (1 to 5 dims); the outermost may be 0 (span the buffer).",
+          "items": {
+            "anyOf": [
+              {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Name of a numeric constant declared in constants.",
+                "minLength": 1,
+                "type": "string"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "dtype": {
+          "$ref": "#/$defs/TmaDType",
+          "description": "Element type as TMA sees it; `u4` is 16 packed nibbles per 8 bytes (`CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN16B`)."
+        },
+        "l2_promotion": {
+          "anyOf": [
+            {
+              "description": "L2 promotion in bytes: 0 (none), 64, 128 or 256.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "L2 promotion in bytes: 0 (none), 64, 128 or 256."
+        },
+        "oob_nan": {
+          "description": "Fill out-of-bounds elements with NaN instead of zero.",
+          "type": "boolean"
+        },
+        "param": {
+          "anyOf": [
+            {
+              "description": "The interface buffer param the descriptor addresses; the call's offset\nis honoured. Mutually exclusive with `scratch`.",
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "The interface buffer param the descriptor addresses; the call's offset\nis honoured. Mutually exclusive with `scratch`."
+        },
+        "scratch": {
+          "description": "An implementation-private scratch buffer. Mutually exclusive with\n`param`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strides": {
+          "description": "Byte stride of each dimension after the first (`dims.len() - 1` entries, multiples of 16).",
+          "items": {
+            "anyOf": [
+              {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Name of a numeric constant declared in constants.",
+                "minLength": 1,
+                "type": "string"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "swizzle": {
+          "anyOf": [
+            {
+              "description": "Shared-memory swizzle span in bytes: 0 (none), 32, 64 or 128.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Shared-memory swizzle span in bytes: 0 (none), 32, 64 or 128."
+        }
+      },
+      "required": [
+        "dtype",
+        "dims",
+        "box"
+      ],
+      "type": "object"
+    },
+    "TensorSource": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "group": {
+              "type": "string"
+            },
+            "tensors": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "group",
+            "tensors"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "A checkpoint tensor, fixed or selected by a declared rank group.\nSelection is a load-time table lookup, never a string template or expression."
+    },
+    "TmaDType": {
+      "description": "TMA element types the runtime encodes.",
+      "oneOf": [
+        {
+          "enum": [
+            "u8",
+            "u16",
+            "u32",
+            "i32",
+            "u64",
+            "i64",
+            "f16",
+            "bf16",
+            "f32"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "tf32",
+          "description": "Float32 storage converted to TF32 by TMA.",
+          "type": "string"
+        },
+        {
+          "const": "u4",
+          "description": "4-bit elements, 16 per 8-byte unit (`16U4_ALIGN16B`); dims and box count nibbles.",
+          "type": "string"
+        },
+        {
+          "const": "u4packed",
+          "description": "Packed 4-bit shared-memory output (`16U4_ALIGN8B`).",
+          "type": "string"
+        }
+      ]
+    },
+    "Topology": {
+      "additionalProperties": false,
+      "description": "Rank groups, e.g. `{\"groups\": {\"ep\": 4}}`. Sizes are fixed in the manifest; the loading rank's index in each group is a load-time constant that `{\"rank\": \"<group>\"}` args receive and `peer` buffers are ordered by.",
+      "properties": {
+        "groups": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Name of a numeric constant declared in constants.",
+                "minLength": 1,
+                "type": "string"
+              }
+            ]
+          },
+          "description": "Group name to member count, e.g. `{\"ep\": 4}`.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "groups"
+      ],
+      "type": "object"
+    },
+    "Var": {
+      "additionalProperties": false,
+      "description": "A per-call scalar the caller supplies, bounded `1..=max`; the only kind of number that may size a shape or a grid.",
+      "properties": {
+        "max": {
+          "anyOf": [
+            {
+              "description": "Upper bound, e.g. `2048` for the token count of a prefill chunk.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "description": "Name of a numeric constant declared in constants.",
+              "minLength": 1,
+              "type": "string"
+            }
+          ],
+          "description": "Upper bound, e.g. `2048` for the token count of a prefill chunk."
+        }
+      },
+      "required": [
+        "max"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://kern-baa.pages.dev/schema/manifest-v6.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The resolved contract: vars, states, buffers, modules, ops and programs.\nThe wire format also accepts optional `constants`, expanded during\ndeserialization. Use [`crate::json_schema`] for the complete wire schema;\nthis type's derived schema describes the resolved numeric form.",
+  "properties": {
+    "buffers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Buffer"
+      },
+      "description": "Typed tensors: inputs, outputs, weights, workspace and carries.",
+      "type": "object"
+    },
+    "constants": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "description": "Optional named numeric literals, recommended for readability. Use C-style UPPER_SNAKE_CASE names. For example {\"HIDDEN_SIZE\": 2560}. Reference a name in any numeric position except schema_version, including {\"i32\": \"HIDDEN_SIZE\"}, shapes, expressions, capacities and byte offsets. Names must not overlap vars. Values are numbers, not expressions or aliases. References expand before typed validation; serialization emits resolved literals.",
+      "propertyNames": {
+        "minLength": 1
+      },
+      "type": "object"
+    },
+    "model": {
+      "description": "Free-form model label, e.g. `\"qwen3-4b\"`.",
+      "type": "string"
+    },
+    "modules": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Module"
+      },
+      "description": "Code artifacts the launches pin, by name, e.g. `{\"argmax\": {\"source\": \"argmax.cubin\", \"sha256\": \"2537…\"}}`.",
+      "type": "object"
+    },
+    "ops": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Op"
+      },
+      "description": "Operators: a typed interface plus the launches that implement it.",
+      "type": "object"
+    },
+    "programs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Program"
+      },
+      "description": "Named straight-line programs, e.g. `\"decode\": {\"batch\": {\"groups\": 256, \"rows\": 1}, \"calls\": [...]}`.",
+      "type": "object"
+    },
+    "schema_version": {
+      "description": "Wire-format version. This runtime accepts v5 and v6; v6 adds\nscratch-backed TMA descriptors.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "states": {
+      "additionalProperties": {
+        "$ref": "#/$defs/State"
+      },
+      "description": "Opaque persistent memory the runtime provisions by size, e.g. a paged KV cache.",
+      "type": "object"
+    },
+    "topology": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Topology"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Rank groups a multi-GPU manifest is SPMD over, e.g. `{\"groups\": {\"ep\": 4}}`; every rank loads the same manifest."
+    },
+    "vars": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Var"
+      },
+      "description": "Per-call scalars the caller supplies, e.g. `{\"tokens\": {\"max\": 2048}}`.",
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "model",
+    "buffers",
+    "modules",
+    "ops",
+    "programs"
+  ],
+  "title": "kern manifest v6",
+  "type": "object"
+}

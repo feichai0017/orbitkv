@@ -2,7 +2,7 @@ use std::fmt;
 
 use kern_manifest::Verified;
 
-/// A schema-v5 manifest accepted by the pinned upstream verifier.
+/// A manifest accepted by the local source-integrated kern verifier.
 ///
 /// Keeping the verified type private prevents later compiler stages from
 /// manufacturing an unchecked runtime artifact.
@@ -35,5 +35,9 @@ impl KernArtifact {
 
     pub fn to_json(&self) -> String {
         self.verified.to_json()
+    }
+
+    pub fn verified(&self) -> &Verified {
+        &self.verified
     }
 }

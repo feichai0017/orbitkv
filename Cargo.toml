@@ -78,6 +78,10 @@ serde_json.workspace = true
 hex.workspace = true
 sha2.workspace = true
 
+[dev-dependencies]
+half.workspace = true
+kern-runtime.workspace = true
+
 [lints.rust]
 unsafe_code = "forbid"
 
