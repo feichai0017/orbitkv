@@ -25,6 +25,7 @@ cargo build --locked --release -p kern-serve
 
 See [the engine design](docs/engine-design.md),
 [the architecture](docs/architecture-next.md), [the roadmap](docs/roadmap-next.md),
-and [the pinned baselines](docs/baselines.md).
+[the current Qwen3.8 M1 status](docs/m1-qwen38.md), and
+[the pinned baselines](docs/baselines.md).
 The complete pre-reset source remains recoverable from branch
 `archive-orbitkv-pre-next-20260917`.

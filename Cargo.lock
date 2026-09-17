@@ -2745,6 +2745,7 @@ version = "0.1.0"
 dependencies = [
  "kern-manifest",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

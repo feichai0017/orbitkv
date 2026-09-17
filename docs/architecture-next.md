@@ -47,10 +47,11 @@ this workspace as the initial execution substrate. The imported revision is
 - differential kernel/program testing;
 - a small CLI and optional serving frontend.
 
-It already has Qwen3.8 target and DFlash2 manifests. Its recorded comparison is
-about 81 versus 95 tokens/s for target decode and 178 versus 176 tokens/s for
-speculative decode against its pinned vLLM setup. Those results establish a
-usable substrate, not this compiler's performance claim.
+It already has BF16-weight Qwen3.8 target and DFlash2 manifests. Its recorded
+comparison is about 81 versus 95 tokens/s for target decode and 178 versus 176
+tokens/s for speculative decode against its pinned vLLM setup. Those results
+establish a usable substrate and a topology/serving oracle; they are not evidence
+for the official FP8 checkpoint or this compiler's performance.
 
 Consequently, Qwen3.8 begins as a compiler-equivalence and optimization target,
 not a fresh runtime bring-up. `kern`'s substantial DeepSeek-V4.1 generators and
@@ -338,7 +339,7 @@ code shape only after reconciling model geometry and numerical semantics.
 | Source | Candidate | Decision | Reason |
 | --- | --- | --- | --- |
 | `kern` | Manifest v5, verifier, runtime, test harness, pool, CLI/serve | Source fork | Imported at an exact revision so the complete engine can evolve in one workspace |
-| `kern` | Qwen3.8 and DFlash2 manifests/kernel packages | Reference baseline | Proves runtime expressiveness and supplies a parity/performance target for compiler output |
+| `kern` | BF16-weight Qwen3.8 and DFlash2 manifests/kernel packages | Reference baseline | Proves runtime expressiveness and supplies topology, ABI, and serving oracles; not an FP8 weight oracle |
 | `kern` | DeepSeek-V4.1 generators, kernels, manifests, and EP4 evidence | Reference/Adapt | Rich implementation oracle; replace hand-authored generation with compiler lowering rather than copying it |
 | Current OrbitKV | Qwen3.8 config and FP8 weight mapping | Direct extract | Already matches the pinned checkpoint and current H20 path |
 | Current OrbitKV | DeepGEMM block-FP8 adapter | Direct extract | Correct 128 by 128 E4M3 contract and existing H20 validation |

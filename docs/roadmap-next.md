@@ -383,6 +383,9 @@ Microbenchmark wins must be reported separately from model and serving wins.
 - Freeze the old roadmap and record the exact reusable source inventory.
 - Pin the Qwen3.8 checkpoint, H20 environment, vLLM/SGLang baselines, inputs, and
   correctness oracle.
+- Treat the imported `kern` Qwen3.8 manifest as a BF16 execution/topology oracle,
+  and the official checkpoint config/index/headers as the separate FP8 weight
+  oracle.
 
 Gate: a clean checkout can reproduce the baseline and no historical code is lost.
 
@@ -390,14 +393,17 @@ Gate: a clean checkout can reproduce the baseline and no historical code is lost
 
 - Lower the Qwen model package into a `kern` manifest without handwritten
   per-layer calls.
+- Validate all official text-tower FP8 matrices and their 128 by 128 inverse
+  scale tensors before deriving packed execution buffers.
 - Execute provider-based prefill and target-only decode through the shared
   `kern` substrate without a model-private runtime path.
 - Use the substrate's fixed buffers, state allocations, and batch programs.
 - Pass serial, changing-batch, ragged, and multi-step state checks.
 
 Gate: correctness is closed before custom optimization. Compiler output matches
-the existing `kern` Qwen execution behavior, and the new repository contains no
-duplicate runtime.
+the existing `kern` Qwen topology and serving behavior while its FP8 weights are
+qualified separately against the official checkpoint, and the new repository
+contains no duplicate runtime.
 
 ### M2 — Stateful GDN superkernel: week 3--4
 

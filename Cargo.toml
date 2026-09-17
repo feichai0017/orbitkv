@@ -74,6 +74,7 @@ needless_range_loop = "allow"
 [dependencies]
 kern-manifest.workspace = true
 serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

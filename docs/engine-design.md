@@ -68,6 +68,19 @@ The initial buckets are target decode batches 1, 2, 4, and 8 on H20. Prefill
 uses a correct provider composition until a measured prefill bottleneck justifies
 its own island work.
 
+### Two Qwen oracles
+
+The imported `examples/qwen3.8-27b.json` is a BF16 executable oracle. It is
+authoritative for model topology, physical recurrent/KV state, call ordering,
+kernel ABI, manifest protocol, and serving behavior. It is not authoritative
+for the official FP8 checkpoint's weight dtypes, block scales, or FP8 GEMM
+numerics.
+
+The official `Qwen3.8-27B-FP8` checkpoint is the weight oracle. Its config and
+safetensors headers define dynamic E4M3, 128 by 128 scale blocks, and the exact
+matrix/scale tensor pairs. Compiler qualification combines the two oracles; it
+must never claim FP8 support merely because it reproduced the BF16 manifest.
+
 ### Compiler/runtime contract
 
 The compiler decides:

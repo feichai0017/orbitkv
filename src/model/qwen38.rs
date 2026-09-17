@@ -22,11 +22,15 @@ impl Qwen38Contract {
     pub const REPOSITORY: &'static str = "Qwen/Qwen3.8-27B-FP8";
     pub const REVISION: &'static str = "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a";
     pub const LAYERS: u16 = 64;
+    pub const GATED_DELTA_LAYERS: u16 = 48;
+    pub const ATTENTION_LAYERS: u16 = 16;
     pub const HIDDEN_SIZE: u32 = 5_120;
     pub const INTERMEDIATE_SIZE: u32 = 17_408;
     pub const FP8_SCALE_ROWS: u16 = 128;
     pub const FP8_SCALE_COLUMNS: u16 = 128;
     pub const MTP_LAYERS: u8 = 1;
+    /// Padding in the imported physical GDN line after conv and recurrent state.
+    pub const ORACLE_GDN_PADDING_BYTES_PER_LAYER: u64 = 4_096;
 
     pub const GATED_DELTA: GatedDeltaGeometry =
         GatedDeltaGeometry { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, convolution_width: 4 };
@@ -55,28 +59,37 @@ impl Qwen38Contract {
         2 * Self::FULL_ATTENTION.kv_heads as u64 * Self::FULL_ATTENTION.head_width as u64 * 2
     }
 
+    pub const fn oracle_gdn_bytes_per_sequence() -> u64 {
+        (Self::recurrent_bytes_per_layer()
+            + Self::convolution_bytes_per_layer()
+            + Self::ORACLE_GDN_PADDING_BYTES_PER_LAYER)
+            * Self::GATED_DELTA_LAYERS as u64
+    }
+
+    pub const fn oracle_kv_bytes_per_token() -> u64 {
+        Self::kv_bytes_per_token_per_layer() * Self::ATTENTION_LAYERS as u64
+    }
+
     /// Construct a target-decode graph at block granularity.
     pub fn target_decode_graph() -> TaskGraph {
-        let gdn_layers = 48;
-        let attention_layers = 16;
         let states = vec![
             StateSpec {
                 id: RECURRENT_STATE,
                 name: "gdn.recurrent".into(),
                 scope: StateScope::PerSequence,
-                bytes: Self::recurrent_bytes_per_layer() * gdn_layers,
+                bytes: Self::recurrent_bytes_per_layer() * Self::GATED_DELTA_LAYERS as u64,
             },
             StateSpec {
                 id: CONVOLUTION_STATE,
                 name: "gdn.convolution".into(),
                 scope: StateScope::PerSequence,
-                bytes: Self::convolution_bytes_per_layer() * gdn_layers,
+                bytes: Self::convolution_bytes_per_layer() * Self::GATED_DELTA_LAYERS as u64,
             },
             StateSpec {
                 id: TOKEN_KV,
                 name: "attention.kv".into(),
                 scope: StateScope::PerToken,
-                bytes: Self::kv_bytes_per_token_per_layer() * attention_layers,
+                bytes: Self::oracle_kv_bytes_per_token(),
             },
         ];
 
