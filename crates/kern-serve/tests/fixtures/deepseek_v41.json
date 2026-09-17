@@ -1,0 +1,633 @@
+[
+  {
+    "name": "effort-null",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "effort-\"low\"",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": "low",
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 25 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "effort-\"high\"",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": "high",
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "effort-\"xhigh\"",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": "xhigh",
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "effort-\"max\"",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": "max",
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "effort-1",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": 1,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 1 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "effort-42",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": 42,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 42 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "effort-100",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": 100,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 100 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "effort--1",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": -1,
+    "drop_thinking": true,
+    "error": true
+  },
+  {
+    "name": "effort-0",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": 0,
+    "drop_thinking": true,
+    "error": true
+  },
+  {
+    "name": "effort-101",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": 101,
+    "drop_thinking": true,
+    "error": true
+  },
+  {
+    "name": "effort-\"medium\"",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": "medium",
+    "drop_thinking": true,
+    "error": true
+  },
+  {
+    "name": "effort-true",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": true,
+    "drop_thinking": true,
+    "error": true
+  },
+  {
+    "name": "effort-false",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": false,
+    "drop_thinking": true,
+    "error": true
+  },
+  {
+    "name": "effort-1.5",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": 1.5,
+    "drop_thinking": true,
+    "error": true
+  },
+  {
+    "name": "chat",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ],
+    "thinking": false,
+    "effort": "max",
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜User｜>hello<｜Assistant｜></think>"
+  },
+  {
+    "name": "initial-system",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a helpful assistant."
+      },
+      {
+        "role": "user",
+        "content": "hello"
+      }
+    ],
+    "thinking": false,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>You are a helpful assistant.<｜User｜>hello<｜Assistant｜></think>"
+  },
+  {
+    "name": "mid-system",
+    "messages": [
+      {
+        "role": "system",
+        "content": "sys"
+      },
+      {
+        "role": "user",
+        "content": "q1"
+      },
+      {
+        "role": "assistant",
+        "content": "a1",
+        "reasoning_content": "r1"
+      },
+      {
+        "role": "system",
+        "content": "mid sys"
+      }
+    ],
+    "thinking": true,
+    "effort": 88,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 88 (range 1-100, the higher the value, the more thorough the reasoning)\n\nsys<｜User｜>q1<｜Assistant｜></think>a1<｜end▁of▁sentence｜><｜System｜>mid sys<｜Assistant｜><think>"
+  },
+  {
+    "name": "drop-reasoning",
+    "messages": [
+      {
+        "role": "system",
+        "content": "sys"
+      },
+      {
+        "role": "user",
+        "content": "q1"
+      },
+      {
+        "role": "assistant",
+        "content": "a1",
+        "reasoning_content": "r1"
+      },
+      {
+        "role": "user",
+        "content": "q2"
+      }
+    ],
+    "thinking": true,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\nsys<｜User｜>q1<｜Assistant｜></think>a1<｜end▁of▁sentence｜><｜User｜>q2<｜Assistant｜><think>"
+  },
+  {
+    "name": "keep-reasoning",
+    "messages": [
+      {
+        "role": "system",
+        "content": "sys"
+      },
+      {
+        "role": "user",
+        "content": "q1"
+      },
+      {
+        "role": "assistant",
+        "content": "a1",
+        "reasoning_content": "r1"
+      },
+      {
+        "role": "user",
+        "content": "q2"
+      }
+    ],
+    "thinking": true,
+    "effort": null,
+    "drop_thinking": false,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\nsys<｜User｜>q1<｜Assistant｜><think>r1</think>a1<｜end▁of▁sentence｜><｜User｜>q2<｜Assistant｜><think>"
+  },
+  {
+    "name": "assistant-spaced-tools",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "  reason  ",
+        "content": "summary",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "{\"query\":\"value\",\"limit\":2}"
+            }
+          }
+        ]
+      }
+    ],
+    "thinking": true,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>  reason  </think>summary\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">value</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"limit\" string=\"false\">2</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜>"
+  },
+  {
+    "name": "tool-schemas-False",
+    "messages": [
+      {
+        "role": "system",
+        "content": "system",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "description": "Look up a value",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  },
+                  "limit": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": false,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>system\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"lookup\", \"description\": \"Look up a value\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\"}, \"limit\": {\"type\": \"integer\"}}}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>question<｜Assistant｜></think>"
+  },
+  {
+    "name": "tool-schemas-True",
+    "messages": [
+      {
+        "role": "system",
+        "content": "system",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "description": "Look up a value",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  },
+                  "limit": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "question"
+      }
+    ],
+    "thinking": true,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\nsystem\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"lookup\", \"description\": \"Look up a value\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\"}, \"limit\": {\"type\": \"integer\"}}}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>question<｜Assistant｜><think>"
+  },
+  {
+    "name": "consecutive-user",
+    "messages": [
+      {
+        "role": "user",
+        "content": "first"
+      },
+      {
+        "role": "user",
+        "content": "second"
+      }
+    ],
+    "thinking": false,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜User｜>first\n\nsecond<｜Assistant｜></think>"
+  },
+  {
+    "name": "mixed-tool-user-sorted",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "  reason  ",
+        "content": "summary",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "{\"query\":\"value\",\"limit\":2}"
+            },
+            "id": "a"
+          },
+          {
+            "id": "b",
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "\"{\\\"query\\\":\\\"double\\\"}\""
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "b",
+        "content": "second"
+      },
+      {
+        "role": "user",
+        "content": "note"
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "a",
+        "content": "first"
+      }
+    ],
+    "thinking": true,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜></think>summary\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">value</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"limit\" string=\"false\">2</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">double</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>first</tool_result>\n\nnote\n\n<tool_result>second</tool_result><｜Assistant｜><think>"
+  },
+  {
+    "name": "invalid-json-tool-argument-fallback",
+    "messages": [
+      {
+        "role": "user",
+        "content": "question"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "  reason  ",
+        "content": "summary",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "not json"
+            },
+            "id": "a"
+          },
+          {
+            "id": "b",
+            "type": "function",
+            "function": {
+              "name": "lookup",
+              "arguments": "\"{\\\"query\\\":\\\"double\\\"}\""
+            }
+          }
+        ]
+      }
+    ],
+    "thinking": true,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>  reason  </think>summary\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"arguments\" string=\"true\">not json</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"lookup\">\n<｜DSML｜ parameter name=\"query\" string=\"true\">double</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜>"
+  },
+  {
+    "name": "released-golden-1",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a helpful assistant.",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get the weather for a specific location",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "location": {
+                    "type": "string",
+                    "description": "The city name"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "celsius",
+                      "fahrenheit"
+                    ],
+                    "description": "Temperature unit"
+                  }
+                },
+                "required": [
+                  "location"
+                ]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "search",
+              "description": "Search the web for information",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "Search query"
+                  },
+                  "num_results": {
+                    "type": "integer",
+                    "description": "Number of results to return"
+                  }
+                },
+                "required": [
+                  "query"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": "What's the weather like in Beijing?"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "The user wants the weather in Beijing. I should call get_weather.",
+        "content": "",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"location\": \"Beijing\", \"unit\": \"celsius\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "call_0",
+        "content": "{\"temperature\": 22, \"condition\": \"sunny\", \"humidity\": 45}"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "Got the weather data. Let me format a nice response.",
+        "content": "The weather in Beijing is currently sunny with a temperature of 22°C and 45% humidity."
+      }
+    ],
+    "thinking": true,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 50 (range 1-100, the higher the value, the more thorough the reasoning)\n\nYou are a helpful assistant.\n\n## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n{\"name\": \"get_weather\", \"description\": \"Get the weather for a specific location\", \"parameters\": {\"type\": \"object\", \"properties\": {\"location\": {\"type\": \"string\", \"description\": \"The city name\"}, \"unit\": {\"type\": \"string\", \"enum\": [\"celsius\", \"fahrenheit\"], \"description\": \"Temperature unit\"}}, \"required\": [\"location\"]}}\n{\"name\": \"search\", \"description\": \"Search the web for information\", \"parameters\": {\"type\": \"object\", \"properties\": {\"query\": {\"type\": \"string\", \"description\": \"Search query\"}, \"num_results\": {\"type\": \"integer\", \"description\": \"Number of results to return\"}}, \"required\": [\"query\"]}}\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n<｜User｜>What's the weather like in Beijing?<｜Assistant｜><think>The user wants the weather in Beijing. I should call get_weather.</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"get_weather\">\n<｜DSML｜ parameter name=\"location\" string=\"true\">Beijing</｜DSML｜ parameter>\n<｜DSML｜ parameter name=\"unit\" string=\"true\">celsius</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls><｜end▁of▁sentence｜><｜User｜><tool_result>{\"temperature\": 22, \"condition\": \"sunny\", \"humidity\": 45}</tool_result><｜Assistant｜><think>Got the weather data. Let me format a nice response.</think>The weather in Beijing is currently sunny with a temperature of 22°C and 45% humidity.<｜end▁of▁sentence｜>"
+  },
+  {
+    "name": "released-golden-2",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a helpful assistant."
+      },
+      {
+        "role": "user",
+        "content": "Hello"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "The user said hello, I should greet back.",
+        "content": "Hi there! How can I help you?"
+      },
+      {
+        "role": "user",
+        "content": "What is the capital of France?"
+      },
+      {
+        "role": "assistant",
+        "reasoning_content": "The user asks about the capital of France. It is Paris.",
+        "content": "The capital of France is Paris."
+      }
+    ],
+    "thinking": false,
+    "effort": null,
+    "drop_thinking": true,
+    "expected": "<｜begin▁of▁sentence｜><｜System｜>You are a helpful assistant.<｜User｜>Hello<｜Assistant｜></think>Hi there! How can I help you?<｜end▁of▁sentence｜><｜User｜>What is the capital of France?<｜Assistant｜></think>The capital of France is Paris.<｜end▁of▁sentence｜>"
+  }
+]

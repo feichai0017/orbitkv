@@ -1,2 +1,3 @@
 *.cu linguist-language=C++
 *.cuh linguist-language=C++
+crates/kern-runtime/src/*.ptx -whitespace

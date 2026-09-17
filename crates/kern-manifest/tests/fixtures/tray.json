@@ -1,0 +1,32 @@
+{
+  "schema_version": 5, "model": "t",
+  "vars": {"tokens": {"max": 8}, "seqs": {"max": 8}, "rows": {"max": 32}},
+  "topology": {"groups": {"ep": 4, "tp": 4}},
+  "states": {"kv": {"bytes_per_token": 1}, "kda": {"bytes_per_seq": 24}},
+  "buffers": {
+    "token_ids": {"kind": "input", "dtype": "i64", "shape": ["rows"], "fill": "token"},
+    "slot_mapping": {"kind": "input", "dtype": "i64", "shape": ["tokens"], "domain": {"index_into": "kv"}, "fill": "slot"},
+    "seq_lens": {"kind": "input", "dtype": "i32", "shape": ["seqs"], "fill": "seq_len"},
+    "block_table": {"kind": "input", "dtype": "i32", "shape": ["seqs", 3], "domain": {"index_into": "kv", "stride": 16}},
+    "kda.line_index": {"kind": "input", "dtype": "i32", "shape": [3, "rows"], "domain": {"index_into": "kda", "stride": 8}},
+    "next_token": {"kind": "output", "dtype": "i64", "shape": ["rows"], "fill": "tokens"},
+    "tp_err": {"kind": "output", "dtype": "i32", "shape": [1], "fill": "error"},
+    "tp_blocks": {"kind": "input", "dtype": "i32", "shape": [5], "fill": "blocks"}
+  },
+  "modules": {},
+  "ops": {
+    "step": {
+      "params": ["in buffer<i64>", "in buffer<i64>", "in buffer<i32>", "in buffer<i32>", "in buffer<i32>", "inout state", "inout state", "out buffer<i64>"],
+      "impl": {"launches": [{"entry": "extern:x"}]}
+    },
+    "init": {"params": ["in buffer<i32>", "out buffer<i32>", "i32", "i32"], "impl": {"launches": [{"entry": "extern:x"}]}}
+  },
+  "programs": {
+    "decode": {"batch": {"groups": 8, "rows": 1}, "calls": [
+      {"op": "step", "args": [{"buf": "token_ids"}, {"buf": "slot_mapping"}, {"buf": "seq_lens"}, {"buf": "block_table"}, {"buf": "kda.line_index"}, {"state": "kv"}, {"state": "kda"}, {"buf": "next_token"}]}
+    ]},
+    "tp_init": {"once": true, "calls": [
+      {"op": "init", "args": [{"buf": "tp_blocks"}, {"buf": "tp_err"}, {"rank": "ep"}, {"rank": "tp"}]}
+    ]}
+  }
+}
