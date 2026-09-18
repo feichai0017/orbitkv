@@ -1,123 +1,83 @@
-# AletheiaRT
+<p align="center">
+  <img src="website/public/readme-banner.svg" alt="OrbitKV — Compile the lifetime of state" width="100%" />
+</p>
 
-> Proof-carrying, self-optimizing inference.
+<p align="center">
+  <a href="https://feichai0017.github.io/orbitkv/">Website</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/roadmap.md">Roadmap</a> ·
+  <a href="UPSTREAM.md">Upstream provenance</a>
+</p>
 
-AletheiaRT is a production inference optimization and execution platform. It
-continuously searches for better kernels, graph transforms, memory layouts, and
-runtime policies, but deploys a candidate only when the candidate carries
-reproducible evidence for semantics, numerical accuracy, hardware scope,
-workload coverage, resource bounds, and rollback.
+**A semantic-aware KV cache data plane for SGLang.**
 
-The name combines *aletheia*—the Greek idea of truth as disclosure—with RT,
-for runtime. An optimization is not accepted because it claims to be fast. It must
-disclose what it executes, where it is valid, how it was measured, and what
-happens when it fails.
+OrbitKV combines a production-oriented Rust storage and transfer engine with a
+new control plane that will compile attention semantics and workload evidence
+into cache placement, retention, prefetch, and movement decisions. SGLang is
+the primary integration target. The imported baseline also contains its mature
+vLLM connector, which is retained as a reference and compatibility path.
 
-## The problem
+## What exists now
 
-Production inference is not one stable program. Its best physical implementation
-changes with the model, GPU, driver, tensor shape, batch distribution, context
-length, latency objective, and kernel ecosystem. Mature engines therefore
-accumulate hard-coded thresholds and backend flags, while automated optimizers
-often stop at a microbenchmark and cannot safely deploy their result.
+- content-addressed KV blocks in pinned host memory, with optional SSD backing;
+- NUMA-aware allocation and batched GPU/host transfer;
+- cross-node discovery and RDMA fetch;
+- prefix lookup, leases, eviction, metrics, and P/D transfer paths;
+- a Rust server, Python bindings, and the imported vLLM connector.
 
-AletheiaRT closes that loop:
+The storage and transfer data plane was imported from PegaFlow `0.24.5` and
+renamed throughout. See [UPSTREAM.md](UPSTREAM.md) and [NOTICE](NOTICE) for the
+exact source revision and license boundary. PegaFlow's published measurements
+are not presented as OrbitKV results.
 
-```text
-model semantics + hardware + workload trace + SLO
-                         |
-                         v
-             bounded candidate generation
-        AutoDeploy / FlashInfer / DeepGEMM / custom
-                         |
-                         v
-                 qualification harness
-        correctness / raw timings / memory / faults
-                         |
-                         v
-              proof-carrying physical plans
-                         |
-                         v
-               deterministic plan registry
-                         |
-                         v
-               source-pinned SGLang runtime
-                         |
-                         +---- telemetry and replay ----> next search
-```
+## Where OrbitKV goes further
 
-## What AletheiaRT owns
+The target is not another manually tuned external cache. OrbitKV will compile a
+declarative state-liveness contract into physical cache plans:
 
-- portable physical-plan, evidence, workload, SLO, and trace contracts;
-- qualification and content-addressed artifact publication;
-- deterministic plan selection, fallback, revocation, and rollback;
-- the provider boundary used by kernel and compiler backends;
-- the closed loop from a real SGLang workload trace to the next qualified plan.
+- semantic death and execution completion are separate reclamation frontiers;
+- HBM, DRAM, SSD, and remote replicas are placement choices under one cost model;
+- ring buffers, prefix pages, checkpoints, and eviction classes are derived
+  physical plans rather than hard-coded product features;
+- SGLang remains the serving scheduler while OrbitKV becomes the authority for
+  cache identity, placement, and safe reuse.
 
-## What AletheiaRT reuses
-
-- **SGLang** owns production requests, batching, KV pools, sampling, and workers;
-- **TensorRT-LLM AutoDeploy** supplies export and graph-transform machinery plus
-  an independent NVIDIA baseline;
-- **FlashInfer**, **DeepGEMM**, and SGLang's in-tree **sglang-kernel** supply
-  high-performance operations and candidate tactics;
-- PyTorch supplies the first numerical oracle.
-
-All four upstream source trees are real Git submodules under `third-party/`,
-including their nested CUTLASS, CCCL, NIXL, spdlog, and fmt revisions. They are
-readable and patchable; AletheiaRT does not hide them behind opaque wheels.
-
-## Current state
-
-The trusted Rust control plane is implemented and tested. The first real GPU
-candidate has also been qualified on an NVIDIA H20: source-pinned FlashInfer
-RMSNorm, BF16, batch 1, hidden size 4096. Its plan, raw CUDA-event samples,
-PyTorch-oracle results, software fingerprint, and JIT `norm.so` are produced by
-`make qualify-rmsnorm`. The candidate remains unpublished until a matching real
-SGLang trace satisfies the admission gate.
-
-The project is not yet a complete model-serving release. M1 proves the
-operator-level optimization loop; M2 adds a complete dense decoder; M3 makes
-the supported single-GPU configuration production-grade.
+The first integration milestone is an SGLang HiCache backend over the imported
+data plane. A deeper allocator boundary follows after the host-page path is
+correct and measured.
 
 ## Workspace
 
-```text
-crates/aletheia-contracts   portable plans, certificates, workloads and SLOs
-crates/aletheia-control     registry, eligibility and deterministic selection
-crates/aletheia-executor    provider preparation, execution and fallback
-crates/aletheia-cli         validation and local orchestration (`aletheia-rt`)
-integrations/sglang         in-process SGLang workload trace hook
-integrations/autodeploy     registered AutoDeploy transforms
-integrations/providers      source provenance and GPU qualification runners
-third-party/                pinned upstream source submodules
+| Path | Responsibility |
+| --- | --- |
+| [`orbitkv-core`](orbitkv-core) | Content-addressed blocks, leases, eviction, SSD and RDMA tiers |
+| [`orbitkv-transfer`](orbitkv-transfer) | CUDA-aware and RDMA transfer engines |
+| [`orbitkv-server`](orbitkv-server) | gRPC service, health/metrics endpoints, and P/D router |
+| [`orbitkv-metaserver`](orbitkv-metaserver) | Cross-node block discovery |
+| [`python/orbitkv`](python/orbitkv) | Python bindings and framework connectors |
+| [`third-party/sglang`](third-party/sglang) | Pinned SGLang source used to develop and validate integration |
+| [`website`](website) | OrbitKV project website and brand assets |
+
+## Build
+
+The default build targets CUDA 12.8. Host-only inspection can disable default
+features; GPU and RDMA tests require matching local hardware and drivers.
+
+```sh
+cargo check --workspace
+
+cd python
+maturin develop --release
 ```
 
-## Start here
+To run the imported vLLM connector while SGLang support is under construction:
 
-```bash
-make source-init source-verify
-make doctor
-make test
-
-# Inspect source-build plans before executing them.
-make bootstrap-kernels-dry-run
-make bootstrap-sglang-dry-run
-make bootstrap-autodeploy-dry-run
-make bootstrap-tensorrt-source-dry-run
-
-# Exercise the complete CPU publication gate.
-make stage-reference
-target/debug/aletheia-rt validate-registry .aletheia/registry
-
-# Build the first real GPU candidate after bootstrapping kernels.
-make qualify-rmsnorm
-
-# Numerically smoke-test the source-built sglang-kernel on the local GPU.
-make smoke-sglang-kernel
+```sh
+orbitkv-server
+vllm serve Qwen/Qwen3-0.6B \
+  --kv-transfer-config '{"kv_connector":"OrbitKVConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.connector"}'
 ```
 
-Read [the product contract](docs/product-contract.md),
-[architecture](docs/architecture.md), [qualification pipeline](docs/qualification.md),
-[project purpose](docs/purpose.md), [roadmap](docs/roadmap.md), and
-[upstream source map](docs/upstream-source-map.md).
+OrbitKV's imported data plane is Apache-2.0 licensed. Earlier separable OrbitKV
+components remain available in repository history under their original MIT
+license; see [LICENSES/OrbitKV-legacy-MIT.txt](LICENSES/OrbitKV-legacy-MIT.txt).

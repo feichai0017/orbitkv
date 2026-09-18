@@ -1,1 +1,0 @@
-{"schema_version":1,"event":"sglang.forward_batch_generation","timestamp_micros":1,"host_elapsed_micros":10,"outcome":"ok","worker_type":"ReferenceWorker","batch_size":1,"phase":"decode","workload":{"phase":"decode","batch":1,"rows_per_sequence":{"min":1,"max":1},"context_tokens":{"min":32,"max":32}}}

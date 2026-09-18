@@ -1,0 +1,119 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "orbitkv-llm"
+version = "0.1.0"
+description = "High-performance key-value storage engine with Python bindings"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "OrbitKV Contributors" }
+]
+dependencies = [
+    "httpx>=0.24.0",
+]
+keywords = ["storage", "kv-store", "rust", "vllm", "inference"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+module-name = "orbitkv.orbitkv"
+python-source = "."
+# Automatically include binaries defined in Cargo.toml [[bin]] sections
+include = ["orbitkv/orbitkv-server-py", "orbitkv/orbitkv-metaserver-py"]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+    "numpy>=1.24",
+    "httpx>=0.24.0",
+    "requests>=2.26.0",
+]
+dev = [
+    "orbitkv-llm[test]",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+orbitkv-server = "orbitkv._server:main"
+orbitkv-metaserver = "orbitkv._metaserver:main"
+
+[project.entry-points."vllm.general_plugins"]
+orbitkv = "orbitkv.vllm_plugin:register"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "-m",
+    "not integration and not e2e and not stress and not gpu",
+]
+markers = [
+    "integration: starts or requires orbitkv-server but does not run vLLM",
+    "e2e: runs baseline vLLM plus OrbitKV connector correctness checks",
+    "stress: long-running vLLM scenario for concurrency or pressure behavior",
+    "gpu: requires CUDA-capable GPU",
+    "slow: may take more than a few seconds",
+    "release_smoke: validates final installed artifact/runtime rather than source tree",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["orbitkv"]
+omit = ["tests/*", "orbitkv/orbitkv.pyi"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]  # Line length handled by formatter
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[tool.isort]
+profile = "black"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+version_files = ["pyproject.toml:^version", "../Cargo.toml:^version"]
+tag_format = "v$version"

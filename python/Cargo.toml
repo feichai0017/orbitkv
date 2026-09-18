@@ -1,0 +1,42 @@
+[package]
+name = "orbitkv-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "orbitkv"
+crate-type = ["cdylib"]
+
+# Binary for orbitkv-server (will be included in wheel by maturin)
+[[bin]]
+name = "orbitkv-server-py"
+path = "src/bin/server.rs"
+
+# Binary for orbitkv-metaserver (will be included in wheel by maturin)
+[[bin]]
+name = "orbitkv-metaserver-py"
+path = "src/bin/metaserver.rs"
+
+[features]
+default = ["cuda-12", "rdma"]
+cuda-12 = ["orbitkv-core/cuda-12", "orbitkv-server/cuda-12", "orbitkv-transfer?/cuda-12"]
+cuda-13 = ["orbitkv-core/cuda-13", "orbitkv-server/cuda-13", "orbitkv-transfer?/cuda-13"]
+rdma = ["dep:orbitkv-transfer", "dep:orbitkv-pd-wire", "orbitkv-core/rdma", "orbitkv-server/rdma"]
+
+[dependencies]
+pyo3 = { workspace = true, features = ["extension-module"] }
+orbitkv-common.workspace = true
+orbitkv-core = { workspace = true, default-features = false }
+orbitkv-proto = { path = "../orbitkv-proto" }
+orbitkv-server = { path = "../orbitkv-server", default-features = false }
+orbitkv-metaserver = { path = "../orbitkv-metaserver", default-features = false }
+orbitkv-pd-wire = { workspace = true, optional = true }
+orbitkv-transfer = { workspace = true, optional = true }
+tokio.workspace = true
+tonic.workspace = true
+log.workspace = true
+mea.workspace = true

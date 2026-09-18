@@ -1,0 +1,183 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        cuda-variant: ['cu12', 'cu13']
+        include:
+          - cuda-variant: cu12
+            cuda-version: '12.8.1'
+            cargo-features: ""
+          - cuda-variant: cu13
+            cuda-version: '13.0.2'
+            cargo-features: "--no-default-features --features cuda-13,rdma"
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ matrix.cuda-version }}
+          linux-local-args: '["--toolkit"]'
+          method: 'network'
+          sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+
+      - name: Install protobuf compiler and RDMA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libibverbs-dev
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Patch package name for cu13
+        if: matrix.cuda-variant == 'cu13'
+        run: |
+          sed -i 's/^name = "orbitkv-llm"$/name = "orbitkv-llm-cu13"/' python/pyproject.toml
+          sed -i 's/"orbitkv-llm\[/"orbitkv-llm-cu13\[/g' python/pyproject.toml
+
+      - name: Build wheel
+        run: |
+          ./scripts/build-wheel.sh --release ${{ matrix.cargo-features }}
+          mkdir -p dist
+          cp target/wheels/*.whl dist/
+        env:
+          CUDA_PATH: /usr/local/cuda
+
+      - name: Generate artifact tag
+        id: generate_tag
+        run: |
+          PYTAG=$(echo "py${{ matrix.python-version }}" | tr -d '.')
+          echo "artifact_tag=${PYTAG}-${{ matrix.cuda-variant }}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbitkv-wheel-${{ steps.generate_tag.outputs.artifact_tag }}
+          path: dist/*.whl
+
+  build-arm-cu13:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install CUDA 13 toolkit and build dependencies
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y \
+            cuda-cudart-dev-13-0 \
+            cuda-nvcc-13-0 \
+            cuda-nvrtc-dev-13-0 \
+            libibverbs-dev \
+            pkg-config \
+            protobuf-compiler
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Patch package name for cu13
+        run: |
+          sed -i 's/^name = "orbitkv-llm"$/name = "orbitkv-llm-cu13"/' python/pyproject.toml
+          sed -i 's/"orbitkv-llm\[/"orbitkv-llm-cu13\[/g' python/pyproject.toml
+
+      - name: Build wheel
+        run: |
+          ./scripts/build-wheel.sh --release --no-default-features --features cuda-13,rdma
+          mkdir -p dist
+          cp target/wheels/*.whl dist/
+        env:
+          CUDA_PATH: /usr/local/cuda-13.0
+          # Grace systems commonly use 64 KiB kernel pages, while the runner uses 4 KiB.
+          JEMALLOC_SYS_WITH_LG_PAGE: "16"
+
+      - name: Generate artifact tag
+        id: generate_tag
+        run: |
+          PYTAG=$(echo "py${{ matrix.python-version }}" | tr -d '.')
+          echo "artifact_tag=${PYTAG}-arm64-cu13" >> "$GITHUB_OUTPUT"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbitkv-wheel-${{ steps.generate_tag.outputs.artifact_tag }}
+          path: dist/*.whl
+
+  publish-release:
+    if: github.event_name == 'push'
+    needs: [build, build-arm-cu13]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-all
+
+      - name: Prepare wheels for release
+        run: |
+          mkdir -p dist-cu12 dist-cu13 dist-release
+          find dist-all -name "orbitkv_llm_cu13-*.whl" -exec cp {} dist-cu13/ \;
+          find dist-all -name "orbitkv_llm-*.whl" ! -name "orbitkv_llm_cu13-*" -exec cp {} dist-cu12/ \;
+          cp dist-cu12/*.whl dist-cu13/*.whl dist-release/
+          echo "Collected wheels:"
+          ls -la dist-release/
+
+      - name: Upload wheels to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-release/*.whl
+
+      - name: Publish orbitkv-llm to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-cu12/
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Publish orbitkv-llm-cu13 to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-cu13/
+          password: ${{ secrets.PYPI_API_TOKEN }}

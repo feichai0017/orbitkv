@@ -1,126 +1,90 @@
-# AletheiaRT architecture
+# OrbitKV architecture
 
-## System boundary
+## Thesis
+
+OrbitKV is a KV-cache system for SGLang, not a second inference server. SGLang
+owns request scheduling and model execution. OrbitKV owns persistent cache
+identity and will progressively own placement and lifetime decisions.
+
+The imported storage engine is a strong physical substrate: content-addressed
+blocks, pinned DRAM, SSD, RDMA, prefix lookup, leases, topology awareness, and
+observability. Those mechanisms are the starting point, not the research
+contribution.
+
+The contribution is a compiler boundary:
 
 ```text
-PyTorch model / exported graph              production request stream
-              |                                         |
-              v                                         v
- TensorRT-LLM AutoDeploy transforms          source-pinned SGLang
-  + bounded candidate generation        scheduler / KV / ModelRunner
-              |                                         |
-              v                                         v
-      qualification harness  ----->  qualified plan registry
-  correctness / memory / perf               | selection by shape + SLO
-              ^                             v
-              |                       qualified executor
-              |                      prepare / run / fallback
-              |                             |
-              +------ trace + replay <------+
-                                            |
-                         +------------------+------------------+
-                         v                  v                  v
-                     FlashInfer          vendor             generated
-                       provider          provider             provider
+attention semantics + request phase + hardware topology + measured costs
+                              |
+                              v
+                    OrbitKV plan compiler
+             liveness / value / placement / movement
+                              |
+                              v
+      HBM pages <-> pinned DRAM <-> SSD <-> remote replicas
+                              ^
+                              |
+                  SGLang execution evidence
 ```
 
-The trusted control plane is independent of the production serving frontend and
-the GPU providers. It deals only in immutable schemas and content digests.
+## Safety invariant
 
-## Workspace
+A physical generation may be reused only when both conditions hold:
 
-| Path | Responsibility | Forbidden dependencies |
-| --- | --- | --- |
-| `aletheia-contracts` | Portable plan, evidence, workload, SLO, trace schemas | CUDA, Python, serving frameworks |
-| `aletheia-control` | Qualification checks, registry, deterministic selection | Provider SDKs, request serving |
-| `aletheia-executor` | Provider ABI, plan preparation, execution and fallback | Model-specific branches |
-| `aletheia-cli` | Inspection and local orchestration | Hidden policy |
-| `integrations/sglang` | In-process batch/execution trace hook | Core schema ownership |
-| `integrations/autodeploy` | AutoDeploy graph inventory and future candidate transforms | Serving lifecycle |
-| `integrations/providers` | Source provenance and provider qualification helpers | Scheduler policy |
-| `third-party/*` | Exact upstream sources and their native build systems | Local product policy |
+```text
+SemanticDead(block, semantic_frontier)
+and
+ExecutionComplete(block, execution_frontier)
+```
 
-Dependencies point inward: integrations and providers may depend on the core;
-the core never depends on them.
+Semantic death proves that no future token permitted by the attention/state
+contract can read the block. Execution completion proves that no submitted GPU
+or transport work still references its storage. Neither fact implies the other.
 
-## Physical plan
+## Current data plane
 
-A plan binds a semantic model digest and a workload domain to an ordered set of
-provider steps. Each step identifies its provider, operation, immutable artifact
-digest, input/output names, and provider configuration. A plan also declares
-peak memory, workspace, address-stability requirements, capture mode, and an
-ordered fallback list.
+| Component | Responsibility |
+| --- | --- |
+| `orbitkv-core` | block identity, pinned allocation, leases, cache admission, SSD/RDMA coordination |
+| `orbitkv-transfer` | topology-aware CUDA and RDMA movement |
+| `orbitkv-server` | process boundary, gRPC, sessions, health, metrics, P/D router |
+| `orbitkv-metaserver` | remote replica discovery and liveness |
+| `python/orbitkv` | Python binding and framework connectors |
+| `orbitkv-proto` | versioned wire contract |
 
-The plan is not trusted because it parses. `aletheia-contracts` validates structural
-invariants; the registry additionally requires a certificate whose plan digest
-matches the canonical serialized plan.
+This data plane was imported from PegaFlow 0.24.5 and renamed. Its vLLM path is
+upstream-derived and must be requalified as OrbitKV before performance claims
+are made.
 
-## Qualification certificate
+## SGLang integration
 
-A certificate contains evidence rather than a boolean:
+Integration proceeds in two explicit stages.
 
-- oracle identity, case count, numerical bounds, and output agreement;
-- measured workload digest, raw sample count, latency distribution and goodput;
-- observed and certified memory bounds;
-- soak duration and named fault cases;
-- exact hardware and software fingerprints;
-- the workload domain over which the evidence is valid.
+1. **HiCache storage backend.** SGLang keeps its allocator and moves pages to
+   its host pool; an OrbitKV dynamic backend implements batch existence, get,
+   and put across KV and recurrent-state pools. This establishes correctness,
+   namespace isolation, failure behavior, and a measurable baseline.
+2. **Authority handoff.** OrbitKV-authored page handles and generation leases
+   replace duplicated physical identity. SGLang consumes those handles, while
+   OrbitKV chooses HBM/DRAM/SSD/remote placement and retires pages only after
+   both frontiers advance.
 
-The control plane admits only `qualified` certificates. Revocation is explicit.
-Future signing can wrap the same canonical certificate without changing plan
-selection.
+Stage one is intentionally not described as sole authority: SGLang still owns
+the L1/L2 allocation. That claim becomes true only after stage two is wired and
+tested.
 
-M1 certificates cover one exact shape bucket. A candidate is publishable only
-when a successful SGLang trace contains that exact phase, batch, rows-per-seq,
-and context point; at least twelve raw device timing samples exist; numerical
-and resource evidence is present; and every referenced artifact's bytes match
-its declared digest. Broader ranges require independent evidence and a future
-explicit schema rather than a min/max extrapolation.
+## Innovation direction
 
-## Selection
+The strongest direction is **Minimum Persistent State Realization**: compile the
+smallest state representation sufficient for future legal execution, then pick
+its physical realization from measured costs. This subsumes several mechanisms:
 
-A request to select a plan contains model semantics, exact hardware, one
-workload point, and an SLO. The registry removes plans that are incompatible,
-out of domain, over memory, numerically insufficient, or slower than the SLO.
-Remaining plans are ordered deterministically by operator preference, goodput,
-p99 latency, memory, then plan ID. Fallbacks receive the same eligibility check.
+- full attention becomes append-only paged KV with prefix sharing;
+- sliding attention becomes bounded cyclic storage;
+- sink-plus-local attention becomes a two-region plan;
+- recurrent models become checkpoint/value-state plans rather than fake token KV;
+- tiering and remote routing become next-touch placement decisions.
 
-Runtime adaptation means selecting among this finite qualified set. Candidate
-generation and benchmarking remain outside the request path.
-
-## Execution
-
-The executor resolves every step's provider and prepares all artifacts before a
-plan becomes live. It executes the primary plan, records a typed failure, and
-tries its prequalified fallbacks in order. A provider cannot mutate the registry
-or silently choose an unqualified artifact.
-
-Bundles are published through `tools/stage_bundle.py`: it calls the Rust
-validator for the plan, builds the certificate from raw evidence, verifies and
-copies content-addressed artifacts, validates the certificate, atomically
-renames the bundle, then validates the entire registry fallback graph. Any
-failure removes the candidate bundle.
-
-The initial reference provider is deliberately trivial. Its purpose is to test
-the lifecycle without CUDA. GPU providers will implement the same interface and
-add asynchronous completion and persistent-state contracts before serving real
-models.
-
-## Source and process topology
-
-SGLang is the initial serving owner. Our `sglang.srt.plugins` hook observes the
-actual scheduler-to-`TpModelWorker` path; kernel choices flow through SGLang's
-existing attention, GEMM, MoE, and compilation backends. We do not proxy to a
-second inference server.
-
-TensorRT-LLM AutoDeploy runs offline in a separate environment. Its registered
-transforms inspect or transform exported graphs and produce candidate metadata.
-It is both a reusable compiler and a strong independent baseline; it is not
-linked into the SGLang request process.
-
-FlashInfer is installed editable from its submodule. DeepGEMM and
-`sglang-kernel` are built as local wheels from their pinned submodules because
-they contain native extensions. Their JIT/AOT products become content-addressed
-artifacts referenced by a physical plan. Provider qualification imports must
-pass a provenance check showing that the module came from the pinned checkout
-rather than an unrelated wheel.
+The key metric is Retention Amplification: physical resident bytes divided by
+semantically live bytes. Bandwidth and TTFT remain required constraints, but a
+faster copy engine alone is not the contribution.

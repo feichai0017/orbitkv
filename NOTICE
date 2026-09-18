@@ -1,0 +1,9 @@
+OrbitKV
+Copyright 2026 OrbitKV contributors
+
+This product contains software derived from PegaFlow
+(https://github.com/novitalabs/pegaflow), imported from version 0.24.5 at commit
+3bc9d7fd609695e34168c226bb72a907b4ca2eec and subsequently modified and renamed
+by the OrbitKV contributors. PegaFlow is licensed under Apache License 2.0.
+
+PegaFlow and Novita AI do not endorse this derivative project.

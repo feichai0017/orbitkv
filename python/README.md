@@ -1,0 +1,241 @@
+# OrbitKV Python Package
+
+High-performance key-value storage engine with Python bindings, built with Rust and PyO3.
+
+## Features
+
+- **OrbitKVEngine**: Fast Rust-based key-value storage with Python bindings
+- **OrbitKVConnector**: vLLM KV connector for distributed inference with KV cache transfer
+
+## Installation
+
+### From Source
+
+```bash
+# Install maturin if you haven't already
+pip install maturin
+
+# Build and install in development mode
+cd python
+maturin develop
+
+# Or build a wheel
+maturin build --release
+```
+
+### From PyPI (coming soon)
+
+```bash
+pip install orbitkv
+```
+
+## Usage
+
+### Basic KV Storage
+
+```python
+from orbitkv import OrbitKVEngine
+
+# Create a new engine
+engine = OrbitKVEngine()
+
+# Store key-value pairs
+engine.put("name", "OrbitKV")
+engine.put("version", "0.1.0")
+
+# Retrieve values
+name = engine.get("name")  # Returns "OrbitKV"
+missing = engine.get("nonexistent")  # Returns None
+
+# Remove keys
+removed = engine.remove("name")  # Returns "OrbitKV"
+```
+
+### vLLM KV Connector
+
+```python
+from vllm import LLM
+from vllm.distributed.kv_transfer.kv_transfer_agent import KVTransferConfig
+
+# Configure vLLM to use OrbitKVConnector
+kv_transfer_config = KVTransferConfig(
+    kv_connector="OrbitKVConnector",
+    kv_role="kv_both",
+    kv_connector_module_path="orbitkv.connector",
+)
+
+# Create LLM with KV transfer enabled
+llm = LLM(
+    model="gpt2",
+    kv_transfer_config=kv_transfer_config,
+)
+```
+
+#### Connector Modes
+
+`OrbitKVConnector` defaults to `read_write`: it queries OrbitKV for reusable KV
+blocks, loads matched blocks into vLLM, and saves newly computed full blocks
+back to OrbitKV.
+
+Set `orbitkv.mode` to `save_only` when another vLLM connector is responsible
+for reads and OrbitKV should only persist KV blocks for later reuse. This is
+intended for `MultiConnector` decode-side setups where an upstream connector
+owns the external hit/load path, while OrbitKV records the resulting KV cache.
+In `save_only` mode, OrbitKV does not query or load KV blocks.
+
+```bash
+vllm serve Qwen/Qwen3-0.6B \
+  --kv-transfer-config '{
+    "kv_connector": "MultiConnector",
+    "kv_role": "kv_both",
+    "kv_connector_extra_config": {
+      "connectors": [
+        {
+          "kv_connector": "<external-read-connector>",
+          "kv_role": "kv_both"
+        },
+        {
+          "kv_connector": "OrbitKVConnector",
+          "kv_role": "kv_both",
+          "kv_connector_module_path": "orbitkv.connector",
+          "kv_connector_extra_config": {
+            "orbitkv.mode": "save_only"
+          }
+        }
+      ]
+    }
+  }'
+```
+
+Valid values are `read_write` and `save_only`.
+
+#### TP Shards Across Hosts
+
+CUDA IPC is host-local. When one tensor-parallel replica spans multiple hosts,
+run one OrbitKV server on each host and configure the connector with every
+server endpoint in global TP-rank order:
+
+```json
+{
+  "kv_connector": "OrbitKVConnector",
+  "kv_role": "kv_both",
+  "kv_connector_module_path": "orbitkv.connector",
+  "kv_connector_extra_config": {
+    "orbitkv.tp_shard_endpoints": [
+      "http://host-a:50055",
+      "http://host-b:50055"
+    ]
+  }
+}
+```
+
+For TP8 and two endpoints, global ranks 0-3 register with the first server and
+ranks 4-7 register with the second. Each server sees a local TP4 topology and
+must manage the four GPUs on its own host. Every vLLM process must receive the
+same ordered endpoint list.
+
+The scheduler queries every shard and only reuses the prefix available from all
+of them. Each worker loads with the lease issued by its local server. The
+connector gives every shard a distinct namespace, so deployments with a
+different host split cannot reuse an incompatible cache layout.
+
+TP sharding currently requires equal contiguous shards and TP-only parallelism.
+Pipeline, decode-context, and prefill-context parallelism are rejected when
+more than one endpoint is configured.
+
+#### P/D Partial Tail Blocks
+
+vLLM normally exposes hashes only for complete KV blocks. In a P/D deployment,
+enable `orbitkv.pd_tail_save` on prefill and `orbitkv.pd_tail_load` on decode
+to reuse the final partial prompt block as well. Start both vLLM processes with
+the same explicit `PYTHONHASHSEED` and `--prefix-caching-hash-algo xxhash_cbor`.
+
+Prefill: `{"orbitkv.pd_tail_save": true}`
+
+Decode: `{"orbitkv.pd_tail_load": true, "orbitkv.wait_for_full_prefix": true}`
+
+`orbitkv.wait_for_full_prefix` makes decode wait (up to 30s) until the full
+prompt prefix is fetchable from a remote node via MetaServer + RDMA. It only
+applies when prefill and decode run separate engines; it does not observe
+saves landing in a shared/local engine and has no effect when RDMA is not
+configured.
+
+## Development
+
+See the [examples](../examples/) directory for more usage examples.
+
+## Testing
+
+### Running Unit Tests
+
+The test suite includes integration tests that verify the `EngineRpcClient` can correctly communicate with a running `orbitkv-server` instance.
+
+#### Prerequisites
+
+1. **Build the Rust extension**:
+
+   ```bash
+   cd python
+   maturin develop --release
+   ```
+
+2. **Build the server binary**:
+
+   ```bash
+   cd ..
+   cargo build --release --bin orbitkv-server
+   ```
+
+3. **Ensure CUDA is available** (tests require GPU):
+   ```bash
+   python -c "import torch; assert torch.cuda.is_available()"
+   ```
+
+#### Running Tests
+
+```bash
+cd python
+
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_engine_client.py -v
+
+# Run with coverage
+pytest tests/ --cov=orbitkv --cov-report=html
+```
+
+#### Test Structure
+
+- **`tests/conftest.py`**: Contains pytest fixtures for:
+
+  - `orbitkv_server`: Automatically starts/stops `orbitkv-server` for integration tests
+  - `engine_client`: Creates an `EngineRpcClient` connected to the test server
+  - `client_context`: Provides a `ClientContext` representing a vLLM instance with GPU KV cache tensors
+  - `registered_instance`: Provides a registered instance ID for query tests
+
+- **`tests/test_engine_client.py`**: Integration tests for:
+  - Server connectivity
+  - Query operations with various inputs
+
+#### Test Fixtures
+
+The `ClientContext` class abstracts a vLLM instance and provides:
+
+- `register_kv_caches()`: Register GPU KV cache tensors with the server
+- `query(block_hashes)`: Query available blocks
+- `unregister_context()`: Unregister context from server
+
+Example test usage:
+
+```python
+def test_query(client_context):
+    """Test query operation."""
+    result = client_context.query([])
+    assert result is not None
+```
+
+## License
+
+MIT

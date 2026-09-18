@@ -1,10 +1,33 @@
 /target/
-/.aletheia/
+/.orbitkv/
 /.infer/
 /.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
+*$py.class
+*.so
+venv/
+python/uv.lock
+.pytest_cache/
+node_modules/
+dist/
+.astro/
+examples/bench_results/
+examples/pd_logs/
+python/tests/*.log
+
+# Built binaries staged into the Python wheel.
+python/orbitkv/orbitkv-server
+python/orbitkv/orbitkv-server-py
+python/orbitkv/orbitkv-metaserver-py
+
+# IDE and local assistant state.
+.vscode/
+.idea/
+*.swp
+*.swo
+CLAUDE.local.md
 /.agents/
 /.codex/
 /.trae/

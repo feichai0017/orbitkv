@@ -1,45 +1,287 @@
-name: ci
+name: "CI"
 
 on:
-  pull_request:
   push:
+    branches:
+      - "master"
+      - "main"
+  pull_request:
+    branches:
+      - "master"
+      - "main"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: sccache
 
 jobs:
-  source-contracts:
+  commit-check:
+    name: commit message check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - run: python3 tools/source_workspace.py verify
-      - run: python3 tools/source_workspace.py bootstrap --stack sglang
-      - run: python3 tools/source_workspace.py bootstrap --stack autodeploy
-      - run: python3 tools/source_workspace.py bootstrap --stack tensorrt-source
-      - run: python3 tools/source_workspace.py bootstrap --stack kernels
+          fetch-depth: 0
+      - name: Install commitizen
+        run: pip install commitizen
+      - name: Check last commit message
+        run: cz check --rev-range HEAD~1..HEAD
 
-  rust:
+  version-consistency-check:
+    name: version consistency check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          components: rustfmt, clippy
-      - run: cargo fmt --all --check
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - run: cargo test --locked --workspace --all-targets
-      - run: cargo build --locked -p aletheia-cli
-      - run: python -m unittest discover -s tools/tests
+          persist-credentials: false
+      - name: Check Rust and Python package versions stay in sync
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
 
-  python-adapter:
+          repo = pathlib.Path.cwd()
+          cargo_toml = (repo / "Cargo.toml").read_text(encoding="utf-8")
+          pyproject_toml = (repo / "python" / "pyproject.toml").read_text(encoding="utf-8")
+
+          def find_section_version(text: str, section: str) -> str:
+              match = re.search(
+                  rf"(?ms)^\[{re.escape(section)}\]\n(.*?)(?:^\[|\Z)",
+                  text,
+              )
+              if match is None:
+                  raise SystemExit(f"missing section [{section}]")
+
+              version_match = re.search(
+                  r'^version = "([^"]+)"$',
+                  match.group(1),
+                  re.MULTILINE,
+              )
+              if version_match is None:
+                  raise SystemExit(f"missing version in [{section}]")
+              return version_match.group(1)
+
+          rust_version = find_section_version(cargo_toml, "workspace.package")
+          python_version = find_section_version(pyproject_toml, "project")
+          commitizen_version = find_section_version(pyproject_toml, "tool.commitizen")
+
+          if rust_version != python_version or python_version != commitizen_version:
+              raise SystemExit(
+                  "version mismatch: "
+                  f"Cargo.toml={rust_version}, "
+                  f"python/pyproject.toml project={python_version}, "
+                  f"tool.commitizen={commitizen_version}"
+              )
+
+          print(f"version check passed: {rust_version}")
+          PY
+
+  typos-check:
+    name: typos check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          python-version: "3.11"
-      - run: python -m unittest discover -s integrations/sglang/tests
-      - run: python -m unittest discover -s integrations/autodeploy/tests
-      - run: python -m unittest discover -s integrations/providers/tests
+          persist-credentials: false
+      - name: Run typos check
+        uses: crate-ci/typos@master
+
+  rust-fmt-check:
+    name: rust fmt check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
+      - name: Run rust format check
+        run: |
+          cargo fmt --all -- --check
+
+  rust-clippy-check:
+    name: rust clippy check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install protobuf compiler and RDMA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libibverbs-dev
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Run rust clippy check
+        run: |
+          cargo clippy --workspace --exclude orbitkv-py --all-targets -- -D warnings
+
+  ruff-check:
+    name: ruff check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run ruff check
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.14.14"
+
+  python-unit-tests:
+    name: python unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install uv
+        run: pip install uv
+      - name: Run default Python test gate
+        working-directory: python
+        run: |
+          uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest
+
+  cargo-check-variant:
+    name: cargo check (${{ matrix.cuda-variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - cuda-variant: cu12
+            cuda-version: '12.8.1'
+            cargo-features: ""
+          - cuda-variant: cu13
+            cuda-version: '13.0.2'
+            cargo-features: "--no-default-features --features cuda-13,rdma"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ matrix.cuda-version }}
+          linux-local-args: '["--toolkit"]'
+          method: 'network'
+          sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+      - name: Install protobuf compiler and RDMA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libibverbs-dev
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Run cargo check
+        run: |
+          cargo check -p orbitkv-core ${{ matrix.cargo-features }}
+          cargo check -p orbitkv-server ${{ matrix.cargo-features }} --all-targets
+        env:
+          CUDA_PATH: /usr/local/cuda
+
+  cargo-check:
+    name: cargo check
+    if: always()
+    needs: cargo-check-variant
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ needs.cargo-check-variant.result }}" != "success" ]]; then
+            echo "cargo check variants failed"
+            exit 1
+          fi
+
+  build-wheel:
+    name: build Python 3.14 wheel (${{ matrix.cuda-variant }})
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - cuda-variant: cu12
+            cuda-version: '12.8.1'
+            cargo-features: ""
+          - cuda-variant: cu13
+            cuda-version: '13.0.2'
+            cargo-features: "--no-default-features --features cuda-13,rdma"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ matrix.cuda-version }}
+          linux-local-args: '["--toolkit"]'
+          method: 'network'
+          sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
+
+      - name: Install protobuf compiler and RDMA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libibverbs-dev
+
+      - name: Install rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Patch package name for cu13
+        if: matrix.cuda-variant == 'cu13'
+        run: |
+          sed -i 's/^name = "orbitkv-llm"$/name = "orbitkv-llm-cu13"/' python/pyproject.toml
+          sed -i 's/"orbitkv-llm\[/"orbitkv-llm-cu13\[/g' python/pyproject.toml
+
+      - name: Build wheel
+        run: |
+          ./scripts/build-wheel.sh --release ${{ matrix.cargo-features }}
+        env:
+          CUDA_PATH: /usr/local/cuda
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orbitkv-wheel-ci-${{ matrix.cuda-variant }}
+          path: target/wheels/*.whl
+          retention-days: 1

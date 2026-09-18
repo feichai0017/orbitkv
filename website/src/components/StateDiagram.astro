@@ -1,0 +1,62 @@
+<figure class="state-diagram">
+  <div class="diagram-label">SGLang → semantic state plan</div>
+  <div class="model-sheet">
+    <span class="diagram-label">Serving runtime</span>
+    <strong>SGLang + workload</strong>
+    <span class="model-rule"></span>
+    <span class="model-rule short"></span>
+  </div>
+  <svg
+    class="diagram-connector"
+    viewBox="0 0 400 42"
+    fill="none"
+    aria-hidden="true"
+  >
+    <path d="M200 0V20H95V42M200 20H305V42" />
+    <path d="m90 36 5 5 5-5m200 0 5 5 5-5" />
+  </svg>
+  <div class="diagram-branches">
+    <div class="state-sheet">
+      <span class="diagram-label">Lifetime plan</span>
+      <strong>
+        LIVE
+        <br />
+        PLAN
+      </strong>
+      <span class="diagram-detail">Semantics &amp; frontiers</span>
+      <div class="page-blocks" aria-hidden="true">
+        <i></i>
+        <i></i>
+        <i></i>
+        <i></i>
+      </div>
+    </div>
+    <div class="program-sheet">
+      <span class="diagram-label">Physical plan</span>
+      <strong>
+        PLACE
+        <br />
+        &amp; MOVE
+      </strong>
+      <span class="diagram-detail">HBM · DRAM · SSD · RDMA</span>
+      <div class="program-blocks" aria-hidden="true">
+        <i></i>
+        <i></i>
+        <i></i>
+      </div>
+    </div>
+  </div>
+  <svg
+    class="diagram-connector join"
+    viewBox="0 0 400 42"
+    fill="none"
+    aria-hidden="true"
+  >
+    <path d="M95 0V20H305V0M200 20V42m-5-6 5 5 5-5" />
+  </svg>
+  <div class="runtime-sheet">
+    <strong>ORBITKV DATA PLANE.</strong>
+    <span class="diagram-label">Own · place · reuse</span>
+  </div>
+  <figcaption>State semantics determine what survives and where.</figcaption>
+</figure>

@@ -1,0 +1,38 @@
+#[cfg(feature = "rdma")]
+pub(super) mod rdma;
+#[cfg(feature = "rdma")]
+pub(super) mod rdma_fetch;
+pub(super) mod ssd;
+pub(super) mod ssd_cache;
+#[cfg(feature = "rdma")]
+mod transfer_lock_guard;
+pub(super) mod uring;
+
+use std::sync::Arc;
+
+pub(crate) use ssd_cache::{DEFAULT_MAX_PREFETCH_BLOCKS, SSD_ALIGNMENT};
+#[allow(
+    unreachable_pub,
+    reason = "SSD config types are re-exported through the public crate API"
+)]
+pub use ssd_cache::{
+    DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig,
+};
+
+use crate::block::{BlockKey, SealedBlock};
+use crate::pinned_pool::PinnedAllocation;
+use orbitkv_common::NumaNode;
+
+#[cfg(feature = "rdma")]
+pub(crate) use rdma::{RdmaTransport, new_rdma};
+#[cfg(feature = "rdma")]
+pub(crate) use rdma_fetch::RdmaFetchStore;
+pub(crate) use ssd::SsdBackingStore;
+pub(crate) use ssd::new_ssd;
+
+pub(crate) type PrefetchResult = Vec<(BlockKey, Arc<SealedBlock>)>;
+
+/// Allocator closure for pinned memory, passed to the SSD backing store.
+pub(crate) type AllocateFn =
+    Arc<dyn Fn(u64, Option<NumaNode>) -> Option<Arc<PinnedAllocation>> + Send + Sync>;

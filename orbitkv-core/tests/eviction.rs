@@ -1,0 +1,107 @@
+//! Memory-pressure eviction tests (pure CPU memory, no SSD).
+//!
+//! Verifies LRU eviction behavior when the pinned memory pool is exhausted:
+//! new blocks push out old ones, leased blocks survive pressure, and loaded
+//! data after eviction is from the correct batch.
+
+mod common;
+
+use common::*;
+use orbitkv_core::StorageConfig;
+
+const BLOCK_SIZE: usize = 4096;
+const NUM_BLOCKS: usize = 4;
+/// Pool fits two batches, so a third batch must reclaim one of them.
+const POOL_SIZE: usize = NUM_BLOCKS * BLOCK_SIZE * 2;
+
+fn eviction_storage_config() -> StorageConfig {
+    StorageConfig {
+        enable_lfu_admission: false,
+        enable_numa_affinity: false,
+        ..StorageConfig::default()
+    }
+}
+
+/// Save more blocks than the pool can hold — old blocks get evicted,
+/// new blocks round-trip with correct (overwritten) data.
+#[tokio::test]
+async fn eviction_reclaims_old_blocks_for_new() {
+    let mut env = TestEnvBuilder::new("inst-evict", "ns-evict")
+        .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
+        .pool_size(POOL_SIZE)
+        .storage(eviction_storage_config())
+        .build();
+
+    let old = env.hashes(1);
+    env.save_and_wait(&old).await;
+
+    // Overwrite GPU data, save second batch — triggers eviction.
+    env.data_mut().overwrite(42);
+    let new = env.hashes(2);
+    env.save_and_wait(&new).await;
+
+    // Load new batch — must get the overwritten data.
+    env.data().zero_gpu();
+    let lease = env.assert_all_hit_lease(&new).await;
+
+    env.load_to_gpu(lease, new.len()).await;
+    env.data().assert_gpu_matches_expected();
+}
+
+/// Leased blocks survive memory pressure: query_prefetch leases prevent LRU eviction.
+#[tokio::test]
+async fn leased_blocks_survive_eviction_pressure() {
+    let env = TestEnvBuilder::new("inst-lease", "ns-lease")
+        .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
+        .pool_size(POOL_SIZE)
+        .storage(eviction_storage_config())
+        .build();
+
+    let hashes = env.hashes(10);
+    env.save_and_wait(&hashes).await;
+    let lease = env.assert_all_hit_lease(&hashes).await;
+
+    // Fill the remaining pool, then force a third batch to reclaim it while
+    // the first batch remains leased.
+    let reclaimed = make_block_hashes(NUM_BLOCKS, 20);
+    env.save_layer_and_flush(0, &reclaimed).await;
+    let pressure = make_block_hashes(NUM_BLOCKS, 21);
+    env.save_layer_and_flush(0, &pressure).await;
+    assert_eq!(env.count_hits_then_release(&reclaimed).await, 0);
+
+    // The lease pins both the allocation and its cache index, so an exact
+    // follow-up query must still see the same prefix after pressure.
+    let second_lease = env.assert_all_hit_lease(&hashes).await;
+    env.release(&second_lease);
+
+    // The original lease must still load the pinned data.
+    env.data().zero_gpu();
+    env.load_to_gpu(lease, hashes.len()).await;
+    env.data().assert_gpu_matches_expected();
+}
+
+/// Eviction works identically with pool_shards > 1.
+#[tokio::test]
+async fn eviction_works_with_sharded_pool() {
+    let mut env = TestEnvBuilder::new("inst-shard", "ns-shard")
+        .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
+        .pool_size(POOL_SIZE)
+        .storage(StorageConfig {
+            pool_shards: 2,
+            ..eviction_storage_config()
+        })
+        .build();
+
+    let old = env.hashes(30);
+    env.save_and_wait(&old).await;
+
+    env.data_mut().overwrite(99);
+    let new = env.hashes(31);
+    env.save_and_wait(&new).await;
+
+    env.data().zero_gpu();
+    let lease = env.assert_all_hit_lease(&new).await;
+
+    env.load_to_gpu(lease, new.len()).await;
+    env.data().assert_gpu_matches_expected();
+}
