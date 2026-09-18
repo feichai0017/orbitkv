@@ -1,5 +1,6 @@
 use orbitkv_common::grpc::{GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL, GRPC_CONNECT_TIMEOUT};
 use orbitkv_core::LoadState;
+use orbitkv_local::{CallOptions, Command as LocalCommand, CommandCode, LocalClient, StatusCode};
 use orbitkv_proto::proto::engine::{
     HealthRequest, LeaseLoad, LoadBlockIds, LoadBlockTarget, LoadGroup, LoadRequest, QueryRequest,
     RegisterContextRequest, ReleaseRequest, ResponseStatus, SaveLayer, SaveRequest, SessionEvent,
@@ -14,6 +15,7 @@ use pyo3::{
 use std::{
     future::Future,
     sync::{Arc, Mutex, OnceLock},
+    time::Duration,
 };
 use tokio::runtime::{Handle, Runtime};
 use tonic::{
@@ -179,6 +181,90 @@ struct EngineRpcClient {
     /// the wire, so server-side disconnect detection only fires when this
     /// process actually dies.
     session_stream: Mutex<Option<Streaming<SessionEvent>>>,
+}
+
+#[pyclass]
+struct LocalControlClient {
+    service_name: String,
+    session_epoch: u64,
+    options: CallOptions,
+    client: LocalClient,
+}
+
+impl LocalControlClient {
+    fn call(&self, py: Python<'_>, command: LocalCommand) -> PyResult<orbitkv_local::Response> {
+        let response = py
+            .detach(|| self.client.call(command, self.options))
+            .map_err(|error| OrbitKVError::new_err(format!("local control failed: {error}")))?;
+        if response.status != StatusCode::Ok {
+            return Err(OrbitKVError::new_err(format!(
+                "local control returned {:?}: client_epoch={} sidecar_epoch={}",
+                response.status, self.session_epoch, response.session_epoch
+            )));
+        }
+        Ok(response)
+    }
+}
+
+#[pymethods]
+impl LocalControlClient {
+    #[new]
+    #[pyo3(signature = (service_name, session_epoch, timeout_ms=5000, spin_iterations=64))]
+    fn new(
+        service_name: String,
+        session_epoch: u64,
+        timeout_ms: u64,
+        spin_iterations: u32,
+    ) -> PyResult<Self> {
+        if session_epoch == 0 {
+            return Err(PyValueError::new_err("session_epoch must be non-zero"));
+        }
+        if timeout_ms == 0 {
+            return Err(PyValueError::new_err("timeout_ms must be non-zero"));
+        }
+        let client = LocalClient::connect(&service_name).map_err(|error| {
+            OrbitKVError::new_err(format!("local control connect failed: {error}"))
+        })?;
+        Ok(Self {
+            service_name,
+            session_epoch,
+            options: CallOptions {
+                timeout: Duration::from_millis(timeout_ms),
+                spin_iterations,
+            },
+            client,
+        })
+    }
+
+    #[getter]
+    fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    #[getter]
+    fn session_epoch(&self) -> u64 {
+        self.session_epoch
+    }
+
+    #[pyo3(signature = (value=0, request_id=1))]
+    fn ping(&self, py: Python<'_>, value: u64, request_id: u64) -> PyResult<u64> {
+        let mut command = LocalCommand::ping(request_id, self.session_epoch);
+        command.arg0 = value;
+        Ok(self.call(py, command)?.value0)
+    }
+
+    #[pyo3(signature = (request_id=1))]
+    fn shutdown(&self, py: Python<'_>, request_id: u64) -> PyResult<()> {
+        self.call(
+            py,
+            LocalCommand {
+                code: CommandCode::Shutdown,
+                request_id,
+                ..LocalCommand::ping(request_id, self.session_epoch)
+            },
+        )?;
+        Ok(())
+    }
 }
 
 impl EngineRpcClient {
@@ -668,6 +754,7 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     orbitkv_common::logging::init_stderr("info,orbitkv_core=info");
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<EngineRpcClient>()?;
+    m.add_class::<LocalControlClient>()?;
     m.add_class::<PyLoadState>()?;
     #[cfg(feature = "rdma")]
     pd_rdma::add_classes(m)?;

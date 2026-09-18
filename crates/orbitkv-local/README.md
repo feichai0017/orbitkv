@@ -4,8 +4,10 @@ Versioned local request/response transport between inference processes and an
 OrbitKV sidecar. The control message is fixed at 64 bytes; KV payloads remain
 in CUDA IPC or registered shared-memory pages.
 
-The current crate is a transport foundation. The production sidecar handlers
-and Python adapter bindings are tracked in the repository TODO.
+The production server owns a thread-safe iceoryx2 service and currently serves
+`Ping` and `Shutdown`, including session-epoch fencing. Python exposes the same
+lifecycle path through `LocalControlClient`. Data commands remain explicitly
+rejected until the descriptor arena and engine handlers are connected.
 
 Run the two-process latency harness in separate terminals:
 

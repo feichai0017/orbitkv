@@ -319,6 +319,23 @@ class EngineRpcClient:
         """
         ...
 
+class LocalControlClient:
+    """iceoryx2 client for the node-local OrbitKV sidecar lifecycle path."""
+
+    def __init__(
+        self,
+        service_name: str,
+        session_epoch: int,
+        timeout_ms: int = 5000,
+        spin_iterations: int = 64,
+    ) -> None: ...
+    @property
+    def service_name(self) -> str: ...
+    @property
+    def session_epoch(self) -> int: ...
+    def ping(self, value: int = 0, request_id: int = 1) -> int: ...
+    def shutdown(self, request_id: int = 1) -> None: ...
+
 class PyLoadState:
     """Batch-level synchronization for async KV cache loading via shared memory.
 

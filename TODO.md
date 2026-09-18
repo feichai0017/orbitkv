@@ -15,6 +15,8 @@ and a passing gate; design text alone does not close an item.
 - [x] Add `orbitkv.client` and `orbitkv.sglang` package boundaries.
 - [x] Add `orbitkv-local` with a versioned 64-byte iceoryx2 request/response ABI.
 - [x] Add a real two-process local-control test.
+- [x] Integrate the iceoryx2 lifecycle endpoint into `orbitkv-server`.
+- [x] Add Python `LocalControlClient` bindings with epoch fencing.
 - [x] Introduce `RemoteMover` and adapt the native RDMA engine.
 - [ ] Add Python representations/serialization for `orbitkv-contract`.
 - [x] Add compatibility tests for `orbitkv.connector` and `orbitkv.vllm`.
@@ -27,7 +29,7 @@ and a passing gate; design text alone does not close an item.
 - [ ] Require `allocator=shm` for the zero-copy host path.
 - [ ] Add UDS registration for memfd-backed host regions.
 - [ ] Bind `orbitkv-local` QueryBundle/Restore/Publish handlers to the sidecar.
-- [ ] Add Python bindings for the iceoryx2 local client.
+- [x] Add Python bindings for the iceoryx2 local client.
 - [ ] Map SGLang `PoolName` values to `StateComponent`.
 - [ ] Map `ALL_PAGES` and `TRAILING_PAGES` into recovery contracts.
 - [ ] Implement `batch_exists_v2`.

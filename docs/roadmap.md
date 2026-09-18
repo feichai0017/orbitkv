@@ -14,6 +14,8 @@ Deliver:
   compatibility alias;
 - establish `orbitkv.sglang` and `orbitkv.client` package boundaries;
 - establish the `orbitkv-local` iceoryx2 control ABI;
+- connect lifecycle probes, epoch fencing, and shutdown to the real sidecar and
+  Python client;
 - introduce `RemoteMover` with the native RDMA implementation as its first
   backend;
 - preserve current vLLM behavior.

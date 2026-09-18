@@ -1,5 +1,6 @@
 mod check_cuda_version;
 pub mod http_server;
+mod local_control;
 pub mod metric;
 pub mod proto;
 pub mod registry;
@@ -185,6 +186,20 @@ pub struct Cli {
     /// locked for at most this duration before being force-released (crash recovery).
     #[arg(long, default_value_t = 120)]
     pub transfer_lock_timeout_secs: u64,
+
+    /// iceoryx2 service name for the node-local inference control path.
+    /// Defaults to a name derived from --addr.
+    #[arg(long)]
+    pub local_control_service: Option<String>,
+
+    /// Explicit sidecar session epoch for stale-client fencing. A random epoch
+    /// is generated when omitted.
+    #[arg(long)]
+    pub local_control_session_epoch: Option<u64>,
+
+    /// Disable the node-local iceoryx2 endpoint.
+    #[arg(long, default_value_t = false)]
+    pub disable_local_control: bool,
 }
 
 fn parse_hll_bucket_bits(s: &str) -> Result<u8, String> {
@@ -596,6 +611,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     crate::metric::register_hll_gauges(&hll_tracker);
 
     let shutdown = Arc::new(Notify::new());
+    let local_control_config = if cli.disable_local_control {
+        None
+    } else {
+        let service_name = cli
+            .local_control_service
+            .clone()
+            .unwrap_or_else(|| format!("orbitkv/local/{}", cli.addr.port()));
+        let session_epoch = cli
+            .local_control_session_epoch
+            .unwrap_or_else(random_nonzero_session_epoch);
+        if session_epoch == 0 {
+            return Err("--local-control-session-epoch must be non-zero".into());
+        }
+        Some((service_name, session_epoch))
+    };
 
     runtime.block_on(async move {
         // Create OrbitKVEngine inside tokio runtime context (needed for SSD cache tokio::spawn)
@@ -604,6 +634,16 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cli.use_hugepages,
             storage_config,
         )?);
+        let mut local_control = if let Some((service_name, session_epoch)) = local_control_config {
+            Some(local_control::LocalControlEndpoint::start(
+                service_name,
+                session_epoch,
+                Arc::clone(&shutdown),
+            )?)
+        } else {
+            info!("Local iceoryx2 control endpoint disabled");
+            None
+        };
 
         let service = GrpcEngineService::new(
             Arc::clone(&engine),
@@ -696,6 +736,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
 
         info!("Server stopped");
+        if let Some(endpoint) = local_control.as_mut() {
+            endpoint.stop();
+        }
 
         // Stop HTTP server
         shutdown.notify_waiters();
@@ -714,6 +757,15 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
         Ok(())
     })
+}
+
+fn random_nonzero_session_epoch() -> u64 {
+    loop {
+        let epoch = uuid::Uuid::new_v4().as_u128() as u64;
+        if epoch != 0 {
+            return epoch;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -736,6 +788,24 @@ mod tests {
             expected_hll_windows()
         );
         assert_eq!(cli.metric_hll_bucket_bits, 16);
+    }
+
+    #[test]
+    fn cli_accepts_local_control_options() {
+        let cli = Cli::try_parse_from([
+            "orbitkv-server",
+            "--local-control-service",
+            "orbitkv/test/server",
+            "--local-control-session-epoch",
+            "42",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.local_control_service.as_deref(),
+            Some("orbitkv/test/server")
+        );
+        assert_eq!(cli.local_control_session_epoch, Some(42));
+        assert!(!cli.disable_local_control);
     }
 
     #[test]

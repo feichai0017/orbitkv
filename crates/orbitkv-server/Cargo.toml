@@ -27,6 +27,7 @@ path = "src/main.rs"
 [dependencies]
 orbitkv-common.workspace = true
 orbitkv-core = { workspace = true, default-features = false }
+orbitkv-local.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
 pyo3 = { workspace = true, features = ["auto-initialize"] }
 cudarc.workspace = true

@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from orbitkv import EngineRpcClient, OrbitKVError, OrbitKVInternal, QueryLoading, QueryReady
+from orbitkv import (
+    EngineRpcClient,
+    LocalControlClient,
+    OrbitKVError,
+    OrbitKVInternal,
+    QueryLoading,
+    QueryReady,
+)
 
 __all__ = [
     "EngineRpcClient",
+    "LocalControlClient",
     "OrbitKVError",
     "OrbitKVInternal",
     "QueryLoading",

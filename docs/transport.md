@@ -9,7 +9,7 @@ discovery so none of them becomes an accidental second source of KV truth.
 
 | Boundary | Control | Payload | Status |
 | --- | --- | --- | --- |
-| inference process to local sidecar | iceoryx2 request/response | CUDA IPC or shared host pages | `orbitkv-local` foundation implemented |
+| inference process to local sidecar | iceoryx2 request/response | CUDA IPC or shared host pages | lifecycle endpoint integrated; data commands planned |
 | local bootstrap and region registration | Unix socket with credential and file-descriptor passing | memfd handles only | planned |
 | sidecar to sidecar | backend-specific session control | RDMA READ/WRITE | native RDMA exists; Mooncake adapter planned |
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
@@ -34,11 +34,21 @@ The initial command vocabulary is `QueryBundle`, `Restore`, `Publish`,
 `Release`, and lifecycle probes. Variable-length hashes and page arrays do not
 live in the message. KV bytes never live in the message.
 
-One inference process gets one iceoryx2 client endpoint. The sidecar owns the
-server endpoint. Calls spin only for a bounded number of iterations and then
-yield; production integration may attach iceoryx2 waitsets instead of polling.
+One inference process gets one iceoryx2 client endpoint. The sidecar exclusively
+creates and owns the server endpoint; clients only open it. The endpoint uses
+iceoryx2's thread-safe IPC service because the server owns it on a dedicated
+control thread. Calls spin only for a bounded number of iterations and then
+yield. The lifecycle-only server uses a short idle sleep instead of consuming a
+core; the data-command phase must add event-driven wakeup before claiming the
+measured busy-poll latency.
 UDS remains necessary for bootstrap, `SO_PEERCRED`, memfd/eventfd passing, and
 process-death detection.
+
+The real `orbitkv-server` lifecycle endpoint and Python `LocalControlClient` now
+support `Ping`, stale-session fencing, and `Shutdown`. `QueryBundle`, `Restore`,
+`Publish`, and `Release` return `Invalid` rather than silently falling back or
+claiming an incomplete implementation. The existing vLLM gRPC data path is
+unchanged.
 
 ## Measured local-control baseline
 
@@ -142,7 +152,8 @@ contract is complete.
 ## Migration sequence
 
 1. Keep gRPC as a tested compatibility transport.
-2. Land the versioned `orbitkv-local` ABI and cross-process tests.
+2. Land the versioned `orbitkv-local` ABI, sidecar lifecycle endpoint, Python
+   client, and cross-process tests.
 3. Add UDS bootstrap and a shared descriptor arena.
 4. Move `QueryBundle` and completions to iceoryx2.
 5. Move `Restore`, `Publish`, and `Release`; remove per-load shared-memory

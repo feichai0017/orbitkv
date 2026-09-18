@@ -4,6 +4,7 @@ Provides fixtures for automatically starting/stopping OrbitKVServer
 and test helpers for connector testing against a running server.
 """
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -89,7 +90,11 @@ def find_server_binary() -> str | None:
     return None
 
 
-def wait_for_server_ready(endpoint: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> bool:
+def wait_for_server_ready(
+    endpoint: str,
+    timeout: float = SERVER_STARTUP_TIMEOUT,
+    process: subprocess.Popen | None = None,
+) -> bool:
     """Wait for server to become ready by attempting connections."""
     # Import directly from submodule to avoid triggering __init__.py imports (vllm dependency)
     import importlib
@@ -100,6 +105,8 @@ def wait_for_server_ready(endpoint: str, timeout: float = SERVER_STARTUP_TIMEOUT
     start_time = time.time()
     last_error = None
     while time.time() - start_time < timeout:
+        if process is not None and process.poll() is not None:
+            return False
         try:
             client = EngineRpcClient(endpoint)
             ok, _ = client.health()
@@ -347,10 +354,22 @@ def block_hashes() -> list[bytes]:
 class OrbitKVServerProcess:
     """Manages a OrbitKVServer subprocess for testing."""
 
-    def __init__(self, port: int, pool_size: str = DEFAULT_POOL_SIZE, devices: str = "0"):
+    def __init__(
+        self,
+        port: int,
+        pool_size: str = DEFAULT_POOL_SIZE,
+        devices: str = "0",
+        *,
+        http_port: int | None = None,
+        local_control_service: str | None = None,
+        local_control_session_epoch: int | None = None,
+    ):
         self.port = port
         self.pool_size = pool_size
         self.devices = devices
+        self.http_port = http_port
+        self.local_control_service = local_control_service
+        self.local_control_session_epoch = local_control_session_epoch
         self.endpoint = f"http://127.0.0.1:{port}"
         self.process: subprocess.Popen | None = None
         self._binary_path = find_server_binary()
@@ -384,6 +403,17 @@ class OrbitKVServerProcess:
             "--devices",
             self.devices,
         ]
+        if self.http_port is not None:
+            cmd.extend(["--http-addr", f"127.0.0.1:{self.http_port}"])
+        if self.local_control_service is not None:
+            cmd.extend(["--local-control-service", self.local_control_service])
+        if self.local_control_session_epoch is not None:
+            cmd.extend(
+                [
+                    "--local-control-session-epoch",
+                    str(self.local_control_session_epoch),
+                ]
+            )
 
         # Route logs to a tempfile so the pipe buffer cannot fill up and
         # block the server mid-startup, and so tests can read the log
@@ -406,7 +436,7 @@ class OrbitKVServerProcess:
             self._close_log()
             return False
 
-        return wait_for_server_ready(self.endpoint)
+        return wait_for_server_ready(self.endpoint, process=self.process)
 
     def stop(self) -> None:
         """Stop the server process."""
@@ -414,12 +444,15 @@ class OrbitKVServerProcess:
             self._close_log()
             return
         try:
-            os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+            if self.process.poll() is None:
+                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
             self.process.wait(timeout=5)
-        except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
-            if self.process:
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError, OSError):
                 os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                self.process.wait(timeout=2)
+            self.process.wait(timeout=2)
+        except (ProcessLookupError, OSError):
+            self.process.wait(timeout=2)
         finally:
             self.process = None
             self._close_log()
@@ -435,8 +468,6 @@ class OrbitKVServerProcess:
         return self._log_path.read_text(errors="replace")
 
     def _close_log(self) -> None:
-        import contextlib
-
         if self._log_file is not None:
             with contextlib.suppress(OSError):
                 self._log_file.close()
@@ -454,6 +485,28 @@ def orbitkv_server() -> Generator[OrbitKVServerProcess, None, None]:
 
     if not server.start() or not server._binary_path:
         pytest.skip("OrbitKVServer binary not found or failed to start")
+
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+def local_control_server() -> Generator[OrbitKVServerProcess, None, None]:
+    """Start an isolated server with a known local-control identity."""
+    service_name = f"orbitkv/test/python/{os.getpid()}/{uuid.uuid4().hex}"
+    server = OrbitKVServerProcess(
+        port=find_available_port(),
+        http_port=find_available_port(),
+        local_control_service=service_name,
+        local_control_session_epoch=0x0B17_17C0,
+    )
+
+    if not server._binary_path:
+        pytest.skip("OrbitKVServer binary not found")
+    if not server.start():
+        logs = server.read_logs()
+        server.stop()
+        pytest.fail(f"OrbitKVServer failed to start:\n{logs}")
 
     yield server
     server.stop()

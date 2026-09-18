@@ -50,6 +50,9 @@ uv run --extra test pytest -m integration
 ```
 
 Runs tests that start or require a local `orbitkv-server` but do not run vLLM:
+
+- `test_local_control.py` proves Python-to-sidecar iceoryx2 ping, epoch fencing,
+  and shutdown across a real process boundary;
 - `test_engine_client.py`
 - `test_session_watcher.py`
 

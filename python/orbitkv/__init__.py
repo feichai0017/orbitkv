@@ -10,6 +10,7 @@ from typing import Any
 
 _NATIVE_EXPORTS = {
     "EngineRpcClient",
+    "LocalControlClient",
     "OrbitKVError",
     "OrbitKVInternal",
     "PyLoadState",
@@ -41,6 +42,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "__version__",
     "EngineRpcClient",
+    "LocalControlClient",
     "OrbitKVError",
     "OrbitKVInternal",
     "PyLoadState",

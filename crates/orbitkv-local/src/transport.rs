@@ -5,10 +5,13 @@ use thiserror::Error;
 
 use crate::{Command, ProtocolError, Response, WireMessage};
 
-type IpcClient = iceoryx2::port::client::Client<ipc::Service, WireMessage, (), WireMessage, ()>;
-type IpcServer = iceoryx2::port::server::Server<ipc::Service, WireMessage, (), WireMessage, ()>;
+type ThreadSafeIpcService = ipc_threadsafe::Service;
+type IpcClient =
+    iceoryx2::port::client::Client<ThreadSafeIpcService, WireMessage, (), WireMessage, ()>;
+type IpcServer =
+    iceoryx2::port::server::Server<ThreadSafeIpcService, WireMessage, (), WireMessage, ()>;
 type IpcService = iceoryx2::service::port_factory::request_response::PortFactory<
-    ipc::Service,
+    ThreadSafeIpcService,
     WireMessage,
     (),
     WireMessage,
@@ -40,6 +43,8 @@ pub enum TransportError {
     Service(String),
     #[error("failed to create iceoryx2 port: {0}")]
     Port(String),
+    #[error("failed to start local-control thread: {0}")]
+    Thread(String),
     #[error("failed to send local-control message: {0}")]
     Send(String),
     #[error("failed to receive local-control message: {0}")]
@@ -57,13 +62,13 @@ pub enum TransportError {
 pub struct LocalClient {
     client: IpcClient,
     _service: IpcService,
-    _node: iceoryx2::node::Node<ipc::Service>,
+    _node: iceoryx2::node::Node<ThreadSafeIpcService>,
 }
 
 impl LocalClient {
     pub fn connect(service_name: &str) -> Result<Self, TransportError> {
         let node = NodeBuilder::new()
-            .create::<ipc::Service>()
+            .create::<ThreadSafeIpcService>()
             .map_err(|error| TransportError::Node(error.to_string()))?;
         let name = service_name.try_into().map_err(
             |error: iceoryx2::service::service_name::ServiceNameError| {
@@ -73,7 +78,7 @@ impl LocalClient {
         let service = node
             .service_builder(&name)
             .request_response::<WireMessage, WireMessage>()
-            .open_or_create()
+            .open()
             .map_err(|error| TransportError::Service(error.to_string()))?;
         let client = service
             .client_builder()
@@ -133,13 +138,13 @@ impl LocalClient {
 pub struct LocalServer {
     server: IpcServer,
     _service: IpcService,
-    _node: iceoryx2::node::Node<ipc::Service>,
+    _node: iceoryx2::node::Node<ThreadSafeIpcService>,
 }
 
 impl LocalServer {
     pub fn bind(service_name: &str) -> Result<Self, TransportError> {
         let node = NodeBuilder::new()
-            .create::<ipc::Service>()
+            .create::<ThreadSafeIpcService>()
             .map_err(|error| TransportError::Node(error.to_string()))?;
         let name = service_name.try_into().map_err(
             |error: iceoryx2::service::service_name::ServiceNameError| {
@@ -149,7 +154,7 @@ impl LocalServer {
         let service = node
             .service_builder(&name)
             .request_response::<WireMessage, WireMessage>()
-            .open_or_create()
+            .create()
             .map_err(|error| TransportError::Service(error.to_string()))?;
         let server = service
             .server_builder()
