@@ -13,6 +13,9 @@ Deliver:
 - move the implementation to `orbitkv.vllm` with `orbitkv.connector` as a
   compatibility alias;
 - establish `orbitkv.sglang` and `orbitkv.client` package boundaries;
+- establish the `orbitkv-local` iceoryx2 control ABI;
+- introduce `RemoteMover` with the native RDMA implementation as its first
+  backend;
 - preserve current vLLM behavior.
 
 Gate:
@@ -29,6 +32,7 @@ Deliver:
 
 - implement the dynamic `HiCacheStorage` backend;
 - register SGLang shared host regions with the sidecar over UDS;
+- execute `QueryBundle`, restore, publish, and completion over iceoryx2;
 - support KV, MLA, Mamba/recurrent, SWA, and explicit opaque pools;
 - map SGLang hit policies into `RecoveryContract`;
 - expose cold miss, partial prefix, warm hit, cancellation, and restart metrics.
@@ -45,7 +49,7 @@ Gate:
 Deliver:
 
 - move vLLM hybrid reconciliation from the adapter into common bundle logic;
-- replace per-load shared-memory status files with a shared completion queue;
+- replace per-load shared-memory status files with iceoryx2 completions;
 - use UDS file-descriptor passing for shared regions;
 - add framework-neutral query, lease, register-region, and transfer-plan RPCs;
 - preserve the legacy vLLM protocol until its adapter migrates.
@@ -66,6 +70,10 @@ Deliver:
 - reproduce a Dynamo-style weighted-overlap worker selector as a baseline;
 - add queue, transfer, recompute, and eviction costs;
 - return target worker plus source/restore plan.
+- implement an optional production `MooncakeMover` while retaining native
+  RDMA as the lightweight and validation backend;
+- qualify topology-aware slicing, endpoint pooling, and alternate-rail retry
+  against identical transfer plans.
 
 Gate:
 
@@ -110,7 +118,6 @@ Gate:
 
 Deliver only after M1-M5 gates:
 
-- optional Mooncake storage/transport domain;
 - agentic multi-turn value model;
 - multi-DC replica planning;
 - signed plan/evidence bundles if deployment requires them.

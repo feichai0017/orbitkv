@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/orbitkv-contract",
+  "crates/orbitkv-local",
   "crates/orbitkv-common",
   "crates/orbitkv-core",
   "crates/orbitkv-proto",
@@ -15,7 +16,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "Apache-2.0"
 
 [profile.release]
@@ -25,6 +26,7 @@ codegen-units = 1
 [workspace.dependencies]
 # Workspace members
 orbitkv-contract = { path = "crates/orbitkv-contract" }
+orbitkv-local = { path = "crates/orbitkv-local" }
 orbitkv-common = { path = "crates/orbitkv-common" }
 orbitkv-core = { path = "crates/orbitkv-core", default-features = false }
 orbitkv-pd-wire = { path = "crates/orbitkv-pd-wire" }
@@ -68,6 +70,7 @@ ahash = "0.8"
 futures = "0.3"
 smallvec = { version = "1.15", features = ["serde", "union"] }
 mea = "0.6.3"
+iceoryx2 = { version = "0.10.0", default-features = false, features = ["std"] }
 
 # HTTP/Web
 axum = "0.8"

@@ -62,12 +62,16 @@ workspace and intentionally has no `src/`. The Python distribution remains at
      generations, and recovery bundles
    - Must not depend on vLLM, SGLang, CUDA, or transport implementations
 
-2. **orbitkv-common** (Rust): Shared lightweight utilities
+2. **orbitkv-local** (Rust): Local control transport
+   - Fixed 64-byte ABI over iceoryx2 request/response
+   - UDS remains the planned bootstrap and file-descriptor passing path
+
+3. **orbitkv-common** (Rust): Shared lightweight utilities
    - `logging.rs`: Unified log initialization (logforth-based)
    - `numa.rs`: NUMA topology detection and CPU affinity utilities
    - Depended on by all other crates to avoid heavy transitive dependencies
 
-3. **orbitkv-core** (Rust): Core storage engine
+4. **orbitkv-core** (Rust): Core storage engine
    - `OrbitKVEngine`: Main engine managing GPU workers and KV cache storage
    - `storage/`: Modular block storage engine
      - `mod.rs`: `StorageEngine` — aggregates allocator, read cache, prefetch, write pipeline, SSD store, RDMA fetch
@@ -86,29 +90,29 @@ workspace and intentionally has no `src/`. The Python distribution remains at
    - `internode/`: Cross-node communication
      - `metaserver_client.rs`: MetaServer registration, removal, query, and node heartbeat
 
-4. **orbitkv-proto** (Rust): Protobuf definitions
+5. **orbitkv-proto** (Rust): Protobuf definitions
    - gRPC service definitions built with prost/tonic
 
-5. **orbitkv-server** (Rust): gRPC sidecar
+6. **orbitkv-server** (Rust): sidecar service
    - `service.rs`: Tonic gRPC service implementation
    - `registry.rs`: Instance/worker registration
    - `http_server.rs`: HTTP health check and Prometheus metrics endpoint
    - `bin/orbitkv-router.rs`: P/D request router (coordinates P/D nodes; OrbitKV itself is a KV store)
 
-6. **orbitkv-metaserver** (Rust): Cross-node block hash registry
+7. **orbitkv-metaserver** (Rust): Cross-node block hash registry
    - `service.rs`: gRPC MetaServer service (insert/query block hashes)
    - `store.rs`: Multi-owner block hash store with TTL sweep (backed by DashMap)
    - Used for multi-node KV cache coordination — each orbitkv-server registers its block hashes here
 
-7. **orbitkv-pd-wire** (Rust): Prefill/decode wire contracts
+8. **orbitkv-pd-wire** (Rust): Prefill/decode wire contracts
 
-8. **orbitkv-transfer** (Rust): RDMA-based inter-node memory transfer engine
+9. **orbitkv-transfer** (Rust): RemoteMover and native RDMA implementation
    - `engine.rs`: `MooncakeTransferEngine` — Mooncake-compatible API for one-sided RDMA READ/WRITE
    - `sideway_backend.rs`: UD control plane + RC data plane with per-peer sessions
    - `rdma_topo.rs`: NUMA-aware topology detection (GPUs, RDMA NICs, CPUs)
    - CLI tools: `orbitkv_topo_cli` (topology display), `orbitkv_cpu_bench` (RDMA benchmark)
 
-9. **python/** (Rust/PyO3 + Python): Python package (`orbitkv-llm` on PyPI)
+10. **python/** (Rust/PyO3 + Python): Python package (`orbitkv-llm` on PyPI)
    - `src/lib.rs`: PyO3 bindings exposing `OrbitKVEngine` and gRPC client
    - `orbitkv/vllm/`: canonical vLLM v1 connector
    - `orbitkv/connector/`: backward-compatible alias for `orbitkv.vllm`
@@ -193,6 +197,7 @@ remote data moves through RDMA. See `docs/architecture.md` and
 ## Key Files
 
 - `crates/orbitkv-contract/src/lib.rs`: Framework-neutral state and recovery contracts
+- `crates/orbitkv-local/src/lib.rs`: iceoryx2 local-control transport
 - `crates/orbitkv-common/src/logging.rs`: Unified log initialization
 - `crates/orbitkv-common/src/numa.rs`: NUMA topology detection and CPU affinity
 - `crates/orbitkv-core/src/lib.rs`: Main OrbitKVEngine implementation

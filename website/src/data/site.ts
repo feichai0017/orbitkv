@@ -20,6 +20,12 @@ export const layers = [
     path: "crates/orbitkv-contract/src/lib.rs",
   },
   {
+    name: "orbitkv-local",
+    role: "Control the sidecar.",
+    detail: "Versioned iceoryx2 request/response with shared descriptor arenas.",
+    path: "crates/orbitkv-local/src/lib.rs",
+  },
+  {
     name: "orbitkv-core",
     role: "Own the blocks.",
     detail:
@@ -29,13 +35,13 @@ export const layers = [
   {
     name: "orbitkv-transfer",
     role: "Move the bytes.",
-    detail: "Topology-aware CUDA, pinned-memory, and RDMA transfer paths.",
+    detail: "A RemoteMover boundary with native RDMA and a planned Mooncake backend.",
     path: "crates/orbitkv-transfer/README.md",
   },
   {
     name: "orbitkv-server",
     role: "Share the cache.",
-    detail: "Versioned gRPC, process lifecycle, P/D routing, health, and metrics.",
+    detail: "Compatibility gRPC, process lifecycle, P/D routing, health, and metrics.",
     path: "crates/orbitkv-server/README.md",
   },
   {
@@ -63,6 +69,7 @@ export const providers = [
 
 export const docs = [
   { name: "System architecture", path: "docs/architecture.md" },
+  { name: "Local and remote transport", path: "docs/transport.md" },
   { name: "Roadmap and validation gates", path: "docs/roadmap.md" },
   { name: "Server configuration", path: "docs/server.md" },
   { name: "Cross-node sharing", path: "docs/p2p.md" },

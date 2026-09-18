@@ -49,6 +49,7 @@ correct and measured.
 | Path | Responsibility |
 | --- | --- |
 | [`orbitkv-contract`](crates/orbitkv-contract) | Framework-neutral state identity, format, page and recovery contracts |
+| [`orbitkv-local`](crates/orbitkv-local) | Versioned iceoryx2 control path between inference processes and the local sidecar |
 | [`orbitkv-core`](crates/orbitkv-core) | Content-addressed blocks, leases, eviction, SSD and RDMA tiers |
 | [`orbitkv-transfer`](crates/orbitkv-transfer) | CUDA-aware and RDMA transfer engines |
 | [`orbitkv-server`](crates/orbitkv-server) | Local sidecar, health/metrics endpoints, and P/D router |
@@ -59,10 +60,15 @@ correct and measured.
 | [`third-party/sglang`](third-party/sglang) | Pinned SGLang source used to develop and validate integration |
 | [`website`](website) | OrbitKV project website and brand assets |
 
+The local and remote transport split, Mooncake integration boundary, and
+measured IPC baselines are documented in
+[`docs/transport.md`](docs/transport.md).
+
 ## Build
 
 The default build targets CUDA 12.8. Host-only inspection can disable default
-features; GPU and RDMA tests require matching local hardware and drivers.
+features; GPU and RDMA tests require matching local hardware and drivers. The
+workspace MSRV is Rust 1.89, required by iceoryx2 0.10.
 
 ```sh
 cargo check --workspace

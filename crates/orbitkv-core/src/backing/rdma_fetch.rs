@@ -13,7 +13,9 @@ use orbitkv_proto::proto::engine::{
     FetchSegment, QueryBlocksForTransferRequest, QueryBlocksForTransferResponse,
     RdmaHandshakeRequest, TransferBlockInfo,
 };
-use orbitkv_transfer::{ConnectionStatus, HandshakeMetadata, TransferDesc, TransferOp};
+use orbitkv_transfer::{
+    ConnectionStatus, HandshakeMetadata, RemoteAddress, RemoteSlice, TransferOp,
+};
 use tonic::transport::{Channel, Endpoint};
 
 use orbitkv_common::NumaNode;
@@ -412,7 +414,7 @@ async fn rdma_fetch_task(
         Ok(r) => r,
         Err(e) => {
             warn!("RDMA transfer from {remote_addr} failed: {e}");
-            rdma.engine().invalidate_connection(remote_addr);
+            rdma.mover().invalidate_peer(remote_addr);
             lock_guard.release();
             core_metrics()
                 .rdma_fetch_total
@@ -543,7 +545,7 @@ async fn fetch_blocks_via_rdma(
     // Build TransferDescs and submit RDMA READ inside a sync block so that
     // all_descs (which contains NonNull<u8>, !Send) is dropped before any .await.
     let (receivers, mut timing) = {
-        let mut all_descs: Vec<TransferDesc> = Vec::new();
+        let mut all_descs: Vec<RemoteSlice> = Vec::new();
 
         for block_info in blocks {
             slot_count += block_info.slots.len();
@@ -558,11 +560,12 @@ async fn fetch_blocks_via_rdma(
                     let len = usize::try_from(slot.k_size)
                         .map_err(|_| format!("K size exceeds usize: {}", slot.k_size))?;
                     let (local_ptr, alloc) = slabs.alloc_segment(numa, len, "K")?;
-                    let remote_ptr = NonNull::new(slot.k_ptr as *mut u8)
-                        .ok_or_else(|| "remote K ptr is null".to_string())?;
-                    all_descs.push(TransferDesc {
+                    if slot.k_ptr == 0 {
+                        return Err("remote K ptr is null".to_string());
+                    }
+                    all_descs.push(RemoteSlice {
                         local_ptr,
-                        remote_ptr,
+                        remote: RemoteAddress::new(slot.k_ptr),
                         len,
                     });
                     segments.push(SegmentAlloc {
@@ -577,11 +580,9 @@ async fn fetch_blocks_via_rdma(
                     let len = usize::try_from(slot.v_size)
                         .map_err(|_| format!("V size exceeds usize: {}", slot.v_size))?;
                     let (local_ptr, alloc) = slabs.alloc_segment(numa, len, "V")?;
-                    let remote_ptr = NonNull::new(slot.v_ptr as *mut u8)
-                        .ok_or_else(|| "remote V ptr is null".to_string())?;
-                    all_descs.push(TransferDesc {
+                    all_descs.push(RemoteSlice {
                         local_ptr,
-                        remote_ptr,
+                        remote: RemoteAddress::new(slot.v_ptr),
                         len,
                     });
                     segments.push(SegmentAlloc {
@@ -612,8 +613,8 @@ async fn fetch_blocks_via_rdma(
         // Submit RDMA READ; all_descs is dropped at the end of this block.
         let submit_start = Instant::now();
         let receivers = rdma
-            .engine()
-            .batch_transfer_async(TransferOp::Read, remote_addr, &all_descs)
+            .mover()
+            .submit(TransferOp::Read, remote_addr, &all_descs)
             .map_err(|e| format!("RDMA batch_transfer_async failed: {e}"))?;
         let submit_transfer = submit_start.elapsed();
 

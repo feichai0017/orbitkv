@@ -2,6 +2,7 @@
 name = "orbitkv-pd-wire"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Sealed wire schema for the OrbitKV P/D KV-push handshake"
 

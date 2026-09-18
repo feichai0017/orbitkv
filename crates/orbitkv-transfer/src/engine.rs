@@ -54,7 +54,7 @@ pub(crate) struct NicHandshake {
     pub(crate) memory_regions: Vec<RegisteredMemoryRegion>,
 }
 
-/// Opaque handshake metadata exchanged between peers via gRPC.
+/// Opaque handshake metadata exchanged through a peer bootstrap channel.
 ///
 /// Contains one [`NicHandshake`] per NIC. NICs are 1:1 mapped by index
 /// between two machines (mlx5_0↔mlx5_0, etc.).
@@ -98,7 +98,7 @@ pub enum ConnectionStatus {
     Existing,
     /// A handshake to this peer is already in progress.
     Connecting,
-    /// Not connected. Exchange this local metadata with remote peer via gRPC,
+    /// Not connected. Exchange this local metadata with the remote peer,
     /// then call complete_handshake. On failure, call abort_handshake.
     Prepared(HandshakeMetadata),
 }
@@ -129,7 +129,7 @@ impl TransferEngine {
     }
 
     /// Check if already connected to the remote peer; if not, prepare local
-    /// QPs and return the handshake metadata that must be exchanged via gRPC.
+    /// QPs and return the handshake metadata for out-of-band exchange.
     pub fn get_or_prepare(&self, remote_addr: &str) -> Result<ConnectionStatus> {
         match self.backend.get_or_prepare(remote_addr)? {
             GetOrPrepareResult::Existing => Ok(ConnectionStatus::Existing),

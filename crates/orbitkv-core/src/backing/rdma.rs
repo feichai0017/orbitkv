@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use log::{error, info};
 use orbitkv_transfer::rdma_topo::SystemTopology;
-use orbitkv_transfer::{MemoryRegion, TransferEngine};
+use orbitkv_transfer::{MemoryRegion, RemoteMover, TransferEngine};
 
 use crate::pinned_pool::PinnedAllocator;
 
@@ -25,6 +25,12 @@ unsafe impl Sync for RdmaTransport {}
 impl RdmaTransport {
     /// Access the underlying transfer engine for active RDMA operations.
     pub(crate) fn engine(&self) -> &TransferEngine {
+        &self.engine
+    }
+
+    /// Data mover used after connection establishment. The concrete native
+    /// engine remains available while handshake control is migrated.
+    pub(crate) fn mover(&self) -> &dyn RemoteMover {
         &self.engine
     }
 

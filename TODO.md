@@ -13,6 +13,9 @@ and a passing gate; design text alone does not close an item.
 - [x] Move the canonical vLLM package to `orbitkv.vllm`.
 - [x] Preserve `orbitkv.connector` as a compatibility alias.
 - [x] Add `orbitkv.client` and `orbitkv.sglang` package boundaries.
+- [x] Add `orbitkv-local` with a versioned 64-byte iceoryx2 request/response ABI.
+- [x] Add a real two-process local-control test.
+- [x] Introduce `RemoteMover` and adapt the native RDMA engine.
 - [ ] Add Python representations/serialization for `orbitkv-contract`.
 - [x] Add compatibility tests for `orbitkv.connector` and `orbitkv.vllm`.
 - [x] Run the full M0 validation matrix and record results in the commit.
@@ -23,6 +26,8 @@ and a passing gate; design text alone does not close an item.
 - [ ] Add a SGLang entry point or documented dynamic-backend config.
 - [ ] Require `allocator=shm` for the zero-copy host path.
 - [ ] Add UDS registration for memfd-backed host regions.
+- [ ] Bind `orbitkv-local` QueryBundle/Restore/Publish handlers to the sidecar.
+- [ ] Add Python bindings for the iceoryx2 local client.
 - [ ] Map SGLang `PoolName` values to `StateComponent`.
 - [ ] Map `ALL_PAGES` and `TRAILING_PAGES` into recovery contracts.
 - [ ] Implement `batch_exists_v2`.
@@ -40,7 +45,9 @@ and a passing gate; design text alone does not close an item.
 - [ ] Define framework-neutral region registration RPCs.
 - [ ] Pass shared-memory file descriptors over UDS.
 - [ ] Replace per-load `PyLoadState` files with a bounded shared completion ring.
-- [ ] Keep gRPC/UDS for control only; prohibit KV payload bytes in protobuf.
+- [ ] Keep control messages descriptor-only; prohibit KV payload bytes in gRPC,
+  UDS, or iceoryx2 messages.
+- [ ] Move hot local control off gRPC; retain gRPC only as compatibility fallback.
 - [ ] Add generation validation to every local page reference.
 - [ ] Benchmark the M2 path against the current CUDA IPC baseline.
 
@@ -54,6 +61,14 @@ and a passing gate; design text alone does not close an item.
 - [ ] Add eviction externality and replica-risk terms.
 - [ ] Return a worker plus a transfer/restore plan.
 - [ ] Evaluate load-only, overlap-only, and joint planning on the same trace.
+- [ ] Add catalog epoch plus resident-inventory resynchronization after directory restart.
+
+- [ ] Add an optional Mooncake Transfer Engine build/runtime backend.
+- [ ] Map OrbitKV authorized regions to Mooncake Segment offsets.
+- [ ] Qualify RDMA READ demand fetch and RDMA WRITE replication.
+- [ ] Import topology-aware slicing, endpoint pooling, and alternate-rail retry.
+- [ ] Keep rkeys and raw addresses out of the global replica directory.
+- [ ] Compare Mooncake and native RDMA with identical transfer-plan tests.
 
 ## M4 — page authority and safety
 

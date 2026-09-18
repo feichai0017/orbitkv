@@ -20,6 +20,7 @@ is being added through HiCache and RadixAttention integration.
 orbitkv/
 ├── crates/
 │   ├── orbitkv-contract/         # Framework-neutral state and recovery contracts
+│   ├── orbitkv-local/            # iceoryx2 local control transport
 │   ├── orbitkv-common/           # Logging, NUMA, and shared utilities
 │   ├── orbitkv-core/             # Cache engine, storage, and backing tiers
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
@@ -39,6 +40,7 @@ orbitkv/
 | Target | Location |
 |--------|----------|
 | State identity and recovery contracts | `crates/orbitkv-contract/` |
+| Local inference-sidecar IPC | `crates/orbitkv-local/` |
 | Shared Rust utilities | `crates/orbitkv-common/` |
 | Core engine and storage path | `crates/orbitkv-core/` |
 | gRPC protocol changes | `crates/orbitkv-proto/` |
@@ -55,6 +57,7 @@ orbitkv/
 ## Key Entry Points
 
 - `crates/orbitkv-contract/src/lib.rs`: shared state and recovery contract
+- `crates/orbitkv-local/src/lib.rs`: versioned iceoryx2 local-control API
 - `crates/orbitkv-core/src/lib.rs`: main Rust engine entry
 - `crates/orbitkv-core/src/storage/mod.rs`: storage pipeline
 - `crates/orbitkv-core/src/backing/`: SSD and RDMA backing implementations

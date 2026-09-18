@@ -36,9 +36,12 @@ separate service.
  +-------------------+              +-------------------+
 ```
 
-The control plane may use gRPC initially. KV bytes must not travel through
-protobuf: vLLM uses registered CUDA IPC pages, SGLang will use a shared pinned
-host pool, and remote transfers use RDMA.
+The compatibility control plane uses gRPC today. The target local hot path is
+iceoryx2 request/response, with UDS reserved for bootstrap, credentials, and
+file-descriptor passing. KV bytes must not travel through either control
+protocol: vLLM uses registered CUDA IPC pages, SGLang will use a shared pinned
+host pool, and remote transfers use a `RemoteMover` backend. See
+[transport.md](transport.md) for the measured decision.
 
 ## Layering
 
@@ -54,8 +57,9 @@ block hashes / CUDA IPC     radix hashes / HiCache pools / shared host pages
                            |
                     orbitkv-core
                  cache · leases · tiers
-                           |
-                orbitkv-transfer / SSD
+                  /                    \
+       orbitkv-local                  RemoteMover / SSD
+       iceoryx2 + UDS             Native RDMA · Mooncake TE
 ```
 
 ### `orbitkv-contract`
@@ -106,9 +110,12 @@ The native physical domains are:
 - local SSD;
 - remote OrbitKV replicas over RDMA.
 
-Mooncake may later be supported as an additional backend domain. OrbitKV should
-not reimplement every transport Mooncake already provides; its contribution is
-the state contract and planner above the data movers.
+Mooncake Transfer Engine is the planned production remote-movement backend. It
+contributes Segment/BatchTransfer, multi-NIC topology selection, endpoint
+pooling, and rail failover. The existing pure-Rust RDMA implementation remains
+the lightweight and validation backend. Mooncake Store Master is not OrbitKV's
+semantic authority: bundle completeness, leases, generations, and planning
+remain in OrbitKV.
 
 ## SGLang integration
 
