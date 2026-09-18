@@ -456,10 +456,6 @@ curl -s http://127.0.0.1:8100/v1/completions \
   -d '{"model":"/data/Qwen3-4B","prompt":"Write a short note about RDMA.","max_tokens":16,"temperature":0}'
 ```
 
-### 5.2 关于 pegainfer 的统一
-
-pegainfer 的 `pegainfer-comm-fabric-lib` 是 pplx-garden 的另一份 vendor。orbitkv v2 稳定后，pegainfer 应改用 `orbitkv_transfer::v2::TransferEngine`。v2 的 API 设计预留了这个对齐：`TransferRequest` 保留 `Scatter`，`Worker` / `FabricEngine` 多 GPU 抽象不削，不在 v2 公开 API 里塞 PD 专用概念。
-
 ## 6. 实施阶段与当前进展
 
 | 阶段 | 内容 | 状态 |
