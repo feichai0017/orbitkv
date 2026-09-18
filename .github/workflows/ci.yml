@@ -1,11 +1,26 @@
 name: ci
 
 on:
-  push:
   pull_request:
+  push:
 
 jobs:
-  host:
+  source-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 tools/source_workspace.py verify
+      - run: python3 tools/source_workspace.py bootstrap --stack sglang
+      - run: python3 tools/source_workspace.py bootstrap --stack autodeploy
+      - run: python3 tools/source_workspace.py bootstrap --stack tensorrt-source
+      - run: python3 tools/source_workspace.py bootstrap --stack kernels
+
+  rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,15 +28,18 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all --check
-      - run: cargo clippy --locked --workspace --exclude kern-serve --all-targets -- -D warnings
-      - run: cargo test --locked --workspace --exclude kern-serve --all-targets
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace --all-targets
+      - run: cargo build --locked -p aletheia-cli
+      - run: python -m unittest discover -s tools/tests
 
-  serving:
+  python-adapter:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
         with:
-          components: clippy
-      - run: cargo clippy --locked -p kern-serve --all-targets -- -D warnings
-      - run: cargo test --locked -p kern-serve
+          python-version: "3.11"
+      - run: python -m unittest discover -s integrations/sglang/tests
+      - run: python -m unittest discover -s integrations/autodeploy/tests
+      - run: python -m unittest discover -s integrations/providers/tests

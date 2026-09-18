@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "hardware": {
+    "accelerator": "cpu",
+    "architecture": "reference",
+    "device_count": 1,
+    "device_memory_bytes": 4096,
+    "driver": "none",
+    "runtime": "rust-reference"
+  },
+  "numerical": {
+    "oracle": "identity-fixture",
+    "cases": 16,
+    "atol": 0.0,
+    "rtol": 0.0,
+    "max_abs_error": 0.0,
+    "min_output_agreement": 1.0
+  },
+  "timing": {
+    "tokens_per_sample": 1,
+    "samples_micros": [10, 11, 9, 10, 12, 11, 10, 9, 11, 10, 12, 10]
+  },
+  "resources": {
+    "peak_device_memory_bytes": 512,
+    "peak_workspace_bytes": 64
+  },
+  "resilience": {
+    "soak_seconds": 1,
+    "passed_faults": ["fixture_restart"]
+  },
+  "software": {
+    "provider": "reference-fixture-v1"
+  },
+  "artifacts": [
+    {
+      "path": "reference.artifact",
+      "sha256": "4d37b95b7ad5b20110469a0079d67cdc122f2a9870a73c79f939eeb4e65254a2"
+    }
+  ]
+}

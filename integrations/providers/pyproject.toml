@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aletheia-providers"
+version = "0.1.0"
+description = "AletheiaRT source provenance and kernel qualification helpers"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+aletheia-provider-probe = "aletheia_providers.probe:main"
+aletheia-qualify-rmsnorm = "aletheia_providers.rmsnorm:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aletheia_providers"]

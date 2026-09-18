@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aletheia-autodeploy"
+version = "0.1.0"
+description = "AletheiaRT plan extensions for TensorRT-LLM AutoDeploy"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aletheia_autodeploy"]

@@ -1,8 +1,10 @@
 /target/
-/.qualification/
-/.pytest_cache/
-/website/
-**/__pycache__/
+/.aletheia/
+/.infer/
+/.venv/
+__pycache__/
 *.py[cod]
-*.jsonl
-*.log
+*.egg-info/
+/.agents/
+/.codex/
+/.trae/

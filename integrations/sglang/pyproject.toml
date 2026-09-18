@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aletheia-sglang"
+version = "0.1.0"
+description = "SGLang source integration for the AletheiaRT inference platform"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.entry-points."sglang.srt.plugins"]
+aletheia = "aletheia_sglang.plugin:register"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aletheia_sglang"]

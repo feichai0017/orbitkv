@@ -1,0 +1,36 @@
+diff --git a/build_sgl_deep_gemm.sh b/build_sgl_deep_gemm.sh
+--- a/build_sgl_deep_gemm.sh
++++ b/build_sgl_deep_gemm.sh
+@@ -100,7 +100,7 @@ os.environ.setdefault('TVM_FFI_CUDA_ARCH_LIST', cuda_helpers.get_cuda_arch())
+ 
+ cxx_abi = int(torch.compiled_with_cxx11_abi())
+ extra_cflags = [
+-    '-std=c++17', '-O3', '-fPIC',
++    '-std=c++20', '-O3', '-fPIC',
+     '-Wno-psabi', '-Wno-deprecated-declarations',
+     f'-D_GLIBCXX_USE_CXX11_ABI={cxx_abi}',
+ ]
+diff --git a/setup.py b/setup.py
+--- a/setup.py
++++ b/setup.py
+@@ -25,7 +25,7 @@ DG_JIT_USE_LOCAL_VERSION = int(os.getenv('DG_USE_LOCAL_VERSION', '1')) == 1
+ DG_JIT_USE_RUNTIME_API = int(os.environ.get('DG_JIT_USE_RUNTIME_API', '0')) == 1
+ 
+ # Compiler flags
+-cxx_flags = ['-std=c++17', '-O3', '-fPIC', '-Wno-psabi', '-Wno-deprecated-declarations',
++cxx_flags = ['-std=c++20', '-O3', '-fPIC', '-Wno-psabi', '-Wno-deprecated-declarations',
+              f'-D_GLIBCXX_USE_CXX11_ABI={int(torch.compiled_with_cxx11_abi())}']
+ if DG_JIT_USE_RUNTIME_API:
+     cxx_flags.append('-DDG_JIT_USE_RUNTIME_API')
+diff --git a/sgl_deep_gemm/__init__.py b/sgl_deep_gemm/__init__.py
+--- a/sgl_deep_gemm/__init__.py
++++ b/sgl_deep_gemm/__init__.py
+@@ -34,7 +34,7 @@ def _build_module(pkg_dir: str, cuda_home: str) -> str:
+     os.environ.setdefault('TVM_FFI_CUDA_ARCH_LIST', get_cuda_arch())
+ 
+     extra_cflags = [
+-        '-std=c++17', '-O3', '-fPIC',
++        '-std=c++20', '-O3', '-fPIC',
+         '-Wno-psabi', '-Wno-deprecated-declarations',
+         f'-D_GLIBCXX_USE_CXX11_ABI={cxx_abi}',
+     ]

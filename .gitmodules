@@ -1,0 +1,16 @@
+[submodule "sglang"]
+	path = third-party/sglang
+	url = https://github.com/sgl-project/sglang.git
+	shallow = true
+[submodule "tensorrt-llm"]
+	path = third-party/tensorrt-llm
+	url = https://github.com/NVIDIA/TensorRT-LLM.git
+	shallow = true
+[submodule "flashinfer"]
+	path = third-party/flashinfer
+	url = https://github.com/flashinfer-ai/flashinfer.git
+	shallow = true
+[submodule "deepgemm"]
+	path = third-party/deepgemm
+	url = https://github.com/sgl-project/DeepGEMM.git
+	shallow = true
