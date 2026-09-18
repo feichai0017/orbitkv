@@ -45,6 +45,10 @@ use layout::KVCacheLayout;
 pub use lease::QueryLeaseId;
 pub use orbitkv_common::NumaNode;
 use orbitkv_common::{NumaTopology, group_hash};
+pub use orbitkv_contract::{
+    BundleComponent, LocalPageRef, RecoveryContract, StateBundle, StateComponent, StateFormat,
+    StateKey, TokenRange,
+};
 pub use pinned_pool::PinnedAllocation;
 pub use seal_offload::SlotMeta;
 pub use storage::{DEFAULT_RDMA_QPS_PER_PEER, MemoryCacheCleanupStats, StorageConfig};

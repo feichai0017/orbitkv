@@ -2,8 +2,8 @@
 
 from dataclasses import dataclass
 
-from orbitkv.connector.common import RecurrentLoadHold, logger
 from orbitkv.orbitkv import EngineRpcClient, QueryLoading, QueryReady
+from orbitkv.vllm.common import RecurrentLoadHold, logger
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,7 +16,7 @@ from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.connector.common import (  # noqa: E402
+from orbitkv.vllm.common import (  # noqa: E402
     CacheGroupLayout,
     reconcile_hybrid_hit,
 )

@@ -26,8 +26,8 @@ from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.connector.common import ConnectorContext, OrbitKVConnectorMode, SaveIntent
-from orbitkv.connector.scheduler import SchedulerConnector
+from orbitkv.vllm.common import ConnectorContext, OrbitKVConnectorMode, SaveIntent
+from orbitkv.vllm.scheduler import SchedulerConnector
 
 VBS = 16
 

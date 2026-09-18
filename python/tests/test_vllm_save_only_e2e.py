@@ -79,7 +79,7 @@ def _save_only_multi_config(orbitkv_port: int) -> dict[str, Any]:
                 {
                     "kv_connector": "OrbitKVConnector",
                     "kv_role": "kv_both",
-                    "kv_connector_module_path": "orbitkv.connector",
+                    "kv_connector_module_path": "orbitkv.vllm",
                     "kv_connector_extra_config": {
                         "orbitkv.port": orbitkv_port,
                         "orbitkv.mode": "save_only",
@@ -94,7 +94,7 @@ def _orbitkv_read_write_config(orbitkv_port: int) -> dict[str, Any]:
     return {
         "kv_connector": "OrbitKVConnector",
         "kv_role": "kv_both",
-        "kv_connector_module_path": "orbitkv.connector",
+        "kv_connector_module_path": "orbitkv.vllm",
         "kv_connector_extra_config": {
             "orbitkv.port": orbitkv_port,
         },

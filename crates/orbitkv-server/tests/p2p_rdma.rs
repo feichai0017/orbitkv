@@ -22,7 +22,7 @@ use orbitkv_server::{CudaTensorRegistry, GrpcEngineService, RegistryHandle};
 use tokio::sync::Notify;
 use tonic::transport::Server;
 
-// ── GPU buffer (from orbitkv-core/tests/common/gpu_buffer.rs) ──────────────
+// ── GPU buffer (from crates/orbitkv-core/tests/common/gpu_buffer.rs) ──────────────
 
 struct GpuBuffer {
     ptr: sys::CUdeviceptr,
@@ -85,7 +85,7 @@ fn check_cuda(result: sys::CUresult, op: &str) {
     );
 }
 
-// ── Helpers (from orbitkv-core/tests/common/helpers.rs) ────────────────────
+// ── Helpers (from crates/orbitkv-core/tests/common/helpers.rs) ────────────────────
 
 fn fill_test_pattern(host_data: &mut [u8], block_size: usize) {
     for (i, block) in host_data.chunks_exact_mut(block_size).enumerate() {

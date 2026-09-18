@@ -4,56 +4,69 @@ This file provides guidance for agents working in the OrbitKV repository.
 
 ## Project Overview
 
-OrbitKV is a high-performance KV cache transfer system for LLM inference, designed for vLLM.
+OrbitKV is a framework-neutral state cache and physical-planning system for
+LLM inference. The current data plane is validated with vLLM; SGLang support
+is being added through HiCache and RadixAttention integration.
 
 - Single-node KV cache offloading between GPU and host memory
 - Cross-node KV cache sharing via RDMA
 - Prefix cache reuse for repeated requests
 - Python bindings and connectors for inference frameworks
+- Framework-neutral state identity and recovery contracts
 
 ## Repository Layout
 
 ```text
 orbitkv/
-├── orbitkv-common/       # Shared utilities such as logging and NUMA helpers
-├── orbitkv-core/         # Core KV cache engine, storage, transfer, backing store
-├── orbitkv-proto/        # Protobuf and gRPC definitions
-├── orbitkv-server/       # gRPC server, router, HTTP metrics/health endpoints
-├── orbitkv-metaserver/   # Cross-node block metadata registry
-├── orbitkv-transfer/     # RDMA transfer layer
-├── python/                # PyO3 bindings and Python integrations
-├── examples/              # Python examples and benchmarks
-├── scripts/               # Project helper scripts
-└── prek.toml              # Local check configuration
+├── crates/
+│   ├── orbitkv-contract/         # Framework-neutral state and recovery contracts
+│   ├── orbitkv-common/           # Logging, NUMA, and shared utilities
+│   ├── orbitkv-core/             # Cache engine, storage, and backing tiers
+│   ├── orbitkv-proto/            # Protobuf and gRPC definitions
+│   ├── orbitkv-server/           # Sidecar, router, health, and metrics
+│   ├── orbitkv-metaserver/       # Cross-node block metadata registry
+│   ├── orbitkv-pd-wire/          # Prefill/decode wire contracts
+│   └── orbitkv-transfer/         # RDMA transfer layer
+├── python/                       # PyO3 package and framework adapters
+├── examples/                     # Python examples and benchmarks
+├── docs/                         # Architecture and roadmap
+├── scripts/                      # Project helper scripts
+└── prek.toml                     # Local check configuration
 ```
 
 ## Where To Change Code
 
 | Target | Location |
 |--------|----------|
-| Shared Rust utilities | `orbitkv-common/` |
-| Core engine and storage path | `orbitkv-core/` |
-| gRPC protocol changes | `orbitkv-proto/` |
-| Server and router logic | `orbitkv-server/` |
-| Cross-node metadata service | `orbitkv-metaserver/` |
-| RDMA transfer path | `orbitkv-transfer/` |
+| State identity and recovery contracts | `crates/orbitkv-contract/` |
+| Shared Rust utilities | `crates/orbitkv-common/` |
+| Core engine and storage path | `crates/orbitkv-core/` |
+| gRPC protocol changes | `crates/orbitkv-proto/` |
+| Server and router logic | `crates/orbitkv-server/` |
+| Cross-node metadata service | `crates/orbitkv-metaserver/` |
+| Prefill/decode wire types | `crates/orbitkv-pd-wire/` |
+| RDMA transfer path | `crates/orbitkv-transfer/` |
 | PyO3 bindings | `python/src/lib.rs` |
 | Python package and helpers | `python/orbitkv/` |
-| vLLM connector | `python/orbitkv/connector/` |
+| vLLM connector | `python/orbitkv/vllm/` |
+| SGLang adapter | `python/orbitkv/sglang/` |
+| Framework-neutral Python client | `python/orbitkv/client/` |
 
 ## Key Entry Points
 
-- `orbitkv-core/src/lib.rs`: main Rust engine entry
-- `orbitkv-core/src/storage/mod.rs`: storage pipeline
-- `orbitkv-core/src/backing/`: SSD and RDMA backing implementations
-- `orbitkv-core/src/internode/`: cross-node coordination
-- `orbitkv-server/src/service.rs`: gRPC service
-- `orbitkv-server/src/http_server.rs`: HTTP health and metrics
-- `orbitkv-metaserver/src/`: metaserver implementation
-- `orbitkv-transfer/src/`: transfer engine implementation
+- `crates/orbitkv-contract/src/lib.rs`: shared state and recovery contract
+- `crates/orbitkv-core/src/lib.rs`: main Rust engine entry
+- `crates/orbitkv-core/src/storage/mod.rs`: storage pipeline
+- `crates/orbitkv-core/src/backing/`: SSD and RDMA backing implementations
+- `crates/orbitkv-core/src/internode/`: cross-node coordination
+- `crates/orbitkv-server/src/service.rs`: gRPC service
+- `crates/orbitkv-server/src/http_server.rs`: HTTP health and metrics
+- `crates/orbitkv-metaserver/src/`: metaserver implementation
+- `crates/orbitkv-transfer/src/`: transfer engine implementation
 - `python/src/lib.rs`: PyO3 bindings
-- `python/orbitkv/connector/scheduler.py`: vLLM scheduler-side connector
-- `python/orbitkv/connector/worker.py`: vLLM worker-side connector
+- `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
+- `python/orbitkv/vllm/worker.py`: vLLM worker-side connector
+- `python/orbitkv/sglang/`: SGLang contracts; the executable backend is not implemented yet
 - `python/orbitkv/orbitkv.pyi`: Python type stubs
 
 ## Build, Check, Test

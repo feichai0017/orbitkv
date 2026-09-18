@@ -22,13 +22,13 @@ def register() -> None:
     with contextlib.suppress(ValueError):
         KVConnectorFactory.register_connector(
             "OrbitKVConnector",
-            "orbitkv.connector",
+            "orbitkv.vllm",
             "OrbitKVConnector",
         )
     with contextlib.suppress(ValueError):
         KVConnectorFactory.register_connector(
             "NoopKVConnector",
-            "orbitkv.connector",
+            "orbitkv.vllm",
             "NoopKVConnector",
         )
     with contextlib.suppress(ValueError):

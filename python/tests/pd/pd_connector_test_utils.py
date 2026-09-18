@@ -20,11 +20,11 @@ from vllm.distributed.kv_transfer.kv_connector.v1.metrics import (  # noqa: E402
     PromMetric,
 )
 
+import orbitkv.orbitkv as native  # noqa: E402
 import orbitkv.pd_connector.decode_worker as decode_worker_mod  # noqa: E402
 import orbitkv.pd_connector.prefill as prefill_mod  # noqa: E402
 import orbitkv.pd_connector.prefill_worker as prefill_worker_mod  # noqa: E402
 import orbitkv.pd_connector.worker as worker_mod  # noqa: E402
-import orbitkv.orbitkv as native  # noqa: E402
 from orbitkv.pd_connector import (  # noqa: E402
     PdConnector,
     PdDecodeConnector,

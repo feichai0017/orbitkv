@@ -27,14 +27,14 @@ from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.connector.common import (  # noqa: E402
+from orbitkv.vllm.common import (  # noqa: E402
     ConnectorContext,
     OrbitKVWorkerMetadata,
     RecurrentLoadHold,
     SaveIntent,
 )
-from orbitkv.connector.scheduler import SchedulerConnector  # noqa: E402
-from orbitkv.connector.tp_shards import ShardedQueryReady  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
+from orbitkv.vllm.tp_shards import ShardedQueryReady  # noqa: E402
 
 VBS = 16
 

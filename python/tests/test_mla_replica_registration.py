@@ -37,10 +37,10 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from orbitkv.connector.common import ConnectorContext, detect_mla  # noqa: E402
-from orbitkv.connector.state_manager import ServiceStateManager  # noqa: E402
-from orbitkv.connector.worker import WorkerConnector  # noqa: E402
 from orbitkv.orbitkv import EngineRpcClient, PyLoadState, QueryReady  # noqa: E402
+from orbitkv.vllm.common import ConnectorContext, detect_mla  # noqa: E402
+from orbitkv.vllm.state_manager import ServiceStateManager  # noqa: E402
+from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 from .conftest import OrbitKVServerProcess, find_available_port  # noqa: E402
 

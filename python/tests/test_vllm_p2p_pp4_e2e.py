@@ -291,7 +291,7 @@ class VllmReplica(ManagedProcess):
     ) -> None:
         kv_config = {
             "kv_connector": "OrbitKVConnector",
-            "kv_connector_module_path": "orbitkv.connector",
+            "kv_connector_module_path": "orbitkv.vllm",
             "kv_role": "kv_both",
             "kv_connector_extra_config": {
                 "orbitkv.host": f"http://{orbitkv_server.grpc_host}",

@@ -116,7 +116,7 @@ def test_vllm_tp_replica_uses_every_orbitkv_shard(
         kv_config = {
             "kv_connector": "OrbitKVConnector",
             "kv_role": "kv_both",
-            "kv_connector_module_path": "orbitkv.connector",
+            "kv_connector_module_path": "orbitkv.vllm",
             "kv_connector_extra_config": {
                 "orbitkv.tp_shard_endpoints": endpoints,
                 "orbitkv.transfer_backend": orbitkv_transfer_backend,

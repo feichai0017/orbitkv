@@ -8,7 +8,7 @@ from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.connector.worker import _infer_kv_cache_registration  # noqa: E402
+from orbitkv.vllm.worker import _infer_kv_cache_registration  # noqa: E402
 
 
 class FakeTensor:

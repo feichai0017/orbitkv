@@ -2,8 +2,8 @@
 
 ## Primary Files
 
-- `python/orbitkv/connector/scheduler.py`
-- `python/orbitkv/connector/worker.py`
+- `python/orbitkv/vllm/scheduler.py`
+- `python/orbitkv/vllm/worker.py`
 - `.project-plans/scheduler.py`
 
 ## End-to-End Async Load Flow (KV Connector)

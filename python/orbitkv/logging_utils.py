@@ -8,7 +8,7 @@ import logging
 
 def get_connector_logger() -> logging.Logger:
     """Get a logger for the connector module."""
-    connector_logger = logging.getLogger("orbitkv.connector")
+    connector_logger = logging.getLogger("orbitkv.vllm")
     connector_logger.setLevel(logging.INFO)
     if not connector_logger.hasHandlers():
         handler = logging.StreamHandler()

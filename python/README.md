@@ -1,11 +1,14 @@
 # OrbitKV Python Package
 
-High-performance key-value storage engine with Python bindings, built with Rust and PyO3.
+Framework adapters and Python bindings for the OrbitKV state cache, built with
+Rust and PyO3. The vLLM adapter is validated today; the SGLang runtime backend
+is tracked as the next milestone.
 
 ## Features
 
-- **OrbitKVEngine**: Fast Rust-based key-value storage with Python bindings
+- **EngineRpcClient**: Thin Python client for the local OrbitKV sidecar
 - **OrbitKVConnector**: vLLM KV connector for distributed inference with KV cache transfer
+- **SGLang contracts**: Configuration and state-pool mapping without claiming a completed backend
 
 ## Installation
 
@@ -31,24 +34,13 @@ pip install orbitkv
 
 ## Usage
 
-### Basic KV Storage
+### Sidecar client
 
 ```python
-from orbitkv import OrbitKVEngine
+from orbitkv.client import EngineRpcClient
 
-# Create a new engine
-engine = OrbitKVEngine()
-
-# Store key-value pairs
-engine.put("name", "OrbitKV")
-engine.put("version", "0.1.0")
-
-# Retrieve values
-name = engine.get("name")  # Returns "OrbitKV"
-missing = engine.get("nonexistent")  # Returns None
-
-# Remove keys
-removed = engine.remove("name")  # Returns "OrbitKV"
+client = EngineRpcClient("http://127.0.0.1:50055")
+ok, message = client.health()
 ```
 
 ### vLLM KV Connector
@@ -61,7 +53,7 @@ from vllm.distributed.kv_transfer.kv_transfer_agent import KVTransferConfig
 kv_transfer_config = KVTransferConfig(
     kv_connector="OrbitKVConnector",
     kv_role="kv_both",
-    kv_connector_module_path="orbitkv.connector",
+    kv_connector_module_path="orbitkv.vllm",
 )
 
 # Create LLM with KV transfer enabled
@@ -97,7 +89,7 @@ vllm serve Qwen/Qwen3-0.6B \
         {
           "kv_connector": "OrbitKVConnector",
           "kv_role": "kv_both",
-          "kv_connector_module_path": "orbitkv.connector",
+          "kv_connector_module_path": "orbitkv.vllm",
           "kv_connector_extra_config": {
             "orbitkv.mode": "save_only"
           }
@@ -119,7 +111,7 @@ server endpoint in global TP-rank order:
 {
   "kv_connector": "OrbitKVConnector",
   "kv_role": "kv_both",
-  "kv_connector_module_path": "orbitkv.connector",
+  "kv_connector_module_path": "orbitkv.vllm",
   "kv_connector_extra_config": {
     "orbitkv.tp_shard_endpoints": [
       "http://host-a:50055",

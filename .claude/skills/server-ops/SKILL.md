@@ -52,11 +52,11 @@ uv run python examples/bench_kv_cache.py --model /path/to/model --num-prompts 10
 
 ## Key Files
 
-- `orbitkv-server/src/service.rs`: gRPC service implementation
-- `orbitkv-server/src/bin/orbitkv-router.rs`: P/D request router
-- `orbitkv-metaserver/src/lib.rs`: MetaServer entry point and CLI
-- `orbitkv-metaserver/src/service.rs`: MetaServer gRPC service
-- `orbitkv-metaserver/src/store.rs`: Multi-owner block hash store with TTL sweep (backed by DashMap)
+- `crates/orbitkv-server/src/service.rs`: gRPC service implementation
+- `crates/orbitkv-server/src/bin/orbitkv-router.rs`: P/D request router
+- `crates/orbitkv-metaserver/src/lib.rs`: MetaServer entry point and CLI
+- `crates/orbitkv-metaserver/src/service.rs`: MetaServer gRPC service
+- `crates/orbitkv-metaserver/src/store.rs`: Multi-owner block hash store with TTL sweep (backed by DashMap)
 
 ## Environment Variables
 

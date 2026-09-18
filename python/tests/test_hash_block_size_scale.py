@@ -23,8 +23,8 @@ from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.connector.common import ConnectorContext, SaveIntent, derive_namespace
-from orbitkv.connector.scheduler import SchedulerConnector, block_hashes_per_block
+from orbitkv.vllm.common import ConnectorContext, SaveIntent, derive_namespace
+from orbitkv.vllm.scheduler import SchedulerConnector, block_hashes_per_block
 
 VBS = 1536
 HASH_BLOCK = 128

@@ -14,12 +14,12 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorWorkerMetadata,
 )
 
-from orbitkv.connector.connector_metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.orbitkv import EngineRpcClient
+from orbitkv.vllm.connector_metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
 
 if TYPE_CHECKING:
-    from orbitkv.connector.state_manager import ServiceStateManager
+    from orbitkv.vllm.state_manager import ServiceStateManager
 
 logger = get_connector_logger()
 
@@ -364,9 +364,7 @@ class CacheGroupLayout:
                 )
         else:
             if any(not isinstance(spec, (FullAttentionSpec, MambaSpec)) for spec in specs):
-                raise RuntimeError(
-                    "OrbitKV HMA supports only FullAttention and Mamba cache groups"
-                )
+                raise RuntimeError("OrbitKV HMA supports only FullAttention and Mamba cache groups")
 
             has_full_attention = any(isinstance(spec, FullAttentionSpec) for spec in specs)
             has_mamba = any(isinstance(spec, MambaSpec) for spec in specs)
@@ -375,9 +373,7 @@ class CacheGroupLayout:
                     "OrbitKV requires a dense FullAttention cache group for block hashes"
                 )
             if not has_mamba:
-                raise RuntimeError(
-                    "OrbitKV HMA requires both FullAttention and Mamba cache groups"
-                )
+                raise RuntimeError("OrbitKV HMA requires both FullAttention and Mamba cache groups")
             if any(
                 isinstance(spec, MambaSpec) and spec.mamba_cache_mode != "align" for spec in specs
             ):

@@ -13,7 +13,7 @@ from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.connector.common import derive_namespace  # noqa: E402
+from orbitkv.vllm.common import derive_namespace  # noqa: E402
 
 
 def _make_vllm_config(

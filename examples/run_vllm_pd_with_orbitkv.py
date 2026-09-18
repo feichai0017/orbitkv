@@ -117,7 +117,7 @@ def build_vllm_cmd(
     kv_transfer_config = {
         "kv_connector": "OrbitKVConnector",
         "kv_role": "kv_both",
-        "kv_connector_module_path": "orbitkv.connector",
+        "kv_connector_module_path": "orbitkv.vllm",
     }
 
     cmd = [

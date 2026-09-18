@@ -10,7 +10,7 @@ interface Props {
 
 const {
   title = "OrbitKV — Compile the lifetime of state",
-  description = "A semantic-aware KV cache data plane for SGLang.",
+  description = "A framework-neutral state cache and physical planner for vLLM and SGLang.",
   active = "",
 } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
@@ -68,7 +68,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     </main>
     <footer class="site-footer container">
       <p>
-        ORBITKV <span>Rust. CUDA. SGLang.</span>
+        ORBITKV <span>Rust. CUDA. vLLM. SGLang.</span>
       </p>
       <div class="footer-links">
         <a href={sourceUrl("docs/roadmap.md")}>

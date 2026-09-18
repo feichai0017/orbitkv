@@ -47,7 +47,7 @@ vllm serve GLM-5.2-FP8 \
         {
           "kv_connector": "OrbitKVConnector",
           "kv_role": "kv_both",
-          "kv_connector_module_path": "orbitkv.connector",
+          "kv_connector_module_path": "orbitkv.vllm",
           "kv_connector_extra_config": {
             "orbitkv.host": "http://<p_node_ip>",
             "orbitkv.port": 50055,
@@ -91,7 +91,7 @@ vllm serve GLM-5.2-FP8 \
         {
           "kv_connector": "OrbitKVConnector",
           "kv_role": "kv_both",
-          "kv_connector_module_path": "orbitkv.connector",
+          "kv_connector_module_path": "orbitkv.vllm",
           "kv_connector_extra_config": {
             "orbitkv.host": "http://<d_node_ip>",
             "orbitkv.port": 50055,

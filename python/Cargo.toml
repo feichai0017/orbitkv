@@ -31,9 +31,9 @@ rdma = ["dep:orbitkv-transfer", "dep:orbitkv-pd-wire", "orbitkv-core/rdma", "orb
 pyo3 = { workspace = true, features = ["extension-module"] }
 orbitkv-common.workspace = true
 orbitkv-core = { workspace = true, default-features = false }
-orbitkv-proto = { path = "../orbitkv-proto" }
-orbitkv-server = { path = "../orbitkv-server", default-features = false }
-orbitkv-metaserver = { path = "../orbitkv-metaserver", default-features = false }
+orbitkv-proto = { path = "../crates/orbitkv-proto" }
+orbitkv-server = { path = "../crates/orbitkv-server", default-features = false }
+orbitkv-metaserver = { path = "../crates/orbitkv-metaserver", default-features = false }
 orbitkv-pd-wire = { workspace = true, optional = true }
 orbitkv-transfer = { workspace = true, optional = true }
 tokio.workspace = true

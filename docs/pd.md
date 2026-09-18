@@ -65,7 +65,7 @@ The current Router uses a synchronous flow: it waits for P's HTTP response befor
 
 ### Router Implementation
 
-The Rust router lives at `orbitkv-server/src/bin/orbitkv-router.rs`. It is a standalone binary (not part of the default build) that can be run with:
+The Rust router lives at `crates/orbitkv-server/src/bin/orbitkv-router.rs`. It is a standalone binary (not part of the default build) that can be run with:
 
 ```bash
 cargo run --release --bin orbitkv-router -- \

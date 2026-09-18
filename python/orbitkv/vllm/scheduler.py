@@ -8,7 +8,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from orbitkv.connector.common import (
+from orbitkv.orbitkv import EngineRpcClient
+from orbitkv.vllm.common import (
     CacheGroupLayout,
     ConnectorContext,
     LoadIntent,
@@ -20,9 +21,8 @@ from orbitkv.connector.common import (
     logger,
     reconcile_hybrid_hit,
 )
-from orbitkv.connector.connector_metrics import PrefetchTracker
-from orbitkv.connector.tp_shards import ShardedQueryReady, TpShardQueryClient
-from orbitkv.orbitkv import EngineRpcClient
+from orbitkv.vllm.connector_metrics import PrefetchTracker
+from orbitkv.vllm.tp_shards import ShardedQueryReady, TpShardQueryClient
 
 if TYPE_CHECKING:
     from vllm.v1.core.kv_cache_manager import KVCacheBlocks

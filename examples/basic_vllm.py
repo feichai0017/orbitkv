@@ -86,7 +86,7 @@ def main():
     kv_transfer_config = KVTransferConfig(
         kv_connector="OrbitKVConnector",
         kv_role="kv_both",
-        kv_connector_module_path="orbitkv.connector",
+        kv_connector_module_path="orbitkv.vllm",
     )
 
     # Initialize vLLM with GPT-2

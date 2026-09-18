@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 
-from orbitkv.connector.common import (
+from orbitkv.ipc_wrapper import CudaIPCWrapper
+from orbitkv.orbitkv import PyLoadState
+from orbitkv.vllm.common import (
     CacheGroupLayout,
     ConnectorContext,
     OrbitKVConnectorMetadata,
@@ -22,8 +24,6 @@ from orbitkv.connector.common import (
     logger,
     parse_env_int,
 )
-from orbitkv.ipc_wrapper import CudaIPCWrapper
-from orbitkv.orbitkv import PyLoadState
 
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionMetadata

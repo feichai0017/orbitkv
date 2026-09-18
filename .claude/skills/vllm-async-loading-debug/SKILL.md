@@ -18,12 +18,12 @@ Trace the async KV loading path between vLLM scheduler and worker connectors, in
 
 ### 2) Follow scheduler-side decisions
 
-- `python/orbitkv/connector/scheduler.py`: prefetch query + `LoadIntent` creation.
+- `python/orbitkv/vllm/scheduler.py`: prefetch query + `LoadIntent` creation.
 - `.project-plans/scheduler.py` (private): `load_kv_async` gating and `WAITING_FOR_REMOTE_KVS` transitions.
 
 ### 3) Follow worker-side lifecycle
 
-- `python/orbitkv/connector/worker.py`: `start_load_kv()` calls `engine_client.load()` and tracks `PyLoadState`.
+- `python/orbitkv/vllm/worker.py`: `start_load_kv()` calls `engine_client.load()` and tracks `PyLoadState`.
 - `get_finished()` polls `is_ready()` and emits `finished_recving`.
 
 ### 4) Check preemption and retries

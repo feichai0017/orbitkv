@@ -75,7 +75,7 @@ def main():
     kv_transfer_config = {
         "kv_connector": "OrbitKVConnector",
         "kv_role": "kv_both",  # Both scheduler and worker roles
-        "kv_connector_module_path": "orbitkv.connector",
+        "kv_connector_module_path": "orbitkv.vllm",
     }
 
     # Build vllm serve command

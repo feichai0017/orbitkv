@@ -1,12 +1,13 @@
 [workspace]
 members = [
-  "orbitkv-common",
-  "orbitkv-core",
-  "orbitkv-proto",
-  "orbitkv-server",
-  "orbitkv-metaserver",
-  "orbitkv-pd-wire",
-  "orbitkv-transfer",
+  "crates/orbitkv-contract",
+  "crates/orbitkv-common",
+  "crates/orbitkv-core",
+  "crates/orbitkv-proto",
+  "crates/orbitkv-server",
+  "crates/orbitkv-metaserver",
+  "crates/orbitkv-pd-wire",
+  "crates/orbitkv-transfer",
   "python",
 ]
 resolver = "2"
@@ -23,10 +24,11 @@ codegen-units = 1
 
 [workspace.dependencies]
 # Workspace members
-orbitkv-common = { path = "orbitkv-common" }
-orbitkv-core = { path = "orbitkv-core", default-features = false }
-orbitkv-pd-wire = { path = "orbitkv-pd-wire" }
-orbitkv-transfer = { path = "orbitkv-transfer", default-features = false }
+orbitkv-contract = { path = "crates/orbitkv-contract" }
+orbitkv-common = { path = "crates/orbitkv-common" }
+orbitkv-core = { path = "crates/orbitkv-core", default-features = false }
+orbitkv-pd-wire = { path = "crates/orbitkv-pd-wire" }
+orbitkv-transfer = { path = "crates/orbitkv-transfer", default-features = false }
 sideway = "0.4.3"
 rdma-mummy-sys = "0.2.4"
 

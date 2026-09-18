@@ -10,12 +10,12 @@ from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.connector.common import (  # noqa: E402
+from orbitkv.vllm.common import (  # noqa: E402
     ConnectorContext,
     OrbitKVConnectorMetadata,
     SaveIntent,
 )
-from orbitkv.connector.worker import WorkerConnector  # noqa: E402
+from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 
 def make_worker() -> WorkerConnector:
@@ -30,7 +30,7 @@ def make_worker() -> WorkerConnector:
         engine_client=MagicMock(),
         state_manager=MagicMock(),
     )
-    with patch("orbitkv.connector.worker.threading.Thread.start"):
+    with patch("orbitkv.vllm.worker.threading.Thread.start"):
         return WorkerConnector(
             context,
             vllm_config=SimpleNamespace(additional_config={}),

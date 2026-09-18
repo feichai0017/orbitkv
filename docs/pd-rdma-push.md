@@ -1,7 +1,7 @@
 # OrbitKV PD Connector：RDMA Push + Layer-wise
 
 > 与现有 `pd.md`（CPU 中转 + 异步回调）完全独立的一条新链路。
-> 单独成文、单独连接器实现、单独配置入口，**不要**回写到现有 `python/orbitkv/connector/`。
+> 单独成文、单独连接器实现、单独配置入口，**不要**回写到现有 `python/orbitkv/vllm/`。
 
 ## 1. 背景与动机
 
@@ -99,7 +99,7 @@ v2 **不是 v1 的替代品**。v1 的接口模型是"caller 给一批 desc，�
 ### 3.3 v2 模块布局
 
 ```
-orbitkv-transfer/src/
+crates/orbitkv-transfer/src/
 ├── lib.rs / engine.rs / rc_backend/    # v1 API + backend
 ├── rdma_topo.rs                        # 两版共用 GPU/NIC NUMA 拓扑
 ├── cuda_lib/ / cuda_sys.rs             # cudarc wrappers
@@ -396,7 +396,7 @@ Router 第一版改造计划：
 
 ```
 orbitkv/
-├── orbitkv-transfer/                 # 现有 crate
+├── crates/orbitkv-transfer/          # 现有 crate
 │   └── src/v2/                        # RDMA substrate
 ├── python/
 │   ├── src/lib.rs                     # PyO3 PdRdmaEngine binding

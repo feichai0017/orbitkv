@@ -17,14 +17,14 @@ from vllm.v1.kv_cache_interface import (  # noqa: E402
     MambaSpec,
 )
 
-from orbitkv.connector.common import (  # noqa: E402
+from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
+from orbitkv.vllm.common import (  # noqa: E402
     ConnectorContext,
     OrbitKVConnectorMetadata,
     OrbitKVConnectorMode,
     SaveIntent,
 )
-from orbitkv.connector.scheduler import SchedulerConnector  # noqa: E402
-from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -265,7 +265,7 @@ def test_effective_tp_cases(case: str, kwargs: dict, expected_rank: int, expecte
     ],
 )
 def test_use_page_first_detection(case: str, kwargs: dict, additional_config: dict, expected: bool):
-    from orbitkv.connector.worker import WorkerConnector
+    from orbitkv.vllm.worker import WorkerConnector
 
     ctx = _make_ctx(**kwargs)
     worker = WorkerConnector(
@@ -279,7 +279,7 @@ def test_use_page_first_detection(case: str, kwargs: dict, additional_config: di
 
 
 def test_hma_disables_page_first_registration():
-    from orbitkv.connector.worker import WorkerConnector
+    from orbitkv.vllm.worker import WorkerConnector
 
     attention = FullAttentionSpec()
     attention.block_size = 16
@@ -307,7 +307,7 @@ def test_page_first_block_shard_is_a_partition():
     """Page-first distributes saves by block, not by layer. Across ranks the
     block stripes must be disjoint and cover every block — otherwise a block's
     page is dropped (never sealed) or saved twice."""
-    from orbitkv.connector.worker import WorkerConnector
+    from orbitkv.vllm.worker import WorkerConnector
 
     block_ids = tuple(range(13))
     block_hashes = tuple(bytes([i]) for i in block_ids)
@@ -333,7 +333,7 @@ def test_page_first_block_shard_is_a_partition():
 def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
     """A page needs every layer, so a page-first rank saves ALL layers but only
     its block stripe (block_id % tp_size == tp_rank)."""
-    from orbitkv.connector.worker import SaveTask, WorkerConnector
+    from orbitkv.vllm.worker import SaveTask, WorkerConnector
 
     ctx = _make_ctx(is_mla=True, tp_rank=1, tp_size=2, device_id=1)
     worker = WorkerConnector(ctx, vllm_config=SimpleNamespace(additional_config={}))
@@ -368,7 +368,7 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
 
 
 def test_recurrent_save_omits_null_group_target():
-    from orbitkv.connector.worker import SaveTask, WorkerConnector
+    from orbitkv.vllm.worker import SaveTask, WorkerConnector
 
     ctx = _make_ctx()
     worker = WorkerConnector(ctx, vllm_config=SimpleNamespace(additional_config={}))
@@ -400,7 +400,7 @@ def test_recurrent_save_omits_null_group_target():
 def test_page_first_layer_split_saves_own_layers_for_all_blocks():
     """Layer-split: each rank is the sole writer of its shard (its own layers),
     so it saves ALL blocks for its registered layers — no block striping."""
-    from orbitkv.connector.worker import SaveTask, WorkerConnector
+    from orbitkv.vllm.worker import SaveTask, WorkerConnector
 
     ctx = _make_ctx(is_mla=True, tp_rank=1, tp_size=2, device_id=1)
     worker = WorkerConnector(

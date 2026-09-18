@@ -85,7 +85,7 @@ Same as single-node — OrbitKV server handles P2P transparently.
 
 ```bash
 vllm serve Qwen/Qwen3-0.6B \
-  --kv-transfer-config '{"kv_connector": "OrbitKVConnector", "kv_role": "kv_both", "kv_connector_module_path": "orbitkv.connector"}'
+  --kv-transfer-config '{"kv_connector": "OrbitKVConnector", "kv_role": "kv_both", "kv_connector_module_path": "orbitkv.vllm"}'
 ```
 
 ### 4. Verify

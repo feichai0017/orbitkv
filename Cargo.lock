@@ -1839,6 +1839,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbitkv-contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "orbitkv-core"
 version = "0.1.0"
 dependencies = [
@@ -1858,6 +1866,7 @@ dependencies = [
  "offset-allocator",
  "opentelemetry",
  "orbitkv-common",
+ "orbitkv-contract",
  "orbitkv-proto",
  "orbitkv-transfer",
  "parking_lot",

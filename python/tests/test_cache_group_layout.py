@@ -18,7 +18,7 @@ from vllm.v1.kv_cache_interface import (  # noqa: E402
     UniformTypeKVCacheSpecs,
 )
 
-from orbitkv.connector.common import CacheGroupLayout  # noqa: E402
+from orbitkv.vllm.common import CacheGroupLayout  # noqa: E402
 
 
 def _group(name, spec):

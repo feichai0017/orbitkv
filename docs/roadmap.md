@@ -1,41 +1,116 @@
-# Roadmap
+# OrbitKV roadmap
 
-## M0: renamed, reproducible baseline
+Every milestone ends with an executable gate. Future design is not reported as
+current capability. The detailed work queue lives in [TODO.md](../TODO.md).
 
-- import the complete PegaFlow 0.24.5 source snapshot;
-- rename crates, modules, packages, binaries, protocol namespaces, metrics,
-  configuration keys, scripts, tests, and documentation to OrbitKV;
-- retain upstream provenance and Apache-2.0 obligations;
-- restore the existing OrbitKV website and logo;
-- pass host-side Rust, Python, and website checks.
+## M0: framework-neutral foundation
+
+Deliver:
+
+- move Rust packages under `crates/` and keep the repository root a virtual
+  workspace;
+- introduce `orbitkv-contract`;
+- move the implementation to `orbitkv.vllm` with `orbitkv.connector` as a
+  compatibility alias;
+- establish `orbitkv.sglang` and `orbitkv.client` package boundaries;
+- preserve current vLLM behavior.
+
+Gate:
+
+- Cargo metadata, format, workspace check, and host-safe tests pass;
+- default Python unit tests pass;
+- the vLLM compatibility module and new canonical module export the same
+  connector classes;
+- SGLang contract helpers import without SGLang installed.
 
 ## M1: SGLang HiCache backend
 
-- implement the dynamic `HiCacheStorage` contract;
-- support batch prefix existence, get, and put for MHA/MLA and named auxiliary
-  pools;
-- isolate keys by model, parallel rank, layout, dtype, and pool;
-- make storage failure fail open for serving while exposing explicit metrics;
-- validate cold miss, warm hit, partial prefix, restart, and cancellation.
+Deliver:
 
-## M2: native transfer path
+- implement the dynamic `HiCacheStorage` backend;
+- register SGLang shared host regions with the sidecar over UDS;
+- support KV, MLA, Mamba/recurrent, SWA, and explicit opaque pools;
+- map SGLang hit policies into `RecoveryContract`;
+- expose cold miss, partial prefix, warm hit, cancellation, and restart metrics.
 
-- remove Python byte copies from the steady state;
-- register SGLang host pages with the Rust engine;
-- batch page descriptors and overlap layer-wise copy with attention;
-- reuse SSD and RDMA tiers through one completion contract.
+Gate:
 
-## M3: proof-carrying lifetime plans
+- numerical parity with SGLang's file backend;
+- no second host-page copy in the steady state;
+- SGLang worker restart preserves sidecar-resident cache;
+- multi-pool queries never report a boundary with missing required state.
 
-- describe `may_read(query, key)` for full, sliding, sink-local, and recurrent
-  state;
-- compile retirement and placement plans;
-- enforce the semantic-frontier plus execution-frontier reuse rule;
-- report Retention Amplification alongside TTFT, TPOT, throughput, and traffic.
+## M2: common StateBundle query and native local transport
 
-## M4: adaptive physical planning
+Deliver:
 
-- learn next-touch and transfer costs from SGLang traces;
-- choose retention, prefetch, compression, tier, and replica placement jointly;
-- treat ring layouts and migration thresholds as derived plans;
-- canary plan changes and roll back on correctness or SLO regressions.
+- move vLLM hybrid reconciliation from the adapter into common bundle logic;
+- replace per-load shared-memory status files with a shared completion queue;
+- use UDS file-descriptor passing for shared regions;
+- add framework-neutral query, lease, register-region, and transfer-plan RPCs;
+- preserve the legacy vLLM protocol until its adapter migrates.
+
+Gate:
+
+- vLLM and SGLang generate equivalent recovery contracts for a shared test
+  model;
+- adapter code contains no tier-selection or bundle-completeness policy;
+- load/save throughput is not regressed against the M0 baseline.
+
+## M3: KV-aware routing and replica catalog
+
+Deliver:
+
+- consume vLLM and SGLang KV placement events;
+- track replicas by worker and tier;
+- reproduce a Dynamo-style weighted-overlap worker selector as a baseline;
+- add queue, transfer, recompute, and eviction costs;
+- return target worker plus source/restore plan.
+
+Gate:
+
+- baseline selector agrees with Dynamo on captured traces;
+- joint planning beats load-only and overlap-only baselines on a held-out trace;
+- stale events and worker restarts cannot route to a dead replica.
+
+## M4: OrbitKV page authority
+
+Deliver:
+
+- generation-qualified page handles;
+- explicit semantic and execution frontiers;
+- CUDA/RDMA/SSD completions advance one execution-fence abstraction;
+- SGLang Radix nodes and vLLM adapter consume manager-authored handles.
+
+Gate:
+
+- generation reuse cannot race an outstanding operation under stress and fault
+  injection;
+- the frameworks no longer mint external page identities;
+- cache cleanup is safe across cancellation, preemption, and process death.
+
+## M5: semantic state compiler
+
+Deliver:
+
+- a `may_read(query, state)` lifetime IR;
+- full, sliding, sink-local, recurrent, and hybrid recovery plans;
+- Minimum Persistent State Realization;
+- compiled retention, checkpoint, placement, and replication policies.
+
+Gate:
+
+- report Retention Amplification alongside TTFT, TPOT, throughput, and network
+  traffic;
+- compiled plans reduce physical state without changing exact-model outputs;
+- ring/checkpoint/tier choices are derived from the state contract and measured
+  cost, not selected by model-name branches.
+
+## M6: backend and ecosystem expansion
+
+Deliver only after M1-M5 gates:
+
+- optional Mooncake storage/transport domain;
+- agentic multi-turn value model;
+- multi-DC replica planning;
+- signed plan/evidence bundles if deployment requires them.

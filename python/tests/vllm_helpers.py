@@ -176,7 +176,7 @@ class VLLMServer:
             kv_config: dict[str, object] = {
                 "kv_connector": connector_name,
                 "kv_role": "kv_both",
-                "kv_connector_module_path": "orbitkv.connector",
+                "kv_connector_module_path": "orbitkv.vllm",
             }
             # The server no longer selects a transfer backend; the connector
             # does. Force it here so --orbitkv-transfer-backend still exercises
@@ -221,9 +221,7 @@ class VLLMServer:
         """Stop the vLLM server and all child processes."""
         if self.process:
             server_label = self.server_label or (
-                "OrbitKV"
-                if self.use_orbitkv or self.kv_transfer_config is not None
-                else "Baseline"
+                "OrbitKV" if self.use_orbitkv or self.kv_transfer_config is not None else "Baseline"
             )
             print(f"\n[{server_label}] Stopping vLLM server...")
             try:

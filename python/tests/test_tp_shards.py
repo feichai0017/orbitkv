@@ -15,16 +15,16 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: E402
     KVConnectorRole,
 )
 
-from orbitkv.connector import OrbitKVConnector  # noqa: E402
-from orbitkv.connector.common import (  # noqa: E402
+from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
+from orbitkv.vllm import OrbitKVConnector  # noqa: E402
+from orbitkv.vllm.common import (  # noqa: E402
     ConnectorContext,
     LoadIntent,
     OrbitKVConnectorMetadata,
     TpShardTopology,
 )
-from orbitkv.connector.scheduler import SchedulerConnector  # noqa: E402
-from orbitkv.connector.worker import WorkerConnector  # noqa: E402
-from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
+from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 
 def _topology() -> TpShardTopology:
@@ -127,10 +127,10 @@ def test_context_exposes_node_local_server_topology_for_hma():
 
 def test_worker_connector_routes_global_tp_rank_to_its_local_server(monkeypatch):
     client = MagicMock()
-    monkeypatch.setattr("orbitkv.connector.get_tensor_model_parallel_rank", lambda: 5)
+    monkeypatch.setattr("orbitkv.vllm.get_tensor_model_parallel_rank", lambda: 5)
     client_factory = MagicMock(return_value=client)
-    monkeypatch.setattr("orbitkv.connector.EngineRpcClient", client_factory)
-    monkeypatch.setattr("orbitkv.connector.ServiceStateManager", MagicMock())
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", client_factory)
+    monkeypatch.setattr("orbitkv.vllm.ServiceStateManager", MagicMock())
 
     connector = OrbitKVConnector(_vllm_config(), KVConnectorRole.WORKER)
     try:
@@ -149,8 +149,8 @@ def test_scheduler_opens_a_local_topology_session_on_every_server(monkeypatch):
     first = MagicMock()
     second = MagicMock()
     client_factory = MagicMock(side_effect=[first, second])
-    monkeypatch.setattr("orbitkv.connector.EngineRpcClient", client_factory)
-    monkeypatch.setattr("orbitkv.connector.ServiceStateManager", MagicMock())
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", client_factory)
+    monkeypatch.setattr("orbitkv.vllm.ServiceStateManager", MagicMock())
 
     connector = OrbitKVConnector(_vllm_config(), KVConnectorRole.SCHEDULER)
     try:
@@ -177,7 +177,7 @@ def test_scheduler_opens_a_local_topology_session_on_every_server(monkeypatch):
     ],
 )
 def test_connector_rejects_non_tp_parallelism_across_server_shards(monkeypatch, parallel_overrides):
-    monkeypatch.setattr("orbitkv.connector.EngineRpcClient", MagicMock())
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock())
 
     with pytest.raises(ValueError, match="TP-only parallelism"):
         OrbitKVConnector(_vllm_config(**parallel_overrides), KVConnectorRole.SCHEDULER)

@@ -4,7 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OrbitKV is a high-performance KV cache transfer system for LLM inference, designed to work with vLLM. It provides RDMA-first, high-bandwidth transport optimized for GPU-to-CPU KV cache offloading and loading.
+OrbitKV is a framework-neutral state cache and physical planner for LLM
+inference. Its current PegaFlow-derived data plane is validated with vLLM.
+SGLang adapter contracts exist, but the executable HiCache backend remains an
+M1 deliverable. Do not describe roadmap functionality as implemented.
 
 ## Build Commands
 
@@ -48,14 +51,23 @@ cargo bench --bench uds_latency
 
 ## Architecture
 
-### Seven-Crate Design
+### Workspace Design
 
-1. **orbitkv-common** (Rust): Shared lightweight utilities
+All Rust packages live under `crates/`; the repository root is a virtual Cargo
+workspace and intentionally has no `src/`. The Python distribution remains at
+`python/` because it is both a maturin package and Python source tree.
+
+1. **orbitkv-contract** (Rust): Framework-neutral state contract
+   - State identity, byte-format compatibility, component kinds, page
+     generations, and recovery bundles
+   - Must not depend on vLLM, SGLang, CUDA, or transport implementations
+
+2. **orbitkv-common** (Rust): Shared lightweight utilities
    - `logging.rs`: Unified log initialization (logforth-based)
    - `numa.rs`: NUMA topology detection and CPU affinity utilities
    - Depended on by all other crates to avoid heavy transitive dependencies
 
-2. **orbitkv-core** (Rust): Core storage engine
+3. **orbitkv-core** (Rust): Core storage engine
    - `OrbitKVEngine`: Main engine managing GPU workers and KV cache storage
    - `storage/`: Modular block storage engine
      - `mod.rs`: `StorageEngine` — aggregates allocator, read cache, prefetch, write pipeline, SSD store, RDMA fetch
@@ -74,36 +86,41 @@ cargo bench --bench uds_latency
    - `internode/`: Cross-node communication
      - `metaserver_client.rs`: MetaServer registration, removal, query, and node heartbeat
 
-3. **orbitkv-proto** (Rust): Protobuf definitions
+4. **orbitkv-proto** (Rust): Protobuf definitions
    - gRPC service definitions built with prost/tonic
 
-4. **orbitkv-server** (Rust): gRPC server
+5. **orbitkv-server** (Rust): gRPC sidecar
    - `service.rs`: Tonic gRPC service implementation
    - `registry.rs`: Instance/worker registration
    - `http_server.rs`: HTTP health check and Prometheus metrics endpoint
    - `bin/orbitkv-router.rs`: P/D request router (coordinates P/D nodes; OrbitKV itself is a KV store)
 
-5. **orbitkv-metaserver** (Rust): Cross-node block hash registry
+6. **orbitkv-metaserver** (Rust): Cross-node block hash registry
    - `service.rs`: gRPC MetaServer service (insert/query block hashes)
    - `store.rs`: Multi-owner block hash store with TTL sweep (backed by DashMap)
    - Used for multi-node KV cache coordination — each orbitkv-server registers its block hashes here
 
-6. **orbitkv-transfer** (Rust): RDMA-based inter-node memory transfer engine
+7. **orbitkv-pd-wire** (Rust): Prefill/decode wire contracts
+
+8. **orbitkv-transfer** (Rust): RDMA-based inter-node memory transfer engine
    - `engine.rs`: `MooncakeTransferEngine` — Mooncake-compatible API for one-sided RDMA READ/WRITE
    - `sideway_backend.rs`: UD control plane + RC data plane with per-peer sessions
    - `rdma_topo.rs`: NUMA-aware topology detection (GPUs, RDMA NICs, CPUs)
    - CLI tools: `orbitkv_topo_cli` (topology display), `orbitkv_cpu_bench` (RDMA benchmark)
 
-7. **python/** (Rust/PyO3 + Python): Python package (`orbitkv-llm` on PyPI)
+9. **python/** (Rust/PyO3 + Python): Python package (`orbitkv-llm` on PyPI)
    - `src/lib.rs`: PyO3 bindings exposing `OrbitKVEngine` and gRPC client
-   - `orbitkv/connector/`: vLLM v1 KV connector (scheduler + worker split)
+   - `orbitkv/vllm/`: canonical vLLM v1 connector
+   - `orbitkv/connector/`: backward-compatible alias for `orbitkv.vllm`
+   - `orbitkv/sglang/`: SGLang config and pool contracts; no runtime backend yet
+   - `orbitkv/client/`: framework-neutral sidecar client exports
    - `orbitkv/ipc_wrapper.py`: CUDA IPC handle wrapper
    - CLI binaries: `orbitkv-server`, `orbitkv-metaserver` (installed via pip)
 
 ### Data Flow
 
 ```
-vLLM Worker <--gRPC--> OrbitKVEngine Server <--CUDA IPC--> GPU Memory
+vLLM/SGLang adapter <--control--> OrbitKV sidecar <--registered pages--> framework memory
                                     |
                              Pinned CPU Memory (KV cache storage)
                                    / \
@@ -118,6 +135,14 @@ vLLM Worker <--gRPC--> OrbitKVEngine Server <--CUDA IPC--> GPU Memory
 - **Worker**: A tensor-parallel rank within an instance
 - **Block**: Unit of KV cache storage, identified by content hash
 - **Split Storage**: K and V segments stored separately for efficient batching
+- **StateBundle**: Complete component set required to restore a logical boundary
+- **Page Generation**: Identity guard that prevents stale references after page reuse
+
+OrbitKV owns external replicas and transfer/storage policy. Frameworks retain
+execution ownership during M0/M1. KV payload bytes must not be serialized into
+gRPC; local data moves through registered CUDA IPC or shared-host pages, and
+remote data moves through RDMA. See `docs/architecture.md` and
+`docs/roadmap.md` for milestone-specific ownership boundaries.
 
 ## Code Conventions
 
@@ -167,22 +192,25 @@ vLLM Worker <--gRPC--> OrbitKVEngine Server <--CUDA IPC--> GPU Memory
 
 ## Key Files
 
-- `orbitkv-common/src/logging.rs`: Unified log initialization
-- `orbitkv-common/src/numa.rs`: NUMA topology detection and CPU affinity
-- `orbitkv-core/src/lib.rs`: Main OrbitKVEngine implementation
-- `orbitkv-core/src/storage/mod.rs`: StorageEngine (allocator, read cache, prefetch, write pipeline, RDMA fetch)
-- `orbitkv-core/src/storage/read_cache.rs`: Pin/unpin/consume operations
-- `orbitkv-core/src/storage/prefetch.rs`: SSD/RDMA prefetch state machine
-- `orbitkv-core/src/storage/transfer_lock.rs`: Transfer lock manager for RDMA transfers
-- `orbitkv-core/src/storage/write_path.rs`: Async insert worker thread
-- `orbitkv-core/src/backing/ssd.rs`: SSD backing store coordinator
-- `orbitkv-core/src/internode/metaserver_client.rs`: MetaServer registration, query, and node heartbeat
-- `orbitkv-server/src/service.rs`: gRPC service implementation
-- `orbitkv-metaserver/src/lib.rs`: MetaServer entry point and CLI
-- `orbitkv-metaserver/src/service.rs`: MetaServer gRPC service
-- `orbitkv-metaserver/src/store.rs`: Block hash store (LRU + TTL)
-- `orbitkv-transfer/src/engine.rs`: RDMA transfer engine (MooncakeTransferEngine)
+- `crates/orbitkv-contract/src/lib.rs`: Framework-neutral state and recovery contracts
+- `crates/orbitkv-common/src/logging.rs`: Unified log initialization
+- `crates/orbitkv-common/src/numa.rs`: NUMA topology detection and CPU affinity
+- `crates/orbitkv-core/src/lib.rs`: Main OrbitKVEngine implementation
+- `crates/orbitkv-core/src/storage/mod.rs`: StorageEngine (allocator, read cache, prefetch, write pipeline, RDMA fetch)
+- `crates/orbitkv-core/src/storage/read_cache.rs`: Pin/unpin/consume operations
+- `crates/orbitkv-core/src/storage/prefetch.rs`: SSD/RDMA prefetch state machine
+- `crates/orbitkv-core/src/storage/transfer_lock.rs`: Transfer lock manager for RDMA transfers
+- `crates/orbitkv-core/src/storage/write_path.rs`: Async insert worker thread
+- `crates/orbitkv-core/src/backing/ssd.rs`: SSD backing store coordinator
+- `crates/orbitkv-core/src/internode/metaserver_client.rs`: MetaServer registration, query, and node heartbeat
+- `crates/orbitkv-server/src/service.rs`: gRPC service implementation
+- `crates/orbitkv-metaserver/src/lib.rs`: MetaServer entry point and CLI
+- `crates/orbitkv-metaserver/src/service.rs`: MetaServer gRPC service
+- `crates/orbitkv-metaserver/src/store.rs`: Block hash store (LRU + TTL)
+- `crates/orbitkv-transfer/src/engine.rs`: RDMA transfer engine (MooncakeTransferEngine)
 - `python/src/lib.rs`: PyO3 bindings (Rust side)
 - `python/orbitkv/orbitkv.pyi`: Type stubs for PyO3 bindings
-- `python/orbitkv/connector/scheduler.py`: vLLM scheduler-side connector
-- `python/orbitkv/connector/worker.py`: vLLM worker-side connector
+- `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
+- `python/orbitkv/vllm/worker.py`: vLLM worker-side connector
+- `python/orbitkv/sglang/`: SGLang adapter contracts; runtime backend pending M1
+- `TODO.md`: Repository-wide milestone checklist

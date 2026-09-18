@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "orbitkv-llm"
 version = "0.1.0"
-description = "High-performance key-value storage engine with Python bindings"
+description = "Framework adapters and Python bindings for the OrbitKV state cache"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -15,7 +15,7 @@ authors = [
 dependencies = [
     "httpx>=0.24.0",
 ]
-keywords = ["storage", "kv-store", "rust", "vllm", "inference"]
+keywords = ["storage", "kv-cache", "rust", "vllm", "sglang", "inference"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

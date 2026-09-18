@@ -20,9 +20,9 @@ from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.connector.common import ConnectorContext
-from orbitkv.connector.scheduler import SchedulerConnector
 from orbitkv.orbitkv import QueryReady
+from orbitkv.vllm.common import ConnectorContext
+from orbitkv.vllm.scheduler import SchedulerConnector
 
 VBS = 16  # virtual block size for these tests
 

@@ -13,23 +13,30 @@ export const navigation = [
 
 export const layers = [
   {
+    name: "orbitkv-contract",
+    role: "Name the state.",
+    detail:
+      "Framework-neutral identity, byte compatibility, page generations, and recovery bundles.",
+    path: "crates/orbitkv-contract/src/lib.rs",
+  },
+  {
     name: "orbitkv-core",
     role: "Own the blocks.",
     detail:
       "Content-addressed KV blocks, leases, admission, eviction, and tier coordination.",
-    path: "orbitkv-core/src/lib.rs",
+    path: "crates/orbitkv-core/src/lib.rs",
   },
   {
     name: "orbitkv-transfer",
     role: "Move the bytes.",
     detail: "Topology-aware CUDA, pinned-memory, and RDMA transfer paths.",
-    path: "orbitkv-transfer/README.md",
+    path: "crates/orbitkv-transfer/README.md",
   },
   {
     name: "orbitkv-server",
     role: "Share the cache.",
     detail: "Versioned gRPC, process lifecycle, P/D routing, health, and metrics.",
-    path: "orbitkv-server/README.md",
+    path: "crates/orbitkv-server/README.md",
   },
   {
     name: "orbitkv-sglang",
@@ -61,5 +68,5 @@ export const docs = [
   { name: "Cross-node sharing", path: "docs/p2p.md" },
   { name: "P/D disaggregation", path: "docs/pd.md" },
   { name: "Metrics", path: "docs/metrics.md" },
-  { name: "Upstream provenance", path: "UPSTREAM.md" },
+  { name: "Implementation TODO", path: "TODO.md" },
 ];
