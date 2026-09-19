@@ -1,4 +1,4 @@
-"""P-side (prefill) worker logic — pushes KV via RDMA."""
+"""P-side worker logic for pushing KV through Mooncake."""
 
 from __future__ import annotations
 
@@ -42,9 +42,9 @@ from orbitkv.pd_connector.prefill_async import (  # noqa: F401
     _elapsed_ms,
     _gbps,
     _pct,
-    _rdma_link_gbps,
-    _rdma_write_stats,
     _run_layer_push,
+    _transfer_link_gbps,
+    _transfer_write_stats,
 )
 from orbitkv.pd_connector.prefill_tasks import (  # noqa: F401
     _LayerPushTask,
@@ -62,7 +62,7 @@ logger = get_connector_logger()
 
 
 class PrefillHandler:
-    """Handles P-side (prefill) requests: KV push via RDMA."""
+    """Handles P-side requests: KV push via Mooncake."""
 
     def __init__(self, worker: PdWorkerBase) -> None:
         self._w = worker
@@ -141,7 +141,7 @@ class PrefillHandler:
             for physical_req_id, target in zip(physical_req_ids, plan.targets, strict=True):
                 self._physical_to_logical[physical_req_id] = req_id
                 local_layout = next(iter(self._w.layouts.values()), None)
-                self._w.rdma.open_request(
+                self._w.transfer.open_request(
                     physical_req_id,
                     _target_handshake_for_local_layout(
                         target,
@@ -197,7 +197,7 @@ class PrefillHandler:
         for physical_req_id in physical_req_ids:
             try:
                 self._drain_physical_request(physical_req_id)
-                self._w.rdma.abort_request(physical_req_id)
+                self._w.transfer.abort_request(physical_req_id)
             except Exception:
                 logger.exception(
                     "[PdConnector] P failed to notify decode abort ack req=%s",
@@ -208,7 +208,7 @@ class PrefillHandler:
         for physical_req_id in physical_req_ids:
             try:
                 self._drain_physical_request(physical_req_id)
-                self._w.rdma.fail_request(physical_req_id)
+                self._w.transfer.fail_request(physical_req_id)
             except Exception:
                 logger.exception(
                     "[PdConnector] P failed to notify decode abort req=%s",
@@ -217,7 +217,7 @@ class PrefillHandler:
 
     def _drain_physical_request(self, physical_req_id: str) -> None:
         self._push_sender.wait_req(physical_req_id)
-        self._w.rdma.wait_for_pushes(physical_req_id)
+        self._w.transfer.wait_for_pushes(physical_req_id)
 
     def save_kv_layer(
         self,
@@ -255,7 +255,7 @@ class PrefillHandler:
     def get_finished_sending(self, finished_req_ids: set[str]) -> set[str]:
         """Return req_ids that are done sending and also finished by the producer."""
         self._producer_finished_req_ids.update(finished_req_ids)
-        finished_sending = self._w.rdma.pop_finished_sending()
+        finished_sending = self._w.transfer.pop_finished_sending()
         self._record_finished_physical_pushes(finished_sending)
         releasable_sending = self._completed_pushes & self._producer_finished_req_ids
         for req_id in releasable_sending:
@@ -271,7 +271,7 @@ class PrefillHandler:
             for physical_req_id in dict.fromkeys(physical_req_ids):
                 self._physical_to_logical.pop(physical_req_id, None)
                 self._completed_physical_pushes.discard(physical_req_id)
-                self._w.rdma.close_request(physical_req_id)
+                self._w.transfer.close_request(physical_req_id)
             self._push_traces.pop(req_id, None)
             self._tracker.remove(req_id)
             self._clear_remote_block_offsets(req_id, physical_req_ids)
@@ -328,18 +328,18 @@ class PrefillHandler:
             )
             if trace.first_save_ts_ns is None:
                 trace.first_save_ts_ns = time.time_ns()
-            assert self._w.rdma is not None
+            assert self._w.transfer is not None
             for target_push in prepared.target_pushes:
                 self._push_sender.submit(
                     _LayerPushTask(
-                        rdma=self._w.rdma,
+                        transfer=self._w.transfer,
                         req_id=target_push.physical_req_id,
                         layer_idx=layer_idx,
                         block_slices=target_push.block_slices,
                         event=event,
                     )
                 )
-            trace.rdma_bytes += prepared.rdma_bytes
+            trace.transfer_bytes += prepared.transfer_bytes
             all_layer_chunks_seen = self._push_all_layers_seen.get(req_id, False)
             chunk_complete = all_layer_chunks_seen
             if not all_layer_chunks_seen:
@@ -361,11 +361,14 @@ class PrefillHandler:
                     current_all_chunks_seen=prepared.all_chunks_seen,
                 )
                 self._clear_push_chunk_maps(req_id)
-                chunk_complete = self._tracker.has_pushed_all_blocks(
-                    req_id,
-                    self._block_ids_by_layer(req.local_block_ids),
-                    num_layers=len(self._w.layer_names),
-                ) or all_layer_chunks_seen
+                chunk_complete = (
+                    self._tracker.has_pushed_all_blocks(
+                        req_id,
+                        self._block_ids_by_layer(req.local_block_ids),
+                        num_layers=len(self._w.layer_names),
+                    )
+                    or all_layer_chunks_seen
+                )
             if not (chunk_complete and all_layer_chunks_seen):
                 logger.info(
                     "[PdConnector] P chunk req=%s target_req=%s chunk=%d blocks=%d forward_ms=%.3f",
@@ -380,14 +383,14 @@ class PrefillHandler:
             self._clear_push_layer_plans(req_id)
             self._tracker.mark_done(req_id)
             finalize_ts_ns = time.time_ns()
-            link_gbps = _rdma_link_gbps(self._w.rdma)
+            link_gbps = _transfer_link_gbps(self._w.transfer)
             logger.info(
-                "[PdConnector] P all chunks submitted req=%s target_req=%s chunks=%d blocks=%d rdma_bytes=%d schedule_to_save_ms=%.3f forward_ms=%.3f link_gbps=%.2f ts_ns=%d",
+                "[PdConnector] P all chunks submitted req=%s target_req=%s chunks=%d blocks=%d transfer_bytes=%d schedule_to_save_ms=%.3f forward_ms=%.3f link_gbps=%.2f ts_ns=%d",
                 req_id,
                 req.target_request_id,
                 trace.chunk_count,
                 len(prepared.req_blocks),
-                trace.rdma_bytes,
+                trace.transfer_bytes,
                 (finalize_ts_ns - trace.queued_ts_ns) / 1_000_000,
                 _elapsed_ms(trace.first_save_ts_ns, trace.last_save_ts_ns),
                 link_gbps,
@@ -395,7 +398,7 @@ class PrefillHandler:
             )
             self._push_finalizer.submit(
                 _PushFinalizeTask(
-                    rdma=self._w.rdma,
+                    transfer=self._w.transfer,
                     req_ids=self._logical_to_physical[req_id],
                     target_request_id=req.target_request_id,
                     num_blocks=len(prepared.req_blocks),
@@ -403,7 +406,7 @@ class PrefillHandler:
                     first_save_ts_ns=trace.first_save_ts_ns,
                     finalize_queued_ts_ns=finalize_ts_ns,
                     schedule_queued_ts_ns=trace.queued_ts_ns,
-                    rdma_bytes=trace.rdma_bytes,
+                    transfer_bytes=trace.transfer_bytes,
                 )
             )
 
@@ -430,7 +433,7 @@ class PrefillHandler:
             )
             target_pushes: list[_PreparedTargetPush] = []
             pushed_req_blocks: set[int] = set()
-            rdma_bytes = 0
+            transfer_bytes = 0
             for physical_req_id, target in zip(
                 self._logical_to_physical[req_id],
                 plan.targets,
@@ -447,7 +450,7 @@ class PrefillHandler:
                     target_req_blocks,
                     remote_block_ids,
                 )
-                rdma_bytes += block_slices_bytes(block_slices)
+                transfer_bytes += block_slices_bytes(block_slices)
                 target_pushes.append(
                     _PreparedTargetPush(
                         physical_req_id=physical_req_id,
@@ -459,7 +462,7 @@ class PrefillHandler:
                 req_blocks=frozenset(req_blocks),
                 pushed_req_blocks=pushed_req_blocks_frozen,
                 target_pushes=tuple(target_pushes),
-                rdma_bytes=rdma_bytes,
+                transfer_bytes=transfer_bytes,
                 all_chunks_seen=all_chunks_seen,
             )
             all_layers_seen = all_layers_seen and all_chunks_seen
@@ -589,9 +592,7 @@ class PrefillHandler:
         self._push_all_layers_seen.pop(req_id, None)
         self._push_complete_layer_count.pop(req_id, None)
 
-    def _clear_remote_block_offsets(
-        self, req_id: str, physical_req_ids: tuple[str, ...]
-    ) -> None:
+    def _clear_remote_block_offsets(self, req_id: str, physical_req_ids: tuple[str, ...]) -> None:
         physical_prefixes = tuple(f"{physical_req_id}#" for physical_req_id in physical_req_ids)
         self._remote_block_offsets = {
             key: value
@@ -640,8 +641,7 @@ def _bool_config(value: Any) -> bool:
 def _assert_runtime_layout_matches(layer_name: str, kv_layer: Any, layout: Any) -> None:
     shape = tuple(int(dim) for dim in kv_layer.shape)
     assert shape == layout.shape, (
-        f"PdConnector KV shape changed for {layer_name}: "
-        f"registered={layout.shape} runtime={shape}"
+        f"PdConnector KV shape changed for {layer_name}: registered={layout.shape} runtime={shape}"
     )
     runtime_stride = tuple(int(stride) for stride in kv_layer.stride())
     assert runtime_stride == layout.strides, (
@@ -652,6 +652,8 @@ def _assert_runtime_layout_matches(layer_name: str, kv_layer: Any, layout: Any) 
         f"PdConnector KV base address changed for {layer_name}: "
         f"registered={layout.base_addr} runtime={int(kv_layer.data_ptr())}"
     )
+
+
 def _target_block_ranges_for_remote_write(
     layout: Any,
     target: PushTargetPlan,

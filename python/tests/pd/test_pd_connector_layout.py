@@ -94,7 +94,7 @@ def test_pd_worker_registers_mla_and_indexer_layouts_from_layer_specs() -> None:
     worker = PdDecodeWorkerConnector(
         fake_mla_config(),
         kv_cache_config=kv_cache_config,
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
 
     worker.register_kv_caches({"layer.0": main_tensor, "indexer.0": indexer_tensor})
@@ -107,8 +107,8 @@ def test_pd_worker_registers_mla_and_indexer_layouts_from_layer_specs() -> None:
         TransferRegionLayout(region_idx=0, base_addr=0x200000, block_len=64 * 128),
     )
     assert (
-        worker.rdma.local_layers[0].regions[0].block_len
-        != worker.rdma.local_layers[1].regions[0].block_len
+        worker.transfer.local_layers[0].regions[0].block_len
+        != worker.transfer.local_layers[1].regions[0].block_len
     )
 
 
@@ -220,7 +220,7 @@ def test_pd_worker_rejects_mla_physical_logical_block_split() -> None:
     worker = PdDecodeWorkerConnector(
         fake_mla_config(block_size=64),
         kv_cache_config=kv_cache_config,
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
 
     with pytest.raises(AssertionError, match="physical/logical block split"):
@@ -241,7 +241,7 @@ def test_p_worker_maps_mla_prefill_tp_greater_than_decode_tp() -> None:
     )
     worker = PdPrefillWorkerConnector(
         fake_mla_config(tp_rank=2, tp_size=8),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
 
     worker.start_load_kv(
@@ -257,7 +257,7 @@ def test_p_worker_maps_mla_prefill_tp_greater_than_decode_tp() -> None:
         None,
     )
 
-    assert worker.rdma.remote_handshakes["prefill-r2"] is handshakes[1]
+    assert worker.transfer.peer_handshakes["prefill-r2"] is handshakes[1]
 
 
 def test_p_worker_skips_non_representative_mla_prefill_rank() -> None:
@@ -274,7 +274,7 @@ def test_p_worker_skips_non_representative_mla_prefill_rank() -> None:
     )
     worker = PdPrefillWorkerConnector(
         fake_mla_config(tp_rank=3, tp_size=8),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
 
     worker.start_load_kv(
@@ -290,7 +290,7 @@ def test_p_worker_skips_non_representative_mla_prefill_rank() -> None:
         None,
     )
 
-    assert "prefill-r3" not in worker.rdma.remote_handshakes
+    assert "prefill-r3" not in worker.transfer.peer_handshakes
     assert worker.get_finished({"prefill-r3"}) == ({"prefill-r3"}, None)
 
 
@@ -427,7 +427,7 @@ def test_p_worker_prefill_tp_greater_than_decode_tp_registers_remote_head_slices
                 ),
             ),
             kv_cache_config=kv_cache_config,
-            rdma=MockRdmaPort(),
+            transfer=MockMooncakePort(),
         )
         worker.register_kv_caches({"layer.0": tensor})
         return worker
@@ -449,8 +449,8 @@ def test_p_worker_prefill_tp_greater_than_decode_tp_registers_remote_head_slices
             None,
         )
 
-    rank0_remote = rank0.rdma.remote_handshakes["prefill-r0"].layers[0]
-    rank1_remote = rank1.rdma.remote_handshakes["prefill-r1"].layers[0]
+    rank0_remote = rank0.transfer.peer_handshakes["prefill-r0"].layers[0]
+    rank1_remote = rank1.transfer.peer_handshakes["prefill-r1"].layers[0]
 
     assert rank0_remote.regions == (
         TransferRegionLayout(
@@ -622,9 +622,9 @@ def test_layout_mapping_rejects_non_divisible_tp_ratios() -> None:
         )
 
 
-def test_real_rdma_port_preserves_native_contract_for_pd_push() -> None:
-    native_engine = FakeNativeRdmaEngine()
-    rdma = RealRdmaPort(native_engine)
+def test_real_mooncake_port_maps_pd_push_to_mooncake_ranges() -> None:
+    native_engine = FakeMooncakeTransferEngine()
+    transfer = RealMooncakePort(native_engine)
     layer = hnd_remote_layer(
         block_ids=(0, 1),
         k_base=0x1000,
@@ -632,35 +632,29 @@ def test_real_rdma_port_preserves_native_contract_for_pd_push() -> None:
         block_len=4096,
     )
 
-    registered = rdma.register_local_layers((layer,))
+    registered = transfer.register_local_layers((layer,))
 
-    assert registered[0].mr_desc == {
-        "ptr": 0x1000,
-        "addr_rkey_list": [["10.0.0.1:1", 17]],
-    }
     assert registered[0].block_ids == (0, 1)
     assert registered[0].regions == layer.regions
+    assert native_engine.registered_regions == [
+        {"addr": 0x1000, "len": 8192, "location": "*"},
+        {"addr": 0x9000, "len": 8192, "location": "*"},
+    ]
 
     handshake = PdHandshake(
         request_id="req-1",
         engine_id="decode",
+        transfer_endpoint=native_engine.endpoint,
         tp_rank=0,
         tp_size=1,
         block_size=16,
-        imm_id=7,
         layers=registered,
     )
-    rdma.open_request("req-1", handshake)
+    transfer.open_request("req-1", handshake)
 
-    assert native_engine.remote_regs[0][0] == "req-1"
-    assert native_engine.remote_regs[0][1]["layers"][0]["mr_desc"]["ptr"] == 0x1000
-    assert native_engine.remote_regs[0][1]["layers"][0]["block_ids"] == [0, 1]
-    assert native_engine.remote_regs[0][1]["layers"][0]["regions"] == [
-        {"region_idx": 0, "base_addr": 0x1000, "block_len": 4096},
-        {"region_idx": 1, "base_addr": 0x9000, "block_len": 4096},
-    ]
+    assert transfer.peer_handshakes["req-1"] == handshake
 
-    rdma.push_layer(
+    transfer.push_layer(
         "req-1",
         0,
         [
@@ -669,50 +663,37 @@ def test_real_rdma_port_preserves_native_contract_for_pd_push() -> None:
             ).block_slices(1)
         ],
     )
-    rdma.push_done("req-1")
-    rdma.wait_done("req-1")
+    transfer.push_done("req-1")
+    transfer.wait_done("req-1")
 
-    _, _, pushed_blocks = native_engine.pushed_layers[0]
-    assert pushed_blocks == [
-        {
-            "regions": [
-                {
-                    "region_idx": 0,
-                    "block_id": 1,
-                    "src_offset_bytes": 2048 * 2,
-                    "bytes": 4096,
-                },
-                {
-                    "region_idx": 1,
-                    "block_id": 1,
-                    "src_offset_bytes": (16384 + 2048) * 2,
-                    "bytes": 4096,
-                },
-            ],
-        }
+    assert native_engine.writes == [
+        (
+            native_engine.endpoint,
+            [(0x2000, 0x2000, 4096), (0xA000, 0xA000, 4096)],
+            30.0,
+        )
     ]
-    assert native_engine.done_reqs == ["req-1"]
-    assert native_engine.waited_reqs == ["req-1"]
-    assert rdma.pop_finished_sending() == {"sent-1"}
-    assert rdma.pop_finished_sending() == set()
-    assert rdma.pop_finished_recving() == {"recv-1"}
-    assert rdma.pop_finished_recving() == set()
+    assert transfer.pop_finished_sending() == {"req-1"}
+    assert transfer.pop_finished_sending() == set()
+    assert transfer.pop_finished_recving() == {"req-1"}
+    assert transfer.pop_finished_recving() == set()
 
 
-def test_real_rdma_port_rejects_native_layout_without_block_mapping() -> None:
-    native_engine = FakeNativeRdmaEngine()
-
-    def broken_register_local_layers(layers):
-        registered = [{**layers[0], "mr_desc": {"ptr": 0x1000, "addr_rkey_list": []}}]
-        registered[0].pop("block_ids")
-        return registered
-
-    native_engine.register_local_layers = broken_register_local_layers
-    rdma = RealRdmaPort(native_engine)
+def test_real_mooncake_port_rejects_missing_mooncake_endpoint() -> None:
+    native_engine = FakeMooncakeTransferEngine()
+    transfer = RealMooncakePort(native_engine)
     layer = hnd_remote_layer(block_ids=(0,), block_len=1024)
+    handshake = PdHandshake(
+        request_id="req-1",
+        engine_id="decode",
+        tp_rank=0,
+        tp_size=1,
+        block_size=16,
+        layers=(layer,),
+    )
 
-    with pytest.raises(KeyError, match="block_ids"):
-        rdma.register_local_layers((layer,))
+    with pytest.raises(ValueError, match="transfer_endpoint"):
+        transfer.open_request("req-1", handshake)
 
 
 def test_pd_handshake_serializes_regions_layout() -> None:
@@ -725,10 +706,10 @@ def test_pd_handshake_serializes_regions_layout() -> None:
     handshake = PdHandshake(
         request_id="req-1",
         engine_id="decode",
+        transfer_endpoint="10.0.0.2:15290",
         tp_rank=0,
         tp_size=1,
         block_size=16,
-        imm_id=7,
         layers=(layer,),
     )
 
@@ -773,10 +754,10 @@ def test_pd_handshake_serializes_strided_regions_layout() -> None:
     handshake = PdHandshake(
         request_id="req-1",
         engine_id="decode",
+        transfer_endpoint="10.0.0.2:15290",
         tp_rank=0,
         tp_size=1,
         block_size=16,
-        imm_id=7,
         layers=(layer,),
     )
 
@@ -809,10 +790,10 @@ def test_pd_handshake_compact_serializes_shared_block_ids_once() -> None:
     handshake = PdHandshake(
         request_id="req-1",
         engine_id="decode",
+        transfer_endpoint="10.0.0.2:15290",
         tp_rank=0,
         tp_size=1,
         block_size=16,
-        imm_id=7,
         layers=layers,
     )
 
@@ -827,8 +808,10 @@ def test_pd_handshake_compact_serializes_shared_block_ids_once() -> None:
     assert restored.layers[1].block_ids == (8, 9, 10)
 
 
-def test_pd_worker_builds_native_rdma_by_default_when_extension_exists(monkeypatch) -> None:
-    monkeypatch.setattr(native, "PdRdmaEngine", FakeNativeRdmaEngineCtor, raising=False)
+def test_pd_worker_builds_mooncake_by_default_when_extension_exists(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
+    )
     tensor = FakeTensor(
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
@@ -838,7 +821,8 @@ def test_pd_worker_builds_native_rdma_by_default_when_extension_exists(monkeypat
         kv_transfer_config=SimpleNamespace(
             engine_id="decode",
             get_from_extra_config=lambda key, default: {
-                "orbitkv.pd.rdma.rank_map": {"0": {"nic": "mlx5_2", "worker_cpu": 64}},
+                "orbitkv.pd.mooncake.bind_host": "10.0.0.2",
+                "orbitkv.pd.mooncake.rank_map": {"0": {"nic": "mlx5_2"}},
             }.get(key, default),
         ),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0),
@@ -847,18 +831,43 @@ def test_pd_worker_builds_native_rdma_by_default_when_extension_exists(monkeypat
     worker = PdDecodeWorkerConnector(config)
     worker.register_kv_caches({"layer.0": tensor})
 
-    assert isinstance(worker.rdma, RealRdmaPort)
-    assert FakeNativeRdmaEngineCtor.last_kwargs == {
-        "cuda_device": 2,
-        "numa_node": None,
-        "domains": ["mlx5_2"],
-        "device": "cuda",
-        "pin_worker_cpu": 64,
+    assert isinstance(worker.transfer, RealMooncakePort)
+    assert FakeMooncakeTransferEngineCtor.last_kwargs == {
+        "bind_host": "10.0.0.2",
+        "nics": ["mlx5_2"],
     }
 
 
-def test_pd_worker_uses_runtime_tp_rank_for_rdma_rank_map(monkeypatch) -> None:
-    monkeypatch.setattr(native, "PdRdmaEngine", FakeNativeRdmaEngineCtor, raising=False)
+def test_pd_worker_allows_mooncake_transport_autoselection(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
+    )
+    tensor = FakeTensor(
+        shape=(2, 8, 16, 4, 32),
+        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        device_index=2,
+    )
+    config = SimpleNamespace(
+        kv_transfer_config=SimpleNamespace(
+            engine_id="decode",
+            get_from_extra_config=lambda _key, default: default,
+        ),
+        parallel_config=SimpleNamespace(tensor_parallel_rank=0),
+    )
+
+    worker = PdDecodeWorkerConnector(config)
+    worker.register_kv_caches({"layer.0": tensor})
+
+    assert FakeMooncakeTransferEngineCtor.last_kwargs == {
+        "bind_host": "127.0.0.1",
+        "nics": [],
+    }
+
+
+def test_pd_worker_uses_runtime_tp_rank_for_mooncake_rank_map(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
+    )
     monkeypatch.setattr(worker_mod, "get_tensor_model_parallel_rank", lambda: 2)
     monkeypatch.setattr(worker_mod, "get_tensor_model_parallel_world_size", lambda: 8)
     tensor = FakeTensor(
@@ -870,9 +879,9 @@ def test_pd_worker_uses_runtime_tp_rank_for_rdma_rank_map(monkeypatch) -> None:
         kv_transfer_config=SimpleNamespace(
             engine_id="decode",
             get_from_extra_config=lambda key, default: {
-                "orbitkv.pd.rdma.rank_map": {
-                    "0": {"nic": "mlx5_1", "worker_cpu": 16},
-                    "2": {"nic": "mlx5_2", "worker_cpu": 60},
+                "orbitkv.pd.mooncake.rank_map": {
+                    "0": {"nic": "mlx5_1"},
+                    "2": {"nic": "mlx5_2"},
                 },
             }.get(key, default),
         ),
@@ -882,12 +891,13 @@ def test_pd_worker_uses_runtime_tp_rank_for_rdma_rank_map(monkeypatch) -> None:
     worker = PdDecodeWorkerConnector(config)
     worker.register_kv_caches({"layer.0": tensor})
 
-    assert FakeNativeRdmaEngineCtor.last_kwargs["domains"] == ["mlx5_2"]
-    assert FakeNativeRdmaEngineCtor.last_kwargs["pin_worker_cpu"] == 60
+    assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_2"]
 
 
 def test_pd_worker_uses_cuda_device_rank_map_for_tp1_replicas(monkeypatch) -> None:
-    monkeypatch.setattr(native, "PdRdmaEngine", FakeNativeRdmaEngineCtor, raising=False)
+    monkeypatch.setattr(
+        native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
+    )
     monkeypatch.setattr(worker_mod, "get_tensor_model_parallel_rank", lambda: 0)
     monkeypatch.setattr(worker_mod, "get_tensor_model_parallel_world_size", lambda: 1)
     tensor = FakeTensor(
@@ -899,9 +909,9 @@ def test_pd_worker_uses_cuda_device_rank_map_for_tp1_replicas(monkeypatch) -> No
         kv_transfer_config=SimpleNamespace(
             engine_id="decode",
             get_from_extra_config=lambda key, default: {
-                "orbitkv.pd.rdma.rank_map": {
-                    "0": {"nic": "mlx5_0", "worker_cpu": 16},
-                    "4": {"nic": "mlx5_4", "worker_cpu": 120},
+                "orbitkv.pd.mooncake.rank_map": {
+                    "0": {"nic": "mlx5_0"},
+                    "4": {"nic": "mlx5_4"},
                 },
             }.get(key, default),
         ),
@@ -911,13 +921,13 @@ def test_pd_worker_uses_cuda_device_rank_map_for_tp1_replicas(monkeypatch) -> No
     worker = PdDecodeWorkerConnector(config)
     worker.register_kv_caches({"layer.0": tensor})
 
-    assert FakeNativeRdmaEngineCtor.last_kwargs["cuda_device"] == 4
-    assert FakeNativeRdmaEngineCtor.last_kwargs["domains"] == ["mlx5_4"]
-    assert FakeNativeRdmaEngineCtor.last_kwargs["pin_worker_cpu"] == 120
+    assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_4"]
 
 
-def test_pd_worker_rejects_legacy_global_rdma_config(monkeypatch) -> None:
-    monkeypatch.setattr(native, "PdRdmaEngine", FakeNativeRdmaEngineCtor, raising=False)
+def test_pd_worker_rejects_removed_rdma_config(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
+    )
     tensor = FakeTensor(
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
@@ -935,11 +945,11 @@ def test_pd_worker_rejects_legacy_global_rdma_config(monkeypatch) -> None:
     )
 
     worker = PdDecodeWorkerConnector(config)
-    with pytest.raises(RuntimeError, match="legacy keys"):
+    with pytest.raises(RuntimeError, match="mooncake.rank_map"):
         worker.register_kv_caches({"layer.0": tensor})
 
 
-def test_rdma_native_blocks_coalesce_contiguous_ranges() -> None:
+def test_mooncake_native_blocks_coalesce_contiguous_ranges() -> None:
     blocks = [
         LayerBlockSlices(
             regions=(

@@ -19,7 +19,7 @@ cargo build --release    # Release build
 cargo test               # Run Rust tests
 ```
 
-On CUDA 13 dev machines, pass `--no-default-features --features cuda-13,rdma` to `cargo test`/`cargo clippy` (default `cuda-12` can fail with missing `libcudart` symbols).
+On CUDA 13 dev machines, pass `--no-default-features --features cuda-13,mooncake` to `cargo test`/`cargo clippy` (default `cuda-12` can fail with missing `libcudart` symbols).
 
 ### CI Checks (Local)
 
@@ -74,10 +74,10 @@ workspace and intentionally has no `src/`. The Python distribution remains at
 4. **orbitkv-core** (Rust): Core storage engine
    - `OrbitKVEngine`: Main engine managing GPU workers and KV cache storage
    - `storage/`: Modular block storage engine
-     - `mod.rs`: `StorageEngine` — aggregates allocator, read cache, prefetch, write pipeline, SSD store, RDMA fetch
+     - `mod.rs`: `StorageEngine` — aggregates allocator, read cache, prefetch, write pipeline, SSD store, Mooncake remote fetch
      - `read_cache.rs`: Pin/unpin/consume operations on sealed blocks
-     - `prefetch.rs`: Per-request SSD/RDMA prefetch state machine
-     - `transfer_lock.rs`: Transfer lock manager — prevents LRU eviction during RDMA transfer
+     - `prefetch.rs`: Per-request SSD/remote prefetch state machine
+     - `transfer_lock.rs`: Transfer lock manager — prevents LRU eviction during remote transfer
      - `write_path.rs`: Async insert worker thread for batched writes
    - `backing/`: SSD backing store
      - `ssd.rs`: `SsdBackingStore` coordinator
@@ -104,15 +104,10 @@ workspace and intentionally has no `src/`. The Python distribution remains at
    - `store.rs`: Multi-owner block hash store with TTL sweep (backed by DashMap)
    - Used for multi-node KV cache coordination — each orbitkv-server registers its block hashes here
 
-8. **orbitkv-pd-wire** (Rust): Prefill/decode wire contracts
+8. **orbitkv-transfer** (Rust): pinned upstream Mooncake Transfer Engine provider
+   - `mooncake.rs`: Segment/BatchTransfer/notification wrapper for READ and WRITE
 
-9. **orbitkv-transfer** (Rust): RemoteMover and native RDMA implementation
-   - `engine.rs`: `MooncakeTransferEngine` — Mooncake-compatible API for one-sided RDMA READ/WRITE
-   - `sideway_backend.rs`: UD control plane + RC data plane with per-peer sessions
-   - `rdma_topo.rs`: NUMA-aware topology detection (GPUs, RDMA NICs, CPUs)
-   - CLI tools: `orbitkv_topo_cli` (topology display), `orbitkv_cpu_bench` (RDMA benchmark)
-
-10. **python/** (Rust/PyO3 + Python): Python package (`orbitkv-llm` on PyPI)
+9. **python/** (Rust/PyO3 + Python): Python package (`orbitkv-llm` on PyPI)
    - `src/lib.rs`: PyO3 bindings exposing `OrbitKVEngine` and gRPC client
    - `orbitkv/vllm/`: canonical vLLM v1 connector
    - `orbitkv/connector/`: backward-compatible alias for `orbitkv.vllm`
@@ -128,7 +123,7 @@ vLLM/SGLang adapter <--control--> OrbitKV sidecar <--registered pages--> framewo
                                     |
                              Pinned CPU Memory (KV cache storage)
                                    / \
-                   SSD Cache (io_uring)  Remote Node (RDMA READ)
+                   SSD Cache (io_uring)  Remote Node (Mooncake READ)
                                               |
                                         MetaServer (block discovery)
 ```
@@ -145,7 +140,7 @@ vLLM/SGLang adapter <--control--> OrbitKV sidecar <--registered pages--> framewo
 OrbitKV owns external replicas and transfer/storage policy. Frameworks retain
 execution ownership during M0/M1. KV payload bytes must not be serialized into
 gRPC; local data moves through registered CUDA IPC or shared-host pages, and
-remote data moves through RDMA. See `docs/architecture.md` and
+remote data moves through Mooncake over RDMA or TCP. See `docs/architecture.md` and
 `docs/roadmap.md` for milestone-specific ownership boundaries.
 
 ## Code Conventions
@@ -201,10 +196,10 @@ remote data moves through RDMA. See `docs/architecture.md` and
 - `crates/orbitkv-common/src/logging.rs`: Unified log initialization
 - `crates/orbitkv-common/src/numa.rs`: NUMA topology detection and CPU affinity
 - `crates/orbitkv-core/src/lib.rs`: Main OrbitKVEngine implementation
-- `crates/orbitkv-core/src/storage/mod.rs`: StorageEngine (allocator, read cache, prefetch, write pipeline, RDMA fetch)
+- `crates/orbitkv-core/src/storage/mod.rs`: StorageEngine (allocator, read cache, prefetch, write pipeline, Mooncake remote fetch)
 - `crates/orbitkv-core/src/storage/read_cache.rs`: Pin/unpin/consume operations
-- `crates/orbitkv-core/src/storage/prefetch.rs`: SSD/RDMA prefetch state machine
-- `crates/orbitkv-core/src/storage/transfer_lock.rs`: Transfer lock manager for RDMA transfers
+- `crates/orbitkv-core/src/storage/prefetch.rs`: SSD/remote prefetch state machine
+- `crates/orbitkv-core/src/storage/transfer_lock.rs`: Transfer lock manager for remote transfers
 - `crates/orbitkv-core/src/storage/write_path.rs`: Async insert worker thread
 - `crates/orbitkv-core/src/backing/ssd.rs`: SSD backing store coordinator
 - `crates/orbitkv-core/src/internode/metaserver_client.rs`: MetaServer registration, query, and node heartbeat
@@ -212,7 +207,7 @@ remote data moves through RDMA. See `docs/architecture.md` and
 - `crates/orbitkv-metaserver/src/lib.rs`: MetaServer entry point and CLI
 - `crates/orbitkv-metaserver/src/service.rs`: MetaServer gRPC service
 - `crates/orbitkv-metaserver/src/store.rs`: Block hash store (LRU + TTL)
-- `crates/orbitkv-transfer/src/engine.rs`: RDMA transfer engine (MooncakeTransferEngine)
+- `crates/orbitkv-transfer/src/mooncake.rs`: Mooncake Transfer Engine wrapper
 - `python/src/lib.rs`: PyO3 bindings (Rust side)
 - `python/orbitkv/orbitkv.pyi`: Type stubs for PyO3 bindings
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector

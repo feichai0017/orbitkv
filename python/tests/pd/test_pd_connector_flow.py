@@ -8,18 +8,18 @@ from http import HTTPStatus
 from .pd_connector_test_utils import *
 
 
-def test_pd_worker_wait_handshake_uses_registered_native_mr_desc() -> None:
+def test_pd_worker_wait_handshake_uses_mooncake_endpoint() -> None:
     tensor = FakeTensor(
         shape=(2, 8, 16, 8, 32),
         stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
     )
-    native_engine = FakeNativeRdmaEngine()
+    native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=RealRdmaPort(native_engine),
+        transfer=RealMooncakePort(native_engine),
     )
     worker.register_kv_caches({"layer.0": tensor})
     meta = PdConnectorMetadata(
@@ -36,16 +36,11 @@ def test_pd_worker_wait_handshake_uses_registered_native_mr_desc() -> None:
 
     worker.start_load_kv(meta, None)
 
-    _, handshake = native_engine.remote_regs[-1]
-    layer = handshake["layers"][0]
-    assert layer["mr_desc"] == {
-        "ptr": tensor.data_ptr(),
-        "addr_rkey_list": [["10.0.0.1:1", 17]],
-    }
-    assert layer["block_ids"] == [1]
-    assert handshake["expected_imm_count"] == 1
-    assert handshake["fail_imm_id"] == (handshake["imm_id"] ^ 0x8000_0000)
-    assert handshake["abort_imm_id"] == (handshake["imm_id"] ^ 0x4000_0000)
+    handshake = worker.transfer.peer_handshakes["req-1"]
+    assert handshake.transfer_endpoint == native_engine.endpoint
+    assert handshake.layers[0].block_ids == (1,)
+    assert handshake.expected_notify_count == 1
+    worker.shutdown()
 
 
 def test_pd_connector_exposes_empty_stats_for_vllm_metrics() -> None:
@@ -127,7 +122,7 @@ def test_pd_prom_metrics_observes_connector_stats(monkeypatch) -> None:
             "pd_prefill_inflight_push_tasks": 3,
             "pd_prefill_inflight_finalize_tasks": 4,
             "pd_decode_wait_duration": [0.1],
-            "pd_decode_rdma_wait_duration": [0.2],
+            "pd_decode_transfer_wait_duration": [0.2],
             "pd_decode_prefill_http_submit_duration": [0.003],
             "pd_load_blocks": [8],
             "pd_prefill_push_duration": [0.4],
@@ -465,13 +460,13 @@ def test_d_consumer_release_does_not_increment_prefill_release_metric() -> None:
         shape=(2, 8, 16, 8, 32),
         stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -508,13 +503,13 @@ def test_pd_worker_stats_record_decode_wait_completion() -> None:
         shape=(2, 8, 16, 8, 32),
         stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -532,7 +527,7 @@ def test_pd_worker_stats_record_decode_wait_completion() -> None:
         ),
         None,
     )
-    rdma._finished_recving.add("req-1")
+    transfer._finished_recving.add("req-1")
     worker.get_finished(set())
 
     stats = worker.get_stats()
@@ -550,7 +545,7 @@ def test_d_worker_waits_for_all_prefill_ranks_when_prefill_tp_is_larger() -> Non
         shape=(2, 8, 16, 8, 32),
         stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
     )
-    native_engine = FakeNativeRdmaEngine()
+    native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(
@@ -560,7 +555,7 @@ def test_d_worker_waits_for_all_prefill_ranks_when_prefill_tp_is_larger() -> Non
             model_config=SimpleNamespace(get_total_num_kv_heads=lambda: 8),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=RealRdmaPort(native_engine),
+        transfer=RealMooncakePort(native_engine),
     )
     worker.register_kv_caches({"layer.0": tensor})
 
@@ -579,16 +574,17 @@ def test_d_worker_waits_for_all_prefill_ranks_when_prefill_tp_is_larger() -> Non
         None,
     )
 
-    _, handshake = native_engine.remote_regs[-1]
-    assert handshake["expected_imm_count"] == 2
+    handshake = worker.transfer.peer_handshakes["req-1"]
+    assert handshake.expected_notify_count == 2
+    worker.shutdown()
 
 
-def test_d_worker_caches_expected_imm_counts(monkeypatch) -> None:
+def test_d_worker_caches_expected_notification_counts(monkeypatch) -> None:
     tensor = FakeTensor(
         shape=(2, 8, 16, 8, 32),
         stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
     )
-    native_engine = FakeNativeRdmaEngine()
+    native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(
@@ -598,7 +594,7 @@ def test_d_worker_caches_expected_imm_counts(monkeypatch) -> None:
             model_config=SimpleNamespace(get_total_num_kv_heads=lambda: 8),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=RealRdmaPort(native_engine),
+        transfer=RealMooncakePort(native_engine),
     )
     calls = 0
     original = decode_worker_mod.decode_rank_source_counts
@@ -633,10 +629,11 @@ def test_d_worker_caches_expected_imm_counts(monkeypatch) -> None:
         )
 
     assert calls == 1
-    assert [handshake["expected_imm_count"] for _, handshake in native_engine.remote_regs] == [
-        2,
-        2,
-    ]
+    assert [
+        worker.transfer.peer_handshakes[req_id].expected_notify_count
+        for req_id in ("req-1", "req-2")
+    ] == [2, 2]
+    worker.shutdown()
 
 
 def test_pd_worker_pushes_flash_attn_hnd_blocks() -> None:
@@ -645,7 +642,8 @@ def test_pd_worker_pushes_flash_attn_hnd_blocks() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), rdma=MockRdmaPort()
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
     meta = PdConnectorMetadata(
@@ -675,7 +673,7 @@ def test_pd_worker_pushes_flash_attn_hnd_blocks() -> None:
     assert unique_blocks_from_slot_mapping(attn_metadata.slot_mapping, 16) == {1, 2}
     worker.wait_for_save()
     drain_pd_pushes(worker)
-    pushed_by_layer = pushed_layers_by_idx(worker.rdma, "req-1")
+    pushed_by_layer = pushed_layers_by_idx(worker.transfer, "req-1")
     assert set(pushed_by_layer) == {0, 1}
     first_layer_blocks = pushed_by_layer[0]
     assert len(first_layer_blocks) == 1
@@ -684,11 +682,11 @@ def test_pd_worker_pushes_flash_attn_hnd_blocks() -> None:
     finished_sending, finished_recving = worker.get_finished({"req-1"})
     assert finished_sending == {"req-1"}
     assert finished_recving is None
-    assert "req-1" not in worker.rdma.registered
+    assert "req-1" not in worker.transfer.registered
 
 
 def test_p_worker_closes_single_target_push_once_when_finished() -> None:
-    class TrackingCloseRdma(MockRdmaPort):
+    class TrackingCloseMooncake(MockMooncakePort):
         def __init__(self) -> None:
             super().__init__()
             self.closed_reqs: list[str] = []
@@ -701,10 +699,10 @@ def test_p_worker_closes_single_target_push_once_when_finished() -> None:
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = TrackingCloseRdma()
+    transfer = TrackingCloseMooncake()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -723,13 +721,13 @@ def test_p_worker_closes_single_target_push_once_when_finished() -> None:
     worker.save_kv_layer("layer.0", tensor, SimpleNamespace())
     drain_pd_pushes(worker)
     assert worker.get_finished({"req-1"}) == ({"req-1"}, None)
-    assert rdma.closed_reqs == ["req-1"]
+    assert transfer.closed_reqs == ["req-1"]
 
 
 def test_pd_worker_get_finished_does_not_poll_wait_reqs() -> None:
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), rdma=rdma
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), transfer=transfer
     )
     worker._wait_reqs["req-1"] = WaitReqMeta(
         local_block_ids=([1],),
@@ -739,14 +737,15 @@ def test_pd_worker_get_finished_does_not_poll_wait_reqs() -> None:
         prefill_url="http://p:8001",
     )
 
-    rdma._finished_recving.add("req-1")
+    transfer._finished_recving.add("req-1")
 
     assert worker.get_finished(set()) == (None, {"req-1"})
 
 
 def test_p_worker_save_kv_layer_noops_without_push_reqs() -> None:
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), rdma=MockRdmaPort()
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        transfer=MockMooncakePort(),
     )
 
     worker.save_kv_layer("unknown-layer", object(), None)
@@ -762,7 +761,7 @@ def test_p_worker_save_kv_layer_uses_registered_layout_fast_path() -> None:
     )
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -781,7 +780,7 @@ def test_p_worker_save_kv_layer_uses_registered_layout_fast_path() -> None:
     worker.save_kv_layer("layer.0", RuntimeTensorThatShouldNotBeInspected(), SimpleNamespace())
     drain_pd_pushes(worker)
 
-    assert {layer_idx for layer_idx, _ in worker.rdma.pushed_layers["req-1"]} == {0}
+    assert {layer_idx for layer_idx, _ in worker.transfer.pushed_layers["req-1"]} == {0}
 
 
 def test_p_worker_runtime_layout_validation_can_be_enabled() -> None:
@@ -800,7 +799,7 @@ def test_p_worker_runtime_layout_validation_can_be_enabled() -> None:
                 extra_config={"orbitkv.pd.validate_runtime_layout": True},
             )
         ),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -826,7 +825,8 @@ def test_d_worker_idle_decode_step_skips_layer_hooks() -> None:
             raise AssertionError("idle decode step should not inspect layouts")
 
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), rdma=MockRdmaPort()
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        transfer=MockMooncakePort(),
     )
     worker.layouts = LayoutsThatShouldNotBeRead()
     worker.start_load_kv(PdConnectorMetadata(), None)
@@ -844,7 +844,7 @@ def test_d_worker_idle_decode_step_skips_layer_hooks() -> None:
 
 
 def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
-    class BlockingWaitRdma(MockRdmaPort):
+    class BlockingWaitMooncake(MockMooncakePort):
         def __init__(self) -> None:
             super().__init__()
             self.wait_started = threading.Event()
@@ -864,9 +864,9 @@ def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = BlockingWaitRdma()
+    transfer = BlockingWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), rdma=rdma
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -883,7 +883,7 @@ def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
         ),
         None,
     )
-    assert rdma.wait_started.wait(timeout=5), "waiter did not start"
+    assert transfer.wait_started.wait(timeout=5), "waiter did not start"
 
     worker.start_load_kv(
         PdConnectorMetadata(
@@ -893,16 +893,16 @@ def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
         None,
     )
 
-    waiter = worker._decode._rdma_waiter
+    waiter = worker._decode._transfer_waiter
     assert waiter is not None
     with waiter._lock:
         assert "req-1" in waiter._submitted
     assert "req-1" in worker._decode.wait_reqs
-    assert "req-1" in rdma.registered
-    assert rdma.closed_reqs == []
+    assert "req-1" in transfer.registered
+    assert transfer.closed_reqs == []
     assert worker.get_finished(set()) == (None, None)
 
-    rdma.wait_can_return.set()
+    transfer.wait_can_return.set()
     deadline = time.time() + 2
     finished = None
     while time.time() < deadline:
@@ -914,8 +914,8 @@ def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
     assert finished == {"req-1"}
     assert worker.get_block_ids_with_load_errors() == set()
     assert "req-1" not in worker._decode.wait_reqs
-    assert "req-1" not in rdma.registered
-    assert rdma.closed_reqs == ["req-1"]
+    assert "req-1" not in transfer.registered
+    assert transfer.closed_reqs == ["req-1"]
 
 
 def test_d_worker_release_ack_does_not_record_successful_load() -> None:
@@ -923,9 +923,9 @@ def test_d_worker_release_ack_does_not_record_successful_load() -> None:
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), rdma=rdma
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -950,7 +950,7 @@ def test_d_worker_release_ack_does_not_record_successful_load() -> None:
         ),
         None,
     )
-    rdma._finished_recving.add("req-1")
+    transfer._finished_recving.add("req-1")
     worker.get_finished(set())
     stats = worker.get_stats()
 
@@ -973,7 +973,7 @@ def test_d_worker_release_cancels_remote_prefill_request() -> None:
             kv_transfer_config=SimpleNamespace(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
         prefill_sender=prefill_sender,
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -1026,7 +1026,7 @@ def test_decode_worker_prefill_sender_worker_count_comes_from_extra_config(monke
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
     )
 
-    worker = PdDecodeWorkerConnector(vllm_config, rdma=MockRdmaPort())
+    worker = PdDecodeWorkerConnector(vllm_config, transfer=MockMooncakePort())
 
     assert created_worker_counts == [4]
     worker.shutdown()
@@ -1049,7 +1049,7 @@ def test_decode_worker_prefill_sender_worker_count_defaults_to_sixteen(monkeypat
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
     )
 
-    worker = PdDecodeWorkerConnector(vllm_config, rdma=MockRdmaPort())
+    worker = PdDecodeWorkerConnector(vllm_config, transfer=MockMooncakePort())
 
     assert created_worker_counts == [16]
     worker.shutdown()
@@ -1083,7 +1083,7 @@ def test_prefill_worker_push_worker_counts_default_to_sixteen(monkeypatch) -> No
     monkeypatch.setattr(prefill_worker_mod, "_AsyncPushFinalizer", FakePushFinalizer)
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
 
     assert created_push_workers == [16]
@@ -1127,7 +1127,7 @@ def test_prefill_worker_push_worker_counts_come_from_extra_config(monkeypatch) -
                 }.get(key, default),
             )
         ),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
 
     assert created_push_workers == [7]
@@ -1136,7 +1136,7 @@ def test_prefill_worker_push_worker_counts_come_from_extra_config(monkeypatch) -
 
 
 def test_d_worker_prefill_failure_reports_load_error(monkeypatch) -> None:
-    class BlockingWaitRdma(MockRdmaPort):
+    class BlockingWaitMooncake(MockMooncakePort):
         def wait_done(self, req_id: str) -> None:
             time.sleep(10)
 
@@ -1158,7 +1158,7 @@ def test_d_worker_prefill_failure_reports_load_error(monkeypatch) -> None:
             kv_transfer_config=SimpleNamespace(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=BlockingWaitRdma(),
+        transfer=BlockingWaitMooncake(),
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -1190,10 +1190,10 @@ def test_d_worker_prefill_failure_reports_load_error(monkeypatch) -> None:
     worker.shutdown()
 
 
-def test_d_worker_rdma_wait_failure_reports_load_error() -> None:
-    class FailingWaitRdma(MockRdmaPort):
+def test_d_worker_transfer_wait_failure_reports_load_error() -> None:
+    class FailingWaitMooncake(MockMooncakePort):
         def wait_done(self, req_id: str) -> None:
-            raise RuntimeError("rdma timeout")
+            raise RuntimeError("transfer timeout")
 
     tensor = FakeTensor(
         shape=(2, 8, 16, 4, 32),
@@ -1201,7 +1201,7 @@ def test_d_worker_rdma_wait_failure_reports_load_error() -> None:
     )
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
-        rdma=FailingWaitRdma(),
+        transfer=FailingWaitMooncake(),
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -1235,8 +1235,8 @@ def test_d_worker_rdma_wait_failure_reports_load_error() -> None:
     worker.shutdown()
 
 
-def test_d_worker_reports_background_rdma_wait_completion_without_native_poll() -> None:
-    class CallbackOnlyRdma(MockRdmaPort):
+def test_d_worker_reports_background_transfer_wait_completion_without_native_poll() -> None:
+    class CallbackOnlyMooncake(MockMooncakePort):
         def __init__(self) -> None:
             super().__init__()
             self.started = threading.Event()
@@ -1250,10 +1250,10 @@ def test_d_worker_reports_background_rdma_wait_completion_without_native_poll() 
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = CallbackOnlyRdma()
+    transfer = CallbackOnlyMooncake()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -1270,8 +1270,8 @@ def test_d_worker_reports_background_rdma_wait_completion_without_native_poll() 
         ),
         None,
     )
-    assert rdma.started.wait(timeout=5), "RDMA waiter did not start"
-    rdma.can_return.set()
+    assert transfer.started.wait(timeout=5), "Mooncake waiter did not start"
+    transfer.can_return.set()
 
     deadline = time.time() + 2
     finished_recving = None
@@ -1282,21 +1282,21 @@ def test_d_worker_reports_background_rdma_wait_completion_without_native_poll() 
         time.sleep(0.01)
 
     assert finished_recving == {"decode-1"}
-    assert rdma.pop_finished_recving() == set()
+    assert transfer.pop_finished_recving() == set()
     worker.shutdown()
 
 
-def test_d_worker_finished_rdma_wait_prevents_idle_fast_path() -> None:
+def test_d_worker_finished_transfer_wait_prevents_idle_fast_path() -> None:
     tensor = FakeTensor(
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker._decode._finished_rdma_waits.add("decode-1")
+    worker._decode._finished_transfer_waits.add("decode-1")
 
     _, finished_recving = worker.get_finished(set())
 
@@ -1304,8 +1304,8 @@ def test_d_worker_finished_rdma_wait_prevents_idle_fast_path() -> None:
     worker.shutdown()
 
 
-def test_d_worker_reregister_keeps_new_rdma_wait_after_old_wait_exits() -> None:
-    class SequencedWaitRdma(MockRdmaPort):
+def test_d_worker_reregister_keeps_new_transfer_wait_after_old_wait_exits() -> None:
+    class SequencedWaitMooncake(MockMooncakePort):
         def __init__(self) -> None:
             super().__init__()
             self._lock = threading.Lock()
@@ -1335,9 +1335,9 @@ def test_d_worker_reregister_keeps_new_rdma_wait_after_old_wait_exits() -> None:
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = SequencedWaitRdma()
+    transfer = SequencedWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), rdma=rdma
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
     )
     worker.register_kv_caches({"layer.0": tensor})
     wait_meta = PdConnectorMetadata(
@@ -1352,12 +1352,12 @@ def test_d_worker_reregister_keeps_new_rdma_wait_after_old_wait_exits() -> None:
         }
     )
     worker.start_load_kv(wait_meta, None)
-    assert rdma.first_started.wait(timeout=5), "first wait did not start"
+    assert transfer.first_started.wait(timeout=5), "first wait did not start"
 
     worker.start_load_kv(PdConnectorMetadata(reqs_to_release={"req-1"}), None)
     worker.start_load_kv(wait_meta, None)
-    assert not rdma.second_started.wait(timeout=0.05)
-    rdma.first_can_return.set()
+    assert not transfer.second_started.wait(timeout=0.05)
+    transfer.first_can_return.set()
 
     deadline = time.time() + 2
     finished = None
@@ -1369,18 +1369,19 @@ def test_d_worker_reregister_keeps_new_rdma_wait_after_old_wait_exits() -> None:
     assert finished == {"req-1"}
 
     worker.start_load_kv(wait_meta, None)
-    assert rdma.second_started.wait(timeout=5), "second wait did not start"
+    assert transfer.second_started.wait(timeout=5), "second wait did not start"
 
-    waiter = worker._decode._rdma_waiter
+    waiter = worker._decode._transfer_waiter
     assert waiter is not None
     with waiter._lock:
         assert "req-1" in waiter._submitted
 
-    rdma.second_can_return.set()
+    transfer.second_can_return.set()
+    worker.shutdown()
 
 
-def test_d_worker_starts_multiple_rdma_waits_concurrently() -> None:
-    class BlockingWaitRdma(MockRdmaPort):
+def test_d_worker_starts_multiple_transfer_waits_concurrently() -> None:
+    class BlockingWaitMooncake(MockMooncakePort):
         def __init__(self) -> None:
             super().__init__()
             self.started = {f"req-{idx}": threading.Event() for idx in (1, 2)}
@@ -1395,9 +1396,9 @@ def test_d_worker_starts_multiple_rdma_waits_concurrently() -> None:
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = BlockingWaitRdma()
+    transfer = BlockingWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), rdma=rdma
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
     )
     worker.register_kv_caches({"layer.0": tensor})
 
@@ -1417,13 +1418,13 @@ def test_d_worker_starts_multiple_rdma_waits_concurrently() -> None:
         None,
     )
 
-    assert rdma.started["req-1"].wait(timeout=5)
-    assert rdma.started["req-2"].wait(timeout=0.2)
-    rdma.can_return.set()
+    assert transfer.started["req-1"].wait(timeout=5)
+    assert transfer.started["req-2"].wait(timeout=0.2)
+    transfer.can_return.set()
 
 
 def test_p_worker_release_closes_all_physical_decode_targets() -> None:
-    class TrackingRdma(MockRdmaPort):
+    class TrackingMooncake(MockMooncakePort):
         def __init__(self) -> None:
             super().__init__()
             self.closed_reqs: list[str] = []
@@ -1466,13 +1467,13 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
         )
         for rank in range(4)
     )
-    rdma = TrackingRdma()
+    transfer = TrackingMooncake()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -1487,7 +1488,7 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
         ),
         None,
     )
-    assert sorted(rdma.registered) == ["prefill-r1#d2", "prefill-r1#d3"]
+    assert sorted(transfer.registered) == ["prefill-r1#d2", "prefill-r1#d3"]
 
     worker.start_load_kv(
         PdConnectorMetadata(
@@ -1497,11 +1498,11 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
         None,
     )
 
-    assert rdma.failed_reqs == []
-    assert sorted(rdma.drained_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
-    assert sorted(rdma.aborted_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
-    assert sorted(rdma.closed_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
-    assert rdma.registered == set()
+    assert transfer.failed_reqs == []
+    assert sorted(transfer.drained_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
+    assert sorted(transfer.aborted_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
+    assert sorted(transfer.closed_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
+    assert transfer.registered == set()
 
 
 def test_p_worker_completion_clears_physical_remote_block_offsets() -> None:
@@ -1509,13 +1510,13 @@ def test_p_worker_completion_clears_physical_remote_block_offsets() -> None:
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -1559,7 +1560,7 @@ def test_p_worker_completion_clears_physical_remote_block_offsets() -> None:
 
 
 def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
-    class TrackingRdma(MockRdmaPort):
+    class TrackingMooncake(MockMooncakePort):
         def __init__(self) -> None:
             super().__init__()
             self.closed_reqs: list[str] = []
@@ -1580,10 +1581,10 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = TrackingRdma()
+    transfer = TrackingMooncake()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
     worker.start_load_kv(
@@ -1598,14 +1599,14 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
         ),
         None,
     )
-    assert rdma.registered == {"prefill-1"}
+    assert transfer.registered == {"prefill-1"}
 
     worker.start_load_kv(PdConnectorMetadata(preempted_req_ids={"prefill-1"}), None)
 
-    assert rdma.failed_reqs == ["prefill-1"]
-    assert rdma.drained_reqs == ["prefill-1"]
-    assert rdma.closed_reqs == ["prefill-1"]
-    assert rdma.registered == set()
+    assert transfer.failed_reqs == ["prefill-1"]
+    assert transfer.drained_reqs == ["prefill-1"]
+    assert transfer.closed_reqs == ["prefill-1"]
+    assert transfer.registered == set()
     assert worker.get_finished({"prefill-1"}) == (None, None)
 
 
@@ -1615,7 +1616,8 @@ def test_p_worker_uses_scheduler_blocks_without_slot_mapping_cpu_sync() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), rdma=MockRdmaPort()
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
     worker.start_load_kv(
@@ -1639,7 +1641,7 @@ def test_p_worker_uses_scheduler_blocks_without_slot_mapping_cpu_sync() -> None:
     assert slot_mapping.cpu_calls == 0
     worker.wait_for_save()
     drain_pd_pushes(worker)
-    pushed_by_layer = pushed_layers_by_idx(worker.rdma, "req-1")
+    pushed_by_layer = pushed_layers_by_idx(worker.transfer, "req-1")
     assert set(pushed_by_layer) == {0, 1}
 
 
@@ -1649,7 +1651,8 @@ def test_p_worker_save_does_not_require_slot_mapping() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), rdma=MockRdmaPort()
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
     worker.start_load_kv(
@@ -1671,7 +1674,7 @@ def test_p_worker_save_does_not_require_slot_mapping() -> None:
     worker.save_kv_layer("layer.1", tensor, attn_metadata)
 
     drain_pd_pushes(worker)
-    pushed_by_layer = pushed_layers_by_idx(worker.rdma, "req-1")
+    pushed_by_layer = pushed_layers_by_idx(worker.transfer, "req-1")
     assert set(pushed_by_layer) == {0, 1}
 
 
@@ -1680,14 +1683,14 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    d_rdma = MockRdmaPort()
+    d_transfer = MockMooncakePort()
     prefill_sender = FakePrefillSender()
     d_worker = PdDecodeWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=d_rdma,
+        transfer=d_transfer,
         prefill_sender=prefill_sender,
     )
     d_worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
@@ -1705,11 +1708,11 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     )
     d_worker.start_load_kv(wait_meta, None)
 
-    wait_handshake = d_rdma.remote_handshakes.get("req-1")
+    wait_handshake = d_transfer.peer_handshakes.get("req-1")
     assert wait_handshake is not None
     assert wait_handshake.engine_id == "decode"
     assert wait_handshake.block_size == 16
-    assert isinstance(wait_handshake.imm_id, int)
+    assert wait_handshake.transfer_endpoint == d_transfer.endpoint()
     assert len(wait_handshake.layers) == 2
     assert wait_handshake.layers[0].block_ids == (1,)
     assert wait_handshake.layers[1].block_ids == (1,)
@@ -1720,7 +1723,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     handshake = handshakes_from_dicts(task.kv_transfer_params["pd_handshakes"])[0]
     assert handshake.engine_id == "decode"
     assert handshake.block_size == 16
-    assert handshake.imm_id == wait_handshake.imm_id
+    assert handshake.transfer_endpoint == wait_handshake.transfer_endpoint
     assert handshake.layers[0].block_ids == (1, 2)
     assert handshake.layers[1].block_ids == (1, 2)
     assert handshake.layers[0].regions[0] == TransferRegionLayout(
@@ -1730,7 +1733,8 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     )
 
     push_worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), rdma=MockRdmaPort()
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        transfer=MockMooncakePort(),
     )
     push_worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
     push_meta = PdConnectorMetadata(
@@ -1743,7 +1747,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
         }
     )
     push_worker.start_load_kv(push_meta, None)
-    assert push_worker.rdma.remote_handshakes["req-1"] is handshake
+    assert push_worker.transfer.peer_handshakes["req-1"] is handshake
 
     push_worker.start_load_kv(
         PdConnectorMetadata(
@@ -1799,7 +1803,7 @@ def test_d_worker_wait_handshake_uses_layer_kv_cache_group_blocks_for_mtp() -> N
     worker = PdDecodeWorkerConnector(
         fake_mtp_config(),
         kv_cache_config=fake_mtp_kv_cache_config(),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
         prefill_sender=prefill_sender,
     )
     base_layer = "model.layers.0.self_attn"
@@ -1821,7 +1825,7 @@ def test_d_worker_wait_handshake_uses_layer_kv_cache_group_blocks_for_mtp() -> N
         None,
     )
 
-    wait_handshake = worker.rdma.remote_handshakes["req-1"]
+    wait_handshake = worker.transfer.peer_handshakes["req-1"]
     assert wait_handshake.layers[0].layer_name == base_layer
     assert wait_handshake.layers[0].block_ids == (1,)
     assert wait_handshake.layers[1].layer_name == mtp_layer
@@ -1843,11 +1847,11 @@ def test_p_worker_pushes_mtp_layers_from_matching_kv_cache_group_blocks() -> Non
     )
     base_layer = "model.layers.0.self_attn"
     mtp_layer = "model.layers.27.self_attn"
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         fake_mtp_config(),
         kv_cache_config=fake_mtp_kv_cache_config(num_blocks=16),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({base_layer: tensor, mtp_layer: tensor})
     handshake = PdHandshake(
@@ -1889,7 +1893,7 @@ def test_p_worker_pushes_mtp_layers_from_matching_kv_cache_group_blocks() -> Non
     worker.wait_for_save()
     drain_pd_pushes(worker)
 
-    pushed_by_layer = pushed_layers_by_idx(rdma, "prefill-r0")
+    pushed_by_layer = pushed_layers_by_idx(transfer, "prefill-r0")
     assert [block.regions[0].block_id for block in pushed_by_layer[0]] == [101]
     assert [block.regions[0].src_offset_bytes for block in pushed_by_layer[0]] == [
         tensor.stride()[1] * 1 * tensor.element_size()
@@ -2098,14 +2102,14 @@ def test_consumer_params_reject_invalid_prefill_max_tokens() -> None:
         )
 
 
-def test_scheduler_carries_cross_process_rdma_handshake() -> None:
+def test_scheduler_carries_cross_process_mooncake_handshake() -> None:
     handshake = {
         "request_id": "decode-1",
         "engine_id": "decode",
+        "transfer_endpoint": "10.0.0.2:15290",
         "tp_rank": 0,
         "tp_size": 1,
         "block_size": 16,
-        "imm_id": 7,
         "layers": [
             {
                 "layer_name": "layer.0",
@@ -2115,7 +2119,6 @@ def test_scheduler_carries_cross_process_rdma_handshake() -> None:
                     {"region_idx": 0, "base_addr": 0x1000, "block_len": 1024},
                     {"region_idx": 1, "base_addr": 0x1400, "block_len": 1024},
                 ],
-                "mr_desc": {"addr_rkey_list": [["10.0.0.1:1", 17]]},
             }
         ],
     }
@@ -2139,18 +2142,18 @@ def test_scheduler_carries_cross_process_rdma_handshake() -> None:
     assert len(push_req.handshakes) == 1
     parsed = push_req.handshakes[0]
     assert parsed.request_id == "decode-1"
-    assert parsed.layers[0].mr_desc == {"addr_rkey_list": [["10.0.0.1:1", 17]]}
+    assert parsed.transfer_endpoint == "10.0.0.2:15290"
 
 
-def test_scheduler_carries_cross_process_rdma_handshake_list() -> None:
+def test_scheduler_carries_cross_process_mooncake_handshake_list() -> None:
     handshake = {
         "request_id": "decode-1",
         "engine_id": "decode",
+        "transfer_endpoint": "10.0.0.2:15290",
         "tp_rank": 0,
         "tp_size": 1,
         "block_size": 16,
         "block_ids": [1],
-        "imm_id": 7,
         "layers": [
             {
                 "layer_name": "layer.0",
@@ -2159,7 +2162,6 @@ def test_scheduler_carries_cross_process_rdma_handshake_list() -> None:
                     {"region_idx": 0, "base_addr": 0x1000, "block_len": 1024},
                     {"region_idx": 1, "base_addr": 0x1400, "block_len": 1024},
                 ],
-                "mr_desc": {"addr_rkey_list": [["10.0.0.1:1", 17]]},
             }
         ],
     }
@@ -2184,7 +2186,7 @@ def test_scheduler_carries_cross_process_rdma_handshake_list() -> None:
     parsed = push_req.handshakes[0]
     assert parsed.request_id == "decode-1"
     assert parsed.layers[0].block_ids == (1,)
-    assert parsed.layers[0].mr_desc == {"addr_rkey_list": [["10.0.0.1:1", 17]]}
+    assert parsed.transfer_endpoint == "10.0.0.2:15290"
 
 
 def test_scheduler_ignores_legacy_fake_rdma_done_endpoint() -> None:
@@ -2281,7 +2283,7 @@ def test_d_failed_load_retry_dispatches_prefill_again() -> None:
             kv_transfer_config=SimpleNamespace(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
         prefill_sender=prefill_sender,
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -2335,7 +2337,7 @@ def test_d_worker_rank0_dispatches_prefill_on_wait() -> None:
             kv_transfer_config=SimpleNamespace(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
         prefill_sender=prefill_sender,
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -2384,12 +2386,12 @@ def test_layer_push_sender_runs_requests_concurrently() -> None:
 
     ready_event = Event()
     ready_event.ready.set()
-    rdma = BlockingRdma()
+    transfer = BlockingRdma()
     sender = prefill_worker_mod._AsyncLayerPushSender()
     try:
         sender.submit(
             prefill_worker_mod._LayerPushTask(
-                rdma=rdma,
+                transfer=transfer,
                 req_id="req-1",
                 layer_idx=0,
                 block_slices=[],
@@ -2398,7 +2400,7 @@ def test_layer_push_sender_runs_requests_concurrently() -> None:
         )
         sender.submit(
             prefill_worker_mod._LayerPushTask(
-                rdma=rdma,
+                transfer=transfer,
                 req_id="req-2",
                 layer_idx=1,
                 block_slices=[],
@@ -2406,13 +2408,13 @@ def test_layer_push_sender_runs_requests_concurrently() -> None:
             )
         )
 
-        entered = {rdma.entered.get(timeout=2), rdma.entered.get(timeout=2)}
+        entered = {transfer.entered.get(timeout=2), transfer.entered.get(timeout=2)}
         assert entered == {"req-1", "req-2"}
 
-        rdma.release.set()
+        transfer.release.set()
         sender.wait_all()
     finally:
-        rdma.release.set()
+        transfer.release.set()
         sender.close()
 
 
@@ -2434,12 +2436,12 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
     hold_event = Event()
     ready_event = Event()
     ready_event.ready.set()
-    rdma = RecordingRdma()
+    transfer = RecordingRdma()
     sender = prefill_worker_mod._AsyncLayerPushSender(max_workers=1)
     try:
         sender.submit(
             prefill_worker_mod._LayerPushTask(
-                rdma=rdma,
+                transfer=transfer,
                 req_id="hold",
                 layer_idx=0,
                 block_slices=[],
@@ -2448,7 +2450,7 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
         )
         sender.submit(
             prefill_worker_mod._LayerPushTask(
-                rdma=rdma,
+                transfer=transfer,
                 req_id="cancelled",
                 layer_idx=0,
                 block_slices=[],
@@ -2460,13 +2462,13 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
         hold_event.ready.set()
         sender.wait_all()
 
-        assert rdma.pushed.get(timeout=2) == "hold"
+        assert transfer.pushed.get(timeout=2) == "hold"
         with pytest.raises(queue.Empty):
-            rdma.pushed.get(timeout=0.1)
+            transfer.pushed.get(timeout=0.1)
 
         sender.submit(
             prefill_worker_mod._LayerPushTask(
-                rdma=rdma,
+                transfer=transfer,
                 req_id="cancelled",
                 layer_idx=1,
                 block_slices=[],
@@ -2474,7 +2476,7 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
             )
         )
         sender.wait_req("cancelled")
-        assert rdma.pushed.get(timeout=2) == "cancelled"
+        assert transfer.pushed.get(timeout=2) == "cancelled"
     finally:
         hold_event.ready.set()
         sender.close()
@@ -2501,13 +2503,13 @@ def test_push_finalizer_runs_requests_concurrently() -> None:
         def aggregated_link_speed(self) -> int:
             return 400_000_000_000
 
-    rdma = BlockingRdma()
+    transfer = BlockingRdma()
     finalizer = prefill_worker_mod._AsyncPushFinalizer(Sender())
     try:
         for req_id in ("req-1", "req-2"):
             finalizer.submit(
                 prefill_worker_mod._PushFinalizeTask(
-                    rdma=rdma,
+                    transfer=transfer,
                     req_ids=(req_id,),
                     target_request_id=req_id,
                     num_blocks=1,
@@ -2515,18 +2517,18 @@ def test_push_finalizer_runs_requests_concurrently() -> None:
                     first_save_ts_ns=time.time_ns(),
                     finalize_queued_ts_ns=time.time_ns(),
                     schedule_queued_ts_ns=time.time_ns(),
-                    rdma_bytes=1,
+                    transfer_bytes=1,
                 )
             )
 
-        entered = {rdma.entered.get(timeout=2), rdma.entered.get(timeout=2)}
+        entered = {transfer.entered.get(timeout=2), transfer.entered.get(timeout=2)}
         assert entered == {"req-1", "req-2"}
 
-        rdma.release.set()
+        transfer.release.set()
         finalizer.wait_all()
-        assert sorted(rdma.done) == ["req-1", "req-2"]
+        assert sorted(transfer.done) == ["req-1", "req-2"]
     finally:
-        rdma.release.set()
+        transfer.release.set()
         finalizer.close()
 
 
@@ -2553,7 +2555,7 @@ def test_push_finalizer_records_schedule_to_done_duration() -> None:
     try:
         finalizer.submit(
             prefill_worker_mod._PushFinalizeTask(
-                rdma=RecordingRdma(),
+                transfer=RecordingRdma(),
                 req_ids=("req-1",),
                 target_request_id="req-1",
                 num_blocks=1,
@@ -2561,7 +2563,7 @@ def test_push_finalizer_records_schedule_to_done_duration() -> None:
                 first_save_ts_ns=now_ns - 800_000_000,
                 finalize_queued_ts_ns=now_ns - 100_000_000,
                 schedule_queued_ts_ns=now_ns - 1_000_000_000,
-                rdma_bytes=1,
+                transfer_bytes=1,
             )
         )
         finalizer.wait_all()
@@ -2729,7 +2731,7 @@ def test_p_worker_selects_matching_tp_rank_handshake() -> None:
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
-        rdma=MockRdmaPort(),
+        transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -2745,7 +2747,7 @@ def test_p_worker_selects_matching_tp_rank_handshake() -> None:
         None,
     )
 
-    assert worker.rdma.remote_handshakes["prefill-r1"] is handshakes[1]
+    assert worker.transfer.peer_handshakes["prefill-r1"] is handshakes[1]
 
 
 def test_p_worker_pushes_registered_blocks_from_save_kv_layer() -> None:
@@ -2753,13 +2755,13 @@ def test_p_worker_pushes_registered_blocks_from_save_kv_layer() -> None:
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
     worker.start_load_kv(
@@ -2790,7 +2792,7 @@ def test_p_worker_pushes_registered_blocks_from_save_kv_layer() -> None:
     worker.wait_for_save()
     drain_pd_pushes(worker)
 
-    assert {layer_idx for layer_idx, _ in rdma.pushed_layers["prefill-r0"]} == {0, 1}
+    assert {layer_idx for layer_idx, _ in transfer.pushed_layers["prefill-r0"]} == {0, 1}
     assert worker.get_finished({"prefill-r0"})[0] == {"prefill-r0"}
 
 
@@ -2799,13 +2801,13 @@ def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> 
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -2838,11 +2840,11 @@ def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> 
     )
     drain_pd_pushes(worker)
 
-    assert sorted(rdma.remote_handshakes) == ["prefill-r1#d2", "prefill-r1#d3"]
-    assert rdma.remote_handshakes["prefill-r1#d2"].request_id == "decode-r2"
-    assert rdma.remote_handshakes["prefill-r1#d3"].request_id == "decode-r3"
-    d2_push = rdma.pushed_layers["prefill-r1#d2"][0][1]
-    d3_push = rdma.pushed_layers["prefill-r1#d3"][0][1]
+    assert sorted(transfer.peer_handshakes) == ["prefill-r1#d2", "prefill-r1#d3"]
+    assert transfer.peer_handshakes["prefill-r1#d2"].request_id == "decode-r2"
+    assert transfer.peer_handshakes["prefill-r1#d3"].request_id == "decode-r3"
+    d2_push = transfer.pushed_layers["prefill-r1#d2"][0][1]
+    d3_push = transfer.pushed_layers["prefill-r1#d3"][0][1]
     assert d2_push[0].regions[0] == BlockRegionSlice(
         block_id=68,
         src_offset_bytes=(3 * 4 * 16 * 32) * 2,
@@ -2854,8 +2856,8 @@ def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> 
         bytes=2 * 16 * 32 * 2,
     )
     assert worker.get_finished({"prefill-r1"})[0] == {"prefill-r1"}
-    assert "prefill-r1#d2" not in rdma.registered
-    assert "prefill-r1#d3" not in rdma.registered
+    assert "prefill-r1#d2" not in transfer.registered
+    assert "prefill-r1#d3" not in transfer.registered
 
 
 def test_p_worker_offsets_remote_heads_when_prefill_tp_is_larger() -> None:
@@ -2863,13 +2865,13 @@ def test_p_worker_offsets_remote_heads_when_prefill_tp_is_larger() -> None:
         shape=(2, 8, 16, 2, 32),
         stride=(8 * 2 * 16 * 32, 2 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=3, tensor_parallel_size=4),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -2902,13 +2904,13 @@ def test_p_worker_offsets_remote_heads_when_prefill_tp_is_larger() -> None:
     )
     drain_pd_pushes(worker)
 
-    assert sorted(rdma.remote_handshakes) == ["prefill-r3"]
-    assert rdma.remote_handshakes["prefill-r3"].request_id == "decode-r1"
-    remote_layer = rdma.remote_handshakes["prefill-r3"].layers[0]
+    assert sorted(transfer.peer_handshakes) == ["prefill-r3"]
+    assert transfer.peer_handshakes["prefill-r3"].request_id == "decode-r1"
+    remote_layer = transfer.peer_handshakes["prefill-r3"].layers[0]
     assert remote_layer.regions[0].base_addr == 0x1000 + 2 * 16 * 32 * 2
     assert remote_layer.regions[0].block_len == 2 * 16 * 32 * 2
     assert remote_layer.regions[0].block_stride == 4 * 16 * 32 * 2
-    pushed = rdma.pushed_layers["prefill-r3"][0][1]
+    pushed = transfer.pushed_layers["prefill-r3"][0][1]
     assert pushed[0].regions[0] == BlockRegionSlice(
         block_id=68,
         src_offset_bytes=(3 * 2 * 16 * 32) * 2,
@@ -2921,13 +2923,13 @@ def test_p_worker_maps_local_blocks_to_remote_blocks_by_position() -> None:
         shape=(2, 16, 16, 4, 32),
         stride=(16 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -2965,9 +2967,9 @@ def test_p_worker_maps_local_blocks_to_remote_blocks_by_position() -> None:
     worker.wait_for_save()
     drain_pd_pushes(worker)
 
-    _, pushed = rdma.pushed_layers["prefill-r0"][0]
+    _, pushed = transfer.pushed_layers["prefill-r0"][0]
     assert [block.regions[0].block_id for block in pushed] == [68]
-    assert len(rdma.pushed_layers["prefill-r0"]) == 1
+    assert len(transfer.pushed_layers["prefill-r0"]) == 1
     assert [block.regions[0].src_offset_bytes for block in pushed] == [
         tensor.stride()[1] * 3 * tensor.element_size()
     ]
@@ -2979,13 +2981,13 @@ def test_p_worker_precomputes_layer_push_plan_before_save() -> None:
         shape=(2, 16, 16, 4, 32),
         stride=(16 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -3018,7 +3020,7 @@ def test_p_worker_precomputes_layer_push_plan_before_save() -> None:
     prepared = worker._prefill._push_layer_plans["prefill-r0"][0]
     assert prepared.req_blocks == frozenset({3, 4})
     assert prepared.pushed_req_blocks == frozenset({3, 4})
-    assert prepared.rdma_bytes == tensor.stride()[1] * tensor.element_size() * 2 * 2
+    assert prepared.transfer_bytes == tensor.stride()[1] * tensor.element_size() * 2 * 2
     assert prepared.all_chunks_seen is True
     assert len(prepared.target_pushes) == 1
     assert len(prepared.target_pushes[0].block_slices) == 1
@@ -3027,7 +3029,7 @@ def test_p_worker_precomputes_layer_push_plan_before_save() -> None:
     worker.save_kv_layer("layer.0", object(), SimpleNamespace())
     drain_pd_pushes(worker)
 
-    _, pushed = rdma.pushed_layers["prefill-r0"][0]
+    _, pushed = transfer.pushed_layers["prefill-r0"][0]
     assert [block.regions[0].block_id for block in pushed] == [68]
 
 
@@ -3036,13 +3038,13 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill() -> None:
         shape=(2, 16, 16, 4, 32),
         stride=(16 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     handshake = PdHandshake(
@@ -3080,8 +3082,10 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill() -> None:
     drain_pd_pushes(worker)
 
     assert worker.get_finished(set())[0] is None
-    assert [block.regions[0].block_id for block in rdma.pushed_layers["prefill-r0"][0][1]] == [68]
-    assert len(rdma.pushed_layers["prefill-r0"]) == 1
+    assert [block.regions[0].block_id for block in transfer.pushed_layers["prefill-r0"][0][1]] == [
+        68
+    ]
+    assert len(transfer.pushed_layers["prefill-r0"]) == 1
 
     worker.start_load_kv(
         PdConnectorMetadata(
@@ -3103,7 +3107,9 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill() -> None:
     worker.wait_for_save()
     drain_pd_pushes(worker)
 
-    assert [block.regions[0].block_id for block in rdma.pushed_layers["prefill-r0"][1][1]] == [70]
+    assert [block.regions[0].block_id for block in transfer.pushed_layers["prefill-r0"][1][1]] == [
+        70
+    ]
     assert worker.get_finished({"prefill-r0"})[0] == {"prefill-r0"}
 
 
@@ -3112,13 +3118,13 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
         shape=(2, 32, 16, 4, 32),
         stride=(32 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
-    rdma = MockRdmaPort()
+    transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
-        rdma=rdma,
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     handshake = PdHandshake(
@@ -3177,7 +3183,7 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
     worker.wait_for_save()
     drain_pd_pushes(worker)
 
-    second_push = rdma.pushed_layers["prefill-r0"][1][1]
+    second_push = transfer.pushed_layers["prefill-r0"][1][1]
     assert [block.regions[0].block_id for block in second_push] == [76]
     assert second_push[0].regions[0].bytes == tensor.stride()[1] * tensor.element_size() * 20
     assert worker.get_finished({"prefill-r0"})[0] == {"prefill-r0"}

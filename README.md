@@ -20,13 +20,14 @@ vLLM is the currently validated adapter; SGLang is the next first-class adapter.
 
 - content-addressed KV blocks in pinned host memory, with optional SSD backing;
 - NUMA-aware allocation and batched GPU/host transfer;
-- cross-node discovery and RDMA fetch;
+- cross-node discovery and Mooncake transfer over RDMA or TCP;
 - prefix lookup, leases, eviction, metrics, and P/D transfer paths;
 - a Rust server, Python bindings, and the imported vLLM connector.
 
-The storage and transfer data plane was imported from PegaFlow `0.24.5` and
-renamed throughout. PegaFlow's published measurements are not presented as
-OrbitKV results.
+The initial storage and control data plane was imported from PegaFlow `0.24.5`
+and renamed throughout. The copied remote transfer stacks have since been
+replaced by a pinned upstream Mooncake Transfer Engine. PegaFlow's published
+measurements are not presented as OrbitKV results.
 
 ## Where OrbitKV goes further
 
@@ -50,8 +51,8 @@ correct and measured.
 | --- | --- |
 | [`orbitkv-contract`](crates/orbitkv-contract) | Framework-neutral state identity, format, page and recovery contracts |
 | [`orbitkv-local`](crates/orbitkv-local) | Versioned iceoryx2 control path between inference processes and the local sidecar |
-| [`orbitkv-core`](crates/orbitkv-core) | Content-addressed blocks, leases, eviction, SSD and RDMA tiers |
-| [`orbitkv-transfer`](crates/orbitkv-transfer) | CUDA-aware and RDMA transfer engines |
+| [`orbitkv-core`](crates/orbitkv-core) | Content-addressed blocks, leases, eviction, SSD and remote tiers |
+| [`orbitkv-transfer`](crates/orbitkv-transfer) | Pinned upstream Mooncake Transfer Engine wrapper |
 | [`orbitkv-server`](crates/orbitkv-server) | Local sidecar, health/metrics endpoints, and P/D router |
 | [`orbitkv-metaserver`](crates/orbitkv-metaserver) | Cross-node replica discovery |
 | [`python/orbitkv/vllm`](python/orbitkv/vllm) | vLLM adapter |
@@ -67,7 +68,7 @@ measured IPC baselines are documented in
 ## Build
 
 The default build targets CUDA 12.8. Host-only inspection can disable default
-features; GPU and RDMA tests require matching local hardware and drivers. The
+features; GPU and RDMA qualification requires matching local hardware and drivers. The
 workspace MSRV is Rust 1.89, required by iceoryx2 0.10.
 
 ```sh
@@ -75,6 +76,12 @@ cargo check --workspace
 
 cd python
 maturin develop --release
+```
+
+Initialize Mooncake before the first native build:
+
+```sh
+git submodule update --init --recursive third-party/mooncake
 ```
 
 To run the vLLM adapter while SGLang support is under construction:

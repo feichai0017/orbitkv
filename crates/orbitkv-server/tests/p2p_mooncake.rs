@@ -1,10 +1,10 @@
-//! P2P RDMA remote fetch integration test.
+//! P2P Mooncake remote fetch integration test.
 //!
 //! Verifies the end-to-end flow:
-//! Engine A saves blocks → MetaServer discovers them → Engine B fetches via RDMA READ
+//! Engine A saves blocks → MetaServer discovers them → Engine B fetches via Mooncake READ
 //! → data integrity verified.
 //!
-//! Run with: `cargo test -p orbitkv-server --test p2p_rdma -- --ignored`
+//! Run with: `cargo test -p orbitkv-server --test p2p_mooncake -- --ignored`
 
 use std::ffi::c_void;
 use std::net::SocketAddr;
@@ -305,6 +305,14 @@ fn ib_device() -> String {
     std::env::var("ORBITKV_IB_DEVICE").unwrap_or_else(|_| "mlx5_1".into())
 }
 
+fn mooncake_nics() -> Vec<String> {
+    if std::env::var_os("MC_FORCE_TCP").is_some() {
+        Vec::new()
+    } else {
+        vec![ib_device()]
+    }
+}
+
 // ── Test ────────────────────────────────────────────────────────────────────
 
 const NUM_BLOCKS: usize = 4;
@@ -316,7 +324,7 @@ const DEVICE_ID: i32 = 0;
 
 #[tokio::test]
 #[ignore] // Requires RDMA hardware (ORBITKV_IB_DEVICE env var, default: mlx5_1), CUDA GPU, and Python+torch
-async fn p2p_rdma_remote_fetch_roundtrip() {
+async fn p2p_mooncake_remote_fetch_roundtrip() {
     orbitkv_common::logging::init_stdout_colored("debug");
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
 
@@ -331,7 +339,7 @@ async fn p2p_rdma_remote_fetch_roundtrip() {
     let config_a = StorageConfig {
         metaserver_addr: Some(format!("http://127.0.0.1:{meta_port}")),
         advertise_addr: Some(format!("127.0.0.1:{port_a}")),
-        rdma_nic_names: Some(vec![ib_device()]),
+        mooncake_nic_names: mooncake_nics(),
         ..StorageConfig::default()
     };
     let engine_a = Arc::new(
@@ -411,7 +419,7 @@ async fn p2p_rdma_remote_fetch_roundtrip() {
     let config_b = StorageConfig {
         metaserver_addr: Some(format!("http://127.0.0.1:{meta_port}")),
         advertise_addr: Some(format!("127.0.0.1:{port_b}")),
-        rdma_nic_names: Some(vec![ib_device()]),
+        mooncake_nic_names: mooncake_nics(),
         ..StorageConfig::default()
     };
     let engine_b =
@@ -478,7 +486,7 @@ async fn p2p_rdma_remote_fetch_roundtrip() {
     )
     .await;
 
-    // ── 9. Engine B observes the producer and fetches via RDMA READ ──
+    // ── 9. Engine B observes the producer and fetches via Mooncake READ ──
     let lease = wait_for_prefetch_done(
         &engine_b,
         "inst-b",
@@ -491,7 +499,7 @@ async fn p2p_rdma_remote_fetch_roundtrip() {
     .await;
 
     // ── 9b. Verify Engine B re-registered fetched blocks to MetaServer ──
-    // RDMA-fetched blocks are now resident on B, so B must advertise them so
+    // Mooncake-fetched blocks are now resident on B, so B must advertise them so
     // other nodes can discover and fetch from B (not just from A).
     wait_for_metaserver_ownership(
         &meta_store,

@@ -22,10 +22,12 @@ jobs:
             cargo-features: ""
           - cuda-variant: cu13
             cuda-version: '13.0.2'
-            cargo-features: "--no-default-features --features cuda-13,rdma"
+            cargo-features: "--no-default-features --features cuda-13,mooncake"
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -49,7 +51,7 @@ jobs:
       - name: Install protobuf compiler and RDMA headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev
+          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
@@ -91,6 +93,8 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -107,6 +111,16 @@ jobs:
             cuda-nvcc-13-0 \
             cuda-nvrtc-dev-13-0 \
             libibverbs-dev \
+            librdmacm-dev \
+            libnuma-dev \
+            libyaml-cpp-dev \
+            libjsoncpp-dev \
+            libgoogle-glog-dev \
+            libgflags-dev \
+            libcurl4-openssl-dev \
+            ninja-build \
+            libboost-dev \
+            patchelf \
             pkg-config \
             protobuf-compiler
 
@@ -123,7 +137,7 @@ jobs:
 
       - name: Build wheel
         run: |
-          ./scripts/build-wheel.sh --release --no-default-features --features cuda-13,rdma
+          ./scripts/build-wheel.sh --release --no-default-features --features cuda-13,mooncake
           mkdir -p dist
           cp target/wheels/*.whl dist/
         env:

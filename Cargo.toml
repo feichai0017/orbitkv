@@ -7,10 +7,11 @@ members = [
   "crates/orbitkv-proto",
   "crates/orbitkv-server",
   "crates/orbitkv-metaserver",
-  "crates/orbitkv-pd-wire",
+  "crates/orbitkv-mooncake-provider",
   "crates/orbitkv-transfer",
   "python",
 ]
+exclude = ["third-party/mooncake"]
 resolver = "2"
 
 [workspace.package]
@@ -29,10 +30,8 @@ orbitkv-contract = { path = "crates/orbitkv-contract" }
 orbitkv-local = { path = "crates/orbitkv-local" }
 orbitkv-common = { path = "crates/orbitkv-common" }
 orbitkv-core = { path = "crates/orbitkv-core", default-features = false }
-orbitkv-pd-wire = { path = "crates/orbitkv-pd-wire" }
+orbitkv-mooncake-provider = { path = "crates/orbitkv-mooncake-provider", default-features = false }
 orbitkv-transfer = { path = "crates/orbitkv-transfer", default-features = false }
-sideway = "0.4.3"
-rdma-mummy-sys = "0.2.4"
 
 # Core dependencies
 # 0.19.7 floor: its regenerated bindings turn several sys enums into newtype
@@ -48,6 +47,7 @@ uuid = { version = "1.22", features = ["v4"] }
 parking_lot = "0.12"
 clap = { version = "4.5", features = ["derive"] }
 libc = "0.2"
+libloading = "0.9"
 dashmap = "6.1"
 opentelemetry = { version = "0.31.0", features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.31.0", features = [
@@ -65,7 +65,6 @@ prometheus = "0.14"
 bytesize = "2.3.1"
 anyhow = "1.0"
 bytes = { version = "1.10", features = ["serde"] }
-crossbeam-channel = "0.5"
 ahash = "0.8"
 futures = "0.3"
 smallvec = { version = "1.15", features = ["serde", "union"] }

@@ -1,8 +1,8 @@
 //! Embeddable P2P transfer gRPC service.
 //!
-//! A node that *serves* cross-node RDMA fetches must expose three RPCs to its
-//! peers: `RdmaHandshake` (QP bring-up), `QueryBlocksForTransfer` (pin blocks +
-//! return pinned-memory descriptors), and `ReleaseTransferLock`. The full
+//! A node that serves cross-node fetches exposes `QueryBlocksForTransfer`
+//! (authorize and pin blocks, returning Mooncake addresses) and
+//! `ReleaseTransferLock`. The full
 //! `orbitkv-server` binary provides them alongside the CUDA-IPC registration
 //! surface — which an in-process Rust embedder (one that registers raw device
 //! pointers and drives saves/loads through `OrbitKVEngine` directly) has no use
@@ -15,17 +15,17 @@
 
 use std::sync::Arc;
 
-use log::{debug, info, warn};
+use log::{debug, info};
 use tonic::{Request, Response, Status, async_trait};
 
 use orbitkv_proto::proto::engine::engine_server::{Engine, EngineServer};
 use orbitkv_proto::proto::engine::{
     HealthRequest, HealthResponse, LoadRequest, LoadResponse, QueryBlocksForTransferRequest,
-    QueryBlocksForTransferResponse, QueryRequest, QueryResponse, RdmaHandshakeRequest,
-    RdmaHandshakeResponse, RegisterContextRequest, RegisterContextResponse, ReleaseRequest,
-    ReleaseResponse, ReleaseTransferLockRequest, ReleaseTransferLockResponse, ResponseStatus,
-    SaveRequest, SaveResponse, SessionEvent, SessionRequest, ShutdownRequest, ShutdownResponse,
-    TransferBlockInfo, TransferSlotInfo, UnregisterRequest, UnregisterResponse,
+    QueryBlocksForTransferResponse, QueryRequest, QueryResponse, RegisterContextRequest,
+    RegisterContextResponse, ReleaseRequest, ReleaseResponse, ReleaseTransferLockRequest,
+    ReleaseTransferLockResponse, ResponseStatus, SaveRequest, SaveResponse, SessionEvent,
+    SessionRequest, ShutdownRequest, ShutdownResponse, TransferBlockInfo, TransferSlotInfo,
+    UnregisterRequest, UnregisterResponse,
 };
 
 use crate::{LayerBlock, OrbitKVEngine};
@@ -35,7 +35,7 @@ use crate::{LayerBlock, OrbitKVEngine};
 /// default 4 MiB limit on large batches.
 const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 
-/// The minimal gRPC surface a `OrbitKVEngine` embedder exposes so RDMA peers can
+/// The minimal gRPC surface an `OrbitKVEngine` embedder exposes so remote peers can
 /// fetch blocks from it. See the module docs for scope.
 pub struct P2pTransferService {
     engine: Arc<OrbitKVEngine>,
@@ -127,9 +127,9 @@ impl Engine for P2pTransferService {
     ) -> Result<Response<QueryBlocksForTransferResponse>, Status> {
         let req = request.into_inner();
 
-        if !self.engine.has_rdma_transport() {
+        if !self.engine.has_remote_transport() {
             return Err(Status::failed_precondition(
-                "RDMA transfer engine is not configured",
+                "Mooncake transfer engine is not configured",
             ));
         }
 
@@ -168,6 +168,13 @@ impl Engine for P2pTransferService {
             blocks,
             transfer_session_id: session_id,
             lock_timeout_secs: self.engine.transfer_lock_timeout().as_secs() as u32,
+            transfer_endpoint: self
+                .engine
+                .transfer_endpoint()
+                .ok_or_else(|| {
+                    Status::failed_precondition("Mooncake transfer engine is not configured")
+                })?
+                .to_string(),
         }))
     }
 
@@ -184,39 +191,6 @@ impl Engine for P2pTransferService {
         Ok(Response::new(ReleaseTransferLockResponse {
             status: Some(Self::ok_status()),
             released_blocks: released as u64,
-        }))
-    }
-
-    async fn rdma_handshake(
-        &self,
-        request: Request<RdmaHandshakeRequest>,
-    ) -> Result<Response<RdmaHandshakeResponse>, Status> {
-        let req = request.into_inner();
-
-        if !self.engine.has_rdma_transport() {
-            return Err(Status::failed_precondition(
-                "RDMA transfer engine is not configured",
-            ));
-        }
-
-        let server_meta = self
-            .engine
-            .rdma_accept_handshake(&req.requester_id, &req.handshake_metadata)
-            .map_err(|e| {
-                warn!(
-                    "P2P rdma_handshake failed: requester={} {e}",
-                    req.requester_id
-                );
-                Status::internal(format!("RDMA handshake failed: {e}"))
-            })?;
-
-        info!(
-            "P2P rdma_handshake accepted: requester={}",
-            req.requester_id
-        );
-        Ok(Response::new(RdmaHandshakeResponse {
-            status: Some(Self::ok_status()),
-            handshake_metadata: server_meta,
         }))
     }
 

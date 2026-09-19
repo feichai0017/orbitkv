@@ -26,10 +26,8 @@ use tonic::{
     transport::{Channel, Endpoint},
 };
 
-#[cfg(feature = "rdma")]
-mod pd_rdma;
-#[cfg(feature = "rdma")]
-mod rdma_v1;
+#[cfg(feature = "mooncake")]
+mod mooncake;
 
 // Custom Python exceptions for error classification
 create_exception!(orbitkv, OrbitKVError, PyException);
@@ -992,10 +990,8 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<LocalControlClient>()?;
     m.add_class::<PyLocalQueryClient>()?;
     m.add_class::<PyLoadState>()?;
-    #[cfg(feature = "rdma")]
-    pd_rdma::add_classes(m)?;
-    #[cfg(feature = "rdma")]
-    rdma_v1::add_classes(m)?;
+    #[cfg(feature = "mooncake")]
+    mooncake::add_classes(m)?;
     // Register custom exceptions for error classification
     m.add("OrbitKVError", m.py().get_type::<OrbitKVError>())?;
     m.add("OrbitKVInternal", m.py().get_type::<OrbitKVInternal>())?;

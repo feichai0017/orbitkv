@@ -5,11 +5,11 @@ use crate::proto::engine::engine_server::Engine;
 use crate::proto::engine::{
     HealthRequest, HealthResponse, LoadRequest, LoadResponse, QueryBlocksForTransferRequest,
     QueryBlocksForTransferResponse, QueryLoading, QueryReady, QueryRequest, QueryResponse,
-    RdmaHandshakeRequest, RdmaHandshakeResponse, RegisterContextRequest, RegisterContextResponse,
-    ReleaseRequest, ReleaseResponse, ReleaseTransferLockRequest, ReleaseTransferLockResponse,
-    ResponseStatus, SaveRequest, SaveResponse, SessionEvent, SessionRequest, ShutdownRequest,
-    ShutdownResponse, TransferBlockInfo, TransferMode as ProtoTransferMode, TransferSlotInfo,
-    UnregisterRequest, UnregisterResponse, load_block_target, query_response,
+    RegisterContextRequest, RegisterContextResponse, ReleaseRequest, ReleaseResponse,
+    ReleaseTransferLockRequest, ReleaseTransferLockResponse, ResponseStatus, SaveRequest,
+    SaveResponse, SessionEvent, SessionRequest, ShutdownRequest, ShutdownResponse,
+    TransferBlockInfo, TransferMode as ProtoTransferMode, TransferSlotInfo, UnregisterRequest,
+    UnregisterResponse, load_block_target, query_response,
 };
 use crate::registry::RegistryHandle;
 use crate::session::SessionRegistry;
@@ -728,9 +728,9 @@ impl Engine for GrpcEngineService {
             req.namespace, hash_count, req.requester_id,
         );
 
-        if !self.engine.has_rdma_transport() {
+        if !self.engine.has_remote_transport() {
             return Err(Status::failed_precondition(
-                "RDMA transfer engine is not configured",
+                "Mooncake transfer engine is not configured",
             ));
         }
 
@@ -762,6 +762,13 @@ impl Engine for GrpcEngineService {
                 blocks,
                 transfer_session_id: session_id,
                 lock_timeout_secs: self.engine.transfer_lock_timeout().as_secs() as u32,
+                transfer_endpoint: self
+                    .engine
+                    .transfer_endpoint()
+                    .ok_or_else(|| {
+                        Status::failed_precondition("Mooncake transfer engine is not configured")
+                    })?
+                    .to_string(),
             }))
         }
         .await;
@@ -810,51 +817,6 @@ impl Engine for GrpcEngineService {
             released, elapsed_ms
         );
         record_rpc_result("release_transfer_lock", &result, start);
-        result
-    }
-
-    async fn rdma_handshake(
-        &self,
-        request: Request<RdmaHandshakeRequest>,
-    ) -> Result<Response<RdmaHandshakeResponse>, Status> {
-        let start = Instant::now();
-        let req = request.into_inner();
-
-        debug!("RPC [rdma_handshake]: requester={}", req.requester_id,);
-
-        if !self.engine.has_rdma_transport() {
-            return Err(Status::failed_precondition(
-                "RDMA transfer engine is not configured",
-            ));
-        }
-
-        let result: Result<Response<RdmaHandshakeResponse>, Status> = async {
-            let server_meta = self
-                .engine
-                .rdma_accept_handshake(&req.requester_id, &req.handshake_metadata)
-                .map_err(|e| Status::internal(format!("RDMA handshake failed: {e}")))?;
-
-            Ok(Response::new(RdmaHandshakeResponse {
-                status: Some(Self::build_simple_response()),
-                handshake_metadata: server_meta,
-            }))
-        }
-        .await;
-
-        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-        match &result {
-            Ok(_) => debug!(
-                "RPC [rdma_handshake] completed: ok requester={} elapsed_ms={:.2}",
-                req.requester_id, elapsed_ms
-            ),
-            Err(status) => warn!(
-                "RPC [rdma_handshake] failed: code={} message={} elapsed_ms={:.2}",
-                status.code(),
-                status.message(),
-                elapsed_ms
-            ),
-        }
-        record_rpc_result("rdma_handshake", &result, start);
         result
     }
 

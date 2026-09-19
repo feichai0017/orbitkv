@@ -75,7 +75,13 @@ impl PinnedAllocation {
     }
 
     /// Get the underlying NonNull pointer.
-    #[cfg_attr(not(feature = "rdma"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "mooncake"),
+        allow(
+            dead_code,
+            reason = "only the Mooncake backing needs the raw allocation pointer"
+        )
+    )]
     pub(crate) fn as_non_null(&self) -> NonNull<u8> {
         self.ptr
     }

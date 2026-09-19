@@ -1,6 +1,8 @@
 # P2P KV Cache Sharing
 
-Share KV cache across OrbitKV nodes via RDMA. When node B needs blocks that node A already has, node B reads them directly from A's memory — one-sided RDMA READ, zero CPU involvement on the remote side.
+Share KV cache across OrbitKV nodes through Mooncake Transfer Engine. When node
+B needs blocks that node A already has, OrbitKV authorizes the block ranges and
+Mooncake reads them over RDMA (or TCP fallback).
 
 **When to use**: multiple OrbitKV instances serving the same model, shared prefixes are common, and you want to reduce TTFT by avoiding redundant prefill.
 
@@ -23,7 +25,8 @@ sequenceDiagram
 
 ### Step 2: Discover & Fetch
 
-Node B needs the same blocks. It queries the MetaServer, discovers Node A has them, and reads them directly via RDMA.
+Node B needs the same blocks. It queries the MetaServer, discovers Node A has
+them, and reads them through Mooncake's selected transport.
 
 ```mermaid
 sequenceDiagram
@@ -33,9 +36,10 @@ sequenceDiagram
 
     B->>M: who has these blocks?
     M-->>B: Node A
-    B->>A: gRPC handshake (first time only)
-    A-->>B: RDMA connection established
-    A-->>B: RDMA READ (one-sided, zero remote CPU)
+    B->>A: gRPC authorize + pin blocks
+    A-->>B: Mooncake endpoint + ranges + lease
+    B->>A: Mooncake READ
+    B->>A: gRPC release lease
     B->>B: pinned memory → GPU
 ```
 
@@ -51,13 +55,17 @@ orbitkv-metaserver --addr 0.0.0.0:50056
 
 ### 2. Start OrbitKV nodes
 
-Two flags enable P2P (must be set together):
+`--metaserver-addr` enables P2P. `--nics` is optional:
 
-- **`--nics <NAME>...`** — which RDMA NICs to use (e.g. `mlx5_0`, `mlx5_0 mlx5_1`). OrbitKV detects each NIC's NUMA node, PCIe topology, and GPU affinity automatically. All pinned memory is registered on these NICs for RDMA access.
+- **`--nics <NAME>...`** — optional Mooncake RDMA allow-list (for example
+  `mlx5_0`, `mlx5_0 mlx5_1`). OrbitKV passes it to `MC_TE_FILTERS`. When it is
+  omitted, Mooncake selects the available transport and can fall back to TCP.
 
-- **`--metaserver-addr <URL>`** — the MetaServer address. Once set, this node registers its block hashes with the MetaServer and fetches remote blocks via RDMA when needed.
+- **`--metaserver-addr <URL>`** — the MetaServer address. Once set, this node
+  starts Mooncake, registers its block hashes, and fetches remote blocks when needed.
 
-When P2P is enabled, `--addr` must be a routable IP (not `0.0.0.0` or `127.0.0.1`) — other nodes connect to this address for gRPC handshake and block queries.
+When P2P is enabled, `--addr` must use a routable IP. The gRPC service and the
+Mooncake P2P endpoint use that host with separate ports.
 
 **Node A** (e.g. `10.0.0.1`):
 
@@ -90,7 +98,8 @@ vllm serve Qwen/Qwen3-0.6B \
 
 ### 4. Verify
 
-Use `--log-level debug` to confirm P2P is working. Look for MetaServer registration, RDMA handshake, and RDMA fetch messages in the logs.
+Use `--log-level debug` to confirm P2P is working. Look for MetaServer
+registration, the advertised Mooncake endpoint, and fetch summaries.
 
 ## Fallback Behavior
 
@@ -99,8 +108,8 @@ P2P is opportunistic. Failures degrade gracefully to single-node operation — n
 | Scenario | What happens |
 |---|---|
 | MetaServer unreachable | Hash registration silently dropped. No remote discovery attempted. |
-| Remote node unreachable | gRPC handshake fails, fetch aborted. Request proceeds without remote blocks. |
-| RDMA transfer timeout | Connection invalidated, transfer lock force-released. Logged as error. |
+| Remote node unreachable | Authorization or Mooncake segment open fails; the request proceeds without remote blocks. |
+| Transfer timeout | Mooncake segment cache entry is invalidated and the transfer lease is released. |
 
 ## Tuning
 
@@ -132,12 +141,11 @@ P2P-related Prometheus metrics (on `:9091/metrics` by default):
 
 | Metric | Type | Description |
 |---|---|---|
-| `orbitkv_rdma_fetch_total` | Counter | Total per-segment RDMA fetch operations |
-| `orbitkv_rdma_fetch_duration` | Histogram | RDMA fetch latency distribution |
-| `orbitkv_rdma_fetch_bytes` | Counter | Total bytes fetched via RDMA |
-| `orbitkv_rdma_fetch_plan_segments` | Histogram | Planned segment count per executed RDMA fetch plan |
-| `orbitkv_rdma_fetch_plan_completed_segments` | Histogram | Completed segment count before a plan stops |
-| `orbitkv_rdma_qps` | Gauge | Active RDMA queue pairs |
+| `orbitkv_remote_fetch_total` | Counter | Total per-segment Mooncake fetch operations |
+| `orbitkv_remote_fetch_duration` | Histogram | Mooncake fetch latency distribution |
+| `orbitkv_remote_fetch_bytes` | Counter | Total bytes fetched via Mooncake |
+| `orbitkv_remote_fetch_plan_segments` | Histogram | Planned segment count per executed Mooncake fetch plan |
+| `orbitkv_remote_fetch_plan_completed_segments` | Histogram | Completed segment count before a plan stops |
 | `orbitkv_transfer_lock_active` | UpDownCounter | Currently held transfer locks |
 | `orbitkv_transfer_lock_timeouts_total` | Counter | Transfer lock timeout events |
 | `orbitkv_prefetch_stale_gc_total` | Counter | Stale prefetch active entries removed by background GC |
@@ -149,9 +157,10 @@ P2P-related Prometheus metrics (on `:9091/metrics` by default):
 - Both nodes must point to the same MetaServer and serve the same model. Namespace is derived from model name and TP config — mismatched models or TP sizes will result in different namespaces.
 - Check MetaServer logs for `InsertBlockHashes` — if absent, the source node isn't registering.
 
-**High RDMA fetch latency**
+**High Mooncake fetch latency**
 
 - Check NUMA affinity in the startup topology log — cross-NUMA transfers add latency.
 - Enable hugepages for large pools (`--use-hugepages`).
 
-For all P2P issues, `--log-level debug` shows the full handshake and fetch flow.
+For all P2P issues, `--log-level debug` shows the authorization and Mooncake
+fetch flow.

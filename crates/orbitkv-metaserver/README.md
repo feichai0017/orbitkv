@@ -276,7 +276,7 @@ Graceful shutdown trigger.
 3. **On block save**: Call `InsertBlockHashes` with `{ node, node_id }`
 4. **On cache eviction**: Call `RemoveBlockHashes` with `{ node, node_id }`
 5. **On block query**: Call `QueryPrefixBlocks` to build an ordered remote fetch plan
-6. **On block load**: Fetch each plan segment in order via RDMA, stopping on the first failure
+6. **On block load**: Fetch each plan segment in order via Mooncake, stopping on the first failure
 
 ## Environment Variables
 

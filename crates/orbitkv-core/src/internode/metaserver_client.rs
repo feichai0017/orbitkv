@@ -4,7 +4,7 @@ use std::sync::Weak;
 use log::{debug, error, info, warn};
 use orbitkv_common::grpc::{GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL, GRPC_CONNECT_TIMEOUT};
 use orbitkv_proto::proto::engine::meta_server_client::MetaServerClient as MetaServerGrpcClient;
-#[cfg(feature = "rdma")]
+#[cfg(feature = "mooncake")]
 use orbitkv_proto::proto::engine::{FetchSegment, QueryPrefixBlocksRequest};
 use orbitkv_proto::proto::engine::{
     HeartbeatNodeRequest, InsertBlockHashesRequest, RemoveBlockHashesRequest, UnregisterNodeRequest,
@@ -29,13 +29,13 @@ pub const DEFAULT_METASERVER_QUEUE_DEPTH: usize = 4096;
 const MAX_HASHES_PER_RPC: usize = 16_384;
 
 /// Error type for MetaServer client operations.
-#[cfg(feature = "rdma")]
+#[cfg(feature = "mooncake")]
 #[derive(Debug)]
 pub(crate) enum ClientError {
     RpcFailed(String),
 }
 
-#[cfg(feature = "rdma")]
+#[cfg(feature = "mooncake")]
 impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -145,7 +145,7 @@ pub struct MetaServerClient {
     /// Fire-and-forget command channel for insert/remove operations.
     command_tx: mpsc::Sender<MetaServerCommand>,
     /// Lazy-connect query client
-    #[cfg(feature = "rdma")]
+    #[cfg(feature = "mooncake")]
     query_client: MetaServerGrpcClient<Channel>,
 }
 
@@ -166,7 +166,7 @@ impl MetaServerClient {
         ));
 
         // Lazy-connect query client: connects on first RPC, not here
-        #[cfg(feature = "rdma")]
+        #[cfg(feature = "mooncake")]
         let query_client = {
             let channel = endpoint.connect_lazy();
             MetaServerGrpcClient::new(channel)
@@ -179,7 +179,7 @@ impl MetaServerClient {
 
         Self {
             command_tx,
-            #[cfg(feature = "rdma")]
+            #[cfg(feature = "mooncake")]
             query_client,
         }
     }
@@ -296,7 +296,7 @@ impl MetaServerClient {
     }
 
     /// Query MetaServer for an ordered remote fetch plan.
-    #[cfg(feature = "rdma")]
+    #[cfg(feature = "mooncake")]
     pub(crate) async fn query_plan(
         &self,
         namespace: &str,
@@ -1137,7 +1137,7 @@ mod tests {
         let _ = shutdown_tx.send(());
     }
 
-    #[cfg(feature = "rdma")]
+    #[cfg(feature = "mooncake")]
     #[tokio::test]
     async fn query_plan_sends_requester_as_excluded_node() {
         let (addr, service, shutdown_tx) = start_fake_metaserver().await;

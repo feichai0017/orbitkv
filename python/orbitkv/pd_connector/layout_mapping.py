@@ -155,6 +155,7 @@ def decode_rank_source_counts(
             PdHandshake(
                 request_id=f"rank-{rank}",
                 engine_id="",
+                transfer_endpoint="placeholder:1",
                 tp_rank=rank,
                 tp_size=decode_tp_size,
                 block_size=1,

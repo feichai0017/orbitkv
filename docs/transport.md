@@ -11,7 +11,7 @@ discovery so none of them becomes an accidental second source of KV truth.
 | --- | --- | --- | --- |
 | inference process to local sidecar | iceoryx2 request/response | CUDA IPC or shared host pages | lifecycle and QueryBundle integrated |
 | local bootstrap and region registration | Unix socket with credential and file-descriptor passing | memfd handles only | descriptor bootstrap implemented; page-region registration planned |
-| sidecar to sidecar | backend-specific session control | RDMA READ/WRITE | native RDMA exists; Mooncake adapter planned |
+| sidecar to sidecar | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | upstream Mooncake provider integrated |
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
 | administration | HTTP or compatibility gRPC | no KV bytes | existing |
 
@@ -94,18 +94,18 @@ Measurements were collected on one H20 node with two Linux processes and a
 64-byte request/response descriptor. They are engineering evidence for the
 transport choice, not end-to-end serving results.
 
-| Path | Mean RTT | p50 | p99 | Sequential RTT/s |
-| --- | ---: | ---: | ---: | ---: |
-| iceoryx2 0.10, dedicated cores, busy poll | 1.51 us | 1.26 us | 1.47 us | 664k |
-| iceoryx2 0.10, cooperative yield polling | 1.97 us | 1.72 us | 2.21 us | 506k |
-| Unix stream, fixed 64-byte echo | 5.97 us | 5.68 us | 11.66 us | 168k |
-| Tonic TCP, native Rust client, release sidecar | 79.69 us | 75.52 us | 103.43 us | 12.5k |
-| Python to PyO3 to Tonic TCP, release sidecar | 92.75 us | 88.35 us | 114.86 us | 10.8k |
+| Path | Mean RTT | p50 | p95 | p99 | Sequential RTT/s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| iceoryx2 two-process 64-byte ping | 4.052 us | 3.877 us | 4.585 us | 9.263 us | 246.8k |
+| real Python/PyO3 local `QueryBundle` | 106.861 us | 107.404 us | 114.390 us | 120.635 us | 9,358 |
+| real Python/PyO3 gRPC `QueryBundle` | 489.575 us | 485.715 us | 547.946 us | 635.653 us | 2,043 |
 
-The benchmark is deliberately sequential because the scheduler needs one
-answer before committing a recovery boundary. Infinite busy polling is not a
-supported production mode: pinning both peers to one CPU demonstrated
-starvation.
+The real local path is about 4.58x faster than gRPC by both mean RTT and
+sequential throughput. Its roughly 107 us RTT is still far above the 4 us
+iceoryx2 substrate, so the next local optimization target is descriptor
+encode/decode, Python/PyO3 crossings, and the sidecar's 50 us idle poll, not a
+replacement IPC library. The benchmark is sequential because the scheduler
+needs one answer before committing a recovery boundary.
 
 The iceoryx2 result can be reproduced with the two binaries documented in
 [`crates/orbitkv-local/README.md`](../crates/orbitkv-local/README.md).
@@ -158,12 +158,19 @@ custom TCP socket daemon, exchanges JSON metadata and QP/MR information, and
 then uses the selected data transport. Larger deployments may instead publish
 Segment metadata through etcd, Redis, or HTTP.
 
+OrbitKV pins Mooncake at `ffe013517eaafa8f33e5e0ee034fd6b8f5561e92` and
+builds its shared Transfer Engine through `orbitkv-mooncake-provider`. Native
+loading first checks `ORBITKV_MOONCAKE_LIB_DIR`, then the executable or Python
+extension directory, then the local `.orbitkv/mooncake/{cuda|cpu}/lib` build cache. Wheels
+bundle `libtransfer_engine.so`, `libmooncake_common.so`, and `libasio.so`; system
+RDMA/CUDA libraries remain deployment prerequisites.
+
 ## What OrbitKV reuses
 
-`orbitkv-transfer::RemoteMover` is the data-movement boundary. The existing
-Rust verbs engine implements it as `NativeRdma`. A future optional
-`MooncakeMover` will wrap Mooncake's C ABI/Rust binding and use its Segment
-offsets, BatchTransfer, multi-rail selection, and failover.
+`orbitkv-transfer::TransferEngine` is a narrow wrapper over the pinned upstream
+Mooncake C ABI. There is no runtime backend selector and no OrbitKV-owned verbs
+implementation. Authorized plans are lowered directly to Mooncake Segment
+addresses, BatchTransfer operations, and notifications.
 
 OrbitKV does not adopt Mooncake Store Master as its semantic authority. The
 following remain above every mover:
@@ -180,11 +187,11 @@ lived transfer capability after validating a lease.
 
 ## Remote operation choice
 
-- demand-driven remote cache reuse uses RDMA READ; the consumer controls
+- demand-driven remote cache reuse uses Mooncake READ; the consumer controls
   destination allocation and can retry another replica;
-- P/D transfer and proactive replication use RDMA WRITE; the destination first
+- P/D transfer and proactive replication use Mooncake WRITE; the destination first
   reserves pages and publishes them only after completion;
-- final WRITE completion uses WRITE_WITH_IMM or an explicit notification;
+- final WRITE completion uses a Mooncake notification after all batches complete;
 - failures invalidate only the physical plan and fall back to another replica
   or recomputation.
 
@@ -202,7 +209,7 @@ contract is complete.
 5. Move `Publish` and `Release`. (complete; vLLM opt-in, SGLang pending)
 6. Move `Restore` and remove per-load shared-memory status objects. (complete
    for the opt-in vLLM local path; gRPC compatibility and SGLang pending)
-7. Implement `MooncakeMover` behind an optional build/runtime feature.
-8. Qualify native RDMA and Mooncake against the same transfer plan tests.
-9. Remove cross-node gRPC data-path RPCs only after equivalent lease, fencing,
-   retry, and observability gates pass.
+7. Keep the pinned Mooncake provider as the only remote transfer backend.
+8. Qualify Mooncake RDMA/GPUDirect against the transfer-plan and P/D gates.
+9. Keep network control RPCs for authorization and leases; the custom verbs
+   handshake RPC has been removed.

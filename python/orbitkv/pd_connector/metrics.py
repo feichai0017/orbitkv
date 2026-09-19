@@ -41,7 +41,7 @@ PD_STATS_KEYS = {
 
 PD_LIST_KEYS = (
     "pd_decode_wait_duration",
-    "pd_decode_rdma_wait_duration",
+    "pd_decode_transfer_wait_duration",
     "pd_decode_prefill_http_submit_duration",
     "pd_load_blocks",
     "pd_prefill_push_duration",
@@ -137,7 +137,7 @@ class PdMetricsTracker:
         self,
         *,
         duration_s: float,
-        rdma_wait_s: float | None,
+        transfer_wait_s: float | None,
         blocks: int,
         success: bool,
     ) -> None:
@@ -146,8 +146,8 @@ class PdMetricsTracker:
             assert data is not None
             data["pd_decode_wait_duration"].append(max(0.0, duration_s))
             data["pd_load_blocks"].append(max(0, blocks))
-            if rdma_wait_s is not None:
-                data["pd_decode_rdma_wait_duration"].append(max(0.0, rdma_wait_s))
+            if transfer_wait_s is not None:
+                data["pd_decode_transfer_wait_duration"].append(max(0.0, transfer_wait_s))
             if success:
                 data["pd_load_success_count"] += 1
             else:
@@ -156,8 +156,8 @@ class PdMetricsTracker:
     def record_prefill_http_submit(self, duration_s: float) -> None:
         self._append("pd_decode_prefill_http_submit_duration", max(0.0, duration_s))
 
-    def record_decode_rdma_wait(self, duration_s: float) -> None:
-        self._append("pd_decode_rdma_wait_duration", max(0.0, duration_s))
+    def record_decode_transfer_wait(self, duration_s: float) -> None:
+        self._append("pd_decode_transfer_wait_duration", max(0.0, duration_s))
 
     def record_decode_abort(self) -> None:
         self._increment("pd_decode_abort_count")
@@ -262,7 +262,7 @@ class PdPromMetrics(KVConnectorPromMetrics):
             self,
             self._gauge_cls(
                 name="vllm:orbitkv_pd_prefill_inflight_push_tasks",
-                documentation="Number of in-flight P/D RDMA push tasks.",
+                documentation="Number of in-flight P/D Mooncake push tasks.",
                 labelnames=labelnames,
             ),
         )
@@ -270,7 +270,7 @@ class PdPromMetrics(KVConnectorPromMetrics):
             self,
             self._gauge_cls(
                 name="vllm:orbitkv_pd_prefill_inflight_finalize_tasks",
-                documentation="Number of in-flight P/D RDMA push finalizer tasks.",
+                documentation="Number of in-flight P/D Mooncake push finalizer tasks.",
                 labelnames=labelnames,
             ),
         )
@@ -289,11 +289,11 @@ class PdPromMetrics(KVConnectorPromMetrics):
                 labelnames=labelnames,
             ),
         )
-        self.hist_decode_rdma_wait_duration = _bind_metric_per_engine(
+        self.hist_decode_transfer_wait_duration = _bind_metric_per_engine(
             self,
             self._histogram_cls(
-                name="vllm:orbitkv_pd_decode_rdma_wait_duration_seconds",
-                documentation="Duration spent waiting for decode-side RDMA done IMM.",
+                name="vllm:orbitkv_pd_decode_transfer_wait_duration_seconds",
+                documentation="Duration spent waiting for decode-side Mooncake done IMM.",
                 buckets=duration_buckets,
                 labelnames=labelnames,
             ),
@@ -338,7 +338,7 @@ class PdPromMetrics(KVConnectorPromMetrics):
             self,
             self._histogram_cls(
                 name="vllm:orbitkv_pd_prefill_wait_for_pushes_duration_seconds",
-                documentation="Duration spent waiting for prefill-side RDMA writes.",
+                documentation="Duration spent waiting for prefill-side Mooncake writes.",
                 buckets=duration_buckets,
                 labelnames=labelnames,
             ),
@@ -403,7 +403,7 @@ class PdPromMetrics(KVConnectorPromMetrics):
 
         histograms = (
             (self.hist_decode_wait_duration, "pd_decode_wait_duration"),
-            (self.hist_decode_rdma_wait_duration, "pd_decode_rdma_wait_duration"),
+            (self.hist_decode_transfer_wait_duration, "pd_decode_transfer_wait_duration"),
             (
                 self.hist_decode_prefill_http_submit_duration,
                 "pd_decode_prefill_http_submit_duration",

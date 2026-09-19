@@ -4,9 +4,12 @@
 
    Focus exclusively on the typical data flows in large model inference: data movement between GPU and CPU, between compute nodes, and high-throughput transport of KV cache blocks. We only solve this specific class of problems—high-bandwidth, predictable, structured data paths.
 
-2. **RDMA-First, High-Performance Implementation**
+2. **Mooncake-Backed, High-Performance Remote Movement**
 
-   The initial version prioritizes RDMA, leveraging static topology, long-lived connections, and pre-allocated resources to push throughput, stability, and tail latency close to hardware limits—validating the value of a "dedicated transport layer".
+   Reuse the pinned upstream Mooncake Transfer Engine for RDMA, GPUDirect, TCP
+   fallback, topology discovery, connection management, and completion. OrbitKV
+   optimizes cache semantics and transfer plans instead of maintaining a second
+   verbs stack.
 
 3. **Developer-Friendly Abstractions**
 
@@ -34,9 +37,11 @@
 
    Does not cover collectives, group communication semantics, or a comprehensive flow control ecosystem—only focused on high-value point-to-point (or few-node) bulk transfer scenarios.
 
-4. **Not a "Runs Everywhere" Compatibility Solution**
+4. **Not a Transport Protocol Lab**
 
-   No compromising design sharpness for compatibility with low-spec or non-accelerated network environments; other protocols or software fallbacks are incremental extensions, not core promises.
+   Do not duplicate Mooncake transports inside OrbitKV. Portability follows the
+   capabilities of the pinned Mooncake provider; OrbitKV's contribution is the
+   cache authority, lifecycle, and physical plan above it.
 
 5. **Not a Security or Compliance Component**
 

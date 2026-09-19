@@ -1,9 +1,10 @@
 """Async executors for the P-side (prefill) push pipeline.
 
-``_AsyncLayerPushSender`` runs per-layer RDMA writes off the forward thread;
+``_AsyncLayerPushSender`` runs per-layer Mooncake writes off the forward thread;
 ``_AsyncPushFinalizer`` waits for those writes to complete and signals the
-remote done IMM. Both build on ``InflightTaskRunner`` (see ``async_runner``).
-The RDMA throughput-stat helpers live here too since the finalizer is their
+remote Mooncake completion notification. Both build on ``InflightTaskRunner``
+(see ``async_runner``).
+The Mooncake throughput-stat helpers live here too since the finalizer is their
 main consumer; ``PrefillHandler`` imports them back for its own logging.
 """
 
@@ -14,14 +15,14 @@ from typing import Any
 
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.pd_connector.async_runner import InflightTaskRunner
+from orbitkv.pd_connector.mooncake import MooncakePort
 from orbitkv.pd_connector.prefill_tasks import _LayerPushTask, _PushFinalizeTask
-from orbitkv.pd_connector.rdma import RdmaPort
 
 logger = get_connector_logger()
 
 
 # ---------------------------------------------------------------------------
-# RDMA throughput stats
+# Mooncake throughput stats
 # ---------------------------------------------------------------------------
 
 
@@ -43,18 +44,18 @@ def _pct(value: float, total: float) -> float:
     return value / total * 100
 
 
-def _rdma_link_gbps(rdma: RdmaPort | None) -> float:
-    if rdma is None:
+def _transfer_link_gbps(transfer: MooncakePort | None) -> float:
+    if transfer is None:
         return 0.0
     try:
-        return rdma.aggregated_link_speed() / 1e9
+        return transfer.aggregated_link_speed() / 1e9
     except Exception:
-        logger.exception("[PdConnector] failed to read RDMA link speed")
+        logger.exception("[PdConnector] failed to read Mooncake link speed")
         return 0.0
 
 
-def _rdma_write_stats(
-    rdma: RdmaPort,
+def _transfer_write_stats(
+    transfer: MooncakePort,
     req_ids: tuple[str, ...],
     *,
     fallback_bytes: int,
@@ -64,11 +65,11 @@ def _rdma_write_stats(
     stats_by_req = []
     for req_id in req_ids:
         try:
-            stats_by_req.append(rdma.write_stats(req_id))
+            stats_by_req.append(transfer.write_stats(req_id))
         except AttributeError:
             continue
         except Exception:
-            logger.exception("[PdConnector] failed to read RDMA write stats req=%s", req_id)
+            logger.exception("[PdConnector] failed to read Mooncake write stats req=%s", req_id)
     if not stats_by_req:
         return {
             "submitted": 0,
@@ -87,7 +88,9 @@ def _rdma_write_stats(
     bytes_total = sum(int(stats.get("bytes", 0)) for stats in stats_by_req)
     xfer_window_ms = max(float(stats.get("xfer_window_ms", 0.0)) for stats in stats_by_req)
     window_gbps = bytes_total * 8 / (xfer_window_ms / 1000.0) / 1e9 if xfer_window_ms > 0 else 0.0
-    write_latency_sum_ms = sum(float(stats.get("write_latency_sum_ms", 0.0)) for stats in stats_by_req)
+    write_latency_sum_ms = sum(
+        float(stats.get("write_latency_sum_ms", 0.0)) for stats in stats_by_req
+    )
     active_gbps = (
         bytes_total * 8 / (write_latency_sum_ms / 1000.0) / 1e9
         if write_latency_sum_ms > 0
@@ -124,12 +127,12 @@ def _rdma_write_stats(
 
 class _AsyncLayerPushSender(InflightTaskRunner["_LayerPushTask"]):
     def __init__(self, metrics: Any | None = None, max_workers: int = 16) -> None:
-        super().__init__("pd-rdma-push", metrics=metrics, max_workers=max_workers)
+        super().__init__("pd-transfer-push", metrics=metrics, max_workers=max_workers)
         self._inflight_by_req: dict[str, int] = {}
         self._cancelled: set[str] = set()
 
     def submit(self, task: _LayerPushTask) -> None:
-        self._submit(task, "PdConnector RDMA push sender is closed")
+        self._submit(task, "PdConnector Mooncake push sender is closed")
 
     def wait_req(self, req_id: str) -> None:
         with self._condition:
@@ -173,7 +176,7 @@ class _AsyncLayerPushSender(InflightTaskRunner["_LayerPushTask"]):
 def _run_layer_push(task: _LayerPushTask) -> None:
     if task.event is not None:
         task.event.synchronize()
-    task.rdma.push_layer(task.req_id, task.layer_idx, task.block_slices)
+    task.transfer.push_layer(task.req_id, task.layer_idx, task.block_slices)
 
 
 class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
@@ -183,13 +186,13 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
         metrics: Any | None = None,
         max_workers: int = 16,
     ) -> None:
-        super().__init__("pd-rdma-finalize", metrics=metrics, max_workers=max_workers)
+        super().__init__("pd-transfer-finalize", metrics=metrics, max_workers=max_workers)
         self._push_sender = push_sender
         self._submitted: set[tuple[str, ...]] = set()
         self._cancelled: set[str] = set()
 
     def submit(self, task: _PushFinalizeTask) -> None:
-        self._submit(task, "PdConnector RDMA push finalizer is closed")
+        self._submit(task, "PdConnector Mooncake push finalizer is closed")
 
     def cancel_many(self, req_ids: tuple[str, ...]) -> None:
         with self._condition:
@@ -215,17 +218,17 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
             if self._is_cancelled(req_id):
                 continue
             per_req_wait_start_ts_ns = time.time_ns()
-            task.rdma.wait_for_pushes(req_id)
+            task.transfer.wait_for_pushes(req_id)
             wait_for_pushes_s += (time.time_ns() - per_req_wait_start_ts_ns) / 1_000_000_000
             if self._is_cancelled(req_id):
                 continue
-            task.rdma.push_done(req_id)
+            task.transfer.push_done(req_id)
             completed = True
         done_ts_ns = time.time_ns()
-        write_stats = _rdma_write_stats(
-            task.rdma,
+        write_stats = _transfer_write_stats(
+            task.transfer,
             task.req_ids,
-            fallback_bytes=task.rdma_bytes,
+            fallback_bytes=task.transfer_bytes,
             fallback_start_ts_ns=task.first_save_ts_ns,
             fallback_end_ts_ns=done_ts_ns,
         )
@@ -240,15 +243,15 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
                 ),
                 wait_for_pushes_s=wait_for_pushes_s,
                 blocks=task.num_blocks,
-                bytes_total=task.rdma_bytes,
+                bytes_total=task.transfer_bytes,
                 gbps=push_gbps,
                 success=True,
             )
         push_gbps = float(write_stats.get("gbps", 0.0))
-        link_gbps = _rdma_link_gbps(task.rdma)
+        link_gbps = _transfer_link_gbps(task.transfer)
         logger.info(
-            "[PdConnector] P RDMA done reqs=%s target_req=%s chunks=%d blocks=%d "
-            "rdma_bytes=%d save_to_imm_ms=%.3f schedule_to_imm_ms=%.3f "
+            "[PdConnector] P Mooncake done reqs=%s target_req=%s chunks=%d blocks=%d "
+            "transfer_bytes=%d save_to_done_ms=%.3f schedule_to_done_ms=%.3f "
             "submit_span_ms=%.3f xfer_window_ms=%.3f completion_tail_ms=%.3f "
             "write_latency_sum_ms=%.3f write_latency_max_ms=%.3f "
             "writes=%d/%d errors=%d gbps=%.2f window_gbps=%.2f "
@@ -257,7 +260,7 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
             task.target_request_id,
             task.chunk_count,
             task.num_blocks,
-            task.rdma_bytes,
+            task.transfer_bytes,
             _elapsed_ms(task.first_save_ts_ns, done_ts_ns),
             _elapsed_ms(task.schedule_queued_ts_ns, done_ts_ns),
             float(write_stats.get("submit_span_ms", 0.0)),
@@ -282,7 +285,7 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
             task.target_request_id,
             task.chunk_count,
             task.num_blocks,
-            task.rdma_bytes,
+            task.transfer_bytes,
         )
         if self._metrics is not None:
             self._metrics.record_prefill_push(
@@ -290,7 +293,7 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
                 first_save_to_done_s=None,
                 wait_for_pushes_s=None,
                 blocks=task.num_blocks,
-                bytes_total=task.rdma_bytes,
+                bytes_total=task.transfer_bytes,
                 gbps=None,
                 success=False,
             )

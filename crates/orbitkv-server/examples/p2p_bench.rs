@@ -1,4 +1,4 @@
-//! End-to-end p2p RDMA fetch benchmark and integrity test.
+//! End-to-end Mooncake remote-fetch benchmark and integrity test.
 //!
 //! Drives the production cross-node path without vLLM. The holder saves
 //! blocks through the real GPU save path, registers them in an in-process
@@ -66,7 +66,7 @@ enum Model {
 #[derive(Parser)]
 #[command(
     name = "p2p_bench",
-    about = "End-to-end p2p RDMA fetch benchmark (production path, no vLLM)"
+    about = "End-to-end Mooncake remote-fetch benchmark (production path, no vLLM)"
 )]
 struct Cli {
     #[arg(long, value_enum)]
@@ -463,7 +463,7 @@ fn report_metadata(shape: &Shape, page_first: bool) {
     let query_bytes = slots * 25 + shape.blocks * 12;
     println!(
         "META page_first={page_first} model_layers={} tp={} blocks={} \
-         set_mib={:.1} slots_per_block={} total_slots={} rdma_descriptors={} \
+         set_mib={:.1} slots_per_block={} total_slots={} transfer_descriptors={} \
          query_resp_kib={:.1}",
         shape.num_layers(),
         shape.tp,
@@ -491,7 +491,7 @@ async fn run_holder(cli: &Cli, shape: &Shape, pool_bytes: usize) {
     let config = StorageConfig {
         metaserver_addr: Some(format!("http://127.0.0.1:{}", cli.meta_port)),
         advertise_addr: Some(format!("{}:{}", cli.advertise_ip, cli.port)),
-        rdma_nic_names: nic_config(cli),
+        mooncake_nic_names: nic_config(cli).unwrap_or_default(),
         max_prefetch_blocks: shape.blocks + 100,
         ..StorageConfig::default()
     };
@@ -601,7 +601,7 @@ async fn run_requester(cli: &Cli, shape: &Shape, pool_bytes: usize) {
     let config = StorageConfig {
         metaserver_addr: Some(format!("http://{holder_ip}:{}", cli.meta_port)),
         advertise_addr: Some(format!("{}:{}", cli.advertise_ip, cli.port)),
-        rdma_nic_names: nic_config(cli),
+        mooncake_nic_names: nic_config(cli).unwrap_or_default(),
         max_prefetch_blocks: shape.blocks + 100,
         ..StorageConfig::default()
     };

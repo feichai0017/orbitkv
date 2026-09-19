@@ -111,7 +111,7 @@ class PdDecodeSchedulerConnector:
             return
         scheduler_wait_ts_ns = time.time_ns()
         assert req_id not in self._active_waits, (
-            f"update_state_after_alloc called while req={req_id} is still waiting for RDMA transfer"
+            f"update_state_after_alloc called while req={req_id} is still waiting for Mooncake transfer"
         )
         if req_id in self._completed_waits:
             return

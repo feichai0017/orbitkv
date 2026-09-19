@@ -65,12 +65,12 @@ OrbitKV exposes the following metrics for monitoring KV cache operations:
 
 - **orbitkv_cache_tier_block_requests_total** (Counter)
   - Per-decision `query_prefetch` block attribution by `tier`
-    (`ram`, `rdma`, `ssd`, or `miss`)
+    (`ram`, `remote`, `ssd`, or `miss`)
   - Use case: Calculate overall hit ratio and each cache tier's contribution
     from one consistent denominator
   - Invariant: for each attributed decision,
-    `ram + rdma + ssd + miss == block_hashes.len()`
-  - Semantics: this is decision attribution. `tier="rdma"` and `tier="ssd"`
+    `ram + remote + ssd + miss == block_hashes.len()`
+  - Semantics: this is decision attribution. `tier="remote"` and `tier="ssd"`
     mean the block was selected to be satisfied by that backing tier; they do
     not guarantee the later backing operation succeeded.
 
@@ -220,15 +220,15 @@ emitted once for each `query_prefetch` decision and uses exactly one label:
 Tier values:
 
 - `ram`: blocks already present in the resident RAM cache at the decision point
-- `rdma`: blocks selected to be satisfied by RDMA remote fetch
+- `remote`: blocks selected to be satisfied by Mooncake remote fetch
 - `ssd`: blocks selected to be satisfied by SSD prefetch
 - `miss`: blocks no tier selected for that decision, including SSD prefetch
-  backpressure and residual blocks after RDMA partial availability
+  backpressure and residual blocks after Mooncake partial availability
 
 This metric intentionally records decisions, not completed service outcomes.
 For backing failure correlation, use:
 
-- `orbitkv_rdma_fetch_total{status="error"}` for RDMA fetch failures
+- `orbitkv_remote_fetch_total{status="error"}` for Mooncake fetch failures
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
 
 The legacy `orbitkv_cache_block_hits_total` and
@@ -454,8 +454,8 @@ sum(rate(orbitkv_cache_tier_block_requests_total[5m]))
 sum(rate(orbitkv_cache_tier_block_requests_total{tier="ram"}[5m])) /
 sum(rate(orbitkv_cache_tier_block_requests_total[5m]))
 
-# RDMA contribution to total requested blocks
-sum(rate(orbitkv_cache_tier_block_requests_total{tier="rdma"}[5m])) /
+# Remote contribution to total requested blocks
+sum(rate(orbitkv_cache_tier_block_requests_total{tier="remote"}[5m])) /
 sum(rate(orbitkv_cache_tier_block_requests_total[5m]))
 
 # SSD contribution to total requested blocks

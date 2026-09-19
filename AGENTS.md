@@ -9,7 +9,7 @@ LLM inference. The current data plane is validated with vLLM; SGLang support
 is being added through HiCache and RadixAttention integration.
 
 - Single-node KV cache offloading between GPU and host memory
-- Cross-node KV cache sharing via RDMA
+- Cross-node KV cache sharing via Mooncake Transfer Engine (RDMA/TCP)
 - Prefix cache reuse for repeated requests
 - Python bindings and connectors for inference frameworks
 - Framework-neutral state identity and recovery contracts
@@ -26,8 +26,8 @@ orbitkv/
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
 │   ├── orbitkv-server/           # Sidecar, router, health, and metrics
 │   ├── orbitkv-metaserver/       # Cross-node block metadata registry
-│   ├── orbitkv-pd-wire/          # Prefill/decode wire contracts
-│   └── orbitkv-transfer/         # RDMA transfer layer
+│   ├── orbitkv-mooncake-provider/# Pinned Mooncake native build/runtime loader
+│   └── orbitkv-transfer/         # Mooncake transfer wrapper
 ├── python/                       # PyO3 package and framework adapters
 ├── examples/                     # Python examples and benchmarks
 ├── docs/                         # Architecture and roadmap
@@ -46,8 +46,7 @@ orbitkv/
 | gRPC protocol changes | `crates/orbitkv-proto/` |
 | Server and router logic | `crates/orbitkv-server/` |
 | Cross-node metadata service | `crates/orbitkv-metaserver/` |
-| Prefill/decode wire types | `crates/orbitkv-pd-wire/` |
-| RDMA transfer path | `crates/orbitkv-transfer/` |
+| Mooncake remote transfer path | `crates/orbitkv-transfer/` |
 | PyO3 bindings | `python/src/lib.rs` |
 | Python package and helpers | `python/orbitkv/` |
 | vLLM connector | `python/orbitkv/vllm/` |
@@ -60,7 +59,7 @@ orbitkv/
 - `crates/orbitkv-local/src/lib.rs`: versioned iceoryx2 local-control API
 - `crates/orbitkv-core/src/lib.rs`: main Rust engine entry
 - `crates/orbitkv-core/src/storage/mod.rs`: storage pipeline
-- `crates/orbitkv-core/src/backing/`: SSD and RDMA backing implementations
+- `crates/orbitkv-core/src/backing/`: SSD and Mooncake-backed remote tiers
 - `crates/orbitkv-core/src/internode/`: cross-node coordination
 - `crates/orbitkv-server/src/service.rs`: gRPC service
 - `crates/orbitkv-server/src/http_server.rs`: HTTP health and metrics
@@ -82,7 +81,7 @@ cargo build --release
 cargo test
 ```
 
-On CUDA 13 dev machines, pass `--no-default-features --features cuda-13,rdma` to `cargo test`/`cargo clippy` (default `cuda-12` can fail with missing `libcudart` symbols).
+On CUDA 13 dev machines, pass `--no-default-features --features cuda-13,mooncake` to `cargo test`/`cargo clippy` (default `cuda-12` can fail with missing `libcudart` symbols).
 
 ### Python Bindings
 

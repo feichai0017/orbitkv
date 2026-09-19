@@ -5,7 +5,7 @@
 //! - Tensor parallelism (TP) across multiple GPUs
 //! - Split-storage layout for efficient K/V batch transfers
 //! - SSD caching tier
-//! - MetaServer-backed block discovery and RDMA fetch
+//! - MetaServer-backed block discovery and Mooncake remote fetch
 
 #[macro_use]
 mod trace;
@@ -51,7 +51,7 @@ pub use orbitkv_contract::{
 };
 pub use pinned_pool::PinnedAllocation;
 pub use seal_offload::SlotMeta;
-pub use storage::{DEFAULT_RDMA_QPS_PER_PEER, MemoryCacheCleanupStats, StorageConfig};
+pub use storage::{MemoryCacheCleanupStats, StorageConfig};
 pub use sync_state::{LoadState, LoadStateError};
 pub use trace::{set_trace_sample_rate, should_sample};
 pub use transfer::TransferMode;
@@ -537,7 +537,7 @@ impl OrbitKVEngine {
     }
 
     /// All-or-nothing membership fetch over one hybrid-cache storage group,
-    /// eligible for the same SSD prefetch and MetaServer + RDMA remote fetch
+    /// eligible for the same SSD prefetch and MetaServer + Mooncake remote fetch
     /// as prefix queries.
     ///
     /// Where [`Self::query_group_membership`] answers from the resident read
@@ -953,7 +953,7 @@ impl OrbitKVEngine {
     // Cross-node transfer: serving side
     // =========================================================================
 
-    /// Look up blocks and lock them for RDMA transfer. Returns metadata
+    /// Look up blocks and lock them for Mooncake transfer. Returns metadata
     /// for each found block plus a session ID for later unlock.
     pub fn query_blocks_for_transfer(
         &self,
@@ -993,88 +993,31 @@ impl OrbitKVEngine {
     }
 
     /// Return `(base_ptr, size)` for each contiguous pinned memory region.
-    /// Used for RDMA memory registration.
+    /// Used for Mooncake memory registration.
     pub fn pinned_memory_regions(&self) -> Vec<(u64, usize)> {
         self.storage.pinned_memory_regions()
     }
 
-    /// Returns true if RDMA transport is available.
-    #[cfg(feature = "rdma")]
-    pub fn has_rdma_transport(&self) -> bool {
-        self.storage.rdma_transport().is_some()
+    /// Returns true if the Mooncake remote transfer engine is available.
+    #[cfg(feature = "mooncake")]
+    pub fn has_remote_transport(&self) -> bool {
+        self.storage.mooncake_transport().is_some()
     }
 
-    /// Returns true if RDMA transport is available.
-    #[cfg(not(feature = "rdma"))]
-    pub fn has_rdma_transport(&self) -> bool {
+    /// Returns true if the Mooncake remote transfer engine is available.
+    #[cfg(not(feature = "mooncake"))]
+    pub fn has_remote_transport(&self) -> bool {
         false
     }
 
-    /// Perform server-side RDMA handshake with connection reuse.
-    ///
-    /// If `client_handshake_bytes` is empty, the client believes it is already
-    /// connected -- return our cached local metadata (or empty if not found).
-    /// Otherwise, establish (or re-establish) a connection to the client.
-    ///
-    /// Returns `Err` if the handshake fails (bad client metadata, QP creation, etc.).
-    #[cfg(feature = "rdma")]
-    pub fn rdma_accept_handshake(
-        &self,
-        client_addr: &str,
-        client_handshake_bytes: &[u8],
-    ) -> Result<Vec<u8>, String> {
-        let rdma = self
-            .storage
-            .rdma_transport()
-            .ok_or_else(|| "RDMA transport not configured".to_string())?;
-
-        if client_handshake_bytes.is_empty() {
-            // Client thinks it's already connected -- return our cached meta if we have it
-            return Ok(rdma
-                .engine()
-                .local_meta_for(client_addr)
-                .map(|m| m.to_bytes())
-                .unwrap_or_default());
-        }
-
-        let client_meta = orbitkv_transfer::HandshakeMetadata::from_bytes(client_handshake_bytes)
-            .map_err(|e| format!("invalid client handshake metadata: {e}"))?;
-
-        // Client sent handshake bytes → it has no connection. If we have a stale
-        // one (e.g. client restarted), tear it down so get_or_prepare creates fresh QPs.
-        rdma.engine().invalidate_connection(client_addr);
-
-        let server_meta = match rdma
-            .engine()
-            .get_or_prepare(client_addr)
-            .map_err(|e| format!("get_or_prepare failed: {e}"))?
-        {
-            orbitkv_transfer::ConnectionStatus::Prepared(m) => m,
-            orbitkv_transfer::ConnectionStatus::Existing => {
-                unreachable!("just invalidated connection for {client_addr}")
-            }
-            orbitkv_transfer::ConnectionStatus::Connecting => {
-                return Err(format!("handshake to {client_addr} already in progress"));
-            }
-        };
-        rdma.engine()
-            .complete_handshake(client_addr, &server_meta, &client_meta)
-            // Without the abort, the client stays in `connecting` forever and
-            // every retry fails with "already in progress".
-            .inspect_err(|_| rdma.engine().abort_handshake(client_addr, &server_meta))
-            .map_err(|e| format!("complete_handshake failed: {e}"))?;
-        info!("RDMA handshake accepted: client={client_addr}");
-        Ok(server_meta.to_bytes())
+    #[cfg(feature = "mooncake")]
+    pub fn transfer_endpoint(&self) -> Option<&str> {
+        self.storage.transfer_endpoint()
     }
 
-    /// Perform server-side RDMA handshake with connection reuse.
-    #[cfg(not(feature = "rdma"))]
-    pub fn rdma_accept_handshake(
-        &self,
-        _client_addr: &str,
-        _client_handshake_bytes: &[u8],
-    ) -> Result<Vec<u8>, String> {
-        Err("this binary was built without RDMA support".to_string())
+    #[cfg(not(feature = "mooncake"))]
+    pub fn transfer_endpoint(&self) -> Option<&str> {
+        None
     }
 }
 
@@ -1082,48 +1025,40 @@ impl OrbitKVEngine {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "rdma")]
-    #[test]
-    fn rdma_initialization_failure_is_returned_to_caller() {
+    #[cfg(feature = "mooncake")]
+    #[tokio::test]
+    async fn mooncake_initialization_failure_is_returned_to_caller() {
         let config = storage::StorageConfig {
-            rdma_nic_names: Some(vec!["definitely-not-a-real-nic".to_string()]),
+            mooncake_nic_names: vec!["definitely-not-a-real-nic".to_string()],
+            metaserver_addr: Some("http://127.0.0.1:50056".to_string()),
+            advertise_addr: Some("127.0.0.1:50055".to_string()),
             ..storage::StorageConfig::default()
         };
 
         let err = match OrbitKVEngine::new_with_config(1 << 20, false, config) {
-            Ok(_) => panic!("engine startup must fail when RDMA NIC init fails"),
+            Ok(_) => panic!("engine startup must fail when Mooncake NIC init fails"),
             Err(err) => err.to_string(),
         };
 
-        assert!(err.contains("Failed to initialise RDMA transport"), "{err}");
+        assert!(
+            err.contains("Failed to initialise Mooncake Transfer Engine"),
+            "{err}"
+        );
         assert!(err.contains("definitely-not-a-real-nic"), "{err}");
     }
 
-    #[cfg(not(feature = "rdma"))]
-    #[test]
-    fn rdma_config_is_ignored_without_feature() {
+    #[cfg(not(feature = "mooncake"))]
+    #[tokio::test]
+    async fn remote_transfer_config_is_ignored_without_feature() {
         let config = storage::StorageConfig {
-            rdma_nic_names: Some(vec!["mlx5_0".to_string()]),
+            mooncake_nic_names: vec!["mlx5_0".to_string()],
+            metaserver_addr: Some("http://127.0.0.1:50056".to_string()),
             ..storage::StorageConfig::default()
         };
 
         let engine = OrbitKVEngine::new_with_config(1 << 20, false, config)
-            .expect("no-RDMA build should ignore RDMA NIC config");
+            .expect("a build without Mooncake should ignore remote transfer config");
 
-        assert!(!engine.has_rdma_transport());
-    }
-
-    #[cfg(not(feature = "rdma"))]
-    #[test]
-    fn rdma_handshake_reports_missing_feature() {
-        let engine =
-            OrbitKVEngine::new_with_config(1 << 20, false, storage::StorageConfig::default())
-                .expect("engine should start without RDMA");
-
-        let err = engine
-            .rdma_accept_handshake("127.0.0.1:50055", b"client-handshake")
-            .expect_err("no-RDMA build should reject RDMA handshakes");
-
-        assert_eq!(err, "this binary was built without RDMA support");
+        assert!(!engine.has_remote_transport());
     }
 }

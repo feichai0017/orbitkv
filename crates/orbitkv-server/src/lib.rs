@@ -155,14 +155,10 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub blockwise_alloc: bool,
 
-    /// RDMA NIC names for inter-node transfer (e.g. --nics mlx5_0,mlx5_1 or --nics mlx5_0 mlx5_1).
-    /// When set, pinned memory is registered for RDMA access on these NICs.
+    /// Optional Mooncake RDMA rail filter (e.g. --nics mlx5_0,mlx5_1).
+    /// Without it, Mooncake selects the available transport, including TCP.
     #[arg(long, value_delimiter = ',', value_parser = parse_nic_name, num_args = 1..)]
     pub nics: Option<Vec<String>>,
-
-    /// Number of RC QPs per (local NIC, remote NIC) pair.
-    #[arg(long, default_value_t = orbitkv_core::DEFAULT_RDMA_QPS_PER_PEER)]
-    pub qps_per_peer: usize,
 
     /// MetaServer address for cross-node block hash registration (e.g. http://127.0.0.1:50056).
     /// When set, sealed block hashes are automatically registered with the MetaServer.
@@ -183,7 +179,7 @@ pub struct Cli {
     #[arg(long, default_value_t = 16, value_parser = parse_hll_bucket_bits)]
     pub metric_hll_bucket_bits: u8,
 
-    /// Transfer lock timeout in seconds. Blocks held for cross-node RDMA transfer are
+    /// Transfer lock timeout in seconds. Blocks held for cross-node transfer are
     /// locked for at most this duration before being force-released (crash recovery).
     #[arg(long, default_value_t = 120)]
     pub transfer_lock_timeout_secs: u64,
@@ -551,12 +547,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let has_metaserver = cli.metaserver_addr.is_some();
     let has_nics = cli.nics.as_ref().is_some_and(|n| !n.is_empty());
 
-    if has_metaserver != has_nics {
-        log::warn!(
-            "--metaserver-addr and --nics should be set together (got metaserver={}, nics={})",
-            has_metaserver,
-            has_nics,
-        );
+    if has_nics && !has_metaserver {
+        log::warn!("--nics has no effect without --metaserver-addr; remote transfer is disabled",);
     }
 
     let advertise_addr = if has_metaserver {
@@ -576,8 +568,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         hint_value_size_bytes: cli.hint_value_size,
         max_prefetch_blocks: cli.max_prefetch_blocks,
         ssd_cache_config,
-        rdma_nic_names: cli.nics.clone(),
-        rdma_qps_per_peer: cli.qps_per_peer,
+        mooncake_nic_names: cli.nics.clone().unwrap_or_default(),
         enable_numa_affinity: !cli.disable_numa_affinity,
         blockwise_alloc: cli.blockwise_alloc,
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),

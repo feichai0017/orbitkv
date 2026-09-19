@@ -10,10 +10,10 @@ default-run = "orbitkv-server"
 workspace = true
 
 [features]
-default = ["cuda-12", "rdma"]
+default = ["cuda-12", "mooncake"]
 cuda-12 = ["orbitkv-core/cuda-12"]
 cuda-13 = ["orbitkv-core/cuda-13"]
-rdma = ["orbitkv-core/rdma"]
+mooncake = ["orbitkv-core/mooncake"]
 tracing = ["fastrace", "orbitkv-core/tracing"]
 
 [lib]

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from orbitkv.pd_connector.layout import LayerBlockSlices
-from orbitkv.pd_connector.rdma import RdmaPort
+from orbitkv.pd_connector.mooncake import MooncakePort
 
 
 class _SkipPushRank(Exception):
@@ -20,7 +20,7 @@ class _SkipPushRank(Exception):
 
 @dataclass(frozen=True)
 class _LayerPushTask:
-    rdma: RdmaPort
+    transfer: MooncakePort
     req_id: str
     layer_idx: int
     block_slices: list[LayerBlockSlices]
@@ -38,7 +38,7 @@ class _PreparedLayerPush:
     req_blocks: frozenset[int]
     pushed_req_blocks: frozenset[int]
     target_pushes: tuple[_PreparedTargetPush, ...]
-    rdma_bytes: int
+    transfer_bytes: int
     all_chunks_seen: bool
 
 
@@ -47,13 +47,13 @@ class _PushTrace:
     queued_ts_ns: int
     first_save_ts_ns: int | None = None
     last_save_ts_ns: int | None = None
-    rdma_bytes: int = 0
+    transfer_bytes: int = 0
     chunk_count: int = 0
 
 
 @dataclass(frozen=True)
 class _PushFinalizeTask:
-    rdma: RdmaPort
+    transfer: MooncakePort
     req_ids: tuple[str, ...]
     target_request_id: str
     num_blocks: int
@@ -61,7 +61,7 @@ class _PushFinalizeTask:
     first_save_ts_ns: int | None
     finalize_queued_ts_ns: int
     schedule_queued_ts_ns: int
-    rdma_bytes: int
+    transfer_bytes: int
 
 
 __all__ = [

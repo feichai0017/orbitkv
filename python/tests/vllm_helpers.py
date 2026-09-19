@@ -53,11 +53,11 @@ def _detect_orbitkv_cargo_features() -> list[str]:
     if not cuda_version:
         return []
 
-    # Keep parity with the default feature set (cuda-12 + rdma) so the e2e
+    # Keep parity with the default feature set (cuda-12 + mooncake) so the e2e
     # server build shares the cargo cache with maturin dev builds instead of
     # invalidating it on every alternation.
     major = cuda_version.split(".", maxsplit=1)[0]
-    return ["cuda-13", "rdma"] if major == "13" else []
+    return ["cuda-13", "mooncake"] if major == "13" else []
 
 
 class VLLMServer:

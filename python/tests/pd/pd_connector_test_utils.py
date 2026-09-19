@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: E402,F401
-import json
 import queue
 import threading
 from types import SimpleNamespace
@@ -54,6 +53,11 @@ from orbitkv.pd_connector.metadata import (  # noqa: E402
     handshake_to_dict,
     handshakes_from_dicts,
 )
+from orbitkv.pd_connector.mooncake import (  # noqa: E402
+    MockMooncakePort,
+    RealMooncakePort,
+    _layer_blocks_to_native,
+)
 from orbitkv.pd_connector.prefill import (  # noqa: E402
     AsyncPrefillSender,
     PrefillHttpTask,
@@ -66,11 +70,6 @@ from orbitkv.pd_connector.proxy import (  # noqa: E402
     build_router,
     iter_http_stream_bytes,
     render_proxy_metrics,
-)
-from orbitkv.pd_connector.rdma import (  # noqa: E402
-    MockRdmaPort,
-    RealRdmaPort,
-    _layer_blocks_to_native,
 )
 from orbitkv.pd_connector.scheduler import (  # noqa: E402
     PdDecodeSchedulerConnector,
@@ -135,112 +134,47 @@ class FakePrefillSender:
         self.cancelled.append(request_id)
 
 
-class FakeNativeRdmaEngine:
+class FakeMooncakeTransferEngine:
     def __init__(self) -> None:
-        self.local_layers = []
-        self.remote_regs = []
-        self.pushed_layers = []
-        self.done_reqs = []
-        self.waited_reqs = []
-        self.waited_push_reqs = []
-        self.closed_reqs = []
-        self.finished_sending = ["sent-1"]
-        self.finished_recving = ["recv-1"]
+        self.endpoint = "127.0.0.1:15290"
+        self.registered_regions = []
+        self.writes = []
+        self.notifications = []
 
-    def register_local_layers(self, layers):
-        self.local_layers.append(layers)
-        registered = []
-        for layer in layers:
-            assert "regions" in layer
-            assert "k_block_addrs" not in layer
-            assert "v_block_addrs" not in layer
-            ptr = min(region["base_addr"] for region in layer["regions"])
-            registered.append(
-                {
-                    **layer,
-                    "mr_desc": {
-                        "ptr": ptr,
-                        "addr_rkey_list": [["10.0.0.1:1", 17]],
-                    },
-                }
-            )
-        return registered
+    def register_memory(self, regions):
+        self.registered_regions.extend(regions)
 
-    def register_remote(self, req_id, handshake_json):
-        # The native engine consumes the sealed wire JSON (orbitkv-pd-wire).
-        assert isinstance(handshake_json, str)
-        handshake = json.loads(handshake_json)
-        assert handshake["request_id"]
-        assert isinstance(handshake["imm_id"], int)
-        assert handshake["imm_id"] & 0xC000_0000 == 0, (
-            "imm_id must keep the reserved flag bits clear"
-        )
-        assert handshake.get("fail_imm_id") is None or isinstance(handshake["fail_imm_id"], int)
-        assert handshake.get("abort_imm_id") is None or isinstance(handshake["abort_imm_id"], int)
-        for layer in handshake["layers"]:
-            assert layer["mr_desc"]["addr_rkey_list"]
-            assert len(layer["mr_desc"]["addr_rkey_list"][0]) == 2
-            assert layer["block_ids"]
-            assert layer["regions"]
-            assert [region["region_idx"] for region in layer["regions"]] == list(
-                range(len(layer["regions"]))
-            )
-            assert "k_block_addrs" not in layer
-            assert "v_block_addrs" not in layer
-        self.remote_regs.append((req_id, handshake))
+    def write(
+        self,
+        remote_endpoint,
+        slices,
+        timeout_s=30.0,
+        notify_name=None,
+        notify_message=None,
+    ):
+        self.writes.append((remote_endpoint, slices, timeout_s))
+        if notify_name is not None:
+            self.notifications.append((notify_name, notify_message))
+        return sum(length for _, _, length in slices)
 
-    def push_layer(self, req_id, layer_idx, blocks):
-        for block in blocks:
-            assert set(block) == {"regions"}
-            assert [region["region_idx"] for region in block["regions"]] == list(
-                range(len(block["regions"]))
-            )
-        self.pushed_layers.append((req_id, layer_idx, blocks))
+    def send_notification(self, remote_endpoint, name, message):
+        self.notifications.append((name, message))
 
-    def push_done(self, req_id):
-        self.done_reqs.append(req_id)
+    def take_notifications(self):
+        notifications = self.notifications
+        self.notifications = []
+        return notifications
 
-    def wait_for_pushes(self, req_id):
-        self.waited_push_reqs.append(req_id)
-
-    def fail_request(self, req_id):
-        return None
-
-    def abort_request(self, req_id):
-        self.finished_recving.append(req_id)
-
-    def wait_done(self, req_id):
-        self.waited_reqs.append(req_id)
-
-    def pop_finished_sending(self):
-        finished = self.finished_sending
-        self.finished_sending = []
-        return finished
-
-    def pop_finished_recving(self):
-        finished = self.finished_recving
-        self.finished_recving = []
-        return finished
-
-    def close_request(self, req_id):
-        self.closed_reqs.append(req_id)
+    def complete(self, request_id: str, status: str = "done") -> None:
+        self.notifications.append((request_id, status))
 
 
-class FakeNativeRdmaEngineCtor(FakeNativeRdmaEngine):
+class FakeMooncakeTransferEngineCtor(FakeMooncakeTransferEngine):
     last_kwargs = None
 
     def __init__(self, **kwargs) -> None:
         super().__init__()
         type(self).last_kwargs = kwargs
-
-    def num_domains(self):
-        return 1
-
-    def num_groups(self):
-        return 1
-
-    def aggregated_link_speed(self):
-        return 400_000_000_000
 
 
 def drain_pd_pushes(worker: PdDecodeWorkerConnector | PdPrefillWorkerConnector) -> None:
@@ -249,15 +183,16 @@ def drain_pd_pushes(worker: PdDecodeWorkerConnector | PdPrefillWorkerConnector) 
 
 
 def pushed_layers_by_idx(
-    rdma: MockRdmaPort,
+    transfer: MockMooncakePort,
     req_id: str,
 ) -> dict[int, list[LayerBlockSlices]]:
-    return dict(rdma.pushed_layers[req_id])
+    return dict(transfer.pushed_layers[req_id])
 
 
 DUMMY_HANDSHAKE = PdHandshake(
     request_id="",
     engine_id="",
+    transfer_endpoint="placeholder:1",
     tp_rank=0,
     tp_size=1,
     block_size=16,
@@ -290,6 +225,7 @@ def decode_handshakes(tp_size: int, *, block_size: int = 16) -> tuple[PdHandshak
         PdHandshake(
             request_id=f"decode-r{rank}",
             engine_id="decode",
+            transfer_endpoint=f"127.0.0.1:{15290 + rank}",
             tp_rank=rank,
             tp_size=tp_size,
             block_size=block_size,

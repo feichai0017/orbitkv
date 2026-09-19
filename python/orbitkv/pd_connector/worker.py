@@ -22,8 +22,8 @@ from orbitkv.pd_connector.metadata import (
     PdWorkerMetadata,
 )
 from orbitkv.pd_connector.metrics import PdKVConnectorStats, PdMetricsTracker
+from orbitkv.pd_connector.mooncake import MooncakePort, build_mooncake_port
 from orbitkv.pd_connector.prefill_worker import PrefillHandler
-from orbitkv.pd_connector.rdma import RdmaPort, build_rdma_port
 
 logger = get_connector_logger()
 
@@ -33,7 +33,7 @@ class PdWorkerBase:
         self,
         vllm_config: Any,
         kv_cache_config: Any = None,
-        rdma: RdmaPort | None = None,
+        transfer: MooncakePort | None = None,
         prefill_sender: Any | None = None,
         metrics: PdMetricsTracker | None = None,
     ) -> None:
@@ -44,8 +44,8 @@ class PdWorkerBase:
         self.logical_block_size = _logical_block_size(vllm_config)
         self._layer_specs = _layer_specs_from_config(kv_cache_config)
         self._layer_group_indices = _layer_group_indices_from_config(kv_cache_config)
-        self.rdma = rdma
-        self._rdma_is_injected = rdma is not None
+        self.transfer = transfer
+        self._transfer_is_injected = transfer is not None
         self.engine_id = getattr(vllm_config.kv_transfer_config, "engine_id", None) or ""
         self.tp_rank, self.tp_size = _tensor_parallel_identity(vllm_config)
         logger.info(
@@ -110,15 +110,15 @@ class PdWorkerBase:
             f"num_blocks_by_layer={num_blocks_by_layer}"
         )
         self.layer_names = list(kv_caches.keys())
-        if not self._rdma_is_injected:
-            self.rdma = build_rdma_port(
+        if not self._transfer_is_injected:
+            self.transfer = build_mooncake_port(
                 self.vllm_config,
                 _infer_cuda_device(kv_caches),
                 tp_rank=self.tp_rank,
             )
-            self._decode.init_rdma_waiter()
-        assert self.rdma is not None
-        registered_layers = self.rdma.register_local_layers(
+            self._decode.init_transfer_waiter()
+        assert self.transfer is not None
+        registered_layers = self.transfer.register_local_layers(
             tuple(
                 self.layouts[layer_name].remote_layout(layer_idx)
                 for layer_idx, layer_name in enumerate(self.layer_names)
@@ -168,7 +168,7 @@ class PdWorkerBase:
             self._idle_decode_step = True
             return
 
-        assert self.rdma is not None, "PdConnector RDMA port is not initialized"
+        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
 
         self._decode.process_wait_reqs(metadata.reqs_to_wait)
         self._prefill.process_push_reqs(metadata.reqs_to_push)
@@ -176,7 +176,7 @@ class PdWorkerBase:
         for req_id in metadata.preempted_req_ids:
             logger.debug("[PdConnector] worker preempt req=%s", req_id)
             for push_req_id in self._prefill.release(req_id, RELEASE_PRODUCER_PREEMPTED):
-                self.rdma.close_request(push_req_id)
+                self.transfer.close_request(push_req_id)
 
         for req_id in metadata.reqs_to_release:
             reason = metadata.release_reasons.get(req_id, RELEASE_CONSUMER_ABORT)
@@ -186,9 +186,9 @@ class PdWorkerBase:
             released_push_req_ids = self._prefill.release(req_id, reason)
             if released_push_req_ids:
                 for push_req_id in released_push_req_ids:
-                    self.rdma.close_request(push_req_id)
+                    self.transfer.close_request(push_req_id)
             elif reason != RELEASE_CONSUMER_ABORT:
-                self.rdma.close_request(req_id)
+                self.transfer.close_request(req_id)
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         if self._idle_decode_step:
@@ -226,8 +226,8 @@ class PdWorkerBase:
         )
 
         releasable_sending = self._prefill.get_finished_sending(finished_req_ids)
-        finished_recving = self.rdma.pop_finished_recving()
-        finished_recving.update(self._decode.pop_finished_rdma_waits())
+        finished_recving = self.transfer.pop_finished_recving()
+        finished_recving.update(self._decode.pop_finished_transfer_waits())
         finished_recving.update(self._decode.pop_finished_aborted_recving())
         failed_recving = self._decode.pop_failed_recving()
         if failed_recving:

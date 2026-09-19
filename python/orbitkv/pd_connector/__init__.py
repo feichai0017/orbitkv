@@ -1,4 +1,4 @@
-"""Experimental P/D RDMA-push vLLM connectors."""
+"""Experimental P/D Mooncake-push vLLM connectors."""
 
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ class _PdSplitConnector(PdConnectorClassMixin, KVConnectorBase_V1, SupportsHMA):
 
 
 class PdDecodeConnector(_PdSplitConnector):
-    """Decode-side vLLM connector for P/D RDMA push."""
+    """Decode-side vLLM connector for P/D Mooncake push."""
 
     _scheduler_cls = PdDecodeSchedulerConnector
     _worker_cls = PdDecodeWorkerConnector
@@ -161,7 +161,7 @@ class PdDecodeConnector(_PdSplitConnector):
 
 
 class PdPrefillConnector(_PdSplitConnector):
-    """Prefill-side vLLM connector for P/D RDMA push."""
+    """Prefill-side vLLM connector for P/D Mooncake push."""
 
     _scheduler_cls = PdPrefillSchedulerConnector
     _worker_cls = PdPrefillWorkerConnector
@@ -202,8 +202,7 @@ class PdConnector(PdConnectorClassMixin, KVConnectorBase_V1, SupportsHMA):
             self._delegate = PdPrefillConnector(vllm_config, role, kv_cache_config)
         else:
             raise ValueError(
-                "PdConnector requires engine_id to start with 'd' or 'p'; "
-                f"engine_id={engine_id!r}"
+                f"PdConnector requires engine_id to start with 'd' or 'p'; engine_id={engine_id!r}"
             )
 
     @classmethod

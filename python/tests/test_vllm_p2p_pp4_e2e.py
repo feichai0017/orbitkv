@@ -6,7 +6,7 @@ This test is intentionally hardware-gated. It starts:
 2. one local PP4 consumer on the source server,
 3. one remote OrbitKV server plus a PP4 consumer that fetches the same KV over RDMA.
 
-The local consumer and the RDMA consumer both load KV produced by the same
+The local consumer and the remote consumer both load KV produced by the same
 producer run. That avoids false failures from independent PP replicas choosing
 slightly different greedy outputs on numerically close logits.
 
@@ -45,15 +45,15 @@ DEFAULT_MAX_MODEL_LEN = 512
 DEFAULT_GPU_MEMORY_UTILIZATION = 0.55
 DEFAULT_POOL_SIZE = "30gb"
 STARTUP_TIMEOUT_SECONDS = 900
-RDMA_FETCH_COUNTER_NAMES = (
-    "orbitkv_rdma_fetch_total",
-    "orbitkv_rdma_fetch_total_total",
-    "orbitkv_rdma_fetch",
+REMOTE_FETCH_COUNTER_NAMES = (
+    "orbitkv_remote_fetch_total",
+    "orbitkv_remote_fetch_total_total",
+    "orbitkv_remote_fetch",
 )
-RDMA_FETCH_BYTES_COUNTER_NAMES = (
-    "orbitkv_rdma_fetch_bytes",
-    "orbitkv_rdma_fetch_bytes_total",
-    "orbitkv_rdma_fetch_bytes_total_total",
+REMOTE_FETCH_BYTES_COUNTER_NAMES = (
+    "orbitkv_remote_fetch_bytes",
+    "orbitkv_remote_fetch_bytes_total",
+    "orbitkv_remote_fetch_bytes_total_total",
 )
 
 PROMPTS = [
@@ -530,11 +530,11 @@ def test_pp4_p2p_matches_local_cache_load(
     log_dir = tmp_path / "p2p_pp4_logs"
     producer_port = find_available_port()
     local_consumer_port = find_available_port()
-    rdma_consumer_port = find_available_port()
+    remote_consumer_port = find_available_port()
 
     with ExitStack() as stack:
         metaserver = stack.enter_context(MetaServer(log_dir, server_host))
-        source_pega = stack.enter_context(
+        source_orbitkv = stack.enter_context(
             OrbitKVServer(
                 "source",
                 source_devices,
@@ -551,17 +551,17 @@ def test_pp4_p2p_matches_local_cache_load(
                 model,
                 producer_port,
                 producer_devices,
-                source_pega,
+                source_orbitkv,
                 log_dir,
                 server_max_model_len,
                 orbitkv_transfer_backend,
             )
         )
 
-        producer_before = fetch_orbitkv_metrics(source_pega.metrics_port)
+        producer_before = fetch_orbitkv_metrics(source_orbitkv.metrics_port)
         _call_batch(producer_port, PROMPTS, request_max_tokens)
         producer_after = _wait_for_metrics(
-            source_pega.metrics_port,
+            source_orbitkv.metrics_port,
             producer_before,
             (
                 "orbitkv_save_bytes_total",
@@ -576,15 +576,15 @@ def test_pp4_p2p_matches_local_cache_load(
             model,
             local_consumer_port,
             consumer_devices,
-            source_pega,
+            source_orbitkv,
             log_dir,
             server_max_model_len,
             orbitkv_transfer_backend,
         ):
-            local_before = fetch_orbitkv_metrics(source_pega.metrics_port)
+            local_before = fetch_orbitkv_metrics(source_orbitkv.metrics_port)
             local_outputs = _call_batch(local_consumer_port, PROMPTS, request_max_tokens)
             local_after = _wait_for_metrics(
-                source_pega.metrics_port,
+                source_orbitkv.metrics_port,
                 local_before,
                 (
                     "orbitkv_load_bytes_total",
@@ -594,7 +594,7 @@ def test_pp4_p2p_matches_local_cache_load(
                 ),
             )
 
-        remote_pega = stack.enter_context(
+        remote_orbitkv = stack.enter_context(
             OrbitKVServer(
                 "remote",
                 consumer_devices,
@@ -606,32 +606,32 @@ def test_pp4_p2p_matches_local_cache_load(
             )
         )
         with VllmReplica(
-            "rdma-consumer",
+            "remote-consumer",
             model,
-            rdma_consumer_port,
+            remote_consumer_port,
             consumer_devices,
-            remote_pega,
+            remote_orbitkv,
             log_dir,
             server_max_model_len,
             orbitkv_transfer_backend,
         ):
-            rdma_before = fetch_orbitkv_metrics(remote_pega.metrics_port)
-            rdma_series_before = _snapshot_metrics(
-                remote_pega.metrics_port,
+            remote_before = fetch_orbitkv_metrics(remote_orbitkv.metrics_port)
+            remote_series_before = _snapshot_metrics(
+                remote_orbitkv.metrics_port,
                 (
-                    (RDMA_FETCH_COUNTER_NAMES, {"status": "ok"}),
-                    (RDMA_FETCH_COUNTER_NAMES, {"status": "error"}),
-                    (RDMA_FETCH_BYTES_COUNTER_NAMES, {"status": "ok"}),
+                    (REMOTE_FETCH_COUNTER_NAMES, {"status": "ok"}),
+                    (REMOTE_FETCH_COUNTER_NAMES, {"status": "error"}),
+                    (REMOTE_FETCH_BYTES_COUNTER_NAMES, {"status": "ok"}),
                 ),
             )
-            rdma_outputs = _call_batch(rdma_consumer_port, PROMPTS, request_max_tokens)
-            rdma_after = _wait_for_metrics(
-                remote_pega.metrics_port,
-                rdma_before,
+            remote_outputs = _call_batch(remote_consumer_port, PROMPTS, request_max_tokens)
+            remote_after = _wait_for_metrics(
+                remote_orbitkv.metrics_port,
+                remote_before,
                 (
-                    "orbitkv_rdma_fetch_total",
-                    "orbitkv_rdma_fetch_bytes_total",
-                    "orbitkv_rdma_fetch_bytes",
+                    "orbitkv_remote_fetch_total",
+                    "orbitkv_remote_fetch_bytes_total",
+                    "orbitkv_remote_fetch_bytes",
                     "orbitkv_load_bytes_total",
                     "orbitkv_load_bytes",
                 ),
@@ -640,9 +640,9 @@ def test_pp4_p2p_matches_local_cache_load(
         # The producer computes the full prompt, while both consumers take the
         # external-prefix path and only recompute the tail. With PP this can
         # legitimately expose tiny numerical differences on close logits. The
-        # P2P invariant is stricter and narrower: RDMA-loaded KV must produce
+        # P2P invariant is stricter and narrower: Mooncake-loaded KV must produce
         # the same outputs as a same-server load from the same saved KV.
-        _assert_outputs_match(local_outputs, rdma_outputs, label="rdma load")
+        _assert_outputs_match(local_outputs, remote_outputs, label="remote load")
 
         producer_saved = _metric_sum(
             producer_before,
@@ -664,13 +664,13 @@ def test_pp4_p2p_matches_local_cache_load(
                 "orbitkv_cache_block_hits",
             ),
         )
-        rdma_loaded = _metric_sum(
-            rdma_before,
-            rdma_after,
+        remote_loaded = _metric_sum(
+            remote_before,
+            remote_after,
             (
-                "orbitkv_rdma_fetch_total",
-                "orbitkv_rdma_fetch_bytes_total",
-                "orbitkv_rdma_fetch_bytes",
+                "orbitkv_remote_fetch_total",
+                "orbitkv_remote_fetch_bytes_total",
+                "orbitkv_remote_fetch_bytes",
                 "orbitkv_load_bytes_total",
                 "orbitkv_load_bytes",
             ),
@@ -678,41 +678,41 @@ def test_pp4_p2p_matches_local_cache_load(
 
         assert producer_saved > 0, f"producer produced no save evidence; logs={log_dir}"
         assert local_loaded > 0, f"local consumer produced no load evidence; logs={log_dir}"
-        assert rdma_loaded > 0, f"RDMA consumer produced no fetch/load evidence; logs={log_dir}"
+        assert remote_loaded > 0, f"remote consumer produced no fetch/load evidence; logs={log_dir}"
         assert (
             _metric_value_delta(
-                remote_pega.metrics_port,
-                rdma_series_before,
-                RDMA_FETCH_COUNTER_NAMES,
+                remote_orbitkv.metrics_port,
+                remote_series_before,
+                REMOTE_FETCH_COUNTER_NAMES,
                 labels={"status": "ok"},
             )
             > 0
-        ), f"RDMA consumer produced no successful RDMA fetch; logs={log_dir}"
+        ), f"remote consumer produced no successful Mooncake fetch; logs={log_dir}"
         assert (
             _metric_value_delta(
-                remote_pega.metrics_port,
-                rdma_series_before,
-                RDMA_FETCH_COUNTER_NAMES,
+                remote_orbitkv.metrics_port,
+                remote_series_before,
+                REMOTE_FETCH_COUNTER_NAMES,
                 labels={"status": "error"},
             )
             == 0
-        ), f"RDMA consumer recorded RDMA fetch errors; logs={log_dir}"
+        ), f"remote consumer recorded Mooncake fetch errors; logs={log_dir}"
         assert (
             _metric_value_delta(
-                remote_pega.metrics_port,
-                rdma_series_before,
-                RDMA_FETCH_BYTES_COUNTER_NAMES,
+                remote_orbitkv.metrics_port,
+                remote_series_before,
+                REMOTE_FETCH_BYTES_COUNTER_NAMES,
                 labels={"status": "ok"},
             )
             > 0
-        ), f"RDMA consumer fetched no RDMA bytes; logs={log_dir}"
+        ), f"remote consumer fetched no RDMA bytes; logs={log_dir}"
 
-        source_failures = _fetch_rpc_failures(source_pega.metrics_port)
-        # The RDMA consumer validates the read path. OrbitKV currently has no
+        source_failures = _fetch_rpc_failures(source_orbitkv.metrics_port)
+        # The remote consumer validates the read path. OrbitKV currently has no
         # read-only connector mode, so vLLM may submit a best-effort save for
         # the generated tail after the load has already completed.
         remote_failures = _fetch_rpc_failures(
-            remote_pega.metrics_port,
+            remote_orbitkv.metrics_port,
             ignored_methods=frozenset({"save"}),
         )
         assert not source_failures, f"source RPC failures: {source_failures}; logs={log_dir}"

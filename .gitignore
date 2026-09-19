@@ -21,6 +21,9 @@ python/tests/*.log
 python/orbitkv/orbitkv-server
 python/orbitkv/orbitkv-server-py
 python/orbitkv/orbitkv-metaserver-py
+python/orbitkv/libtransfer_engine.so
+python/orbitkv/libmooncake_common.so
+python/orbitkv/libasio.so
 
 # IDE and local assistant state.
 .vscode/

@@ -67,15 +67,3 @@ def register() -> None:
             "orbitkv.nixl_connector",
             "NixlPushConnector",
         )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "OrbitKVNixlConnector",
-            "orbitkv.nixl_connector",
-            "OrbitKVNixlConnector",
-        )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "OrbitKVNixlPullConnector",
-            "orbitkv.nixl_connector",
-            "OrbitKVNixlPullConnector",
-        )

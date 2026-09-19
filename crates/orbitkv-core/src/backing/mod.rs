@@ -1,10 +1,10 @@
-#[cfg(feature = "rdma")]
-pub(super) mod rdma;
-#[cfg(feature = "rdma")]
-pub(super) mod rdma_fetch;
+#[cfg(feature = "mooncake")]
+pub(super) mod mooncake;
+#[cfg(feature = "mooncake")]
+pub(super) mod mooncake_fetch;
 pub(super) mod ssd;
 pub(super) mod ssd_cache;
-#[cfg(feature = "rdma")]
+#[cfg(feature = "mooncake")]
 mod transfer_lock_guard;
 pub(super) mod uring;
 
@@ -24,10 +24,10 @@ use crate::block::{BlockKey, SealedBlock};
 use crate::pinned_pool::PinnedAllocation;
 use orbitkv_common::NumaNode;
 
-#[cfg(feature = "rdma")]
-pub(crate) use rdma::{RdmaTransport, new_rdma};
-#[cfg(feature = "rdma")]
-pub(crate) use rdma_fetch::RdmaFetchStore;
+#[cfg(feature = "mooncake")]
+pub(crate) use mooncake::{MooncakeTransport, new_mooncake};
+#[cfg(feature = "mooncake")]
+pub(crate) use mooncake_fetch::MooncakeFetchStore;
 pub(crate) use ssd::SsdBackingStore;
 pub(crate) use ssd::new_ssd;
 

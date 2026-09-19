@@ -1,11 +1,11 @@
 """Shared async task-execution primitives for the P/D connector.
 
 These factor out the threading skeleton that the prefill push sender, push
-finalizer, and decode RDMA-done waiter previously duplicated:
+finalizer, and decode Mooncake-done waiter previously duplicated:
 
 - ``AsyncTaskPool``: thin owner of a ``ThreadPoolExecutor`` with a shared lock.
   Used by callback-driven pools that track their own per-request generation
-  state (the decode RDMA-done waiter).
+  state (the decode Mooncake-done waiter).
 - ``InflightTaskRunner``: adds an inflight counter, error propagation, and
   ``wait_all`` / ``is_idle`` semantics on top, for pools whose callers block on
   completion (the prefill push sender and finalizer).

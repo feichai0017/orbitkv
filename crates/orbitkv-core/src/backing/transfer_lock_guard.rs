@@ -1,5 +1,5 @@
 // RAII release of a remote transfer-lock session acquired via
-// QueryBlocksForTransfer. See `rdma_fetch` for the fetch flow that owns it.
+// QueryBlocksForTransfer. See `mooncake_fetch` for the fetch flow that owns it.
 
 use log::warn;
 use orbitkv_proto::proto::engine::ReleaseTransferLockRequest;
@@ -65,7 +65,7 @@ impl Drop for TransferLockGuard {
         }
         // Only panic/cancellation reaches here — the coded paths call release().
         warn!(
-            "RDMA fetch aborted without releasing transfer lock; releasing via drop guard: session={} remote={} req_id={}",
+            "Mooncake fetch aborted without releasing transfer lock; releasing via drop guard: session={} remote={} req_id={}",
             self.session_id, self.remote_addr, self.req_id
         );
         self.spawn_release();
@@ -82,10 +82,10 @@ mod tests {
     use orbitkv_proto::proto::engine::engine_server::{Engine, EngineServer};
     use orbitkv_proto::proto::engine::{
         HealthRequest, HealthResponse, LoadRequest, LoadResponse, QueryBlocksForTransferRequest,
-        QueryBlocksForTransferResponse, QueryRequest, QueryResponse, RdmaHandshakeRequest,
-        RdmaHandshakeResponse, RegisterContextRequest, RegisterContextResponse, ReleaseRequest,
-        ReleaseResponse, ReleaseTransferLockResponse, SaveRequest, SaveResponse, SessionEvent,
-        SessionRequest, ShutdownRequest, ShutdownResponse, UnregisterRequest, UnregisterResponse,
+        QueryBlocksForTransferResponse, QueryRequest, QueryResponse, RegisterContextRequest,
+        RegisterContextResponse, ReleaseRequest, ReleaseResponse, ReleaseTransferLockResponse,
+        SaveRequest, SaveResponse, SessionEvent, SessionRequest, ShutdownRequest, ShutdownResponse,
+        UnregisterRequest, UnregisterResponse,
     };
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::transport::Endpoint;
@@ -111,12 +111,6 @@ mod tests {
             &self,
             _request: Request<QueryBlocksForTransferRequest>,
         ) -> Result<Response<QueryBlocksForTransferResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        async fn rdma_handshake(
-            &self,
-            _request: Request<RdmaHandshakeRequest>,
-        ) -> Result<Response<RdmaHandshakeResponse>, Status> {
             Err(Status::unimplemented("stub"))
         }
         async fn health(

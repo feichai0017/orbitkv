@@ -1,5 +1,5 @@
 // Transfer lock manager: prevents LRU eviction of blocks during cross-node
-// RDMA transfer by holding Arc<SealedBlock> references. When the TinyLFU cache
+// remote transfer by holding Arc<SealedBlock> references. When the TinyLFU cache
 // evicts a key, the pinned memory stays allocated as long as this lock holds an Arc.
 
 use std::collections::HashMap;

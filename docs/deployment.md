@@ -108,7 +108,7 @@ vllm serve GLM-5.2-FP8 \
 Generate a multi-block response, then send the full history in turn two. A hit
 for the first response exercises D-to-P reuse. Verify:
 
-- `orbitkv_rdma_fetch_total_total{status="ok"}` increases on the prefill-side
+- `orbitkv_remote_fetch_total_total{status="ok"}` increases on the prefill-side
   server and `query_blocks_for_transfer` increases on decode.
 - Every requested block is transferred with no block-count mismatch.
 - `vllm:orbitkv_load_failure_total`, `vllm:orbitkv_save_failure_total`, and non-OK

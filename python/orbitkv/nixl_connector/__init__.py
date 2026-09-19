@@ -14,8 +14,6 @@ from orbitkv.nixl_connector.connector import (
     NixlConnector,
     NixlPullConnector,
     NixlPushConnector,
-    OrbitKVNixlConnector,
-    OrbitKVNixlPullConnector,
 )
 from orbitkv.nixl_connector.metadata import (
     NixlAgentMetadata,
@@ -24,11 +22,9 @@ from orbitkv.nixl_connector.metadata import (
 )
 from orbitkv.nixl_connector.pull_scheduler import (
     NixlPullConnectorScheduler,
-    OrbitKVNixlPullConnectorScheduler,
 )
 from orbitkv.nixl_connector.pull_worker import (
     NixlPullConnectorWorker,
-    OrbitKVNixlPullConnectorWorker,
 )
 from orbitkv.nixl_connector.push_scheduler import (
     NixlPushConnectorScheduler,
@@ -63,8 +59,4 @@ __all__ = [
     "NixlPushConnector",
     "NixlPushConnectorScheduler",
     "NixlPushConnectorWorker",
-    "OrbitKVNixlConnector",
-    "OrbitKVNixlPullConnector",
-    "OrbitKVNixlPullConnectorScheduler",
-    "OrbitKVNixlPullConnectorWorker",
 ]

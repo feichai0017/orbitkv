@@ -48,11 +48,9 @@ from orbitkv.nixl_connector.metadata import (
 )
 from orbitkv.nixl_connector.pull_scheduler import (
     NixlPullConnectorScheduler,
-    OrbitKVNixlPullConnectorScheduler,
 )
 from orbitkv.nixl_connector.pull_worker import (
     NixlPullConnectorWorker,
-    OrbitKVNixlPullConnectorWorker,
 )
 from orbitkv.nixl_connector.push_scheduler import (
     NixlPushConnectorScheduler,
@@ -376,38 +374,9 @@ class NixlPushConnector(NixlBaseConnector):
 NixlConnector = NixlPullConnector
 
 
-class OrbitKVNixlPullConnector(NixlPullConnector):
-    """Pull connector using NIXL logic with OrbitKV RDMA v1 data READs."""
-
-    def __init__(
-        self,
-        vllm_config: VllmConfig,
-        role: KVConnectorRole,
-        kv_cache_config: "KVCacheConfig",
-    ):
-        NixlBaseConnector.__init__(self, vllm_config, role, kv_cache_config)
-        if role == KVConnectorRole.SCHEDULER:
-            self.connector_scheduler = OrbitKVNixlPullConnectorScheduler(
-                vllm_config, self.engine_id, kv_cache_config
-            )
-            self.connector_worker = None
-        elif role == KVConnectorRole.WORKER:
-            self.connector_scheduler = None
-            self.connector_worker = OrbitKVNixlPullConnectorWorker(
-                vllm_config, self.engine_id, kv_cache_config
-            )
-        else:
-            raise ValueError(f"Unsupported KVConnectorRole: {role}")
-
-
-OrbitKVNixlConnector = OrbitKVNixlPullConnector
-
-
 __all__ = [
     "NixlBaseConnector",
     "NixlConnector",
     "NixlPullConnector",
     "NixlPushConnector",
-    "OrbitKVNixlConnector",
-    "OrbitKVNixlPullConnector",
 ]

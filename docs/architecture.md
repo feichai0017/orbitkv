@@ -30,7 +30,7 @@ separate service.
  | framework adapter |              | framework adapter |
  +---------+---------+              +---------+---------+
            | local control / registered pages |
- +---------v---------+    RDMA      +---------v---------+
+ +---------v---------+  Mooncake    +---------v---------+
  | OrbitKV sidecar   |<------------>| OrbitKV sidecar   |
  | pinned DRAM / SSD |              | pinned DRAM / SSD |
  +-------------------+              +-------------------+
@@ -44,7 +44,7 @@ The vLLM adapter exposes this as an explicit `orbitkv.local_data` mode; its
 default remains gRPC and the SGLang adapter has not yet been switched. KV bytes
 must not travel through either control protocol: vLLM uses
 registered CUDA IPC pages, SGLang will use a shared pinned host pool, and remote
-transfers use a `RemoteMover` backend. See [transport.md](transport.md) for the
+transfers use the Mooncake-backed `TransferEngine`. See [transport.md](transport.md) for the
 measured decision.
 
 ## Layering
@@ -62,8 +62,8 @@ block hashes / CUDA IPC     radix hashes / HiCache pools / shared host pages
                     orbitkv-core
                  cache · leases · tiers
                   /                    \
-       orbitkv-local                  RemoteMover / SSD
-       iceoryx2 + UDS             Native RDMA · Mooncake TE
+       orbitkv-local              Mooncake Transfer / SSD
+       iceoryx2 + UDS             RDMA · TCP fallback
 ```
 
 ### `orbitkv-contract`
@@ -112,12 +112,11 @@ The native physical domains are:
 - framework GPU pages;
 - shared or OrbitKV-owned pinned DRAM;
 - local SSD;
-- remote OrbitKV replicas over RDMA.
+- remote OrbitKV replicas over Mooncake-selected RDMA or TCP.
 
-Mooncake Transfer Engine is the planned production remote-movement backend. It
+Mooncake Transfer Engine is the sole production remote-movement backend. It
 contributes Segment/BatchTransfer, multi-NIC topology selection, endpoint
-pooling, and rail failover. The existing pure-Rust RDMA implementation remains
-the lightweight and validation backend. Mooncake Store Master is not OrbitKV's
+pooling, and rail failover. Mooncake Store Master is not OrbitKV's
 semantic authority: bundle completeness, leases, generations, and planning
 remain in OrbitKV.
 
@@ -156,7 +155,7 @@ ExecutionComplete(page, execution_frontier)
 ```
 
 Semantic death proves that no future legal execution can read the state.
-Execution completion proves that no submitted CUDA, SSD, or RDMA operation
+Execution completion proves that no submitted CUDA, SSD, or network operation
 still references the generation. A lease or refcount supplies execution
 evidence; it does not by itself prove semantic death.
 

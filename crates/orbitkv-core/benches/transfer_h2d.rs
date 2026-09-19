@@ -8,7 +8,7 @@
 //!
 //! Run (this box is CUDA 13):
 //!   cargo bench -p orbitkv-core --no-default-features \
-//!       --features cuda-13,rdma --bench transfer_h2d
+//!       --features cuda-13,mooncake --bench transfer_h2d
 //!
 //! Optional host allocation flags:
 //!   cargo bench -p orbitkv-core --bench transfer_h2d -- --hugepages

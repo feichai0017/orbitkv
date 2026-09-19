@@ -1,7 +1,7 @@
 """Typed definitions for the two kv_transfer_params formats in P/D push.
 
 Router → D (consumer):  ConsumerKvParams  — "do a remote prefill for this request"
-D → P (producer):       ProducerKvParams  — "run prefill and push KV back via RDMA"
+D → P (producer):       ProducerKvParams  — "run prefill and push KV back via Mooncake"
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class ConsumerKvParams:
 
 @dataclass(frozen=True)
 class ProducerKvParams:
-    """D → P: tells Prefill to run prefill and RDMA-push KV to D."""
+    """D → P: tells Prefill to run prefill and push KV to D via Mooncake."""
 
     target_engine_id: str
     target_request_id: str

@@ -20,8 +20,8 @@ Deliver:
   `QueryBundle` through the same core path as compatibility gRPC;
 - add a framework-neutral Python data-plane facade and an explicit vLLM local
   mode for query, publish, restore, and lease release;
-- introduce `RemoteMover` with the native RDMA implementation as its first
-  backend;
+- integrate a pinned upstream Mooncake Transfer Engine as the single remote
+  movement implementation;
 - preserve current vLLM behavior.
 
 Gate:
@@ -79,10 +79,8 @@ Deliver:
 - reproduce a Dynamo-style weighted-overlap worker selector as a baseline;
 - add queue, transfer, recompute, and eviction costs;
 - return target worker plus source/restore plan.
-- implement an optional production `MooncakeMover` while retaining native
-  RDMA as the lightweight and validation backend;
-- qualify topology-aware slicing, endpoint pooling, and alternate-rail retry
-  against identical transfer plans.
+- qualify Mooncake topology-aware slicing, endpoint pooling, and alternate-rail
+  retry against OrbitKV transfer plans.
 
 Gate:
 

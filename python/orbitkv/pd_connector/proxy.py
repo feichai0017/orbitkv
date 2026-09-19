@@ -3,7 +3,8 @@
 The proxy accepts OpenAI-compatible completion requests, injects the
 ``kv_transfer_params`` expected by ``PdConnector``, and sends the request only
 to D. D allocates KV blocks, then uses the P hint from those params to trigger
-the prefill side. D begins decoding after its connector observes the RDMA IMM
+the prefill side. D begins decoding after its connector observes the Mooncake
+completion notification
 notification from P.
 """
 

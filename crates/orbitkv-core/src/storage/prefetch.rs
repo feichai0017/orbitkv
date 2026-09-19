@@ -9,8 +9,8 @@ use log::{info, warn};
 use parking_lot::Mutex;
 use tokio::task::JoinHandle;
 
-#[cfg(feature = "rdma")]
-use crate::backing::RdmaFetchStore;
+#[cfg(feature = "mooncake")]
+use crate::backing::MooncakeFetchStore;
 use crate::backing::{PrefetchResult, SsdBackingStore};
 use crate::block::{BlockKey, PrefetchStatus, SealedBlock};
 use crate::internode::MetaServerClient;
@@ -24,16 +24,16 @@ use super::tier_attribution::{
 const REMOTE_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const REMOTE_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[cfg(feature = "rdma")]
+#[cfg(feature = "mooncake")]
 #[derive(Clone)]
-pub(super) struct RdmaFetch(Arc<RdmaFetchStore>);
-#[cfg(not(feature = "rdma"))]
+pub(super) struct RemoteFetch(Arc<MooncakeFetchStore>);
+#[cfg(not(feature = "mooncake"))]
 #[derive(Clone)]
-pub(super) struct RdmaFetch;
+pub(super) struct RemoteFetch;
 
-#[cfg(feature = "rdma")]
-impl RdmaFetch {
-    pub(super) fn new(store: Arc<RdmaFetchStore>) -> Self {
+#[cfg(feature = "mooncake")]
+impl RemoteFetch {
+    pub(super) fn new(store: Arc<MooncakeFetchStore>) -> Self {
         Self(store)
     }
 
@@ -56,10 +56,10 @@ impl RdmaFetch {
         if require_full_prefix && blocks.len() != found {
             // One planned segment served fewer blocks than the MetaServer
             // promised (stale advertisement or failed fetch). Keep the partial
-            // result so poll_existing blacklists RDMA for this request instead
+            // result so poll_existing blacklists remote fetch for this request
             // of the wait loop retrying the same fetch until timeout.
             warn!(
-                "RDMA fetch returned fewer blocks than planned: req_id={} returned={} planned={}",
+                "Mooncake fetch returned fewer blocks than planned: req_id={} returned={} planned={}",
                 req_id,
                 blocks.len(),
                 found
@@ -69,8 +69,8 @@ impl RdmaFetch {
     }
 }
 
-#[cfg(not(feature = "rdma"))]
-impl RdmaFetch {
+#[cfg(not(feature = "mooncake"))]
+impl RemoteFetch {
     async fn try_fetch_prefix(
         &self,
         _req_id: &str,
@@ -85,14 +85,14 @@ impl RdmaFetch {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum PrefetchSource {
     Ssd,
-    Rdma,
+    Remote,
 }
 
 impl PrefetchSource {
     const fn as_attribution(self) -> AttributionSource {
         match self {
             Self::Ssd => AttributionSource::Ssd,
-            Self::Rdma => AttributionSource::Rdma,
+            Self::Remote => AttributionSource::Remote,
         }
     }
 }
@@ -130,7 +130,7 @@ struct PrefetchStart<'a> {
 }
 
 struct PrefetchTaskDeps {
-    rdma_fetch: Option<RdmaFetch>,
+    remote_fetch: Option<RemoteFetch>,
     ssd_store: Option<Arc<SsdBackingStore>>,
     prefetch_state: Arc<Mutex<PrefetchState>>,
     max_prefetch_blocks: usize,
@@ -151,9 +151,9 @@ struct PrefetchState {
     active: HashMap<String, PrefetchEntry>,
     /// Reserved SSD prefetch budget for active background tasks.
     reserved_ssd_prefetch_blocks: usize,
-    /// req_ids where the advertised RDMA owner served fewer blocks than the
+    /// req_ids where the advertised remote owner served fewer blocks than the
     /// MetaServer promised (stale advertisement or failed fetch). Prevents
-    /// re-triggering RDMA on every subsequent poll for the same request.
+    /// re-triggering Mooncake on every subsequent poll for the same request.
     failed_remote: HashMap<String, Instant>,
 }
 
@@ -180,7 +180,7 @@ impl Drop for SsdPrefetchReservation {
 pub(super) struct PrefetchScheduler {
     state: Arc<Mutex<PrefetchState>>,
     ssd_store: Option<Arc<SsdBackingStore>>,
-    rdma_fetch: Option<RdmaFetch>,
+    remote_fetch: Option<RemoteFetch>,
     metaserver_client: Option<Arc<MetaServerClient>>,
     max_prefetch_blocks: usize,
 }
@@ -188,7 +188,7 @@ pub(super) struct PrefetchScheduler {
 impl PrefetchScheduler {
     pub(super) fn new(
         ssd_store: Option<Arc<SsdBackingStore>>,
-        rdma_fetch: Option<RdmaFetch>,
+        remote_fetch: Option<RemoteFetch>,
         metaserver_client: Option<Arc<MetaServerClient>>,
         max_prefetch_blocks: usize,
     ) -> Self {
@@ -199,7 +199,7 @@ impl PrefetchScheduler {
                 failed_remote: HashMap::new(),
             })),
             ssd_store,
-            rdma_fetch,
+            remote_fetch,
             metaserver_client,
             max_prefetch_blocks,
         }
@@ -263,9 +263,9 @@ impl PrefetchScheduler {
             }
         };
 
-        // RDMA remote node can return fewer blocks than MetaServer promised
-        // (likely evicted). Don't re-trigger RDMA on subsequent scans.
-        if result.source == Some(PrefetchSource::Rdma)
+        // A remote node can return fewer blocks than MetaServer promised
+        // (likely evicted). Don't re-trigger Mooncake on subsequent scans.
+        if result.source == Some(PrefetchSource::Remote)
             && result.cache_inserts.len() < result.found
             && result.found > 0
         {
@@ -274,28 +274,28 @@ impl PrefetchScheduler {
                 .failed_remote
                 .insert(req_id.to_string(), Instant::now());
             info!(
-                "RDMA prefetch returned fewer blocks than expected: req_id={} returned={} expected={}",
+                "Mooncake prefetch returned fewer blocks than expected: req_id={} returned={} expected={}",
                 req_id,
                 result.cache_inserts.len(),
                 result.found
             );
         }
 
-        // RDMA-fetched blocks that survive cache admission are now resident on
+        // Remotely fetched blocks that survive cache admission are now resident on
         // this node. Re-advertise only those resident blocks to the MetaServer
         // so peers can discover and fetch from here too. SSD prefetch is
         // skipped: those blocks were already registered by this node's own save
         // path, and eviction explicitly unregisters them.
-        let rdma_registration = if result.source == Some(PrefetchSource::Rdma) {
+        let remote_registration = if result.source == Some(PrefetchSource::Remote) {
             let resident_keys = read_cache.batch_insert_resident_keys(result.cache_inserts);
-            rdma_registration_from_resident_keys(result.source, &resident_keys)
+            remote_registration_from_resident_keys(result.source, &resident_keys)
         } else {
             read_cache.batch_insert(result.cache_inserts);
             None
         };
 
         if let Some(client) = &self.metaserver_client
-            && let Some((namespace, hashes)) = rdma_registration
+            && let Some((namespace, hashes)) = remote_registration
         {
             client.try_register_namespace(namespace, hashes);
         }
@@ -391,18 +391,18 @@ impl PrefetchScheduler {
             return true;
         }
 
-        let rdma_fetch = self
-            .rdma_fetch
+        let remote_fetch = self
+            .remote_fetch
             .as_ref()
             .filter(|_| !state.failed_remote.contains_key(start.req_id))
             .cloned();
 
-        if rdma_fetch.is_none() && self.ssd_store.is_none() {
+        if remote_fetch.is_none() && self.ssd_store.is_none() {
             return false;
         }
 
         let deps = PrefetchTaskDeps {
-            rdma_fetch,
+            remote_fetch,
             ssd_store: self.ssd_store.clone(),
             prefetch_state: Arc::clone(&self.state),
             max_prefetch_blocks: self.max_prefetch_blocks,
@@ -432,7 +432,7 @@ impl PrefetchScheduler {
 
     /// Drop stale active entries and sweep old `failed_remote` entries.
     ///
-    /// Dropping a `JoinHandle` detaches the task; it keeps running so RDMA
+    /// Dropping a `JoinHandle` detaches the task; it keeps running so remote
     /// transfer locks can still be released by the normal completion path.
     pub(super) fn gc_stale_entries(
         &self,
@@ -539,11 +539,11 @@ fn build_ready_result(
     }
 }
 
-fn rdma_registration_from_resident_keys(
+fn remote_registration_from_resident_keys(
     source: Option<PrefetchSource>,
     resident_keys: &[BlockKey],
 ) -> Option<(String, Vec<Vec<u8>>)> {
-    if source != Some(PrefetchSource::Rdma) || resident_keys.is_empty() {
+    if source != Some(PrefetchSource::Remote) || resident_keys.is_empty() {
         return None;
     }
 
@@ -565,8 +565,8 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
     } = input;
     let remaining_hashes: Vec<Vec<u8>> = remaining_keys.iter().map(|k| k.hash.clone()).collect();
 
-    if let Some(rdma) = deps.rdma_fetch.as_ref()
-        && let Some((found, blocks)) = rdma
+    if let Some(remote) = deps.remote_fetch.as_ref()
+        && let Some((found, blocks)) = remote
             .try_fetch_prefix(&req_id, &namespace, &remaining_hashes, wait_for_full_prefix)
             .await
     {
@@ -574,13 +574,13 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
             total,
             hit,
             found,
-            Some(PrefetchSource::Rdma.as_attribution()),
+            Some(PrefetchSource::Remote.as_attribution()),
             emit_tier_metrics,
         );
         return build_ready_result(
             prefix_blocks,
             total,
-            Some(PrefetchSource::Rdma),
+            Some(PrefetchSource::Remote),
             found,
             &remaining_keys[..found],
             blocks,
@@ -622,11 +622,11 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
         }
     }
 
-    if wait_for_full_prefix && let Some(rdma) = deps.rdma_fetch {
+    if wait_for_full_prefix && let Some(remote) = deps.remote_fetch {
         let started_at = Instant::now();
         while started_at.elapsed() < REMOTE_WAIT_TIMEOUT {
             tokio::time::sleep(REMOTE_WAIT_POLL_INTERVAL).await;
-            if let Some((found, blocks)) = rdma
+            if let Some((found, blocks)) = remote
                 .try_fetch_prefix(&req_id, &namespace, &remaining_hashes, true)
                 .await
             {
@@ -634,13 +634,13 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
                     total,
                     hit,
                     found,
-                    Some(PrefetchSource::Rdma.as_attribution()),
+                    Some(PrefetchSource::Remote.as_attribution()),
                     emit_tier_metrics,
                 );
                 return build_ready_result(
                     prefix_blocks,
                     total,
-                    Some(PrefetchSource::Rdma),
+                    Some(PrefetchSource::Remote),
                     found,
                     &remaining_keys[..found],
                     blocks,
@@ -732,25 +732,27 @@ mod tests {
     }
 
     #[test]
-    fn rdma_registration_uses_only_resident_keys() {
+    fn remote_registration_uses_only_resident_keys() {
         let k1 = key(1);
         let k3 = key(3);
 
         let (namespace, hashes) =
-            rdma_registration_from_resident_keys(Some(PrefetchSource::Rdma), &[k1, k3])
-                .expect("RDMA resident keys should register");
+            remote_registration_from_resident_keys(Some(PrefetchSource::Remote), &[k1, k3])
+                .expect("remote resident keys should register");
 
         assert_eq!(namespace, "ns");
         assert_eq!(hashes, vec![vec![1], vec![3]]);
     }
 
     #[test]
-    fn rdma_registration_skips_ssd_and_empty_resident_keys() {
+    fn remote_registration_skips_ssd_and_empty_resident_keys() {
         let k1 = key(1);
 
-        assert!(rdma_registration_from_resident_keys(Some(PrefetchSource::Ssd), &[k1]).is_none());
-        assert!(rdma_registration_from_resident_keys(Some(PrefetchSource::Rdma), &[]).is_none());
-        assert!(rdma_registration_from_resident_keys(None, &[]).is_none());
+        assert!(remote_registration_from_resident_keys(Some(PrefetchSource::Ssd), &[k1]).is_none());
+        assert!(
+            remote_registration_from_resident_keys(Some(PrefetchSource::Remote), &[]).is_none()
+        );
+        assert!(remote_registration_from_resident_keys(None, &[]).is_none());
     }
 
     /// Feed a finished prefetch task with the given outcome through
@@ -787,16 +789,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn short_rdma_result_blacklists_request() {
+    async fn short_remote_result_blacklists_request() {
         // Partial prefix and total failure both mean the advertised owner
         // could not serve what the MetaServer promised.
-        assert!(poll_outcome_blacklists_req(Some(PrefetchSource::Rdma), 3, 2).await);
-        assert!(poll_outcome_blacklists_req(Some(PrefetchSource::Rdma), 3, 0).await);
+        assert!(poll_outcome_blacklists_req(Some(PrefetchSource::Remote), 3, 2).await);
+        assert!(poll_outcome_blacklists_req(Some(PrefetchSource::Remote), 3, 0).await);
     }
 
     #[tokio::test]
-    async fn full_or_non_rdma_result_does_not_blacklist() {
-        assert!(!poll_outcome_blacklists_req(Some(PrefetchSource::Rdma), 3, 3).await);
+    async fn full_or_non_remote_result_does_not_blacklist() {
+        assert!(!poll_outcome_blacklists_req(Some(PrefetchSource::Remote), 3, 3).await);
         assert!(!poll_outcome_blacklists_req(Some(PrefetchSource::Ssd), 3, 2).await);
         assert!(!poll_outcome_blacklists_req(None, 0, 0).await);
     }

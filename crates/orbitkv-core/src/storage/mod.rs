@@ -12,8 +12,8 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use crate::backing::{AllocateFn, DEFAULT_MAX_PREFETCH_BLOCKS, SsdBackingStore, SsdCacheConfig};
-#[cfg(feature = "rdma")]
-use crate::backing::{RdmaFetchStore, RdmaTransport};
+#[cfg(feature = "mooncake")]
+use crate::backing::{MooncakeFetchStore, MooncakeTransport};
 use crate::block::{BlockKey, PrefetchStatus, SealedBlock};
 use crate::internode::MetaServerClient;
 use crate::internode::metaserver_client::MetaServerClientConfig;
@@ -22,15 +22,14 @@ use crate::pinned_pool::{PinnedAllocation, PinnedAllocator};
 use orbitkv_common::NumaNode;
 
 use prefetch::PrefetchScheduler;
-#[cfg(feature = "rdma")]
-use prefetch::RdmaFetch;
+#[cfg(feature = "mooncake")]
+use prefetch::RemoteFetch;
 pub(crate) use read_cache::ReadCache;
 use write_path::{InsertDeps, WritePipeline};
 
 // Each reclaim iteration emits one MetaServer removal command; a small batch
 // turns an eviction burst into a command flood that overflows the removal queue.
 const RECLAIM_BATCH_SIZE: usize = 512;
-pub const DEFAULT_RDMA_QPS_PER_PEER: usize = 2;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryCacheCleanupStats {
@@ -49,16 +48,15 @@ pub struct StorageConfig {
     pub max_prefetch_blocks: usize,
     /// Optional SSD cache for sealed blocks (single-node, FIFO).
     pub ssd_cache_config: Option<SsdCacheConfig>,
-    /// Optional RDMA NIC names for inter-node transfer (e.g. `["mlx5_0", "mlx5_1"]`).
-    pub rdma_nic_names: Option<Vec<String>>,
-    /// Number of RC QPs per (local NIC, remote NIC) pair.
-    pub rdma_qps_per_peer: usize,
+    /// Optional Mooncake RDMA rail filter. Empty means that Mooncake selects
+    /// the available transport, including TCP fallback.
+    pub mooncake_nic_names: Vec<String>,
     /// Enable NUMA-aware memory allocation.
     pub enable_numa_affinity: bool,
     /// Allocate each block separately instead of contiguous batch allocation.
     /// Reduces fragmentation when blocks are freed in different order.
     pub blockwise_alloc: bool,
-    /// Transfer lock timeout for cross-node RDMA transfers.
+    /// Transfer lock timeout for cross-node Mooncake transfers.
     pub transfer_lock_timeout: Duration,
     /// MetaServer address for p2p block discovery + registration (None = disabled).
     pub metaserver_addr: Option<String>,
@@ -78,8 +76,7 @@ impl Default for StorageConfig {
             hint_value_size_bytes: None,
             max_prefetch_blocks: DEFAULT_MAX_PREFETCH_BLOCKS,
             ssd_cache_config: None,
-            rdma_nic_names: None,
-            rdma_qps_per_peer: DEFAULT_RDMA_QPS_PER_PEER,
+            mooncake_nic_names: Vec::new(),
             enable_numa_affinity: true,
             blockwise_alloc: false,
             transfer_lock_timeout: Duration::from_secs(120),
@@ -97,14 +94,21 @@ pub(crate) struct StorageEngine {
     prefetch: PrefetchScheduler,
     write_pipeline: Arc<WritePipeline>,
     ssd_store: Option<Arc<SsdBackingStore>>,
-    #[cfg(feature = "rdma")]
-    rdma_transport: Option<Arc<RdmaTransport>>,
+    #[cfg(feature = "mooncake")]
+    mooncake_transport: Option<Arc<MooncakeTransport>>,
     blockwise_alloc: bool,
     metaserver_client: Option<Arc<MetaServerClient>>,
     transfer_lock: Arc<transfer_lock::TransferLockManager>,
 }
 
 impl StorageEngine {
+    #[cfg_attr(
+        not(feature = "mooncake"),
+        allow(
+            clippy::unnecessary_wraps,
+            reason = "the public construction contract is fallible when Mooncake is enabled"
+        )
+    )]
     pub(crate) fn new_with_config(
         capacity_bytes: usize,
         use_hugepages: bool,
@@ -115,9 +119,8 @@ impl StorageEngine {
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let max_prefetch_blocks = config.max_prefetch_blocks;
         let ssd_cache_config = config.ssd_cache_config;
-        let rdma_nic_names = config.rdma_nic_names;
-        #[cfg(feature = "rdma")]
-        let rdma_qps_per_peer = config.rdma_qps_per_peer;
+        #[cfg(feature = "mooncake")]
+        let mooncake_nic_names = config.mooncake_nic_names;
         let blockwise_alloc = config.blockwise_alloc;
         let transfer_lock_timeout = config.transfer_lock_timeout;
 
@@ -180,22 +183,25 @@ impl StorageEngine {
         let (write_pipeline, insert_rx) = WritePipeline::new();
         let write_pipeline = Arc::new(write_pipeline);
 
-        // RDMA transport must be created after the allocator so it can
-        // register the pinned memory regions with the RDMA NICs.
-        let rdma_nics = rdma_nic_names.as_deref().filter(|nics| !nics.is_empty());
-        #[cfg(feature = "rdma")]
-        let rdma_transport = if let Some(nics) = rdma_nics {
-            let rdma = crate::backing::new_rdma(nics, &allocator, rdma_qps_per_peer)?;
-            crate::metrics::register_rdma_gauges(&rdma);
-            Some(rdma)
+        // Mooncake must be created after the allocator so it can register the
+        // pinned pool. An empty rail filter lets Mooncake choose TCP fallback.
+        #[cfg(feature = "mooncake")]
+        let mooncake_transport = if metaserver_client.is_some() {
+            let advertise = config
+                .advertise_addr
+                .as_deref()
+                .ok_or_else(|| "Mooncake transfer requires advertise_addr".to_string())?;
+            let transfer =
+                crate::backing::new_mooncake(&mooncake_nic_names, &allocator, advertise)?;
+            Some(transfer)
         } else {
             None
         };
 
-        #[cfg(not(feature = "rdma"))]
-        if rdma_nics.is_some() {
+        #[cfg(not(feature = "mooncake"))]
+        if metaserver_client.is_some() {
             warn!(
-                "RDMA NICs were configured, but this binary was built without the `rdma` feature; ignoring RDMA config"
+                "MetaServer was configured, but this binary was built without the `mooncake` feature; remote transfer is disabled"
             );
         }
 
@@ -212,26 +218,26 @@ impl StorageEngine {
             let ssd_store = ssd_cache_config
                 .map(|cfg| crate::backing::new_ssd(cfg, allocate_fn.clone(), is_numa));
 
-            #[cfg(feature = "rdma")]
-            let rdma_fetch = rdma_transport.as_ref().and_then(|rdma| {
+            #[cfg(feature = "mooncake")]
+            let remote_fetch = mooncake_transport.as_ref().and_then(|transfer| {
                 let ms = metaserver_client.as_ref()?;
                 let advertise = config
                     .advertise_addr
                     .clone()
                     .unwrap_or_else(|| "127.0.0.1:50055".to_string());
-                Some(RdmaFetch::new(Arc::new(RdmaFetchStore::new(
+                Some(RemoteFetch::new(Arc::new(MooncakeFetchStore::new(
                     Arc::clone(ms),
-                    Arc::clone(rdma),
+                    Arc::clone(transfer),
                     allocate_fn.clone(),
                     advertise,
                 ))))
             });
-            #[cfg(not(feature = "rdma"))]
-            let rdma_fetch = None;
+            #[cfg(not(feature = "mooncake"))]
+            let remote_fetch = None;
 
             let prefetch = PrefetchScheduler::new(
                 ssd_store.clone(),
-                rdma_fetch,
+                remote_fetch,
                 metaserver_client.clone(),
                 max_prefetch_blocks,
             );
@@ -246,8 +252,8 @@ impl StorageEngine {
                 prefetch,
                 write_pipeline: write_pipeline.clone(),
                 ssd_store,
-                #[cfg(feature = "rdma")]
-                rdma_transport,
+                #[cfg(feature = "mooncake")]
+                mooncake_transport,
                 blockwise_alloc,
                 metaserver_client,
                 transfer_lock,
@@ -505,7 +511,7 @@ impl StorageEngine {
                 break;
             }
 
-            // Notify MetaServer that evicted blocks are no longer available for RDMA fetch.
+            // Notify MetaServer that evicted blocks are no longer available for remote fetch.
             if let Some(client) = &self.metaserver_client {
                 let entries: Vec<(String, Vec<u8>)> = evicted
                     .iter()
@@ -613,7 +619,7 @@ impl StorageEngine {
     }
 
     /// Return `(base_ptr, size)` for each contiguous pinned memory region.
-    /// Used for RDMA memory registration.
+    /// Used for Mooncake memory registration.
     pub(crate) fn pinned_memory_regions(&self) -> Vec<(u64, usize)> {
         self.allocator
             .memory_regions()
@@ -622,9 +628,16 @@ impl StorageEngine {
             .collect()
     }
 
-    #[cfg(feature = "rdma")]
-    pub(crate) fn rdma_transport(&self) -> Option<&Arc<RdmaTransport>> {
-        self.rdma_transport.as_ref()
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn mooncake_transport(&self) -> Option<&Arc<MooncakeTransport>> {
+        self.mooncake_transport.as_ref()
+    }
+
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn transfer_endpoint(&self) -> Option<&str> {
+        self.mooncake_transport
+            .as_ref()
+            .map(|transport| transport.transfer_endpoint())
     }
 
     pub(crate) async fn shutdown_metaserver_client(&self) {

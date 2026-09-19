@@ -16,8 +16,8 @@ VENV="$REPO_ROOT/python/.venv/bin"
 
 # GPU 1 → NIC mlx5_1 (PIX), GPU 2 → NIC mlx5_2 (PIX)
 # rank_map: tp_rank 0 for each single-GPU node
-DECODE_KV_CONFIG='{"kv_connector":"PdConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.pd_connector","engine_id":"d0","kv_connector_extra_config":{"orbitkv.pd.rdma.rank_map":{"0":{"nic":"mlx5_1","worker_cpu":30}}}}'
-PREFILL_KV_CONFIG='{"kv_connector":"PdConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.pd_connector","engine_id":"p0","kv_connector_extra_config":{"orbitkv.pd.rdma.rank_map":{"0":{"nic":"mlx5_2","worker_cpu":60}}}}'
+DECODE_KV_CONFIG='{"kv_connector":"PdConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.pd_connector","engine_id":"d0","kv_connector_extra_config":{"orbitkv.pd.mooncake.bind_host":"127.0.0.1","orbitkv.pd.mooncake.rank_map":{"0":{"nic":"mlx5_1"}}}}'
+PREFILL_KV_CONFIG='{"kv_connector":"PdConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.pd_connector","engine_id":"p0","kv_connector_extra_config":{"orbitkv.pd.mooncake.bind_host":"127.0.0.1","orbitkv.pd.mooncake.rank_map":{"0":{"nic":"mlx5_2"}}}}'
 
 echo "============================================="
 echo " OrbitKV P/D Local Setup"

@@ -33,7 +33,13 @@ classifiers = [
 module-name = "orbitkv.orbitkv"
 python-source = "."
 # Automatically include binaries defined in Cargo.toml [[bin]] sections
-include = ["orbitkv/orbitkv-server-py", "orbitkv/orbitkv-metaserver-py"]
+include = [
+    "orbitkv/orbitkv-server-py",
+    "orbitkv/orbitkv-metaserver-py",
+    "orbitkv/libtransfer_engine.so",
+    "orbitkv/libmooncake_common.so",
+    "orbitkv/libasio.so",
+]
 
 [project.optional-dependencies]
 test = [

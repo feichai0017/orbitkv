@@ -1,38 +1,38 @@
 // Decision-level tier attribution for `query_prefetch`.
 //
 // Splits a single `query_prefetch` decision's block budget into four mutually
-// exclusive tiers: RAM (resident-cache prefix hit), RDMA / SSD (backing tier
+// exclusive tiers: RAM (resident-cache prefix hit), Mooncake / SSD (backing tier
 // selected to satisfy the remaining prefix), and MISS (everything no tier
-// could satisfy this decision, including SSD backpressure and RDMA partial
+// could satisfy this decision, including SSD backpressure and Mooncake partial
 // returns).
 //
-// `ram + rdma + ssd + miss == total` is enforced on construction.
+// `ram + remote + ssd + miss == total` is enforced on construction.
 //
 // This is decision attribution: tiers report which path was *selected* by
 // `full_prefix_scan`, not which path *eventually* succeeded. Backing
-// completion / failure must be observed via the existing `rdma_fetch_total`
+// completion / failure must be observed via the existing `remote_fetch_total`
 // and `ssd_prefetch_failures` counters.
 
 /// The tier a block was attributed to for a single `query_prefetch` decision.
 ///
-/// Only backing tiers (`Rdma`, `Ssd`) are represented here; the local RAM
+/// Only backing tiers (`Remote`, `Ssd`) are represented here; the local RAM
 /// prefix hit is conveyed through the `hit` argument to `classify` rather
 /// than as a separate `AttributionSource` variant. Keeping the enum closed
 /// over the two backing sources makes the call sites in `prefetch.rs` total
 /// without a dead RAM branch.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum AttributionSource {
-    /// RDMA remote-fetch was selected for at least one remaining block.
-    Rdma,
+    /// Mooncake remote-fetch was selected for at least one remaining block.
+    Remote,
     /// SSD prefetch was selected for at least one remaining block.
     Ssd,
 }
 
-/// Per-decision block counts. Invariant: `ram + rdma + ssd + miss == total`.
+/// Per-decision block counts. Invariant: `ram + remote + ssd + miss == total`.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct TierAttribution {
     ram: usize,
-    rdma: usize,
+    remote: usize,
     ssd: usize,
     miss: usize,
 }
@@ -53,8 +53,8 @@ impl TierAttribution {
         let miss = total
             .checked_sub(hit + loading)
             .expect("hit + loading must not exceed total");
-        let (rdma, ssd) = match loading_source {
-            Some(AttributionSource::Rdma) => (loading, 0),
+        let (remote, ssd) = match loading_source {
+            Some(AttributionSource::Remote) => (loading, 0),
             Some(AttributionSource::Ssd) => (0, loading),
             // `loading == 0` is the only valid shape when no backing tier was
             // selected; if a caller hands us `loading > 0` without a source it
@@ -66,7 +66,7 @@ impl TierAttribution {
         };
         let attribution = Self {
             ram: hit,
-            rdma,
+            remote,
             ssd,
             miss,
         };
@@ -79,7 +79,7 @@ impl TierAttribution {
     }
 
     fn sum(&self) -> usize {
-        self.ram + self.rdma + self.ssd + self.miss
+        self.ram + self.remote + self.ssd + self.miss
     }
 }
 
@@ -96,7 +96,7 @@ pub(super) fn record_cache_tier_block_requests(total: usize, attribution: TierAt
     );
     crate::metrics::record_cache_tier_block_requests(
         attribution.ram,
-        attribution.rdma,
+        attribution.remote,
         attribution.ssd,
         attribution.miss,
     );
@@ -112,9 +112,9 @@ mod tests {
             // Done branch: local RAM prefix plus residual miss when no backing
             // tier is selected for this decision.
             (TierAttribution::classify(7, 3, 0, None), (3, 0, 0, 4, 7)),
-            // RDMA found only part of the non-RAM prefix.
+            // Mooncake found only part of the non-RAM prefix.
             (
-                TierAttribution::classify(5, 1, 3, Some(AttributionSource::Rdma)),
+                TierAttribution::classify(5, 1, 3, Some(AttributionSource::Remote)),
                 (1, 3, 0, 1, 5),
             ),
             // SSD prefetch accepted only part of the non-RAM prefix, for
@@ -129,7 +129,7 @@ mod tests {
             assert_eq!(
                 (
                     attribution.ram,
-                    attribution.rdma,
+                    attribution.remote,
                     attribution.ssd,
                     attribution.miss,
                     attribution.sum()

@@ -23,10 +23,10 @@ name = "orbitkv-metaserver-py"
 path = "src/bin/metaserver.rs"
 
 [features]
-default = ["cuda-12", "rdma"]
+default = ["cuda-12", "mooncake"]
 cuda-12 = ["orbitkv-core/cuda-12", "orbitkv-server/cuda-12", "orbitkv-transfer?/cuda-12"]
 cuda-13 = ["orbitkv-core/cuda-13", "orbitkv-server/cuda-13", "orbitkv-transfer?/cuda-13"]
-rdma = ["dep:orbitkv-transfer", "dep:orbitkv-pd-wire", "orbitkv-core/rdma", "orbitkv-server/rdma"]
+mooncake = ["dep:orbitkv-transfer", "orbitkv-core/mooncake", "orbitkv-server/mooncake"]
 
 [dependencies]
 pyo3 = { workspace = true, features = ["extension-module"] }
@@ -36,9 +36,7 @@ orbitkv-local.workspace = true
 orbitkv-proto = { path = "../crates/orbitkv-proto" }
 orbitkv-server = { path = "../crates/orbitkv-server", default-features = false }
 orbitkv-metaserver = { path = "../crates/orbitkv-metaserver", default-features = false }
-orbitkv-pd-wire = { workspace = true, optional = true }
 orbitkv-transfer = { workspace = true, optional = true }
 tokio.workspace = true
 tonic.workspace = true
 log.workspace = true
-mea.workspace = true

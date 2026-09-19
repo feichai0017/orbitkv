@@ -1,15 +1,8 @@
-#[cfg(feature = "rdma")]
-use opentelemetry::metrics::ObservableGauge;
 use opentelemetry::{
     KeyValue, global,
     metrics::{Counter, Histogram, Meter, UpDownCounter},
 };
-#[cfg(feature = "rdma")]
-use std::sync::Arc;
 use std::sync::{LazyLock, OnceLock};
-
-#[cfg(feature = "rdma")]
-use crate::backing::RdmaTransport;
 
 // ---------------------------------------------------------------------------
 // Tier-attribution label sets for `cache_tier_block_requests`.
@@ -19,7 +12,7 @@ use crate::backing::RdmaTransport;
 // ---------------------------------------------------------------------------
 
 static TIER_RAM: LazyLock<[KeyValue; 1]> = LazyLock::new(|| [KeyValue::new("tier", "ram")]);
-static TIER_RDMA: LazyLock<[KeyValue; 1]> = LazyLock::new(|| [KeyValue::new("tier", "rdma")]);
+static TIER_REMOTE: LazyLock<[KeyValue; 1]> = LazyLock::new(|| [KeyValue::new("tier", "remote")]);
 static TIER_SSD: LazyLock<[KeyValue; 1]> = LazyLock::new(|| [KeyValue::new("tier", "ssd")]);
 static TIER_MISS: LazyLock<[KeyValue; 1]> = LazyLock::new(|| [KeyValue::new("tier", "miss")]);
 pub(crate) static CACHE_CLASS_RECLAIMABLE: LazyLock<[KeyValue; 1]> =
@@ -48,7 +41,7 @@ pub(crate) struct CoreMetrics {
     pub cache_block_hits: Counter<u64>,
     pub cache_block_misses: Counter<u64>,
     /// Per-decision block attribution for `query_prefetch`. Labelled by `tier`
-    /// (`ram` | `rdma` | `ssd` | `miss`). Each `query_prefetch` decision adds
+    /// (`ram` | `remote` | `ssd` | `miss`). Each `query_prefetch` decision adds
     /// at most four times (one per non-zero tier) and the sum across tiers
     /// equals the request's `block_hashes.len()`.
     pub cache_tier_block_requests: Counter<u64>,
@@ -102,17 +95,17 @@ pub(crate) struct CoreMetrics {
     pub transfer_lock_active: UpDownCounter<i64>,
     pub transfer_lock_timeouts_total: Counter<u64>,
 
-    // RDMA remote fetch (client side)
-    #[cfg(feature = "rdma")]
-    pub rdma_fetch_total: Counter<u64>,
-    #[cfg(feature = "rdma")]
-    pub rdma_fetch_duration_seconds: Histogram<f64>,
-    #[cfg(feature = "rdma")]
-    pub rdma_fetch_bytes: Counter<u64>,
-    #[cfg(feature = "rdma")]
-    pub rdma_fetch_plan_segments: Histogram<u64>,
-    #[cfg(feature = "rdma")]
-    pub rdma_fetch_plan_completed_segments: Histogram<u64>,
+    // Mooncake remote fetch (client side)
+    #[cfg(feature = "mooncake")]
+    pub remote_fetch_total: Counter<u64>,
+    #[cfg(feature = "mooncake")]
+    pub remote_fetch_duration_seconds: Histogram<f64>,
+    #[cfg(feature = "mooncake")]
+    pub remote_fetch_bytes: Counter<u64>,
+    #[cfg(feature = "mooncake")]
+    pub remote_fetch_plan_segments: Histogram<u64>,
+    #[cfg(feature = "mooncake")]
+    pub remote_fetch_plan_completed_segments: Histogram<u64>,
 }
 
 fn init_meter() -> Meter {
@@ -125,9 +118,9 @@ fn ssd_throughput_boundaries() -> Vec<f64> {
     (1..=40).map(|i| i as f64 * 1.0e9).collect()
 }
 
-/// Histogram boundaries for RDMA remote fetch (gRPC + handshake + RDMA READ).
-#[cfg(feature = "rdma")]
-fn rdma_fetch_duration_boundaries() -> Vec<f64> {
+/// Histogram boundaries for Mooncake remote fetch (authorization + Mooncake READ).
+#[cfg(feature = "mooncake")]
+fn remote_fetch_duration_boundaries() -> Vec<f64> {
     vec![
         0.01, // 10ms
         0.02, // 20ms
@@ -140,9 +133,9 @@ fn rdma_fetch_duration_boundaries() -> Vec<f64> {
     ]
 }
 
-/// Histogram boundaries for the number of segments in one RDMA fetch plan.
-#[cfg(feature = "rdma")]
-fn rdma_fetch_plan_segment_boundaries() -> Vec<f64> {
+/// Histogram boundaries for the number of segments in one Mooncake fetch plan.
+#[cfg(feature = "mooncake")]
+fn remote_fetch_plan_segment_boundaries() -> Vec<f64> {
     vec![
         0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 16.0, 32.0, 64.0, 128.0,
     ]
@@ -181,43 +174,17 @@ fn cache_residence_duration_seconds_boundaries() -> Vec<f64> {
     ]
 }
 
-#[cfg(feature = "rdma")]
-struct RdmaGaugeHandles {
-    _qps: ObservableGauge<u64>,
-}
-
-#[cfg(feature = "rdma")]
-static RDMA_GAUGES: OnceLock<RdmaGaugeHandles> = OnceLock::new();
-
-/// Register RDMA observable gauges backed by the given transport.
-/// Must be called after [`RdmaTransport`] is created; safe to call multiple times (no-op after first).
-#[cfg(feature = "rdma")]
-pub(crate) fn register_rdma_gauges(transport: &Arc<RdmaTransport>) {
-    let t = Arc::clone(transport);
-    RDMA_GAUGES.get_or_init(|| {
-        let meter = init_meter();
-        let qps = meter
-            .u64_observable_gauge("orbitkv_rdma_qps")
-            .with_description("Active RC queue pairs across all RDMA NICs")
-            .with_callback(move |observer| {
-                observer.observe(t.engine().num_qps() as u64, &[]);
-            })
-            .build();
-        RdmaGaugeHandles { _qps: qps }
-    });
-}
-
-pub(crate) fn record_cache_tier_block_requests(ram: usize, rdma: usize, ssd: usize, miss: usize) {
+pub(crate) fn record_cache_tier_block_requests(ram: usize, remote: usize, ssd: usize, miss: usize) {
     let metrics = core_metrics();
     if ram > 0 {
         metrics
             .cache_tier_block_requests
             .add(ram as u64, &*TIER_RAM);
     }
-    if rdma > 0 {
+    if remote > 0 {
         metrics
             .cache_tier_block_requests
-            .add(rdma as u64, &*TIER_RDMA);
+            .add(remote as u64, &*TIER_REMOTE);
     }
     if ssd > 0 {
         metrics
@@ -288,10 +255,10 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .u64_counter("orbitkv_cache_tier_block_requests")
                 .with_description(
                     "Per-decision query_prefetch block attribution by storage tier \
-                     (tier=ram|rdma|ssd|miss). The sum across tiers equals the \
+                     (tier=ram|remote|ssd|miss). The sum across tiers equals the \
                      request's block count for that decision. This is decision \
                      attribution, not service attribution; backing failures must be \
-                     inspected via orbitkv_rdma_fetch_total{status=\"error\"} \
+                     inspected via orbitkv_remote_fetch_total{status=\"error\"} \
                      and orbitkv_ssd_prefetch_failures_total.",
                 )
                 .build(),
@@ -466,45 +433,45 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             // Transfer lock
             transfer_lock_active: meter
                 .i64_up_down_counter("orbitkv_transfer_lock_active")
-                .with_description("Currently locked blocks for cross-node RDMA transfer")
+                .with_description("Currently locked blocks for cross-node transfer")
                 .build(),
             transfer_lock_timeouts_total: meter
                 .u64_counter("orbitkv_transfer_lock_timeouts_total")
                 .with_description("Transfer lock sessions expired by timeout (potential issue)")
                 .build(),
 
-            // RDMA remote fetch (client side)
-            #[cfg(feature = "rdma")]
-            rdma_fetch_total: meter
-                .u64_counter("orbitkv_rdma_fetch_total")
-                .with_description("RDMA remote fetch attempts (status=ok|error)")
+            // Mooncake remote fetch (client side)
+            #[cfg(feature = "mooncake")]
+            remote_fetch_total: meter
+                .u64_counter("orbitkv_remote_fetch_total")
+                .with_description("Mooncake remote fetch attempts (status=ok|error)")
                 .build(),
-            #[cfg(feature = "rdma")]
-            rdma_fetch_duration_seconds: meter
-                .f64_histogram("orbitkv_rdma_fetch_duration")
+            #[cfg(feature = "mooncake")]
+            remote_fetch_duration_seconds: meter
+                .f64_histogram("orbitkv_remote_fetch_duration")
                 .with_unit("s")
-                .with_description("End-to-end RDMA fetch latency (gRPC + handshake + RDMA READ)")
-                .with_boundaries(rdma_fetch_duration_boundaries())
+                .with_description("End-to-end Mooncake fetch latency (authorization + READ)")
+                .with_boundaries(remote_fetch_duration_boundaries())
                 .build(),
-            #[cfg(feature = "rdma")]
-            rdma_fetch_bytes: meter
-                .u64_counter("orbitkv_rdma_fetch_bytes")
+            #[cfg(feature = "mooncake")]
+            remote_fetch_bytes: meter
+                .u64_counter("orbitkv_remote_fetch_bytes")
                 .with_unit("bytes")
-                .with_description("Total bytes fetched via RDMA from remote nodes")
+                .with_description("Total bytes fetched via Mooncake from remote nodes")
                 .build(),
-            #[cfg(feature = "rdma")]
-            rdma_fetch_plan_segments: meter
-                .u64_histogram("orbitkv_rdma_fetch_plan_segments")
-                .with_description("Number of segments planned per executed RDMA fetch plan")
-                .with_boundaries(rdma_fetch_plan_segment_boundaries())
+            #[cfg(feature = "mooncake")]
+            remote_fetch_plan_segments: meter
+                .u64_histogram("orbitkv_remote_fetch_plan_segments")
+                .with_description("Number of segments planned per executed Mooncake fetch plan")
+                .with_boundaries(remote_fetch_plan_segment_boundaries())
                 .build(),
-            #[cfg(feature = "rdma")]
-            rdma_fetch_plan_completed_segments: meter
-                .u64_histogram("orbitkv_rdma_fetch_plan_completed_segments")
+            #[cfg(feature = "mooncake")]
+            remote_fetch_plan_completed_segments: meter
+                .u64_histogram("orbitkv_remote_fetch_plan_completed_segments")
                 .with_description(
-                    "Number of segments completed before an RDMA fetch plan stopped",
+                    "Number of segments completed before a Mooncake fetch plan stopped",
                 )
-                .with_boundaries(rdma_fetch_plan_segment_boundaries())
+                .with_boundaries(remote_fetch_plan_segment_boundaries())
                 .build(),
         }
     })
@@ -537,11 +504,11 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "rdma")]
+    #[cfg(feature = "mooncake")]
     #[test]
-    fn rdma_fetch_plan_segment_boundaries_cover_failures_and_fragmented_plans() {
+    fn remote_fetch_plan_segment_boundaries_cover_failures_and_fragmented_plans() {
         assert_eq!(
-            rdma_fetch_plan_segment_boundaries(),
+            remote_fetch_plan_segment_boundaries(),
             vec![
                 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 16.0, 32.0, 64.0, 128.0,
             ]

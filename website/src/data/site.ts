@@ -35,7 +35,7 @@ export const layers = [
   {
     name: "orbitkv-transfer",
     role: "Move the bytes.",
-    detail: "A RemoteMover boundary with native RDMA and a planned Mooncake backend.",
+    detail: "Pinned Mooncake Transfer Engine for RDMA, TCP fallback, and completion notifications.",
     path: "crates/orbitkv-transfer/README.md",
   },
   {

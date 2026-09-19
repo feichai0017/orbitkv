@@ -1,4 +1,4 @@
-"""Metadata exchanged by the experimental P/D RDMA push connector."""
+"""Metadata exchanged by the experimental P/D Mooncake connector."""
 
 from __future__ import annotations
 
@@ -89,7 +89,6 @@ class LayerRemoteLayout:
     layer_idx: int
     block_ids: tuple[int, ...]
     regions: tuple[TransferRegionLayout, ...]
-    mr_desc: Any | None = None
 
     def __post_init__(self) -> None:
         assert self.layer_name
@@ -111,13 +110,12 @@ class PdHandshake:
     tp_size: int
     block_size: int
     layers: tuple[LayerRemoteLayout, ...]
-    imm_id: int | None = None
-    fail_imm_id: int | None = None
-    abort_imm_id: int | None = None
-    expected_imm_count: int = 1
+    transfer_endpoint: str = ""
+    expected_notify_count: int = 1
     layers_by_idx: dict[int, LayerRemoteLayout] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        assert self.expected_notify_count > 0
         object.__setattr__(
             self,
             "layers_by_idx",
@@ -179,7 +177,6 @@ def layer_layout_from_dict(
             )
             for region in data["regions"]
         ),
-        mr_desc=data.get("mr_desc"),
     )
 
 
@@ -189,7 +186,6 @@ def layer_layout_to_dict(layer: LayerRemoteLayout) -> dict[str, Any]:
         "layer_idx": layer.layer_idx,
         "block_ids": list(layer.block_ids),
         "regions": [_region_layout_to_dict(region) for region in layer.regions],
-        "mr_desc": layer.mr_desc,
     }
 
 
@@ -198,7 +194,6 @@ def layer_layout_to_compact_dict(layer: LayerRemoteLayout) -> dict[str, Any]:
         "layer_name": layer.layer_name,
         "layer_idx": layer.layer_idx,
         "regions": [_region_layout_to_dict(region) for region in layer.regions],
-        "mr_desc": layer.mr_desc,
     }
 
 
@@ -215,16 +210,14 @@ def handshake_from_dict(data: dict[str, Any] | None) -> PdHandshake | None:
     return PdHandshake(
         request_id=str(data["request_id"]),
         engine_id=str(data["engine_id"]),
+        transfer_endpoint=str(data["transfer_endpoint"]),
         tp_rank=int(data["tp_rank"]),
         tp_size=int(data["tp_size"]),
         block_size=int(data["block_size"]),
         layers=tuple(
             layer_layout_from_dict(layer, block_ids=shared_block_ids) for layer in data["layers"]
         ),
-        imm_id=int(data["imm_id"]),
-        fail_imm_id=int(data["fail_imm_id"]) if data.get("fail_imm_id") is not None else None,
-        abort_imm_id=int(data["abort_imm_id"]) if data.get("abort_imm_id") is not None else None,
-        expected_imm_count=int(data.get("expected_imm_count") or 1),
+        expected_notify_count=int(data.get("expected_notify_count") or 1),
     )
 
 
@@ -241,14 +234,12 @@ def handshake_to_dict(handshake: PdHandshake) -> dict[str, Any]:
     return {
         "request_id": handshake.request_id,
         "engine_id": handshake.engine_id,
+        "transfer_endpoint": handshake.transfer_endpoint,
         "tp_rank": handshake.tp_rank,
         "tp_size": handshake.tp_size,
         "block_size": handshake.block_size,
         "layers": [layer_layout_to_dict(layer) for layer in handshake.layers],
-        "imm_id": handshake.imm_id,
-        "fail_imm_id": handshake.fail_imm_id,
-        "abort_imm_id": handshake.abort_imm_id,
-        "expected_imm_count": handshake.expected_imm_count,
+        "expected_notify_count": handshake.expected_notify_count,
     }
 
 
@@ -261,15 +252,13 @@ def handshake_to_compact_dict(handshake: PdHandshake) -> dict[str, Any]:
     return {
         "request_id": handshake.request_id,
         "engine_id": handshake.engine_id,
+        "transfer_endpoint": handshake.transfer_endpoint,
         "tp_rank": handshake.tp_rank,
         "tp_size": handshake.tp_size,
         "block_size": handshake.block_size,
         "block_ids": list(block_ids),
         "layers": [layer_layout_to_compact_dict(layer) for layer in handshake.layers],
-        "imm_id": handshake.imm_id,
-        "fail_imm_id": handshake.fail_imm_id,
-        "abort_imm_id": handshake.abort_imm_id,
-        "expected_imm_count": handshake.expected_imm_count,
+        "expected_notify_count": handshake.expected_notify_count,
     }
 
 

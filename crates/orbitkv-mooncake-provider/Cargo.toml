@@ -1,0 +1,19 @@
+[package]
+name = "orbitkv-mooncake-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+links = "orbitkv_mooncake_transfer_engine"
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = ["cuda"]
+cuda = []
+
+[dependencies]
+libc.workspace = true
+libloading.workspace = true
