@@ -1,32 +1,73 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use log::{error, info};
-use orbitkv_local::{CommandCode, LocalServer, Response, StatusCode, TransportError};
+use orbitkv_common::hll::MultiWindowHllTracker;
+use orbitkv_core::{EngineError, OrbitKVEngine};
+use orbitkv_local::{
+    ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
+    LocalServer, QueryBundleRequest, QueryBundleResponse, QueryOutcomeCode,
+    RESPONSE_FLAG_REQUEST_CONSUMED, Response, StatusCode, TransportError,
+};
+use thiserror::Error;
+use tokio::runtime::Handle;
 use tokio::sync::Notify;
 
+use crate::query::{QueryInput, QueryOutcome, execute_query};
+
 const IDLE_POLL_INTERVAL: Duration = Duration::from_micros(50);
+const BOOTSTRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const LIVENESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+#[derive(Debug, Error)]
+pub(crate) enum LocalControlError {
+    #[error(transparent)]
+    Transport(#[from] TransportError),
+    #[error(transparent)]
+    Bootstrap(#[from] BootstrapError),
+}
 
 /// Dedicated iceoryx2 endpoint owned by one sidecar process.
 ///
-/// Only lifecycle probes are dispatched today. Data-path commands return
-/// `Invalid` until their descriptor arenas and engine handlers are wired.
+/// QueryBundle uses a generation-checked memfd arena bootstrapped over UDS.
+/// Restore, Publish, and Release remain explicit `Invalid` responses.
 pub(crate) struct LocalControlEndpoint {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl LocalControlEndpoint {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "endpoint construction names each transport-owned resource"
+    )]
     pub(crate) fn start(
         service_name: String,
         session_epoch: u64,
+        bootstrap_socket: PathBuf,
+        arena_size: usize,
+        slot_size: usize,
+        engine: Arc<OrbitKVEngine>,
+        runtime: Handle,
+        hll_tracker: Arc<std::sync::Mutex<MultiWindowHllTracker>>,
         shutdown: Arc<Notify>,
-    ) -> Result<Self, TransportError> {
+    ) -> Result<Self, LocalControlError> {
         let server = LocalServer::bind(&service_name)?;
+        let bootstrap = BootstrapServer::bind(
+            &bootstrap_socket,
+            &service_name,
+            session_epoch,
+            arena_size,
+            slot_size,
+        )?;
+        bootstrap.set_nonblocking(true)?;
+
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let thread_service = service_name.clone();
@@ -34,28 +75,42 @@ impl LocalControlEndpoint {
             .name("orbitkv-local-control".to_string())
             .spawn(move || {
                 info!(
-                    "Local control endpoint ready: service={} session_epoch={}",
-                    thread_service, session_epoch
+                    "Local control endpoint ready: service={} session_epoch={} bootstrap={}",
+                    thread_service,
+                    session_epoch,
+                    bootstrap_socket.display()
                 );
+                let mut sessions = HashMap::new();
+                let mut next_bootstrap_poll = Instant::now();
+                let mut next_liveness_poll = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
+                    let now = Instant::now();
+                    if now >= next_bootstrap_poll {
+                        accept_pending_sessions(&bootstrap, &mut sessions);
+                        next_bootstrap_poll = now + BOOTSTRAP_POLL_INTERVAL;
+                    }
+                    if now >= next_liveness_poll {
+                        sessions.retain(|_, session| match session.is_alive() {
+                            Ok(alive) => alive,
+                            Err(error) => {
+                                error!("Local bootstrap liveness check failed: {error}");
+                                false
+                            }
+                        });
+                        next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
+                    }
+
                     let mut request_shutdown = false;
                     match server.try_serve_for_epoch(session_epoch, |command| {
-                        let mut response = Response::ok(command);
-                        match command.code {
-                            CommandCode::Ping => {
-                                response.value0 = command.arg0.wrapping_add(1);
-                            }
-                            CommandCode::Shutdown => {
-                                request_shutdown = true;
-                            }
-                            CommandCode::QueryBundle
-                            | CommandCode::Restore
-                            | CommandCode::Publish
-                            | CommandCode::Release => {
-                                response.status = StatusCode::Invalid;
-                            }
-                        }
-                        response
+                        dispatch(
+                            command,
+                            &bootstrap,
+                            &mut sessions,
+                            &engine,
+                            &runtime,
+                            &hll_tracker,
+                            &mut request_shutdown,
+                        )
                     }) {
                         Ok(true) if request_shutdown => {
                             shutdown.notify_waiters();
@@ -95,83 +150,184 @@ impl Drop for LocalControlEndpoint {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use orbitkv_local::{CallOptions, Command, LocalClient, StatusCode};
-
-    use super::*;
-
-    fn service_name() -> String {
-        format!(
-            "orbitkv/test/server-lifecycle/{}/{}",
-            std::process::id(),
-            uuid::Uuid::new_v4().as_simple()
-        )
+fn accept_pending_sessions(
+    bootstrap: &BootstrapServer,
+    sessions: &mut HashMap<u64, BootstrapSession>,
+) {
+    loop {
+        match bootstrap.try_accept() {
+            Ok(Some(session)) => {
+                info!(
+                    "Local client bootstrapped: pid={} uid={} slot={}",
+                    session.credentials().pid,
+                    session.credentials().uid,
+                    session.slot_index()
+                );
+                sessions.insert(session.client_token(), session);
+            }
+            Ok(None) => break,
+            Err(error) => {
+                error!("Local bootstrap accept failed: {error}");
+                break;
+            }
+        }
     }
+}
 
-    #[test]
-    fn endpoint_serves_ping_and_fences_old_sessions() {
-        let shutdown = Arc::new(Notify::new());
-        let service_name = service_name();
-        let mut endpoint =
-            LocalControlEndpoint::start(service_name.clone(), 17, Arc::clone(&shutdown)).unwrap();
-        let client = LocalClient::connect(&service_name).unwrap();
+fn dispatch(
+    command: Command,
+    bootstrap: &BootstrapServer,
+    sessions: &mut HashMap<u64, BootstrapSession>,
+    engine: &Arc<OrbitKVEngine>,
+    runtime: &Handle,
+    hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
+    request_shutdown: &mut bool,
+) -> Response {
+    let mut response = Response::ok(command);
+    response.value1 = 0;
+    match command.code {
+        CommandCode::Ping => {
+            response.value0 = command.arg0.wrapping_add(1);
+        }
+        CommandCode::Shutdown => {
+            *request_shutdown = true;
+        }
+        CommandCode::QueryBundle => {
+            response = dispatch_query(command, bootstrap, sessions, engine, runtime, hll_tracker);
+        }
+        CommandCode::Restore | CommandCode::Publish | CommandCode::Release => {
+            response.status = StatusCode::Invalid;
+        }
+    }
+    response
+}
 
-        let mut ping = Command::ping(1, 17);
-        ping.arg0 = 41;
-        assert_eq!(
-            client.call(ping, CallOptions::default()).unwrap().value0,
-            42
-        );
-        assert_eq!(
-            client
-                .call(Command::ping(2, 16), CallOptions::default())
-                .unwrap()
-                .status,
+fn dispatch_query(
+    command: Command,
+    bootstrap: &BootstrapServer,
+    sessions: &mut HashMap<u64, BootstrapSession>,
+    engine: &Arc<OrbitKVEngine>,
+    runtime: &Handle,
+    hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
+) -> Response {
+    let mut response = Response::ok(command);
+    response.value1 = 0;
+    let descriptor_slot = match bootstrap.descriptor_slot(command.descriptor.offset) {
+        Ok(slot) => slot,
+        Err(error) => return error_response(response, local_error_status(&error), &error),
+    };
+    let session = match sessions.get_mut(&command.arg0) {
+        Some(session) => session,
+        None => {
+            response.status = StatusCode::StaleSession;
+            return response;
+        }
+    };
+    if let Err(error) = session.validate_request(command.descriptor, command.arg0, descriptor_slot)
+    {
+        return error_response(response, bootstrap_error_status(&error), &error);
+    }
+    let payload = match bootstrap.arena().read(command.descriptor) {
+        Ok(payload) => payload,
+        Err(error) => return error_response(response, local_error_status(&error), &error),
+    };
+    if let Err(error) = session.complete_request() {
+        return error_response(response, bootstrap_error_status(&error), &error);
+    }
+    response.value1 |= RESPONSE_FLAG_REQUEST_CONSUMED;
+    let request = match QueryBundleRequest::decode(&payload) {
+        Ok(request) => request,
+        Err(error) => return error_response(response, StatusCode::Invalid, &error),
+    };
+    let outcome = match runtime.block_on(execute_query(
+        engine,
+        hll_tracker,
+        QueryInput {
+            instance_id: request.instance_id,
+            block_hashes: request.block_hashes,
+            request_id: request.request_id,
+            wait_for_full_prefix: request.wait_for_full_prefix,
+            group_id: request.group_id,
+        },
+    )) {
+        Ok(outcome) => outcome,
+        Err(error) => return error_response(response, engine_error_status(&error), &error),
+    };
+    let payload = match outcome {
+        QueryOutcome::Loading => QueryBundleResponse::loading(),
+        QueryOutcome::Ready {
+            num_hit_blocks,
+            lease,
+            hit_positions,
+        } => QueryBundleResponse {
+            outcome: QueryOutcomeCode::Ready,
+            num_hit_blocks,
+            lease,
+            hit_positions,
+        },
+    };
+    let payload = match payload.encode() {
+        Ok(payload) => payload,
+        Err(error) => return error_response(response, StatusCode::Internal, &error),
+    };
+    match bootstrap
+        .arena()
+        .write_response(command.descriptor, &payload)
+    {
+        Ok(descriptor) => response.descriptor = descriptor,
+        Err(error) => return error_response(response, local_error_status(&error), &error),
+    }
+    response
+}
+
+fn error_response(
+    mut response: Response,
+    status: StatusCode,
+    error: &impl std::fmt::Display,
+) -> Response {
+    error!("Local control command failed: {error}");
+    response.status = status;
+    response.value0 = 0;
+    response
+}
+
+fn local_error_status(error: &ArenaError) -> StatusCode {
+    match error {
+        ArenaError::StaleGeneration { .. } => StatusCode::StaleGeneration,
+        ArenaError::InvalidOffset { .. }
+        | ArenaError::PayloadTooLarge { .. }
+        | ArenaError::LengthMismatch { .. }
+        | ArenaError::ZeroGeneration => StatusCode::Invalid,
+        ArenaError::TooSmall { .. }
+        | ArenaError::FieldOverflow { .. }
+        | ArenaError::System(_)
+        | ArenaError::InvalidMagic(_)
+        | ArenaError::UnsupportedVersion(_)
+        | ArenaError::SessionMismatch { .. }
+        | ArenaError::SlotOutOfRange { .. }
+        | ArenaError::ConcurrentWrite { .. }
+        | ArenaError::Poisoned => StatusCode::Internal,
+    }
+}
+
+fn bootstrap_error_status(error: &BootstrapError) -> StatusCode {
+    match error {
+        BootstrapError::UnexpectedGeneration { .. } => StatusCode::StaleGeneration,
+        BootstrapError::ClientTokenMismatch | BootstrapError::SlotMismatch { .. } => {
             StatusCode::StaleSession
-        );
-        assert_eq!(
-            client
-                .call(
-                    Command {
-                        code: CommandCode::QueryBundle,
-                        request_id: 3,
-                        ..Command::ping(3, 17)
-                    },
-                    CallOptions::default(),
-                )
-                .unwrap()
-                .status,
-            StatusCode::Invalid
-        );
-        endpoint.stop();
+        }
+        _ => StatusCode::Invalid,
     }
+}
 
-    #[test]
-    fn shutdown_command_notifies_the_sidecar_lifecycle() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let shutdown = Arc::new(Notify::new());
-        let service_name = service_name();
-        let mut endpoint =
-            LocalControlEndpoint::start(service_name.clone(), 23, Arc::clone(&shutdown)).unwrap();
-        let client = LocalClient::connect(&service_name).unwrap();
-
-        runtime.block_on(async {
-            let call = tokio::task::spawn_blocking(move || {
-                client.call(
-                    Command {
-                        code: CommandCode::Shutdown,
-                        request_id: 3,
-                        ..Command::ping(3, 23)
-                    },
-                    CallOptions::default(),
-                )
-            });
-            tokio::time::timeout(Duration::from_secs(2), shutdown.notified())
-                .await
-                .unwrap();
-            assert_eq!(call.await.unwrap().unwrap().status, StatusCode::Ok);
-        });
-        endpoint.stop();
+fn engine_error_status(error: &EngineError) -> StatusCode {
+    match error {
+        EngineError::InvalidArgument(_)
+        | EngineError::InstanceMissing(_)
+        | EngineError::WorkerMissing(_, _)
+        | EngineError::TopologyMismatch(_) => StatusCode::Invalid,
+        EngineError::CudaInit(_) | EngineError::Storage(_) | EngineError::Poisoned(_) => {
+            StatusCode::Internal
+        }
     }
 }

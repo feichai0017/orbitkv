@@ -336,6 +336,29 @@ class LocalControlClient:
     def ping(self, value: int = 0, request_id: int = 1) -> int: ...
     def shutdown(self, request_id: int = 1) -> None: ...
 
+class LocalQueryClient:
+    """UDS-bootstrapped iceoryx2 client for framework-neutral cache queries."""
+
+    def __init__(
+        self,
+        bootstrap_socket: str,
+        timeout_ms: int = 5000,
+        spin_iterations: int = 64,
+    ) -> None: ...
+    @property
+    def service_name(self) -> str: ...
+    @property
+    def session_epoch(self) -> int: ...
+    def query_bundle(
+        self,
+        instance_id: str,
+        block_hashes: list[bytes],
+        req_id: str,
+        wait_for_full_prefix: bool = False,
+        group_id: int = 0,
+        request_id: int = 1,
+    ) -> QueryLoading | QueryReady: ...
+
 class PyLoadState:
     """Batch-level synchronization for async KV cache loading via shared memory.
 

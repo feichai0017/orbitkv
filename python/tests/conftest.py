@@ -363,6 +363,7 @@ class OrbitKVServerProcess:
         http_port: int | None = None,
         local_control_service: str | None = None,
         local_control_session_epoch: int | None = None,
+        local_bootstrap_socket: str | None = None,
     ):
         self.port = port
         self.pool_size = pool_size
@@ -370,6 +371,7 @@ class OrbitKVServerProcess:
         self.http_port = http_port
         self.local_control_service = local_control_service
         self.local_control_session_epoch = local_control_session_epoch
+        self.local_bootstrap_socket = local_bootstrap_socket
         self.endpoint = f"http://127.0.0.1:{port}"
         self.process: subprocess.Popen | None = None
         self._binary_path = find_server_binary()
@@ -414,6 +416,8 @@ class OrbitKVServerProcess:
                     str(self.local_control_session_epoch),
                 ]
             )
+        if self.local_bootstrap_socket is not None:
+            cmd.extend(["--local-bootstrap-socket", self.local_bootstrap_socket])
 
         # Route logs to a tempfile so the pipe buffer cannot fill up and
         # block the server mid-startup, and so tests can read the log
@@ -456,6 +460,9 @@ class OrbitKVServerProcess:
         finally:
             self.process = None
             self._close_log()
+            if self.local_bootstrap_socket is not None:
+                with contextlib.suppress(OSError):
+                    Path(self.local_bootstrap_socket).unlink()
 
     def is_running(self) -> bool:
         """Check if server process is still running."""
@@ -494,11 +501,13 @@ def orbitkv_server() -> Generator[OrbitKVServerProcess, None, None]:
 def local_control_server() -> Generator[OrbitKVServerProcess, None, None]:
     """Start an isolated server with a known local-control identity."""
     service_name = f"orbitkv/test/python/{os.getpid()}/{uuid.uuid4().hex}"
+    bootstrap_socket = f"/tmp/orbitkv-python-{os.getpid()}-{uuid.uuid4().hex}.sock"
     server = OrbitKVServerProcess(
         port=find_available_port(),
         http_port=find_available_port(),
         local_control_service=service_name,
         local_control_session_epoch=0x0B17_17C0,
+        local_bootstrap_socket=bootstrap_socket,
     )
 
     if not server._binary_path:
@@ -510,6 +519,28 @@ def local_control_server() -> Generator[OrbitKVServerProcess, None, None]:
 
     yield server
     server.stop()
+
+
+@pytest.fixture
+def local_control_client_context(
+    local_control_server: OrbitKVServerProcess, instance_id: str, namespace: str
+) -> Generator[ClientContext, None, None]:
+    """Register a minimal GPU context on the isolated local-control server."""
+    import importlib
+
+    orbitkv_native = importlib.import_module("orbitkv.orbitkv")
+    ctx = ClientContext(
+        engine_client=orbitkv_native.EngineRpcClient(local_control_server.endpoint),
+        instance_id=instance_id,
+        namespace=namespace,
+        device_id=0,
+        num_blocks=4,
+        num_layers=1,
+    )
+    ctx.register_kv_caches()
+    yield ctx
+    if local_control_server.is_running():
+        ctx.unregister_context()
 
 
 @pytest.fixture

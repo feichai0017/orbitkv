@@ -5,9 +5,13 @@ OrbitKV sidecar. The control message is fixed at 64 bytes; KV payloads remain
 in CUDA IPC or registered shared-memory pages.
 
 The production server owns a thread-safe iceoryx2 service and currently serves
-`Ping` and `Shutdown`, including session-epoch fencing. Python exposes the same
-lifecycle path through `LocalControlClient`. Data commands remain explicitly
-rejected until the descriptor arena and engine handlers are connected.
+`Ping`, `QueryBundle`, and `Shutdown`, including session-epoch fencing. A
+mode-0600 Unix socket verifies peer credentials and passes a sealed memfd arena
+plus a liveness eventfd. Every client owns one arena slot guarded by a client
+token and a monotonic request/response generation. Python exposes lifecycle and
+query paths through `LocalControlClient` and `LocalQueryClient`. Restore,
+Publish, and Release remain explicitly rejected until their engine handlers are
+connected.
 
 Run the two-process latency harness in separate terminals:
 

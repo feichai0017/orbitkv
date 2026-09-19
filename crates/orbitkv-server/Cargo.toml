@@ -50,6 +50,7 @@ opentelemetry-prometheus.workspace = true
 prometheus.workspace = true
 tikv-jemallocator.workspace = true
 fastrace = { workspace = true, features = ["enable"], optional = true }
+thiserror = "2"
 
 [dev-dependencies]
 orbitkv-metaserver = { path = "../orbitkv-metaserver", default-features = false }

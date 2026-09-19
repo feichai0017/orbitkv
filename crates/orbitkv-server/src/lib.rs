@@ -3,6 +3,7 @@ pub mod http_server;
 mod local_control;
 pub mod metric;
 pub mod proto;
+mod query;
 pub mod registry;
 pub mod service;
 pub mod session;
@@ -200,6 +201,19 @@ pub struct Cli {
     /// Disable the node-local iceoryx2 endpoint.
     #[arg(long, default_value_t = false)]
     pub disable_local_control: bool,
+
+    /// Unix socket used to bootstrap local clients and pass descriptor arena FDs.
+    /// Defaults to /tmp/orbitkv-<grpc-port>.sock.
+    #[arg(long)]
+    pub local_bootstrap_socket: Option<std::path::PathBuf>,
+
+    /// Shared descriptor arena size for local clients.
+    #[arg(long, default_value = "8mb", value_parser = parse_memory_size)]
+    pub local_descriptor_arena_size: usize,
+
+    /// Per-client descriptor slot capacity.
+    #[arg(long, default_value = "64kb", value_parser = parse_memory_size)]
+    pub local_descriptor_slot_size: usize,
 }
 
 fn parse_hll_bucket_bits(s: &str) -> Result<u8, String> {
@@ -624,9 +638,19 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         if session_epoch == 0 {
             return Err("--local-control-session-epoch must be non-zero".into());
         }
-        Some((service_name, session_epoch))
+        let bootstrap_socket = cli.local_bootstrap_socket.clone().unwrap_or_else(|| {
+            std::path::PathBuf::from(format!("/tmp/orbitkv-{}.sock", cli.addr.port()))
+        });
+        Some((
+            service_name,
+            session_epoch,
+            bootstrap_socket,
+            cli.local_descriptor_arena_size,
+            cli.local_descriptor_slot_size,
+        ))
     };
 
+    let runtime_handle = runtime.handle().clone();
     runtime.block_on(async move {
         // Create OrbitKVEngine inside tokio runtime context (needed for SSD cache tokio::spawn)
         let engine = Arc::new(OrbitKVEngine::new_with_config(
@@ -634,10 +658,23 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cli.use_hugepages,
             storage_config,
         )?);
-        let mut local_control = if let Some((service_name, session_epoch)) = local_control_config {
+        let mut local_control = if let Some((
+            service_name,
+            session_epoch,
+            bootstrap_socket,
+            arena_size,
+            slot_size,
+        )) = local_control_config
+        {
             Some(local_control::LocalControlEndpoint::start(
                 service_name,
                 session_epoch,
+                bootstrap_socket,
+                arena_size,
+                slot_size,
+                Arc::clone(&engine),
+                runtime_handle,
+                Arc::clone(&hll_tracker),
                 Arc::clone(&shutdown),
             )?)
         } else {
@@ -798,6 +835,12 @@ mod tests {
             "orbitkv/test/server",
             "--local-control-session-epoch",
             "42",
+            "--local-bootstrap-socket",
+            "/tmp/orbitkv-test.sock",
+            "--local-descriptor-arena-size",
+            "4mb",
+            "--local-descriptor-slot-size",
+            "32kb",
         ])
         .unwrap();
         assert_eq!(
@@ -805,6 +848,12 @@ mod tests {
             Some("orbitkv/test/server")
         );
         assert_eq!(cli.local_control_session_epoch, Some(42));
+        assert_eq!(
+            cli.local_bootstrap_socket.as_deref(),
+            Some(std::path::Path::new("/tmp/orbitkv-test.sock"))
+        );
+        assert_eq!(cli.local_descriptor_arena_size, 4 * 1024 * 1024);
+        assert_eq!(cli.local_descriptor_slot_size, 32 * 1024);
         assert!(!cli.disable_local_control);
     }
 

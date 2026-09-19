@@ -9,8 +9,8 @@ discovery so none of them becomes an accidental second source of KV truth.
 
 | Boundary | Control | Payload | Status |
 | --- | --- | --- | --- |
-| inference process to local sidecar | iceoryx2 request/response | CUDA IPC or shared host pages | lifecycle endpoint integrated; data commands planned |
-| local bootstrap and region registration | Unix socket with credential and file-descriptor passing | memfd handles only | planned |
+| inference process to local sidecar | iceoryx2 request/response | CUDA IPC or shared host pages | lifecycle and QueryBundle integrated |
+| local bootstrap and region registration | Unix socket with credential and file-descriptor passing | memfd handles only | descriptor bootstrap implemented; page-region registration planned |
 | sidecar to sidecar | backend-specific session control | RDMA READ/WRITE | native RDMA exists; Mooncake adapter planned |
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
 | administration | HTTP or compatibility gRPC | no KV bytes | existing |
@@ -44,11 +44,23 @@ measured busy-poll latency.
 UDS remains necessary for bootstrap, `SO_PEERCRED`, memfd/eventfd passing, and
 process-death detection.
 
-The real `orbitkv-server` lifecycle endpoint and Python `LocalControlClient` now
-support `Ping`, stale-session fencing, and `Shutdown`. `QueryBundle`, `Restore`,
-`Publish`, and `Release` return `Invalid` rather than silently falling back or
-claiming an incomplete implementation. The existing vLLM gRPC data path is
-unchanged.
+The real `orbitkv-server` endpoint now supports `Ping`, `QueryBundle`,
+stale-session fencing, and `Shutdown`. `LocalQueryClient` obtains the service
+identity, an exclusive arena slot, a client token, the arena memfd, and a
+notification eventfd through a mode-0600 Unix socket. `SO_PEERCRED` restricts the
+bootstrap to the sidecar's uid. Each request has an odd generation and each
+response advances it by one; reconnecting to a reused slot starts beyond the
+prior generation, so delayed commands cannot target a new occupant. The memfd
+is sealed against growth and shrinking. The eventfd is reserved for completion
+wakeups; `QueryBundle` currently observes response arrival through iceoryx2's
+request/response channel.
+
+`QueryBundle` has a framework-neutral binary schema for instance identity,
+request identity, hashes, group, query mode, hit positions, and the opaque
+lease. Both gRPC and iceoryx2 dispatch through the same core query function.
+`Restore`, `Publish`, and `Release` still return `Invalid`. The existing vLLM
+adapter remains on gRPC until those operations and their completion semantics
+are migrated. KV payload bytes do not travel through the descriptor arena.
 
 ## Measured local-control baseline
 
@@ -154,8 +166,9 @@ contract is complete.
 1. Keep gRPC as a tested compatibility transport.
 2. Land the versioned `orbitkv-local` ABI, sidecar lifecycle endpoint, Python
    client, and cross-process tests.
-3. Add UDS bootstrap and a shared descriptor arena.
-4. Move `QueryBundle` and completions to iceoryx2.
+3. Add UDS bootstrap and a shared descriptor arena. (complete for control
+   descriptors; framework-owned page registration remains)
+4. Move `QueryBundle` to iceoryx2. (complete; framework adapters not switched)
 5. Move `Restore`, `Publish`, and `Release`; remove per-load shared-memory
    status objects.
 6. Implement `MooncakeMover` behind an optional build/runtime feature.

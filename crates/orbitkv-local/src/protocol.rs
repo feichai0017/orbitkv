@@ -2,6 +2,9 @@ use thiserror::Error;
 
 pub const ABI_VERSION: u16 = 1;
 pub const WIRE_MESSAGE_BYTES: usize = 64;
+/// Response `value1` bit set after a descriptor-backed request has been
+/// accepted and its generation consumed, including business-error responses.
+pub const RESPONSE_FLAG_REQUEST_CONSUMED: u64 = 1;
 const MAGIC: u32 = 0x4f52_4254; // ORBT
 const WORD_COUNT: usize = 8;
 

@@ -1,6 +1,9 @@
 use orbitkv_common::grpc::{GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL, GRPC_CONNECT_TIMEOUT};
 use orbitkv_core::LoadState;
-use orbitkv_local::{CallOptions, Command as LocalCommand, CommandCode, LocalClient, StatusCode};
+use orbitkv_local::{
+    CallOptions, Command as LocalCommand, CommandCode, LocalClient, LocalQueryClient,
+    QueryBundleRequest, QueryOutcomeCode, StatusCode,
+};
 use orbitkv_proto::proto::engine::{
     HealthRequest, LeaseLoad, LoadBlockIds, LoadBlockTarget, LoadGroup, LoadRequest, QueryRequest,
     RegisterContextRequest, ReleaseRequest, ResponseStatus, SaveLayer, SaveRequest, SessionEvent,
@@ -189,6 +192,84 @@ struct LocalControlClient {
     session_epoch: u64,
     options: CallOptions,
     client: LocalClient,
+}
+
+#[pyclass(name = "LocalQueryClient")]
+struct PyLocalQueryClient {
+    inner: LocalQueryClient,
+}
+
+#[pymethods]
+impl PyLocalQueryClient {
+    #[new]
+    #[pyo3(signature = (bootstrap_socket, timeout_ms=5000, spin_iterations=64))]
+    fn new(bootstrap_socket: String, timeout_ms: u64, spin_iterations: u32) -> PyResult<Self> {
+        if timeout_ms == 0 {
+            return Err(PyValueError::new_err("timeout_ms must be non-zero"));
+        }
+        let inner = LocalQueryClient::connect(
+            bootstrap_socket,
+            CallOptions {
+                timeout: Duration::from_millis(timeout_ms),
+                spin_iterations,
+            },
+        )
+        .map_err(|error| OrbitKVError::new_err(format!("local query connect failed: {error}")))?;
+        Ok(Self { inner })
+    }
+
+    #[getter]
+    fn service_name(&self) -> &str {
+        self.inner.service_name()
+    }
+
+    #[getter]
+    fn session_epoch(&self) -> u64 {
+        self.inner.session_epoch()
+    }
+
+    #[pyo3(signature = (instance_id, block_hashes, req_id, wait_for_full_prefix=false, group_id=0, request_id=1))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Python API mirrors the framework-neutral local query contract"
+    )]
+    fn query_bundle(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        block_hashes: Vec<Vec<u8>>,
+        req_id: String,
+        wait_for_full_prefix: bool,
+        group_id: u32,
+        request_id: u64,
+    ) -> PyResult<Py<PyAny>> {
+        let response = py
+            .detach(|| {
+                self.inner.query_bundle(
+                    request_id,
+                    &QueryBundleRequest {
+                        instance_id,
+                        request_id: req_id,
+                        block_hashes,
+                        group_id,
+                        wait_for_full_prefix,
+                    },
+                )
+            })
+            .map_err(|error| OrbitKVError::new_err(format!("local query failed: {error}")))?;
+        match response.outcome {
+            QueryOutcomeCode::Loading => Py::new(py, QueryLoading {}).map(|value| value.into_any()),
+            QueryOutcomeCode::Ready => Py::new(
+                py,
+                QueryReady {
+                    num_hit_blocks: u64_to_usize(response.num_hit_blocks, "num_hit_blocks")?,
+                    lease: PyQueryLease(response.lease),
+                    hit_positions: response.hit_positions,
+                },
+            )
+            .map(|value| value.into_any()),
+        }
+    }
 }
 
 impl LocalControlClient {
@@ -755,6 +836,7 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<EngineRpcClient>()?;
     m.add_class::<LocalControlClient>()?;
+    m.add_class::<PyLocalQueryClient>()?;
     m.add_class::<PyLoadState>()?;
     #[cfg(feature = "rdma")]
     pd_rdma::add_classes(m)?;

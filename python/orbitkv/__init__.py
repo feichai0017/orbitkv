@@ -11,6 +11,7 @@ from typing import Any
 _NATIVE_EXPORTS = {
     "EngineRpcClient",
     "LocalControlClient",
+    "LocalQueryClient",
     "OrbitKVError",
     "OrbitKVInternal",
     "PyLoadState",
@@ -43,6 +44,7 @@ __all__ = [
     "__version__",
     "EngineRpcClient",
     "LocalControlClient",
+    "LocalQueryClient",
     "OrbitKVError",
     "OrbitKVInternal",
     "PyLoadState",

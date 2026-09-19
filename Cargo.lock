@@ -1925,6 +1925,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "memoffset"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2221,6 +2230,9 @@ name = "orbitkv-local"
 version = "0.1.0"
 dependencies = [
  "iceoryx2",
+ "memmap2",
+ "rustix 1.1.4",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
@@ -2309,6 +2321,7 @@ dependencies = [
  "reqwest 0.13.2",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tikv-jemallocator",
  "tokio",
  "tokio-stream",

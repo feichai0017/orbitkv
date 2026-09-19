@@ -36,12 +36,14 @@ separate service.
  +-------------------+              +-------------------+
 ```
 
-The compatibility control plane uses gRPC today. The target local hot path is
-iceoryx2 request/response, with UDS reserved for bootstrap, credentials, and
-file-descriptor passing. KV bytes must not travel through either control
-protocol: vLLM uses registered CUDA IPC pages, SGLang will use a shared pinned
-host pool, and remote transfers use a `RemoteMover` backend. See
-[transport.md](transport.md) for the measured decision.
+The compatibility control plane still uses gRPC. The first native local path is
+now live for `QueryBundle`: iceoryx2 carries fixed descriptors while a Unix
+socket authenticates the peer and passes a sealed memfd descriptor arena. The
+remaining restore, publish, release, and framework-adapter calls have not been
+migrated. KV bytes must not travel through either control protocol: vLLM uses
+registered CUDA IPC pages, SGLang will use a shared pinned host pool, and remote
+transfers use a `RemoteMover` backend. See [transport.md](transport.md) for the
+measured decision.
 
 ## Layering
 

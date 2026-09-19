@@ -27,8 +27,10 @@ and a passing gate; design text alone does not close an item.
 - [ ] Implement `OrbitKVHiCacheStorage`.
 - [ ] Add a SGLang entry point or documented dynamic-backend config.
 - [ ] Require `allocator=shm` for the zero-copy host path.
-- [ ] Add UDS registration for memfd-backed host regions.
-- [ ] Bind `orbitkv-local` QueryBundle/Restore/Publish handlers to the sidecar.
+- [x] Add UDS bootstrap for the memfd-backed descriptor arena.
+- [ ] Add UDS registration for framework-owned shared host page regions.
+- [x] Bind `orbitkv-local` QueryBundle to the shared core query path.
+- [ ] Bind `orbitkv-local` Restore/Publish/Release handlers to the sidecar.
 - [x] Add Python bindings for the iceoryx2 local client.
 - [ ] Map SGLang `PoolName` values to `StateComponent`.
 - [ ] Map `ALL_PAGES` and `TRAILING_PAGES` into recovery contracts.
@@ -45,7 +47,8 @@ and a passing gate; design text alone does not close an item.
 - [ ] Convert the vLLM cache-group layout to `StateBundle`.
 - [ ] Move hybrid-boundary reconciliation out of `orbitkv.vllm`.
 - [ ] Define framework-neutral region registration RPCs.
-- [ ] Pass shared-memory file descriptors over UDS.
+- [x] Pass the descriptor-arena memfd and notification eventfd over UDS.
+- [ ] Pass framework-owned shared-page file descriptors over UDS.
 - [ ] Replace per-load `PyLoadState` files with a bounded shared completion ring.
 - [ ] Keep control messages descriptor-only; prohibit KV payload bytes in gRPC,
   UDS, or iceoryx2 messages.

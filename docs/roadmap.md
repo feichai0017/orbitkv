@@ -16,6 +16,8 @@ Deliver:
 - establish the `orbitkv-local` iceoryx2 control ABI;
 - connect lifecycle probes, epoch fencing, and shutdown to the real sidecar and
   Python client;
+- bootstrap a generation-checked descriptor arena over UDS and execute
+  `QueryBundle` through the same core path as compatibility gRPC;
 - introduce `RemoteMover` with the native RDMA implementation as its first
   backend;
 - preserve current vLLM behavior.
@@ -34,7 +36,8 @@ Deliver:
 
 - implement the dynamic `HiCacheStorage` backend;
 - register SGLang shared host regions with the sidecar over UDS;
-- execute `QueryBundle`, restore, publish, and completion over iceoryx2;
+- execute restore, publish, and completion over iceoryx2 (`QueryBundle` is
+  already available to local clients);
 - support KV, MLA, Mamba/recurrent, SWA, and explicit opaque pools;
 - map SGLang hit policies into `RecoveryContract`;
 - expose cold miss, partial prefix, warm hit, cancellation, and restart metrics.
