@@ -58,9 +58,11 @@ request/response channel.
 `QueryBundle` has a framework-neutral binary schema for instance identity,
 request identity, hashes, group, query mode, hit positions, and the opaque
 lease. Both gRPC and iceoryx2 dispatch through the same core query function.
-`Restore`, `Publish`, and `Release` still return `Invalid`. The existing vLLM
-adapter remains on gRPC until those operations and their completion semantics
-are migrated. KV payload bytes do not travel through the descriptor arena.
+`Release` uses the same authenticated descriptor session, so leases returned by
+the local query path can complete their lifecycle without gRPC. `Restore` and
+`Publish` still return `Invalid`. The existing vLLM adapter remains on gRPC
+until those operations and their completion semantics are migrated. KV payload
+bytes do not travel through the descriptor arena.
 
 ## Measured local-control baseline
 

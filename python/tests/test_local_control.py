@@ -81,4 +81,6 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(
         time.sleep(0.05)
 
     assert result.lease
-    local_control_client_context.engine_client.release(result.lease)
+    query_client.release(result.lease, request_id=204)
+    with pytest.raises(orbitkv_native.OrbitKVError, match="Invalid"):
+        query_client.release(result.lease, request_id=205)

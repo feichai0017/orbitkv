@@ -270,6 +270,12 @@ impl PyLocalQueryClient {
             .map(|value| value.into_any()),
         }
     }
+
+    #[pyo3(signature = (lease, request_id=1))]
+    fn release(&self, py: Python<'_>, lease: Vec<u8>, request_id: u64) -> PyResult<()> {
+        py.detach(|| self.inner.release(request_id, lease))
+            .map_err(|error| OrbitKVError::new_err(format!("local release failed: {error}")))
+    }
 }
 
 impl LocalControlClient {

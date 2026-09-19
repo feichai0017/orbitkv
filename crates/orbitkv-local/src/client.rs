@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::{
     BootstrapClient, BootstrapError, CallOptions, Command, CommandCode, LocalClient,
     QueryBundleRequest, QueryBundleResponse, QueryCodecError, RESPONSE_FLAG_REQUEST_CONSUMED,
-    StatusCode, TransportError,
+    ReleaseRequest, StatusCode, TransportError,
 };
 
 #[derive(Debug, Error)]
@@ -61,6 +61,29 @@ impl LocalQueryClient {
         request_id: u64,
         request: &QueryBundleRequest,
     ) -> Result<QueryBundleResponse, LocalQueryError> {
+        let payload = request.encode()?;
+        let payload = self.call_descriptor(CommandCode::QueryBundle, request_id, &payload)?;
+        match QueryBundleResponse::decode(&payload) {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                self.poisoned.store(true, Ordering::Release);
+                Err(error.into())
+            }
+        }
+    }
+
+    pub fn release(&self, request_id: u64, lease: Vec<u8>) -> Result<(), LocalQueryError> {
+        let payload = ReleaseRequest { lease }.encode()?;
+        let _ = self.call_descriptor(CommandCode::Release, request_id, &payload)?;
+        Ok(())
+    }
+
+    fn call_descriptor(
+        &self,
+        code: CommandCode,
+        request_id: u64,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, LocalQueryError> {
         let _call = self
             .call_lock
             .lock()
@@ -68,12 +91,11 @@ impl LocalQueryClient {
         if self.poisoned.load(Ordering::Acquire) {
             return Err(LocalQueryError::SessionRequiresReconnect);
         }
-        let payload = request.encode()?;
-        let descriptor = self.bootstrap.write_request(&payload)?;
+        let descriptor = self.bootstrap.write_request(payload)?;
         let info = self.bootstrap.info();
         let response = match self.client.call(
             Command {
-                code: CommandCode::QueryBundle,
+                code,
                 request_id,
                 session_epoch: info.session_epoch,
                 descriptor,
@@ -96,15 +118,13 @@ impl LocalQueryClient {
             }
             return Err(LocalQueryError::Status(response.status));
         }
+        if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED == 0 {
+            self.poisoned.store(true, Ordering::Release);
+            return Err(LocalQueryError::SessionRequiresReconnect);
+        }
         let payload = self
             .bootstrap
             .read_response(descriptor, response.descriptor)?;
-        match QueryBundleResponse::decode(&payload) {
-            Ok(response) => Ok(response),
-            Err(error) => {
-                self.poisoned.store(true, Ordering::Release);
-                Err(error.into())
-            }
-        }
+        Ok(payload)
     }
 }

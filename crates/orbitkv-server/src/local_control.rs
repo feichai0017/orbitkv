@@ -13,13 +13,14 @@ use orbitkv_core::{EngineError, OrbitKVEngine};
 use orbitkv_local::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
     LocalServer, QueryBundleRequest, QueryBundleResponse, QueryOutcomeCode,
-    RESPONSE_FLAG_REQUEST_CONSUMED, Response, StatusCode, TransportError,
+    RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest as LocalReleaseRequest, Response, StatusCode,
+    TransportError,
 };
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
 
-use crate::query::{QueryInput, QueryOutcome, execute_query};
+use crate::query::{QueryInput, QueryOutcome, execute_query, execute_release};
 
 const IDLE_POLL_INTERVAL: Duration = Duration::from_micros(50);
 const BOOTSTRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -36,7 +37,7 @@ pub(crate) enum LocalControlError {
 /// Dedicated iceoryx2 endpoint owned by one sidecar process.
 ///
 /// QueryBundle uses a generation-checked memfd arena bootstrapped over UDS.
-/// Restore, Publish, and Release remain explicit `Invalid` responses.
+/// Restore and Publish remain explicit `Invalid` responses.
 pub(crate) struct LocalControlEndpoint {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -195,9 +196,57 @@ fn dispatch(
         CommandCode::QueryBundle => {
             response = dispatch_query(command, bootstrap, sessions, engine, runtime, hll_tracker);
         }
-        CommandCode::Restore | CommandCode::Publish | CommandCode::Release => {
+        CommandCode::Release => {
+            response = dispatch_release(command, bootstrap, sessions, engine);
+        }
+        CommandCode::Restore | CommandCode::Publish => {
             response.status = StatusCode::Invalid;
         }
+    }
+    response
+}
+
+fn dispatch_release(
+    command: Command,
+    bootstrap: &BootstrapServer,
+    sessions: &mut HashMap<u64, BootstrapSession>,
+    engine: &OrbitKVEngine,
+) -> Response {
+    let mut response = Response::ok(command);
+    response.value1 = 0;
+    let descriptor_slot = match bootstrap.descriptor_slot(command.descriptor.offset) {
+        Ok(slot) => slot,
+        Err(error) => return error_response(response, local_error_status(&error), &error),
+    };
+    let session = match sessions.get_mut(&command.arg0) {
+        Some(session) => session,
+        None => {
+            response.status = StatusCode::StaleSession;
+            return response;
+        }
+    };
+    if let Err(error) = session.validate_request(command.descriptor, command.arg0, descriptor_slot)
+    {
+        return error_response(response, bootstrap_error_status(&error), &error);
+    }
+    let payload = match bootstrap.arena().read(command.descriptor) {
+        Ok(payload) => payload,
+        Err(error) => return error_response(response, local_error_status(&error), &error),
+    };
+    if let Err(error) = session.complete_request() {
+        return error_response(response, bootstrap_error_status(&error), &error);
+    }
+    response.value1 |= RESPONSE_FLAG_REQUEST_CONSUMED;
+    let request = match LocalReleaseRequest::decode(&payload) {
+        Ok(request) => request,
+        Err(error) => return error_response(response, StatusCode::Invalid, &error),
+    };
+    if let Err(error) = execute_release(engine, &request.lease) {
+        return error_response(response, StatusCode::Invalid, &error);
+    }
+    match bootstrap.arena().write_response(command.descriptor, &[]) {
+        Ok(descriptor) => response.descriptor = descriptor,
+        Err(error) => return error_response(response, local_error_status(&error), &error),
     }
     response
 }

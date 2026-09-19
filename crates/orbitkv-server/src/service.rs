@@ -21,7 +21,7 @@ use tokio::sync::{Notify, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, async_trait};
 
-use crate::query::{QueryInput, QueryOutcome, execute_query};
+use crate::query::{QueryInput, QueryOutcome, ReleaseError, execute_query, execute_release};
 
 #[derive(Clone)]
 pub struct GrpcEngineService {
@@ -638,12 +638,10 @@ impl Engine for GrpcEngineService {
         let result: Result<Response<ReleaseResponse>, Status> = async {
             debug!("RPC [release]: lease_len={}", lease_len);
 
-            let lease = QueryLeaseId::from_bytes(&req.lease).map_err(Status::invalid_argument)?;
-            if !self.engine.release_query_lease(&lease) {
-                return Err(Status::failed_precondition(
-                    "query lease is unknown or expired",
-                ));
-            }
+            execute_release(&self.engine, &req.lease).map_err(|error| match error {
+                ReleaseError::InvalidLease(message) => Status::invalid_argument(message),
+                ReleaseError::UnknownOrExpired => Status::failed_precondition(error.to_string()),
+            })?;
 
             Ok(Response::new(ReleaseResponse {}))
         }

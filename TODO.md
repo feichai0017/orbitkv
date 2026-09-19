@@ -30,7 +30,8 @@ and a passing gate; design text alone does not close an item.
 - [x] Add UDS bootstrap for the memfd-backed descriptor arena.
 - [ ] Add UDS registration for framework-owned shared host page regions.
 - [x] Bind `orbitkv-local` QueryBundle to the shared core query path.
-- [ ] Bind `orbitkv-local` Restore/Publish/Release handlers to the sidecar.
+- [x] Bind `orbitkv-local` Release to the shared core lease path.
+- [ ] Bind `orbitkv-local` Restore/Publish handlers to the sidecar.
 - [x] Add Python bindings for the iceoryx2 local client.
 - [ ] Map SGLang `PoolName` values to `StateComponent`.
 - [ ] Map `ALL_PAGES` and `TRAILING_PAGES` into recovery contracts.

@@ -2,9 +2,45 @@ use thiserror::Error;
 
 const QUERY_REQUEST_MAGIC: u32 = 0x4f52_5151; // ORQQ
 const QUERY_RESPONSE_MAGIC: u32 = 0x4f52_5152; // ORQR
+const RELEASE_REQUEST_MAGIC: u32 = 0x4f52_4c51; // ORLQ
 const QUERY_VERSION: u16 = 1;
 const REQUEST_HEADER_BYTES: usize = 24;
 const RESPONSE_HEADER_BYTES: usize = 24;
+const RELEASE_HEADER_BYTES: usize = 12;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReleaseRequest {
+    pub lease: Vec<u8>,
+}
+
+impl ReleaseRequest {
+    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+        let mut bytes = Vec::with_capacity(RELEASE_HEADER_BYTES + self.lease.len());
+        push_u32(&mut bytes, RELEASE_REQUEST_MAGIC);
+        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, 0);
+        push_u32(&mut bytes, checked_u32(self.lease.len(), "lease")?);
+        bytes.extend_from_slice(&self.lease);
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+        let mut decoder = Decoder::new(bytes);
+        decoder.expect_magic(RELEASE_REQUEST_MAGIC)?;
+        decoder.expect_version()?;
+        let flags = decoder.u16()?;
+        if flags != 0 {
+            return Err(QueryCodecError::InvalidFlags(flags));
+        }
+        let lease_len = decoder.usize_u32()?;
+        let lease = decoder.bytes(lease_len)?.to_vec();
+        decoder.finish()?;
+        if lease.is_empty() {
+            return Err(QueryCodecError::EmptyLease);
+        }
+        Ok(Self { lease })
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryBundleRequest {
@@ -185,6 +221,8 @@ pub enum QueryCodecError {
     UnknownOutcome(u16),
     #[error("query request_id must not be empty")]
     EmptyRequestId,
+    #[error("release lease must not be empty")]
+    EmptyLease,
     #[error("query field {field} is too large: {len}")]
     FieldTooLarge { field: &'static str, len: usize },
     #[error("query field {field} is not valid UTF-8")]
@@ -337,6 +375,19 @@ mod tests {
         assert_eq!(
             QueryBundleResponse::decode(&invalid.encode().unwrap()),
             Err(QueryCodecError::InvalidLoadingPayload)
+        );
+    }
+
+    #[test]
+    fn release_request_round_trip_and_empty_rejection() {
+        let request = ReleaseRequest { lease: vec![7; 16] };
+        assert_eq!(
+            ReleaseRequest::decode(&request.encode().unwrap()).unwrap(),
+            request
+        );
+        assert_eq!(
+            ReleaseRequest::decode(&ReleaseRequest { lease: Vec::new() }.encode().unwrap()),
+            Err(QueryCodecError::EmptyLease)
         );
     }
 }

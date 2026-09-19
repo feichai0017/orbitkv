@@ -36,8 +36,8 @@ Deliver:
 
 - implement the dynamic `HiCacheStorage` backend;
 - register SGLang shared host regions with the sidecar over UDS;
-- execute restore, publish, and completion over iceoryx2 (`QueryBundle` is
-  already available to local clients);
+- execute restore, publish, and completion over iceoryx2 (`QueryBundle` and
+  lease release are already available to local clients);
 - support KV, MLA, Mamba/recurrent, SWA, and explicit opaque pools;
 - map SGLang hit policies into `RecoveryContract`;
 - expose cold miss, partial prefix, warm hit, cancellation, and restart metrics.

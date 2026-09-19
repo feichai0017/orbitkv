@@ -1,7 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use orbitkv_common::hll::MultiWindowHllTracker;
+use orbitkv_core::QueryLeaseId;
 use orbitkv_core::{EngineError, OrbitKVEngine, PrefetchStatus};
+use thiserror::Error;
 
 #[derive(Clone, Debug)]
 pub(crate) struct QueryInput {
@@ -20,6 +22,23 @@ pub(crate) enum QueryOutcome {
         lease: Vec<u8>,
         hit_positions: Vec<u32>,
     },
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum ReleaseError {
+    #[error("{0}")]
+    InvalidLease(String),
+    #[error("query lease is unknown or expired")]
+    UnknownOrExpired,
+}
+
+pub(crate) fn execute_release(engine: &OrbitKVEngine, lease: &[u8]) -> Result<(), ReleaseError> {
+    let lease = QueryLeaseId::from_bytes(lease).map_err(ReleaseError::InvalidLease)?;
+    if engine.release_query_lease(&lease) {
+        Ok(())
+    } else {
+        Err(ReleaseError::UnknownOrExpired)
+    }
 }
 
 pub(crate) async fn execute_query(
