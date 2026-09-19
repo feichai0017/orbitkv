@@ -6,8 +6,8 @@ use thiserror::Error;
 
 use crate::{
     BootstrapClient, BootstrapError, CallOptions, Command, CommandCode, LocalClient,
-    QueryBundleRequest, QueryBundleResponse, QueryCodecError, RESPONSE_FLAG_REQUEST_CONSUMED,
-    ReleaseRequest, StatusCode, TransportError,
+    PublishRequest, QueryBundleRequest, QueryBundleResponse, QueryCodecError,
+    RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest, StatusCode, TransportError,
 };
 
 #[derive(Debug, Error)]
@@ -75,6 +75,16 @@ impl LocalQueryClient {
     pub fn release(&self, request_id: u64, lease: Vec<u8>) -> Result<(), LocalQueryError> {
         let payload = ReleaseRequest { lease }.encode()?;
         let _ = self.call_descriptor(CommandCode::Release, request_id, &payload)?;
+        Ok(())
+    }
+
+    pub fn publish(
+        &self,
+        request_id: u64,
+        request: &PublishRequest,
+    ) -> Result<(), LocalQueryError> {
+        let payload = request.encode()?;
+        let _ = self.call_descriptor(CommandCode::Publish, request_id, &payload)?;
         Ok(())
     }
 

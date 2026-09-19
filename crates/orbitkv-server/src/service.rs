@@ -14,14 +14,17 @@ use crate::proto::engine::{
 use crate::registry::RegistryHandle;
 use crate::session::SessionRegistry;
 use log::{debug, info, warn};
-use orbitkv_core::{EngineError, LayerSave, OrbitKVEngine, QueryLeaseId};
+use orbitkv_core::{EngineError, OrbitKVEngine, QueryLeaseId};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Notify, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, async_trait};
 
-use crate::query::{QueryInput, QueryOutcome, ReleaseError, execute_query, execute_release};
+use crate::query::{
+    PublishInput, PublishLayerInput, QueryInput, QueryOutcome, ReleaseError, execute_publish,
+    execute_query, execute_release,
+};
 
 #[derive(Clone)]
 pub struct GrpcEngineService {
@@ -389,14 +392,11 @@ impl Engine for GrpcEngineService {
             } = req;
             Self::validate_device_id(device_id)?;
             Self::validate_save_layers(&saves)?;
-            let tp_rank = Self::usize_from_u32(tp_rank, "tp_rank")?;
-            let pp_rank = Self::usize_from_u32(pp_rank, "pp_rank")?;
-
-            let saves: Vec<LayerSave> = saves
+            let layers = saves
                 .into_iter()
-                .map(|layer| LayerSave {
+                .map(|layer| PublishLayerInput {
                     layer_name: layer.layer_name,
-                    block_ids: layer.block_ids.into_iter().map(|id| id as usize).collect(),
+                    block_ids: layer.block_ids,
                     block_hashes: layer.block_hashes,
                 })
                 .collect();
@@ -406,10 +406,18 @@ impl Engine for GrpcEngineService {
                 instance_id, tp_rank, pp_rank, device_id, layer_count, total_blocks, total_hashes
             );
 
-            self.engine
-                .batch_save_kv_blocks_from_ipc(&instance_id, tp_rank, pp_rank, device_id, saves)
-                .await
-                .map_err(Self::map_engine_error)?;
+            execute_publish(
+                &self.engine,
+                PublishInput {
+                    instance_id,
+                    tp_rank,
+                    pp_rank,
+                    device_id,
+                    layers,
+                },
+            )
+            .await
+            .map_err(Self::map_engine_error)?;
 
             Ok(Response::new(SaveResponse {
                 status: Some(Self::build_simple_response()),

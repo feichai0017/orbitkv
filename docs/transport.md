@@ -58,11 +58,14 @@ request/response channel.
 `QueryBundle` has a framework-neutral binary schema for instance identity,
 request identity, hashes, group, query mode, hit positions, and the opaque
 lease. Both gRPC and iceoryx2 dispatch through the same core query function.
-`Release` uses the same authenticated descriptor session, so leases returned by
-the local query path can complete their lifecycle without gRPC. `Restore` and
-`Publish` still return `Invalid`. The existing vLLM adapter remains on gRPC
-until those operations and their completion semantics are migrated. KV payload
-bytes do not travel through the descriptor arena.
+`Publish` and `Release` use the same authenticated descriptor session, so local
+GPU page metadata can be submitted and query leases can complete their
+lifecycle without gRPC. Publish retains the existing asynchronous core save
+semantics: success means the validated GPU copy job was accepted, while a later
+query observes it after the write pipeline seals the blocks. `Restore` still
+returns `Invalid`. The existing vLLM adapter remains on gRPC until restore and
+completion semantics are migrated. KV payload bytes do not travel through the
+descriptor arena.
 
 ## Measured local-control baseline
 
@@ -171,9 +174,9 @@ contract is complete.
 3. Add UDS bootstrap and a shared descriptor arena. (complete for control
    descriptors; framework-owned page registration remains)
 4. Move `QueryBundle` to iceoryx2. (complete; framework adapters not switched)
-5. Move `Restore`, `Publish`, and `Release`; remove per-load shared-memory
-   status objects.
-6. Implement `MooncakeMover` behind an optional build/runtime feature.
-7. Qualify native RDMA and Mooncake against the same transfer plan tests.
-8. Remove cross-node gRPC data-path RPCs only after equivalent lease, fencing,
+5. Move `Publish` and `Release`. (complete; framework adapters not switched)
+6. Move `Restore` and remove per-load shared-memory status objects.
+7. Implement `MooncakeMover` behind an optional build/runtime feature.
+8. Qualify native RDMA and Mooncake against the same transfer plan tests.
+9. Remove cross-node gRPC data-path RPCs only after equivalent lease, fencing,
    retry, and observability gates pass.

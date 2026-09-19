@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::QueryLeaseId;
-use orbitkv_core::{EngineError, OrbitKVEngine, PrefetchStatus};
+use orbitkv_core::{EngineError, LayerSave, OrbitKVEngine, PrefetchStatus};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -22,6 +22,59 @@ pub(crate) enum QueryOutcome {
         lease: Vec<u8>,
         hit_positions: Vec<u32>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PublishLayerInput {
+    pub layer_name: String,
+    pub block_ids: Vec<u32>,
+    pub block_hashes: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PublishInput {
+    pub instance_id: String,
+    pub tp_rank: u32,
+    pub pp_rank: u32,
+    pub device_id: i32,
+    pub layers: Vec<PublishLayerInput>,
+}
+
+pub(crate) async fn execute_publish(
+    engine: &OrbitKVEngine,
+    input: PublishInput,
+) -> Result<(), EngineError> {
+    if input.device_id < 0 {
+        return Err(EngineError::InvalidArgument(format!(
+            "device_id {} must be >= 0",
+            input.device_id
+        )));
+    }
+    let tp_rank = usize::try_from(input.tp_rank).map_err(|_| {
+        EngineError::InvalidArgument(format!("tp_rank {} does not fit usize", input.tp_rank))
+    })?;
+    let pp_rank = usize::try_from(input.pp_rank).map_err(|_| {
+        EngineError::InvalidArgument(format!("pp_rank {} does not fit usize", input.pp_rank))
+    })?;
+    let mut saves = Vec::with_capacity(input.layers.len());
+    for layer in input.layers {
+        if layer.block_ids.len() != layer.block_hashes.len() {
+            return Err(EngineError::InvalidArgument(format!(
+                "block_ids length {} does not match block_hashes {} for layer {}",
+                layer.block_ids.len(),
+                layer.block_hashes.len(),
+                layer.layer_name
+            )));
+        }
+        saves.push(LayerSave {
+            layer_name: layer.layer_name,
+            block_ids: layer.block_ids.into_iter().map(|id| id as usize).collect(),
+            block_hashes: layer.block_hashes,
+        });
+    }
+    engine
+        .batch_save_kv_blocks_from_ipc(&input.instance_id, tp_rank, pp_rank, input.device_id, saves)
+        .await
 }
 
 #[derive(Debug, Error)]

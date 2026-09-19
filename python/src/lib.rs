@@ -1,8 +1,8 @@
 use orbitkv_common::grpc::{GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL, GRPC_CONNECT_TIMEOUT};
 use orbitkv_core::LoadState;
 use orbitkv_local::{
-    CallOptions, Command as LocalCommand, CommandCode, LocalClient, LocalQueryClient,
-    QueryBundleRequest, QueryOutcomeCode, StatusCode,
+    CallOptions, Command as LocalCommand, CommandCode, LocalClient, LocalQueryClient, PublishLayer,
+    PublishRequest, QueryBundleRequest, QueryOutcomeCode, StatusCode,
 };
 use orbitkv_proto::proto::engine::{
     HealthRequest, LeaseLoad, LoadBlockIds, LoadBlockTarget, LoadGroup, LoadRequest, QueryRequest,
@@ -275,6 +275,44 @@ impl PyLocalQueryClient {
     fn release(&self, py: Python<'_>, lease: Vec<u8>, request_id: u64) -> PyResult<()> {
         py.detach(|| self.inner.release(request_id, lease))
             .map_err(|error| OrbitKVError::new_err(format!("local release failed: {error}")))
+    }
+
+    #[pyo3(signature = (instance_id, tp_rank, pp_rank, device_id, saves, request_id=1))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Python API mirrors the framework-neutral local publish contract"
+    )]
+    fn publish(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        tp_rank: u32,
+        pp_rank: u32,
+        device_id: i32,
+        saves: Vec<(String, Vec<u32>, Vec<Vec<u8>>)>,
+        request_id: u64,
+    ) -> PyResult<()> {
+        let layers = saves
+            .into_iter()
+            .map(|(layer_name, block_ids, block_hashes)| PublishLayer {
+                layer_name,
+                block_ids,
+                block_hashes,
+            })
+            .collect();
+        py.detach(|| {
+            self.inner.publish(
+                request_id,
+                &PublishRequest {
+                    instance_id,
+                    tp_rank,
+                    pp_rank,
+                    device_id,
+                    layers,
+                },
+            )
+        })
+        .map_err(|error| OrbitKVError::new_err(format!("local publish failed: {error}")))
     }
 }
 

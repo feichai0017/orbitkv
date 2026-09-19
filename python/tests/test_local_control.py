@@ -58,14 +58,14 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(
     assert result.lease == b""
 
     block_hashes = [bytes([1]) * 32, bytes([2]) * 32]
-    ok, message = local_control_client_context.engine_client.save(
+    query_client.publish(
         local_control_client_context.instance_id,
         0,
         0,
         0,
         [(local_control_client_context._layer_names[0], [0, 1], block_hashes)],
+        request_id=203,
     )
-    assert ok, message
 
     deadline = time.monotonic() + 5
     while True:
@@ -73,7 +73,7 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(
             instance_id=local_control_client_context.instance_id,
             block_hashes=block_hashes,
             req_id="registered-warm-query",
-            request_id=203,
+            request_id=204,
         )
         if isinstance(result, orbitkv_native.QueryReady) and result.num_hit_blocks == 2:
             break
@@ -81,6 +81,6 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(
         time.sleep(0.05)
 
     assert result.lease
-    query_client.release(result.lease, request_id=204)
+    query_client.release(result.lease, request_id=205)
     with pytest.raises(orbitkv_native.OrbitKVError, match="Invalid"):
-        query_client.release(result.lease, request_id=205)
+        query_client.release(result.lease, request_id=206)

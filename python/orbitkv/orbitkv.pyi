@@ -359,6 +359,15 @@ class LocalQueryClient:
         request_id: int = 1,
     ) -> QueryLoading | QueryReady: ...
     def release(self, lease: bytes, request_id: int = 1) -> None: ...
+    def publish(
+        self,
+        instance_id: str,
+        tp_rank: int,
+        pp_rank: int,
+        device_id: int,
+        saves: list[tuple[str, list[int], list[bytes]]],
+        request_id: int = 1,
+    ) -> None: ...
 
 class PyLoadState:
     """Batch-level synchronization for async KV cache loading via shared memory.

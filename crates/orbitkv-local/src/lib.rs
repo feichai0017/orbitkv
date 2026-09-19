@@ -33,6 +33,7 @@ pub use protocol::{
     RESPONSE_FLAG_REQUEST_CONSUMED, Response, StatusCode, WIRE_MESSAGE_BYTES, WireMessage,
 };
 pub use query::{
-    QueryBundleRequest, QueryBundleResponse, QueryCodecError, QueryOutcomeCode, ReleaseRequest,
+    PublishLayer, PublishRequest, QueryBundleRequest, QueryBundleResponse, QueryCodecError,
+    QueryOutcomeCode, ReleaseRequest,
 };
 pub use transport::{CallOptions, LocalClient, LocalServer, TransportError};

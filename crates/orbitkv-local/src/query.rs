@@ -3,10 +3,113 @@ use thiserror::Error;
 const QUERY_REQUEST_MAGIC: u32 = 0x4f52_5151; // ORQQ
 const QUERY_RESPONSE_MAGIC: u32 = 0x4f52_5152; // ORQR
 const RELEASE_REQUEST_MAGIC: u32 = 0x4f52_4c51; // ORLQ
+const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const QUERY_VERSION: u16 = 1;
 const REQUEST_HEADER_BYTES: usize = 24;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
+const PUBLISH_HEADER_BYTES: usize = 28;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishLayer {
+    pub layer_name: String,
+    pub block_ids: Vec<u32>,
+    pub block_hashes: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishRequest {
+    pub instance_id: String,
+    pub tp_rank: u32,
+    pub pp_rank: u32,
+    pub device_id: i32,
+    pub layers: Vec<PublishLayer>,
+}
+
+impl PublishRequest {
+    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+        validate_publish_layers(&self.layers)?;
+        let instance = self.instance_id.as_bytes();
+        let mut bytes = Vec::with_capacity(PUBLISH_HEADER_BYTES + instance.len());
+        push_u32(&mut bytes, PUBLISH_REQUEST_MAGIC);
+        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, 0);
+        push_u32(&mut bytes, self.tp_rank);
+        push_u32(&mut bytes, self.pp_rank);
+        push_i32(&mut bytes, self.device_id);
+        push_u32(&mut bytes, checked_u32(instance.len(), "instance_id")?);
+        push_u32(&mut bytes, checked_u32(self.layers.len(), "layers")?);
+        bytes.extend_from_slice(instance);
+        for layer in &self.layers {
+            let name = layer.layer_name.as_bytes();
+            push_u32(&mut bytes, checked_u32(name.len(), "layer_name")?);
+            push_u32(&mut bytes, checked_u32(layer.block_ids.len(), "block_ids")?);
+            bytes.extend_from_slice(name);
+            for (block_id, hash) in layer.block_ids.iter().zip(&layer.block_hashes) {
+                push_u32(&mut bytes, *block_id);
+                push_u32(&mut bytes, checked_u32(hash.len(), "block_hash")?);
+                bytes.extend_from_slice(hash);
+            }
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+        let mut decoder = Decoder::new(bytes);
+        decoder.expect_magic(PUBLISH_REQUEST_MAGIC)?;
+        decoder.expect_version()?;
+        let flags = decoder.u16()?;
+        if flags != 0 {
+            return Err(QueryCodecError::InvalidFlags(flags));
+        }
+        let tp_rank = decoder.u32()?;
+        let pp_rank = decoder.u32()?;
+        let device_id = decoder.i32()?;
+        let instance_len = decoder.usize_u32()?;
+        let layer_count = decoder.usize_u32()?;
+        let instance_id = decoder.string(instance_len, "instance_id")?;
+        let mut layers = Vec::with_capacity(layer_count.min(1024));
+        for _ in 0..layer_count {
+            let name_len = decoder.usize_u32()?;
+            let block_count = decoder.usize_u32()?;
+            let layer_name = decoder.string(name_len, "layer_name")?;
+            let mut block_ids = Vec::with_capacity(block_count.min(4096));
+            let mut block_hashes = Vec::with_capacity(block_count.min(4096));
+            for _ in 0..block_count {
+                block_ids.push(decoder.u32()?);
+                let hash_len = decoder.usize_u32()?;
+                block_hashes.push(decoder.bytes(hash_len)?.to_vec());
+            }
+            layers.push(PublishLayer {
+                layer_name,
+                block_ids,
+                block_hashes,
+            });
+        }
+        decoder.finish()?;
+        validate_publish_layers(&layers)?;
+        Ok(Self {
+            instance_id,
+            tp_rank,
+            pp_rank,
+            device_id,
+            layers,
+        })
+    }
+}
+
+fn validate_publish_layers(layers: &[PublishLayer]) -> Result<(), QueryCodecError> {
+    for layer in layers {
+        if layer.block_ids.len() != layer.block_hashes.len() {
+            return Err(QueryCodecError::PublishShapeMismatch {
+                layer: layer.layer_name.clone(),
+                block_ids: layer.block_ids.len(),
+                block_hashes: layer.block_hashes.len(),
+            });
+        }
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseRequest {
@@ -229,6 +332,12 @@ pub enum QueryCodecError {
     InvalidUtf8 { field: &'static str },
     #[error("loading query outcome must not carry ready data")]
     InvalidLoadingPayload,
+    #[error("publish layer {layer} has {block_ids} block ids but {block_hashes} block hashes")]
+    PublishShapeMismatch {
+        layer: String,
+        block_ids: usize,
+        block_hashes: usize,
+    },
 }
 
 struct Decoder<'a> {
@@ -265,6 +374,12 @@ impl<'a> Decoder<'a> {
 
     fn u32(&mut self) -> Result<u32, QueryCodecError> {
         Ok(u32::from_le_bytes(
+            self.bytes(4)?.try_into().expect("fixed slice"),
+        ))
+    }
+
+    fn i32(&mut self) -> Result<i32, QueryCodecError> {
+        Ok(i32::from_le_bytes(
             self.bytes(4)?.try_into().expect("fixed slice"),
         ))
     }
@@ -317,6 +432,10 @@ fn push_u16(bytes: &mut Vec<u8>, value: u16) {
 }
 
 fn push_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_i32(bytes: &mut Vec<u8>, value: i32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
@@ -389,5 +508,37 @@ mod tests {
             ReleaseRequest::decode(&ReleaseRequest { lease: Vec::new() }.encode().unwrap()),
             Err(QueryCodecError::EmptyLease)
         );
+    }
+
+    #[test]
+    fn publish_request_round_trip_and_shape_validation() {
+        let request = PublishRequest {
+            instance_id: "model-a".to_string(),
+            tp_rank: 2,
+            pp_rank: 1,
+            device_id: 3,
+            layers: vec![PublishLayer {
+                layer_name: "layer.0".to_string(),
+                block_ids: vec![4, 7],
+                block_hashes: vec![vec![1; 32], vec![2; 32]],
+            }],
+        };
+        assert_eq!(
+            PublishRequest::decode(&request.encode().unwrap()).unwrap(),
+            request
+        );
+
+        let invalid = PublishRequest {
+            layers: vec![PublishLayer {
+                layer_name: "bad".to_string(),
+                block_ids: vec![1],
+                block_hashes: Vec::new(),
+            }],
+            ..request
+        };
+        assert!(matches!(
+            invalid.encode(),
+            Err(QueryCodecError::PublishShapeMismatch { .. })
+        ));
     }
 }
