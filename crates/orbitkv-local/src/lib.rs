@@ -34,6 +34,7 @@ pub use protocol::{
 };
 pub use query::{
     PublishLayer, PublishRequest, QueryBundleRequest, QueryBundleResponse, QueryCodecError,
-    QueryOutcomeCode, ReleaseRequest,
+    QueryOutcomeCode, ReleaseRequest, RestoreCommand, RestoreLease, RestoreRequest,
+    RestoreResponse, RestoreState,
 };
 pub use transport::{CallOptions, LocalClient, LocalServer, TransportError};

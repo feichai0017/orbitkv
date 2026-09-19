@@ -6,6 +6,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rustix::event::{EventfdFlags, eventfd};
 use rustix::net::sockopt::socket_peercred;
@@ -144,7 +145,7 @@ impl BootstrapServer {
                 return Err(BootstrapError::ClientTokenExhausted);
             }
         };
-        let notification = match eventfd(0, EventfdFlags::CLOEXEC) {
+        let notification = match eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK) {
             Ok(notification) => notification,
             Err(error) => {
                 self.release_slot(slot_index);
@@ -284,6 +285,21 @@ impl BootstrapSession {
         &self.notification
     }
 
+    pub fn notify(&self) -> Result<(), BootstrapError> {
+        let written = match rustix::io::write(&self.notification, &1u64.to_ne_bytes()) {
+            Ok(written) => written,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) => return Err(std::io::Error::from(error).into()),
+        };
+        if written != std::mem::size_of::<u64>() {
+            return Err(BootstrapError::PayloadLength {
+                expected: std::mem::size_of::<u64>(),
+                actual: written,
+            });
+        }
+        Ok(())
+    }
+
     pub fn slot_index(&self) -> usize {
         self.slot_index
     }
@@ -397,6 +413,31 @@ impl BootstrapClient {
 
     pub fn notification_fd(&self) -> &std::os::fd::OwnedFd {
         &self.notification
+    }
+
+    pub fn wait_for_notification(&self, timeout: Duration) -> Result<bool, BootstrapError> {
+        let timeout = rustix::event::Timespec {
+            tv_sec: i64::try_from(timeout.as_secs()).map_err(|_| {
+                BootstrapError::FieldOverflow {
+                    field: "notification_timeout",
+                }
+            })?,
+            tv_nsec: timeout.subsec_nanos().into(),
+        };
+        let mut fds = [rustix::event::PollFd::new(
+            &self.notification,
+            rustix::event::PollFlags::IN,
+        )];
+        if rustix::event::poll(&mut fds, Some(&timeout)).map_err(std::io::Error::from)? == 0 {
+            return Ok(false);
+        }
+        let mut value = [0u8; 8];
+        let read = match rustix::io::read(&self.notification, &mut value) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),
+            Err(error) => return Err(std::io::Error::from(error).into()),
+        };
+        Ok(read == value.len())
     }
 
     pub fn write_request(&self, payload: &[u8]) -> Result<crate::DescriptorRef, BootstrapError> {
@@ -669,6 +710,7 @@ mod tests {
                 let session = server.accept().unwrap();
                 assert_eq!(session.credentials().uid, geteuid().as_raw());
                 assert!(session.credentials().pid > 0);
+                session.notify().unwrap();
                 session
             })
         };
@@ -677,6 +719,11 @@ mod tests {
         assert_eq!(client.info().session_epoch, 29);
         assert_eq!(client.info().service_name, "orbitkv/test/bootstrap");
         assert_ne!(client.info().client_token, 0);
+        assert!(
+            client
+                .wait_for_notification(Duration::from_secs(1))
+                .unwrap()
+        );
         let descriptor = client.write_request(b"query").unwrap();
         assert_eq!(
             server.descriptor_slot(descriptor.offset).unwrap(),

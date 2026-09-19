@@ -349,6 +349,8 @@ class LocalQueryClient:
     def service_name(self) -> str: ...
     @property
     def session_epoch(self) -> int: ...
+    @property
+    def notification_fd(self) -> int: ...
     def query_bundle(
         self,
         instance_id: str,
@@ -368,6 +370,28 @@ class LocalQueryClient:
         saves: list[tuple[str, list[int], list[bytes]]],
         request_id: int = 1,
     ) -> None: ...
+    def restore(
+        self,
+        instance_id: str,
+        tp_rank: int,
+        device_id: int,
+        layer_groups: list[list[str]],
+        loads: list[tuple[bytes, list[list[int | None]]]],
+        timeout_ms: int = 5000,
+        request_id: int = 1,
+    ) -> None: ...
+    def restore_submit(
+        self,
+        instance_id: str,
+        tp_rank: int,
+        device_id: int,
+        layer_groups: list[list[str]],
+        loads: list[tuple[bytes, list[list[int | None]]]],
+        request_id: int = 1,
+    ) -> int: ...
+    def restore_poll(
+        self, operation_id: int, request_id: int = 1
+    ) -> tuple[str, str]: ...
 
 class PyLoadState:
     """Batch-level synchronization for async KV cache loading via shared memory.

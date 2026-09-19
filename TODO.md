@@ -32,7 +32,7 @@ and a passing gate; design text alone does not close an item.
 - [x] Bind `orbitkv-local` QueryBundle to the shared core query path.
 - [x] Bind `orbitkv-local` Release to the shared core lease path.
 - [x] Bind `orbitkv-local` Publish to the shared core save path.
-- [ ] Bind `orbitkv-local` Restore to the sidecar.
+- [x] Bind `orbitkv-local` Restore to core oneshot completion and eventfd wakeup.
 - [x] Add Python bindings for the iceoryx2 local client.
 - [ ] Map SGLang `PoolName` values to `StateComponent`.
 - [ ] Map `ALL_PAGES` and `TRAILING_PAGES` into recovery contracts.
@@ -51,7 +51,9 @@ and a passing gate; design text alone does not close an item.
 - [ ] Define framework-neutral region registration RPCs.
 - [x] Pass the descriptor-arena memfd and notification eventfd over UDS.
 - [ ] Pass framework-owned shared-page file descriptors over UDS.
-- [ ] Replace per-load `PyLoadState` files with a bounded shared completion ring.
+- [x] Add bounded local restore operations that replace per-load `PyLoadState`
+  for `LocalQueryClient`.
+- [ ] Switch framework adapters from `PyLoadState` to local restore operations.
 - [ ] Keep control messages descriptor-only; prohibit KV payload bytes in gRPC,
   UDS, or iceoryx2 messages.
 - [ ] Move hot local control off gRPC; retain gRPC only as compatibility fallback.

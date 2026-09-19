@@ -2,7 +2,7 @@ use orbitkv_common::grpc::{GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL, GRPC_CONNECT_TI
 use orbitkv_core::LoadState;
 use orbitkv_local::{
     CallOptions, Command as LocalCommand, CommandCode, LocalClient, LocalQueryClient, PublishLayer,
-    PublishRequest, QueryBundleRequest, QueryOutcomeCode, StatusCode,
+    PublishRequest, QueryBundleRequest, QueryOutcomeCode, RestoreLease, RestoreRequest, StatusCode,
 };
 use orbitkv_proto::proto::engine::{
     HealthRequest, LeaseLoad, LoadBlockIds, LoadBlockTarget, LoadGroup, LoadRequest, QueryRequest,
@@ -228,6 +228,11 @@ impl PyLocalQueryClient {
         self.inner.session_epoch()
     }
 
+    #[getter]
+    fn notification_fd(&self) -> i32 {
+        self.inner.notification_fd()
+    }
+
     #[pyo3(signature = (instance_id, block_hashes, req_id, wait_for_full_prefix=false, group_id=0, request_id=1))]
     #[allow(
         clippy::too_many_arguments,
@@ -313,6 +318,111 @@ impl PyLocalQueryClient {
             )
         })
         .map_err(|error| OrbitKVError::new_err(format!("local publish failed: {error}")))
+    }
+
+    #[pyo3(signature = (instance_id, tp_rank, device_id, layer_groups, loads, timeout_ms=5000, request_id=1))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Python API mirrors the framework-neutral local restore contract"
+    )]
+    fn restore(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        tp_rank: u32,
+        device_id: i32,
+        layer_groups: Vec<Vec<String>>,
+        loads: Vec<PyLeaseLoad>,
+        timeout_ms: u64,
+        request_id: u64,
+    ) -> PyResult<()> {
+        if timeout_ms == 0 {
+            return Err(PyValueError::new_err("timeout_ms must be non-zero"));
+        }
+        let loads = loads
+            .into_iter()
+            .map(|(lease, block_ids_by_group)| RestoreLease {
+                lease,
+                block_ids_by_group,
+            })
+            .collect();
+        py.detach(|| {
+            let operation_id = self.inner.restore_submit(
+                request_id,
+                &RestoreRequest {
+                    instance_id,
+                    tp_rank,
+                    device_id,
+                    layer_groups,
+                    loads,
+                },
+            )?;
+            self.inner.restore_wait(
+                request_id
+                    .checked_add(1)
+                    .ok_or(orbitkv_local::LocalQueryError::SessionRequiresReconnect)?,
+                operation_id,
+                Duration::from_millis(timeout_ms),
+            )
+        })
+        .map_err(|error| OrbitKVError::new_err(format!("local restore failed: {error}")))
+    }
+
+    #[pyo3(signature = (instance_id, tp_rank, device_id, layer_groups, loads, request_id=1))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Python API mirrors the framework-neutral local restore contract"
+    )]
+    fn restore_submit(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        tp_rank: u32,
+        device_id: i32,
+        layer_groups: Vec<Vec<String>>,
+        loads: Vec<PyLeaseLoad>,
+        request_id: u64,
+    ) -> PyResult<u64> {
+        let loads = loads
+            .into_iter()
+            .map(|(lease, block_ids_by_group)| RestoreLease {
+                lease,
+                block_ids_by_group,
+            })
+            .collect();
+        py.detach(|| {
+            self.inner.restore_submit(
+                request_id,
+                &RestoreRequest {
+                    instance_id,
+                    tp_rank,
+                    device_id,
+                    layer_groups,
+                    loads,
+                },
+            )
+        })
+        .map_err(|error| OrbitKVError::new_err(format!("local restore submit failed: {error}")))
+    }
+
+    #[pyo3(signature = (operation_id, request_id=1))]
+    fn restore_poll(
+        &self,
+        py: Python<'_>,
+        operation_id: u64,
+        request_id: u64,
+    ) -> PyResult<(String, String)> {
+        let response = py
+            .detach(|| self.inner.restore_poll(request_id, operation_id))
+            .map_err(|error| {
+                OrbitKVError::new_err(format!("local restore poll failed: {error}"))
+            })?;
+        let state = match response.state {
+            orbitkv_local::RestoreState::Pending => "pending",
+            orbitkv_local::RestoreState::Succeeded => "succeeded",
+            orbitkv_local::RestoreState::Failed => "failed",
+        };
+        Ok((state.to_string(), response.message))
     }
 }
 

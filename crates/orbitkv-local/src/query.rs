@@ -4,11 +4,253 @@ const QUERY_REQUEST_MAGIC: u32 = 0x4f52_5151; // ORQQ
 const QUERY_RESPONSE_MAGIC: u32 = 0x4f52_5152; // ORQR
 const RELEASE_REQUEST_MAGIC: u32 = 0x4f52_4c51; // ORLQ
 const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
+const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
+const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
+const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
 const QUERY_VERSION: u16 = 1;
 const REQUEST_HEADER_BYTES: usize = 24;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
 const PUBLISH_HEADER_BYTES: usize = 28;
+const RESTORE_HEADER_BYTES: usize = 28;
+const RESTORE_RESPONSE_BYTES: usize = 24;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoreLease {
+    pub lease: Vec<u8>,
+    pub block_ids_by_group: Vec<Vec<Option<u32>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoreRequest {
+    pub instance_id: String,
+    pub tp_rank: u32,
+    pub device_id: i32,
+    pub layer_groups: Vec<Vec<String>>,
+    pub loads: Vec<RestoreLease>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RestoreCommand {
+    Submit(RestoreRequest),
+    Poll { operation_id: u64 },
+}
+
+impl RestoreCommand {
+    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+        match self {
+            Self::Submit(request) => request.encode(),
+            Self::Poll { operation_id } => {
+                let mut bytes = Vec::with_capacity(16);
+                push_u32(&mut bytes, RESTORE_POLL_MAGIC);
+                push_u16(&mut bytes, QUERY_VERSION);
+                push_u16(&mut bytes, 0);
+                push_u64(&mut bytes, *operation_id);
+                Ok(bytes)
+            }
+        }
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+        let magic = bytes
+            .get(0..4)
+            .ok_or(QueryCodecError::Truncated)
+            .map(|value| u32::from_le_bytes(value.try_into().expect("fixed slice")))?;
+        if magic == RESTORE_REQUEST_MAGIC {
+            return Ok(Self::Submit(RestoreRequest::decode(bytes)?));
+        }
+        if magic != RESTORE_POLL_MAGIC {
+            return Err(QueryCodecError::InvalidMagic(magic));
+        }
+        let mut decoder = Decoder::new(bytes);
+        decoder.expect_magic(RESTORE_POLL_MAGIC)?;
+        decoder.expect_version()?;
+        let flags = decoder.u16()?;
+        if flags != 0 {
+            return Err(QueryCodecError::InvalidFlags(flags));
+        }
+        let operation_id = decoder.u64()?;
+        decoder.finish()?;
+        if operation_id == 0 {
+            return Err(QueryCodecError::ZeroOperationId);
+        }
+        Ok(Self::Poll { operation_id })
+    }
+}
+
+impl RestoreRequest {
+    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+        let instance = self.instance_id.as_bytes();
+        let mut bytes = Vec::with_capacity(RESTORE_HEADER_BYTES + instance.len());
+        push_u32(&mut bytes, RESTORE_REQUEST_MAGIC);
+        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, 0);
+        push_u32(&mut bytes, self.tp_rank);
+        push_i32(&mut bytes, self.device_id);
+        push_u32(&mut bytes, checked_u32(instance.len(), "instance_id")?);
+        push_u32(
+            &mut bytes,
+            checked_u32(self.layer_groups.len(), "layer_groups")?,
+        );
+        push_u32(&mut bytes, checked_u32(self.loads.len(), "loads")?);
+        bytes.extend_from_slice(instance);
+        for group in &self.layer_groups {
+            push_u32(&mut bytes, checked_u32(group.len(), "layer_group")?);
+            for layer in group {
+                push_bytes(&mut bytes, layer.as_bytes(), "layer_name")?;
+            }
+        }
+        for load in &self.loads {
+            push_bytes(&mut bytes, &load.lease, "lease")?;
+            push_u32(
+                &mut bytes,
+                checked_u32(load.block_ids_by_group.len(), "block_ids_by_group")?,
+            );
+            for targets in &load.block_ids_by_group {
+                push_u32(&mut bytes, checked_u32(targets.len(), "block_targets")?);
+                for target in targets {
+                    push_u32(&mut bytes, target.map_or(u32::MAX, |block_id| block_id));
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+        let mut decoder = Decoder::new(bytes);
+        decoder.expect_magic(RESTORE_REQUEST_MAGIC)?;
+        decoder.expect_version()?;
+        let flags = decoder.u16()?;
+        if flags != 0 {
+            return Err(QueryCodecError::InvalidFlags(flags));
+        }
+        let tp_rank = decoder.u32()?;
+        let device_id = decoder.i32()?;
+        let instance_len = decoder.usize_u32()?;
+        let group_count = decoder.usize_u32()?;
+        let load_count = decoder.usize_u32()?;
+        let instance_id = decoder.string(instance_len, "instance_id")?;
+        if group_count > decoder.remaining() / 4 {
+            return Err(QueryCodecError::Truncated);
+        }
+        let mut layer_groups = Vec::with_capacity(group_count);
+        for _ in 0..group_count {
+            let layer_count = decoder.usize_u32()?;
+            if layer_count > decoder.remaining() / 4 {
+                return Err(QueryCodecError::Truncated);
+            }
+            let mut group = Vec::with_capacity(layer_count);
+            for _ in 0..layer_count {
+                let len = decoder.usize_u32()?;
+                group.push(decoder.string(len, "layer_name")?);
+            }
+            layer_groups.push(group);
+        }
+        if load_count > decoder.remaining() / 8 {
+            return Err(QueryCodecError::Truncated);
+        }
+        let mut loads = Vec::with_capacity(load_count);
+        for _ in 0..load_count {
+            let lease_len = decoder.usize_u32()?;
+            let lease = decoder.bytes(lease_len)?.to_vec();
+            if lease.is_empty() {
+                return Err(QueryCodecError::EmptyLease);
+            }
+            let target_group_count = decoder.usize_u32()?;
+            if target_group_count > decoder.remaining() / 4 {
+                return Err(QueryCodecError::Truncated);
+            }
+            let mut block_ids_by_group = Vec::with_capacity(target_group_count);
+            for _ in 0..target_group_count {
+                let target_count = decoder.usize_u32()?;
+                if target_count > decoder.remaining() / 4 {
+                    return Err(QueryCodecError::Truncated);
+                }
+                let mut targets = Vec::with_capacity(target_count);
+                for _ in 0..target_count {
+                    let target = decoder.u32()?;
+                    targets.push((target != u32::MAX).then_some(target));
+                }
+                block_ids_by_group.push(targets);
+            }
+            loads.push(RestoreLease {
+                lease,
+                block_ids_by_group,
+            });
+        }
+        decoder.finish()?;
+        Ok(Self {
+            instance_id,
+            tp_rank,
+            device_id,
+            layer_groups,
+            loads,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum RestoreState {
+    Pending = 1,
+    Succeeded = 2,
+    Failed = 3,
+}
+
+impl TryFrom<u16> for RestoreState {
+    type Error = QueryCodecError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Pending),
+            2 => Ok(Self::Succeeded),
+            3 => Ok(Self::Failed),
+            _ => Err(QueryCodecError::UnknownRestoreState(value)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoreResponse {
+    pub operation_id: u64,
+    pub state: RestoreState,
+    pub message: String,
+}
+
+impl RestoreResponse {
+    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+        let message = self.message.as_bytes();
+        let mut bytes = Vec::with_capacity(RESTORE_RESPONSE_BYTES + message.len());
+        push_u32(&mut bytes, RESTORE_RESPONSE_MAGIC);
+        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, self.state as u16);
+        push_u64(&mut bytes, self.operation_id);
+        push_u32(&mut bytes, checked_u32(message.len(), "restore_message")?);
+        push_u32(&mut bytes, 0);
+        bytes.extend_from_slice(message);
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+        let mut decoder = Decoder::new(bytes);
+        decoder.expect_magic(RESTORE_RESPONSE_MAGIC)?;
+        decoder.expect_version()?;
+        let state = RestoreState::try_from(decoder.u16()?)?;
+        let operation_id = decoder.u64()?;
+        let message_len = decoder.usize_u32()?;
+        let reserved = decoder.u32()?;
+        if reserved != 0 {
+            return Err(QueryCodecError::InvalidReserved(reserved));
+        }
+        let message = decoder.string(message_len, "restore_message")?;
+        decoder.finish()?;
+        Ok(Self {
+            operation_id,
+            state,
+            message,
+        })
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublishLayer {
@@ -68,13 +310,19 @@ impl PublishRequest {
         let instance_len = decoder.usize_u32()?;
         let layer_count = decoder.usize_u32()?;
         let instance_id = decoder.string(instance_len, "instance_id")?;
-        let mut layers = Vec::with_capacity(layer_count.min(1024));
+        if layer_count > decoder.remaining() / 8 {
+            return Err(QueryCodecError::Truncated);
+        }
+        let mut layers = Vec::with_capacity(layer_count);
         for _ in 0..layer_count {
             let name_len = decoder.usize_u32()?;
             let block_count = decoder.usize_u32()?;
             let layer_name = decoder.string(name_len, "layer_name")?;
-            let mut block_ids = Vec::with_capacity(block_count.min(4096));
-            let mut block_hashes = Vec::with_capacity(block_count.min(4096));
+            if block_count > decoder.remaining() / 8 {
+                return Err(QueryCodecError::Truncated);
+            }
+            let mut block_ids = Vec::with_capacity(block_count);
+            let mut block_hashes = Vec::with_capacity(block_count);
             for _ in 0..block_count {
                 block_ids.push(decoder.u32()?);
                 let hash_len = decoder.usize_u32()?;
@@ -207,7 +455,10 @@ impl QueryBundleRequest {
         if request_id.is_empty() {
             return Err(QueryCodecError::EmptyRequestId);
         }
-        let mut block_hashes = Vec::with_capacity(hash_count.min(1024));
+        if hash_count > decoder.remaining() / 4 {
+            return Err(QueryCodecError::Truncated);
+        }
+        let mut block_hashes = Vec::with_capacity(hash_count);
         for _ in 0..hash_count {
             let len = decoder.usize_u32()?;
             block_hashes.push(decoder.bytes(len)?.to_vec());
@@ -289,7 +540,10 @@ impl QueryBundleResponse {
         let lease_len = decoder.usize_u32()?;
         let positions_len = decoder.usize_u32()?;
         let lease = decoder.bytes(lease_len)?.to_vec();
-        let mut hit_positions = Vec::with_capacity(positions_len.min(1024));
+        if positions_len > decoder.remaining() / 4 {
+            return Err(QueryCodecError::Truncated);
+        }
+        let mut hit_positions = Vec::with_capacity(positions_len);
         for _ in 0..positions_len {
             hit_positions.push(decoder.u32()?);
         }
@@ -338,6 +592,12 @@ pub enum QueryCodecError {
         block_ids: usize,
         block_hashes: usize,
     },
+    #[error("unknown restore state: {0}")]
+    UnknownRestoreState(u16),
+    #[error("restore response reserved field must be zero, got {0}")]
+    InvalidReserved(u32),
+    #[error("restore operation id must be non-zero")]
+    ZeroOperationId,
 }
 
 struct Decoder<'a> {
@@ -421,6 +681,10 @@ impl<'a> Decoder<'a> {
             ))
         }
     }
+
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
 }
 
 fn checked_u32(value: usize, field: &'static str) -> Result<u32, QueryCodecError> {
@@ -441,6 +705,16 @@ fn push_i32(bytes: &mut Vec<u8>, value: i32) {
 
 fn push_u64(bytes: &mut Vec<u8>, value: u64) {
     bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_bytes(
+    bytes: &mut Vec<u8>,
+    value: &[u8],
+    field: &'static str,
+) -> Result<(), QueryCodecError> {
+    push_u32(bytes, checked_u32(value.len(), field)?);
+    bytes.extend_from_slice(value);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -540,5 +814,39 @@ mod tests {
             invalid.encode(),
             Err(QueryCodecError::PublishShapeMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn restore_request_and_response_round_trip() {
+        let request = RestoreRequest {
+            instance_id: "model-a".to_string(),
+            tp_rank: 1,
+            device_id: 2,
+            layer_groups: vec![vec!["layer.0".to_string()], Vec::new()],
+            loads: vec![RestoreLease {
+                lease: vec![9; 16],
+                block_ids_by_group: vec![vec![Some(3), None], vec![None, Some(7)]],
+            }],
+        };
+        assert_eq!(
+            RestoreRequest::decode(&request.encode().unwrap()).unwrap(),
+            request
+        );
+
+        let response = RestoreResponse {
+            operation_id: 42,
+            state: RestoreState::Failed,
+            message: "cuda copy failed".to_string(),
+        };
+        assert_eq!(
+            RestoreResponse::decode(&response.encode().unwrap()).unwrap(),
+            response
+        );
+
+        let poll = RestoreCommand::Poll { operation_id: 42 };
+        assert_eq!(
+            RestoreCommand::decode(&poll.encode().unwrap()).unwrap(),
+            poll
+        );
     }
 }

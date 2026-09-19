@@ -40,6 +40,67 @@ pub(crate) struct PublishInput {
     pub layers: Vec<PublishLayerInput>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct RestoreLeaseInput {
+    pub lease: Vec<u8>,
+    pub block_ids_by_group: Vec<Vec<Option<u32>>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RestoreInput {
+    pub instance_id: String,
+    pub tp_rank: u32,
+    pub device_id: i32,
+    pub layer_groups: Vec<Vec<String>>,
+    pub loads: Vec<RestoreLeaseInput>,
+}
+
+pub(crate) fn execute_restore(
+    engine: &OrbitKVEngine,
+    input: RestoreInput,
+) -> Result<tokio::sync::oneshot::Receiver<Result<(), EngineError>>, EngineError> {
+    if input.device_id < 0 {
+        return Err(EngineError::InvalidArgument(format!(
+            "device_id {} must be >= 0",
+            input.device_id
+        )));
+    }
+    let tp_rank = usize::try_from(input.tp_rank).map_err(|_| {
+        EngineError::InvalidArgument(format!("tp_rank {} does not fit usize", input.tp_rank))
+    })?;
+    let loads = input
+        .loads
+        .into_iter()
+        .map(|load| {
+            let lease =
+                QueryLeaseId::from_bytes(&load.lease).map_err(EngineError::InvalidArgument)?;
+            let groups = load
+                .block_ids_by_group
+                .into_iter()
+                .map(|targets| {
+                    targets
+                        .into_iter()
+                        .map(|target| target.map(|id| id as usize))
+                        .collect()
+                })
+                .collect();
+            Ok((lease, groups))
+        })
+        .collect::<Result<Vec<_>, EngineError>>()?;
+    let layer_groups = input
+        .layer_groups
+        .iter()
+        .map(|group| group.iter().map(String::as_str).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    engine.batch_load_kv_blocks_multi_layer_inproc(
+        &input.instance_id,
+        tp_rank,
+        input.device_id,
+        &layer_groups,
+        &loads,
+    )
+}
+
 pub(crate) async fn execute_publish(
     engine: &OrbitKVEngine,
     input: PublishInput,

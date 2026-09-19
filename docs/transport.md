@@ -51,9 +51,9 @@ notification eventfd through a mode-0600 Unix socket. `SO_PEERCRED` restricts th
 bootstrap to the sidecar's uid. Each request has an odd generation and each
 response advances it by one; reconnecting to a reused slot starts beyond the
 prior generation, so delayed commands cannot target a new occupant. The memfd
-is sealed against growth and shrinking. The eventfd is reserved for completion
-wakeups; `QueryBundle` currently observes response arrival through iceoryx2's
-request/response channel.
+is sealed against growth and shrinking. The eventfd wakes clients when an
+asynchronous restore reaches a terminal state; ordinary control responses still
+arrive through iceoryx2's request/response channel.
 
 `QueryBundle` has a framework-neutral binary schema for instance identity,
 request identity, hashes, group, query mode, hit positions, and the opaque
@@ -62,10 +62,13 @@ lease. Both gRPC and iceoryx2 dispatch through the same core query function.
 GPU page metadata can be submitted and query leases can complete their
 lifecycle without gRPC. Publish retains the existing asynchronous core save
 semantics: success means the validated GPU copy job was accepted, while a later
-query observes it after the write pipeline seals the blocks. `Restore` still
-returns `Invalid`. The existing vLLM adapter remains on gRPC until restore and
-completion semantics are migrated. KV payload bytes do not travel through the
-descriptor arena.
+query observes it after the write pipeline seals the blocks. `Restore` submits
+the existing in-process GPU load, returns an operation ID, signals its session's
+eventfd at terminal completion, and is consumed through a follow-up poll. Python
+exposes both non-blocking `restore_submit`/`restore_poll` plus the notification
+fd and a synchronous `restore` convenience wrapper. The
+existing vLLM adapter remains on gRPC until its calls are switched to this local
+client. KV payload bytes do not travel through the descriptor arena.
 
 ## Measured local-control baseline
 
@@ -175,7 +178,8 @@ contract is complete.
    descriptors; framework-owned page registration remains)
 4. Move `QueryBundle` to iceoryx2. (complete; framework adapters not switched)
 5. Move `Publish` and `Release`. (complete; framework adapters not switched)
-6. Move `Restore` and remove per-load shared-memory status objects.
+6. Move `Restore` and remove per-load shared-memory status objects. (local API
+   complete; framework adapters not switched)
 7. Implement `MooncakeMover` behind an optional build/runtime feature.
 8. Qualify native RDMA and Mooncake against the same transfer plan tests.
 9. Remove cross-node gRPC data-path RPCs only after equivalent lease, fencing,

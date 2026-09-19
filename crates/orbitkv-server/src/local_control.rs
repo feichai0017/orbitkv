@@ -14,20 +14,27 @@ use orbitkv_local::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
     LocalServer, PublishRequest as LocalPublishRequest, QueryBundleRequest, QueryBundleResponse,
     QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest as LocalReleaseRequest,
-    Response, StatusCode, TransportError,
+    Response, RestoreCommand, RestoreResponse, RestoreState, StatusCode, TransportError,
 };
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
 
 use crate::query::{
-    PublishInput, PublishLayerInput, QueryInput, QueryOutcome, execute_publish, execute_query,
-    execute_release,
+    PublishInput, PublishLayerInput, QueryInput, QueryOutcome, RestoreInput, RestoreLeaseInput,
+    execute_publish, execute_query, execute_release, execute_restore,
 };
 
 const IDLE_POLL_INTERVAL: Duration = Duration::from_micros(50);
 const BOOTSTRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LIVENESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_RESTORE_OPERATIONS_PER_SESSION: usize = 1024;
+const MAX_RESTORE_ERROR_BYTES: usize = 4096;
+
+enum RestoreOperation {
+    Pending(tokio::sync::oneshot::Receiver<Result<(), EngineError>>),
+    Complete(Result<(), String>),
+}
 
 #[derive(Debug, Error)]
 pub(crate) enum LocalControlError {
@@ -85,6 +92,8 @@ impl LocalControlEndpoint {
                     bootstrap_socket.display()
                 );
                 let mut sessions = HashMap::new();
+                let mut operations = HashMap::new();
+                let mut next_operation_id = 1u64;
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
@@ -94,15 +103,24 @@ impl LocalControlEndpoint {
                         next_bootstrap_poll = now + BOOTSTRAP_POLL_INTERVAL;
                     }
                     if now >= next_liveness_poll {
-                        sessions.retain(|_, session| match session.is_alive() {
-                            Ok(alive) => alive,
-                            Err(error) => {
-                                error!("Local bootstrap liveness check failed: {error}");
-                                false
+                        let mut dead_sessions = Vec::new();
+                        sessions.retain(|token, session| {
+                            let alive = match session.is_alive() {
+                                Ok(alive) => alive,
+                                Err(error) => {
+                                    error!("Local bootstrap liveness check failed: {error}");
+                                    false
+                                }
+                            };
+                            if !alive {
+                                dead_sessions.push(*token);
                             }
+                            alive
                         });
+                        operations.retain(|(token, _), _| !dead_sessions.contains(token));
                         next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
                     }
+                    advance_restore_operations(&sessions, &mut operations);
 
                     let mut request_shutdown = false;
                     match server.try_serve_for_epoch(session_epoch, |command| {
@@ -113,6 +131,8 @@ impl LocalControlEndpoint {
                             &engine,
                             &runtime,
                             &hll_tracker,
+                            &mut operations,
+                            &mut next_operation_id,
                             &mut request_shutdown,
                         )
                     }) {
@@ -178,6 +198,10 @@ fn accept_pending_sessions(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "dispatch names each sidecar-owned subsystem explicitly"
+)]
 fn dispatch(
     command: Command,
     bootstrap: &BootstrapServer,
@@ -185,6 +209,8 @@ fn dispatch(
     engine: &Arc<OrbitKVEngine>,
     runtime: &Handle,
     hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
+    operations: &mut HashMap<(u64, u64), RestoreOperation>,
+    next_operation_id: &mut u64,
     request_shutdown: &mut bool,
 ) -> Response {
     let mut response = Response::ok(command);
@@ -206,10 +232,231 @@ fn dispatch(
             response = dispatch_publish(command, bootstrap, sessions, engine, runtime);
         }
         CommandCode::Restore => {
-            response.status = StatusCode::Invalid;
+            response = dispatch_restore(
+                command,
+                bootstrap,
+                sessions,
+                engine,
+                operations,
+                next_operation_id,
+            );
         }
     }
     response
+}
+
+fn advance_restore_operations(
+    sessions: &HashMap<u64, BootstrapSession>,
+    operations: &mut HashMap<(u64, u64), RestoreOperation>,
+) {
+    for ((token, _), operation) in operations.iter_mut() {
+        let result = match operation {
+            RestoreOperation::Pending(receiver) => match receiver.try_recv() {
+                Ok(result) => Some(result.map_err(|error| truncate_error(error.to_string()))),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    Some(Err("restore completion channel closed".to_string()))
+                }
+            },
+            RestoreOperation::Complete(_) => None,
+        };
+        if let Some(result) = result {
+            *operation = RestoreOperation::Complete(result);
+            if let Some(session) = sessions.get(token)
+                && let Err(error) = session.notify()
+            {
+                error!("Failed to notify local restore completion: {error}");
+            }
+        }
+    }
+}
+
+fn truncate_error(mut message: String) -> String {
+    if message.len() <= MAX_RESTORE_ERROR_BYTES {
+        return message;
+    }
+    let mut end = MAX_RESTORE_ERROR_BYTES;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message.truncate(end);
+    message
+}
+
+fn dispatch_restore(
+    command: Command,
+    bootstrap: &BootstrapServer,
+    sessions: &mut HashMap<u64, BootstrapSession>,
+    engine: &OrbitKVEngine,
+    operations: &mut HashMap<(u64, u64), RestoreOperation>,
+    next_operation_id: &mut u64,
+) -> Response {
+    let mut response = Response::ok(command);
+    response.value1 = 0;
+    let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
+        Ok(payload) => payload,
+        Err(response) => return response,
+    };
+    let restore = match RestoreCommand::decode(&payload) {
+        Ok(restore) => restore,
+        Err(error) => return error_response(response, StatusCode::Invalid, &error),
+    };
+    let restore_response = match restore {
+        RestoreCommand::Submit(request) => {
+            let active_operations = operations
+                .keys()
+                .filter(|(token, _)| *token == command.arg0)
+                .count();
+            if active_operations >= MAX_RESTORE_OPERATIONS_PER_SESSION {
+                return error_response(
+                    response,
+                    StatusCode::Invalid,
+                    &"too many unconsumed restore operations",
+                );
+            }
+            let operation_id = *next_operation_id;
+            *next_operation_id = match next_operation_id.checked_add(1) {
+                Some(next) => next,
+                None => {
+                    return error_response(
+                        response,
+                        StatusCode::Internal,
+                        &"operation ids exhausted",
+                    );
+                }
+            };
+            let loads = request
+                .loads
+                .into_iter()
+                .map(|load| RestoreLeaseInput {
+                    lease: load.lease,
+                    block_ids_by_group: load.block_ids_by_group,
+                })
+                .collect();
+            let receiver = match execute_restore(
+                engine,
+                RestoreInput {
+                    instance_id: request.instance_id,
+                    tp_rank: request.tp_rank,
+                    device_id: request.device_id,
+                    layer_groups: request.layer_groups,
+                    loads,
+                },
+            ) {
+                Ok(receiver) => receiver,
+                Err(error) => return error_response(response, engine_error_status(&error), &error),
+            };
+            operations.insert(
+                (command.arg0, operation_id),
+                RestoreOperation::Pending(receiver),
+            );
+            RestoreResponse {
+                operation_id,
+                state: RestoreState::Pending,
+                message: String::new(),
+            }
+        }
+        RestoreCommand::Poll { operation_id } => {
+            match operations.get(&(command.arg0, operation_id)) {
+                Some(RestoreOperation::Pending(_)) => RestoreResponse {
+                    operation_id,
+                    state: RestoreState::Pending,
+                    message: String::new(),
+                },
+                Some(RestoreOperation::Complete(Ok(()))) => RestoreResponse {
+                    operation_id,
+                    state: RestoreState::Succeeded,
+                    message: String::new(),
+                },
+                Some(RestoreOperation::Complete(Err(message))) => {
+                    let message = message.clone();
+                    RestoreResponse {
+                        operation_id,
+                        state: RestoreState::Failed,
+                        message,
+                    }
+                }
+                None => {
+                    return error_response(
+                        response,
+                        StatusCode::Invalid,
+                        &"unknown restore operation",
+                    );
+                }
+            }
+        }
+    };
+    let payload = match restore_response.encode() {
+        Ok(payload) => payload,
+        Err(error) => return error_response(response, StatusCode::Internal, &error),
+    };
+    let completed_operation = (restore_response.state != RestoreState::Pending)
+        .then_some((command.arg0, restore_response.operation_id));
+    match bootstrap
+        .arena()
+        .write_response(command.descriptor, &payload)
+    {
+        Ok(descriptor) => {
+            response.descriptor = descriptor;
+            if let Some(key) = completed_operation {
+                operations.remove(&key);
+            }
+        }
+        Err(error) => return error_response(response, local_error_status(&error), &error),
+    }
+    response
+}
+
+fn consume_descriptor(
+    command: Command,
+    bootstrap: &BootstrapServer,
+    sessions: &mut HashMap<u64, BootstrapSession>,
+    response: &mut Response,
+) -> Result<Vec<u8>, Response> {
+    let descriptor_slot = match bootstrap.descriptor_slot(command.descriptor.offset) {
+        Ok(slot) => slot,
+        Err(error) => {
+            return Err(error_response(
+                *response,
+                local_error_status(&error),
+                &error,
+            ));
+        }
+    };
+    let session = match sessions.get_mut(&command.arg0) {
+        Some(session) => session,
+        None => {
+            response.status = StatusCode::StaleSession;
+            return Err(*response);
+        }
+    };
+    if let Err(error) = session.validate_request(command.descriptor, command.arg0, descriptor_slot)
+    {
+        return Err(error_response(
+            *response,
+            bootstrap_error_status(&error),
+            &error,
+        ));
+    }
+    let payload = match bootstrap.arena().read(command.descriptor) {
+        Ok(payload) => payload,
+        Err(error) => {
+            return Err(error_response(
+                *response,
+                local_error_status(&error),
+                &error,
+            ));
+        }
+    };
+    if let Err(error) = session.complete_request() {
+        return Err(error_response(
+            *response,
+            bootstrap_error_status(&error),
+            &error,
+        ));
+    }
+    response.value1 |= RESPONSE_FLAG_REQUEST_CONSUMED;
+    Ok(payload)
 }
 
 fn dispatch_publish(
@@ -221,29 +468,10 @@ fn dispatch_publish(
 ) -> Response {
     let mut response = Response::ok(command);
     response.value1 = 0;
-    let descriptor_slot = match bootstrap.descriptor_slot(command.descriptor.offset) {
-        Ok(slot) => slot,
-        Err(error) => return error_response(response, local_error_status(&error), &error),
-    };
-    let session = match sessions.get_mut(&command.arg0) {
-        Some(session) => session,
-        None => {
-            response.status = StatusCode::StaleSession;
-            return response;
-        }
-    };
-    if let Err(error) = session.validate_request(command.descriptor, command.arg0, descriptor_slot)
-    {
-        return error_response(response, bootstrap_error_status(&error), &error);
-    }
-    let payload = match bootstrap.arena().read(command.descriptor) {
+    let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
         Ok(payload) => payload,
-        Err(error) => return error_response(response, local_error_status(&error), &error),
+        Err(response) => return response,
     };
-    if let Err(error) = session.complete_request() {
-        return error_response(response, bootstrap_error_status(&error), &error);
-    }
-    response.value1 |= RESPONSE_FLAG_REQUEST_CONSUMED;
     let request = match LocalPublishRequest::decode(&payload) {
         Ok(request) => request,
         Err(error) => return error_response(response, StatusCode::Invalid, &error),
@@ -284,29 +512,10 @@ fn dispatch_release(
 ) -> Response {
     let mut response = Response::ok(command);
     response.value1 = 0;
-    let descriptor_slot = match bootstrap.descriptor_slot(command.descriptor.offset) {
-        Ok(slot) => slot,
-        Err(error) => return error_response(response, local_error_status(&error), &error),
-    };
-    let session = match sessions.get_mut(&command.arg0) {
-        Some(session) => session,
-        None => {
-            response.status = StatusCode::StaleSession;
-            return response;
-        }
-    };
-    if let Err(error) = session.validate_request(command.descriptor, command.arg0, descriptor_slot)
-    {
-        return error_response(response, bootstrap_error_status(&error), &error);
-    }
-    let payload = match bootstrap.arena().read(command.descriptor) {
+    let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
         Ok(payload) => payload,
-        Err(error) => return error_response(response, local_error_status(&error), &error),
+        Err(response) => return response,
     };
-    if let Err(error) = session.complete_request() {
-        return error_response(response, bootstrap_error_status(&error), &error);
-    }
-    response.value1 |= RESPONSE_FLAG_REQUEST_CONSUMED;
     let request = match LocalReleaseRequest::decode(&payload) {
         Ok(request) => request,
         Err(error) => return error_response(response, StatusCode::Invalid, &error),
@@ -331,29 +540,10 @@ fn dispatch_query(
 ) -> Response {
     let mut response = Response::ok(command);
     response.value1 = 0;
-    let descriptor_slot = match bootstrap.descriptor_slot(command.descriptor.offset) {
-        Ok(slot) => slot,
-        Err(error) => return error_response(response, local_error_status(&error), &error),
-    };
-    let session = match sessions.get_mut(&command.arg0) {
-        Some(session) => session,
-        None => {
-            response.status = StatusCode::StaleSession;
-            return response;
-        }
-    };
-    if let Err(error) = session.validate_request(command.descriptor, command.arg0, descriptor_slot)
-    {
-        return error_response(response, bootstrap_error_status(&error), &error);
-    }
-    let payload = match bootstrap.arena().read(command.descriptor) {
+    let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
         Ok(payload) => payload,
-        Err(error) => return error_response(response, local_error_status(&error), &error),
+        Err(response) => return response,
     };
-    if let Err(error) = session.complete_request() {
-        return error_response(response, bootstrap_error_status(&error), &error);
-    }
-    response.value1 |= RESPONSE_FLAG_REQUEST_CONSUMED;
     let request = match QueryBundleRequest::decode(&payload) {
         Ok(request) => request,
         Err(error) => return error_response(response, StatusCode::Invalid, &error),

@@ -36,11 +36,12 @@ separate service.
  +-------------------+              +-------------------+
 ```
 
-The compatibility control plane still uses gRPC. The first native local path is
-now live for `QueryBundle`: iceoryx2 carries fixed descriptors while a Unix
-socket authenticates the peer and passes a sealed memfd descriptor arena. The
-remaining restore, publish, release, and framework-adapter calls have not been
-migrated. KV bytes must not travel through either control protocol: vLLM uses
+The compatibility control plane still uses gRPC. The native local API now
+supports query, publish, asynchronous restore completion, and lease release:
+iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
+passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
+Framework adapters have not yet been switched. KV bytes must not travel through
+either control protocol: vLLM uses
 registered CUDA IPC pages, SGLang will use a shared pinned host pool, and remote
 transfers use a `RemoteMover` backend. See [transport.md](transport.md) for the
 measured decision.

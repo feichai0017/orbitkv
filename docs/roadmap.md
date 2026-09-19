@@ -36,8 +36,8 @@ Deliver:
 
 - implement the dynamic `HiCacheStorage` backend;
 - register SGLang shared host regions with the sidecar over UDS;
-- execute restore and completion over iceoryx2 (`QueryBundle`, publish, and
-  lease release are already available to local clients);
+- switch framework adapters to the available local `QueryBundle`, publish,
+  restore, completion, and lease-release APIs;
 - support KV, MLA, Mamba/recurrent, SWA, and explicit opaque pools;
 - map SGLang hit policies into `RecoveryContract`;
 - expose cold miss, partial prefix, warm hit, cancellation, and restart metrics.
@@ -54,7 +54,8 @@ Gate:
 Deliver:
 
 - move vLLM hybrid reconciliation from the adapter into common bundle logic;
-- replace per-load shared-memory status files with iceoryx2 completions;
+- replace framework adapters' per-load shared-memory status files with the
+  implemented local restore operations and eventfd wakeups;
 - use UDS file-descriptor passing for shared regions;
 - add framework-neutral query, lease, register-region, and transfer-plan RPCs;
 - preserve the legacy vLLM protocol until its adapter migrates.
