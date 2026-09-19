@@ -28,6 +28,7 @@ import pytest
 from .vllm_helpers import (
     OrbitKVServer,
     VLLMServer,
+    _uses_linear_attention,
     adapt_prompt_for_hybrid_cache,
     call_openai_api,
     e2e_max_tokens,
@@ -289,6 +290,7 @@ class TestE2ECorrectness:
         base_port: int,
         orbitkv_server: OrbitKVServer,
         orbitkv_transfer_backend: str,
+        orbitkv_local_data: bool,
         log_dir: Path,
         tensor_parallel_size: int,
         pipeline_parallel_size: int,
@@ -311,6 +313,7 @@ class TestE2ECorrectness:
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
             transfer_backend=orbitkv_transfer_backend,
+            local_data=orbitkv_local_data,
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
                 if expectation not in {"cold", "warm-same-process"}:
@@ -336,6 +339,7 @@ class TestE2ECorrectness:
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
             transfer_backend=orbitkv_transfer_backend,
+            local_data=orbitkv_local_data,
             server_label="OrbitKV load",
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
@@ -358,6 +362,10 @@ class TestE2ECorrectness:
             "metrics_start": metrics_start,
             "metrics_same_process": metrics_same_process,
             "metrics_end": metrics_end,
+            "connector_logs": (
+                (log_dir / "orbitkv.log").read_text(errors="replace")
+                + (log_dir / "orbitkv-load.log").read_text(errors="replace")
+            ),
         }
 
     def test_execution_plan_outputs_match_baseline(self, baseline_outputs, orbitkv_results):
@@ -399,8 +407,17 @@ class TestE2ECorrectness:
             f"hits={hits:.0f} blocks ({load_bytes / 1e6:.1f}MB)"
         )
 
-    def test_same_process_hma_load_uses_orbitkv(self, orbitkv_results):
+    def test_selected_data_plane(self, orbitkv_results, orbitkv_local_data: bool):
+        expected = "local" if orbitkv_local_data else "grpc"
+        assert (
+            f"[OrbitKVConnector] data plane selected: transport={expected}"
+            in orbitkv_results["connector_logs"]
+        )
+
+    def test_same_process_hma_load_uses_orbitkv(self, model: str, orbitkv_results):
         """The warm request in the first vLLM process must load from OrbitKV."""
+        if not _uses_linear_attention(model):
+            pytest.skip("same-process HMA assertion requires a hybrid linear-attention model")
         m_start = orbitkv_results["metrics_start"]
         m_end = orbitkv_results["metrics_same_process"]
         hit_delta = m_end.get("orbitkv_cache_block_hits_total", 0) - m_start.get(

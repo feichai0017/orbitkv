@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from orbitkv.orbitkv import EngineRpcClient
+from orbitkv.client.data_plane import CacheDataClient
 from orbitkv.vllm.common import (
     CacheGroupLayout,
     ConnectorContext,
@@ -122,21 +122,22 @@ class SchedulerConnector:
     def __init__(
         self,
         context: ConnectorContext,
-        engine_clients: tuple[EngineRpcClient, ...] | None = None,
+        data_clients: tuple[CacheDataClient, ...] | None = None,
         pd_tail_save: bool = False,
         pd_tail_load: bool = False,
         vllm_config=None,
         kv_cache_config=None,
     ):
         self._ctx = context
-        engine_clients = tuple(engine_clients or (context.engine_client,))
+        assert context.data_client is not None
+        data_clients = tuple(data_clients or (context.data_client,))
         expected_shards = context.tp_shards.shard_count if context.tp_shards is not None else 1
-        if len(engine_clients) != expected_shards:
+        if len(data_clients) != expected_shards:
             raise ValueError(
-                f"scheduler has {len(engine_clients)} OrbitKV clients for "
+                f"scheduler has {len(data_clients)} OrbitKV data clients for "
                 f"{expected_shards} TP shards"
             )
-        self._tp_shard_client = TpShardQueryClient(engine_clients)
+        self._tp_shard_client = TpShardQueryClient(data_clients)
         self._cache_groups = CacheGroupLayout.from_config(kv_cache_config)
         if self._cache_groups.has_recurrent_state and (pd_tail_save or pd_tail_load):
             raise ValueError("P/D tail-block caching is not supported with HMA")

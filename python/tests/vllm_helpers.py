@@ -81,12 +81,14 @@ class VLLMServer:
         server_label: str | None = None,
         env_overrides: dict[str, str] | None = None,
         transfer_backend: str | None = None,
+        local_data: bool = False,
     ):
         self.model = model
         self.port = port
         self.use_orbitkv = use_orbitkv
         self.orbitkv_port = orbitkv_port
         self.transfer_backend = transfer_backend
+        self.local_data = local_data
         self.log_file = log_file
         self.max_model_len = max_model_len
         self.tensor_parallel_size = tensor_parallel_size
@@ -114,6 +116,11 @@ class VLLMServer:
 
         env = os.environ.copy()
         env["PYTHONHASHSEED"] = "0"
+        python_source = str(Path(__file__).parent.parent)
+        current_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = (
+            f"{python_source}:{current_pythonpath}" if current_pythonpath else python_source
+        )
         if _uses_linear_attention(self.model):
             env.pop("VLLM_BATCH_INVARIANT", None)
         else:
@@ -184,6 +191,8 @@ class VLLMServer:
             extra_config: dict[str, object] = {}
             if self.use_orbitkv and self.transfer_backend is not None:
                 extra_config["orbitkv.transfer_backend"] = self.transfer_backend
+            if self.use_orbitkv and self.local_data:
+                extra_config["orbitkv.local_data"] = True
             if extra_config:
                 kv_config["kv_connector_extra_config"] = extra_config
             cmd.extend(["--kv-transfer-config", json.dumps(kv_config)])
@@ -367,6 +376,10 @@ class OrbitKVServer:
     @property
     def metrics_port(self) -> int:
         return self.http_port
+
+    @property
+    def local_bootstrap_socket(self) -> str:
+        return f"/tmp/orbitkv-{self.grpc_port}.sock"
 
     def __enter__(self):
         project_root = Path(__file__).parent.parent.parent

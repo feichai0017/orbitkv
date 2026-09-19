@@ -15,8 +15,10 @@ discovery so none of them becomes an accidental second source of KV truth.
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
 | administration | HTTP or compatibility gRPC | no KV bytes | existing |
 
-The existing gRPC connector remains the compatibility and correctness baseline
-until the same vLLM and SGLang gates pass over `orbitkv-local`.
+The existing gRPC data path remains the default compatibility and correctness
+baseline. The vLLM adapter can opt into `orbitkv-local` for its hot data
+operations while keeping registration, health, session watching, and
+unregistration on gRPC. SGLang has not yet made this cutover.
 
 ## Local IPC
 
@@ -67,8 +69,24 @@ the existing in-process GPU load, returns an operation ID, signals its session's
 eventfd at terminal completion, and is consumed through a follow-up poll. Python
 exposes both non-blocking `restore_submit`/`restore_poll` plus the notification
 fd and a synchronous `restore` convenience wrapper. The
-existing vLLM adapter remains on gRPC until its calls are switched to this local
-client. KV payload bytes do not travel through the descriptor arena.
+vLLM selects these operations with `orbitkv.local_data=true`; KV payload bytes
+do not travel through the descriptor arena. The adapter wraps both transports
+behind one data-plane interface: scheduler Query/Release and worker
+Publish/Restore use the selected transport, while lifecycle calls stay on
+gRPC. Local restore completion uses the session eventfd with bounded fallback
+polling, replacing `PyLoadState` only on the opt-in path.
+
+For one sidecar, the adapter derives `/tmp/orbitkv-<grpc-port>.sock` unless
+`orbitkv.local_bootstrap_socket` is set. A scheduler querying multiple TP shards
+must receive one locally reachable socket per shard through
+`orbitkv.tp_shard_bootstrap_sockets`; using one socket for multiple sidecars is
+rejected. In today's centralized vLLM scheduler topology this makes the full
+local path a same-host feature. Cross-host TP shards keep the gRPC Query/Release
+path until query fan-out is delegated to node-local agents.
+`orbitkv.wait_for_full_prefix` is also rejected in local mode because the
+current local dispatcher is serial and a blocking remote fetch would stall
+unrelated Publish/Restore calls. Supporting that combination requires an
+asynchronous QueryBundle operation, analogous to Restore.
 
 ## Measured local-control baseline
 
@@ -94,22 +112,26 @@ The iceoryx2 result can be reproduced with the two binaries documented in
 
 ## vLLM path evidence
 
-The existing gRPC path was exercised with vLLM `0.26.0`, PyTorch `2.11.0`
-CUDA 13, `Qwen2.5-0.5B-Instruct`, and a separate OrbitKV sidecar. The run:
+Both the compatibility gRPC path and the opt-in local data path have been
+exercised with vLLM `0.26.0`, PyTorch `2.11.0`, CUDA 13,
+`Qwen2.5-0.5B-Instruct`, and a separate OrbitKV sidecar. The local run selected
+`transport=local` in both vLLM processes and:
 
 - registered 24 attention layers through CUDA IPC;
 - saved 74 blocks / 14.5 MB;
 - hit 40 blocks and loaded 7.9 MB after a vLLM process restart;
 - exercised exact and partial prefixes;
-- reported no connector/server RPC failures and no KV load failures.
+- reported no connector/server data-path failures and no KV load failures.
 
-One strict text-equality assertion differed between full prefill and warm
+One strict text-equality assertion still differs between full prefill and warm
 prefix reuse. An independent vLLM native prefix-cache control reproduced the
 same divergence at the same output position, while a no-prefix-cache control
-was stable. This is evidence of a vLLM execution-path numerical difference,
-not evidence that OrbitKV corrupted the transferred bytes. Future correctness
-qualification must compare equivalent prefix-reuse paths and add logits or
-top-1-margin checks where exact text is unstable.
+was stable. The local run therefore passes transport selection, cache activity,
+and failure-counter gates, but not the repository's strict full-text gate. This
+is evidence of a vLLM execution-path numerical difference, not evidence that
+OrbitKV corrupted the transferred bytes. Future correctness qualification must
+compare equivalent prefix-reuse paths and add logits or top-1-margin checks
+where exact text is unstable.
 
 ## Mooncake findings
 
@@ -176,10 +198,10 @@ contract is complete.
    client, and cross-process tests.
 3. Add UDS bootstrap and a shared descriptor arena. (complete for control
    descriptors; framework-owned page registration remains)
-4. Move `QueryBundle` to iceoryx2. (complete; framework adapters not switched)
-5. Move `Publish` and `Release`. (complete; framework adapters not switched)
-6. Move `Restore` and remove per-load shared-memory status objects. (local API
-   complete; framework adapters not switched)
+4. Move `QueryBundle` to iceoryx2. (complete; vLLM opt-in, SGLang pending)
+5. Move `Publish` and `Release`. (complete; vLLM opt-in, SGLang pending)
+6. Move `Restore` and remove per-load shared-memory status objects. (complete
+   for the opt-in vLLM local path; gRPC compatibility and SGLang pending)
 7. Implement `MooncakeMover` behind an optional build/runtime feature.
 8. Qualify native RDMA and Mooncake against the same transfer plan tests.
 9. Remove cross-node gRPC data-path RPCs only after equivalent lease, fencing,

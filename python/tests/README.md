@@ -9,7 +9,7 @@
 | Connector helper math, scheduler state, worker load failure handling, IPC wrapper compatibility | Default unit | `uv run --extra test pytest` | Python contract or local connector state-machine regression |
 | Clean source-only Python changes, docs touching test layout, CI test dependency changes | Source-only default | `uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Default test accidentally depends on torch, vLLM, CUDA, or native extension |
 | Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --extra test pytest -m integration` | Server/native/GPU lifecycle regression |
-| vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `uv run --extra test pytest -m e2e tests/test_vllm_e2e_correctness.py --model /data/models/Qwen3-4B` | Real vLLM connector correctness regression |
+| vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `uv run --extra test pytest -m e2e tests/test_vllm_e2e_correctness.py --model /data/models/Qwen3-4B` | Real vLLM connector correctness regression; add `--orbitkv-local-data` to qualify local IPC |
 | Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --extra test pytest -m stress tests/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
@@ -81,6 +81,9 @@ This gate is required before merging PRs that change Python test gates, the
 vLLM connector, cache semantics visible to the connector, save/load behavior,
 query planning, or release confidence. The code author runs it before requesting
 merge, and review reruns it independently on the GPU machine.
+
+Run the same command with `--orbitkv-local-data` whenever the local facade,
+iceoryx2 protocol, or vLLM data-plane routing changes.
 
 Requirements:
 - vLLM installed in the active environment

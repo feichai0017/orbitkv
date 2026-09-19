@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 
+from orbitkv.client.data_plane import RestoreHandle, RestoreStatus
 from orbitkv.ipc_wrapper import CudaIPCWrapper
-from orbitkv.orbitkv import PyLoadState
 from orbitkv.vllm.common import (
     CacheGroupLayout,
     ConnectorContext,
@@ -208,6 +208,8 @@ class WorkerConnector:
         kv_cache_config=None,
     ):
         self._ctx = context
+        assert context.data_client is not None
+        self._data_client = context.data_client
         self._kv_cache_config = kv_cache_config
         self._cache_groups = CacheGroupLayout.from_config(kv_cache_config)
         self._layer_to_group = self._cache_groups.layer_to_group()
@@ -230,7 +232,7 @@ class WorkerConnector:
         self._completed_boundary_jobs: list[int] = []
         self._current_metadata: OrbitKVConnectorMetadata | None = None
 
-        self._pending_loads: dict[str, PyLoadState] = {}
+        self._pending_loads: dict[str, RestoreHandle] = {}
         self._pending_load_reqs: dict[str, set[str]] = {}
         self._pending_load_meta: dict[
             str, tuple[float, int, list[int]]
@@ -466,34 +468,70 @@ class WorkerConnector:
         hma_load_failure: str | None = None
         with self._load_completion_lock:
             completed_reqs: set[str] = set()
-            completed_shms: list[str] = []
+            completed_restore_keys: list[str] = []
             load_stats_to_record: list[tuple[float, int, bool]] = []
             now = time.perf_counter()
 
-            for shm_name, req_ids in self._pending_load_reqs.items():
+            completion_error: Exception | None = None
+            should_poll_restores = False
+            if self._pending_load_reqs:
+                try:
+                    should_poll_restores = self._data_client.restore_completions_ready()
+                except Exception as error:
+                    logger.exception("[OrbitKVConnector] restore notification check failed")
+                    completion_error = error
+                    should_poll_restores = True
+                    self._ctx.state_manager.mark_unavailable(
+                        f"restore notification check exception: {error}"
+                    )
+            for restore_key, req_ids in self._pending_load_reqs.items():
                 sample_req_id = next(iter(req_ids))
-                load_state = self._pending_loads.get(sample_req_id)
-                if load_state is None:
+                restore = self._pending_loads.get(sample_req_id)
+                if restore is None:
                     continue
 
-                meta = self._pending_load_meta.get(shm_name)
-                ready = load_state.is_ready()
+                meta = self._pending_load_meta.get(restore_key)
+                status = None
+                if completion_error is not None:
+                    status = RestoreStatus(
+                        done=True,
+                        success=False,
+                        message=f"notification check exception: {completion_error}",
+                    )
+                elif should_poll_restores:
+                    try:
+                        status = self._data_client.poll_restore(restore)
+                    except Exception as error:
+                        logger.exception(
+                            "[OrbitKVConnector] restore completion poll failed: reqs=%s",
+                            req_ids,
+                        )
+                        status = RestoreStatus(
+                            done=True,
+                            success=False,
+                            message=f"completion poll exception: {error}",
+                        )
+                        self._ctx.state_manager.mark_unavailable(
+                            f"restore completion poll exception: {error}"
+                        )
+                ready = status is not None and status.done
                 timed_out = (
                     not ready and meta is not None and (now - meta[0]) > self.LOAD_TIMEOUT_SECONDS
                 )
 
                 if ready:
-                    state = load_state.get_state()
-                    success = state >= 0
+                    assert status is not None
+                    success = status.success
                     if not success:
                         logger.error(
-                            "[OrbitKVConnector] async_load_failed: reqs=%s state=%d",
+                            "[OrbitKVConnector] async_load_failed: reqs=%s error=%s",
                             req_ids,
-                            state,
+                            status.message,
                         )
                         if self._cache_groups.group_count > 1:
                             hma_load_failure = (
-                                f"async load failed for requests {sorted(req_ids)}: state={state}"
+                                f"async load failed for requests {sorted(req_ids)}: "
+                                f"{status.message}"
                             )
                         elif meta is not None:
                             self._failed_load_block_ids.update(meta[2])
@@ -509,16 +547,16 @@ class WorkerConnector:
                         load_stats_to_record.append((duration, num_blocks, success))
 
                     completed_reqs.update(req_ids)
-                    completed_shms.append(shm_name)
+                    completed_restore_keys.append(restore_key)
                 elif timed_out:
                     assert meta is not None
                     start_time, num_blocks, block_ids = meta
                     duration = now - start_time
                     logger.error(
-                        "[OrbitKVConnector] load_timeout: reqs=%s shm=%s elapsed=%.1fs "
+                        "[OrbitKVConnector] load_timeout: reqs=%s restore=%s elapsed=%.1fs "
                         "blocks=%d (reporting as load errors)",
                         req_ids,
-                        shm_name,
+                        restore_key,
                         duration,
                         num_blocks,
                     )
@@ -530,13 +568,13 @@ class WorkerConnector:
                         self._failed_load_block_ids.update(block_ids)
                     load_stats_to_record.append((duration, num_blocks, False))
                     completed_reqs.update(req_ids)
-                    completed_shms.append(shm_name)
+                    completed_restore_keys.append(restore_key)
                     timeout_triggered = True
 
-            for shm_name in completed_shms:
-                shm_req_ids = self._pending_load_reqs.pop(shm_name, set())
-                self._pending_load_meta.pop(shm_name, None)
-                for req_id in shm_req_ids:
+            for restore_key in completed_restore_keys:
+                restore_req_ids = self._pending_load_reqs.pop(restore_key, set())
+                self._pending_load_meta.pop(restore_key, None)
+                for req_id in restore_req_ids:
                     self._pending_loads.pop(req_id, None)
 
             if self._failed_load_reqs:
@@ -657,28 +695,24 @@ class WorkerConnector:
         if not any(layer_groups):
             return
 
-        load_state = PyLoadState()
-        shm_name = load_state.shm_name()
-
         try:
-            ok, message = self._ctx.engine_client.load(
+            restore = self._data_client.start_restore(
                 self._ctx.instance_id,
                 self._ctx.effective_tp_rank,
                 self._ctx.device_id,
-                shm_name,
                 layer_groups,
                 loads,
             )
         except Exception as e:
             logger.error(
-                "[OrbitKVConnector] Load RPC exception: %s (reqs=%s blocks=%d, "
+                "[OrbitKVConnector] restore submit exception: %s (reqs=%s blocks=%d, "
                 "marking blocks as load errors)",
                 e,
                 request_ids,
                 len(all_block_ids),
             )
             self._release_load_leases(loads)
-            self._ctx.state_manager.mark_unavailable(f"load rpc exception: {e}")
+            self._ctx.state_manager.mark_unavailable(f"restore submit exception: {e}")
             if self._cache_groups.group_count > 1:
                 raise RuntimeError(
                     "OrbitKV HMA load failed; vLLM 0.26 cannot recover failed "
@@ -687,35 +721,18 @@ class WorkerConnector:
             self._record_load_failure(request_ids, all_block_ids, load_start)
             return
 
-        if not ok:
-            logger.error(
-                "[OrbitKVConnector] Load RPC failed: %s (reqs=%s blocks=%d, "
-                "marking blocks as load errors)",
-                message,
-                request_ids,
-                len(all_block_ids),
-            )
-            self._release_load_leases(loads)
-            self._ctx.state_manager.mark_unavailable(f"load rpc failed: {message}")
-            if self._cache_groups.group_count > 1:
-                raise RuntimeError(
-                    "OrbitKV HMA load failed; vLLM 0.26 cannot recover failed "
-                    f"loads for multiple cache groups: {message}"
-                )
-            self._record_load_failure(request_ids, all_block_ids, load_start)
-            return
-
         num_layers = sum(len(group) for group in layer_groups)
         num_blocks = len(all_block_ids)
+        restore_key = restore.key
 
         schedule_end = time.perf_counter()
         schedule_time_us = (schedule_end - load_start) * 1e6
 
         with self._load_completion_lock:
             for req_id in request_ids:
-                self._pending_loads[req_id] = load_state
-            self._pending_load_reqs[shm_name] = set(request_ids)
-            self._pending_load_meta[shm_name] = (
+                self._pending_loads[req_id] = restore
+            self._pending_load_reqs[restore_key] = set(request_ids)
+            self._pending_load_meta[restore_key] = (
                 load_start,
                 num_blocks,
                 all_block_ids,
@@ -723,12 +740,13 @@ class WorkerConnector:
 
         logger.debug(
             "[OrbitKVConnector] started async load: %d blocks across %d layers for %d reqs, "
-            "schedule %.0f us, shm=%s",
+            "schedule %.0f us, restore=%s transport=%s",
             num_blocks,
             num_layers,
             total_requests,
             schedule_time_us,
-            shm_name,
+            restore_key,
+            self._data_client.transport,
         )
 
     def wait_for_layer_load(self, layer_name: str) -> None:
@@ -741,7 +759,7 @@ class WorkerConnector:
                 continue
             seen.add(lease)
             try:
-                self._ctx.engine_client.release(lease)
+                self._data_client.release(lease)
             except Exception:
                 logger.exception(
                     "[OrbitKVConnector] load failure lease release exception: lease_len=%d",
@@ -929,7 +947,7 @@ class WorkerConnector:
         success = False
 
         try:
-            ok, message = self._ctx.engine_client.save(
+            ok, message = self._data_client.save(
                 self._ctx.instance_id,
                 self._ctx.effective_tp_rank,
                 self._ctx.pp_rank,
@@ -951,7 +969,7 @@ class WorkerConnector:
                 )
         except Exception as e:
             logger.error(
-                "[OrbitKVConnector] Save RPC exception: %s (continuing without save)",
+                "[OrbitKVConnector] Save data-plane exception: %s (continuing without save)",
                 e,
             )
 

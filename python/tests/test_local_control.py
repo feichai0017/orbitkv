@@ -143,3 +143,62 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(
     query_client.release(third.lease, request_id=301)
     with pytest.raises(orbitkv_native.OrbitKVError, match="Invalid"):
         query_client.release(third.lease, request_id=302)
+
+
+def test_local_data_facade_runs_publish_query_restore_release(
+    local_control_server, local_control_client_context
+):
+    orbitkv_native = importlib.import_module("orbitkv.orbitkv")
+    LocalDataClient = importlib.import_module("orbitkv.client.data_plane").LocalDataClient
+    torch = pytest.importorskip("torch")
+    bootstrap_socket = local_control_server.local_bootstrap_socket
+    assert bootstrap_socket is not None
+    client = LocalDataClient(bootstrap_socket)
+
+    block_hash = bytes([9]) * 32
+    expected = local_control_client_context.get_kv_cache()[:, 0:1].cpu().clone()
+    ok, message = client.save(
+        local_control_client_context.instance_id,
+        0,
+        0,
+        0,
+        [(local_control_client_context._layer_names[0], [0], [block_hash])],
+    )
+    assert ok, message
+    local_control_client_context.get_kv_cache()[:, 0:1].zero_()
+    torch.cuda.synchronize()
+
+    deadline = time.monotonic() + 5
+    while True:
+        result = client.query_prefetch(
+            local_control_client_context.instance_id, [block_hash], "facade-query"
+        )
+        if isinstance(result, orbitkv_native.QueryReady) and result.num_hit_blocks == 1:
+            break
+        assert time.monotonic() < deadline, f"local facade query never became ready: {result!r}"
+        time.sleep(0.05)
+
+    deadline = time.monotonic() + 5
+    restore = client.start_restore(
+        local_control_client_context.instance_id,
+        0,
+        0,
+        [local_control_client_context._layer_names],
+        [(result.lease, [[0]])],
+    )
+    while True:
+        if client.restore_completions_ready():
+            status = client.poll_restore(restore)
+            if status.done:
+                break
+        assert time.monotonic() < deadline, "local facade restore did not complete"
+        time.sleep(0.01)
+
+    assert status.success, status.message
+    assert local_control_client_context.get_kv_cache()[:, 0:1].cpu().equal(expected)
+
+    release_result = client.query_prefetch(
+        local_control_client_context.instance_id, [block_hash], "facade-release"
+    )
+    assert isinstance(release_result, orbitkv_native.QueryReady)
+    client.release(release_result.lease)

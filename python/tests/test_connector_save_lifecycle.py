@@ -187,6 +187,20 @@ def test_hma_request_saves_run_async():
     assert finished_sending == {"request"}
 
 
+def test_save_uses_the_selected_data_plane():
+    worker = make_worker()
+    worker._registered_layers = ["layer"]
+    local_data = MagicMock(transport="local")
+    local_data.save.return_value = (True, "")
+    worker._data_client = local_data
+    enqueue_save(worker)
+
+    process_next_save(worker)
+
+    local_data.save.assert_called_once_with("test", 0, 0, 0, [("layer", [1], [b"hash"])])
+    worker._ctx.engine_client.save.assert_not_called()
+
+
 def test_preemption_waits_for_every_save_task():
     worker = make_worker()
     completion = enqueue_save(worker)

@@ -53,12 +53,23 @@ and a passing gate; design text alone does not close an item.
 - [ ] Pass framework-owned shared-page file descriptors over UDS.
 - [x] Add bounded local restore operations that replace per-load `PyLoadState`
   for `LocalQueryClient`.
-- [ ] Switch framework adapters from `PyLoadState` to local restore operations.
-- [ ] Keep control messages descriptor-only; prohibit KV payload bytes in gRPC,
-  UDS, or iceoryx2 messages.
-- [ ] Move hot local control off gRPC; retain gRPC only as compatibility fallback.
+- [ ] Switch SGLang from its future compatibility transport to local restore
+  operations.
+- [x] Switch vLLM Query/Publish/Restore/Release to an opt-in local data client;
+  keep registration, health, session watching, and unregister on gRPC.
+- [x] Remove per-load `PyLoadState` from the opt-in vLLM local data path.
+- [x] Keep local control messages descriptor-only; prohibit KV payload bytes in
+  UDS or iceoryx2 messages. The gRPC compatibility path still carries block
+  descriptors until it is retired.
+- [x] Move vLLM hot local control off gRPC behind `orbitkv.local_data`; retain
+  gRPC as the default compatibility path.
+- [ ] Qualify vLLM correctness E2E with `--orbitkv-local-data` on the GPU/vLLM
+  environment (transport, activity, and failure gates pass; strict warm-prefix
+  text equality retains the known vLLM execution-path divergence).
 - [ ] Add generation validation to every local page reference.
 - [ ] Benchmark the M2 path against the current CUDA IPC baseline.
+- [ ] Make local QueryBundle asynchronous before supporting
+  `orbitkv.wait_for_full_prefix` without head-of-line blocking.
 
 ## M3 — routing and replica planning
 

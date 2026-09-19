@@ -14,6 +14,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorWorkerMetadata,
 )
 
+from orbitkv.client.data_plane import CacheDataClient, GrpcDataClient
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.orbitkv import EngineRpcClient
 from orbitkv.vllm.connector_metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
@@ -133,6 +134,7 @@ class ConnectorContext:
     device_id: int | None
     engine_client: EngineRpcClient
     state_manager: "ServiceStateManager"
+    data_client: CacheDataClient | None = None
     is_mla: bool = False
     collapse_mla_tp: bool = True
     transfer_backend: str = "direct"
@@ -147,6 +149,10 @@ class ConnectorContext:
     # Token span of one `Request.block_hashes` entry; `None` means one per
     # scheduler block.
     hash_block_size: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.data_client is None:
+            object.__setattr__(self, "data_client", GrpcDataClient(self.engine_client))
 
     @property
     def read_enabled(self) -> bool:

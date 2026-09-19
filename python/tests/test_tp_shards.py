@@ -53,13 +53,14 @@ def _context(**kwargs) -> ConnectorContext:
     return ConnectorContext(**defaults)  # type: ignore[arg-type]
 
 
-def _vllm_config(**parallel_overrides):
+def _vllm_config(*, extra_overrides=None, **parallel_overrides):
     extra_config = {
         "orbitkv.tp_shard_endpoints": [
             "http://node-a:50055",
             "http://node-b:50055",
         ]
     }
+    extra_config.update(extra_overrides or {})
     kv_transfer_config = SimpleNamespace(
         engine_id="instance",
         get_from_extra_config=lambda key, default: extra_config.get(key, default),
@@ -168,6 +169,95 @@ def test_scheduler_opens_a_local_topology_session_on_every_server(monkeypatch):
         connector.shutdown()
 
 
+def test_scheduler_maps_each_tp_shard_to_its_local_data_socket(monkeypatch):
+    lifecycle_clients = [MagicMock(), MagicMock()]
+    lifecycle_factory = MagicMock(side_effect=lifecycle_clients)
+    local_clients = [MagicMock(transport="local"), MagicMock(transport="local")]
+    local_factory = MagicMock(side_effect=local_clients)
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", lifecycle_factory)
+    monkeypatch.setattr("orbitkv.vllm.LocalDataClient", local_factory)
+    monkeypatch.setattr("orbitkv.vllm.ServiceStateManager", MagicMock())
+    config = _vllm_config(
+        extra_overrides={
+            "orbitkv.local_data": True,
+            "orbitkv.tp_shard_bootstrap_sockets": [
+                "/run/orbitkv/a.sock",
+                "/run/orbitkv/b.sock",
+            ],
+        }
+    )
+
+    connector = OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
+    try:
+        assert connector._ctx.data_client is local_clients[0]
+        assert connector._scheduler._tp_shard_client._clients == tuple(local_clients)
+        assert connector._lifecycle_clients == tuple(lifecycle_clients)
+        for lifecycle in lifecycle_clients:
+            lifecycle.start_session_watcher.assert_called_once()
+    finally:
+        connector.shutdown()
+
+    assert local_factory.call_args_list == [
+        call("/run/orbitkv/a.sock", timeout_ms=5_000, spin_iterations=64),
+        call("/run/orbitkv/b.sock", timeout_ms=5_000, spin_iterations=64),
+    ]
+
+
+def test_worker_uses_only_the_socket_for_its_tp_shard(monkeypatch):
+    lifecycle = MagicMock()
+    local = MagicMock(transport="local")
+    monkeypatch.setattr("orbitkv.vllm.get_tensor_model_parallel_rank", lambda: 5)
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock(return_value=lifecycle))
+    local_factory = MagicMock(return_value=local)
+    monkeypatch.setattr("orbitkv.vllm.LocalDataClient", local_factory)
+    monkeypatch.setattr("orbitkv.vllm.ServiceStateManager", MagicMock())
+    config = _vllm_config(
+        extra_overrides={
+            "orbitkv.local_data": True,
+            "orbitkv.tp_shard_bootstrap_sockets": [
+                "/run/orbitkv/a.sock",
+                "/run/orbitkv/b.sock",
+            ],
+        }
+    )
+
+    connector = OrbitKVConnector(config, KVConnectorRole.WORKER)
+    try:
+        assert connector._ctx.data_client is local
+        assert connector._worker._data_client is local
+    finally:
+        connector.shutdown()
+
+    local_factory.assert_called_once_with(
+        "/run/orbitkv/b.sock", timeout_ms=5_000, spin_iterations=64
+    )
+
+
+def test_local_data_rejects_multiple_shards_without_socket_mapping(monkeypatch):
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock())
+    config = _vllm_config(extra_overrides={"orbitkv.local_data": True})
+
+    with pytest.raises(ValueError, match="tp_shard_bootstrap_sockets"):
+        OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
+
+
+def test_local_data_rejects_blocking_remote_prefetch(monkeypatch):
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock())
+    config = _vllm_config(
+        extra_overrides={
+            "orbitkv.local_data": True,
+            "orbitkv.tp_shard_bootstrap_sockets": [
+                "/run/orbitkv/a.sock",
+                "/run/orbitkv/b.sock",
+            ],
+            "orbitkv.wait_for_full_prefix": True,
+        }
+    )
+
+    with pytest.raises(ValueError, match="blocking remote prefetch"):
+        OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
+
+
 @pytest.mark.parametrize(
     "parallel_overrides",
     [
@@ -201,7 +291,7 @@ def test_scheduler_uses_common_prefix_and_exact_per_shard_leases():
         QueryReady(2, b"first-exact"),
     ]
     second.query_prefetch.return_value = QueryReady(2, b"second-exact")
-    scheduler = SchedulerConnector(_context(), engine_clients=(first, second))
+    scheduler = SchedulerConnector(_context(), data_clients=(first, second))
     hashes = [b"h0", b"h1", b"h2"]
 
     ready = scheduler._count_available_block_prefix(hashes, "request")
@@ -232,7 +322,7 @@ def test_scheduler_releases_ready_shards_when_another_shard_is_loading():
     second = MagicMock()
     first.query_prefetch.return_value = QueryReady(2, b"first")
     second.query_prefetch.return_value = QueryLoading()
-    scheduler = SchedulerConnector(_context(), engine_clients=(first, second))
+    scheduler = SchedulerConnector(_context(), data_clients=(first, second))
 
     assert scheduler._count_available_block_prefix([b"h0", b"h1"], "request") is None
     first.release.assert_called_once_with(b"first")
@@ -247,7 +337,7 @@ def test_scheduler_discards_drifted_prefetch_before_querying_new_hashes():
         QueryLoading(),
     ]
     second.query_prefetch.return_value = QueryReady(4, b"second-old")
-    scheduler = SchedulerConnector(_context(), engine_clients=(first, second))
+    scheduler = SchedulerConnector(_context(), data_clients=(first, second))
     request = SimpleNamespace(
         request_id="request",
         block_hashes=[b"h0", b"h1", b"h2", b"h3"],
@@ -296,7 +386,7 @@ def test_scheduler_rejects_invalid_shard_query_results_without_leaking_lease(inv
     second = MagicMock()
     first.query_prefetch.return_value = QueryReady(2, b"first")
     second.query_prefetch.return_value = invalid_ready
-    scheduler = SchedulerConnector(_context(), engine_clients=(first, second))
+    scheduler = SchedulerConnector(_context(), data_clients=(first, second))
 
     with pytest.raises(RuntimeError, match="TP shard 1"):
         scheduler._count_available_block_prefix([b"h0", b"h1"], "request")

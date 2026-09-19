@@ -215,6 +215,7 @@ def _install_native_extension_stub() -> None:
             self.lease = lease
 
     module.EngineRpcClient = getattr(module, "EngineRpcClient", MagicMock)
+    module.LocalQueryClient = getattr(module, "LocalQueryClient", MagicMock)
     module.OrbitKVError = getattr(module, "OrbitKVError", type("OrbitKVError", (Exception,), {}))
     module.OrbitKVInternal = getattr(
         module, "OrbitKVInternal", type("OrbitKVInternal", (Exception,), {})

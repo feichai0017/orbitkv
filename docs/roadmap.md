@@ -18,6 +18,8 @@ Deliver:
   Python client;
 - bootstrap a generation-checked descriptor arena over UDS and execute
   `QueryBundle` through the same core path as compatibility gRPC;
+- add a framework-neutral Python data-plane facade and an explicit vLLM local
+  mode for query, publish, restore, and lease release;
 - introduce `RemoteMover` with the native RDMA implementation as its first
   backend;
 - preserve current vLLM behavior.
@@ -55,7 +57,8 @@ Deliver:
 
 - move vLLM hybrid reconciliation from the adapter into common bundle logic;
 - replace framework adapters' per-load shared-memory status files with the
-  implemented local restore operations and eventfd wakeups;
+  implemented local restore operations and eventfd wakeups (complete for the
+  opt-in vLLM path; SGLang pending);
 - use UDS file-descriptor passing for shared regions;
 - add framework-neutral query, lease, register-region, and transfer-plan RPCs;
 - preserve the legacy vLLM protocol until its adapter migrates.

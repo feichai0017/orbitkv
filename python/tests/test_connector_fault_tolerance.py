@@ -6,15 +6,15 @@ failed blocks / reqs flow through `get_block_ids_with_load_errors` and
 `get_finished` so vLLM can re-compute without dirty data or permanent leaks.
 
 Covers:
-- B.1 Load RPC returns ok=False → failure reported, no raise, no PyLoadState
-  registered.
-- B.1 Load RPC raises → same path.
-- B.2 Load RPC ok=True but PyLoadState never ready → wall-clock timeout kicks
-  in during get_finished, blocks/req reported as failures.
+- B.1 restore submission fails → failure reported and no completion registered.
+- B.2 an accepted restore never completes → wall-clock timeout kicks in during
+  get_finished and its blocks/requests are reported as failures.
+- local restore completion is consumed through the common data-plane facade.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,6 +25,7 @@ install_connector_unit_stubs()
 
 from vllm.v1.kv_cache_interface import FullAttentionSpec  # noqa: E402
 
+from orbitkv.client.data_plane import RestoreStatus  # noqa: E402
 from orbitkv.vllm.common import (  # noqa: E402
     ConnectorContext,
     LoadIntent,
@@ -347,6 +348,30 @@ def test_load_uses_registered_layer_names_before_forward_context_names():
     assert len(client.load_calls) == 1
     assert client.load_calls[0][4] == [["registered.layer.0", "registered.layer.1"]]
 
+    worker.shutdown()
+
+
+def test_worker_uses_local_restore_completion_without_grpc_load():
+    data_client = MagicMock(transport="local")
+    restore = SimpleNamespace(key="local:41:9")
+    data_client.start_restore.return_value = restore
+    data_client.restore_completions_ready.return_value = True
+    data_client.poll_restore.return_value = RestoreStatus(done=True, success=True)
+    worker, engine_client, _state_manager = _make_worker(data_client=data_client)
+
+    worker.start_load_kv(_load_metadata("local-restore", (3, 4)), _stub_forward_context())
+    _, finished_recving = worker.get_finished(set())
+
+    assert finished_recving == {"local-restore"}
+    data_client.start_restore.assert_called_once_with(
+        "test_instance",
+        0,
+        0,
+        [["ALL_LAYERS"]],
+        [(b"lease-local-restore", [[3, 4]])],
+    )
+    data_client.poll_restore.assert_called_once_with(restore)
+    assert engine_client.load_calls == []
     worker.shutdown()
 
 

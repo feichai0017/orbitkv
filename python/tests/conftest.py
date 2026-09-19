@@ -393,8 +393,17 @@ class OrbitKVServerProcess:
 
         # Set PYTHONPATH to include python package and venv site-packages
         python_dir = Path(__file__).parent.parent
-        site_packages = next((p for p in sys.path if "site-packages" in p), None)
-        env["PYTHONPATH"] = f"{python_dir}" + (f":{site_packages}" if site_packages else "")
+        site_packages = [
+            path
+            for path in dict.fromkeys(
+                [
+                    sysconfig.get_path("purelib"),
+                    *(path for path in sys.path if "site-packages" in path),
+                ]
+            )
+            if path
+        ]
+        env["PYTHONPATH"] = ":".join([str(python_dir), *site_packages])
 
         cmd = [
             self._binary_path,
@@ -657,6 +666,11 @@ def orbitkv_pool_size(request) -> str:
     return request.config.getoption("--orbitkv-pool-size")
 
 
+@pytest.fixture(scope="module")
+def orbitkv_local_data(request) -> bool:
+    return request.config.getoption("--orbitkv-local-data")
+
+
 # =============================================================================
 # Pytest Configuration
 # =============================================================================
@@ -723,6 +737,12 @@ def pytest_addoption(parser):
         action="store",
         default="30gb",
         help="OrbitKV server pinned memory pool size for E2E tests",
+    )
+    parser.addoption(
+        "--orbitkv-local-data",
+        action="store_true",
+        default=False,
+        help="Run vLLM E2E hot cache operations over the local iceoryx2 data plane",
     )
 
 

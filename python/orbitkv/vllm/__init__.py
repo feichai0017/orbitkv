@@ -16,6 +16,11 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
 )
 from vllm.distributed.parallel_state import get_pp_group, get_tensor_model_parallel_rank
 
+from orbitkv.client.data_plane import (
+    GrpcDataClient,
+    LocalDataClient,
+    resolve_local_bootstrap_sockets,
+)
 from orbitkv.orbitkv import EngineRpcClient
 from orbitkv.vllm.common import (
     ConnectorContext,
@@ -33,6 +38,18 @@ from orbitkv.vllm.common import (
 from orbitkv.vllm.scheduler import SchedulerConnector
 from orbitkv.vllm.state_manager import ServiceStateManager
 from orbitkv.vllm.worker import WorkerConnector
+
+
+def _positive_int_config(value: object, name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _non_negative_int_config(value: object, name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return value
 
 
 class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
@@ -149,11 +166,85 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                 f"got tp_size={tp_size}, world_size={world_size}, "
                 f"dcp_world_size={dcp_world_size}, pcp_world_size={pcp_world_size}"
             )
+        local_data = vllm_config.kv_transfer_config.get_from_extra_config(
+            "orbitkv.local_data", False
+        )
+        local_sockets = resolve_local_bootstrap_sockets(
+            enabled=local_data,
+            endpoints=tp_shards.endpoints,
+            bootstrap_socket=vllm_config.kv_transfer_config.get_from_extra_config(
+                "orbitkv.local_bootstrap_socket", None
+            ),
+            shard_bootstrap_sockets=vllm_config.kv_transfer_config.get_from_extra_config(
+                "orbitkv.tp_shard_bootstrap_sockets", None
+            ),
+        )
+        if local_sockets is not None and wait_for_full_prefix:
+            raise ValueError(
+                "orbitkv.local_data cannot be combined with "
+                "orbitkv.wait_for_full_prefix yet; use the gRPC data path for "
+                "blocking remote prefetch"
+            )
+        if local_sockets is not None:
+            local_timeout_ms = _positive_int_config(
+                vllm_config.kv_transfer_config.get_from_extra_config(
+                    "orbitkv.local_timeout_ms", 5_000
+                ),
+                "orbitkv.local_timeout_ms",
+            )
+            local_spin_iterations = _non_negative_int_config(
+                vllm_config.kv_transfer_config.get_from_extra_config(
+                    "orbitkv.local_spin_iterations", 64
+                ),
+                "orbitkv.local_spin_iterations",
+            )
+        else:
+            local_timeout_ms = 5_000
+            local_spin_iterations = 64
         shard_index = tp_shards.shard_index(tp_rank) if tp_rank is not None else 0
         namespace = tp_shards.namespace(base_namespace, shard_index)
         self._engine_endpoint = tp_shards.endpoints[shard_index]
         engine_client = EngineRpcClient(self._engine_endpoint)
+        if role == KVConnectorRole.SCHEDULER:
+            lifecycle_clients = tuple(
+                engine_client if index == shard_index else EngineRpcClient(endpoint)
+                for index, endpoint in enumerate(tp_shards.endpoints)
+            )
+            data_clients = (
+                tuple(
+                    LocalDataClient(
+                        socket,
+                        timeout_ms=local_timeout_ms,
+                        spin_iterations=local_spin_iterations,
+                    )
+                    for socket in local_sockets
+                )
+                if local_sockets is not None
+                else tuple(GrpcDataClient(client) for client in lifecycle_clients)
+            )
+            data_client = data_clients[shard_index]
+        else:
+            lifecycle_clients = (engine_client,)
+            data_client = (
+                LocalDataClient(
+                    local_sockets[shard_index],
+                    timeout_ms=local_timeout_ms,
+                    spin_iterations=local_spin_iterations,
+                )
+                if local_sockets is not None
+                else GrpcDataClient(engine_client)
+            )
+            data_clients = (data_client,)
+        # In local-data mode the scheduler no longer retains the secondary
+        # gRPC clients through its query fan-out. Keep every client alive so
+        # each server-streaming session watcher remains open.
+        self._lifecycle_clients = lifecycle_clients
         logger.debug("[OrbitKVConnector] Connected to engine server at %s", self._engine_endpoint)
+        logger.info(
+            "[OrbitKVConnector] data plane selected: transport=%s target=%s",
+            data_client.transport,
+            (local_sockets[shard_index] if local_sockets is not None else self._engine_endpoint),
+        )
 
         self._state_manager = ServiceStateManager(engine_client)
 
@@ -166,6 +257,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             tp_rank=tp_rank,
             device_id=device_id,
             engine_client=engine_client,
+            data_client=data_client,
             state_manager=self._state_manager,
             is_mla=is_mla,
             collapse_mla_tp=collapse_mla_tp,
@@ -203,13 +295,9 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             pd_tail_load = bool(
                 vllm_config.kv_transfer_config.get_from_extra_config("orbitkv.pd_tail_load", False)
             )
-            query_clients = tuple(
-                engine_client if index == shard_index else EngineRpcClient(endpoint)
-                for index, endpoint in enumerate(tp_shards.endpoints)
-            )
             self._scheduler = SchedulerConnector(
                 self._ctx,
-                engine_clients=query_clients,
+                data_clients=data_clients,
                 pd_tail_save=pd_tail_save,
                 pd_tail_load=pd_tail_load,
                 vllm_config=vllm_config,
@@ -219,7 +307,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             # stream per vllm replica is enough — if any tp worker crashes,
             # the scheduler dies too, closing this stream and triggering
             # server-side cleanup of the instance's CUDA IPC mappings.
-            for index, client in enumerate(query_clients):
+            for index, client in enumerate(lifecycle_clients):
                 client.start_session_watcher(
                     instance_id,
                     tp_shards.namespace(base_namespace, index),
@@ -238,7 +326,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             "tp_rank=%s tp_size=%d pp_rank=%d pp_size=%d world_size=%d namespace=%s "
             "is_mla=%s collapse_mla_tp=%s transfer_backend=%s dcp_world_size=%d "
             "pcp_world_size=%d dcp_rank=%d tp_shard=%d/%d "
-            "mode=%s wait_for_full_prefix=%s",
+            "mode=%s wait_for_full_prefix=%s data_transport=%s",
             role.name,
             instance_id,
             device_id if device_id is not None else "cpu",
@@ -258,6 +346,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             tp_shards.shard_count,
             mode.value,
             wait_for_full_prefix,
+            data_client.transport,
         )
 
     # ==============================
