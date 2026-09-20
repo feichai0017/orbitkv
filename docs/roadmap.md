@@ -120,6 +120,12 @@ Gate:
 
 ## M4: generation-safe page references
 
+The transfer-lifetime prerequisite is implemented: uncertain restore completion
+does not release destinations, and partially submitted GPU work is drained
+before a terminal error. Per-page allocator generations are still open. The
+pinned engine APIs expose block IDs/indices without allocation generations;
+counting transfer requests is not a substitute for observing allocation reuse.
+
 Deliver:
 
 - generation-qualified GPU registrations and external page handles;

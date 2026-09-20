@@ -240,6 +240,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             tuple[list[tuple[str, list[int], list[bytes]]], torch.cuda.Event] | None
         ] = queue.Queue()
         self._completed_loads: queue.Queue[list[str]] = queue.Queue()
+        self._load_error: Exception | None = None
         self._completed_offloads: queue.Queue[bool] = queue.Queue()
         self._load_thread = threading.Thread(
             target=self._load_worker, daemon=True, name="orbitkv-sglang-load"
@@ -296,6 +297,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         return list(range(1, hit_pages + 1))
 
     def load(self, rid: str, transfers: list[PoolTransfer]) -> bool:
+        self._check_load_failure()
         if rid in self._queued_loads:
             raise ValueError(f"duplicate OrbitKV load for {rid}")
         if len(transfers) != 1 or transfers[0].name != PoolName.KV:
@@ -324,6 +326,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         return True
 
     def start_layer_wise_loading(self) -> int:
+        self._check_load_failure()
         if not self._queued_loads:
             return -1
         pending = list(self._queued_loads.values())
@@ -343,8 +346,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 index, pending, ready = task
                 submitted = 0
                 try:
+                    self._check_load_failure()
                     ready.synchronize()
                     for load in pending:
+                        submitted += 1
                         restore = self.client.start_restore(
                             self.instance_id,
                             0,
@@ -352,7 +357,6 @@ class OrbitKVLinker(UnifiedCacheLinker):
                             [self._layer_names],
                             [(load.lease, [list(load.targets)])],
                         )
-                        submitted += 1
                         deadline = time.monotonic() + 120
                         while True:
                             status = self.client.poll_restore(restore)
@@ -364,7 +368,9 @@ class OrbitKVLinker(UnifiedCacheLinker):
                                 raise TimeoutError("OrbitKV SGLang GPU restore timed out")
                             time.sleep(0.01)
                     self.layer_done_counter.complete(index)
+                    self._completed_loads.put([load.rid for load in pending])
                 except Exception as error:
+                    self._load_error = error
                     logger.exception("OrbitKV SGLang GPU restore failed")
                     for load in pending[submitted:]:
                         try:
@@ -375,8 +381,6 @@ class OrbitKVLinker(UnifiedCacheLinker):
                                 exc_info=True,
                             )
                     self.layer_done_counter.complete(index, error)
-                finally:
-                    self._completed_loads.put([load.rid for load in pending])
             finally:
                 self._load_queue.task_done()
 
@@ -389,10 +393,18 @@ class OrbitKVLinker(UnifiedCacheLinker):
         return True
 
     def num_completed_loads(self) -> int:
+        self._check_load_failure()
         return self._completed_loads.qsize()
 
     def pop_completed_load(self) -> list[str]:
+        self._check_load_failure()
         return self._completed_loads.get_nowait()
+
+    def _check_load_failure(self) -> None:
+        if self._load_error is not None:
+            raise RuntimeError(
+                "OrbitKV restore failed; GPU pages remain held until transfer teardown"
+            ) from self._load_error
 
     def offload(self, transfers: list[PoolTransfer]) -> bool:
         if len(transfers) != 1 or transfers[0].name != PoolName.KV:

@@ -158,5 +158,9 @@ The SGLang linker currently accepts full-attention MHA/MLA layouts with one KV
 pool. For exact setup steps, supported layouts, and warm-hit verification for
 both engines, use [the single-node guide](docs/single-node.md).
 
+For reproducible Qwen3-8B latency comparisons against native HBM caching,
+vLLM CPU offload, and SGLang HiCache, see the
+[single-node benchmark](docs/single-node-performance.md).
+
 OrbitKV's current workspace is Apache-2.0 licensed. Earlier experiments remain
 available in repository history but are not part of the current build.

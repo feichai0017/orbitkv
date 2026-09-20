@@ -103,6 +103,24 @@ until process death. A live Cache Manager stalled forever will keep the vLLM sav
 worker waiting. A watchdog/recovery policy is still needed for that availability
 case.
 
+Publish batches are split to the slot capacity negotiated at bootstrap. Each
+chunk carries the same page range across its layers; the client returns only
+after every chunk has completed D2H. This supports long-context, many-layer
+models with the default 64 KiB slot without silently skipping oversized saves.
+
+Restore destinations remain owned by the engine until the manager confirms a
+terminal result. A lost submission acknowledgement, failed completion poll, or
+deadline does not cancel CUDA writes. vLLM stops the engine step in those cases
+without reporting reusable blocks; SGLang fails its layer wait and completion
+observer without acknowledging the destination pages. A confirmed, drained
+failure can still use vLLM's single-cache-group recomputation path.
+
+Both H2D and D2H workers synchronize submitted stream work even when the backend
+returns an error partway through a batch. If CUDA cannot establish completion,
+the manager terminates instead of publishing a terminal result and recycling
+potentially active memory. This is a transfer lifetime fence; allocator-owned
+per-page generations and graceful cancellation remain separate work.
+
 The bootstrap protocol is version 2. After FD exchange, its UDS also carries
 versioned, epoch-checked lifecycle frames with a 16 MiB metadata limit. These
 frames reuse the registration protobuf schema without a gRPC channel or HTTP/2.

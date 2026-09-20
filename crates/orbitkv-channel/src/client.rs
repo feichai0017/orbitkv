@@ -185,8 +185,13 @@ impl ChannelClient {
             .publish_peer
             .as_ref()
             .ok_or(ChannelError::PublishPeerUnobservable)?;
-        let payload = request.encode()?;
-        let _ = self.call_descriptor_with_peer(CommandCode::Publish, request_id, &payload, peer)?;
+        let payloads = publish_payloads(request, self.bootstrap.info_ref().slot_capacity)?;
+        for payload in payloads {
+            // One logical publish can use several descriptor generations.
+            // Every chunk retains the source pages until its D2H completes.
+            let _ =
+                self.call_descriptor_with_peer(CommandCode::Publish, request_id, &payload, peer)?;
+        }
         Ok(())
     }
 
@@ -335,5 +340,162 @@ impl ChannelClient {
             .read_response(descriptor, response.descriptor)
             .inspect_err(|_| self.close())?;
         Ok(payload)
+    }
+}
+
+fn publish_payloads(
+    request: &PublishRequest,
+    capacity: usize,
+) -> Result<Vec<Vec<u8>>, ChannelError> {
+    let payload = request.encode()?;
+    if payload.len() <= capacity {
+        return Ok(vec![payload]);
+    }
+    let too_large = |len| {
+        ChannelError::Bootstrap(BootstrapError::Arena(crate::ArenaError::PayloadTooLarge {
+            len,
+            capacity,
+        }))
+    };
+    let block_count = request
+        .layers
+        .iter()
+        .map(|layer| layer.block_ids.len())
+        .max()
+        .unwrap_or(0);
+    if block_count == 0 {
+        return Err(too_large(payload.len()));
+    }
+
+    let mut payloads = Vec::new();
+    let mut start = 0;
+    while start < block_count {
+        let mut low = start + 1;
+        let mut high = block_count;
+        let mut selected = None;
+        while low <= high {
+            let end = low + (high - low) / 2;
+            // Slice the same block range across layers so each completed
+            // chunk can seal full pages, including page-first registrations.
+            let layers = request
+                .layers
+                .iter()
+                .filter_map(|layer| {
+                    let end = end.min(layer.block_ids.len());
+                    (start < end).then(|| crate::PublishLayer {
+                        layer_name: layer.layer_name.clone(),
+                        block_ids: layer.block_ids[start..end].to_vec(),
+                        block_hashes: layer.block_hashes[start..end].to_vec(),
+                    })
+                })
+                .collect();
+            let chunk = PublishRequest {
+                instance_id: request.instance_id.clone(),
+                tp_rank: request.tp_rank,
+                pp_rank: request.pp_rank,
+                device_id: request.device_id,
+                layers,
+            }
+            .encode()?;
+            if chunk.len() <= capacity {
+                selected = Some((end, chunk));
+                low = end + 1;
+            } else {
+                if end == start + 1 {
+                    return Err(too_large(chunk.len()));
+                }
+                high = end - 1;
+            }
+        }
+        let (end, chunk) = selected.ok_or_else(|| too_large(payload.len()))?;
+        payloads.push(chunk);
+        start = end;
+    }
+    Ok(payloads)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PublishLayer;
+
+    #[test]
+    fn publish_chunks_preserve_all_layers_and_pages_within_the_slot_limit() {
+        let request = PublishRequest {
+            instance_id: "qwen3-8b".to_string(),
+            tp_rank: 2,
+            pp_rank: 1,
+            device_id: 3,
+            layers: (0..36)
+                .map(|layer| PublishLayer {
+                    layer_name: format!("model.layers.{layer}.attn"),
+                    block_ids: (0..192).collect(),
+                    block_hashes: (0..192).map(|page| vec![page as u8; 32]).collect(),
+                })
+                .collect(),
+        };
+        let capacity = crate::arena::DEFAULT_SLOT_CAPACITY;
+        let payloads = publish_payloads(&request, capacity).unwrap();
+        assert!(payloads.len() > 1);
+        let mut reconstructed = request.clone();
+        for layer in &mut reconstructed.layers {
+            layer.block_ids.clear();
+            layer.block_hashes.clear();
+        }
+        for payload in payloads {
+            assert!(payload.len() <= capacity);
+            let chunk = PublishRequest::decode(&payload).unwrap();
+            assert_eq!(chunk.instance_id, request.instance_id);
+            assert_eq!((chunk.tp_rank, chunk.pp_rank, chunk.device_id), (2, 1, 3));
+            assert_eq!(chunk.layers.len(), request.layers.len());
+            for (layer, original) in chunk.layers.into_iter().zip(&mut reconstructed.layers) {
+                assert_eq!(layer.layer_name, original.layer_name);
+                original.block_ids.extend(layer.block_ids);
+                original.block_hashes.extend(layer.block_hashes);
+            }
+        }
+        assert_eq!(reconstructed, request);
+        assert!(publish_payloads(&request, 32).is_err());
+        assert_eq!(
+            publish_payloads(&request, usize::MAX).unwrap(),
+            vec![request.encode().unwrap()]
+        );
+    }
+
+    #[test]
+    fn publish_chunks_preserve_ragged_cache_groups() {
+        let request = PublishRequest {
+            instance_id: "hybrid".to_string(),
+            tp_rank: 0,
+            pp_rank: 0,
+            device_id: 0,
+            layers: (0..6)
+                .map(|index| PublishLayer {
+                    layer_name: format!("layer.{index}"),
+                    block_ids: (0..index * 4).collect(),
+                    block_hashes: (0..index * 4)
+                        .map(|page| vec![page as u8; 8 + page as usize])
+                        .collect(),
+                })
+                .collect(),
+        };
+        let mut reconstructed = request.clone();
+        for layer in &mut reconstructed.layers {
+            layer.block_ids.clear();
+            layer.block_hashes.clear();
+        }
+        for payload in publish_payloads(&request, 512).unwrap() {
+            assert!(payload.len() <= 512);
+            for layer in PublishRequest::decode(&payload).unwrap().layers {
+                let original = reconstructed
+                    .layers
+                    .iter_mut()
+                    .find(|candidate| candidate.layer_name == layer.layer_name)
+                    .unwrap();
+                original.block_ids.extend(layer.block_ids);
+                original.block_hashes.extend(layer.block_hashes);
+            }
+        }
+        assert_eq!(reconstructed, request);
     }
 }

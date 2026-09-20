@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import torch
 
 from orbitkv.client.gpu import serialize_gpu_buffer
-from orbitkv.client.manager import RestoreHandle, RestoreStatus
+from orbitkv.client.manager import RestoreHandle
 from orbitkv.vllm.common import (
     CacheGroupLayout,
     ConnectorContext,
@@ -242,7 +242,6 @@ class WorkerConnector:
         # load times out waiting for the server. Drained once per get_finished
         # and get_block_ids_with_load_errors call.
         self._failed_load_block_ids: set[int] = set()
-        self._failed_load_reqs: set[str] = set()
 
         self._registered_layers: list[str] = []
         # Page-first storage: all layers of a block in one host page, one slot
@@ -461,7 +460,6 @@ class WorkerConnector:
                 self._finished_requests -= done_saves
                 finished_sending = done_saves
 
-        timeout_triggered = False
         hma_load_failure: str | None = None
         with self._load_completion_lock:
             completed_reqs: set[str] = set()
@@ -469,18 +467,17 @@ class WorkerConnector:
             load_stats_to_record: list[tuple[float, int, bool]] = []
             now = time.perf_counter()
 
-            completion_error: Exception | None = None
             should_poll_restores = False
             if self._pending_load_reqs:
                 try:
                     should_poll_restores = self._client.restore_completions_ready()
                 except Exception as error:
-                    logger.exception("[OrbitKVConnector] restore notification check failed")
-                    completion_error = error
-                    should_poll_restores = True
                     self._ctx.state_manager.mark_unavailable(
                         f"restore notification check exception: {error}"
                     )
+                    raise RuntimeError(
+                        "OrbitKV lost restore completion visibility; GPU pages remain held"
+                    ) from error
             for restore_key, req_ids in self._pending_load_reqs.items():
                 sample_req_id = next(iter(req_ids))
                 restore = self._pending_loads.get(sample_req_id)
@@ -489,28 +486,16 @@ class WorkerConnector:
 
                 meta = self._pending_load_meta.get(restore_key)
                 status = None
-                if completion_error is not None:
-                    status = RestoreStatus(
-                        done=True,
-                        success=False,
-                        message=f"notification check exception: {completion_error}",
-                    )
-                elif should_poll_restores:
+                if should_poll_restores:
                     try:
                         status = self._client.poll_restore(restore)
                     except Exception as error:
-                        logger.exception(
-                            "[OrbitKVConnector] restore completion poll failed: reqs=%s",
-                            req_ids,
-                        )
-                        status = RestoreStatus(
-                            done=True,
-                            success=False,
-                            message=f"completion poll exception: {error}",
-                        )
                         self._ctx.state_manager.mark_unavailable(
                             f"restore completion poll exception: {error}"
                         )
+                        raise RuntimeError(
+                            "OrbitKV lost restore completion visibility; GPU pages remain held"
+                        ) from error
                 ready = status is not None and status.done
                 timed_out = (
                     not ready and meta is not None and (now - meta[0]) > self.LOAD_TIMEOUT_SECONDS
@@ -547,26 +532,14 @@ class WorkerConnector:
                     completed_restore_keys.append(restore_key)
                 elif timed_out:
                     assert meta is not None
-                    start_time, num_blocks, block_ids = meta
-                    duration = now - start_time
-                    logger.error(
-                        "[OrbitKVConnector] load_timeout: reqs=%s restore=%s elapsed=%.1fs "
-                        "blocks=%d (reporting as load errors)",
-                        req_ids,
-                        restore_key,
-                        duration,
-                        num_blocks,
+                    self._ctx.state_manager.mark_unavailable("restore completion timeout")
+                    # A deadline does not cancel DMA in the Cache Manager.
+                    # Fail the engine step without acknowledging or recycling
+                    # any destination; instance teardown drains the GPU worker.
+                    raise RuntimeError(
+                        f"OrbitKV restore timed out for {sorted(req_ids)}; "
+                        "GPU pages remain held until transfer teardown"
                     )
-                    if self._cache_groups.group_count > 1:
-                        hma_load_failure = (
-                            f"load timed out for requests {sorted(req_ids)} after {duration:.1f}s"
-                        )
-                    else:
-                        self._failed_load_block_ids.update(block_ids)
-                    load_stats_to_record.append((duration, num_blocks, False))
-                    completed_reqs.update(req_ids)
-                    completed_restore_keys.append(restore_key)
-                    timeout_triggered = True
 
             for restore_key in completed_restore_keys:
                 restore_req_ids = self._pending_load_reqs.pop(restore_key, set())
@@ -574,15 +547,8 @@ class WorkerConnector:
                 for req_id in restore_req_ids:
                     self._pending_loads.pop(req_id, None)
 
-            if self._failed_load_reqs:
-                completed_reqs.update(self._failed_load_reqs)
-                self._failed_load_reqs = set()
-
             if completed_reqs:
                 finished_recving = completed_reqs
-
-        if timeout_triggered:
-            self._ctx.state_manager.mark_unavailable("load timeout")
 
         if load_stats_to_record:
             with self._stats_lock:
@@ -592,7 +558,7 @@ class WorkerConnector:
         if hma_load_failure is not None:
             self._ctx.state_manager.mark_unavailable(hma_load_failure)
             raise RuntimeError(
-                f"OrbitKV HMA load failed; vLLM 0.26 cannot recover failed "
+                f"OrbitKV HMA load failed; vLLM cannot recover failed "
                 f"loads for multiple cache groups: {hma_load_failure}"
             )
 
@@ -700,23 +666,14 @@ class WorkerConnector:
                 layer_groups,
                 loads,
             )
-        except Exception as e:
-            logger.error(
-                "[OrbitKVConnector] restore submit exception: %s (reqs=%s blocks=%d, "
-                "marking blocks as load errors)",
-                e,
-                request_ids,
-                len(all_block_ids),
-            )
-            self._release_load_leases(loads)
-            self._ctx.state_manager.mark_unavailable(f"restore submit exception: {e}")
-            if self._cache_groups.group_count > 1:
-                raise RuntimeError(
-                    "OrbitKV HMA load failed; vLLM 0.26 cannot recover failed "
-                    "loads for multiple cache groups"
-                ) from e
-            self._record_load_failure(request_ids, all_block_ids, load_start)
-            return
+        except Exception as error:
+            self._ctx.state_manager.mark_unavailable(f"restore submit exception: {error}")
+            # A lost acknowledgement can hide an accepted transfer. Releasing
+            # its lease or asking vLLM to recompute would race that GPU write.
+            raise RuntimeError(
+                "OrbitKV restore submission did not establish completion; "
+                "GPU pages remain held until transfer teardown"
+            ) from error
 
         num_layers = sum(len(group) for group in layer_groups)
         num_blocks = len(all_block_ids)
@@ -749,45 +706,17 @@ class WorkerConnector:
     def wait_for_layer_load(self, layer_name: str) -> None:
         pass
 
-    def _release_load_leases(self, loads: list[tuple[bytes, list[list[int | None]]]]) -> None:
-        seen: set[bytes] = set()
-        for lease, _block_ids in loads:
-            if not lease or lease in seen:
-                continue
-            seen.add(lease)
-            try:
-                self._client.release(lease)
-            except Exception:
-                logger.exception(
-                    "[OrbitKVConnector] load failure lease release exception: lease_len=%d",
-                    len(lease),
-                )
-
     def get_block_ids_with_load_errors(self) -> set[int]:
         """Return block IDs whose load failed since the last call, then clear.
 
         vLLM calls this each forward pass and re-schedules reported blocks for
-        local recomputation. Failures may come from synchronous RPC errors in
-        start_load_kv or from in-flight load timeouts detected in get_finished.
+        local recomputation. Only terminal Cache Manager failures establish
+        that DMA has stopped; timeouts and lost acknowledgements are fatal.
         """
         with self._load_completion_lock:
             failed = self._failed_load_block_ids
             self._failed_load_block_ids = set()
         return failed
-
-    def _record_load_failure(
-        self,
-        request_ids: list[str],
-        block_ids: list[int],
-        start_time: float,
-    ) -> None:
-        """Record a synchronous load RPC failure for later reporting to vLLM."""
-        duration = time.perf_counter() - start_time
-        with self._load_completion_lock:
-            self._failed_load_reqs.update(request_ids)
-            self._failed_load_block_ids.update(block_ids)
-        with self._stats_lock:
-            self._stats.record_load(duration, len(block_ids), success=False)
 
     def save_kv_layer(
         self,

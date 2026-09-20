@@ -1,16 +1,4 @@
-"""Unit tests for load-path fault tolerance in the vLLM KV connector.
-
-Mirrors NIXL's approach (vllm/tests/v1/kv_connector/unit/test_nixl_connector.py):
-mock the transport, drive the connector's public API directly, assert that
-failed blocks / reqs flow through `get_block_ids_with_load_errors` and
-`get_finished` so vLLM can re-compute without dirty data or permanent leaks.
-
-Covers:
-- B.1 restore submission fails → failure reported and no completion registered.
-- B.2 an accepted restore never completes → wall-clock timeout kicks in during
-  get_finished and its blocks/requests are reported as failures.
-- local restore completion is consumed through the common data-plane facade.
-"""
+"""GPU destinations stay held until a restore has a confirmed terminal result."""
 
 from __future__ import annotations
 
@@ -44,7 +32,6 @@ class FakeEngineClient:
     transport = "local"
 
     def __init__(self) -> None:
-        self.fail_load_with_ok_false = False
         self.fail_load_with_exception: Exception | None = None
         self.load_calls: list[tuple] = []
         self.register_response: tuple[bool, str] = (True, "ok")
@@ -75,8 +62,6 @@ class FakeEngineClient:
         )
         if self.fail_load_with_exception is not None:
             raise self.fail_load_with_exception
-        if self.fail_load_with_ok_false:
-            raise RuntimeError("simulated restore submission failure")
         return SimpleNamespace(key=f"restore-{len(self.load_calls)}")
 
     def restore_completions_ready(self) -> bool:
@@ -183,63 +168,28 @@ def _hma_load_metadata(req_id: str) -> OrbitKVConnectorMetadata:
     )
 
 
+@pytest.mark.parametrize("hybrid", [False, True])
 @pytest.mark.parametrize(
-    ("failure_mode", "req_id", "block_ids"),
-    [
-        ("ok_false", "req_fail_ok", (1, 2, 3)),
-        ("exception", "req_fail_exc", (10, 20)),
-    ],
+    "error", [ConnectionError("lost acknowledgement"), RuntimeError("rejected")]
 )
-def test_load_rpc_failure_reports_failures_without_raise(
-    failure_mode: str,
-    req_id: str,
-    block_ids: tuple[int, ...],
-):
-    """B.1: failed load RPCs surface through vLLM recovery APIs instead of raising."""
+def test_restore_submission_failure_does_not_release_destinations(hybrid, error):
     worker, client, state_mgr = _make_worker()
-    if failure_mode == "ok_false":
-        client.fail_load_with_ok_false = True
-    elif failure_mode == "exception":
-        client.fail_load_with_exception = ConnectionError("server gone")
-
-    metadata = _load_metadata(req_id, block_ids)
-
-    # Must not raise; used to crash the worker step instead of letting vLLM recompute.
-    worker.start_load_kv(metadata, _stub_forward_context())
-
-    assert len(client.load_calls) == 1
-    assert worker.get_block_ids_with_load_errors() == set(block_ids)
-    assert worker.get_block_ids_with_load_errors() == set()
-
-    _, finished_recving = worker.get_finished(set())
-    assert finished_recving == {req_id}
-
-    assert state_mgr.mark_unavailable.called
-    assert client.release_calls == [f"lease-{req_id}".encode()]
-
-    assert worker._pending_loads == {}
-    assert worker._pending_load_reqs == {}
-    assert worker._pending_load_meta == {}
-
-    worker.shutdown()
-
-
-@pytest.mark.parametrize("failure_mode", ["ok_false", "exception"])
-def test_hma_load_rpc_failure_crashes_before_vllm_partial_recovery(failure_mode: str):
-    worker, client, state_mgr = _make_worker()
-    _configure_hma_worker(worker)
-    if failure_mode == "ok_false":
-        client.fail_load_with_ok_false = True
+    if hybrid:
+        _configure_hma_worker(worker)
+        metadata = _hma_load_metadata("submit")
     else:
-        client.fail_load_with_exception = ConnectionError("server gone")
+        metadata = _load_metadata("submit", (1, 2))
+    client.fail_load_with_exception = error
 
-    with pytest.raises(RuntimeError, match="cannot recover failed loads"):
-        worker.start_load_kv(_hma_load_metadata("hma-failure"), _stub_forward_context())
-
-    assert state_mgr.mark_unavailable.called
-    assert client.release_calls == [b"lease-hma-failure"]
-    assert worker._pending_loads == {}
-    worker.shutdown()
+    try:
+        with pytest.raises(RuntimeError, match="GPU pages remain held"):
+            worker.start_load_kv(metadata, _stub_forward_context())
+        assert worker.get_block_ids_with_load_errors() == set()
+        assert client.release_calls == []
+        assert worker.get_finished(set())[1] is None
+        assert state_mgr.mark_unavailable.called
+    finally:
+        worker.shutdown()
 
 
 def test_hma_load_distinguishes_block_zero_from_absent_recurrent_target():
@@ -261,82 +211,75 @@ def test_hma_load_distinguishes_block_zero_from_absent_recurrent_target():
     worker.shutdown()
 
 
-def test_hma_load_timeout_crashes_before_vllm_partial_recovery(monkeypatch):
+@pytest.mark.parametrize("hybrid", [False, True])
+def test_restore_timeout_keeps_pages_pending(monkeypatch, hybrid):
     worker, _client, state_mgr = _make_worker()
-    _configure_hma_worker(worker)
+    if hybrid:
+        _configure_hma_worker(worker)
+        metadata = _hma_load_metadata("timeout")
+    else:
+        metadata = _load_metadata("timeout", (5, 6, 7))
     clock = {"now": 10_000.0}
     monkeypatch.setattr("orbitkv.vllm.worker.time.perf_counter", lambda: clock["now"])
-    worker.start_load_kv(_hma_load_metadata("hma-timeout"), _stub_forward_context())
-    clock["now"] += worker.LOAD_TIMEOUT_SECONDS + 1
-
-    with pytest.raises(RuntimeError, match="cannot recover failed loads"):
-        worker.get_finished(set())
-
-    assert state_mgr.mark_unavailable.called
-    assert worker._pending_loads == {}
-    assert worker._pending_load_reqs == {}
-    assert worker._pending_load_meta == {}
-    worker.shutdown()
-
-
-def test_in_flight_load_timeout_respects_configured_boundary(monkeypatch):
-    """B.2 boundary: elapsed < LOAD_TIMEOUT_SECONDS stays pending, > trips timeout.
-
-    Mocks time.perf_counter so we can drive the wall-clock deterministically
-    and verify the actual arithmetic — operand order and strict-greater-than
-    behavior. Using LOAD_TIMEOUT_SECONDS=0 would exercise the same code path
-    but would pass under a `>=` or swapped-operand regression.
-    """
-    worker, _client, state_mgr = _make_worker()
-    timeout = worker.LOAD_TIMEOUT_SECONDS
-
-    t0 = 10_000.0
-    clock = {"now": t0}
-
-    def fake_clock() -> float:
-        return clock["now"]
-
-    monkeypatch.setattr("orbitkv.vllm.worker.time.perf_counter", fake_clock)
-
-    metadata = _load_metadata("req_boundary", (5, 6, 7, 8))
-    worker.start_load_kv(metadata, _stub_forward_context())
-    assert "req_boundary" in worker._pending_loads
-
-    # Just before the deadline: must NOT time out.
-    clock["now"] = t0 + (timeout - 1)
-    _, finished_recving = worker.get_finished(set())
-    assert finished_recving is None, "load flagged as timed out before the deadline"
-    assert "req_boundary" in worker._pending_loads
-    assert worker.get_block_ids_with_load_errors() == set()
-    assert not state_mgr.mark_unavailable.called
-
-    # Just after the deadline: must time out.
-    clock["now"] = t0 + (timeout + 1)
-    _, finished_recving = worker.get_finished(set())
-    assert finished_recving == {"req_boundary"}
-    assert worker.get_block_ids_with_load_errors() == {5, 6, 7, 8}
-    assert state_mgr.mark_unavailable.called
-
-    # In-flight state cleaned up — no permanent leak.
-    assert worker._pending_loads == {}
-    assert worker._pending_load_reqs == {}
-    assert worker._pending_load_meta == {}
-
-    worker.shutdown()
+    try:
+        worker.start_load_kv(metadata, _stub_forward_context())
+        clock["now"] += worker.LOAD_TIMEOUT_SECONDS - 1
+        assert worker.get_finished(set())[1] is None
+        assert not state_mgr.mark_unavailable.called
+        clock["now"] += 2
+        with pytest.raises(RuntimeError, match="GPU pages remain held"):
+            worker.get_finished(set())
+        assert worker.get_block_ids_with_load_errors() == set()
+        assert "timeout" in worker._pending_loads
+        assert worker._pending_load_reqs
+        assert worker._pending_load_meta
+        assert state_mgr.mark_unavailable.called
+    finally:
+        worker.shutdown()
 
 
-def test_get_block_ids_with_load_errors_drains_between_calls():
-    """Repeated failures accumulate, but each call drains the set."""
+@pytest.mark.parametrize("failure", ["notification", "poll"])
+def test_lost_completion_visibility_never_acknowledges_pages(failure):
+    worker, client, state_mgr = _make_worker()
+    try:
+        worker.start_load_kv(_load_metadata("pending", (8, 9)), _stub_forward_context())
+        if failure == "notification":
+            client.restore_completions_ready = MagicMock(side_effect=OSError("closed fd"))
+        else:
+            client.restore_completions_ready = lambda: True
+            client.poll_restore = MagicMock(side_effect=ConnectionError("disconnected"))
+        with pytest.raises(RuntimeError, match="GPU pages remain held"):
+            worker.get_finished(set())
+        assert worker.get_block_ids_with_load_errors() == set()
+        assert "pending" in worker._pending_loads
+        assert client.release_calls == []
+        assert state_mgr.mark_unavailable.called
+    finally:
+        worker.shutdown()
+
+
+@pytest.mark.parametrize("hybrid", [False, True])
+def test_only_confirmed_failure_permits_recovery(hybrid):
     worker, client, _ = _make_worker()
-    client.fail_load_with_ok_false = True
-
-    worker.start_load_kv(_load_metadata("r1", (1,)), _stub_forward_context())
-    worker.start_load_kv(_load_metadata("r2", (2, 3)), _stub_forward_context())
-
-    assert worker.get_block_ids_with_load_errors() == {1, 2, 3}
-    assert worker.get_block_ids_with_load_errors() == set()
-
-    worker.shutdown()
+    if hybrid:
+        _configure_hma_worker(worker)
+        metadata = _hma_load_metadata("failed")
+    else:
+        metadata = _load_metadata("failed", (5, 6))
+    client.restore_completions_ready = lambda: True
+    client.poll_restore = lambda _: RestoreStatus(done=True, success=False, message="drained")
+    try:
+        worker.start_load_kv(metadata, _stub_forward_context())
+        if hybrid:
+            with pytest.raises(RuntimeError, match="cannot recover failed loads"):
+                worker.get_finished(set())
+        else:
+            assert worker.get_finished(set())[1] == {"failed"}
+            assert worker.get_block_ids_with_load_errors() == {5, 6}
+            assert worker.get_block_ids_with_load_errors() == set()
+        assert worker._pending_loads == {}
+    finally:
+        worker.shutdown()
 
 
 def test_load_uses_registered_layer_names_before_forward_context_names():
