@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use orbitkv_channel::{CallOptions, Command, CommandCode, LocalClient};
+use orbitkv_channel::{CallOptions, Command, CommandCode, TransportClient};
 
 fn percentile(sorted: &[u64], fraction: f64) -> f64 {
     let index = ((sorted.len() - 1) as f64 * fraction).round() as usize;
@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("iterations must be greater than zero".into());
     }
 
-    let client = LocalClient::connect(&service_name)?;
+    let client = TransportClient::connect(&service_name)?;
     let options = CallOptions {
         timeout: Duration::from_secs(2),
         ..CallOptions::default()

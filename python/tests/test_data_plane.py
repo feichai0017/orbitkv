@@ -13,14 +13,14 @@ from .unit_stubs import install_connector_unit_stubs
 install_connector_unit_stubs()
 
 from orbitkv.client import (  # noqa: E402
-    LocalDataClient,
-    resolve_local_bootstrap_sockets,
+    CacheManagerClient,
+    resolve_bootstrap_sockets,
 )
 
 
 def test_local_socket_defaults_to_the_cache_manager_addr_port(monkeypatch):
     monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
-    assert resolve_local_bootstrap_sockets(
+    assert resolve_bootstrap_sockets(
         endpoints=("http://127.0.0.1:50055",),
     ) == ("/tmp/orbitkv-50055.sock",)
 
@@ -31,17 +31,17 @@ def test_local_socket_requires_same_host_socket(monkeypatch):
         lambda path: path == "/tmp/orbitkv-50055.sock",
     )
 
-    assert resolve_local_bootstrap_sockets(endpoints=("http://127.0.0.1:50055",)) == (
+    assert resolve_bootstrap_sockets(endpoints=("http://127.0.0.1:50055",)) == (
         "/tmp/orbitkv-50055.sock",
     )
     with pytest.raises(ConnectionError, match="/tmp/orbitkv-50056.sock"):
-        resolve_local_bootstrap_sockets(endpoints=("http://127.0.0.1:50056",))
+        resolve_bootstrap_sockets(endpoints=("http://127.0.0.1:50056",))
 
 
 def test_local_socket_derives_every_tp_shard(monkeypatch):
     monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
 
-    assert resolve_local_bootstrap_sockets(
+    assert resolve_bootstrap_sockets(
         endpoints=("http://127.0.0.1:50055", "http://127.0.0.1:50056"),
     ) == ("/tmp/orbitkv-50055.sock", "/tmp/orbitkv-50056.sock")
 
@@ -64,10 +64,10 @@ def test_local_socket_derives_every_tp_shard(monkeypatch):
 )
 def test_local_socket_configuration_rejects_ambiguous_layouts(kwargs, message):
     with pytest.raises(ValueError, match=message):
-        resolve_local_bootstrap_sockets(**kwargs)
+        resolve_bootstrap_sockets(**kwargs)
 
 
-def test_local_data_client_translates_hot_operations(monkeypatch):
+def test_cache_manager_client_translates_hot_operations(monkeypatch):
     native = MagicMock()
     publisher = MagicMock()
     native.session_epoch = 41
@@ -76,9 +76,9 @@ def test_local_data_client_translates_hot_operations(monkeypatch):
     native.restore_submit.return_value = 13
     native.restore_poll.side_effect = [("pending", ""), ("succeeded", "")]
     factory = MagicMock(side_effect=[native, publisher])
-    monkeypatch.setattr("orbitkv.client.data_plane.LocalQueryClient", factory)
+    monkeypatch.setattr("orbitkv.client.data_plane.ChannelClient", factory)
 
-    client = LocalDataClient("/tmp/orbitkv.sock", timeout_ms=123, spin_iterations=8)
+    client = CacheManagerClient("/tmp/orbitkv.sock", timeout_ms=123, spin_iterations=8)
     query_result = client.query_prefetch(
         "instance", [b"hash"], "request", wait_for_full_prefix=True, group_id=2
     )
@@ -87,7 +87,7 @@ def test_local_data_client_translates_hot_operations(monkeypatch):
     restore = client.start_restore("instance", 1, 3, [["layer"]], [(b"lease", [[4]])])
 
     assert query_result is native.query_bundle.return_value
-    assert restore.key == "local:41:13"
+    assert restore.key == "manager:41:13"
     assert not client.poll_restore(restore).done
     assert client.poll_restore(restore).success
     assert factory.call_args_list == [
@@ -145,8 +145,8 @@ def test_blocked_publish_does_not_serialize_queries(monkeypatch):
 
     primary, publisher = Session(), Session()
     factory = MagicMock(side_effect=[primary, publisher])
-    monkeypatch.setattr("orbitkv.client.data_plane.LocalQueryClient", factory)
-    client = LocalDataClient("/tmp/orbitkv.sock")
+    monkeypatch.setattr("orbitkv.client.data_plane.ChannelClient", factory)
+    client = CacheManagerClient("/tmp/orbitkv.sock")
 
     save_thread = threading.Thread(target=client.save, args=("instance", 0, 0, 0, []))
     query_thread = threading.Thread(

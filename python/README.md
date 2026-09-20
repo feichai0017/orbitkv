@@ -6,10 +6,10 @@ adapters for the releases below.
 
 ## Features
 
-- **LocalDataClient**: UDS/iceoryx2 client for the node-local Cache Manager
+- **CacheManagerClient**: UDS/iceoryx2 client for the node-local Cache Manager
 - **CacheDataClient**: Framework-neutral cache operations for every storage tier
-- **OrbitKVConnector**: vLLM external-cache connector for local DRAM/SSD and experimental remote fetch
-- **OrbitKVLinker**: SGLang direct GPU-page cache through CUDA IPC and iceoryx2
+- **OrbitKVConnector**: vLLM external-cache connector; Cache Manager selects RAM, SSD, or configured remote fetch
+- **OrbitKVLinker**: SGLang direct GPU-page cache through the same Cache Manager channel
 - **PdConnector**: experimental vLLM P/D handoff through Mooncake; independent of the external-cache connector
 
 ## Installation
@@ -68,9 +68,9 @@ adapter-specific configuration.
 ### Cache Manager client
 
 ```python
-from orbitkv.client import LocalDataClient
+from orbitkv.client import CacheManagerClient
 
-client = LocalDataClient("/tmp/orbitkv-50055.sock")
+client = CacheManagerClient("/tmp/orbitkv-50055.sock")
 ok, message = client.health()
 client.close()
 ```
@@ -135,7 +135,7 @@ the linker's completion queues. Startup fails if it is omitted. The GPU E2E
 has qualified the single-rank path; multi-rank TP recovery remains to be
 validated on a matching GPU deployment.
 
-#### Local data plane
+#### Process channel
 
 The connector derives the Cache Manager's Unix socket from the configured
 endpoint. Scheduler Query/Release and worker Publish/Restore use iceoryx2;
@@ -143,11 +143,11 @@ registration, health, session ownership, and cleanup use the bootstrap UDS.
 Each inference process requires a Cache Manager on its own host. A missing
 socket fails at startup. No extra configuration is needed on one node.
 
-The local path connects to `/tmp/orbitkv-<orbitkv.port>.sock`, matching the
-Cache Manager default. Use `orbitkv.local_bootstrap_socket` for a custom single-manager
-path. `orbitkv.local_timeout_ms` (default 5000) bounds hot requests and health;
+The process channel connects to `/tmp/orbitkv-<orbitkv.port>.sock`, matching the
+Cache Manager default. Use `orbitkv.bootstrap_socket` for a custom single-manager
+path. `orbitkv.timeout_ms` (default 5000) bounds hot requests and health;
 registration and unregister allow at least 120 seconds for CUDA setup/draining.
-`orbitkv.local_spin_iterations` defaults to 64. Standalone Cache Managers do
+`orbitkv.spin_iterations` defaults to 64. Standalone Cache Managers do
 not start gRPC. Client and Cache Manager must use matching
 bootstrap protocol versions (currently version 2).
 

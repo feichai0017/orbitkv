@@ -47,9 +47,9 @@ def _worker_env() -> dict[str, str]:
     return env
 
 
-def test_crashed_client_releases_ipc(local_control_server, tmp_path):
-    orbitkv_server = local_control_server
-    endpoint = orbitkv_server.local_bootstrap_socket
+def test_crashed_client_releases_ipc(channel_server, tmp_path):
+    orbitkv_server = channel_server
+    endpoint = orbitkv_server.bootstrap_socket
     instance_id = f"inst-crash-{os.getpid()}"
     ready_file = tmp_path / "ready"
 

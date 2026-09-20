@@ -402,10 +402,9 @@ class TestE2ECorrectness:
             "cannot distinguish a cache hit from local recomputation"
         )
 
-    def test_selected_data_plane(self, orbitkv_results):
-        expected = "local"
+    def test_cache_manager_channel(self, orbitkv_results):
         assert (
-            f"[OrbitKVConnector] data plane selected: transport={expected}"
+            "[OrbitKVConnector] Cache Manager channel: transport=iceoryx2"
             in orbitkv_results["connector_logs"]
         )
 

@@ -181,7 +181,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             "[OrbitKVConnector] Connected to Cache Manager at %s", self._connections.target
         )
         logger.info(
-            "[OrbitKVConnector] data plane selected: transport=%s target=%s",
+            "[OrbitKVConnector] Cache Manager channel: transport=%s target=%s",
             data_client.transport,
             self._connections.target,
         )

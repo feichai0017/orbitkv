@@ -47,13 +47,13 @@ pub enum TransportError {
     Service(String),
     #[error("failed to create iceoryx2 port: {0}")]
     Port(String),
-    #[error("failed to start local-control thread: {0}")]
+    #[error("failed to start process channel thread: {0}")]
     Thread(String),
-    #[error("failed to send local-control message: {0}")]
+    #[error("failed to send process channel message: {0}")]
     Send(String),
-    #[error("failed to receive local-control message: {0}")]
+    #[error("failed to receive process channel message: {0}")]
     Receive(String),
-    #[error("local-control request {request_id} timed out")]
+    #[error("process channel request {request_id} timed out")]
     Timeout { request_id: u64 },
     #[error("Cache Manager process exited before request {request_id} completed")]
     PeerExited { request_id: u64 },
@@ -65,13 +65,13 @@ pub enum TransportError {
     Protocol(#[from] ProtocolError),
 }
 
-pub struct LocalClient {
+pub struct TransportClient {
     client: IpcClient,
     _service: IpcService,
     _node: iceoryx2::node::Node<ThreadSafeIpcService>,
 }
 
-impl LocalClient {
+impl TransportClient {
     pub fn connect(service_name: &str) -> Result<Self, TransportError> {
         let node = NodeBuilder::new()
             .create::<ThreadSafeIpcService>()
@@ -196,7 +196,7 @@ fn peer_exited(peer: &OwnedFd) -> Result<bool, TransportError> {
     Ok(fds[0].revents().contains(PollFlags::IN))
 }
 
-pub struct LocalServer {
+pub struct TransportServer {
     server: IpcServer,
     _service: IpcService,
     _node: iceoryx2::node::Node<ThreadSafeIpcService>,
@@ -214,7 +214,7 @@ impl DeferredResponse {
     }
 }
 
-impl LocalServer {
+impl TransportServer {
     pub fn bind(service_name: &str) -> Result<Self, TransportError> {
         let node = NodeBuilder::new()
             .create::<ThreadSafeIpcService>()
@@ -327,9 +327,9 @@ mod tests {
             .unwrap()
             .as_nanos();
         let name = format!("orbitkv/test/{}/{nonce}", std::process::id());
-        let server = LocalServer::bind(&name).unwrap();
-        let first = LocalClient::connect(&name).unwrap();
-        let second = LocalClient::connect(&name).unwrap();
+        let server = TransportServer::bind(&name).unwrap();
+        let first = TransportClient::connect(&name).unwrap();
+        let second = TransportClient::connect(&name).unwrap();
         let options = CallOptions {
             timeout: Duration::from_secs(5),
             spin_iterations: 0,

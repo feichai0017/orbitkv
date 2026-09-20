@@ -1,7 +1,8 @@
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{
-    CallOptions, Command as LocalCommand, CommandCode, LocalClient, LocalQueryClient, PublishLayer,
+    CallOptions, ChannelClient, Command as ChannelCommand, CommandCode, PublishLayer,
     PublishRequest, QueryBundleRequest, QueryOutcomeCode, RestoreLease, RestoreRequest, StatusCode,
+    TransportClient,
 };
 use orbitkv_proto::proto::engine::{
     RegisterContextRequest, SessionRequest, TransferMode, UnregisterRequest,
@@ -105,19 +106,19 @@ impl QueryReady {
 }
 
 #[pyclass]
-struct LocalControlClient {
+struct ChannelProbeClient {
     service_name: String,
     session_epoch: u64,
     options: CallOptions,
-    client: LocalClient,
+    client: TransportClient,
 }
 
-#[pyclass(name = "LocalQueryClient")]
-struct PyLocalQueryClient {
-    inner: LocalQueryClient,
+#[pyclass(name = "ChannelClient")]
+struct PyChannelClient {
+    inner: ChannelClient,
 }
 
-impl PyLocalQueryClient {
+impl PyChannelClient {
     fn lifecycle_call(
         &self,
         py: Python<'_>,
@@ -126,10 +127,10 @@ impl PyLocalQueryClient {
     ) -> PyResult<()> {
         py.detach(|| self.inner.lifecycle(command, &payload))
             .map_err(|error| match error {
-                orbitkv_channel::LocalQueryError::Lifecycle { code: 1, message } => {
+                orbitkv_channel::ChannelError::Lifecycle { code: 1, message } => {
                     PyValueError::new_err(message)
                 }
-                orbitkv_channel::LocalQueryError::Lifecycle { code: 3, message } => {
+                orbitkv_channel::ChannelError::Lifecycle { code: 3, message } => {
                     OrbitKVInternal::new_err(message)
                 }
                 other => OrbitKVError::new_err(other.to_string()),
@@ -138,7 +139,7 @@ impl PyLocalQueryClient {
 }
 
 #[pymethods]
-impl PyLocalQueryClient {
+impl PyChannelClient {
     #[new]
     #[pyo3(signature = (bootstrap_socket, timeout_ms=5000, spin_iterations=64))]
     fn new(
@@ -152,7 +153,7 @@ impl PyLocalQueryClient {
         }
         let inner = py
             .detach(|| {
-                LocalQueryClient::connect(
+                ChannelClient::connect(
                     bootstrap_socket,
                     CallOptions {
                         timeout: Duration::from_millis(timeout_ms),
@@ -161,7 +162,7 @@ impl PyLocalQueryClient {
                 )
             })
             .map_err(|error| {
-                OrbitKVError::new_err(format!("local query connect failed: {error}"))
+                OrbitKVError::new_err(format!("Cache Manager connect failed: {error}"))
             })?;
         Ok(Self { inner })
     }
@@ -280,7 +281,7 @@ impl PyLocalQueryClient {
     #[pyo3(signature = (instance_id, block_hashes, req_id, wait_for_full_prefix=false, group_id=0, request_id=1))]
     #[allow(
         clippy::too_many_arguments,
-        reason = "Python API mirrors the framework-neutral local query contract"
+        reason = "Python API mirrors the framework-neutral cache query contract"
     )]
     fn query_bundle(
         &self,
@@ -305,7 +306,7 @@ impl PyLocalQueryClient {
                     },
                 )
             })
-            .map_err(|error| OrbitKVError::new_err(format!("local query failed: {error}")))?;
+            .map_err(|error| OrbitKVError::new_err(format!("cache query failed: {error}")))?;
         match response.outcome {
             QueryOutcomeCode::Loading => Py::new(py, QueryLoading {}).map(|value| value.into_any()),
             QueryOutcomeCode::Ready => Py::new(
@@ -404,7 +405,7 @@ impl PyLocalQueryClient {
             self.inner.restore_wait(
                 request_id
                     .checked_add(1)
-                    .ok_or(orbitkv_channel::LocalQueryError::SessionRequiresReconnect)?,
+                    .ok_or(orbitkv_channel::ChannelError::SessionRequiresReconnect)?,
                 operation_id,
                 Duration::from_millis(timeout_ms),
             )
@@ -458,9 +459,7 @@ impl PyLocalQueryClient {
     ) -> PyResult<(String, String)> {
         let response = py
             .detach(|| self.inner.restore_poll(request_id, operation_id))
-            .map_err(|error| {
-                OrbitKVError::new_err(format!("local restore poll failed: {error}"))
-            })?;
+            .map_err(|error| OrbitKVError::new_err(format!("restore poll failed: {error}")))?;
         let state = match response.state {
             orbitkv_channel::RestoreState::Pending => "pending",
             orbitkv_channel::RestoreState::Succeeded => "succeeded",
@@ -470,14 +469,14 @@ impl PyLocalQueryClient {
     }
 }
 
-impl LocalControlClient {
-    fn call(&self, py: Python<'_>, command: LocalCommand) -> PyResult<orbitkv_channel::Response> {
+impl ChannelProbeClient {
+    fn call(&self, py: Python<'_>, command: ChannelCommand) -> PyResult<orbitkv_channel::Response> {
         let response = py
             .detach(|| self.client.call(command, self.options))
-            .map_err(|error| OrbitKVError::new_err(format!("local control failed: {error}")))?;
+            .map_err(|error| OrbitKVError::new_err(format!("channel probe failed: {error}")))?;
         if response.status != StatusCode::Ok {
             return Err(OrbitKVError::new_err(format!(
-                "local control returned {:?}: client_epoch={} manager_epoch={}",
+                "channel probe returned {:?}: client_epoch={} manager_epoch={}",
                 response.status, self.session_epoch, response.session_epoch
             )));
         }
@@ -486,7 +485,7 @@ impl LocalControlClient {
 }
 
 #[pymethods]
-impl LocalControlClient {
+impl ChannelProbeClient {
     #[new]
     #[pyo3(signature = (service_name, session_epoch, timeout_ms=5000, spin_iterations=64))]
     fn new(
@@ -501,8 +500,8 @@ impl LocalControlClient {
         if timeout_ms == 0 {
             return Err(PyValueError::new_err("timeout_ms must be non-zero"));
         }
-        let client = LocalClient::connect(&service_name).map_err(|error| {
-            OrbitKVError::new_err(format!("local control connect failed: {error}"))
+        let client = TransportClient::connect(&service_name).map_err(|error| {
+            OrbitKVError::new_err(format!("channel probe connect failed: {error}"))
         })?;
         Ok(Self {
             service_name,
@@ -527,7 +526,7 @@ impl LocalControlClient {
 
     #[pyo3(signature = (value=0, request_id=1))]
     fn ping(&self, py: Python<'_>, value: u64, request_id: u64) -> PyResult<u64> {
-        let mut command = LocalCommand::ping(request_id, self.session_epoch);
+        let mut command = ChannelCommand::ping(request_id, self.session_epoch);
         command.arg0 = value;
         Ok(self.call(py, command)?.value0)
     }
@@ -536,10 +535,10 @@ impl LocalControlClient {
     fn shutdown(&self, py: Python<'_>, request_id: u64) -> PyResult<()> {
         self.call(
             py,
-            LocalCommand {
+            ChannelCommand {
                 code: CommandCode::Shutdown,
                 request_id,
-                ..LocalCommand::ping(request_id, self.session_epoch)
+                ..ChannelCommand::ping(request_id, self.session_epoch)
             },
         )?;
         Ok(())
@@ -551,8 +550,8 @@ impl LocalControlClient {
 fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     orbitkv_common::logging::init_stderr("info,orbitkv_core=info");
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
-    m.add_class::<LocalControlClient>()?;
-    m.add_class::<PyLocalQueryClient>()?;
+    m.add_class::<ChannelProbeClient>()?;
+    m.add_class::<PyChannelClient>()?;
     #[cfg(feature = "mooncake")]
     mooncake::add_classes(m)?;
     // Register custom exceptions for error classification

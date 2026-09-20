@@ -83,7 +83,7 @@ impl PendingQueries {
                 Err(oneshot::error::TryRecvError::Empty) => return Ok(None),
                 Err(oneshot::error::TryRecvError::Closed) => {
                     self.pending.remove(&key);
-                    return Err(EngineError::Storage("local query task closed".into()));
+                    return Err(EngineError::Storage("cache query task closed".into()));
                 }
             }
         }
@@ -110,7 +110,7 @@ impl PendingQueries {
         let query = async move {
             let outcome = tokio::time::timeout(QUERY_TIMEOUT, execute_query(&engine, &hll, input))
                 .await
-                .unwrap_or_else(|_| Err(EngineError::Storage("local query timed out".into())));
+                .unwrap_or_else(|_| Err(EngineError::Storage("cache query timed out".into())));
             QueryReply {
                 outcome,
                 engine,

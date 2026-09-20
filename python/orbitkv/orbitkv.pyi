@@ -55,8 +55,8 @@ class QueryReady:
         hit_positions: list[int] = ...,
     ) -> None: ...
 
-class LocalControlClient:
-    """iceoryx2 client for the node-local OrbitKV Cache Manager lifecycle path."""
+class ChannelProbeClient:
+    """Low-level iceoryx2 probe for Cache Manager channel diagnostics."""
 
     def __init__(
         self,
@@ -72,8 +72,8 @@ class LocalControlClient:
     def ping(self, value: int = 0, request_id: int = 1) -> int: ...
     def shutdown(self, request_id: int = 1) -> None: ...
 
-class LocalQueryClient:
-    """UDS-bootstrapped iceoryx2 client for framework-neutral cache queries."""
+class ChannelClient:
+    """UDS-bootstrapped iceoryx2 client for framework-neutral cache operations."""
 
     def __init__(
         self,

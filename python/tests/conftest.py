@@ -112,7 +112,7 @@ def wait_for_server_ready(
         if process is not None and process.poll() is not None:
             return False
         try:
-            client = orbitkv_module.LocalQueryClient(bootstrap_socket)
+            client = orbitkv_module.ChannelClient(bootstrap_socket)
             ok, _ = client.health()
             client.close()
             if ok:
@@ -365,17 +365,17 @@ class CacheManagerProcess:
         devices: str = "0",
         *,
         http_port: int | None = None,
-        local_control_service: str | None = None,
-        local_control_session_epoch: int | None = None,
-        local_bootstrap_socket: str | None = None,
+        channel_service: str | None = None,
+        channel_session_epoch: int | None = None,
+        bootstrap_socket: str | None = None,
     ):
         self.port = port
         self.pool_size = pool_size
         self.devices = devices
         self.http_port = http_port
-        self.local_control_service = local_control_service
-        self.local_control_session_epoch = local_control_session_epoch
-        self.local_bootstrap_socket = local_bootstrap_socket or f"/tmp/orbitkv-{port}.sock"
+        self.channel_service = channel_service
+        self.channel_session_epoch = channel_session_epoch
+        self.bootstrap_socket = bootstrap_socket or f"/tmp/orbitkv-{port}.sock"
         self.process: subprocess.Popen | None = None
         self._binary_path = find_cache_manager_binary()
         self._log_path: Path | None = None
@@ -419,16 +419,16 @@ class CacheManagerProcess:
         ]
         if self.http_port is not None:
             cmd.extend(["--http-addr", f"127.0.0.1:{self.http_port}"])
-        if self.local_control_service is not None:
-            cmd.extend(["--local-control-service", self.local_control_service])
-        if self.local_control_session_epoch is not None:
+        if self.channel_service is not None:
+            cmd.extend(["--channel-service", self.channel_service])
+        if self.channel_session_epoch is not None:
             cmd.extend(
                 [
-                    "--local-control-session-epoch",
-                    str(self.local_control_session_epoch),
+                    "--channel-session-epoch",
+                    str(self.channel_session_epoch),
                 ]
             )
-        cmd.extend(["--local-bootstrap-socket", self.local_bootstrap_socket])
+        cmd.extend(["--bootstrap-socket", self.bootstrap_socket])
 
         # Route logs to a tempfile so the pipe buffer cannot fill up and
         # block the server mid-startup, and so tests can read the log
@@ -451,7 +451,7 @@ class CacheManagerProcess:
             self._close_log()
             return False
 
-        return wait_for_server_ready(self.local_bootstrap_socket, process=self.process)
+        return wait_for_server_ready(self.bootstrap_socket, process=self.process)
 
     def stop(self) -> None:
         """Stop the server process."""
@@ -471,9 +471,9 @@ class CacheManagerProcess:
         finally:
             self.process = None
             self._close_log()
-            if self.local_bootstrap_socket is not None:
+            if self.bootstrap_socket is not None:
                 with contextlib.suppress(OSError):
-                    Path(self.local_bootstrap_socket).unlink()
+                    Path(self.bootstrap_socket).unlink()
 
     def is_running(self) -> bool:
         """Check if server process is still running."""
@@ -509,16 +509,16 @@ def orbitkv_server() -> Generator[CacheManagerProcess, None, None]:
 
 
 @pytest.fixture
-def local_control_server() -> Generator[CacheManagerProcess, None, None]:
-    """Start an isolated server with a known local-control identity."""
+def channel_server() -> Generator[CacheManagerProcess, None, None]:
+    """Start an isolated Cache Manager with a known channel identity."""
     service_name = f"orbitkv/test/python/{os.getpid()}/{uuid.uuid4().hex}"
     bootstrap_socket = f"/tmp/orbitkv-python-{os.getpid()}-{uuid.uuid4().hex}.sock"
     server = CacheManagerProcess(
         port=find_available_port(),
         http_port=find_available_port(),
-        local_control_service=service_name,
-        local_control_session_epoch=0x0B17_17C0,
-        local_bootstrap_socket=bootstrap_socket,
+        channel_service=service_name,
+        channel_session_epoch=0x0B17_17C0,
+        bootstrap_socket=bootstrap_socket,
     )
 
     if not server._binary_path:
@@ -533,15 +533,15 @@ def local_control_server() -> Generator[CacheManagerProcess, None, None]:
 
 
 @pytest.fixture
-def local_control_client_context(
-    local_control_server: CacheManagerProcess, instance_id: str, namespace: str
+def channel_client_context(
+    channel_server: CacheManagerProcess, instance_id: str, namespace: str
 ) -> Generator[ClientContext, None, None]:
-    """Register a minimal GPU context on the isolated local-control server."""
+    """Register a minimal GPU context on the isolated Cache Manager."""
     import importlib
 
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
     ctx = ClientContext(
-        engine_client=orbitkv_native.LocalQueryClient(local_control_server.local_bootstrap_socket),
+        engine_client=orbitkv_native.ChannelClient(channel_server.bootstrap_socket),
         instance_id=instance_id,
         namespace=namespace,
         device_id=0,
@@ -550,16 +550,16 @@ def local_control_client_context(
     )
     ctx.register_kv_caches()
     yield ctx
-    if local_control_server.is_running():
+    if channel_server.is_running():
         ctx.unregister_context()
 
 
 @pytest.fixture
 def engine_client(orbitkv_server: CacheManagerProcess):
     """Create a local Cache Manager client for integration tests."""
-    from orbitkv.client.data_plane import LocalDataClient
+    from orbitkv.client.data_plane import CacheManagerClient
 
-    client = LocalDataClient(orbitkv_server.local_bootstrap_socket)
+    client = CacheManagerClient(orbitkv_server.bootstrap_socket)
     yield client
     client.close()
 
@@ -571,7 +571,7 @@ def client_context(
     """Fixture that provides a ClientContext representing a vLLM instance.
 
     Args:
-        engine_client: LocalDataClient connected to the Cache Manager
+        engine_client: CacheManagerClient connected to the Cache Manager
         instance_id: Unique instance identifier
         namespace: Namespace for the instance
 

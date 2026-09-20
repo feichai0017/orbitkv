@@ -37,7 +37,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from orbitkv.client import LocalDataClient, QueryReady  # noqa: E402
+from orbitkv.client import CacheManagerClient, QueryReady  # noqa: E402
 from orbitkv.vllm.common import ConnectorContext, detect_mla  # noqa: E402
 from orbitkv.vllm.state_manager import ServiceStateManager  # noqa: E402
 from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
@@ -169,7 +169,7 @@ def _wait_for_ready_lease(engine_client, instance_id: str, block_hashes: list[by
 def test_mla_replica_devices_save_and_load(dual_device_server):
     hf_config, layer_names = _glm51_topology()
 
-    engine_client = LocalDataClient(dual_device_server.local_bootstrap_socket)
+    engine_client = CacheManagerClient(dual_device_server.bootstrap_socket)
     instance_id = f"glm51-mla-{uuid.uuid4().hex[:8]}"
     workers: list[ReplicaWorker] = []
     try:

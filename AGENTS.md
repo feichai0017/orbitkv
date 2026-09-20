@@ -19,8 +19,8 @@ and SGLang `0.5.20`; deeper RadixAttention integration is still planned.
 ```text
 orbitkv/
 ├── crates/
-│   ├── orbitkv-state/         # Framework-neutral state and recovery contracts
-│   ├── orbitkv-channel/            # iceoryx2/UDS process transport
+│   ├── orbitkv-state/           # Framework-neutral state and recovery contracts
+│   ├── orbitkv-channel/         # iceoryx2/UDS process transport
 │   ├── orbitkv-common/           # Logging, NUMA, and shared utilities
 │   ├── orbitkv-core/             # Cache engine, storage, and backing tiers
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
@@ -41,7 +41,7 @@ orbitkv/
 | Target | Location |
 |--------|----------|
 | State identity and recovery contracts | `crates/orbitkv-state/` |
-| Local inference-Cache Manager IPC | `crates/orbitkv-channel/` |
+| Inference-to-Cache-Manager process channel | `crates/orbitkv-channel/` |
 | Shared Rust utilities | `crates/orbitkv-common/` |
 | Core engine and storage path | `crates/orbitkv-core/` |
 | gRPC protocol changes | `crates/orbitkv-proto/` |
@@ -57,7 +57,7 @@ orbitkv/
 ## Key Entry Points
 
 - `crates/orbitkv-state/src/lib.rs`: shared state and recovery contract
-- `crates/orbitkv-channel/src/lib.rs`: versioned iceoryx2 local-control API
+- `crates/orbitkv-channel/src/lib.rs`: versioned iceoryx2 process channel API
 - `crates/orbitkv-core/src/lib.rs`: main Rust engine entry
 - `crates/orbitkv-core/src/storage/mod.rs`: storage pipeline
 - `crates/orbitkv-core/src/backing/`: SSD and Mooncake-backed remote tiers
@@ -75,7 +75,7 @@ orbitkv/
 - `python/orbitkv/vllm/connector.py`: vLLM connector entry point
 - `python/orbitkv/vllm/pd/`: P/D connector
 - `python/orbitkv/sglang/linker.py`: direct SGLang GPU-page linker
-- `python/orbitkv/client/connection.py`: transport selection hidden from adapters
+- `python/orbitkv/client/connection.py`: Cache Manager socket selection for adapters
 - `python/orbitkv/orbitkv.pyi`: Python type stubs
 
 ## Build, Check, Test

@@ -186,25 +186,25 @@ pub struct Cli {
     /// iceoryx2 service name for the node-local inference control path.
     /// Defaults to a name derived from --addr.
     #[arg(long)]
-    pub local_control_service: Option<String>,
+    pub channel_service: Option<String>,
 
     /// Explicit Cache Manager session epoch for stale-client fencing. A random epoch
     /// is generated when omitted.
     #[arg(long)]
-    pub local_control_session_epoch: Option<u64>,
+    pub channel_session_epoch: Option<u64>,
 
-    /// Unix socket used to bootstrap local clients and pass descriptor arena FDs.
+    /// Unix socket used to bootstrap inference clients and pass descriptor arena FDs.
     /// Defaults to /tmp/orbitkv-<addr-port>.sock.
     #[arg(long)]
-    pub local_bootstrap_socket: Option<std::path::PathBuf>,
+    pub bootstrap_socket: Option<std::path::PathBuf>,
 
-    /// Shared descriptor arena size for local clients.
+    /// Shared descriptor arena size for inference clients.
     #[arg(long, default_value = "8mb", value_parser = parse_memory_size)]
-    pub local_descriptor_arena_size: usize,
+    pub descriptor_arena_size: usize,
 
     /// Per-client descriptor slot capacity.
     #[arg(long, default_value = "64kb", value_parser = parse_memory_size)]
-    pub local_descriptor_slot_size: usize,
+    pub descriptor_slot_size: usize,
 }
 
 fn parse_hll_bucket_bits(s: &str) -> Result<u8, String> {
@@ -612,26 +612,26 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     crate::metric::register_hll_gauges(&hll_tracker);
 
     let shutdown = Arc::new(Notify::new());
-    let local_control_config = {
+    let channel_config = {
         let service_name = cli
-            .local_control_service
+            .channel_service
             .clone()
-            .unwrap_or_else(|| format!("orbitkv/local/{}", cli.addr.port()));
+            .unwrap_or_else(|| format!("orbitkv/channel/{}", cli.addr.port()));
         let session_epoch = cli
-            .local_control_session_epoch
+            .channel_session_epoch
             .unwrap_or_else(random_nonzero_session_epoch);
         if session_epoch == 0 {
-            return Err("--local-control-session-epoch must be non-zero".into());
+            return Err("--channel-session-epoch must be non-zero".into());
         }
-        let bootstrap_socket = cli.local_bootstrap_socket.clone().unwrap_or_else(|| {
+        let bootstrap_socket = cli.bootstrap_socket.clone().unwrap_or_else(|| {
             std::path::PathBuf::from(format!("/tmp/orbitkv-{}.sock", cli.addr.port()))
         });
         (
             service_name,
             session_epoch,
             bootstrap_socket,
-            cli.local_descriptor_arena_size,
-            cli.local_descriptor_slot_size,
+            cli.descriptor_arena_size,
+            cli.descriptor_slot_size,
         )
     };
     let runtime_handle = runtime.handle().clone();
@@ -649,8 +649,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             bootstrap_socket,
             arena_size,
             slot_size,
-        ) = local_control_config;
-        let mut local_control = endpoint::ProcessEndpoint::start(
+        ) = channel_config;
+        let mut channel_endpoint = endpoint::ProcessEndpoint::start(
                 service_name,
                 session_epoch,
                 bootstrap_socket,
@@ -758,7 +758,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
 
         info!("Cache Manager stopped");
-        local_control.stop();
+        channel_endpoint.stop();
 
         // Stop HTTP server
         shutdown.notify_waiters();
@@ -812,34 +812,31 @@ mod tests {
     }
 
     #[test]
-    fn cli_accepts_local_control_options() {
+    fn cli_accepts_channel_options() {
         let cli = Cli::try_parse_from([
             "orbitkv-cache-manager",
-            "--local-control-service",
+            "--channel-service",
             "orbitkv/test/server",
-            "--local-control-session-epoch",
+            "--channel-session-epoch",
             "42",
-            "--local-bootstrap-socket",
+            "--bootstrap-socket",
             "/tmp/orbitkv-test.sock",
-            "--local-descriptor-arena-size",
+            "--descriptor-arena-size",
             "4mb",
-            "--local-descriptor-slot-size",
+            "--descriptor-slot-size",
             "32kb",
         ])
         .unwrap();
+        assert_eq!(cli.channel_service.as_deref(), Some("orbitkv/test/server"));
+        assert_eq!(cli.channel_session_epoch, Some(42));
         assert_eq!(
-            cli.local_control_service.as_deref(),
-            Some("orbitkv/test/server")
-        );
-        assert_eq!(cli.local_control_session_epoch, Some(42));
-        assert_eq!(
-            cli.local_bootstrap_socket.as_deref(),
+            cli.bootstrap_socket.as_deref(),
             Some(std::path::Path::new("/tmp/orbitkv-test.sock"))
         );
-        assert_eq!(cli.local_descriptor_arena_size, 4 * 1024 * 1024);
-        assert_eq!(cli.local_descriptor_slot_size, 32 * 1024);
+        assert_eq!(cli.descriptor_arena_size, 4 * 1024 * 1024);
+        assert_eq!(cli.descriptor_slot_size, 32 * 1024);
         assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--enable-grpc"]).is_err());
-        assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--disable-local-control"]).is_err());
+        assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--disable-channel"]).is_err());
     }
 
     #[test]

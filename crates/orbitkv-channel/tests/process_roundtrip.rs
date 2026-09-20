@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::time::{Duration, SystemTime};
 
-use orbitkv_channel::{CallOptions, Command, CommandCode, LocalClient, StatusCode};
+use orbitkv_channel::{CallOptions, Command, CommandCode, StatusCode, TransportClient};
 
 #[test]
 fn request_response_crosses_a_real_process_boundary() {
@@ -25,7 +25,7 @@ fn request_response_crosses_a_real_process_boundary() {
         .unwrap();
     assert_eq!(ready.trim(), "READY");
 
-    let client = LocalClient::connect(&service_name).unwrap();
+    let client = TransportClient::connect(&service_name).unwrap();
     let mut ping = Command::ping(7, 11);
     ping.arg0 = 41;
     let response = client.call(ping, CallOptions::default()).unwrap();

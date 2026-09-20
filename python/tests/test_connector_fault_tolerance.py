@@ -359,7 +359,7 @@ def test_load_uses_registered_layer_names_before_forward_context_names():
 
 
 def test_worker_uses_local_restore_completion_without_grpc_load():
-    data_client = MagicMock(transport="local")
+    data_client = MagicMock(transport="iceoryx2")
     restore = SimpleNamespace(key="local:41:9")
     data_client.start_restore.return_value = restore
     data_client.restore_completions_ready.return_value = True

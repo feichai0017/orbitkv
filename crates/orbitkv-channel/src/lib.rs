@@ -1,4 +1,4 @@
-//! Local control-plane transport for inference engines and an OrbitKV Cache Manager.
+//! Process channel between inference engines and an OrbitKV Cache Manager.
 //!
 //! Payload bytes do not travel through this crate. Messages refer to
 //! descriptors in separately registered CUDA IPC or shared-memory regions.
@@ -33,9 +33,11 @@ pub use cache_protocol::{
     RestoreResponse, RestoreState,
 };
 #[cfg(target_os = "linux")]
-pub use client::{LocalQueryClient, LocalQueryError};
+pub use client::{ChannelClient, ChannelError};
 pub use protocol::{
     ABI_VERSION, Command, CommandCode, DescriptorRef, ProtocolError,
     RESPONSE_FLAG_REQUEST_CONSUMED, Response, StatusCode, WIRE_MESSAGE_BYTES, WireMessage,
 };
-pub use transport::{CallOptions, DeferredResponse, LocalClient, LocalServer, TransportError};
+pub use transport::{
+    CallOptions, DeferredResponse, TransportClient, TransportError, TransportServer,
+};

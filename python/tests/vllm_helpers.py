@@ -396,7 +396,7 @@ class CacheManager:
         return self.http_port
 
     @property
-    def local_bootstrap_socket(self) -> str:
+    def bootstrap_socket(self) -> str:
         return f"/tmp/orbitkv-{self.cache_port}.sock"
 
     def __enter__(self):
@@ -456,7 +456,7 @@ class CacheManager:
         else:
             launch_label = self.server_binary
         print(
-            f"\n[Cache Manager] {launch_label} on UDS={self.local_bootstrap_socket}, HTTP={self.http_port}"
+            f"\n[Cache Manager] {launch_label} on UDS={self.bootstrap_socket}, HTTP={self.http_port}"
         )
 
         if self.log_file:

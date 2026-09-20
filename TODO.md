@@ -16,9 +16,9 @@ and a passing gate; design text alone does not close an item.
 - [x] Group the vLLM cache connector and P/D adapter under `orbitkv.vllm`.
 - [x] Add `orbitkv.client` and `orbitkv.sglang` package boundaries.
 - [x] Add `orbitkv-channel` with a versioned 64-byte iceoryx2 request/response ABI.
-- [x] Add a real two-process local-control test.
+- [x] Add a real two-process channel test.
 - [x] Integrate the iceoryx2 lifecycle endpoint into `orbitkv-server`.
-- [x] Add Python `LocalControlClient` bindings with epoch fencing.
+- [x] Add Python `ChannelProbeClient` bindings with epoch fencing.
 - [x] Replace the copied native RDMA stacks with a pinned stable Mooncake
   Transfer Engine sys crate and one clean transfer API.
 - [ ] Add Python representations/serialization for `orbitkv-state`.
@@ -56,11 +56,11 @@ and a passing gate; design text alone does not close an item.
 - [ ] Move hybrid-boundary reconciliation out of `orbitkv.vllm`.
 - [ ] Define framework-neutral region registration RPCs.
 - [x] Pass the descriptor-arena memfd and notification eventfd over UDS.
-- [x] Add bounded local restore operations that replace per-load `PyLoadState`
-  for `LocalQueryClient`.
-- [x] Implement direct SGLang full-attention GPU restore through the local
-  Cache Manager endpoint.
-- [x] Switch vLLM Query/Publish/Restore/Release to the local data client.
+- [x] Add bounded restore operations that replace per-load `PyLoadState`
+  for `ChannelClient`.
+- [x] Implement direct SGLang full-attention GPU restore through the process
+  channel to Cache Manager.
+- [x] Switch vLLM Query/Publish/Restore/Release to the Cache Manager client.
 - [x] Move registration, health, session watching, and unregister to UDS;
   remove the inference gRPC endpoint.
 - [x] Require the node-local process endpoint; fail fast if its socket is missing.
