@@ -78,6 +78,12 @@ Gate:
 - adapter code contains no tier-selection or bundle-completeness policy;
 - load/save throughput is not regressed against the M0 baseline.
 
+The immediate performance sequence is notification-driven restore completion,
+measured transfer batching, real per-layer readiness, then bounded concurrent
+restore/publish scheduling. Use the [single-node measurements and gates](single-node-performance.md)
+to compare against each engine's native CPU cache, LMCache, and FlexKV before
+expanding distributed scheduling.
+
 ## M2.5: recoverable multi-node cache
 
 Deliver:

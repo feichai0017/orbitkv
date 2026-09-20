@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from unittest.mock import MagicMock, call
 
@@ -15,6 +16,7 @@ from orbitkv.client import (  # noqa: E402
     CacheManagerClient,
     resolve_bootstrap_sockets,
 )
+from orbitkv.client.manager import RestoreHandle  # noqa: E402
 
 
 def test_local_socket_defaults_to_the_cache_manager_addr_port(monkeypatch):
@@ -163,3 +165,53 @@ def test_blocked_publish_does_not_serialize_queries(monkeypatch):
         client.close()
     assert not save_thread.is_alive()
     assert not query_thread.is_alive()
+
+
+@pytest.mark.parametrize("notify", [True, False], ids=["event_wakeup", "lost_notification"])
+def test_restore_wait_observes_completion_without_releasing_pages(monkeypatch, notify):
+    fd = os.eventfd(0, os.EFD_NONBLOCK | os.EFD_CLOEXEC)
+    polled = threading.Event()
+    completed = threading.Event()
+    native = MagicMock(session_epoch=41, notification_fd=fd)
+
+    def poll(*_args, **_kwargs):
+        polled.set()
+        return ("succeeded", "") if completed.is_set() else ("pending", "")
+
+    native.restore_poll.side_effect = poll
+    monkeypatch.setattr("orbitkv.client.manager.ChannelClient", lambda *_args, **_kwargs: native)
+    client = CacheManagerClient("/tmp/orbitkv.sock")
+    # A missing event must not delay the event-driven case until the safety poll.
+    if notify:
+        client._FALLBACK_POLL_SECONDS = 30
+
+    def complete():
+        if polled.wait(timeout=2):
+            completed.set()
+            if notify:
+                os.eventfd_write(fd, 1)
+
+    worker = threading.Thread(target=complete)
+    try:
+        worker.start()
+        assert client.wait_restore(RestoreHandle(13, 41), timeout=2).success
+        native.release.assert_not_called()
+    finally:
+        worker.join(timeout=2)
+        client.close()
+        os.close(fd)
+
+
+def test_restore_wait_deadline_keeps_pending_pages_owned(monkeypatch):
+    fd = os.eventfd(0, os.EFD_NONBLOCK | os.EFD_CLOEXEC)
+    native = MagicMock(session_epoch=41, notification_fd=fd)
+    native.restore_poll.return_value = ("pending", "")
+    monkeypatch.setattr("orbitkv.client.manager.ChannelClient", lambda *_args, **_kwargs: native)
+    client = CacheManagerClient("/tmp/orbitkv.sock")
+    try:
+        with pytest.raises(TimeoutError, match="restore timed out"):
+            client.wait_restore(RestoreHandle(13, 41), timeout=0.01)
+        native.release.assert_not_called()
+    finally:
+        client.close()
+        os.close(fd)

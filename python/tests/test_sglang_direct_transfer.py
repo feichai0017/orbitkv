@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import queue
 import threading
-import time
 import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -16,9 +15,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
 @pytest.mark.parametrize("failure", ["submit", "poll", "timeout"])
-def test_linker_failure_never_acknowledges_gpu_destinations(monkeypatch, failure):
+def test_linker_failure_never_acknowledges_gpu_destinations(failure):
     pytest.importorskip("sglang")
-    from orbitkv.client.manager import RestoreStatus
     from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
 
     linker = object.__new__(OrbitKVLinker)
@@ -30,13 +28,12 @@ def test_linker_failure_never_acknowledges_gpu_destinations(monkeypatch, failure
     linker._completed_loads = queue.Queue()
     linker.layer_done_counter = _LayerDoneCounter(1)
     linker.client = MagicMock()
-    linker.client.poll_restore.return_value = RestoreStatus(done=False, success=False)
     if failure == "submit":
         linker.client.start_restore.side_effect = ConnectionError("lost acknowledgement")
     elif failure == "poll":
-        linker.client.poll_restore.side_effect = ConnectionError("lost completion")
+        linker.client.wait_restore.side_effect = ConnectionError("lost completion")
     else:
-        monkeypatch.setattr("orbitkv.sglang.linker.time.monotonic", MagicMock(side_effect=[0, 121]))
+        linker.client.wait_restore.side_effect = TimeoutError("restore deadline")
 
     index = linker.layer_done_counter.update_producer()
     linker._load_queue.put(
@@ -139,14 +136,8 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             [names],
             [(lookup.lease, [list(range(3, page_count + 3))])],
         )
-        deadline = time.monotonic() + 30
-        while True:
-            status = client.poll_restore(restore)
-            if status.done:
-                assert status.success, status.message
-                break
-            assert time.monotonic() < deadline, "GPU restore timed out"
-            time.sleep(0.01)
+        status = client.wait_restore(restore, timeout=30)
+        assert status.success, status.message
         torch.cuda.synchronize()
         for tensor, original in zip(tensors, expected, strict=True):
             assert torch.equal(tensor[page_size * 3 : page_size * (page_count + 3)], original)

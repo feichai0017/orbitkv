@@ -6,9 +6,9 @@ and frontend; it does not isolate the cache implementation.
 
 The first reference backends are vLLM's `OffloadingConnector` with pinned CPU
 memory and SGLang's HiCache with a CPU pool. Native HBM-only prefix caching is
-the control for each engine. LMCache is the next independent cache-system
-comparison; its engine, PyTorch, CUDA, and connector versions must be pinned
-and validated together. FlexKV and Mooncake Store can extend that matrix.
+the control for each engine. Independent LMCache and FlexKV comparisons must
+pin and validate the engine, PyTorch, CUDA, and connector versions together.
+Mooncake Store can extend that matrix.
 Mooncake Transfer Engine alone is a transport library, so a raw transfer-engine
 bandwidth result is not an end-to-end cache comparison.
 
@@ -73,7 +73,111 @@ The [270 request measurements](benchmarks/qwen3-8b-h20.csv) and
 [launch manifests and summaries](benchmarks/qwen3-8b-h20.json) are checked in.
 Complete JSONL responses, counter deltas, and engine/manager logs are retained
 under `/workspace/benchmarks/orbitkv-qwen3-8b` on the measurement host.
-LMCache, FlexKV, and Mooncake Store have **not** been measured in this experiment.
+LMCache, FlexKV, and Mooncake Store are not included in this initial experiment.
+
+## Completion-notification experiment
+
+The SGLang restore worker now consumes the process channel's existing
+completion notification instead of sleeping 10 ms between polls. With the same
+original release environment and workload, the before/after TTFT p50 values
+were:
+
+| SGLang OrbitKV | 1,024 tokens | 4,096 tokens | 8,192 tokens |
+| --- | ---: | ---: | ---: |
+| Fixed-interval polling | 39.31 ms | 50.51 ms | 62.04 ms |
+| Completion notification | 32.25 ms | 44.33 ms | 60.12 ms |
+
+All 15 pressure samples were verified external restores. All 45 outputs match
+their corresponding cold outputs. The 4K notification run includes two
+59–60 ms observations; they remain in the results. This is a small before/after
+experiment, not a tail-latency guarantee. The code change removes an explicit
+waiting interval; it does not make copies faster or add layerwise overlap.
+
+## LMCache and FlexKV on the current engine releases
+
+Measured on September 21, 2026, the follow-up uses the same model, capacity,
+and request sequence, with vLLM 0.29.0 and SGLang 0.5.20. LMCache is 0.5.5,
+using its official CUDA 13 /
+PyTorch 2.13 wheel. FlexKV is a release build from commit
+`738ddc141a198b4e20de6c5d1f0128e387f7fdb2`; its locally built package identifies
+as `0.0.0+unknown`, so the source commit is the version identity for this test.
+
+The independent-cache dependencies live in isolated comparison environments.
+CPU offload and OrbitKV were rerun in those same environments: NumPy 2.2.6,
+OpenTelemetry API 1.40.0, and prometheus-client 0.24.1, with the engine and
+PyTorch builds unchanged. The earlier notification experiment deliberately
+uses the original release environment. Its numbers should not be substituted
+for these matched controls.
+
+**Client TTFT p50 after pressure, milliseconds; five external restores per cell:**
+
+| Engine | Cache backend | 1,024 tokens | 4,096 tokens | 8,192 tokens |
+| --- | --- | ---: | ---: | ---: |
+| vLLM | Native CPU offload | 21.72 | 32.30 | 47.17 |
+| vLLM | OrbitKV DRAM, direct | 23.99 | 34.92 | 53.96 |
+| vLLM | LMCache MP, DRAM | 26.88 | 39.61 | 56.65 |
+| SGLang | HiCache CPU | 30.25 | 31.63 | 44.50 |
+| SGLang | OrbitKV DRAM, direct | 31.44 | 42.31 | 56.15 |
+| SGLang | LMCache MP, DRAM | 33.17 | 44.04 | 58.76 |
+
+OrbitKV's medians are lower than LMCache's in this configuration, but the
+native CPU caches remain faster. All 45 corresponding outputs match the CPU
+control for OrbitKV and LMCache within each engine. Non-deterministic reuse
+changes output for the same two 1K vLLM prefixes and one 1K SGLang prefix in
+the CPU controls and external caches. These are retained, not discarded.
+
+FlexKV has **no latency row** because the unmodified engine integrations fail:
+
+- vLLM's built-in wrapper does not pass `kv_cache_config` to FlexKV. FlexKV
+  consequently calls `FlashAttentionBackend.get_kv_cache_shape`, which is no
+  longer present in vLLM 0.29.0.
+- SGLang's built-in connector passes `is_mla` to `KVCacheLayout`; this FlexKV
+  commit expects `kv_dim`. GPU registration repeatedly fails before serving
+  requests. The test was stopped after confirming that error.
+
+The latest published Git tag found, FlexKV `v1.2.1` at `24455633`, was also
+inspected. Its SGLang configuration signature is older and it lacks the
+`flexkv.transfer.layerwise` module imported by SGLang 0.5.20. It was not built
+or benchmarked. A compatible FlexKV/engine adapter tuple must be established
+before adding a performance result; these failures say nothing about FlexKV's
+transfer speed. No engine or competitor adapter was patched for this matrix.
+
+The first setup attempts exposed missing overlay dependencies, an incorrect
+LMCache metrics port, and an embedded-Python package search path issue. Those
+were corrected before the successful runs; failed attempts remain in the
+manifest archive. Source logs and complete responses are under
+`/workspace/benchmarks/orbitkv-qwen3-8b-comparisons`.
+
+### Existing copy-kernel experiment
+
+vLLM OrbitKV also ran the same workload with its existing mapped-host copy
+kernel, selected through `orbitkv.transfer_backend`. The manager logs confirm
+that both GPU workers used the requested backend.
+
+| OrbitKV vLLM transfer backend | 1,024 tokens | 4,096 tokens | 8,192 tokens |
+| --- | ---: | ---: | ---: |
+| Direct DMA, TTFT p50 | 23.99 ms | 34.92 ms | 53.96 ms |
+| Copy kernel, TTFT p50 | 24.31 ms | 42.58 ms | 63.40 ms |
+
+Every pressure sample was an external restore. The kernel is slower here,
+especially for long prefixes; it is not promoted to the default. Fewer driver
+submissions do not by themselves establish a faster transfer path. This result
+does not rule out the kernel on a different layout, fragmentation pattern,
+GPU, or host topology.
+
+The [360 follow-up request measurements](benchmarks/qwen3-8b-comparisons.csv)
+include the matched controls, LMCache, notification experiment, and kernel
+experiment. The [manifests, summaries, and failed attempts](benchmarks/qwen3-8b-comparisons.json)
+pin launch commands, dependencies, and failure reasons. The original 270
+measurements remain a separate dataset.
+
+The notification change passed 335 source-only Python tests and six real GPU
+integration cases, including failure/timeout ownership and poisoned-page
+round trips. The deterministic model gates passed: vLLM 6 passed, 1 skipped
+(hybrid-only case on a dense model), and SGLang 1 passed. The existing kernel
+test also verified exact H2D and D2H bytes against the direct backend. Applicable
+local checks, including release Rust tests, passed. External-cache performance
+runs are not a substitute for that backend's own correctness qualification.
 
 ## Reproduce the latency experiment
 
@@ -92,9 +196,29 @@ done
 ```
 
 Each output directory must be empty. The script starts and stops its own engine
-and, for OrbitKV, its own manager. It preserves engine/manager logs, launch
+and, for OrbitKV or LMCache, its own cache service. It preserves service logs, launch
 commands, versions, GPU details, raw samples, cache-source evidence, and a
 summary. Do not run other GPU workloads alongside these measurements.
+
+The same script accepts `--backend lmcache` and `--backend flexkv`. Install the
+cache backend and its complete runtime dependencies in an isolated environment
+with the pinned engine; do not let installation silently replace PyTorch or the
+engine being compared. LMCache 0.5.5 uses its MP daemon for both engines here.
+SGLang 0.5.20 requires `--lmcache-config-file` with `mp_host` and `mp_port`; the
+script writes that file and uses the daemon's HTTP `/metrics` endpoint. vLLM
+loads the external LMCache connector module explicitly.
+
+The script sets FlexKV's host payload budget and disables SSD, GDS, MPS, and
+optional metrics. It leaves the default SM-copy and non-layerwise transfer
+settings in place. This is a specified configuration baseline, not an exhaustive
+FlexKV tuning result. Successful installation does not establish compatibility
+with an engine's KV APIs; a startup failure is not a cache miss or a latency
+sample.
+
+For the existing OrbitKV transfer-backend experiment, add
+`--engine vllm --backend orbitkv --orbitkv-transfer-backend kernel`. The default
+remains `direct`. This switch belongs to the benchmark and selects an existing
+connector option; it does not introduce another cache API.
 
 The initial experiment uses dense Qwen3-8B in BF16, one GPU, TP=1, 64-token
 pages, 16,384 GPU KV tokens (2.25 GiB), and a 16 GiB external payload budget.
@@ -125,4 +249,50 @@ still has a separate deterministic E2E gate.
 This is a serial latency experiment. Five observations do not establish a
 production tail-latency SLO. It does not measure concurrent goodput, SSD
 performance, multi-node transfers, restart recovery, or a production prompt
-distribution. Those require additional workloads and capacity sweeps.
+distribution. Runs are sequential rather than randomized. Those questions
+require repeated experiments, additional workloads, and capacity sweeps.
+
+## Single-node optimization order
+
+1. **Observe completion promptly.** The SGLang load worker used to sleep for
+   10 ms between restore polls. It now waits on the existing completion
+   notification, with a 50 ms fallback poll if a notification is lost. The
+   shared client owns the deadline. Timeout or transport failure still leaves
+   destination ownership unresolved and faults the engine; neither condition
+   means GPU pages can be reused.
+2. **Measure transfer fragmentation before choosing a backend.** Record
+   descriptor construction, merged-copy count, submission, CUDA completion,
+   and engine resumption separately. The existing load-duration counter
+   includes construction, submission, and stream synchronization; it is not a
+   pure PCIe bandwidth measurement. Compare the existing `direct` and `kernel`
+   backends under identical requests, then under concurrent inference. SM copy
+   kernels and DMA copies have different contention costs, so an isolated
+   latency win is insufficient to change the default for every workload.
+3. **Expose actual layer readiness.** SGLang's current
+   `start_layer_wise_loading` entry point restores all layers before completing
+   any layer future. Introduce manager-owned per-layer or per-group completion
+   fences and let inference consume completed layers while later layers load.
+   GPU dependencies must be established before acknowledging readiness, and
+   all in-flight work must drain before source leases or destination pages are
+   released. Keep a whole-operation terminal result for cleanup and failures.
+   Validate the engine's CUDA graph mode as well: a Python layer wait that runs
+   during capture does not automatically run on graph replay. Measure any
+   graph-mode change alongside the transfer benefit.
+4. **Bound work under load.** Sweep concurrency 1/4/8/16, partial-prefix hits,
+   and a working set larger than the host pool. Measure TTFT/TPOT and goodput
+   with restore and publish traffic together; bound outstanding bytes and
+   apply backpressure. The current Rust GPU workers have separate load/save
+   threads but unbounded queues. SGLang also waits for queued requests one at
+   a time. Batch independent requests only within descriptor capacity and
+   maintain cancellation and page-lifetime guarantees.
+5. **Tune placement and retention from measurements.** Verify the existing
+   NUMA placement on the target host. Measure offload write amplification,
+   host-pool pressure, allocation cost, and hit reuse before adding admission
+   or eviction policies. Preserve useful prefixes without allowing a long
+   one-off request to monopolize transfer bandwidth. Add SSD and distributed
+   cache comparisons after the DRAM path has stable correctness and load tests.
+
+HBM allocation and eviction remain engine-owned. OrbitKV owns external copies,
+transfer scheduling, and its completion contract. These changes do not require
+a new central directory, a compatibility facade, or a second engine-facing
+cache API.

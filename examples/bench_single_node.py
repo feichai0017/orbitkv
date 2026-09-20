@@ -34,7 +34,13 @@ def free_port() -> int:
 
 
 @contextlib.contextmanager
-def server(command: list[str], env: dict[str, str], url: str, log: Path):
+def server(
+    command: list[str],
+    env: dict[str, str],
+    url: str,
+    log: Path,
+    health_path: str = "/health",
+):
     with log.open("w") as output:
         process = subprocess.Popen(
             command,
@@ -49,7 +55,7 @@ def server(command: list[str], env: dict[str, str], url: str, log: Path):
             if process.poll() is not None:
                 raise RuntimeError(f"Server exited: {log}\n{log.read_text()[-6000:]}")
             try:
-                if requests.get(f"{url}/health", timeout=2).ok:
+                if requests.get(url + health_path, timeout=2).ok:
                     break
             except requests.RequestException:
                 pass
@@ -189,7 +195,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", choices=["vllm", "sglang"], required=True)
     parser.add_argument(
-        "--backend", choices=["native", "cpu", "orbitkv"], required=True
+        "--backend",
+        choices=["native", "cpu", "orbitkv", "lmcache", "flexkv"],
+        required=True,
     )
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -198,11 +206,18 @@ def main() -> None:
     parser.add_argument("--output-tokens", type=int, default=16)
     parser.add_argument("--gpu-tokens", type=int, default=16384)
     parser.add_argument("--host-gib", type=int, default=16)
+    parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
     args = parser.parse_args()
     args.model = args.model.resolve()
     args.output = args.output.resolve()
+    if args.orbitkv_transfer_backend and (
+        args.engine != "vllm" or args.backend != "orbitkv"
+    ):
+        parser.error(
+            "--orbitkv-transfer-backend requires --engine vllm --backend orbitkv"
+        )
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("--output must be empty so measurements cannot mix across runs")
     if (
@@ -244,13 +259,20 @@ def main() -> None:
     env.update(PYTHONHASHSEED="0", VLLM_LOG_STATS_INTERVAL="1")
     env.pop("VLLM_BATCH_INVARIANT", None)
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(ROOT / "python"), str(args.output), sysconfig.get_path("purelib")]
+        [str(ROOT / "python"), str(args.output)]
+        + [
+            path
+            for path in sys.path
+            if Path(path).name in {"site-packages", "dist-packages"}
+        ]
     )
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
     pressure_tokens = args.gpu_tokens * 3 // 4
     manager_url = None
+    manager_health_path = "/health"
     manager_command = None
+    backend_configuration = {}
     if args.backend == "orbitkv":
         manager_port = free_port()
         manager_http = free_port()
@@ -280,9 +302,55 @@ def main() -> None:
         (plugin / "entry_points.txt").write_text(
             "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
         )
+    elif args.backend == "lmcache":
+        env["LMCACHE_TRACK_USAGE"] = "false"
+        cache_port, cache_http = free_port(), free_port()
+        manager_url = f"http://127.0.0.1:{cache_http}"
+        manager_health_path = "/healthcheck"
+        manager_command = [
+            sys.executable,
+            "-m",
+            "lmcache.cli.main",
+            "server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(cache_port),
+            "--http-host",
+            "127.0.0.1",
+            "--http-port",
+            str(cache_http),
+            "--l1-size-gb",
+            str(args.host_gib),
+            "--eviction-policy",
+            "LRU",
+            "--chunk-size",
+            "64",
+        ]
+        if args.engine == "sglang":
+            backend_configuration = {
+                "chunk_size": 64,
+                "mp_host": "127.0.0.1",
+                "mp_port": cache_port,
+            }
+            cache_config = args.output / "lmcache.json"
+            cache_config.write_text(json.dumps(backend_configuration, indent=2))
+    elif args.backend == "flexkv":
+        backend_configuration = {
+            "FLEXKV_CPU_CACHE_GB": str(args.host_gib),
+            "FLEXKV_SSD_CACHE_GB": "0",
+            "FLEXKV_ENABLE_GDS": "0",
+            "FLEXKV_ENABLE_MPS": "0",
+            "FLEXKV_ENABLE_METRICS": "0",
+            "FLEXKV_SERVER_RECV_PORT": f"ipc://{args.output}/flexkv.sock",
+        }
+        env.pop("FLEXKV_CONFIG_PATH", None)
+        env.update(backend_configuration)
     if args.engine == "vllm":
         command = [
-            str(Path(sys.executable).parent / "vllm"),
+            sys.executable,
+            "-m",
+            "vllm.entrypoints.cli.main",
             "serve",
             str(args.model),
             "--host",
@@ -325,6 +393,22 @@ def main() -> None:
                 "kv_role": "kv_both",
                 "kv_connector_module_path": "orbitkv.vllm",
             }
+            if args.orbitkv_transfer_backend:
+                connector["kv_connector_extra_config"] = {
+                    "orbitkv.transfer_backend": args.orbitkv_transfer_backend
+                }
+        elif args.backend == "lmcache":
+            connector = {
+                "kv_connector": "LMCacheMPConnector",
+                "kv_role": "kv_both",
+                "kv_connector_module_path": "lmcache.integration.vllm.lmcache_mp_connector",
+                "kv_connector_extra_config": {
+                    "lmcache.mp.host": "127.0.0.1",
+                    "lmcache.mp.port": cache_port,
+                },
+            }
+        elif args.backend == "flexkv":
+            connector = {"kv_connector": "FlexKVConnectorV1", "kv_role": "kv_both"}
         if args.backend != "native":
             command += ["--kv-transfer-config", json.dumps(connector)]
     else:
@@ -373,7 +457,14 @@ def main() -> None:
                 "orbitkv",
                 "--enable-unified-cache-external-linker",
             ]
+        elif args.backend == "lmcache":
+            command += ["--enable-lmcache", "--lmcache-config-file", str(cache_config)]
+        elif args.backend == "flexkv":
+            command += ["--enable-flexkv"]
 
+    packages = [args.engine, "torch", "transformers", "numpy", "prometheus_client"]
+    if args.backend in ("lmcache", "flexkv"):
+        packages.append(args.backend)
     manifest = {
         "arguments": {
             key: str(value) if isinstance(value, Path) else value
@@ -381,6 +472,9 @@ def main() -> None:
         },
         "engine_command": command,
         "manager_command": manager_command,
+        "backend_configuration": backend_configuration,
+        "library_path": env.get("LD_LIBRARY_PATH", ""),
+        "python_path": env["PYTHONPATH"],
         "git_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
@@ -393,10 +487,7 @@ def main() -> None:
             ],
             text=True,
         ),
-        "packages": {
-            name: importlib.metadata.version(name)
-            for name in (args.engine, "torch", "transformers")
-        },
+        "packages": {name: importlib.metadata.version(name) for name in packages},
         "python": sys.version,
         "kv_bytes_per_token": bytes_per_token,
         "model_revision": (args.model / ".revision").read_text().strip()
@@ -410,7 +501,13 @@ def main() -> None:
     with contextlib.ExitStack() as stack:
         if manager_command:
             stack.enter_context(
-                server(manager_command, env, manager_url, args.output / "manager.log")
+                server(
+                    manager_command,
+                    env,
+                    manager_url,
+                    args.output / "manager.log",
+                    manager_health_path,
+                )
             )
         stack.enter_context(server(command, env, base_url, args.output / "engine.log"))
         for _ in range(3):
