@@ -38,6 +38,8 @@ Issues = "https://github.com/feichai0017/orbitkv/issues"
 [project.optional-dependencies]
 vllm = ["vllm==0.29.0"]
 sglang = ["sglang==0.5.20"]
+
+[dependency-groups]
 test = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
@@ -46,14 +48,11 @@ test = [
     "requests>=2.26.0",
 ]
 dev = [
-    "pytest>=8.0",
-    "pytest-cov>=4.0",
-    "pytest-xdist>=3.0",
-    "numpy>=1.24",
-    "requests>=2.26.0",
+    { include-group = "test" },
     "ruff>=0.4",
     "mypy>=1.10",
 ]
+bench = ["requests>=2.26.0"]
 
 [tool.maturin]
 module-name = "orbitkv.orbitkv"
@@ -126,6 +125,9 @@ target-version = "py310"
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]  # Line length handled by formatter
 
+[tool.ruff.lint.isort]
+known-first-party = ["orbitkv", "benches", "tests"]
+
 [tool.mypy]
 python_version = "3.10"
 warn_return_any = true
@@ -134,6 +136,7 @@ ignore_missing_imports = true
 
 [tool.isort]
 profile = "black"
+known_first_party = ["orbitkv", "benches", "tests"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

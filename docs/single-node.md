@@ -172,8 +172,8 @@ decisions; OrbitKV's `--pool-size` and SSD options control only external cache
 capacity. Pinning too much host memory or saving every low-reuse block can
 increase latency, so size and admission policy should be measured against the
 workload. To validate the current adapters, use the
-[vLLM correctness test](../python/tests/test_vllm_e2e_correctness.py) and
-[SGLang direct GPU test](../python/tests/test_sglang_direct_e2e.py) on the
+[vLLM correctness test](../python/tests/e2e/test_vllm_e2e_correctness.py) and
+[SGLang direct GPU test](../python/tests/e2e/test_sglang_direct_e2e.py) on the
 matching GPU host.
 
 For experimental multi-node cache sharing, use [P2P deployment](p2p.md).

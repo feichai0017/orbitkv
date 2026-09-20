@@ -9,20 +9,23 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from orbitkv.client.manager import CacheManagerClient
-from orbitkv.vllm.common import (
-    CacheGroupLayout,
-    ConnectorContext,
+from orbitkv.logging_utils import get_connector_logger
+from orbitkv.vllm.config import ConnectorContext
+from orbitkv.vllm.layout import CacheGroupLayout, reconcile_hybrid_hit
+from orbitkv.vllm.metadata import (
     LoadIntent,
     OrbitKVConnectorMetadata,
-    OrbitKVConnectorStats,
     OrbitKVWorkerMetadata,
     RecurrentLoadHold,
     SaveIntent,
-    logger,
-    reconcile_hybrid_hit,
 )
-from orbitkv.vllm.connector_metrics import PrefetchTracker
+from orbitkv.vllm.metrics import (
+    OrbitKVConnectorStats,
+    PrefetchTracker,
+)
 from orbitkv.vllm.tp_shards import ShardedQueryReady, TpShardQueryClient
+
+logger = get_connector_logger()
 
 if TYPE_CHECKING:
     from vllm.v1.core.kv_cache_manager import KVCacheBlocks

@@ -22,9 +22,15 @@ def check_wheel(path: Path, variant: str) -> None:
         "orbitkv/client/gpu.py",
         "orbitkv/vllm/plugin.py",
         "orbitkv/vllm/connector.py",
+        "orbitkv/vllm/config.py",
+        "orbitkv/vllm/layout.py",
+        "orbitkv/vllm/metadata.py",
+        "orbitkv/vllm/metrics.py",
         "orbitkv/vllm/pd/__init__.py",
         "orbitkv/sglang/plugin.py",
         "orbitkv/sglang/linker.py",
+        "orbitkv/sglang/config.py",
+        "orbitkv/sglang/layout.py",
         "orbitkv/orbitkv-cache-manager-py",
         "orbitkv/orbitkv-metaserver-py",
         "orbitkv/libtransfer_engine.so",
@@ -40,7 +46,8 @@ def check_wheel(path: Path, variant: str) -> None:
             "orbitkv/vllm_plugin.py",
             "orbitkv/sglang/storage.py",
             "orbitkv/sglang/hicache.py",
-            "orbitkv/sglang/config.py",
+            "orbitkv/vllm/common.py",
+            "orbitkv/vllm/connector_metrics.py",
             "orbitkv/sglang/pools.py",
             "orbitkv/ipc_wrapper.py",
         }
@@ -49,6 +56,8 @@ def check_wheel(path: Path, variant: str) -> None:
             "orbitkv/pd_connector/",
             "orbitkv/nixl_connector/",
             "orbitkv/vllm/nixl/",
+            "tests/",
+            "benches/",
         )
         unexpected = (removed_files & files) | {
             name for name in files if name.startswith(removed_prefixes)
@@ -74,8 +83,8 @@ def check_wheel(path: Path, variant: str) -> None:
         if metadata["Name"] != expected_name:
             raise ValueError(f"expected {expected_name}, got {metadata['Name']}")
         extras = set(metadata.get_all("Provides-Extra", []))
-        if not {"vllm", "sglang", "test", "dev"} <= extras:
-            raise ValueError(f"missing engine or developer extras: {extras}")
+        if extras != {"vllm", "sglang"}:
+            raise ValueError(f"wheel should expose only engine extras: {extras}")
         requirements = metadata.get_all("Requires-Dist", [])
         for engine in ("vllm", "sglang"):
             if not any(

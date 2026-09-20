@@ -13,16 +13,18 @@ import torch
 
 from orbitkv.client.gpu import serialize_gpu_buffer
 from orbitkv.client.manager import RestoreHandle
-from orbitkv.vllm.common import (
-    CacheGroupLayout,
-    ConnectorContext,
+from orbitkv.logging_utils import get_connector_logger
+from orbitkv.vllm.config import ConnectorContext, parse_env_int
+from orbitkv.vllm.layout import CacheGroupLayout
+from orbitkv.vllm.metadata import (
     OrbitKVConnectorMetadata,
-    OrbitKVConnectorStats,
     OrbitKVWorkerMetadata,
     SaveIntent,
-    logger,
-    parse_env_int,
 )
+from orbitkv.vllm.metrics import OrbitKVConnectorStats
+
+logger = get_connector_logger()
+
 
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionMetadata

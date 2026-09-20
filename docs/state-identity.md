@@ -10,6 +10,9 @@ OrbitKV must reject an ambiguous candidate and let the engine recompute it.
 Both adapters resolve a versioned SHA-256 computation identity at startup.
 Local model, tokenizer, processor and model-code artifacts are fingerprinted by
 content; identical artifact copies can keep the same identity after relocation.
+Each initialization reads the content again. File timestamps are not used to
+reuse an earlier digest: an equal-sized replacement can have the same timestamp
+on a filesystem with coarse clocks. This work stays outside the request path.
 Hub deployments require a full immutable commit revision. For large models,
 `ORBITKV_MODEL_FINGERPRINT` accepts a lowercase 64-digit deployment digest and
 skips artifact reads: the operator owns the accuracy of that assertion. It

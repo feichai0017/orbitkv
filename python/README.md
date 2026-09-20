@@ -6,7 +6,6 @@ adapters for the releases below.
 
 ## Features
 
-- **CacheManagerClient**: UDS/iceoryx2 client for the node-local Cache Manager
 - **CacheManagerClient**: One client for lifecycle, queries, publication and asynchronous restores across storage tiers
 - **OrbitKVConnector**: vLLM external-cache connector; Cache Manager selects RAM, SSD, or configured remote fetch
 - **OrbitKVLinker**: SGLang direct GPU-page cache through the same Cache Manager channel
@@ -280,77 +279,51 @@ For P/D transfer, NIXL, and the difference from remote-cache sharing, see
 [P/D and NIXL](../docs/pd.md). OrbitKV's `PdConnector` currently targets vLLM
 only; SGLang has no OrbitKV P/D adapter.
 
-## Testing
+## Package organization
 
-### Running Unit Tests
+`orbitkv` is the installed import package; the native extension remains
+`orbitkv.orbitkv`. The engine entry points load their own adapters lazily.
+Neither engine is required to import the base package or discover its plugins.
 
-The test suite includes integration tests that verify the local client can communicate with a running Cache Manager.
+| Module | Responsibility |
+| --- | --- |
+| `identity.py` | Framework-neutral model and computation identity |
+| `client/` | Cache Manager connections, CUDA registration, and transfer ownership |
+| `vllm/config.py` | Deployment configuration, model namespace, and rank topology |
+| `vllm/layout.py` | Cache groups and hybrid recovery boundaries |
+| `vllm/metadata.py` | Scheduler/worker transfer intents and completion reports |
+| `vllm/scheduler.py`, `worker.py` | Scheduling decisions and GPU page lifetime |
+| `vllm/metrics.py` | Connector measurements |
+| `vllm/pd/` | Experimental vLLM prefill/decode handoff |
+| `sglang/config.py`, `layout.py` | SGLang identity and GPU page-layout validation |
+| `sglang/linker.py` | RadixCache lookup/offload/restore lifecycle |
+| `sglang/plugin.py` | Backend registration and cache construction |
 
-#### Prerequisites
+Import the owning module directly. The framework-neutral client is shared by
+both adapters; engine-specific metadata stays inside its adapter package.
 
-1. **Build the Rust extension**:
+The published wheel exposes only the `vllm` and `sglang` engine extras.
+Contributor dependencies live in the `test`, `dev`, and `bench` dependency
+groups in `pyproject.toml`; `dev` includes `test`. Benchmark code, tests, and
+results are not installed in the runtime wheel.
 
-   ```bash
-   cd python
-   maturin develop --release
-   ```
+## Testing and benchmarks
 
-2. **Build the server binary**:
-
-   ```bash
-   cd ..
-   cargo build --release --bin orbitkv-cache-manager
-   ```
-
-3. **Ensure CUDA is available** (tests require GPU):
-   ```bash
-   python -c "import torch; assert torch.cuda.is_available()"
-   ```
-
-#### Running Tests
+Correctness tests live in `tests/unit/`, `tests/integration/`, `tests/e2e/`,
+and `tests/stress/`. Shared process, path, and import-stub helpers live in
+`tests/support/`. Heavy fixtures import torch only when exercised.
+See [the test gates](tests/README.md) for the trigger and runtime requirements
+of each gate. A source-only unit run needs neither CUDA nor a compiled wheel:
 
 ```bash
 cd python
-
-# Run all tests
-pytest tests/ -v
-
-# Run specific test file
-pytest tests/test_cache_manager_client.py -v
-
-# Run with coverage
-pytest tests/ --cov=orbitkv --cov-report=html
+uv run --isolated --no-project --with pytest --with numpy --with requests pytest
 ```
 
-#### Test Structure
-
-- **`tests/conftest.py`**: Contains pytest fixtures for:
-
-  - `orbitkv_server`: Automatically starts/stops the Cache Manager for integration tests
-  - `engine_client`: Creates a local Cache Manager client for the test
-  - `client_context`: Provides a `ClientContext` representing a vLLM instance with GPU KV cache tensors
-  - `registered_instance`: Provides a registered instance ID for query tests
-
-- **`tests/test_cache_manager_client.py`**: Integration tests for:
-  - Server connectivity
-  - Query operations with various inputs
-
-#### Test Fixtures
-
-The `ClientContext` class abstracts a vLLM instance and provides:
-
-- `register_kv_caches()`: Register GPU KV cache tensors with the server
-- `query(block_hashes)`: Query available blocks
-- `unregister_context()`: Unregister context from server
-
-Example test usage:
-
-```python
-def test_query(client_context):
-    """Test query operation."""
-    result = client_context.query([])
-    assert result is not None
-```
+Performance workloads and measurements live at the repository root under
+[`benches/`](../benches/README.md), with separate CPU-only harness tests. Run them
+using the selected engine environment and preserve the run's manifest with its
+measurements.
 
 ## License
 

@@ -15,12 +15,12 @@ hooks = [
 [[repos]]
 repo = "https://github.com/pycqa/isort"
 rev = "7.0.0"
-hooks = [{ id = "isort", args = ["--profile", "black", "--settings-path", "python"], additional_dependencies = ["toml"], files = "^python/" }]
+hooks = [{ id = "isort", args = ["--profile", "black", "--settings-path", "python"], additional_dependencies = ["toml"], files = "^(python|benches)/" }]
 
 [[repos]]
 repo = "https://github.com/codespell-project/codespell"
 rev = "v2.2.4"
-hooks = [{ id = "codespell", additional_dependencies = ["tomli"], files = '^python/.*\.pyi?$' }]
+hooks = [{ id = "codespell", additional_dependencies = ["tomli"], files = '^(python|benches)/.*\.pyi?$' }]
 
 [[repos]]
 repo = "local"

@@ -2,16 +2,29 @@
 
 `python/tests` is organized around developer workflow, not around how much code has accumulated. A test belongs here only when skipping it would materially reduce confidence to merge a PR for its trigger area. The default pytest invocation is intentionally small: it runs unit/helper contracts and excludes tests that start `orbitkv-cache-manager`, require CUDA, run vLLM, or create pressure workloads.
 
+## Layout
+
+- `unit/`: source-only contracts, including `unit/pd/`.
+- `integration/`: Cache Manager, native channel, and CUDA page transfers.
+- `e2e/`: actual inference-engine correctness and restart recovery.
+- `stress/`: concurrent or pressure workloads with explicit resource requirements.
+- `support/`: process helpers, import stubs, paths, and immutable test data.
+- `conftest.py`: shared options and the Cache Manager fixture used by both engine
+  E2E and channel integration tests; `integration/conftest.py` owns GPU fixtures.
+
+Performance workloads and their results live in [`benches/`](../../benches/README.md),
+with their own CPU-only harness tests. They are not correctness-test fixtures.
+
 ## What To Run
 
 | Change area | Gate | Command | Failure boundary |
 | --- | --- | --- | --- |
-| Connector helper math, scheduler state, worker load failure handling, GPU registration | Default unit | `uv run --extra test pytest` | Python contract or local connector state-machine regression |
+| Connector helper math, scheduler state, worker load failure handling, GPU registration | Default unit | `uv run --group test pytest` | Python contract or local connector state-machine regression |
 | Clean source-only Python changes, docs touching test layout, CI test dependency changes | Source-only default | `uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Default test accidentally depends on torch, vLLM, CUDA, or native extension |
-| Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --extra test pytest -m integration` | Server/native/GPU lifecycle regression |
-| vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
-| SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/test_sglang_direct_e2e.py --model /path/to/model` | Restores the same prompt after a RadixCache flush and after SGLang restarts against a live Cache Manager. |
-| Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --extra test pytest -m stress tests/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
+| Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --group test pytest -m integration` | Server/native/GPU lifecycle regression |
+| vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
+| SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores the same prompt after a RadixCache flush and after SGLang restarts against a live Cache Manager. |
+| Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
 A heavy test without a clear trigger should not be promoted into a routine gate. A generated fuzz workload used to live here, but it had no stable owner, cadence, data contract, or debugging path; it was removed from the main pytest surface instead of pretending to be a regular gate.
@@ -20,12 +33,12 @@ A heavy test without a clear trigger should not be promoted into a routine gate.
 
 ```bash
 cd python
-uv run --extra test pytest
+uv run --group test pytest
 ```
 
 This command must not start vLLM, `orbitkv-cache-manager`, or any GPU runtime. It still
 imports every test module during pytest collection, so any top-level import used
-by deselected heavy tests must be present in the `test` extra or moved behind a
+by deselected heavy tests must be present in the `test` dependency group or moved behind a
 fixture/helper boundary.
 
 CI uses the source-only variant below so the unit gate does not compile the native extension or require CUDA:
@@ -47,7 +60,7 @@ This gate must collect and run without torch, vLLM, CUDA, external models, or a 
 
 ```bash
 cd python
-uv run --extra test pytest -m integration
+uv run --group test pytest -m integration
 ```
 
 Runs tests that start or require a local `orbitkv-cache-manager` but do not run vLLM:
@@ -77,11 +90,11 @@ installed or release binary. Both integration and vLLM helpers honor this overri
 
 Use the vLLM `0.29.0` release environment described in
 [`python/README.md`](../README.md). The SGLang `0.5.20` environment is separate.
-The default `uv run --extra test` environment intentionally has no GPU framework.
+The default `uv run --group test` environment intentionally has no GPU framework.
 
 ```bash
 cd python
-../.venv/vllm-release/bin/python -m pytest -m e2e tests/test_vllm_e2e_correctness.py \
+../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py \
   --model /path/to/model \
   --tensor-parallel-size 1 \
   --pipeline-parallel-size 1 \
@@ -117,7 +130,7 @@ Requirements:
 
 ```bash
 cd python
-uv run --extra test pytest -m stress tests/test_vllm_warm_hit_stress.py \
+uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py \
   --model /data/models/Qwen3-4B \
   --max-model-len 2048
 ```

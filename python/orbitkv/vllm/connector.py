@@ -18,23 +18,24 @@ from vllm.distributed.parallel_state import get_pp_group, get_tensor_model_paral
 
 from orbitkv.client.connection import connect_cache
 from orbitkv.client.gpu import resolve_device_id as _resolve_device_id
-from orbitkv.vllm.common import (
-    CacheGroupLayout,
+from orbitkv.logging_utils import get_connector_logger
+from orbitkv.vllm.config import (
     ConnectorContext,
-    OrbitKVConnectorMetadata,
     OrbitKVConnectorMode,
-    OrbitKVConnectorStats,
-    OrbitKVPromMetrics,
     TpShardTopology,
     derive_namespace,
     detect_mla,
-    logger,
     resolve_instance_id,
     resolve_transfer_backend,
 )
+from orbitkv.vllm.layout import CacheGroupLayout
+from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
+from orbitkv.vllm.metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
 from orbitkv.vllm.scheduler import SchedulerConnector
 from orbitkv.vllm.state_manager import ServiceStateManager
 from orbitkv.vllm.worker import WorkerConnector
+
+logger = get_connector_logger()
 
 
 class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
