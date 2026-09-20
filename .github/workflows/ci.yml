@@ -5,10 +5,7 @@ on:
     branches:
       - "master"
       - "main"
-  pull_request:
-    branches:
-      - "master"
-      - "main"
+  pull_request: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
@@ -174,6 +171,9 @@ jobs:
         working-directory: python
         run: |
           uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest
+      - name: Check benchmark measurements and reporting
+        run: |
+          uv run --isolated --no-project --with pytest --with 'requests>=2.26.0' pytest benchs/tests
 
   cargo-check-variant:
     name: cargo check (${{ matrix.cuda-variant }})

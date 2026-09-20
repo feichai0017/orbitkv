@@ -3,8 +3,11 @@
 from dataclasses import dataclass
 
 from orbitkv.client.manager import CacheManagerClient
+from orbitkv.logging_utils import get_connector_logger
 from orbitkv.orbitkv import QueryLoading, QueryReady
-from orbitkv.vllm.common import RecurrentLoadHold, logger
+from orbitkv.vllm.metadata import RecurrentLoadHold
+
+logger = get_connector_logger()
 
 
 @dataclass(frozen=True, slots=True)

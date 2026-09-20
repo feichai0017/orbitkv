@@ -1,0 +1,212 @@
+"""Prove the SGLang-style GPU buffer layout survives a real D2H/H2D round trip."""
+
+from __future__ import annotations
+
+import hashlib
+import queue
+import threading
+import uuid
+from types import SimpleNamespace
+from unittest.mock import MagicMock, call
+
+import pytest
+
+pytestmark = [pytest.mark.integration, pytest.mark.gpu]
+
+
+@pytest.mark.parametrize("failure", ["submit", "poll", "timeout"])
+def test_linker_failure_never_acknowledges_gpu_destinations(failure):
+    pytest.importorskip("sglang")
+    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
+
+    linker = object.__new__(OrbitKVLinker)
+    linker.instance_id = "failed-transfer"
+    linker.device_id = 0
+    linker.layout = SimpleNamespace(layer_names=["kv:0"])
+    linker._load_error = None
+    linker._load_queue = queue.Queue()
+    linker._completed_loads = queue.Queue()
+    linker.layer_done_counter = _LayerDoneCounter(1)
+    linker.client = MagicMock()
+    if failure == "submit":
+        linker.client.start_restore.side_effect = [
+            object(),
+            ConnectionError("lost acknowledgement"),
+        ]
+    elif failure == "poll":
+        linker.client.wait_restore.side_effect = ConnectionError("lost completion")
+    else:
+        linker.client.wait_restore.side_effect = TimeoutError("restore deadline")
+
+    index = linker.layer_done_counter.update_producer()
+    linker._load_queue.put(
+        (
+            index,
+            [_Load(str(i), bytes([i]), (i,)) for i in range(12)],
+            SimpleNamespace(synchronize=lambda: None),
+        )
+    )
+    linker._load_queue.put(None)
+    thread = threading.Thread(target=linker._load_worker)
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert linker._completed_loads.empty()
+    attempted = 2 if failure == "submit" else linker._RESTORE_WINDOW
+    assert linker.client.release.call_args_list == [call(bytes([i])) for i in range(attempted, 12)]
+    for observe in (linker.num_completed_loads, linker.pop_completed_load):
+        with pytest.raises(RuntimeError, match="GPU pages remain held"):
+            observe()
+    linker.layer_done_counter.set_consumer(index)
+    with pytest.raises((ConnectionError, TimeoutError)):
+        linker.layer_done_counter.wait_until(0)
+
+
+def test_restore_window_never_acknowledges_a_partially_completed_batch():
+    pytest.importorskip("sglang")
+    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
+
+    linker = object.__new__(OrbitKVLinker)
+    linker.instance_id = "windowed-restore"
+    linker.device_id = 0
+    linker.layout = SimpleNamespace(layer_names=["kv:0"])
+    linker._load_error = None
+    linker._load_queue = queue.Queue()
+    linker._completed_loads = queue.Queue()
+    linker.layer_done_counter = _LayerDoneCounter(1)
+    linker.client = MagicMock()
+    index = linker.layer_done_counter.update_producer()
+    waiting = set()
+    peak = 0
+
+    def submit(*args):
+        nonlocal peak
+        handle = object()
+        waiting.add(handle)
+        peak = max(peak, len(waiting))
+        assert len(waiting) <= linker._RESTORE_WINDOW
+        return handle
+
+    def complete(handle, **kwargs):
+        assert linker._completed_loads.empty()
+        assert not linker.layer_done_counter._futures[index][0].done()
+        waiting.remove(handle)
+        return SimpleNamespace(success=True)
+
+    linker.client.start_restore.side_effect = submit
+    linker.client.wait_restore.side_effect = complete
+    pending = [_Load(str(i), bytes([i]), (i,)) for i in range(12)]
+    linker._load_queue.put((index, pending, SimpleNamespace(synchronize=lambda: None)))
+    linker._load_queue.put(None)
+    linker._load_worker()
+    assert peak == linker._RESTORE_WINDOW
+    assert not waiting
+    assert linker.pop_completed_load() == [load.rid for load in pending]
+    linker.client.release.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("layer_count", "page_count", "page_first"),
+    [(2, 2, False), (36, 64, False), (36, 64, True)],
+)
+def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
+    channel_server, layer_count, page_count, page_first
+):
+    torch = pytest.importorskip("torch")
+    from orbitkv import QueryReady
+    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.manager import CacheManagerClient
+    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required")
+
+    page_size = 64
+    num_blocks = page_count + 4
+    shape = (page_size * num_blocks, 2, 128)
+    tensors = [torch.zeros(shape, dtype=torch.bfloat16, device="cuda") for _ in range(layer_count)]
+    expected = []
+    for layer, tensor in enumerate(tensors):
+        values = torch.arange(page_size * page_count * 2 * 128, device="cuda").reshape(
+            page_size * page_count, 2, 128
+        )
+        tensor[page_size : page_size * (page_count + 1)] = (values + layer * 13).to(torch.bfloat16)
+        expected.append(tensor[page_size : page_size * (page_count + 1)].clone())
+    torch.cuda.synchronize()
+
+    names = [f"kv:{layer}" for layer in range(layer_count)]
+    hashes = [hashlib.sha256(f"page-{i}".encode()).digest() for i in range(page_count)]
+    instance = f"sglang-layout-{uuid.uuid4().hex}"
+    namespace = f"sglang-layout:{instance}"
+    client = CacheManagerClient(channel_server.bootstrap_socket)
+    try:
+        client.start_session_watcher(instance, namespace, 1, 1)
+        wrappers = [serialize_gpu_buffer(tensor) for tensor in tensors]
+        block_bytes = page_size * tensors[0].stride(0) * tensors[0].element_size()
+        ok, message = client.register_context_batch(
+            instance,
+            namespace,
+            0,
+            0,
+            1,
+            1,
+            resolve_device_id(),
+            names,
+            wrappers,
+            [num_blocks] * layer_count,
+            [block_bytes] * layer_count,
+            [0] * layer_count,
+            [1] * layer_count,
+            "direct",
+            page_first,
+        )
+        assert ok, message
+
+        success, message = client.save(
+            instance,
+            0,
+            0,
+            resolve_device_id(),
+            [(name, list(range(1, page_count + 1)), hashes) for name in names],
+        )
+        assert success, message
+        for tensor in tensors:
+            tensor.zero_()
+        torch.cuda.synchronize()
+
+        linker = object.__new__(OrbitKVLinker)
+        linker.instance_id = instance
+        linker.device_id = resolve_device_id()
+        linker.layout = SimpleNamespace(layer_names=names)
+        linker.client = client
+        linker._load_error = None
+        linker._load_queue = queue.Queue()
+        linker._completed_loads = queue.Queue()
+        linker.layer_done_counter = _LayerDoneCounter(layer_count)
+        pending = []
+        # The 64-page case spans two windows of independently pinned requests.
+        for start in range(0, page_count, 4):
+            end = min(start + 4, page_count)
+            rid = f"sglang-poison-{start}"
+            lookup = client.query_prefetch(instance, hashes[start:end], rid)
+            assert isinstance(lookup, QueryReady)
+            assert lookup.num_hit_blocks == end - start
+            pending.append(_Load(rid, lookup.lease, tuple(range(start + 3, end + 3))))
+        index = linker.layer_done_counter.update_producer()
+        ready = torch.cuda.Event()
+        ready.record()
+        linker._load_queue.put((index, pending, ready))
+        linker._load_queue.put(None)
+        thread = threading.Thread(target=linker._load_worker, daemon=True)
+        thread.start()
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+        linker.layer_done_counter.set_consumer(index)
+        linker.layer_done_counter.wait_until(layer_count - 1)
+        assert linker.pop_completed_load() == [load.rid for load in pending]
+        torch.cuda.synchronize()
+        for tensor, original in zip(tensors, expected, strict=True):
+            assert torch.equal(tensor[page_size * 3 : page_size * (page_count + 3)], original)
+    finally:
+        client.unregister_context(instance)
+        client.close()

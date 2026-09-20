@@ -10,24 +10,18 @@ import threading
 import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass
-from importlib.metadata import version
 from typing import Any
 
 import torch
 from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
-from sglang.srt.mem_cache.hybrid_cache.linker_pool_assembler import (
-    DevicePoolEntry,
-    DevicePoolGroup,
-    resolve_hybrid_device_pool_group,
-)
-from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool, MLATokenToKVPool
 from sglang.srt.mem_cache.unified_cache.components import ComponentType
 from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinker
-from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
 from orbitkv.client import CacheManagerClient
 from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
-from orbitkv.identity import model_identity, state_namespace
+
+from .config import derive_namespace
+from .layout import GpuLayout
 
 logger = logging.getLogger(__name__)
 
@@ -96,107 +90,14 @@ class OrbitKVLinker(UnifiedCacheLinker):
     model-scoped namespace that other replicas of the same rank can reuse.
     """
 
+    _RESTORE_WINDOW = 8
+
     def __init__(self, server_args: Any, params: Any, *, components: set[ComponentType]):
         if components != {ComponentType.FULL}:
             raise ValueError("OrbitKV direct GPU linker currently supports full-attention KV only")
-        self.page_size = params.page_size
-        kvcache = params.token_to_kv_pool_allocator.get_kvcache()
-        if type(kvcache) in (MHATokenToKVPool, MLATokenToKVPool):
-            # SGLang's stock direct-linker assembler does not implement its
-            # plain KV strategy. Both ordinary layouts expose page-aligned
-            # rows, so they can use the same DevicePoolEntry contract.
-            buffers = (
-                [list(kvcache.k_buffer), list(kvcache.v_buffer)]
-                if type(kvcache) is MHATokenToKVPool
-                else [list(kvcache.kv_buffer)]
-            )
-            entry = DevicePoolEntry(
-                name=PoolName.KV,
-                indices_from_pool=PoolName.KV,
-                device_pool=kvcache,
-                components=buffers,
-                layer_mapping={i: i for i in range(kvcache.layer_num)},
-                page_size=self.page_size,
-                rows_are_pages=bool(getattr(kvcache, "use_hnd", False)),
-            )
-            self.pool_group = DevicePoolGroup([entry], kvcache.layer_num, self.page_size)
-        else:
-            self.pool_group = resolve_hybrid_device_pool_group(
-                kvcache=kvcache,
-                page_size=self.page_size,
-                params=params,
-                components=components,
-            )
-        if set(self.pool_group.entry_map) != {PoolName.KV}:
-            raise ValueError(
-                "OrbitKV direct GPU linker requires one KV pool; auxiliary GPU pools are unsupported"
-            )
-        self.pool = self.pool_group.entry_map[PoolName.KV]
-        self._row_span = self.pool._row_span
-        if self._row_span not in (1, self.page_size):
-            raise ValueError(f"unsupported SGLang GPU page row span: {self._row_span}")
-
-        self._layer_names = [f"kv:{i}" for i in range(len(self.pool.kv_buffer))]
-        if not self._layer_names:
-            raise ValueError("SGLang KV pool has no GPU buffers")
-        self._num_blocks = []
-        self._block_bytes = []
-        for tensor in self.pool.kv_buffer:
-            if tensor.device.type != "cuda" or not tensor.is_contiguous():
-                raise ValueError("OrbitKV direct GPU linker requires contiguous CUDA KV buffers")
-            if tensor.shape[0] % self._row_span:
-                raise ValueError("SGLang GPU KV buffer is not page aligned")
-            self._num_blocks.append(tensor.shape[0] // self._row_span)
-            self._block_bytes.append(tensor.stride(0) * tensor.element_size() * self._row_span)
-        if len(set(self._num_blocks)) != 1:
-            raise ValueError("SGLang GPU KV buffers have different page counts")
-
-        if server_args.enable_lora:
-            raise ValueError(
-                "OrbitKV requires immutable adapter identities; dynamic LoRA is unsupported"
-            )
-        from sglang.srt.runtime_context import get_parallel
-
-        parallel = get_parallel()
-        tp_rank = parallel.tp_rank
-        tp_size = parallel.tp_size
-        computation = {
-            "weight_version": getattr(server_args, "weight_version", None),
-            "quantization": getattr(server_args, "quantization", None),
-            "model_overrides": getattr(server_args, "json_model_override_args", None),
-            "dtype": server_args.dtype,
-            "attention_backend": server_args.attention_backend,
-            "prefill_attention_backend": server_args.prefill_attention_backend,
-            "decode_attention_backend": server_args.decode_attention_backend,
-        }
-        representation = {
-            "kv_cache_dtype": getattr(server_args, "kv_cache_dtype", None),
-            "tp": [tp_rank, tp_size],
-            "pp": [params.pp_rank, params.pp_size],
-            "cp": [params.attn_cp_rank, params.attn_cp_size],
-            "page_size": self.page_size,
-            "buffers": [
-                {
-                    "dtype": str(tensor.dtype),
-                    "shape": list(tensor.shape[1:]),
-                    "stride": list(tensor.stride()[1:]),
-                    "block_bytes": block_bytes,
-                }
-                for tensor, block_bytes in zip(self.pool.kv_buffer, self._block_bytes, strict=True)
-            ],
-        }
-        self.namespace = state_namespace(
-            engine="sglang",
-            engine_version=version("sglang"),
-            model=model_identity(
-                server_args.model_path,
-                revision=server_args.revision,
-                tokenizer=server_args.tokenizer_path,
-                tokenizer_revision=server_args.revision,
-            ),
-            computation=computation,
-            representation=representation,
-        )
+        self.layout = GpuLayout.from_pool(params, components)
+        self.page_size = self.layout.page_size
+        self.namespace = derive_namespace(server_args, params, self.layout)
         self.instance_id = f"sglang-{uuid.uuid4().hex}"
         self.device_id = resolve_device_id()
         endpoint = os.environ.get("ORBITKV_SGLANG_ENDPOINT", "unix:///run/orbitkv/orbitkv.sock")
@@ -205,7 +106,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self.client = CacheManagerClient(endpoint.removeprefix("unix://"))
         try:
             self.client.start_session_watcher(self.instance_id, self.namespace, 1, 1)
-            wrappers = [serialize_gpu_buffer(tensor) for tensor in self.pool.kv_buffer]
+            wrappers = [serialize_gpu_buffer(tensor) for tensor in self.layout.pool.kv_buffer]
             ok, message = self.client.register_context_batch(
                 self.instance_id,
                 self.namespace,
@@ -214,10 +115,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 1,
                 1,
                 self.device_id,
-                self._layer_names,
+                self.layout.layer_names,
                 wrappers,
-                self._num_blocks,
-                self._block_bytes,
+                self.layout.num_blocks,
+                self.layout.block_bytes,
                 [0] * len(wrappers),
                 [1] * len(wrappers),
                 "direct",
@@ -229,7 +130,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             self.client.close()
             raise
 
-        self.layer_done_counter = _LayerDoneCounter(self.pool_group.num_layers)
+        self.layer_done_counter = _LayerDoneCounter(self.layout.pool_group.num_layers)
         self._lookups: dict[str, _Lookup] = {}
         self._queued_loads: dict[str, _Load] = {}
         self._load_queue: queue.Queue[tuple[int, list[_Load], torch.cuda.Event] | None] = (
@@ -251,23 +152,14 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._offload_thread.start()
         logger.info(
             "OrbitKV direct GPU linker registered %s buffers, %s pages on device %s",
-            len(self._layer_names),
-            self._num_blocks[0],
+            len(self.layout.layer_names),
+            self.layout.num_blocks[0],
             self.device_id,
         )
 
     @staticmethod
     def _hashes(keys: list[str] | tuple[str, ...]) -> list[bytes]:
         return [hashlib.sha256(key.encode()).digest() for key in keys]
-
-    def _block_ids(self, indices: torch.Tensor, expected_pages: int) -> list[int]:
-        if indices.numel() != expected_pages * self.page_size:
-            raise ValueError("SGLang GPU indices do not cover exactly the requested pages")
-        rows = self.pool.prepare_locations(indices)
-        block_ids = [row // self._row_span for row in rows]
-        if any(block_id >= self._num_blocks[0] for block_id in block_ids):
-            raise ValueError("SGLang GPU page index is outside its registered buffers")
-        return block_ids
 
     def _release_lookup(self, rid: str) -> None:
         lookup = self._lookups.pop(rid, None)
@@ -311,7 +203,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         if lookup is None:
             raise RuntimeError(f"SGLang load for {rid} has no OrbitKV lookup lease")
         try:
-            block_ids = self._block_ids(transfer.device_indices, len(keys))
+            block_ids = self.layout.block_ids(transfer.device_indices, len(keys))
             positions = {key: index for index, key in enumerate(lookup.keys[: lookup.hit_pages])}
             if len(positions) != lookup.hit_pages:
                 raise ValueError("SGLang lookup contains duplicate page hashes")
@@ -347,18 +239,25 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 try:
                     self._check_load_failure()
                     ready.synchronize()
-                    for load in pending:
-                        submitted += 1
-                        restore = self.client.start_restore(
-                            self.instance_id,
-                            0,
-                            self.device_id,
-                            [self._layer_names],
-                            [(load.lease, [list(load.targets)])],
-                        )
-                        status = self.client.wait_restore(restore, timeout=120)
-                        if not status.success:
-                            raise RuntimeError(status.message)
+                    for offset in range(0, len(pending), self._RESTORE_WINDOW):
+                        restores = []
+                        for load in pending[offset : offset + self._RESTORE_WINDOW]:
+                            # A lost submission acknowledgement still leaves GPU ownership
+                            # unresolved. Only leases never attempted can be released.
+                            submitted += 1
+                            restores.append(
+                                self.client.start_restore(
+                                    self.instance_id,
+                                    0,
+                                    self.device_id,
+                                    [self.layout.layer_names],
+                                    [(load.lease, [list(load.targets)])],
+                                )
+                            )
+                        for restore in restores:
+                            status = self.client.wait_restore(restore, timeout=120)
+                            if not status.success:
+                                raise RuntimeError(status.message)
                     self.layer_done_counter.complete(index)
                     self._completed_loads.put([load.rid for load in pending])
                 except Exception as error:
@@ -405,9 +304,9 @@ class OrbitKVLinker(UnifiedCacheLinker):
         keys = list(transfer.keys or ())
         if not keys or transfer.device_indices is None:
             return False
-        block_ids = self._block_ids(transfer.device_indices, len(keys))
+        block_ids = self.layout.block_ids(transfer.device_indices, len(keys))
         hashes = self._hashes(keys)
-        saves = [(name, block_ids, hashes) for name in self._layer_names]
+        saves = [(name, block_ids, hashes) for name in self.layout.layer_names]
         ready = torch.cuda.Event()
         ready.record()
         self._offload_queue.put((saves, ready))
@@ -464,50 +363,3 @@ class OrbitKVLinker(UnifiedCacheLinker):
         except Exception:
             logger.warning("Could not unregister SGLang GPU context", exc_info=True)
         self.client.close()
-
-
-def create_cache(ctx: Any) -> UnifiedRadixCache:
-    """Factory selected by SGLang's ``--radix-cache-backend orbitkv``."""
-    if ctx.disable_radix_cache:
-        raise ValueError("OrbitKV direct GPU linker requires RadixCache")
-    if ctx.enable_hierarchical_cache:
-        raise ValueError("OrbitKV direct GPU linker does not support hierarchical cache")
-    if ctx.is_hybrid_swa or ctx.is_hybrid_ssm:
-        raise ValueError("OrbitKV direct GPU linker currently supports full-attention KV only")
-    if (
-        ctx.is_dsa
-        or ctx.params.is_eagle
-        or ctx.params.mtp_draft_device_pools
-        or ctx.params.component_registry_override
-        or hasattr(ctx.params.req_to_token_pool, "req_to_c128_sidecar")
-    ):
-        raise ValueError(
-            "OrbitKV direct GPU linker cannot restore DSA, draft, or auxiliary GPU state; "
-            "select a backend with a complete recovery contract for that model"
-        )
-    from sglang.srt.runtime_context import get_disagg, get_memory
-
-    if not get_memory().enable_unified_cache_external_linker:
-        raise ValueError(
-            "OrbitKV direct GPU linker requires --enable-unified-cache-external-linker "
-            "so SGLang schedules GPU KV restores"
-        )
-    if get_disagg().disaggregation_decode_retraction_backup == "host_pool":
-        raise ValueError("OrbitKV direct GPU linker does not support host-pool retraction")
-
-    # SGLang's built-in unified-cache factory hardcodes Mooncake/Mori when the
-    # external-linker flag is set. Construct its public RadixCache component
-    # directly and attach OrbitKV through the public linker interface.
-    ctx.params.tree_components = (ComponentType.FULL,)
-    cache = UnifiedRadixCache(ctx.params)
-    linker = OrbitKVLinker(ctx.server_args, ctx.params, components=set(cache.components))
-    try:
-        cache.init_cache_linker(linker)
-    except Exception:
-        linker.close()
-        raise
-    counter = linker.layer_done_counter
-    kvcache = ctx.params.token_to_kv_pool_allocator.get_kvcache()
-    kvcache.register_layer_transfer_counter(counter)
-    ctx.tp_worker.register_hicache_layer_transfer_counter(counter)
-    return cache

@@ -31,12 +31,12 @@ if ! command -v ruff &> /dev/null; then
     echo -e "${RED}Install with: pip install ruff${NC}"
     exit 1
 fi
-ruff format --check python/
+ruff format --check python/ benchs/
 echo -e "${GREEN}✓ Python formatting check passed${NC}\n"
 
 # Check 4: Python linting with ruff
 echo -e "${YELLOW}[4/6] Running Python linter (ruff)...${NC}"
-ruff check python/
+ruff check python/ benchs/
 echo -e "${GREEN}✓ Python linting passed${NC}\n"
 
 # Check 5: Clippy for Rust packages

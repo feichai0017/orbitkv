@@ -30,7 +30,8 @@ orbitkv/
 │   └── orbitkv-transfer/         # Mooncake transfer wrapper
 ├── python/                       # PyO3 package and framework adapters
 ├── third-party/                  # Pinned Mooncake, vLLM, and SGLang sources
-├── examples/                     # Python examples and benchmarks
+├── examples/                     # Runnable usage examples
+├── benchs/                       # Performance workloads, reports, and results
 ├── docs/                         # Architecture and roadmap
 ├── scripts/                      # Project helper scripts
 └── prek.toml                     # Local check configuration
@@ -121,12 +122,12 @@ Notes:
 
 | Gate | When to run | Command | Notes |
 |------|-------------|---------|-------|
-| Default unit | Every Python PR before review | `cd python && uv run --extra test pytest` | Must not start vLLM, `orbitkv-cache-manager`, or GPU runtime. Collection still imports deselected files, so top-level imports must be in `python[test]` or moved behind fixtures. |
+| Default unit | Every Python PR before review | `cd python && uv run --group test pytest` | Must not start vLLM, `orbitkv-cache-manager`, or GPU runtime. Collection still imports deselected files, so top-level imports must be in the `test` dependency group or moved behind fixtures. |
 | Source-only default | CI and dependency-boundary checks | `cd python && uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Proves default gate does not need torch, vLLM, CUDA, native extension build, or a running server. |
-| Integration | Server/native/client/session lifecycle changes | `cd python && uv run --extra test pytest -m integration` | Requires built native extension, server binary, and GPU where the test uses CUDA IPC. |
-| vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && ../.venv/vllm-release/bin/python -m pytest -m e2e tests/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` | Use the vLLM `0.29.0` release environment described in `python/README.md`; reviewer reruns the gate on the GPU machine. |
-| SGLang direct GPU E2E | SGLang linker, CUDA IPC layout, or plugin changes | `cd python && ../.venv/sglang-release/bin/python -m pytest -m e2e tests/test_sglang_direct_e2e.py --model /path/to/model` | Checks actual GPU load bytes after SGLang process restart against a cold-control namespace. |
-| Stress | Warm-hit pressure, pending unpin, scheduler/cache concurrency | `cd python && uv run --extra test pytest -m stress tests/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Targeted single-GPU evidence, not default PR feedback. |
+| Integration | Server/native/client/session lifecycle changes | `cd python && uv run --group test pytest -m integration` | Requires built native extension, server binary, and GPU where the test uses CUDA IPC. |
+| vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && ../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` | Use the vLLM `0.29.0` release environment described in `python/README.md`; reviewer reruns the gate on the GPU machine. |
+| SGLang direct GPU E2E | SGLang linker, CUDA IPC layout, or plugin changes | `cd python && ../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Checks actual GPU load bytes after SGLang process restart against a cold-control namespace. |
+| Stress | Warm-hit pressure, pending unpin, scheduler/cache concurrency | `cd python && uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Targeted single-GPU evidence, not default PR feedback. |
 | Release smoke | Published wheel/image, loader path, installed console script, CUDA runtime | See `python/tests/README.md` | Validates final installed artifact, not the source checkout. |
 
 Do not default to running all of `python/tests`. Current project taste is `uv` + pytest markers for Python and Cargo/CI for Rust; do not add an `xtask` wrapper until the gate contract is stable and repeated execution is the real bottleneck.
@@ -135,7 +136,7 @@ Do not default to running all of `python/tests`. Current project taste is `uv` +
 
 ```bash
 uv run python examples/basic_vllm.py --model /path/to/immutable-model
-uv run python examples/bench_kv_cache.py --model /path/to/model --num-prompts 10
+.venv/vllm-release/bin/python -m benchs.single_node --engine vllm --backend orbitkv --model /path/to/model
 ```
 
 ## Run Services

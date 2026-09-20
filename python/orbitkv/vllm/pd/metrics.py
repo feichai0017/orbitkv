@@ -14,7 +14,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.metrics import (
     PromMetricT,
 )
 
-from orbitkv.vllm.connector_metrics import build_buckets
+from orbitkv.vllm.metrics import build_buckets
 
 if TYPE_CHECKING:
     from vllm.config import VllmConfig

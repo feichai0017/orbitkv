@@ -13,9 +13,9 @@ python/uv.lock
 node_modules/
 dist/
 .astro/
-examples/bench_results/
+benchs/results/runs/
 examples/pd_logs/
-python/tests/*.log
+python/tests/**/*.log
 
 # Built binaries staged into the Python wheel.
 python/orbitkv/orbitkv-cache-manager-py
