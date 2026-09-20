@@ -3,9 +3,9 @@
 Start a vLLM server with OrbitKV KV cache connector.
 
 Usage:
-    python run_vllm_with_pega.py --model <model_path>
-    python run_vllm_with_pega.py --model meta-llama/Llama-3.1-8B --port 8000
-    python run_vllm_with_pega.py --model gpt2 --kv-events  # Enable KV events publishing
+    python run_vllm_with_orbitkv.py --model <model_path>
+    python run_vllm_with_orbitkv.py --model /path/to/immutable-model --port 8000
+    python run_vllm_with_orbitkv.py --model /path/to/immutable-model --kv-events  # Enable KV events publishing
 """
 
 import argparse
@@ -22,7 +22,7 @@ def parse_args():
         "--model",
         type=str,
         required=True,
-        help="Model path or HuggingFace model ID (e.g., meta-llama/Llama-3.1-8B)",
+        help="Local model directory; Hub IDs require ORBITKV_MODEL_FINGERPRINT",
     )
     parser.add_argument(
         "--host",

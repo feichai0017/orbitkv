@@ -101,7 +101,7 @@ fetch after a local miss. A vLLM/SGLang process does not connect to a remote
 manager or MetaServer directly.
 
 ```bash
-vllm serve Qwen/Qwen3-0.6B \
+vllm serve /path/to/immutable-model \
   --kv-transfer-config '{"kv_connector": "OrbitKVConnector", "kv_role": "kv_both", "kv_connector_module_path": "orbitkv.vllm"}'
 ```
 

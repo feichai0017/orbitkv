@@ -6,6 +6,7 @@ This example demonstrates:
 2. Second run: Generate same prompt again and load KV cache from CPU
 """
 
+import argparse
 import random
 import time
 
@@ -78,6 +79,16 @@ def real_long_prompt() -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Exercise OrbitKV with an immutable model"
+    )
+    parser.add_argument(
+        "--model", required=True, help="Local model directory or pinned Hub model"
+    )
+    parser.add_argument(
+        "--revision", help="Full immutable Hub commit when --model is a Hub ID"
+    )
+    args = parser.parse_args()
     print("=" * 70)
     print("OrbitKV KV Cache Test - Save and Load")
     print("=" * 70)
@@ -89,10 +100,11 @@ def main():
         kv_connector_module_path="orbitkv.vllm",
     )
 
-    # Initialize vLLM with GPT-2
+    # Initialize vLLM with the selected immutable model
     print("\n[1/4] Loading model...")
     llm = LLM(
-        model="Qwen/Qwen3-0.6B",
+        model=args.model,
+        revision=args.revision,
         trust_remote_code=True,
         enforce_eager=True,
         tensor_parallel_size=1,

@@ -79,7 +79,7 @@ client.close()
 
 ```python
 from vllm import LLM
-from vllm.distributed.kv_transfer.kv_transfer_agent import KVTransferConfig
+from vllm.config import KVTransferConfig
 
 # Configure vLLM to use OrbitKVConnector
 kv_transfer_config = KVTransferConfig(
@@ -90,7 +90,7 @@ kv_transfer_config = KVTransferConfig(
 
 # Create LLM with KV transfer enabled
 llm = LLM(
-    model="gpt2",
+    model="/path/to/immutable-model",
     kv_transfer_config=kv_transfer_config,
 )
 ```
@@ -176,7 +176,7 @@ owns the external hit/load path, while OrbitKV records the resulting KV cache.
 In `save_only` mode, OrbitKV does not query or load KV blocks.
 
 ```bash
-vllm serve Qwen/Qwen3-0.6B \
+vllm serve /path/to/immutable-model \
   --kv-transfer-config '{
     "kv_connector": "MultiConnector",
     "kv_role": "kv_both",

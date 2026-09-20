@@ -63,8 +63,7 @@ The cache hot path now uses a versioned `StateKey` bound to model-artifact
 content, engine configuration and registered storage geometry. Complete
 recovery semantics remain open: Publish carries raw block IDs, absolute token
 span evidence is not carried by both adapters, and bundle completeness is a
-component-presence check. The
-MetaServer is a separate, non-HA, in-memory directory without complete
+component-presence check. The MetaServer is a separate, non-HA, in-memory directory without complete
 resident-inventory replay after restart. See [architecture](docs/architecture.md)
 and the [model-aware state plan](docs/state-identity.md) for the implementation
 boundary. Single-node correctness is validated for the pinned adapter layouts;
@@ -128,10 +127,14 @@ orbitkv-cache-manager
 ```
 
 ```sh
-vllm serve Qwen/Qwen3-0.6B \
+vllm serve /path/to/immutable-model \
   --enable-prefix-caching \
   --kv-transfer-config '{"kv_connector":"OrbitKVConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.vllm"}'
 ```
+
+Local model artifacts are fingerprinted at startup. Hub models require an
+immutable `--revision` or a verified `ORBITKV_MODEL_FINGERPRINT`; see
+[state identity](docs/state-identity.md).
 
 For SGLang `0.5.20`, use the same manager and a SGLang environment containing
 the OrbitKV wheel:

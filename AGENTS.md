@@ -134,7 +134,7 @@ Do not default to running all of `python/tests`. Current project taste is `uv` +
 ### Benchmarks and Examples
 
 ```bash
-uv run python examples/basic_vllm.py
+uv run python examples/basic_vllm.py --model /path/to/immutable-model
 uv run python examples/bench_kv_cache.py --model /path/to/model --num-prompts 10
 ```
 

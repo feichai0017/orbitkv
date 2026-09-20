@@ -16,10 +16,10 @@ This script automates the following workflow:
 
 Usage:
     # Default: OrbitKV only (faster for development):
-    python examples/bench_kv_cache.py [--model MODEL] [--num-prompts N] [--input-len L] [--output-len O] [--tp-size TP]
+    python examples/bench_kv_cache.py --model MODEL [--num-prompts N] [--input-len L] [--output-len O] [--tp-size TP]
 
     # Full benchmark with LMCache comparison:
-    python examples/bench_kv_cache.py --with-lmcache [--model MODEL] [--num-prompts N] [--input-len L] [--output-len O] [--tp-size TP]
+    python examples/bench_kv_cache.py --with-lmcache --model MODEL [--num-prompts N] [--input-len L] [--output-len O] [--tp-size TP]
 """
 
 import argparse
@@ -185,7 +185,7 @@ class VLLMServer:
         self._wait_for_ready()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):  # noqa: U100
+    def __exit__(self, exc_type, exc_val, exc_tb):
         """Stop the vLLM server."""
         if self.process:
             server_label = (
@@ -382,7 +382,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="Qwen/Qwen3-0.6B",
+        required=True,
         help="Path or identifier for the model to benchmark (e.g. /work/models/Llama-3.1-8B)",
     )
     parser.add_argument(
