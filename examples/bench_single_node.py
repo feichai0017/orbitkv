@@ -259,7 +259,12 @@ def main() -> None:
     env.update(PYTHONHASHSEED="0", VLLM_LOG_STATS_INTERVAL="1")
     env.pop("VLLM_BATCH_INVARIANT", None)
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(ROOT / "python"), str(args.output), sysconfig.get_path("purelib")]
+        [str(ROOT / "python"), str(args.output)]
+        + [
+            path
+            for path in sys.path
+            if Path(path).name in {"site-packages", "dist-packages"}
+        ]
     )
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -300,47 +305,39 @@ def main() -> None:
             "[sglang.srt.plugins]\norbitkv = orbitkv.sglang.plugin:register\n"
         )
     elif args.backend == "lmcache":
-        if args.engine == "vllm":
-            cache_port, cache_http, cache_metrics = (
-                free_port(),
-                free_port(),
-                free_port(),
-            )
-            manager_url = f"http://127.0.0.1:{cache_http}"
-            manager_metrics_url = f"http://127.0.0.1:{cache_metrics}"
-            manager_health_path = "/healthcheck"
-            manager_command = [
-                sys.executable,
-                "-m",
-                "lmcache.cli.main",
-                "server",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(cache_port),
-                "--http-host",
-                "127.0.0.1",
-                "--http-port",
-                str(cache_http),
-                "--prometheus-port",
-                str(cache_metrics),
-                "--l1-size-gb",
-                str(args.host_gib),
-                "--eviction-policy",
-                "LRU",
-                "--chunk-size",
-                "64",
-            ]
-        else:
+        env["LMCACHE_TRACK_USAGE"] = "false"
+        cache_port, cache_http = free_port(), free_port()
+        manager_url = f"http://127.0.0.1:{cache_http}"
+        manager_metrics_url = manager_url
+        manager_health_path = "/healthcheck"
+        manager_command = [
+            sys.executable,
+            "-m",
+            "lmcache.cli.main",
+            "server",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(cache_port),
+            "--http-host",
+            "127.0.0.1",
+            "--http-port",
+            str(cache_http),
+            "--l1-size-gb",
+            str(args.host_gib),
+            "--eviction-policy",
+            "LRU",
+            "--chunk-size",
+            "64",
+        ]
+        if args.engine == "sglang":
             backend_configuration = {
                 "chunk_size": 64,
-                "local_cpu": True,
-                "max_local_cpu_size": args.host_gib,
-                "use_layerwise": True,
+                "mp_host": "127.0.0.1",
+                "mp_port": cache_port,
             }
             cache_config = args.output / "lmcache.json"
             cache_config.write_text(json.dumps(backend_configuration, indent=2))
-            env["LMCACHE_CONFIG_FILE"] = str(cache_config)
     elif args.backend == "flexkv":
         backend_configuration = {
             "FLEXKV_CPU_CACHE_GB": str(args.host_gib),
@@ -464,7 +461,7 @@ def main() -> None:
                 "--enable-unified-cache-external-linker",
             ]
         elif args.backend == "lmcache":
-            command += ["--enable-lmcache"]
+            command += ["--enable-lmcache", "--lmcache-config-file", str(cache_config)]
         elif args.backend == "flexkv":
             command += ["--enable-flexkv"]
 
@@ -480,6 +477,7 @@ def main() -> None:
         "manager_command": manager_command,
         "backend_configuration": backend_configuration,
         "library_path": env.get("LD_LIBRARY_PATH", ""),
+        "python_path": env["PYTHONPATH"],
         "git_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
