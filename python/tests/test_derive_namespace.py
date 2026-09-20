@@ -43,7 +43,12 @@ def _make_vllm_config(
     )
     return SimpleNamespace(
         model_config=model_config,
-        cache_config=SimpleNamespace(cache_dtype="fp8", prefix_caching_hash_algo="sha256"),
+        cache_config=SimpleNamespace(
+            cache_dtype="fp8",
+            prefix_caching_hash_algo="sha256",
+            kv_cache_layout="LBNHC",
+            compute_hash=lambda: "cache-config-v1",
+        ),
         lora_config=None,
         attention_config=SimpleNamespace(compute_hash=lambda: "attention-v1"),
         kernel_config=SimpleNamespace(compute_hash=lambda: "kernel-v1"),
@@ -77,6 +82,16 @@ def test_hma_enablement_isolates_namespace():
 
 def test_namespace_is_stable_for_same_config():
     assert _ns(pp_size=4, mla_layer_split=True) == _ns(pp_size=4, mla_layer_split=True)
+
+
+def test_resolved_byte_layout_and_cache_config_isolate_identical_geometry():
+    cfg = _make_vllm_config()
+    original = derive_namespace(cfg, tp_size=8)
+    cfg.cache_config.kv_cache_layout = "LBHNC"
+    assert derive_namespace(cfg, tp_size=8) != original
+    cfg.cache_config.kv_cache_layout = "LBNHC"
+    cfg.cache_config.compute_hash = lambda: "different-quantization-or-state-format"
+    assert derive_namespace(cfg, tp_size=8) != original
 
 
 def test_missing_additional_config_defaults_to_no_split():

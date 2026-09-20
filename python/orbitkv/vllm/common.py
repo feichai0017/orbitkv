@@ -590,6 +590,8 @@ def derive_namespace(
     }
     factors = {
         "dtype": str(model_config.dtype),
+        "kv_cache_layout": cache_config.kv_cache_layout,
+        "cache_config": cache_config.compute_hash(),
         "tp_size": tp_size,
         "pp_size": vllm_config.parallel_config.pipeline_parallel_size,
         "num_kv_heads": model_config.get_total_num_kv_heads(),

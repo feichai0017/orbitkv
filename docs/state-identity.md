@@ -18,7 +18,8 @@ participates in the identity even with an explicit artifact digest.
 
 The identity also includes the engine release, computation settings and cache
 representation. vLLM includes its HF configuration, quantization, attention and
-kernel configuration, hash algorithm/seed, dtype, block sizes and parallelism.
+kernel configuration, resolved KV dimension order, cache configuration hash,
+hash algorithm/seed, dtype, block sizes and parallelism.
 SGLang includes weight version, model overrides, quantization, attention
 backend, rank, dtype, page size and buffer shape/strides. The Cache Manager
 binds this identity to the actual registered storage slots, groups, segment
