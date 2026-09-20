@@ -165,15 +165,20 @@ class CacheManagerClient:
             session_epoch=self._client.session_epoch,
         )
 
-    def restore_completions_ready(self) -> bool:
+    def restore_completions_ready(self, *, timeout: float = 0.0) -> bool:
         now = time.monotonic()
-        if now - self._last_completion_poll >= self._FALLBACK_POLL_SECONDS:
+        fallback_remaining = self._FALLBACK_POLL_SECONDS - (now - self._last_completion_poll)
+        if fallback_remaining <= 0:
             self._last_completion_poll = now
             return True
 
         fd = self._client.notification_fd
-        readable, _, _ = select.select((fd,), (), (), 0)
+        readable, _, _ = select.select((fd,), (), (), min(timeout, fallback_remaining))
+        now = time.monotonic()
         if not readable:
+            if now - self._last_completion_poll >= self._FALLBACK_POLL_SECONDS:
+                self._last_completion_poll = now
+                return True
             return False
         try:
             os.read(fd, 8)
@@ -181,6 +186,18 @@ class CacheManagerClient:
             return False
         self._last_completion_poll = now
         return True
+
+    def wait_restore(self, handle: RestoreHandle, *, timeout: float) -> RestoreStatus:
+        """Wait for terminal state; a deadline never releases the destination pages."""
+        deadline = time.monotonic() + timeout
+        while True:
+            status = self.poll_restore(handle)
+            if status.done:
+                return status
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("OrbitKV GPU restore timed out")
+            self.restore_completions_ready(timeout=remaining)
 
     def poll_restore(self, handle: RestoreHandle) -> RestoreStatus:
         if not isinstance(handle, RestoreHandle):

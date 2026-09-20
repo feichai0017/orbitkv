@@ -7,7 +7,6 @@ import logging
 import os
 import queue
 import threading
-import time
 import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -357,16 +356,9 @@ class OrbitKVLinker(UnifiedCacheLinker):
                             [self._layer_names],
                             [(load.lease, [list(load.targets)])],
                         )
-                        deadline = time.monotonic() + 120
-                        while True:
-                            status = self.client.poll_restore(restore)
-                            if status.done:
-                                if not status.success:
-                                    raise RuntimeError(status.message)
-                                break
-                            if time.monotonic() >= deadline:
-                                raise TimeoutError("OrbitKV SGLang GPU restore timed out")
-                            time.sleep(0.01)
+                        status = self.client.wait_restore(restore, timeout=120)
+                        if not status.success:
+                            raise RuntimeError(status.message)
                     self.layer_done_counter.complete(index)
                     self._completed_loads.put([load.rid for load in pending])
                 except Exception as error:
