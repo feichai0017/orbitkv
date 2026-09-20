@@ -13,7 +13,7 @@ discovery so none of them becomes an accidental second source of KV truth.
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
 | administration | HTTP | no KV bytes | existing |
 
-Both framework adapters require `orbitkv-local` for hot data operations. Every
+Both framework adapters require `orbitkv-channel` for hot data operations. Every
 inference process must connect to a Cache Manager on its own host; a missing
 Unix socket fails fast.
 Registration, health, session watching, and unregistration use the
@@ -21,7 +21,7 @@ authenticated bootstrap UDS for both adapters.
 
 ## Local IPC
 
-`orbitkv-local` uses iceoryx2 `0.10.0`. The workspace minimum Rust version is
+`orbitkv-channel` uses iceoryx2 `0.10.0`. The workspace minimum Rust version is
 therefore `1.89`. Its first ABI is a fixed 64-byte message carrying:
 
 - protocol magic and ABI version;
@@ -136,7 +136,7 @@ replacement IPC library. The benchmark is sequential because the scheduler
 needs one answer before committing a recovery boundary.
 
 The iceoryx2 result can be reproduced with the two binaries documented in
-[`crates/orbitkv-local/README.md`](../crates/orbitkv-local/README.md).
+[`crates/orbitkv-channel/README.md`](../crates/orbitkv-channel/README.md).
 
 ## Current local validation
 

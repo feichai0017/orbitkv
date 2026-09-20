@@ -69,8 +69,8 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | --- | --- | --- |
 | Framework adapters | `python/orbitkv/vllm`, `python/orbitkv/sglang` | Framework-specific hashes, layout, and page-lifetime events |
 | Cache client | `python/orbitkv/client/data_plane.py`, `connection.py` | Query, publish, restore, release, lifecycle through the node-local connection |
-| State contract | `orbitkv-contract` | State identity, format compatibility, bundles, page-reference types |
-| Process IPC | `orbitkv-local`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
+| State contract | `orbitkv-state` | State identity, format compatibility, bundles, page-reference types |
+| Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
 | Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
 | Peer control | `orbitkv-proto`, `orbitkv-core/src/internode/p2p_service.rs` | Network authorization and transfer locks |
@@ -80,8 +80,8 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 Transport-specific names belong at physical boundaries. Cache operations and
 framework adapters use placement-neutral names and results. Moving a cache hit
 from DRAM to SSD or another node should not change `query_prefetch`, `save`,
-`start_restore`, or `release` for the caller. The `orbitkv-local` crate name is
-kept because it describes one IPC implementation, not a different cache API.
+`start_restore`, or `release` for the caller. The process channel implements
+the current iceoryx2/UDS connection without defining a separate cache API.
 
 ## Layering
 
@@ -91,7 +91,7 @@ block hashes / CUDA IPC     radix hashes / CUDA IPC
                              /
        python/orbitkv/client (cache API)
                     |
-    orbitkv-local / iceoryx2 + UDS
+    orbitkv-channel / iceoryx2 + UDS
                     |
               orbitkv-server/cache/operations
                            |
@@ -104,10 +104,10 @@ block hashes / CUDA IPC     radix hashes / CUDA IPC
 
      peer control: tonic / gRPC, only with --metaserver-addr
 
-    orbitkv-contract: shared state identity and recovery semantics
+    orbitkv-state: shared state identity and recovery semantics
 ```
 
-### `orbitkv-contract`
+### `orbitkv-state`
 
 This crate contains no framework or CUDA dependencies. Its first public types
 are:
@@ -132,7 +132,7 @@ blind cross-framework byte reuse.
 ### Framework adapters
 
 The adapters currently translate framework-native hashes and GPU layouts into
-the cache API. Full translation into `orbitkv-contract` is the intended next
+the cache API. Full translation into `orbitkv-state` is the intended next
 step:
 
 | Concern | vLLM | SGLang |

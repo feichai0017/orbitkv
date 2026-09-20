@@ -1,7 +1,7 @@
 [workspace]
 members = [
-  "crates/orbitkv-contract",
-  "crates/orbitkv-local",
+  "crates/orbitkv-state",
+  "crates/orbitkv-channel",
   "crates/orbitkv-common",
   "crates/orbitkv-core",
   "crates/orbitkv-proto",
@@ -26,8 +26,8 @@ codegen-units = 1
 
 [workspace.dependencies]
 # Workspace members
-orbitkv-contract = { path = "crates/orbitkv-contract" }
-orbitkv-local = { path = "crates/orbitkv-local" }
+orbitkv-state = { path = "crates/orbitkv-state" }
+orbitkv-channel = { path = "crates/orbitkv-channel" }
 orbitkv-common = { path = "crates/orbitkv-common" }
 orbitkv-core = { path = "crates/orbitkv-core", default-features = false }
 orbitkv-mooncake-sys = { path = "crates/orbitkv-mooncake-sys", default-features = false }

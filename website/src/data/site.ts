@@ -13,17 +13,17 @@ export const navigation = [
 
 export const layers = [
   {
-    name: "orbitkv-contract",
+    name: "orbitkv-state",
     role: "Name the state.",
     detail:
       "State identity, page, and recovery types; full validation is not yet in the cache hot path.",
-    path: "crates/orbitkv-contract/src/lib.rs",
+    path: "crates/orbitkv-state/src/lib.rs",
   },
   {
-    name: "orbitkv-local",
+    name: "orbitkv-channel",
     role: "Control the Cache Manager.",
     detail: "Versioned iceoryx2 requests plus UDS bootstrap and lifecycle for both adapters.",
-    path: "crates/orbitkv-local/src/lib.rs",
+    path: "crates/orbitkv-channel/src/lib.rs",
   },
   {
     name: "orbitkv-core",

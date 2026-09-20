@@ -353,10 +353,10 @@ mod tests {
     use crate::endpoint::ProcessEndpoint;
     use crate::proto::engine::{RegisterContextRequest, SessionRequest};
     use crate::registry::CudaTensorRegistry;
+    use orbitkv_channel::lifecycle::LifecycleCommand;
+    use orbitkv_channel::{CallOptions, LocalQueryClient, LocalQueryError, QueryBundleRequest};
     use orbitkv_common::hll::MultiWindowHllTracker;
     use orbitkv_core::StorageConfig;
-    use orbitkv_local::lifecycle::LifecycleCommand;
-    use orbitkv_local::{CallOptions, LocalQueryClient, LocalQueryError, QueryBundleRequest};
     use prost::Message;
     use std::time::Duration;
     use tokio::sync::Notify;

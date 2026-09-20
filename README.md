@@ -73,8 +73,8 @@ OrbitKV can claim a reusable prefix for them.
 
 | Path | Responsibility |
 | --- | --- |
-| [`orbitkv-contract`](crates/orbitkv-contract) | Framework-neutral state identity, format, page and recovery contracts |
-| [`orbitkv-local`](crates/orbitkv-local) | Versioned iceoryx2 and UDS process IPC implementation |
+| [`orbitkv-state`](crates/orbitkv-state) | Framework-neutral state identity, format, page and recovery contracts |
+| [`orbitkv-channel`](crates/orbitkv-channel) | Versioned iceoryx2 and UDS process IPC implementation |
 | [`orbitkv-core`](crates/orbitkv-core) | Content-addressed blocks, leases, eviction, SSD and remote tiers |
 | [`orbitkv-transfer`](crates/orbitkv-transfer) | Pinned upstream Mooncake Transfer Engine wrapper |
 | [`orbitkv-server`](crates/orbitkv-server) | Cache Manager crate: shared cache operations, process endpoint, peer control, health and metrics |

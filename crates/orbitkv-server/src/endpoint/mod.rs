@@ -11,15 +11,15 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use log::{error, info};
-use orbitkv_common::hll::MultiWindowHllTracker;
-use orbitkv_core::{EngineError, OrbitKVEngine};
-use orbitkv_local::{
+use orbitkv_channel::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
     DeferredResponse, LocalServer, PublishRequest as LocalPublishRequest, QueryBundleRequest,
     QueryBundleResponse, QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED,
     ReleaseRequest as LocalReleaseRequest, Response, RestoreCommand, RestoreResponse, RestoreState,
     StatusCode, TransportError,
 };
+use orbitkv_common::hll::MultiWindowHllTracker;
+use orbitkv_core::{EngineError, OrbitKVEngine};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
@@ -88,7 +88,7 @@ impl ProcessEndpoint {
         let thread_stop = Arc::clone(&stop);
         let thread_service = service_name.clone();
         let thread = thread::Builder::new()
-            .name("orbitkv-local-control".to_string())
+            .name("orbitkv-channel-control".to_string())
             .spawn(move || {
                 info!(
                     "Local control endpoint ready: service={} session_epoch={} bootstrap={}",

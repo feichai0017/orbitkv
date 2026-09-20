@@ -16,7 +16,7 @@ mooncake = ["dep:orbitkv-transfer"]
 tracing = ["fastrace"]
 
 [dependencies]
-orbitkv-contract.workspace = true
+orbitkv-state.workspace = true
 orbitkv-common.workspace = true
 cudarc.workspace = true
 log.workspace = true

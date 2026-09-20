@@ -45,7 +45,7 @@ use layout::KVCacheLayout;
 pub use lease::QueryLeaseId;
 pub use orbitkv_common::NumaNode;
 use orbitkv_common::{NumaTopology, group_hash};
-pub use orbitkv_contract::{
+pub use orbitkv_state::{
     BundleComponent, LocalPageRef, RecoveryContract, StateBundle, StateComponent, StateFormat,
     StateKey, TokenRange,
 };

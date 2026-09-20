@@ -1,10 +1,10 @@
 [package]
-name = "orbitkv-local"
+name = "orbitkv-channel"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Versioned local control transport for OrbitKV Cache Managers"
+description = "Versioned process channel between inference engines and OrbitKV Cache Managers"
 
 [lints]
 workspace = true
@@ -19,9 +19,9 @@ thiserror = "2"
 tempfile = "3"
 
 [[bin]]
-name = "orbitkv-local-echo"
+name = "orbitkv-channel-echo"
 path = "src/bin/echo.rs"
 
 [[bin]]
-name = "orbitkv-local-bench"
+name = "orbitkv-channel-bench"
 path = "src/bin/bench.rs"
