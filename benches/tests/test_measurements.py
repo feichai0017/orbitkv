@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchs.metrics import cache_source, metrics
-from benchs.report import collect_run
+from benches.metrics import cache_source, metrics
+from benches.report import collect_run
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
@@ -38,7 +38,7 @@ def test_source_requires_evidence(engine, device, external, bytes_loaded, expect
 
 def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
     monkeypatch.setattr(
-        "benchs.metrics.requests.get",
+        "benches.metrics.requests.get",
         lambda *a, **kw: SimpleNamespace(
             text='unused NaN\ncounter{worker="a"} 10\ncounter{worker="b"} 5\nidle +Inf\n',
             raise_for_status=lambda: None,

@@ -69,10 +69,10 @@ and retains GPU sources until every chunk finishes. The table uses the full
 rerun after this fix. The earlier failed-offload run and an SGLang CLI startup
 failure are preserved separately in the local benchmark directory.
 
-The [270 request measurements](../benchs/results/qwen3-8b-h20.csv) and
-[launch manifests and summaries](../benchs/results/qwen3-8b-h20.json) are checked in.
+The [270 request measurements](../benches/results/qwen3-8b-h20.csv) and
+[launch manifests and summaries](../benches/results/qwen3-8b-h20.json) are checked in.
 Complete JSONL responses, counter deltas, and engine/manager logs are retained
-under `/workspace/orbitkv/benchs/results/runs/orbitkv-qwen3-8b` on the measurement host.
+under `/workspace/orbitkv/benches/results/runs/orbitkv-qwen3-8b` on the measurement host.
 LMCache, FlexKV, and Mooncake Store are not included in this initial experiment.
 
 ## Completion-notification experiment
@@ -146,7 +146,7 @@ The first setup attempts exposed missing overlay dependencies, an incorrect
 LMCache metrics port, and an embedded-Python package search path issue. Those
 were corrected before the successful runs; failed attempts remain in the
 manifest archive. Source logs and complete responses are under
-`/workspace/orbitkv/benchs/results/runs/orbitkv-qwen3-8b-comparisons`.
+`/workspace/orbitkv/benches/results/runs/orbitkv-qwen3-8b-comparisons`.
 
 ### Existing copy-kernel experiment
 
@@ -165,9 +165,9 @@ submissions do not by themselves establish a faster transfer path. This result
 does not rule out the kernel on a different layout, fragmentation pattern,
 GPU, or host topology.
 
-The [360 follow-up request measurements](../benchs/results/qwen3-8b-comparisons.csv)
+The [360 follow-up request measurements](../benches/results/qwen3-8b-comparisons.csv)
 include the matched controls, LMCache, notification experiment, and kernel
-experiment. The [manifests, summaries, and failed attempts](../benchs/results/qwen3-8b-comparisons.json)
+experiment. The [manifests, summaries, and failed attempts](../benches/results/qwen3-8b-comparisons.json)
 pin launch commands, dependencies, and failure reasons. The original 270
 measurements remain a separate dataset.
 
@@ -187,10 +187,10 @@ install it into the two engine release environments. From the repository root:
 ```bash
 for engine in vllm sglang; do
   for backend in native cpu orbitkv; do
-    ".venv/${engine}-release/bin/python" -m benchs.single_node \
+    ".venv/${engine}-release/bin/python" -m benches.single_node \
       --engine "$engine" --backend "$backend" \
       --model /workspace/models/qwen3-8b \
-      --output "benchs/results/runs/qwen3-8b/${engine}-${backend}"
+      --output "benches/results/runs/qwen3-8b/${engine}-${backend}"
   done
 done
 ```
@@ -254,7 +254,7 @@ require repeated experiments, additional workloads, and capacity sweeps.
 
 ## Single-node optimization order
 
-Benchmark code and committed results are maintained in [`benchs/`](../benchs/README.md).
+Benchmark code and committed results are maintained in [`benches/`](../benches/README.md).
 The SGLang adapter now submits up to eight independent restores before waiting
 for their completions. This bounds its contribution to the manager's operation
 queue and avoids a Python submission gap after every completed request. Each

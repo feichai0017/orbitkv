@@ -25,6 +25,11 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.metrics import (
+    fetch_orbitkv_metrics,
+    fetch_orbitkv_rpc_failures,
+    fetch_vllm_prefix_cache_hits,
+)
 from tests.support.vllm_helpers import (
     CacheManager,
     VLLMServer,
@@ -32,9 +37,6 @@ from tests.support.vllm_helpers import (
     adapt_prompt_for_hybrid_cache,
     call_openai_api,
     e2e_max_tokens,
-    fetch_orbitkv_metrics,
-    fetch_orbitkv_rpc_failures,
-    fetch_vllm_prefix_cache_hits,
 )
 
 # ---------------------------------------------------------------------------

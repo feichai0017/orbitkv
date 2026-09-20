@@ -1,7 +1,7 @@
 """Measure cold prefill, HBM hits, and external-cache reuse after HBM pressure.
 
 Run from the repository root with the selected engine's Python environment:
-python -m benchs.single_node --engine sglang --backend orbitkv --model /path/to/model
+python -m benches.single_node --engine sglang --backend orbitkv --model /path/to/model
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        help="Empty result directory (default: benchs/results/runs/<timestamp>-<engine>-<backend>)",
+        help="Empty result directory (default: benches/results/runs/<timestamp>-<engine>-<backend>)",
     )
     parser.add_argument("--lengths", type=int, nargs="+", default=[1024, 4096, 8192])
     parser.add_argument("--repeats", type=int, default=5)
@@ -46,7 +46,7 @@ def main() -> None:
     args.output = (
         args.output
         or ROOT
-        / "benchs/results/runs"
+        / "benches/results/runs"
         / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}-{args.engine}-{args.backend}"
     ).resolve()
     if args.orbitkv_transfer_backend and (args.engine != "vllm" or args.backend != "orbitkv"):

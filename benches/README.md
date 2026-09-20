@@ -29,15 +29,15 @@ its tokenizer and GPU runtime. LMCache and FlexKV are comparison dependencies,
 not OrbitKV package dependencies.
 
 ```bash
-.venv/vllm-release/bin/python -m benchs.single_node \
+.venv/vllm-release/bin/python -m benches.single_node \
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b
 
-.venv/sglang-release/bin/python -m benchs.single_node \
+.venv/sglang-release/bin/python -m benches.single_node \
   --engine sglang --backend orbitkv --model /workspace/models/qwen3-8b
 ```
 
 By default, each run gets a new timestamped directory below `results/runs/`.
-Use `--output benchs/results/runs/<name>` for an explicit empty directory. The
+Use `--output benches/results/runs/<name>` for an explicit empty directory. The
 harness owns the engine and the OrbitKV/LMCache process; do not start other GPU
 workloads during measurement. An OrbitKV source run uses the staged Cache Manager
 binary in `python/orbitkv/` and the Python adapters from this checkout.
@@ -57,9 +57,9 @@ it does not establish concurrent goodput or production tail latency.
 ## Report existing runs
 
 ```bash
-python -m benchs.report \
-  benchs/results/runs/<cpu-run> benchs/results/runs/<orbitkv-run> \
-  --output benchs/results/runs/<report-name>
+python -m benches.report \
+  benches/results/runs/<cpu-run> benches/results/runs/<orbitkv-run> \
+  --output benches/results/runs/<report-name>
 ```
 
 This needs only `requests`, not torch, either inference engine, or the native
@@ -72,13 +72,13 @@ keep raw logs and dataset downloads in the ignored `results/runs/` directory.
 
 ```bash
 BASE_URL=http://127.0.0.1:8000 MODEL=/path/to/model LABEL=orbitkv \
-  bash benchs/serving.sh
+  bash benches/serving.sh
 
 git submodule update --init third-party/vllm
-.venv/vllm-release/bin/python -m benchs.sharegpt \
+.venv/vllm-release/bin/python -m benches.sharegpt \
   --model /path/to/model --dataset-path /path/to/sharegpt.json
 
-uv run --isolated --no-project --with pytest --with requests pytest benchs/tests
+uv run --isolated --no-project --with pytest --with requests pytest benches/tests
 ```
 
 The ShareGPT workload requires the dependencies listed by the pinned vLLM

@@ -162,7 +162,7 @@ For Qwen3-8B latency measurements against native HBM caching, CPU offload,
 SGLang HiCache, and LMCache, plus FlexKV compatibility results, see the
 [single-node benchmark](docs/single-node-performance.md).
 
-Benchmark workloads, harness tests, and recorded results: [`benchs/`](benchs/README.md).
+Benchmark workloads, harness tests, and recorded results: [`benches/`](benches/README.md).
 
 OrbitKV's current workspace is Apache-2.0 licensed. Earlier experiments remain
 available in repository history but are not part of the current build.

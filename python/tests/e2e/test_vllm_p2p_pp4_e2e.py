@@ -36,8 +36,9 @@ from typing import Any
 import pytest
 import requests
 
+from tests.support.cache_manager import find_available_port
+from tests.support.metrics import fetch_orbitkv_metrics
 from tests.support.paths import PYTHON_ROOT, REPO_ROOT
-from tests.support.vllm_helpers import fetch_orbitkv_metrics, find_available_port
 
 PP_SIZE = 4
 TP_SIZE = 1

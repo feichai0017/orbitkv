@@ -15,12 +15,8 @@ from pathlib import Path
 import pytest
 import requests
 
-from tests.support.vllm_helpers import (
-    CacheManager,
-    VLLMServer,
-    call_openai_api,
-    fetch_orbitkv_metrics,
-)
+from tests.support.metrics import fetch_orbitkv_metrics
+from tests.support.vllm_helpers import CacheManager, VLLMServer, call_openai_api
 
 pytestmark = [pytest.mark.e2e, pytest.mark.stress, pytest.mark.gpu]
 

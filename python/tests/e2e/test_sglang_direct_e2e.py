@@ -14,8 +14,8 @@ import pytest
 import requests
 
 from tests.support.cache_manager import find_available_port
+from tests.support.metrics import fetch_orbitkv_metrics
 from tests.support.paths import PYTHON_ROOT
-from tests.support.vllm_helpers import fetch_orbitkv_metrics
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 

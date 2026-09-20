@@ -12,7 +12,7 @@
 - `conftest.py`: shared options and the Cache Manager fixture used by both engine
   E2E and channel integration tests; `integration/conftest.py` owns GPU fixtures.
 
-Performance workloads and their results live in [`benchs/`](../../benchs/README.md),
+Performance workloads and their results live in [`benches/`](../../benches/README.md),
 with their own CPU-only harness tests. They are not correctness-test fixtures.
 
 ## What To Run

@@ -321,7 +321,7 @@ uv run --isolated --no-project --with pytest --with numpy --with requests pytest
 ```
 
 Performance workloads and measurements live at the repository root under
-[`benchs/`](../benchs/README.md), with separate CPU-only harness tests. Run them
+[`benches/`](../benches/README.md), with separate CPU-only harness tests. Run them
 using the selected engine environment and preserve the run's manifest with its
 measurements.
 

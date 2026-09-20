@@ -173,7 +173,7 @@ jobs:
           uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest
       - name: Check benchmark measurements and reporting
         run: |
-          uv run --isolated --no-project --with pytest --with 'requests>=2.26.0' pytest benchs/tests
+          uv run --isolated --no-project --with pytest --with 'requests>=2.26.0' pytest benches/tests
 
   cargo-check-variant:
     name: cargo check (${{ matrix.cuda-variant }})

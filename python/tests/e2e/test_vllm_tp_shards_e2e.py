@@ -10,14 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.metrics import fetch_orbitkv_metrics, fetch_orbitkv_rpc_failures
 from tests.support.paths import REPO_ROOT
-from tests.support.vllm_helpers import (
-    CacheManager,
-    VLLMServer,
-    call_openai_api,
-    fetch_orbitkv_metrics,
-    fetch_orbitkv_rpc_failures,
-)
+from tests.support.vllm_helpers import CacheManager, VLLMServer, call_openai_api
 
 PROMPT = (
     "Distributed inference splits one tensor-parallel model replica across GPUs. "

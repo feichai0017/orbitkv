@@ -3,8 +3,8 @@
 Benchmark vLLM server using ShareGPT dataset with multi-turn conversations.
 
 Usage:
-    python -m benchs.sharegpt --model meta-llama/Llama-3.1-8B
-    python -m benchs.sharegpt --model Qwen/Qwen2.5-7B --num-conversations 50
+    python -m benches.sharegpt --model meta-llama/Llama-3.1-8B
+    python -m benches.sharegpt --model Qwen/Qwen2.5-7B --num-conversations 50
 """
 
 import argparse
@@ -256,8 +256,8 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="benchs/results/runs",
-        help="Directory to save benchmark results (default: benchs/results/runs)",
+        default="benches/results/runs",
+        help="Directory to save benchmark results (default: benches/results/runs)",
     )
 
     args = parser.parse_args()

@@ -126,7 +126,7 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]  # Line length handled by formatter
 
 [tool.ruff.lint.isort]
-known-first-party = ["orbitkv", "benchs", "tests"]
+known-first-party = ["orbitkv", "benches", "tests"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -136,7 +136,7 @@ ignore_missing_imports = true
 
 [tool.isort]
 profile = "black"
-known_first_party = ["orbitkv", "benchs", "tests"]
+known_first_party = ["orbitkv", "benches", "tests"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"

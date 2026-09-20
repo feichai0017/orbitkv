@@ -13,7 +13,7 @@ python/uv.lock
 node_modules/
 dist/
 .astro/
-benchs/results/runs/
+benches/results/runs/
 examples/pd_logs/
 python/tests/**/*.log
 

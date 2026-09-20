@@ -57,7 +57,7 @@ def check_wheel(path: Path, variant: str) -> None:
             "orbitkv/nixl_connector/",
             "orbitkv/vllm/nixl/",
             "tests/",
-            "benchs/",
+            "benches/",
         )
         unexpected = (removed_files & files) | {
             name for name in files if name.startswith(removed_prefixes)

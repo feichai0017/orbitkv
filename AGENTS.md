@@ -31,7 +31,7 @@ orbitkv/
 ├── python/                       # PyO3 package and framework adapters
 ├── third-party/                  # Pinned Mooncake, vLLM, and SGLang sources
 ├── examples/                     # Runnable usage examples
-├── benchs/                       # Performance workloads, reports, and results
+├── benches/                       # Performance workloads, reports, and results
 ├── docs/                         # Architecture and roadmap
 ├── scripts/                      # Project helper scripts
 └── prek.toml                     # Local check configuration
@@ -136,7 +136,7 @@ Do not default to running all of `python/tests`. Current project taste is `uv` +
 
 ```bash
 uv run python examples/basic_vllm.py --model /path/to/immutable-model
-.venv/vllm-release/bin/python -m benchs.single_node --engine vllm --backend orbitkv --model /path/to/model
+.venv/vllm-release/bin/python -m benches.single_node --engine vllm --backend orbitkv --model /path/to/model
 ```
 
 ## Run Services
