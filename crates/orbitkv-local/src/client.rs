@@ -91,15 +91,6 @@ impl LocalQueryClient {
         command: LifecycleCommand,
         payload: &[u8],
     ) -> Result<(), LocalQueryError> {
-        self.lifecycle_bytes(command, payload).map(|_| ())
-    }
-
-    /// Exchange one bounded lifecycle frame; page operations return binary data.
-    pub fn lifecycle_bytes(
-        &self,
-        command: LifecycleCommand,
-        payload: &[u8],
-    ) -> Result<Vec<u8>, LocalQueryError> {
         let _guard = self
             .lifecycle_lock
             .lock()
@@ -116,11 +107,8 @@ impl LocalQueryClient {
             .encode()?;
             let mut stream = self.bootstrap.stream();
             let timeout = match command {
-                LifecycleCommand::Register
-                | LifecycleCommand::Unregister
-                | LifecycleCommand::PagePut => self.options.timeout.max(Duration::from_secs(120)),
-                LifecycleCommand::PageGet | LifecycleCommand::PageExists => {
-                    self.options.timeout.max(Duration::from_secs(45))
+                LifecycleCommand::Register | LifecycleCommand::Unregister => {
+                    self.options.timeout.max(Duration::from_secs(120))
                 }
                 _ => self.options.timeout,
             };
@@ -141,7 +129,11 @@ impl LocalQueryClient {
             Ok((header.code, body))
         };
         match exchange() {
-            Ok((0, body)) => Ok(body),
+            Ok((0, body)) if body.is_empty() => Ok(()),
+            Ok((0, _)) => Err(LocalQueryError::Lifecycle {
+                code: 0,
+                message: "unexpected lifecycle response body".to_string(),
+            }),
             Ok((code, message)) => Err(LocalQueryError::Lifecycle {
                 code,
                 message: String::from_utf8_lossy(&message).into_owned(),

@@ -24,7 +24,7 @@ from types import TracebackType
 from typing import Any, Protocol
 from urllib.error import HTTPError
 
-from orbitkv.pd_connector.kv_params import ConsumerKvParams
+from orbitkv.vllm.pd.kv_params import ConsumerKvParams
 
 logger = logging.getLogger("orbitkv.pd_proxy")
 

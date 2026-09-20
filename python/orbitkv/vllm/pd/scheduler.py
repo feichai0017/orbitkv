@@ -7,13 +7,13 @@ from dataclasses import replace
 from typing import Any
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.pd_connector.kv_params import (
+from orbitkv.vllm.pd.kv_params import (
     is_consumer,
     is_producer,
     parse_consumer,
     parse_producer,
 )
-from orbitkv.pd_connector.metadata import (
+from orbitkv.vllm.pd.metadata import (
     RELEASE_CONSUMER_ABORT,
     RELEASE_PRODUCER_ABORT,
     RELEASE_PRODUCER_FINISHED,

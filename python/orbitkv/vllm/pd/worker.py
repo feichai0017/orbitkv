@@ -11,9 +11,9 @@ from vllm.distributed.parallel_state import (
 )
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.pd_connector.decode_worker import DecodeHandler
-from orbitkv.pd_connector.layout import KvCacheLayout, layout_from_tensor
-from orbitkv.pd_connector.metadata import (
+from orbitkv.vllm.pd.decode_worker import DecodeHandler
+from orbitkv.vllm.pd.layout import KvCacheLayout, layout_from_tensor
+from orbitkv.vllm.pd.metadata import (
     RELEASE_CONSUMER_ABORT,
     RELEASE_PRODUCER_PREEMPTED,
     BlockIds,
@@ -21,9 +21,9 @@ from orbitkv.pd_connector.metadata import (
     PdConnectorMetadata,
     PdWorkerMetadata,
 )
-from orbitkv.pd_connector.metrics import PdKVConnectorStats, PdMetricsTracker
-from orbitkv.pd_connector.mooncake import MooncakePort, build_mooncake_port
-from orbitkv.pd_connector.prefill_worker import PrefillHandler
+from orbitkv.vllm.pd.metrics import PdKVConnectorStats, PdMetricsTracker
+from orbitkv.vllm.pd.mooncake import MooncakePort, build_mooncake_port
+from orbitkv.vllm.pd.prefill_worker import PrefillHandler
 
 logger = get_connector_logger()
 

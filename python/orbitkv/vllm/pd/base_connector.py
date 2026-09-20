@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from orbitkv.pd_connector.metrics import PdKVConnectorStats, PdMetricsTracker, PdPromMetrics
-from orbitkv.pd_connector.worker import model_uses_mla
+from orbitkv.vllm.pd.metrics import PdKVConnectorStats, PdMetricsTracker, PdPromMetrics
+from orbitkv.vllm.pd.worker import model_uses_mla
 
 
 def assert_supported_config(vllm_config: Any) -> None:

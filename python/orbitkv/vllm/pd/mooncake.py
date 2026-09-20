@@ -10,12 +10,12 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.pd_connector.layout import (
+from orbitkv.vllm.pd.layout import (
     BlockRegionSlice,
     LayerBlockSlices,
     block_slices_bytes,
 )
-from orbitkv.pd_connector.metadata import (
+from orbitkv.vllm.pd.metadata import (
     LayerRemoteLayout,
     PdHandshake,
     layer_layout_from_dict,

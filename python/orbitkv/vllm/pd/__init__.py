@@ -10,17 +10,17 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     SupportsHMA,
 )
 
-from orbitkv.pd_connector.base_connector import (
+from orbitkv.vllm.pd.base_connector import (
     PdConnectorClassMixin,
     assert_supported_config,
 )
-from orbitkv.pd_connector.metadata import PdConnectorMetadata
-from orbitkv.pd_connector.metrics import PdMetricsTracker
-from orbitkv.pd_connector.scheduler import (
+from orbitkv.vllm.pd.metadata import PdConnectorMetadata
+from orbitkv.vllm.pd.metrics import PdMetricsTracker
+from orbitkv.vllm.pd.scheduler import (
     PdDecodeSchedulerConnector,
     PdPrefillSchedulerConnector,
 )
-from orbitkv.pd_connector.worker import (
+from orbitkv.vllm.pd.worker import (
     PdDecodeWorkerConnector,
     PdPrefillWorkerConnector,
 )

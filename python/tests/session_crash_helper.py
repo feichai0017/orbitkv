@@ -10,13 +10,12 @@ Run as: python session_crash_helper.py <endpoint> <instance_id> <ready_file>
 from __future__ import annotations
 
 import importlib
-import pickle
 import sys
 import time
 
 import torch
 
-from orbitkv.ipc_wrapper import CudaIPCWrapper
+from orbitkv.client.gpu import serialize_gpu_buffer
 
 
 def main() -> int:
@@ -27,7 +26,7 @@ def main() -> int:
 
     device = torch.device("cuda:0")
     kv = torch.rand((2, 16, 16, 8, 128), dtype=torch.bfloat16, device=device).contiguous()
-    wrapper_bytes = pickle.dumps(CudaIPCWrapper(kv))
+    wrapper_bytes = serialize_gpu_buffer(kv)
 
     shape = tuple(kv.shape)
     stride = tuple(kv.stride())

@@ -37,6 +37,13 @@ class CacheConnections:
                 close()
 
 
+def connect_data_client(
+    bootstrap_socket: str, *, timeout_ms: int = 5_000, spin_iterations: int = 64
+) -> LocalDataClient:
+    """Open the node-local data path used by every inference adapter."""
+    return LocalDataClient(bootstrap_socket, timeout_ms=timeout_ms, spin_iterations=spin_iterations)
+
+
 def connect_cache(
     *,
     endpoints: tuple[str, ...],
@@ -51,11 +58,6 @@ def connect_cache(
     """
     if not endpoints or not 0 <= shard_index < len(endpoints):
         raise ValueError("cache shard index is outside the configured endpoints")
-    local_data = get_option("orbitkv.local_data", "auto")
-    if local_data is False:
-        raise ValueError("orbitkv.local_data=false is removed; use the node-local Cache Manager")
-    if local_data != "auto" and local_data is not True:
-        raise ValueError("orbitkv.local_data must be true or 'auto'")
     bootstrap_socket = get_option("orbitkv.local_bootstrap_socket", None)
     shard_sockets = get_option("orbitkv.tp_shard_bootstrap_sockets", None)
     selection_endpoints = endpoints
@@ -90,7 +92,7 @@ def connect_cache(
     try:
         for socket in selected_sockets:
             opened.append(
-                LocalDataClient(socket, timeout_ms=timeout_ms, spin_iterations=spin_iterations)
+                connect_data_client(socket, timeout_ms=timeout_ms, spin_iterations=spin_iterations)
             )
     except Exception:
         for client in opened:

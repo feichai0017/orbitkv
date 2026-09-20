@@ -8,7 +8,6 @@ import contextlib
 import hashlib
 import logging
 import os
-import pickle
 import signal
 import socket
 import subprocess
@@ -26,11 +25,11 @@ import pytest
 if TYPE_CHECKING:
     import torch
 
-# Import CudaIPCWrapper for IPC communication
+# Import the GPU registration helper for integration tests.
 try:
-    from orbitkv.ipc_wrapper import CudaIPCWrapper
+    from orbitkv.client.gpu import serialize_gpu_buffer
 except ImportError:
-    CudaIPCWrapper = None
+    serialize_gpu_buffer = None
 
 logger = logging.getLogger(__name__)
 
@@ -222,8 +221,8 @@ class ClientContext:
 
     def register_kv_caches(self) -> None:
         """Register KV cache tensors with the engine server (like WorkerConnector.register_kv_caches)."""
-        if CudaIPCWrapper is None:
-            raise RuntimeError("CudaIPCWrapper not available")
+        if serialize_gpu_buffer is None:
+            raise RuntimeError("GPU registration helper not available")
 
         if self._registered:
             return
@@ -240,8 +239,7 @@ class ClientContext:
         for layer_name, kv_cache in kv_caches.items():
             if not kv_cache.is_contiguous():
                 kv_cache = kv_cache.contiguous()
-            wrapper = CudaIPCWrapper(kv_cache)
-            wrapper_bytes = pickle.dumps(wrapper)
+            wrapper_bytes = serialize_gpu_buffer(kv_cache)
 
             shape = tuple(kv_cache.shape)
             stride = tuple(kv_cache.stride())

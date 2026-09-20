@@ -14,9 +14,9 @@ import time
 from typing import Any
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.pd_connector.async_runner import InflightTaskRunner
-from orbitkv.pd_connector.mooncake import MooncakePort
-from orbitkv.pd_connector.prefill_tasks import _LayerPushTask, _PushFinalizeTask
+from orbitkv.vllm.pd.async_runner import InflightTaskRunner
+from orbitkv.vllm.pd.mooncake import MooncakePort
+from orbitkv.vllm.pd.prefill_tasks import _LayerPushTask, _PushFinalizeTask
 
 logger = get_connector_logger()
 

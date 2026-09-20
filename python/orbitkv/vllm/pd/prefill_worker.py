@@ -8,22 +8,22 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.pd_connector.chunk_tracker import ChunkTracker
-from orbitkv.pd_connector.config import extra_config_value
-from orbitkv.pd_connector.layout import (
+from orbitkv.vllm.pd.chunk_tracker import ChunkTracker
+from orbitkv.vllm.pd.config import extra_config_value
+from orbitkv.vllm.pd.layout import (
     BlockRegionSlice,
     FlashAttnHndLayout,
     LayerBlockSlices,
     block_ranges_for_remote_write,
     block_slices_bytes,
 )
-from orbitkv.pd_connector.layout_mapping import (
+from orbitkv.vllm.pd.layout_mapping import (
     HeadSlice,
     PushLayoutPlan,
     PushTargetPlan,
     build_push_layout_plan,
 )
-from orbitkv.pd_connector.metadata import (
+from orbitkv.vllm.pd.metadata import (
     RELEASE_CONSUMER_ABORT,
     RELEASE_PRODUCER_ABORT,
     RELEASE_PRODUCER_PREEMPTED,
@@ -36,7 +36,7 @@ from orbitkv.pd_connector.metadata import (
 # Re-exported so PrefillHandler resolves these as module globals (tests
 # monkeypatch prefill_worker_mod._AsyncLayerPushSender / _LayerPushTask / etc.)
 # and so existing import sites keep working after the split.
-from orbitkv.pd_connector.prefill_async import (  # noqa: F401
+from orbitkv.vllm.pd.prefill_async import (  # noqa: F401
     _AsyncLayerPushSender,
     _AsyncPushFinalizer,
     _elapsed_ms,
@@ -46,7 +46,7 @@ from orbitkv.pd_connector.prefill_async import (  # noqa: F401
     _transfer_link_gbps,
     _transfer_write_stats,
 )
-from orbitkv.pd_connector.prefill_tasks import (  # noqa: F401
+from orbitkv.vllm.pd.prefill_tasks import (  # noqa: F401
     _LayerPushTask,
     _PreparedLayerPush,
     _PreparedTargetPush,
@@ -56,7 +56,7 @@ from orbitkv.pd_connector.prefill_tasks import (  # noqa: F401
 )
 
 if TYPE_CHECKING:
-    from orbitkv.pd_connector.worker import PdWorkerBase
+    from orbitkv.vllm.pd.worker import PdWorkerBase
 
 logger = get_connector_logger()
 

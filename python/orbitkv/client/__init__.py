@@ -10,7 +10,7 @@ from orbitkv import (
     QueryLoading,
     QueryReady,
 )
-from orbitkv.client.connection import CacheConnections, connect_cache
+from orbitkv.client.connection import CacheConnections, connect_cache, connect_data_client
 from orbitkv.client.data_plane import (
     CacheDataClient,
     LocalDataClient,
@@ -33,4 +33,5 @@ __all__ = [
     "RestoreStatus",
     "resolve_local_bootstrap_sockets",
     "connect_cache",
+    "connect_data_client",
 ]

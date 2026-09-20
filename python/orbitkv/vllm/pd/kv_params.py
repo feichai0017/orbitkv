@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from orbitkv.pd_connector.metadata import (
+from orbitkv.vllm.pd.metadata import (
     PdHandshake,
     handshake_to_compact_dict,
     handshakes_from_dicts,

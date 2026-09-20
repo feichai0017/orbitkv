@@ -13,7 +13,7 @@ and a passing gate; design text alone does not close an item.
 - [x] Name the bundle's current component-presence check honestly; it is not
   yet a restorable-state proof.
 - [x] Move the canonical vLLM package to `orbitkv.vllm`.
-- [x] Preserve `orbitkv.connector` as a compatibility alias.
+- [x] Group the vLLM cache connector and P/D adapter under `orbitkv.vllm`.
 - [x] Add `orbitkv.client` and `orbitkv.sglang` package boundaries.
 - [x] Add `orbitkv-local` with a versioned 64-byte iceoryx2 request/response ABI.
 - [x] Add a real two-process local-control test.
@@ -22,38 +22,27 @@ and a passing gate; design text alone does not close an item.
 - [x] Replace the copied native RDMA stacks with a pinned stable Mooncake
   Transfer Engine sys crate and one clean transfer API.
 - [ ] Add Python representations/serialization for `orbitkv-contract`.
-- [x] Add compatibility tests for `orbitkv.connector` and `orbitkv.vllm`.
 - [x] Run the full M0 validation matrix and record results in the commit.
 
-## M1 — SGLang HiCache backend
+## M1 — SGLang direct GPU-page linker
 
-- [x] Implement `OrbitKVHiCacheStorage` using bounded UDS host-page transfers.
-- [x] Document the SGLang dynamic-backend config.
-- [x] Require `allocator=shm` for SGLang's HiCache host pool.
+- [x] Register SGLang full-attention MHA/MLA GPU buffers through CUDA IPC.
+- [x] Document SGLang direct-linker configuration and supported layouts.
 - [x] Add UDS bootstrap for the memfd-backed descriptor arena.
-- [ ] Add UDS registration for framework-owned shared host page regions.
 - [x] Bind `orbitkv-local` QueryBundle to the shared core query path.
 - [x] Bind `orbitkv-local` Release to the shared core lease path.
 - [x] Bind `orbitkv-local` Publish to the shared core save path.
 - [x] Bind `orbitkv-local` Restore to core oneshot completion and eventfd wakeup.
 - [x] Add Python bindings for the iceoryx2 local client.
-- [x] Map SGLang `PoolName` values to `StateComponent`.
-- [ ] Map `ALL_PAGES` and `TRAILING_PAGES` into recovery contracts.
-- [x] Return SGLang `PoolTransferResult.restorable_prefix_pages` for hybrid
-  checkpoints; a largest-hit count alone cannot express legal trailing pages.
-- [x] Implement `batch_exists_v2` with all-pages and trailing-pages policies.
-- [ ] Implement zero-copy `batch_get_v2` and `batch_set_v2`.
-- [ ] Add fail-open behavior for non-hybrid requests.
-- [ ] Add explicit fail-closed behavior where incomplete hybrid state cannot be
-  recomputed safely.
+- [x] Reject SGLang hybrid, draft, DSA, and auxiliary GPU state at startup
+  until their complete recovery contracts are implemented.
 - [ ] Add cold-miss, partial-prefix, warm-hit, cancellation, and restart tests.
-- [x] Run one real SGLang model E2E on H20, including restore after L1/L2 flush.
+- [x] Run one real SGLang model E2E, including restore after radix-cache flush.
 - [x] Register a SGLang RadixCache plugin that transfers full-attention GPU KV
   through CUDA IPC and iceoryx2, with a real Cache Manager load after SGLang
   process restart and cold-inference output comparison.
 - [ ] Add direct GPU recovery contracts for hybrid SWA/Mamba, DSA, draft-model,
-  and auxiliary state; retain the HiCache backend where it has a complete
-  recovery contract until then.
+  and auxiliary state.
 
 ## M2 — common bundle and local IPC
 
@@ -63,12 +52,10 @@ and a passing gate; design text alone does not close an item.
 - [ ] Move hybrid-boundary reconciliation out of `orbitkv.vllm`.
 - [ ] Define framework-neutral region registration RPCs.
 - [x] Pass the descriptor-arena memfd and notification eventfd over UDS.
-- [ ] Pass framework-owned shared-page file descriptors over UDS.
 - [x] Add bounded local restore operations that replace per-load `PyLoadState`
   for `LocalQueryClient`.
 - [x] Implement direct SGLang full-attention GPU restore through the local
-  Cache Manager endpoint; the HiCache L3 compatibility path still uses UDS
-  host-page payloads.
+  Cache Manager endpoint.
 - [x] Switch vLLM Query/Publish/Restore/Release to the local data client.
 - [x] Move registration, health, session watching, and unregister to UDS;
   remove the inference gRPC endpoint.
@@ -81,9 +68,8 @@ and a passing gate; design text alone does not close an item.
 - [x] Remove per-load `PyLoadState` from the vLLM path.
 - [x] Keep local control messages descriptor-only; prohibit KV payload bytes in
   UDS or iceoryx2 messages.
-- [x] Move vLLM hot local control off gRPC automatically when the local socket
-  is available; retain explicit gRPC fallback.
-- [x] Qualify the revised vLLM correctness E2E with `--orbitkv-local-data` on a
+- [x] Require UDS and iceoryx2 for local inference control.
+- [x] Qualify the revised vLLM correctness E2E on a
   GPU/vLLM host. It compares the same prompt/reuse plan against native prefix
   caching, checks the native prefix hit, and requires `long_warm` to load KV
   bytes after process restart;
@@ -108,8 +94,7 @@ and a passing gate; design text alone does not close an item.
 
 - [ ] Normalize vLLM and SGLang KV events.
 - [ ] Build a worker/tier replica catalog with sequence recovery.
-- [ ] Delegate cross-host TP query fan-out to node-local agents before removing
-  compatibility Query/Save/Load gRPC methods from the network service.
+- [ ] Delegate cross-host TP query fan-out to node-local Cache Managers.
 - [ ] Reproduce Dynamo's weighted-overlap selector.
 - [ ] Add measured HBM/DRAM/SSD/RDMA restore cost.
 - [ ] Add recompute and queue-delay estimates.
@@ -152,4 +137,4 @@ and a passing gate; design text alone does not close an item.
   and multi-node contracts are stable; retain one source workspace.
 - [ ] Keep heavy GPU/RDMA gates explicitly marked.
 - [ ] Preserve license and upstream provenance requirements.
-- [ ] Publish SGLang support only after the M1 E2E gate.
+- [ ] Keep SGLang support claims aligned with the direct-linker E2E gate.

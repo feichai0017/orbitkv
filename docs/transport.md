@@ -9,7 +9,7 @@ discovery so none of them becomes an accidental second source of KV truth.
 
 | Boundary | Control | Payload | Status |
 | --- | --- | --- | --- |
-| inference process to local Cache Manager | iceoryx2 request/response and UDS lifecycle | CUDA IPC or shared host pages | integrated |
+| inference process to local Cache Manager | iceoryx2 request/response and UDS lifecycle | registered CUDA IPC pages | integrated |
 | local bootstrap and region registration | Unix socket with credential and file-descriptor passing | memfd handles only | descriptor bootstrap implemented; page-region registration planned |
 | Cache Manager to Cache Manager | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | stable Mooncake runtime integrated |
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |

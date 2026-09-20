@@ -241,11 +241,11 @@ def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypa
 
     import orbitkv.vllm as vllm
 
-    attention = FullAttentionSpec()
-    attention.block_size = VBS
-    recurrent = MambaSpec()
-    recurrent.block_size = VBS
-    recurrent.mamba_cache_mode = "align"
+    attention = object.__new__(FullAttentionSpec)
+    object.__setattr__(attention, "block_size", VBS)
+    recurrent = object.__new__(MambaSpec)
+    object.__setattr__(recurrent, "block_size", VBS)
+    object.__setattr__(recurrent, "mamba_cache_mode", "align")
     groups = (
         SimpleNamespace(layer_names=("attention",), kv_cache_spec=attention),
         SimpleNamespace(layer_names=("recurrent",), kv_cache_spec=recurrent),
@@ -256,7 +256,7 @@ def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypa
         monkeypatch.setitem(sys.modules, name, ModuleType(name))
     monkeypatch.setitem(sys.modules, output_module.__name__, output_module)
     connect_cache = MagicMock()
-    monkeypatch.setattr(vllm, "connect_cache", connect_cache)
+    monkeypatch.setattr("orbitkv.vllm.connector.connect_cache", connect_cache)
     config = SimpleNamespace(
         kv_transfer_config=SimpleNamespace(engine_id="test"),
         parallel_config=SimpleNamespace(tensor_parallel_size=1, world_size=1),
