@@ -202,10 +202,17 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 
 ### SSD Cache Metrics
 - **orbitkv_ssd_write_bytes_total** (Counter) - Bytes written to SSD cache
-- **orbitkv_ssd_write_duration_seconds** (Histogram) - SSD write latency
+- **orbitkv_ssd_write_duration_seconds** (Histogram) - Per-block write submission
+  and completion latency. Concurrent block writes overlap; summing these
+  durations does not measure wall-clock flush time.
+- **orbitkv_ssd_prefetch_bytes_total** (Counter) - Successfully read and
+  validated SSD bytes, including reads an engine may not subsequently consume.
 - **orbitkv_ssd_prefetch_success_total** (Counter) - Successful SSD prefetches
 - **orbitkv_ssd_prefetch_failures_total** (Counter) - Failed SSD prefetches
-- **orbitkv_ssd_prefetch_duration_seconds** (Histogram) - SSD prefetch latency
+- **orbitkv_ssd_prefetch_duration_seconds** (Histogram) - Prefix prefetch latency
+  for nonempty SSD candidates, including queueing, pinned-memory allocation,
+  reads, and block reconstruction. Excludes H2D and does not prove a successful
+  GPU restore; correlate with read bytes, failures, and load bytes.
 
 ### Tier Attribution Semantics
 

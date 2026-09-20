@@ -8,7 +8,7 @@ import json
 import math
 from pathlib import Path
 
-from .metrics import cache_source, summarize
+from .metrics import cache_source, summarize, workload_phases
 
 
 def collect_run(directory: Path) -> dict:
@@ -21,7 +21,7 @@ def collect_run(directory: Path) -> dict:
         (length, repeat, phase)
         for length in args["lengths"]
         for repeat in range(args["repeats"])
-        for phase in ("cold", "hbm_hit", "after_pressure")
+        for phase in workload_phases(bool(args.get("ssd_gib", 0)))
     }
     actual = {(s["length"], s["repeat"], s["phase"]) for s in samples}
     if actual != expected or len(samples) != len(expected):
@@ -34,6 +34,9 @@ def collect_run(directory: Path) -> dict:
     return {
         "directory": str(directory.resolve()),
         "manifest": manifest,
+        "storage": json.loads((directory / "storage.json").read_text())
+        if args.get("ssd_gib", 0)
+        else None,
         "summary": summarize(samples, args["lengths"]),
     }
 

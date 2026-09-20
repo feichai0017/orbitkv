@@ -64,6 +64,7 @@ pub(crate) struct CoreMetrics {
 
     // SSD cache
     pub ssd_write_bytes: Counter<u64>,
+    pub ssd_write_duration_seconds: Histogram<f64>,
     pub ssd_write_failures: Counter<u64>,
     pub ssd_write_throughput_bytes_per_second: Histogram<f64>,
     pub ssd_write_queue_pending: UpDownCounter<i64>,
@@ -71,6 +72,7 @@ pub(crate) struct CoreMetrics {
     pub ssd_write_inflight: UpDownCounter<i64>,
 
     pub ssd_prefetch_bytes: Counter<u64>,
+    pub ssd_prefetch_duration_seconds: Histogram<f64>,
     pub ssd_prefetch_success: Counter<u64>,
     pub ssd_prefetch_failures: Counter<u64>,
     pub ssd_prefetch_throughput_bytes_per_second: Histogram<f64>,
@@ -335,6 +337,12 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_unit("bytes")
                 .with_description("Bytes written to SSD cache")
                 .build(),
+            ssd_write_duration_seconds: meter
+                .f64_histogram("orbitkv_ssd_write_duration")
+                .with_unit("s")
+                .with_description("Per-block SSD write submission and completion latency; concurrent operations overlap")
+                .with_boundaries(duration_seconds_boundaries())
+                .build(),
             ssd_write_failures: meter
                 .u64_counter("orbitkv_ssd_write_failures")
                 .with_description("SSD write failures")
@@ -362,6 +370,12 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .u64_counter("orbitkv_ssd_prefetch_bytes")
                 .with_unit("bytes")
                 .with_description("Bytes prefetched from SSD cache")
+                .build(),
+            ssd_prefetch_duration_seconds: meter
+                .f64_histogram("orbitkv_ssd_prefetch_duration")
+                .with_unit("s")
+                .with_description("SSD prefix prefetch latency including queueing, pinned allocation, reads, and reconstruction; excludes H2D")
+                .with_boundaries(duration_seconds_boundaries())
                 .build(),
             ssd_prefetch_success: meter
                 .u64_counter("orbitkv_ssd_prefetch_success")

@@ -8,6 +8,11 @@ import statistics
 import requests
 
 
+def workload_phases(ssd: bool = False) -> tuple[str, ...]:
+    phases = ("cold", "hbm_hit", "after_pressure")
+    return (*phases, "after_host_eviction") if ssd else phases
+
+
 def metrics(url: str | None) -> dict[str, float]:
     if url is None:
         return {}
@@ -59,8 +64,9 @@ def cache_source(engine: str, result: dict) -> str:
 
 def summarize(samples: list[dict], lengths: list[int]) -> list[dict]:
     summary = []
+    phases = tuple(dict.fromkeys(sample["phase"] for sample in samples))
     for length in lengths:
-        for phase in ("cold", "hbm_hit", "after_pressure"):
+        for phase in phases:
             group = [
                 sample
                 for sample in samples
@@ -82,6 +88,24 @@ def summarize(samples: list[dict], lengths: list[int]) -> list[dict]:
                     },
                     "orbitkv_load_bytes": sum(
                         sample["manager_delta"].get("orbitkv_load_bytes_total", 0)
+                        for sample in group
+                    ),
+                    "orbitkv_ssd_read_bytes": sum(
+                        sample["manager_delta"].get("orbitkv_ssd_prefetch_bytes_total", 0)
+                        for sample in group
+                    ),
+                    "ssd_reads_without_gpu_restore": sum(
+                        sample["manager_delta"].get("orbitkv_ssd_prefetch_bytes_total", 0) > 0
+                        and sample["manager_delta"].get("orbitkv_load_bytes_total", 0) == 0
+                        for sample in group
+                    ),
+                    "load_task_p50_ms": statistics.median(
+                        sample["manager_delta"].get("orbitkv_load_duration_seconds_sum", 0) * 1000
+                        for sample in group
+                    ),
+                    "ssd_prefetch_p50_ms": statistics.median(
+                        sample["manager_delta"].get("orbitkv_ssd_prefetch_duration_seconds_sum", 0)
+                        * 1000
                         for sample in group
                     ),
                 }

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .launch import configure
 from .metrics import summarize
-from .runtime import ROOT, manifest, server
+from .runtime import ROOT, manifest, server, storage_manifest
 from .workload import run_workload
 
 
@@ -38,6 +38,12 @@ def main() -> None:
     parser.add_argument("--output-tokens", type=int, default=16)
     parser.add_argument("--gpu-tokens", type=int, default=16384)
     parser.add_argument("--host-gib", type=int, default=16)
+    parser.add_argument(
+        "--ssd-gib",
+        type=int,
+        default=0,
+        help="OrbitKV SSD capacity; adds a measured phase after evicting manager DRAM",
+    )
     parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
@@ -51,6 +57,8 @@ def main() -> None:
     ).resolve()
     if args.orbitkv_transfer_backend and (args.engine != "vllm" or args.backend != "orbitkv"):
         parser.error("--orbitkv-transfer-backend requires --engine vllm --backend orbitkv")
+    if args.ssd_gib < 0 or (args.ssd_gib and args.backend != "orbitkv"):
+        parser.error("--ssd-gib must be nonnegative and requires --backend orbitkv")
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("--output must be empty so measurements cannot mix across runs")
     if (
@@ -84,7 +92,7 @@ def main() -> None:
     try:
         with contextlib.ExitStack() as stack:
             if launch.manager_command:
-                stack.enter_context(
+                manager = stack.enter_context(
                     server(
                         launch.manager_command,
                         launch.env,
@@ -93,6 +101,13 @@ def main() -> None:
                         launch.manager_health_path,
                     )
                 )
+                if args.ssd_gib:
+                    (args.output / "storage.json").write_text(
+                        json.dumps(
+                            storage_manifest(manager.pid, args.output / "cache.bin"), indent=2
+                        )
+                        + "\n"
+                    )
             stack.enter_context(
                 server(launch.command, launch.env, launch.base_url, args.output / "engine.log")
             )
@@ -102,6 +117,9 @@ def main() -> None:
             json.dumps({"type": type(error).__name__, "message": str(error)}, indent=2) + "\n"
         )
         raise
+    finally:
+        if args.ssd_gib:
+            (args.output / "cache.bin").unlink(missing_ok=True)
     summary = summarize(samples, args.lengths)
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summary, indent=2, allow_nan=False))

@@ -271,6 +271,11 @@ Cache Manager A  <---- Mooncake KV bytes ---->  Cache Manager B
 
 ## Planning direction
 
+The proposed [state demand and transfer planner](state-planning.md) describes
+engine readiness signals, recovery boundaries, prefetch timing, and the local
+evaluation sequence. It is a design proposal; current cache hits do not imply
+those planning capabilities are implemented.
+
 After the cache and catalog are reliable, the target optimization problem is
 Minimum Persistent State Realization: find
 the smallest complete `StateBundle` that can resume legal execution, then choose

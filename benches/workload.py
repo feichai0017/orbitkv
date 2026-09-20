@@ -9,7 +9,7 @@ from argparse import Namespace
 
 import requests
 
-from .metrics import cache_source, metrics
+from .metrics import cache_source, metrics, workload_phases
 
 
 def generate(url: str, engine: str, model: str, tokens: list[int], output_len: int) -> dict:
@@ -75,6 +75,40 @@ def generate(url: str, engine: str, model: str, tokens: list[int], output_len: i
     }
 
 
+def evict_host_cache(manager_url: str) -> dict:
+    deadline = time.monotonic() + 60
+    previous = None
+    quiet = 0
+    while time.monotonic() < deadline:
+        observed = metrics(manager_url)
+        stamp = tuple(
+            observed.get(name, 0)
+            for name in ("orbitkv_save_bytes_total", "orbitkv_ssd_write_bytes_total")
+        )
+        busy = any(
+            observed.get(name, 0) != 0
+            for name in (
+                "orbitkv_ssd_write_queue_pending",
+                "orbitkv_ssd_write_inflight",
+                "orbitkv_ssd_prefetch_inflight",
+                "orbitkv_inflight_bytes",
+            )
+        )
+        quiet = quiet + 1 if not busy and stamp == previous else 0
+        if quiet >= 3:
+            break
+        previous = stamp
+        time.sleep(0.1)
+    else:
+        raise TimeoutError("Cache Manager did not become idle before DRAM eviction")
+    response = requests.post(f"{manager_url}/cache/memory/cleanup", timeout=30)
+    response.raise_for_status()
+    result = response.json()
+    if result["still_referenced_blocks"] or not result["evicted_blocks"]:
+        raise RuntimeError(f"Could not establish an empty manager DRAM cache: {result}")
+    return {"cleanup": result, "manager_before_cleanup": observed}
+
+
 def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> list[dict]:
     from transformers import AutoTokenizer
 
@@ -106,8 +140,9 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
             for repeat in range(args.repeats):
                 tokens = prompt(length)
                 texts = []
-                for phase in ("cold", "hbm_hit", "after_pressure"):
-                    if phase == "after_pressure":
+                for phase in workload_phases(bool(args.ssd_gib)):
+                    preparation = {}
+                    if phase in ("after_pressure", "after_host_eviction"):
                         for _ in range(2):
                             generate(
                                 base_url,
@@ -117,6 +152,8 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
                                 1,
                             )
                     time.sleep(args.settle_seconds)
+                    if phase == "after_host_eviction":
+                        preparation = evict_host_cache(manager_url)
                     before = metrics(base_url)
                     manager_before = metrics(manager_url)
                     result = generate(
@@ -133,6 +170,7 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
                         length=length,
                         repeat=repeat,
                         phase=phase,
+                        preparation=preparation,
                         metrics_delta={
                             key: value - before.get(key, 0)
                             for key, value in after.items()

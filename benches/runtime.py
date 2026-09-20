@@ -53,7 +53,7 @@ def server(
             time.sleep(1)
         else:
             raise TimeoutError(f"Server startup timed out: {log}")
-        yield
+        yield process
     finally:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGTERM)
@@ -63,6 +63,37 @@ def server(
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)
+
+
+def storage_manifest(pid: int, cache_path: Path) -> dict:
+    flags = []
+    for fd in Path(f"/proc/{pid}/fd").iterdir():
+        try:
+            if fd.resolve() != cache_path.resolve():
+                continue
+            info = Path(f"/proc/{pid}/fdinfo/{fd.name}").read_text()
+        except FileNotFoundError:
+            continue
+        flags.extend(
+            int(line.split()[1], 8) for line in info.splitlines() if line.startswith("flags:")
+        )
+    if not flags or not all(value & os.O_DIRECT for value in flags):
+        raise RuntimeError("SSD measurement requires an open O_DIRECT cache file")
+    return {
+        "path": str(cache_path),
+        "capacity_bytes": cache_path.stat().st_size,
+        "fd_flags": flags,
+        "direct_io": True,
+        "payload_retained_after_run": False,
+        "mount": subprocess.check_output(
+            ["findmnt", "--json", "--target", str(cache_path), "--output", "TARGET,SOURCE,FSTYPE"],
+            text=True,
+        ),
+        "devices": subprocess.check_output(
+            ["lsblk", "--json", "--output", "NAME,TYPE,SIZE,ROTA,MODEL"], text=True
+        ),
+        "notes": "Device inventory does not prove which physical disk backs an overlay mount.",
+    }
 
 
 def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:

@@ -228,18 +228,23 @@ impl SsdBackingStore {
 
     /// Prefetch prefix reads and await completion.
     pub(crate) async fn prefetch_prefix(&self, keys: Vec<StateKey>) -> (usize, PrefetchResult) {
+        let started = std::time::Instant::now();
         let (found, done_rx) = self.submit_prefix(keys);
         if found == 0 {
             return (0, Vec::new());
         }
 
-        match done_rx.await {
+        let result = match done_rx.await {
             Ok(blocks) => (found, blocks),
             Err(_) => {
                 warn!("SSD prefetch completion channel closed");
                 (found, Vec::new())
             }
-        }
+        };
+        core_metrics()
+            .ssd_prefetch_duration_seconds
+            .record(started.elapsed().as_secs_f64(), &[]);
+        result
     }
 }
 
