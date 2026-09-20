@@ -5,6 +5,12 @@ engine-owned HBM, and one Cache Manager per host remain the foundation.
 The [SSD experiment](ssd-performance.md) supplies initial
 measurements; predictive policies require separate evaluation.
 
+The [implementation sequence](#implementation-sequence) below turns the
+proposal into reviewable changes. [Dynamo reuse](#reuse-dynamo-for-request-routing)
+defines the boundary between worker selection and physical transfer scheduling.
+The current scope is single-node recovery and scheduling; routing remains a
+later milestone.
+
 ## What can be known ahead of time
 
 | Evidence | What OrbitKV can prepare | Limit |
@@ -139,6 +145,89 @@ SSD/PCIe/NUMA/NIC resources. The adapters supply demand and lifecycle events;
 `orbitkv-channel` carries them. A future router can consume summaries after
 the local planner is useful. No new central MetaServer is required for this work.
 
+## Reuse Dynamo for request routing
+
+Source audit: September 21, 2026, Dynamo
+[v1.4.2](https://github.com/ai-dynamo/dynamo/releases/tag/v1.4.2), commit
+`2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a`. The capabilities below were checked
+in that release, not inferred from the newer `dev` documentation. OrbitKV has
+not yet built or integrated this dependency.
+
+The routing implementation is already reusable:
+
+- [`dynamo-kv-router`](https://github.com/ai-dynamo/dynamo/blob/v1.4.2/lib/kv-router/README.md)
+  exports prefix indexers, a local request scheduler, load accounting, and
+  worker selection. Its
+  [Cargo features](https://github.com/ai-dynamo/dynamo/blob/v1.4.2/lib/kv-router/Cargo.toml)
+  make `dynamo-runtime` optional. A Rust integration need not adopt the whole
+  Dynamo runtime, although sibling hashing/token crates and enabled service
+  dependencies still need build qualification.
+- The release's
+  [`WorkerSelector` implementation](https://github.com/ai-dynamo/dynamo/blob/v1.4.2/lib/kv-router/src/scheduling/selector.rs)
+  combines projected prefill/decode load with device, pinned-host, disk, and
+  shared-cache credits. Its score is expressed in weighted block equivalents;
+  it is not a prediction of an SSD operation's completion time in milliseconds.
+- The
+  [standalone selection contract](https://github.com/ai-dynamo/dynamo/blob/v1.4.2/docs/fern/pages/developer-guide/knowledge-base/modular-components/router/standalone-selection.md)
+  supports HTTP selection and active-load reservation without forwarding
+  inference. `SelectionServiceBuilder` embeds that lifecycle in Rust. A
+  production integration should use it rather than the intentionally local,
+  unsynchronized `SelectionCore` helper.
+
+| Decision | Owner | Information required |
+| --- | --- | --- |
+| Select an inference worker or DP rank | Dynamo request router | Prefix overlap, worker eligibility, active prefill/decode load |
+| Decide whether a token boundary is recoverable | OrbitKV recovery contract plus adapter evidence | Model/storage identity, token coverage, complete components |
+| Choose and reserve the source replica | Cache Manager | Current residency, replica generation, source lease |
+| Schedule SSD reads, H2D, D2H, and later remote reads | Cache Manager transfer planner | Bytes, queue pressure, staging capacity, first-use budget, completion dependencies |
+| Allocate or reuse engine HBM and schedule computation | Inference engine | Page lifetime, batch membership, execution dependencies |
+
+A Dynamo load reservation books projected inference work. An OrbitKV lease
+holds a source or destination generation alive. They have different owners
+and completion conditions. Selecting a worker does not reserve SSD extents,
+pinned memory, or CUDA destination pages.
+
+Even with one worker, requests may compete for SSD/PCIe bandwidth and staging
+capacity. Worker selection alone cannot order those physical operations or
+establish a CUDA completion fence. Dynamo has a separate
+[KVBM engine](https://github.com/ai-dynamo/dynamo/blob/v1.4.2/lib/kvbm-engine/README.md)
+and [physical manager](https://github.com/ai-dynamo/dynamo/blob/v1.4.2/lib/kvbm-physical/README.md)
+for tiered block management. Adopting those would be a larger storage and
+transfer integration, including their layout and NIXL abstractions. It is not
+required to reuse the router and is outside the current Mooncake/OrbitKV plan.
+
+The later routing milestone will first integrate the upstream default selector,
+not copy its formula into a competing implementation. Prefer a pinned Rust
+dependency in an optional routing component owned by `orbitkv-server`; keep
+the GPU/SSD core independent of it. Deployments that already use Dynamo may
+retain its selection service instead. Choose one request-selection owner in
+each deployment. Neither mode becomes a prerequisite for a single-node cache.
+
+The future integration must supply real events and load lifecycle, rather
+than assuming an existing OrbitKV block hash is a Dynamo routing hash:
+
+- Partition by computation identity, tokenizer/hash scheme, block size, and
+  engine/rank compatibility. Derive matching query and event hashes using the
+  same scheme; do not reinterpret OrbitKV's 32-byte keys as router integers.
+- Publish HBM events from the engine and DRAM/SSD residency changes from the
+  Manager, with epochs, ordering, removals, and inventory recovery. Announce an
+  SSD replica after successful writing. A pending read is not a resident hit.
+- Resolve overlapping tier coverage before scoring. Advertise lower-tier
+  credit only for adapter paths that can actually restore that state.
+- Book load on assignment; update it on prefill completion, cancellation,
+  generation progress, and request completion as required by the selected
+  upstream model. Reconcile worker restarts and abandoned bookings.
+- Revalidate state and obtain transfer leases at the selected Manager. Router
+  events and cost estimates may be stale; they never authorize skipping prefill.
+
+Start with upstream tier weights as a routing baseline. Later, feed calibrated
+Manager estimates into a custom `WorkerSelector` only if measurements justify
+it. Such a cost-hint integration is proposed, not an existing OrbitKV or Dynamo
+wire field. Normalize units and avoid counting cache savings twice: adding a
+millisecond transfer estimate directly to the default block score is invalid.
+Keep estimates bounded and timestamped; export coarse summaries rather than
+asking every Manager to reserve data for each candidate request.
+
 ## Research to borrow from
 
 - [KVFlow (2025)](https://arxiv.org/abs/2507.07400) uses an agent execution graph
@@ -152,33 +241,211 @@ the local planner is useful. No new central MetaServer is required for this work
   overlaps lossless recall with indexer computation for native sparse attention
   using graph-compatible GPU mechanisms. Its model-specific opportunity does
   not justify dropping dense Qwen3 attention KV or assuming unchanged accuracy.
-- [Dynamo's routing model](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/router/routing-concepts)
-  combines cache locality with active work. It is a useful later placement
-  baseline; it does not supply the missing engine page-lifetime contract.
+- [Dynamo's routing model](https://github.com/ai-dynamo/dynamo/blob/v1.4.2/docs/fern/pages/developer-guide/knowledge-base/modular-components/router/routing-concepts.md)
+  combines cache locality with active work. Reuse its implementation at the
+  later routing milestone, with the ownership boundary described above.
 
 These mechanisms are prior work, not OrbitKV inventions. The proposed direction
 combines explicit demand, legal recovery boundaries, resource scheduling, and
 measured restore-versus-recompute decisions. Performance and novelty claims
 require comparisons against compatible implementations on the same workloads.
 
-## Implementation and evaluation order
+## Implementation sequence
 
-1. Measure DRAM and forced SSD restores in both engines; retain unsuccessful
-   prefetches as misses. Separate client TTFT, GPU task time, SSD prefix time,
-   transferred bytes, and writes that are never reused.
-2. Resolve pending-query lifetime and engine readiness, then add bounded
-   demand-based warming into DRAM. Use queue information available at the time,
-   not future knowledge taken from the benchmark trace.
-3. Introduce generation checks and per-group completion fences. Compare whole
-   restore with layer overlap under eager execution and CUDA graph replay.
-4. Add calibrated admission and retention, then optional workflow hints. Sweep
-   concurrency 1/4/8/16, host working sets larger than capacity, partial-prefix
-   hits, cancellation, and mixed read/write traffic. Report goodput under TTFT
-   and inter-token-latency limits, unused prefetch bytes, and correctness.
-   Measure latency from request arrival, including added scheduler waiting;
-   do not hide prefetch time by resetting the timer at admission. Report any
-   application-provided hint lead time separately.
-5. Extend the same plan to remote replicas after directory recovery is qualified.
-   Keep an oracle with perfect next-use knowledge as an upper-bound experiment,
-   clearly separate from deployable policies. Run ablations for earlier demand,
-   overlap, and admission so their contributions remain identifiable.
+The initial SSD measurements, stage metrics, and direct GPU byte tests are
+complete in the SSD measurement change. The following stages are planned;
+each needs its own implementation and acceptance evidence. Start with dense
+full-attention, TP=1, and the currently pinned vLLM/SGLang releases. Broader
+model and topology support needs separate qualification.
+
+| Stage | Reviewable deliverable | Main code owners | Prerequisite |
+| --- | --- | --- | --- |
+| P0 | Prove a supported SGLang readiness/admission hook | `python/orbitkv/sglang/`, pinned engine interface | Current source audit and SSD reproduction |
+| P1 | Owned pending operations, cancellation and bounded completion retention | `orbitkv-core`, `orbitkv-server`, `orbitkv-channel`, Python bindings/client | Can proceed while P0 establishes the engine contract |
+| P2 | SGLang consumes SSD results in actual serving | SGLang linker and its qualified admission hook | P0 and P1 |
+| P3 | Explicit demand and bounded early warming to DRAM | Engine adapters, state/channel contracts, core prefetch | P1 and P2 |
+| P4 | Calibrated restore decisions and SSD write admission | Core storage/offload and `benches/` | P3 measurements |
+| P5 | Recovery evidence, page generations and layer completion fences | State contracts, adapters, core GPU workers | P2; required before P6 |
+| P6 | Qualified overlap of storage, H2D and computation | Core transfer/backing and engine layer callbacks | P3 and P5 |
+| R1 | Upstream Dynamo routing with OrbitKV events | Optional server routing component and event integration | Recoverable distributed catalog and qualified remote restores |
+
+### P0: establish the SGLang scheduling contract
+
+The pinned `UnifiedCacheLinker.lookup` returns `list[int]` of fully restorable
+boundaries; it has no pending result. In the pinned scheduler, request-arrival
+prefetch and admission-time `check_prefetch_progress` are guarded by
+`enable_hicache_storage`. The current OrbitKV plugin constructs the external
+linker and rejects the separate hierarchical-cache mode. Merely overriding a
+cache method does not make those guarded scheduler calls run.
+
+Before claiming an adapter-only fix, demonstrate a nonblocking admission path
+on the supported release: observe the request, start lookup, keep only that
+request waiting, process completions, retry its prefix match, and then allocate
+destinations. Other requests must continue executing. Prefer an explicit
+external-cache prepare/poll/cancel lifecycle exposed by the engine.
+
+If the release has no usable extension point, the deliverable is a minimal
+upstream generic callback change and a declared release dependency. Do not
+silently patch installed engine files, impersonate HiCache storage, or return
+unreserved disk candidates as hits. Another possible approach is a reserved
+backing-source lease usable by the existing load callback; it requires SSD
+extent lifetime and staging-capacity guarantees and is a separate design
+decision, not a shortcut in this plan. SGLang SSD support stays unqualified
+until one supported path passes P2. Core ownership work in P1 can proceed.
+
+### P1: make pending work an owned operation
+
+Today, `orbitkv-server/src/endpoint/pending.rs` scopes pending replies by
+session, instance, request, and group. The underlying
+`orbitkv-core/src/storage/prefetch.rs` tracks prefetches by request string and
+collects their result when polled. Both levels must agree on operation identity
+and terminal ownership.
+
+Introduce one semantic operation identity bound to the Manager session epoch,
+registered instance, request revision, model/storage identity, and group.
+Treat the wire request ID as a message correlation ID, not the identity of
+the entire prefetch. Bind query content so a changed prefix cannot consume an
+older result. Repeated polls observe one operation and do not launch new reads
+or mint duplicate leases.
+
+Evolve the existing query protocol with operation polling and cancellation,
+reusing the current descriptor/eventfd channel and completion infrastructure.
+Keep a resident fast path. The core owns backing work and resources; the
+endpoint owns encoding, authentication, and delivery. Update PyO3 and
+`orbitkv.pyi` together. Remove superseded query paths when switching both
+adapters; do not retain an old API facade.
+
+The lifecycle must distinguish pending preparation, a ready leased result,
+an authoritative miss, failure, and cancellation being drained. An abandoned
+reply releases its lease. A completed backing read is inserted or discarded
+under a bounded policy even if the caller never polls again. A deadline ends
+waiting interest; it is not evidence that I/O stopped touching its buffers.
+Submitted work releases resources only after completion. Reusing a request ID
+or reconnecting cannot attach to an old operation.
+
+Acceptance: test identical request IDs in different sessions/namespaces/groups,
+changed revisions, repeated polls, cancellation before/during/after I/O,
+disconnects, result-delivery loss, and restart epochs. Check both operation
+counts and retained bytes return to baseline without relying on the periodic
+stale-entry sweep. Fault tests must retain pages when DMA completion is unknown.
+
+### P2: qualify actual SGLang SSD recovery
+
+Connect the P0 admission lifecycle to P1. A ready, leased result must be consumed
+by the request's subsequent prefix match and restore. A verified miss, bounded
+waiting-policy expiration, or pre-transfer failure may lead to recomputation
+from a valid boundary. A submitted GPU load keeps its existing fail-closed
+ownership rules; there is no arbitrary fallback while DMA may still be active.
+
+Extend the current SGLang serving E2E and `benches.single_node` workload.
+For each of the 15 forced-SSD requests, require an actual external GPU load and
+the expected restored prefix, including SGLang's last-page rule. Keep the
+existing exact GPU-byte tests as a separate transfer check. Add delayed SSD
+completion, partial/missing suffixes, cancellation, and an unrelated request
+that progresses while another waits. The test must use the serving adapter's
+waiting path, not poll readiness on its behalf from the test process.
+
+Run the vLLM correctness gate after shared query changes. Retain the 1K/4K/8K
+DRAM controls and investigate regressions before introducing predictive policy.
+
+### P3: prepare declared demand within a byte budget
+
+Add a demand revision, required boundary, priority, and optional first-use/wait
+budget to the shared state/channel contract. Begin with exact queued prompts;
+derive timing only from information available at enqueue. Relative budgets are
+interpreted at the receiver; do not compare monotonic clocks across hosts.
+
+Extend `storage/prefetch.rs` rather than adding a second scheduler facade.
+Use explicit byte reservations for staging, in-flight reads, and completed
+but unconsumed results, globally and per instance. Keep capacity for normal
+demand restores. Same-state requests may share a backing read, but each owner
+has its own interest and lease; cancelling one cannot cancel another's work.
+Give overdue demand work priority, cap speculative traffic, and bound write
+starvation. Application workflow hints remain disabled until this lifecycle
+and resource accounting pass their gates.
+
+Acceptance: concurrent requests larger than the DRAM working-set budget,
+duplicate prefixes, request reordering and cancellations stay bounded. Record
+enqueue, read start, host-ready, restore submission, GPU-ready, and first-use
+timestamps. Measure useful prefetch bytes and unused retained byte-seconds.
+Demonstrate that early warming reduces exposed wait on a workload with real
+queueing; a serial idle server need not gain anything from earlier demand.
+
+### P4: calibrate costs and choose useful writes
+
+Build rolling estimates from measured bytes, queue time, service time,
+fragmentation, NUMA/device path, and competing reads/writes. Track model- and
+shape-specific prefill time through engine observations. Cold-start estimates
+use conservative measured baselines; uncertainty must remain visible.
+
+Use the same first-use boundary to compare prepare/restore with legal
+recomputation. The Manager proposes a plan and the engine makes admission and
+recompute decisions using its live queue. Prioritize reads by remaining slack;
+admit writes using expected avoided computation, write cost, and retention
+cost. Reuse existing admission/eviction infrastructure where it fits. A
+per-block sum of overlapping SSD write durations is not a pipeline latency.
+
+Acceptance: separate ablations for early demand, read scheduling, and write
+admission. Report p50/p95/p99 TTFT, inter-token latency, goodput under declared
+SLOs, written bytes, unused prefetch bytes, and memory occupancy. A policy is
+not accepted on hit rate alone. Keep established behavior as the initial
+policy configuration until the new policy passes these measurements; this
+does not require maintaining duplicate implementations or compatibility APIs.
+
+### P5 and P6: prove recovery and then overlap execution
+
+P5 puts absolute token spans, component coverage, and format evidence into the
+actual transfer path. Enforce engine page allocation generations, including
+reuse during preemption. Generation values must come from allocation/reuse
+events; incrementing an adapter transfer counter does not supply that evidence.
+Qualify full-attention first. Hybrid checkpoints, sliding windows, MLA and
+auxiliary state each require their own complete recovery gate.
+
+P6 adds per-layer-group completion dependencies to `gpu_worker.rs`, the backing
+pipeline, and both adapters. Start with whole-prefix SSD preparation plus
+layer-group H2D/compute overlap; only then pipeline SSD chunks through a bounded
+staging ring. The current serialized full restore remains the reference for
+byte correctness during evaluation. GPU execution must wait on a dependency
+that is valid on every CUDA graph replay, not only on a host wait during graph
+capture. Drain cancellation before reusing any ring slot or engine page.
+
+Acceptance: exact poisoned-destination byte checks, eager and graph-replay
+inference, partial submission faults, cancellation, and allocation reuse under
+pressure. Measure decode interference as well as TTFT. Publish overlap gains
+only for qualified engine/model/layout combinations.
+
+### R1: reuse the upstream router after distributed recovery
+
+First build a small pinned `dynamo-kv-router` integration and replay known
+events and worker loads through the upstream selector. Use its service builder
+for production lifecycle. Validate the event/hash mapping and reservation
+accounting before adding custom cost inputs. Keep this component optional and
+outside `orbitkv-core`; no current single-node dependency or service is added.
+
+Then exercise multiple engine replicas with OrbitKV tier events and the
+recovered catalog. Compare upstream default routing with load-only routing,
+and separately evaluate any calibrated selector extension. Test event loss,
+reordering, node restart, expired cost summaries, and failed source reservation.
+A stale routing hint may degrade latency; it must never become a false cache
+hit. Router-level load booking and Manager transfer leases are released through
+their respective lifecycle events.
+
+## Evaluation contract
+
+Keep scripts and results in `benches/`; keep correctness and failure tests in
+the existing Python integration/E2E and Rust test suites. Extend those owners
+rather than duplicating launchers or adding forwarding packages.
+
+Preserve the original serial forced-tier test as a regression baseline. Add
+natural DRAM pressure, concurrency 1/4/8/16, partial-prefix reuse, cancellation,
+and mixed SSD reads/writes. Compare compatible native-engine, LMCache, and
+FlexKV SSD configurations under the same model revision, token/page budgets,
+storage path and I/O mode. Record unavailable combinations as such.
+
+Measure latency from request arrival, including scheduler waiting. Do not hide
+prefetch time by resetting the timer at admission. Record application hint
+lead time separately. Predeclare sample sizes, SLOs, and regression budgets;
+five samples per cell do not qualify tail latency. Preserve unsuccessful reads
+as misses. An oracle with perfect future knowledge is an upper bound, separate
+from deployable policies. Run independent ablations for demand timing, overlap,
+and admission, then repeat the combined policy on held-out workloads.

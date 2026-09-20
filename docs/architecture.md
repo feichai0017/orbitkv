@@ -297,9 +297,21 @@ queue delay
 + replica failure risk
 ```
 
-It returns a worker plus a physical plan: source replica, restore or recompute,
-target tier, prefetch deadline, eviction set, and replication action. Dynamo's
-KV-aware worker scorer is the routing baseline, not the final planner.
+These terms require calibrated units and critical-path accounting; overlapping
+operations cannot simply have their durations added together.
+
+Reuse Dynamo's worker selector for request placement. Dynamo v1.4.2 provides
+an independent Rust router crate and a selection service; its runtime is an
+optional dependency of the crate. The selected Cache Manager then revalidates
+replicas and constructs the leased physical plan: source, restore or recompute
+proposal, staging budget, transfer deadline, and completion dependencies. The
+engine owns execution admission and HBM allocation. A routing load reservation
+does not replace a transfer lease.
+
+The [Dynamo integration boundary](state-planning.md#reuse-dynamo-for-request-routing)
+and [implementation stages](state-planning.md#implementation-sequence) specify
+the reusable components, pending engine-interface dependency, and acceptance
+gates. No router dependency is introduced into the current single-node core.
 
 ## Ownership boundary by milestone
 

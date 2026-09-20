@@ -83,7 +83,9 @@ SGLang must observe pending-query readiness before it can use asynchronously
 fetched state. Then add bounded request-driven DRAM warming, generation-safe
 per-layer readiness, and measured copy/compute overlap. The
 [state demand and transfer proposal](state-planning.md) defines the signals,
-resource limits, and evaluation order. Use the
+resource limits, and [implementation stages](state-planning.md#implementation-sequence).
+The first gate proves a supported SGLang admission hook; its current external
+linker does not expose a pending lookup result. Use the
 [single-node measurements and gates](single-node-performance.md) to compare
 against each engine's native CPU cache, LMCache, and FlexKV before expanding
 distributed scheduling.
@@ -116,17 +118,23 @@ Deliver:
 
 - consume vLLM and SGLang KV placement events;
 - consume the recovered catalog to track replicas by worker and tier;
-- reproduce a Dynamo-style weighted-overlap worker selector as a baseline;
-- add queue, transfer, recompute, and eviction costs;
-- return target worker plus source/restore plan.
+- reuse a pinned `dynamo-kv-router` selector and its production service lifecycle
+  as the baseline, following the [integration boundary](state-planning.md#reuse-dynamo-for-request-routing);
+- feed qualified tier events and request-load lifecycle into that selector;
+- evaluate calibrated queue, transfer, recompute, and eviction estimates without
+  mixing block scores with milliseconds or counting reuse twice;
+- select the worker, then have its Cache Manager revalidate sources and create
+  a leased restore plan;
 - qualify Mooncake topology-aware slicing, endpoint pooling, and alternate-rail
   retry against OrbitKV transfer plans.
 
 Gate:
 
-- baseline selector agrees with Dynamo on captured traces;
+- event/hash mapping and load reservation produce the expected upstream
+  selections on captured traces;
 - joint planning beats load-only and overlap-only baselines on a held-out trace;
-- stale events and worker restarts cannot route to a dead replica.
+- stale events and worker restarts produce bounded fallback/reselection and
+  cannot become an incorrect cache hit.
 
 ## M4: generation-safe page references
 
