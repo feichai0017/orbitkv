@@ -401,7 +401,7 @@ class CacheManagerProcess:
             for path in dict.fromkeys(
                 [
                     sysconfig.get_path("purelib"),
-                    *(path for path in sys.path if "site-packages" in path),
+                    *(path for path in sys.path if Path(path).name == "site-packages"),
                 ]
             )
             if path

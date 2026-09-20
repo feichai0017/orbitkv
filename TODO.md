@@ -84,6 +84,12 @@ and a passing gate; design text alone does not close an item.
 - [x] Requalify the vLLM E2E against release 0.29.0, including a hybrid model
   that exercises scheduler boundary-state hand-offs.
 - [ ] Add generation validation to every local page reference.
+- [x] Keep restore destinations held on lost acknowledgements, poll failures,
+  and deadlines; fail the engine instead of claiming DMA was cancelled.
+- [x] Drain partially submitted H2D/D2H work before returning a backend error;
+  terminate the manager if CUDA cannot establish completion.
+- [x] Split Publish metadata to the negotiated descriptor capacity while
+  preserving per-page layer completeness and retaining sources through all chunks.
 - [ ] Benchmark the M2 path against the current CUDA IPC baseline.
 - [ ] Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,
   throughput, P50/P95 query/save/restore, and pinned-memory use against

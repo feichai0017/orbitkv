@@ -19,6 +19,11 @@ The revised deferred Publish path still needs concurrent load/save profiling;
 a live manager that never finishes Publish can retain a save source indefinitely
 until an operational watchdog is implemented.
 
+The [single-node benchmark](single-node-performance.md) separates cold prefill,
+HBM hits, and external restores after GPU cache pressure. Restore timeouts and
+lost completion acknowledgements stop the affected engine instead of recycling
+GPU destinations that may still be receiving DMA.
+
 ## Install and start the common manager
 
 Build from the repository root after selecting the wheel variant that matches
