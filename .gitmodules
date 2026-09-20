@@ -1,4 +1,4 @@
-[submodule "sglang"]
+[submodule "third-party/sglang"]
 	path = third-party/sglang
 	url = https://github.com/sgl-project/sglang.git
 	shallow = true

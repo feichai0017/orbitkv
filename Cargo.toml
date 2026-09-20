@@ -41,7 +41,7 @@ cudarc = { version = "0.19.7" }
 offset-allocator = "0.2.0"
 hashlink = "0.11.0"
 tokio = { version = "1.48.0", features = ["full"] }
-rand = "0.10"
+rand = "0.10.1"
 shared_memory = "0.12"
 uuid = { version = "1.22", features = ["v4"] }
 parking_lot = "0.12"
@@ -49,18 +49,18 @@ clap = { version = "4.5", features = ["derive"] }
 libc = "0.2"
 libloading = "0.9"
 dashmap = "6.1"
-opentelemetry = { version = "0.31.0", features = ["trace", "metrics"] }
-opentelemetry-otlp = { version = "0.31.0", features = [
+opentelemetry = { version = "0.32.0", features = ["trace", "metrics"] }
+opentelemetry-otlp = { version = "0.32.0", features = [
   "trace",
   "metrics",
   "grpc-tonic",
 ] }
-opentelemetry_sdk = { version = "0.31.0", features = [
+opentelemetry_sdk = { version = "0.32.1", features = [
   "trace",
   "metrics",
   "rt-tokio-current-thread",
 ] }
-opentelemetry-prometheus = "0.31"
+opentelemetry-prometheus = "0.32"
 prometheus = "0.14"
 bytesize = "2.3.1"
 anyhow = "1.0"
@@ -86,8 +86,8 @@ tonic = "0.14"
 tonic-prost = "0.14"
 
 # Python bindings
-pyo3 = { version = "0.28" }
-pyo3-build-config = { version = "0.28", features = ["resolve-config"] }
+pyo3 = { version = "0.29.2" }
+pyo3-build-config = { version = "0.29.2", features = ["resolve-config"] }
 # Redis
 
 # Logging
