@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import pickle
 import time
 import uuid
 
@@ -16,8 +15,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(local_control_server
     torch = pytest.importorskip("torch")
     from orbitkv import QueryReady
     from orbitkv.client.data_plane import LocalDataClient
-    from orbitkv.client.gpu import resolve_device_id
-    from orbitkv.ipc_wrapper import CudaIPCWrapper
+    from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
 
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
@@ -39,7 +37,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(local_control_server
     client = LocalDataClient(local_control_server.local_bootstrap_socket)
     try:
         client.start_session_watcher(instance, namespace, 1, 1)
-        wrappers = [pickle.dumps(CudaIPCWrapper(tensor)) for tensor in tensors]
+        wrappers = [serialize_gpu_buffer(tensor) for tensor in tensors]
         block_bytes = page_size * tensors[0].stride(0) * tensors[0].element_size()
         ok, message = client.register_context_batch(
             instance,

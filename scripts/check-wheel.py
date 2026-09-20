@@ -19,7 +19,10 @@ def check_wheel(path: Path, variant: str) -> None:
     required_files = {
         "orbitkv/__init__.py",
         "orbitkv/orbitkv.pyi",
-        "orbitkv/vllm_plugin.py",
+        "orbitkv/client/gpu.py",
+        "orbitkv/vllm/plugin.py",
+        "orbitkv/vllm/connector.py",
+        "orbitkv/vllm/pd/__init__.py",
         "orbitkv/sglang/plugin.py",
         "orbitkv/sglang/linker.py",
         "orbitkv/orbitkv-cache-manager-py",
@@ -33,6 +36,27 @@ def check_wheel(path: Path, variant: str) -> None:
         missing = required_files - files
         if missing:
             raise ValueError(f"missing wheel files: {', '.join(sorted(missing))}")
+        removed_files = {
+            "orbitkv/vllm_plugin.py",
+            "orbitkv/sglang/storage.py",
+            "orbitkv/sglang/hicache.py",
+            "orbitkv/sglang/config.py",
+            "orbitkv/sglang/pools.py",
+            "orbitkv/ipc_wrapper.py",
+        }
+        removed_prefixes = (
+            "orbitkv/connector/",
+            "orbitkv/pd_connector/",
+            "orbitkv/nixl_connector/",
+            "orbitkv/vllm/nixl/",
+        )
+        unexpected = (removed_files & files) | {
+            name for name in files if name.startswith(removed_prefixes)
+        }
+        if unexpected:
+            raise ValueError(
+                f"wheel contains removed adapter paths: {', '.join(sorted(unexpected))}"
+            )
         if any("/__pycache__/" in name or name.endswith(".pyc") for name in files):
             raise ValueError("wheel contains Python build caches")
         if not any(
@@ -70,7 +94,7 @@ def check_wheel(path: Path, variant: str) -> None:
         expected_entries = {
             ("console_scripts", "orbitkv-cache-manager"): "orbitkv._cache_manager:main",
             ("console_scripts", "orbitkv-metaserver"): "orbitkv._metaserver:main",
-            ("vllm.general_plugins", "orbitkv"): "orbitkv.vllm_plugin:register",
+            ("vllm.general_plugins", "orbitkv"): "orbitkv.vllm.plugin:register",
             ("sglang.srt.plugins", "orbitkv"): "orbitkv.sglang.plugin:register",
         }
         for (group, name), target in expected_entries.items():
@@ -97,6 +121,7 @@ def check_install(path: Path, variant: str) -> None:
     env.pop("PYTHONHOME", None)
     import_check = (
         "import importlib.metadata as metadata; import orbitkv; "
+        "import orbitkv.vllm.plugin; import orbitkv.sglang.plugin; "
         f"assert orbitkv.__version__ == metadata.version({distribution!r}); "
         "assert orbitkv.LocalControlClient"
     )

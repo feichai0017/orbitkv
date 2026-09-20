@@ -6,12 +6,11 @@
 
 | Change area | Gate | Command | Failure boundary |
 | --- | --- | --- | --- |
-| Connector helper math, scheduler state, worker load failure handling, IPC wrapper compatibility | Default unit | `uv run --extra test pytest` | Python contract or local connector state-machine regression |
+| Connector helper math, scheduler state, worker load failure handling, GPU registration | Default unit | `uv run --extra test pytest` | Python contract or local connector state-machine regression |
 | Clean source-only Python changes, docs touching test layout, CI test dependency changes | Source-only default | `uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Default test accidentally depends on torch, vLLM, CUDA, or native extension |
 | Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --extra test pytest -m integration` | Server/native/GPU lifecycle regression |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
 | SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/test_sglang_direct_e2e.py --model /path/to/model` | Restores the same prompt after a RadixCache flush and after SGLang restarts against a live Cache Manager. |
-| SGLang HiCache L3 backend or hybrid auxiliary pools | SGLang HiCache E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/test_sglang_inference_e2e.py --model /path/to/model` | Exercises the host-page compatibility path and its recovery policy. |
 | Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --extra test pytest -m stress tests/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
@@ -39,7 +38,7 @@ uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26
 Runs:
 - connector arithmetic and scheduler state-machine contracts (`test_combine_hashes.py`)
 - connector load fault-tolerance unit tests with fake transport (`test_connector_fault_tolerance.py`)
-- CUDA IPC wrapper shape compatibility with fake torch objects (`test_ipc_wrapper.py`)
+- GPU registration layout with fake torch objects (`test_gpu_registration.py`)
 - import-stub safety checks for default unit tests (`test_unit_stubs.py`)
 
 This gate must collect and run without torch, vLLM, CUDA, external models, or a running OrbitKV server. Stub modules are allowed only inside tests that explicitly mock the connector boundary, and they must not shadow a real runtime during integration or E2E collection.
@@ -107,8 +106,7 @@ SGLang direct-linker changes require the SGLang direct E2E in the release
 environment. It checks exact generated text, a nonzero external prefix hit
 after `/flush_cache`, and an actual Cache Manager GPU load after the SGLang
 process restarts while the Cache Manager remains alive. A separate namespace
-provides a true cold inference control for the restarted process. The legacy
-HiCache test remains the gate for its host-page backend.
+provides a true cold inference control for the restarted process.
 
 Requirements:
 - vLLM installed in the active environment

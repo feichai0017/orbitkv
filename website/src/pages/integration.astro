@@ -3,11 +3,11 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 import { sourceUrl } from "../data/site";
 ---
 
-<SiteLayout title="SGLang integration — OrbitKV" description="The staged path from SGLang HiCache storage to OrbitKV-owned page lifetimes." active="Integration">
+<SiteLayout title="SGLang integration — OrbitKV" description="Direct GPU-page caching through a node-local Cache Manager." active="Integration">
   <div class="container interior">
-    <header class="page-hero"><p class="eyebrow">SGLang integration</p><h1>Integrate first.<br /><span class="highlight">Take authority carefully.</span></h1><p>Start at HiCache's storage contract. Move page identity and lifecycle only after correctness and transfer evidence are available.</p></header>
-    <section class="detail-section"><h2>Stage 1 — HiCache backend</h2><p class="reading-copy">OrbitKV will implement batched prefix existence, get, and put for SGLang host pages, including named KV and recurrent-state pools. SGLang retains L1/L2 allocation in this stage.</p></section>
+    <header class="page-hero"><p class="eyebrow">SGLang integration</p><h1>Register GPU pages.<br /><span class="highlight">Reuse safe prefixes.</span></h1><p>The direct linker transfers full-attention MHA and MLA KV pages through the node-local Cache Manager. SGLang retains HBM page ownership.</p></header>
+    <section class="detail-section"><h2>Stage 1 — direct GPU-page linker</h2><p class="reading-copy">SGLang provides radix page hashes and registered GPU buffers. OrbitKV queries and restores complete prefixes using iceoryx2 control and CUDA IPC data movement. Hybrid and auxiliary state remain unsupported until full recovery contracts are implemented.</p></section>
     <section class="detail-section"><h2>Stage 2 — page authority</h2><p class="reading-copy">OrbitKV-authored handles replace duplicate page identities. Reuse is legal only after semantic death and execution completion. Placement is selected across HBM, pinned DRAM, SSD, and remote replicas.</p></section>
-    <section class="detail-section"><h2>What is verified</h2><p class="reading-copy">The storage and transfer substrate is imported and renamed. SGLang support is the next validation gate; no end-to-end performance claim is made before that gate passes.</p><a class="text-link" href={sourceUrl("docs/roadmap.md")}>Read the implementation gates <span aria-hidden="true">↗</span></a></section>
+    <section class="detail-section"><h2>What is verified</h2><p class="reading-copy">Single-node GPU recovery passed with the pinned SGLang release. Hybrid-model recovery and multi-rank deployment still need qualification.</p><a class="text-link" href={sourceUrl("docs/roadmap.md")}>Read the implementation gates <span aria-hidden="true">↗</span></a></section>
   </div>
 </SiteLayout>

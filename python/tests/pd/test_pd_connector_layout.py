@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from orbitkv.pd_connector.layout_mapping import (
+from orbitkv.vllm.pd.layout_mapping import (
     HeadSlice,
     build_push_layout_plan,
     decode_rank_source_counts,
@@ -167,10 +167,10 @@ def test_legacy_pd_connector_preserves_piecewise_default_for_prefill() -> None:
     )
 
 
-def test_vllm_plugin_registers_split_pd_connectors(monkeypatch) -> None:
+def test_vllm_plugin_registers_framework_connectors(monkeypatch) -> None:
     import sys
 
-    import orbitkv.vllm_plugin as vllm_plugin
+    import orbitkv.vllm.plugin as vllm_plugin
 
     registered = []
 
@@ -189,19 +189,20 @@ def test_vllm_plugin_registers_split_pd_connectors(monkeypatch) -> None:
 
     assert (
         "PdConnector",
-        "orbitkv.pd_connector",
+        "orbitkv.vllm.pd",
         "PdConnector",
     ) in registered
     assert (
         "PdDecodeConnector",
-        "orbitkv.pd_connector",
+        "orbitkv.vllm.pd",
         "PdDecodeConnector",
     ) in registered
     assert (
         "PdPrefillConnector",
-        "orbitkv.pd_connector",
+        "orbitkv.vllm.pd",
         "PdPrefillConnector",
     ) in registered
+    assert not any(name.startswith("Nixl") for name, _, _ in registered)
 
 
 def test_pd_worker_rejects_mla_physical_logical_block_split() -> None:

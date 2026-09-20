@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 OrbitKV is a framework-neutral state cache and physical planner for LLM
-inference. Its current PegaFlow-derived data plane is validated with vLLM.
-SGLang adapter contracts exist, but the executable HiCache backend remains an
-M1 deliverable. Do not describe roadmap functionality as implemented.
+inference. Its PegaFlow-derived data plane is validated with vLLM and the
+SGLang direct GPU-page linker. Do not describe roadmap functionality as
+implemented.
 
 ## Build Commands
 
@@ -109,12 +109,12 @@ workspace and intentionally has no `src/`. The Python distribution remains at
    - `mooncake.rs`: Segment/BatchTransfer/notification wrapper for READ and WRITE
 
 9. **python/** (Rust/PyO3 + Python): Python package (`orbitkv-llm` on PyPI)
-   - `src/lib.rs`: PyO3 bindings exposing `OrbitKVEngine` and gRPC client
+   - `src/lib.rs`: PyO3 bindings for local cache clients and lifecycle operations
    - `orbitkv/vllm/`: canonical vLLM v1 connector
-   - `orbitkv/connector/`: backward-compatible alias for `orbitkv.vllm`
-   - `orbitkv/sglang/`: SGLang config and pool contracts; no runtime backend yet
+   - `orbitkv/vllm/pd/`: Mooncake P/D transfer adapter
+   - `orbitkv/sglang/`: direct GPU-page linker and plugin entry point
    - `orbitkv/client/`: framework-neutral Cache Manager client exports
-   - `orbitkv/ipc_wrapper.py`: CUDA IPC handle wrapper
+   - `orbitkv/client/gpu.py`: GPU buffer registration and device resolution
    - CLI binaries: `orbitkv-cache-manager`, `orbitkv-metaserver` (installed via pip)
 
 ### Data Flow
@@ -140,7 +140,7 @@ vLLM/SGLang adapter <--control--> OrbitKV Cache Manager <--registered pages--> f
 
 OrbitKV owns external replicas and transfer/storage policy. Frameworks retain
 execution ownership during M0/M1. KV payload bytes must not be serialized into
-gRPC; local data moves through registered CUDA IPC or shared-host pages, and
+gRPC; local data moves through registered CUDA IPC pages, and
 remote data moves through Mooncake over RDMA or TCP. See `docs/architecture.md` and
 `docs/roadmap.md` for milestone-specific ownership boundaries.
 

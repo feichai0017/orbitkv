@@ -22,7 +22,6 @@ mod lease;
 pub use orbitkv_common::logging;
 mod metrics;
 mod offload;
-mod page_store;
 mod pinned_mem;
 mod pinned_pool;
 mod seal_offload;

@@ -83,7 +83,7 @@ def test_pd_prom_metrics_observes_connector_stats(monkeypatch) -> None:
         KVConnectorPromMetrics,
     )
 
-    import orbitkv.pd_connector.metrics as pd_metrics_mod
+    import orbitkv.vllm.pd.metrics as pd_metrics_mod
 
     monkeypatch.setattr(
         pd_metrics_mod,
@@ -176,7 +176,7 @@ def test_pd_proxy_metrics_render_low_cardinality_route_stats() -> None:
 
 
 def test_pd_proxy_counts_non_stream_decode_http_errors(monkeypatch) -> None:
-    from orbitkv.pd_connector import proxy as proxy_mod
+    from orbitkv.vllm.pd import proxy as proxy_mod
 
     def fake_post_json(*_args, **_kwargs):
         return HTTPStatus.BAD_GATEWAY, b'{"error":"decode failed"}', "application/json"
@@ -203,7 +203,7 @@ def test_pd_proxy_counts_non_stream_decode_http_errors(monkeypatch) -> None:
 
 
 def test_pd_proxy_reuses_non_stream_http_client(monkeypatch) -> None:
-    from orbitkv.pd_connector import proxy as proxy_mod
+    from orbitkv.vllm.pd import proxy as proxy_mod
 
     class FakeResponse:
         status_code = 200
@@ -260,7 +260,7 @@ def test_pd_proxy_reuses_non_stream_http_client(monkeypatch) -> None:
 
 
 def test_pd_proxy_warms_decode_connections_with_non_stream_client(monkeypatch) -> None:
-    from orbitkv.pd_connector import proxy as proxy_mod
+    from orbitkv.vllm.pd import proxy as proxy_mod
 
     class FakeResponse:
         status_code = 200
@@ -316,7 +316,7 @@ def test_pd_proxy_warms_decode_connections_with_non_stream_client(monkeypatch) -
 
 
 def test_pd_proxy_warms_decode_connections_with_stream_client(monkeypatch) -> None:
-    from orbitkv.pd_connector import proxy as proxy_mod
+    from orbitkv.vllm.pd import proxy as proxy_mod
 
     class FakeResponse:
         status_code = 200
@@ -361,7 +361,7 @@ def test_pd_proxy_warms_decode_connections_with_stream_client(monkeypatch) -> No
 
 
 def test_pd_proxy_unsupported_stream_does_not_record_decode_duration() -> None:
-    from orbitkv.pd_connector import proxy as proxy_mod
+    from orbitkv.vllm.pd import proxy as proxy_mod
 
     config = ProxyConfig(
         prefill_url="http://p0:8000",
@@ -384,7 +384,7 @@ def test_pd_proxy_unsupported_stream_does_not_record_decode_duration() -> None:
 
 
 def test_pd_proxy_reuses_stream_http_client(monkeypatch) -> None:
-    from orbitkv.pd_connector import proxy as proxy_mod
+    from orbitkv.vllm.pd import proxy as proxy_mod
 
     class FakeHeaders(dict):
         def get(self, key, default=None):
@@ -2547,7 +2547,7 @@ def test_push_finalizer_records_schedule_to_done_duration() -> None:
         def aggregated_link_speed(self) -> int:
             return 400_000_000_000
 
-    from orbitkv.pd_connector.metrics import PdMetricsTracker
+    from orbitkv.vllm.pd.metrics import PdMetricsTracker
 
     metrics = PdMetricsTracker()
     now_ns = time.time_ns()

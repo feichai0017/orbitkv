@@ -8,12 +8,12 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.pd_connector.async_runner import AsyncTaskPool
-from orbitkv.pd_connector.layout import KvCacheLayout
-from orbitkv.pd_connector.layout_mapping import (
+from orbitkv.vllm.pd.async_runner import AsyncTaskPool
+from orbitkv.vllm.pd.layout import KvCacheLayout
+from orbitkv.vllm.pd.layout_mapping import (
     decode_rank_source_counts,
 )
-from orbitkv.pd_connector.metadata import (
+from orbitkv.vllm.pd.metadata import (
     BlockIds,
     LayerRemoteLayout,
     PdHandshake,
@@ -21,13 +21,13 @@ from orbitkv.pd_connector.metadata import (
     flatten_block_ids,
     layer_layout_to_compact_dict,
 )
-from orbitkv.pd_connector.mooncake import MooncakePort
-from orbitkv.pd_connector.prefill import AsyncPrefillSender, PrefillHttpTask
+from orbitkv.vllm.pd.mooncake import MooncakePort
+from orbitkv.vllm.pd.prefill import AsyncPrefillSender, PrefillHttpTask
 
 if TYPE_CHECKING:
-    from orbitkv.pd_connector.worker import PdWorkerBase
+    from orbitkv.vllm.pd.worker import PdWorkerBase
 
-from orbitkv.pd_connector.config import extra_config_value
+from orbitkv.vllm.pd.config import extra_config_value
 
 logger = get_connector_logger()
 

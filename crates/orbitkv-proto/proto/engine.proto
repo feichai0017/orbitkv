@@ -172,14 +172,6 @@ message UnregisterResponse {
   ResponseStatus status = 1;
 }
 
-// Opaque host page used by framework storage adapters. The namespace carries
-// model and byte-layout identity; key is the framework's page identity.
-message CachePageRequest {
-  string namespace = 1;
-  bytes key = 2;
-  bytes data = 3;
-}
-
 message ShutdownRequest {}
 
 message ShutdownResponse {

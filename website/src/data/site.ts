@@ -48,7 +48,7 @@ export const layers = [
     name: "orbitkv-sglang",
     role: "Integrate the runtime.",
     detail:
-      "A native HiCache path first, followed by an OrbitKV-authored page and lifetime boundary.",
+      "A direct GPU-page linker for full-attention models, followed by complete hybrid recovery contracts.",
     path: "docs/roadmap.md",
   },
 ];

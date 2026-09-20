@@ -47,7 +47,7 @@ Each TP rank configures a routable bind host and may select an RDMA NIC. When
 {
   "kv_connector": "PdConnector",
   "kv_role": "kv_both",
-  "kv_connector_module_path": "orbitkv.pd_connector",
+  "kv_connector_module_path": "orbitkv.vllm.pd",
   "engine_id": "d0",
   "kv_connector_extra_config": {
     "orbitkv.pd.mooncake.bind_host": "10.0.0.2",

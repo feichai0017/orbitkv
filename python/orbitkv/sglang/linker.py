@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import pickle
 import queue
 import threading
 import time
@@ -28,9 +27,8 @@ from sglang.srt.mem_cache.unified_cache.components import ComponentType
 from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinker
 from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
-from orbitkv.client.data_plane import LocalDataClient
-from orbitkv.client.gpu import resolve_device_id
-from orbitkv.ipc_wrapper import CudaIPCWrapper
+from orbitkv.client.connection import connect_data_client
+from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
 
 logger = logging.getLogger(__name__)
 
@@ -101,10 +99,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
 
     def __init__(self, server_args: Any, params: Any, *, components: set[ComponentType]):
         if components != {ComponentType.FULL}:
-            raise ValueError(
-                "OrbitKV direct GPU linker currently supports full-attention KV only; "
-                "use the HiCache storage backend for hybrid SWA/Mamba models"
-            )
+            raise ValueError("OrbitKV direct GPU linker currently supports full-attention KV only")
         self.page_size = params.page_size
         kvcache = params.token_to_kv_pool_allocator.get_kvcache()
         if type(kvcache) in (MHATokenToKVPool, MLATokenToKVPool):
@@ -135,8 +130,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             )
         if set(self.pool_group.entry_map) != {PoolName.KV}:
             raise ValueError(
-                "OrbitKV direct GPU linker requires one KV pool; "
-                "use the HiCache storage backend for auxiliary GPU pools"
+                "OrbitKV direct GPU linker requires one KV pool; auxiliary GPU pools are unsupported"
             )
         self.pool = self.pool_group.entry_map[PoolName.KV]
         self._row_span = self.pool._row_span
@@ -196,10 +190,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
         endpoint = os.environ.get("ORBITKV_SGLANG_ENDPOINT", "unix:///run/orbitkv/orbitkv.sock")
         if not endpoint.startswith("unix://"):
             raise ValueError("ORBITKV_SGLANG_ENDPOINT must be a unix:// socket")
-        self.client = LocalDataClient(endpoint.removeprefix("unix://"))
+        self.client = connect_data_client(endpoint.removeprefix("unix://"))
         try:
             self.client.start_session_watcher(self.instance_id, self.namespace, 1, 1)
-            wrappers = [pickle.dumps(CudaIPCWrapper(tensor)) for tensor in self.pool.kv_buffer]
+            wrappers = [serialize_gpu_buffer(tensor) for tensor in self.pool.kv_buffer]
             ok, message = self.client.register_context_batch(
                 self.instance_id,
                 self.namespace,
@@ -457,13 +451,12 @@ class OrbitKVLinker(UnifiedCacheLinker):
 
 def create_cache(ctx: Any) -> UnifiedRadixCache:
     """Factory selected by SGLang's ``--radix-cache-backend orbitkv``."""
-    if ctx.disable_radix_cache or ctx.enable_hierarchical_cache:
-        raise ValueError("OrbitKV direct GPU linker requires RadixCache without HiCache")
+    if ctx.disable_radix_cache:
+        raise ValueError("OrbitKV direct GPU linker requires RadixCache")
+    if ctx.enable_hierarchical_cache:
+        raise ValueError("OrbitKV direct GPU linker does not support hierarchical cache")
     if ctx.is_hybrid_swa or ctx.is_hybrid_ssm:
-        raise ValueError(
-            "OrbitKV direct GPU linker currently supports full-attention KV only; "
-            "use the HiCache storage backend for hybrid SWA/Mamba models"
-        )
+        raise ValueError("OrbitKV direct GPU linker currently supports full-attention KV only")
     if (
         ctx.is_dsa
         or ctx.params.is_eagle

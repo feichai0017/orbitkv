@@ -2,7 +2,6 @@
 Worker-side connector logic.
 """
 
-import pickle
 import queue
 import threading
 import time
@@ -13,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import torch
 
 from orbitkv.client.data_plane import RestoreHandle, RestoreStatus
-from orbitkv.ipc_wrapper import CudaIPCWrapper
+from orbitkv.client.gpu import serialize_gpu_buffer
 from orbitkv.vllm.common import (
     CacheGroupLayout,
     ConnectorContext,
@@ -330,7 +329,7 @@ class WorkerConnector:
         layout = "unknown"
 
         layer_names = []
-        ipc_wrappers = []
+        buffer_registrations = []
         layer_num_blocks = []
         layer_bytes_per_block = []
         layer_kv_stride_bytes = []
@@ -359,8 +358,7 @@ class WorkerConnector:
                     registration_tensor.storage_offset(),
                 )
 
-            wrapper = CudaIPCWrapper(registration_tensor)
-            wrapper_bytes = pickle.dumps(wrapper)
+            wrapper_bytes = serialize_gpu_buffer(registration_tensor)
 
             registration = _infer_kv_cache_registration(
                 registration_tensor,
@@ -371,7 +369,7 @@ class WorkerConnector:
             layout = registration.layout
 
             layer_names.append(layer_name)
-            ipc_wrappers.append(wrapper_bytes)
+            buffer_registrations.append(wrapper_bytes)
             layer_num_blocks.append(registration.num_blocks)
             layer_bytes_per_block.append(registration.bytes_per_block)
             layer_kv_stride_bytes.append(registration.kv_stride_bytes)
@@ -404,7 +402,7 @@ class WorkerConnector:
             self._ctx.effective_world_size,
             self._ctx.device_id,
             layer_names,
-            ipc_wrappers,
+            buffer_registrations,
             layer_num_blocks,
             layer_bytes_per_block,
             layer_kv_stride_bytes,

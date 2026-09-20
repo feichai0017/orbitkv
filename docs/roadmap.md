@@ -10,8 +10,7 @@ Deliver:
 - move Rust packages under `crates/` and keep the repository root a virtual
   workspace;
 - introduce `orbitkv-contract`;
-- move the implementation to `orbitkv.vllm` with `orbitkv.connector` as a
-  compatibility alias;
+- place the vLLM cache connector and Mooncake P/D adapter under `orbitkv.vllm`;
 - establish `orbitkv.sglang` and `orbitkv.client` package boundaries;
 - establish the `orbitkv-local` iceoryx2 control ABI;
 - connect lifecycle probes, epoch fencing, and shutdown to the real Cache Manager and
@@ -28,40 +27,37 @@ Gate:
 
 - Cargo metadata, format, workspace check, and host-safe tests pass;
 - default Python unit tests pass;
-- the vLLM compatibility module and new canonical module export the same
-  connector classes;
-- SGLang contract helpers import without SGLang installed.
+- the vLLM plugin registers its connectors without loading the engine at
+  package import time;
+- the SGLang plugin registers the direct GPU-page linker.
 
-## M1: SGLang HiCache backend
+## M1: SGLang direct GPU-page linker
 
 Deliver:
 
-- implement the dynamic `HiCacheStorage` backend;
-- register SGLang shared host regions with the Cache Manager over UDS;
+- register SGLang GPU KV buffers with the Cache Manager through CUDA IPC;
 - switch framework adapters to the available local `QueryBundle`, publish,
   restore, completion, and lease-release APIs;
-- support KV, MLA, Mamba/recurrent, SWA, and explicit opaque pools;
-- map SGLang hit policies into `RecoveryContract`;
+- support full-attention MHA and MLA layouts;
+- reject hybrid, draft, DSA, and auxiliary GPU state until complete recovery
+  contracts are available;
 - expose cold miss, partial prefix, warm hit, cancellation, and restart metrics.
 
 Gate:
 
-- numerical parity with SGLang's file backend;
-- no second host-page copy in the steady state;
+- exact generated-text parity against a cold-control namespace;
+- a real GPU load after flushing radix cache and after a worker restart;
 - SGLang worker restart preserves Cache Manager-resident cache;
-- multi-pool queries never report a boundary with missing required state.
+- unsupported state fails during initialization rather than reporting a hit.
 
 ## M2: common StateBundle query and native local transport
 
 Deliver:
 
 - move vLLM hybrid reconciliation from the adapter into common bundle logic;
-- replace framework adapters' per-load shared-memory status files with the
-  implemented local restore operations and eventfd wakeups (complete for the
-  opt-in vLLM path; SGLang pending);
-- use UDS file-descriptor passing for shared regions;
-- add framework-neutral query, lease, register-region, and transfer-plan RPCs;
-- preserve the legacy vLLM protocol until its adapter migrates.
+- use local restore operations and eventfd wakeups for both adapters;
+- define framework-neutral region registration and transfer-plan operations;
+- add generation validation to every local page reference.
 
 Gate:
 

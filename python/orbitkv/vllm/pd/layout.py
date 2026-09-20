@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from orbitkv.pd_connector.metadata import LayerRemoteLayout, TransferRegionLayout
+from orbitkv.vllm.pd.metadata import LayerRemoteLayout, TransferRegionLayout
 
 BlockIdSelection = set[int] | tuple[int, ...] | None
 

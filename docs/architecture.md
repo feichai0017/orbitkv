@@ -8,9 +8,8 @@ server. Framework adapters expose logical model state and local pages; OrbitKV
 owns external replicas, transfer leases, storage tiers, and eventually the
 policy that chooses placement, movement, reclamation, routing, or recomputation.
 
-The data plane is derived from PegaFlow 0.24.5. The vLLM connector, SGLang
-direct GPU linker, and SGLang HiCache L3 backend have passed single-node GPU
-recovery tests.
+The data plane is derived from PegaFlow 0.24.5. The vLLM connector and SGLang
+direct GPU linker have passed single-node GPU recovery tests.
 
 ## Process topology
 
@@ -55,9 +54,7 @@ against registration, drains GPU
 load/save queues, and only then releases imported CUDA mappings. Superseded
 sessions cannot clean up a replacement session. Both vLLM and the SGLang
 direct linker register CUDA IPC pages and use iceoryx2 descriptors on the hot
-path. The SGLang HiCache L3 compatibility backend still sends bounded host
-pages over UDS; shared host page registration is its next transport
-optimization. Remote transfers use the Mooncake-backed `TransferEngine`.
+path. Remote transfers use the Mooncake-backed `TransferEngine`.
 See [transport.md](transport.md) for the measured process-transport baseline.
 
 ## API and crate boundaries
@@ -84,7 +81,7 @@ kept because it describes one IPC implementation, not a different cache API.
 
 ```text
 vLLM adapter                SGLang adapter
-block hashes / CUDA IPC     radix hashes / CUDA IPC or HiCache host pages
+block hashes / CUDA IPC     radix hashes / CUDA IPC
                              /
        python/orbitkv/client (cache API)
                     |
@@ -134,9 +131,9 @@ The adapters translate framework-native state into `orbitkv-contract`:
 | --- | --- | --- |
 | Prefix identity | `Request.block_hashes` | Radix page hashes |
 | Local GPU pages | vLLM block IDs + CUDA IPC | Radix page indices + CUDA IPC on the direct path |
-| Host pages | OrbitKV-owned pinned blocks today | Direct path uses OrbitKV-owned pinned blocks; HiCache L3 copies SGLang L2 pages into them |
-| Hybrid state | KV cache groups and checkpoints | `PoolTransfer` components |
-| Lifecycle | KVConnector callbacks | Radix/HiCache events |
+| Host pages | OrbitKV-owned pinned blocks | OrbitKV-owned pinned blocks |
+| Hybrid state | KV cache groups and checkpoints | Unsupported until complete recovery contracts are implemented |
+| Lifecycle | KVConnector callbacks | Radix-cache events |
 
 Adapters do not decide which component set is a legal recovery point. That
 logic belongs in the common recovery contract.
@@ -179,19 +176,6 @@ incompatible byte reuse. The direct path currently requires a single full-KV
 pool; hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state need a more
 complete recovery contract. SGLang retains authority over HBM allocation and
 prefix-tree nodes.
-
-### Stage 1 compatibility: HiCache L3 backend
-
-`orbitkv.sglang.storage.OrbitKVHiCacheStorage` implements SGLang's dynamic
-`HiCacheStorage` interface, including `batch_exists_v2`, `batch_get_v2`,
-`batch_set_v2`, and named auxiliary pools. SGLang remains owner of HBM and
-its L2 host pool. A completed L2 page is copied into Cache Manager-owned
-bounded pinned memory, with the core SSD tier available for eviction.
-The adapter scopes keys by model, parallel rank, pool, dtype, layout, and page
-size. `batch_exists_v2` returns legal `restorable_prefix_pages` for trailing
-auxiliary state, and only reports a prefix as a hit when all required pools
-are available. The simple path uses per-page UDS operations; shared-region
-registration and batched query/transfer are pending performance work.
 
 ### Stage 2: Radix lifecycle bridge for routing
 
@@ -280,8 +264,8 @@ KV-aware worker scorer is the routing baseline, not the final planner.
 | Milestone | Framework owns | OrbitKV owns |
 | --- | --- | --- |
 | M0 | local page identity and execution | external replicas and current data plane |
-| M1 | GPU + host pages | L3 storage, remote replicas, bundle query |
-| M2 | GPU pages | shared host pages, L3, transfers |
+| M1 | GPU pages | Pinned DRAM/SSD replicas and direct GPU restore |
+| M2 | GPU pages | Common recovery contracts and transfer operations |
 | M3 | execution and local page identity | replica catalog, routing, and restore plans |
 | M4 | execution and radix topology | page identity, generations, and all placements |
 | M5+ | execution | semantic lifetime and compiled physical plans |

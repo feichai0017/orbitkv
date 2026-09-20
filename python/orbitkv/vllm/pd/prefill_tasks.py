@@ -10,8 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from orbitkv.pd_connector.layout import LayerBlockSlices
-from orbitkv.pd_connector.mooncake import MooncakePort
+from orbitkv.vllm.pd.layout import LayerBlockSlices
+from orbitkv.vllm.pd.mooncake import MooncakePort
 
 
 class _SkipPushRank(Exception):

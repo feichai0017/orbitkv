@@ -4,7 +4,7 @@ use orbitkv_local::{
     PublishRequest, QueryBundleRequest, QueryOutcomeCode, RestoreLease, RestoreRequest, StatusCode,
 };
 use orbitkv_proto::proto::engine::{
-    CachePageRequest, RegisterContextRequest, SessionRequest, TransferMode, UnregisterRequest,
+    RegisterContextRequest, SessionRequest, TransferMode, UnregisterRequest,
 };
 use prost::Message;
 use pyo3::{
@@ -230,66 +230,6 @@ impl PyLocalQueryClient {
     fn health(&self, py: Python<'_>) -> PyResult<(bool, String)> {
         self.lifecycle_call(py, LifecycleCommand::Health, Vec::new())?;
         Ok((true, String::new()))
-    }
-
-    fn put_host_page(
-        &self,
-        py: Python<'_>,
-        namespace: String,
-        key: Vec<u8>,
-        data: Vec<u8>,
-    ) -> PyResult<()> {
-        let request = CachePageRequest {
-            namespace,
-            key,
-            data,
-        };
-        self.lifecycle_call(py, LifecycleCommand::PagePut, request.encode_to_vec())
-    }
-
-    fn get_host_page<'py>(
-        &self,
-        py: Python<'py>,
-        namespace: String,
-        key: Vec<u8>,
-    ) -> PyResult<Option<Bound<'py, pyo3::types::PyBytes>>> {
-        let request = CachePageRequest {
-            namespace,
-            key,
-            data: Vec::new(),
-        };
-        let body = py
-            .detach(|| {
-                self.inner
-                    .lifecycle_bytes(LifecycleCommand::PageGet, &request.encode_to_vec())
-            })
-            .map_err(|error| OrbitKVError::new_err(format!("host page get failed: {error}")))?;
-        match body.split_first() {
-            Some((&0, [])) => Ok(None),
-            Some((&1, data)) => Ok(Some(pyo3::types::PyBytes::new(py, data))),
-            _ => Err(OrbitKVInternal::new_err("invalid host page get response")),
-        }
-    }
-
-    fn has_host_page(&self, py: Python<'_>, namespace: String, key: Vec<u8>) -> PyResult<bool> {
-        let request = CachePageRequest {
-            namespace,
-            key,
-            data: Vec::new(),
-        };
-        let body = py
-            .detach(|| {
-                self.inner
-                    .lifecycle_bytes(LifecycleCommand::PageExists, &request.encode_to_vec())
-            })
-            .map_err(|error| OrbitKVError::new_err(format!("host page exists failed: {error}")))?;
-        match body.as_slice() {
-            [0] => Ok(false),
-            [1] => Ok(true),
-            _ => Err(OrbitKVInternal::new_err(
-                "invalid host page exists response",
-            )),
-        }
     }
 
     fn unregister_context(&self, py: Python<'_>, instance_id: String) -> PyResult<(bool, String)> {

@@ -14,7 +14,7 @@
 OrbitKV combines a production-oriented Rust storage and transfer engine with a
 new control plane that will compile attention semantics and workload evidence
 into cache placement, retention, prefetch, movement, and routing decisions.
-vLLM uses the KV connector; SGLang uses a dynamic HiCache L3 backend. Both
+vLLM uses a KV connector and SGLang uses a direct GPU-page linker. Both
 single-node paths have been validated against their pinned releases on a GPU.
 The framework release targets as of 2026-09-20 are
 [vLLM `0.29.0`](https://github.com/vllm-project/vllm/releases/tag/v0.29.0)
@@ -29,7 +29,7 @@ the SGLang source submodule is pinned to that release. See
 - cross-node discovery and Mooncake transfer over RDMA or TCP;
 - prefix lookup, leases, eviction, metrics, and P/D transfer paths;
 - a Rust Cache Manager, Python bindings, the vLLM connector, and an SGLang
-  HiCache backend that restores prompts after SGLang flushes its L1/L2 cache.
+  GPU-page linker that restores prompts after SGLang flushes its radix cache.
 
 The initial storage and control data plane was imported from PegaFlow `0.24.5`
 and renamed throughout. The copied remote transfer stacks have since been
@@ -48,9 +48,9 @@ declarative state-liveness contract into physical cache plans:
 - SGLang remains the serving scheduler while OrbitKV becomes the authority for
   cache identity, placement, and safe reuse.
 
-SGLang has a direct GPU-page linker for ordinary full-attention models and a
-HiCache host-page backend for hybrid models and auxiliary state. Both are
-validated against the pinned release; deeper recovery contracts remain planned.
+SGLang has a direct GPU-page linker for full-attention MHA and MLA models.
+Hybrid models and auxiliary state require complete recovery contracts before
+OrbitKV can claim a reusable prefix for them.
 
 ## Workspace
 
@@ -62,8 +62,8 @@ validated against the pinned release; deeper recovery contracts remain planned.
 | [`orbitkv-transfer`](crates/orbitkv-transfer) | Pinned upstream Mooncake Transfer Engine wrapper |
 | [`orbitkv-server`](crates/orbitkv-server) | Cache Manager crate: shared cache operations, process endpoint, peer control, health and metrics |
 | [`orbitkv-metaserver`](crates/orbitkv-metaserver) | Cross-node replica discovery |
-| [`python/orbitkv/vllm`](python/orbitkv/vllm) | vLLM adapter |
-| [`python/orbitkv/sglang`](python/orbitkv/sglang) | SGLang GPU-page linker, HiCache backend, and pool mapping |
+| [`python/orbitkv/vllm`](python/orbitkv/vllm) | vLLM cache connector, Mooncake P/D adapter, plugin entry point |
+| [`python/orbitkv/sglang`](python/orbitkv/sglang) | SGLang GPU-page linker and plugin entry point |
 | [`python/orbitkv/client`](python/orbitkv/client) | Framework-neutral cache API and transport selection |
 | [`third-party/sglang`](third-party/sglang) | Pinned SGLang source used to develop and validate integration |
 | [`third-party/vllm`](third-party/vllm) | Pinned vLLM release source used to develop and validate integration |
@@ -109,7 +109,7 @@ Unix socket. Standalone mode does not start a gRPC listener. Distributed mode
 bytes still use Mooncake. Every inference process connects to a Cache Manager
 on its own host.
 
-For the SGLang dynamic backend command and its host-memory requirements, see
+For the SGLang GPU-page linker command and supported layouts, see
 [`python/README.md`](python/README.md).
 
 OrbitKV's current workspace is Apache-2.0 licensed. Earlier experiments remain

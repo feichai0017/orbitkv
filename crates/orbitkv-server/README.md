@@ -10,7 +10,7 @@ transfer control RPCs. Mooncake transfers KV bytes between nodes.
 
 ## Building
 
-The binary embeds CPython via PyO3 so it can reconstruct CUDA IPC tensors with Torch, just like the Python server. Before running cargo commands, point PyO3 to the exact interpreter you want (usually the repo's `.venv`) so linking works and the runtime can import `orbitkv.ipc_wrapper`:
+The binary embeds CPython via PyO3 so it can reconstruct registered CUDA tensors with Torch. Before running cargo commands, point PyO3 to the exact interpreter you want (usually the repo's `.venv`) so linking works and the runtime can import `orbitkv.client.gpu`:
 
 ```bash
 # Explicitly set your Python interpreter path if needed:

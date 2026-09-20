@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from orbitkv.pd_connector.metadata import PdHandshake
+from orbitkv.vllm.pd.metadata import PdHandshake
 
 
 @dataclass(frozen=True)

@@ -20,23 +20,23 @@ from vllm.distributed.kv_transfer.kv_connector.v1.metrics import (  # noqa: E402
 )
 
 import orbitkv.orbitkv as native  # noqa: E402
-import orbitkv.pd_connector.decode_worker as decode_worker_mod  # noqa: E402
-import orbitkv.pd_connector.prefill as prefill_mod  # noqa: E402
-import orbitkv.pd_connector.prefill_worker as prefill_worker_mod  # noqa: E402
-import orbitkv.pd_connector.worker as worker_mod  # noqa: E402
-from orbitkv.pd_connector import (  # noqa: E402
+import orbitkv.vllm.pd.decode_worker as decode_worker_mod  # noqa: E402
+import orbitkv.vllm.pd.prefill as prefill_mod  # noqa: E402
+import orbitkv.vllm.pd.prefill_worker as prefill_worker_mod  # noqa: E402
+import orbitkv.vllm.pd.worker as worker_mod  # noqa: E402
+from orbitkv.vllm.pd import (  # noqa: E402
     PdConnector,
     PdDecodeConnector,
     PdPrefillConnector,
 )
-from orbitkv.pd_connector.kv_params import parse_consumer  # noqa: E402
-from orbitkv.pd_connector.layout import (  # noqa: E402
+from orbitkv.vllm.pd.kv_params import parse_consumer  # noqa: E402
+from orbitkv.vllm.pd.layout import (  # noqa: E402
     BlockRegionSlice,
     FlashAttnHndLayout,
     LayerBlockSlices,
     unique_blocks_from_slot_mapping,
 )
-from orbitkv.pd_connector.metadata import (  # noqa: E402
+from orbitkv.vllm.pd.metadata import (  # noqa: E402
     RELEASE_CONSUMER_ABORT,
     RELEASE_PRODUCER_ABORT,
     RELEASE_PRODUCER_FINISHED,
@@ -53,16 +53,16 @@ from orbitkv.pd_connector.metadata import (  # noqa: E402
     handshake_to_dict,
     handshakes_from_dicts,
 )
-from orbitkv.pd_connector.mooncake import (  # noqa: E402
+from orbitkv.vllm.pd.mooncake import (  # noqa: E402
     MockMooncakePort,
     RealMooncakePort,
     _layer_blocks_to_native,
 )
-from orbitkv.pd_connector.prefill import (  # noqa: E402
+from orbitkv.vllm.pd.prefill import (  # noqa: E402
     AsyncPrefillSender,
     PrefillHttpTask,
 )
-from orbitkv.pd_connector.proxy import (  # noqa: E402
+from orbitkv.vllm.pd.proxy import (  # noqa: E402
     PdEndpoint,
     ProxyConfig,
     RoundRobinPairRouter,
@@ -71,11 +71,11 @@ from orbitkv.pd_connector.proxy import (  # noqa: E402
     iter_http_stream_bytes,
     render_proxy_metrics,
 )
-from orbitkv.pd_connector.scheduler import (  # noqa: E402
+from orbitkv.vllm.pd.scheduler import (  # noqa: E402
     PdDecodeSchedulerConnector,
     PdPrefillSchedulerConnector,
 )
-from orbitkv.pd_connector.worker import (  # noqa: E402
+from orbitkv.vllm.pd.worker import (  # noqa: E402
     PdDecodeWorkerConnector,
     PdPrefillWorkerConnector,
 )

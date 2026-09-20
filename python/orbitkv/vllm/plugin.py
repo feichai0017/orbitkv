@@ -34,36 +34,18 @@ def register() -> None:
     with contextlib.suppress(ValueError):
         KVConnectorFactory.register_connector(
             "PdConnector",
-            "orbitkv.pd_connector",
+            "orbitkv.vllm.pd",
             "PdConnector",
         )
     with contextlib.suppress(ValueError):
         KVConnectorFactory.register_connector(
             "PdDecodeConnector",
-            "orbitkv.pd_connector",
+            "orbitkv.vllm.pd",
             "PdDecodeConnector",
         )
     with contextlib.suppress(ValueError):
         KVConnectorFactory.register_connector(
             "PdPrefillConnector",
-            "orbitkv.pd_connector",
+            "orbitkv.vllm.pd",
             "PdPrefillConnector",
-        )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "NixlConnector",
-            "orbitkv.nixl_connector",
-            "NixlConnector",
-        )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "NixlPullConnector",
-            "orbitkv.nixl_connector",
-            "NixlPullConnector",
-        )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "NixlPushConnector",
-            "orbitkv.nixl_connector",
-            "NixlPushConnector",
         )

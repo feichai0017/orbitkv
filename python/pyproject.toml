@@ -75,7 +75,7 @@ orbitkv-cache-manager = "orbitkv._cache_manager:main"
 orbitkv-metaserver = "orbitkv._metaserver:main"
 
 [project.entry-points."vllm.general_plugins"]
-orbitkv = "orbitkv.vllm_plugin:register"
+orbitkv = "orbitkv.vllm.plugin:register"
 
 [project.entry-points."sglang.srt.plugins"]
 orbitkv = "orbitkv.sglang.plugin:register"
