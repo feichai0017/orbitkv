@@ -1,8 +1,8 @@
 # OrbitKV Python Package
 
 Framework adapters and Python bindings for the OrbitKV state cache, built with
-Rust and PyO3. Both vLLM and SGLang single-node cache paths have GPU-validated
-adapters for the releases below.
+Rust and PyO3. Both vLLM and SGLang single-node DRAM cache paths have
+GPU-validated adapters for the releases below.
 
 ## Features
 
@@ -116,8 +116,11 @@ SGLang owns the HBM page lifecycle. OrbitKV registers the worker's GPU KV
 buffers once through CUDA IPC, then queries, saves, and restores page-aligned
 blocks through the same local client used by vLLM. iceoryx2 carries cache
 commands; GPU data is copied directly between the registered buffers and the
-Cache Manager's pinned memory. Its DRAM/SSD tiers can preserve pages across a
-SGLang restart while the Cache Manager remains running.
+Cache Manager's pinned memory. DRAM recovery across a SGLang restart is
+validated while the Cache Manager remains running. SSD lookup currently
+triggers asynchronous reads without waiting for readiness; requests can
+recompute instead of using those reads. See the
+[SSD measurements and limitation](../docs/ssd-performance.md).
 
 Both engines fingerprint local model artifacts and bind their configuration and
 registered storage layout to a versioned cache identity. Hub models must use

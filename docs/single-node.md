@@ -10,7 +10,7 @@ No MetaServer or peer gRPC listener is needed for this deployment.
 | Adapter | Validated release | Single-node path | Current limit |
 | --- | --- | --- | --- |
 | vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Cross-host TP query fan-out is unsupported; model-specific hybrid layouts need their own recovery qualification |
-| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA with one KV pool; single-rank GPU recovery qualified, multi-rank TP still needs a GPU gate |
+| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA with one KV pool; single-rank DRAM recovery qualified, SSD readiness and multi-rank TP need further integration and validation |
 
 These are tested release targets, not an assertion that every model or GPU
 topology is qualified. The local cache has correctness gates, but no current
@@ -62,8 +62,11 @@ This reserves an external pinned-host-memory budget; it does not take over the
 engine's HBM allocator. Set `--pool-size` according to host RAM and the desired
 cache budget. To enable an SSD backing cache, add for example
 `--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb` to the
-manager command. The current SSD cache file is truncated on manager startup:
-it preserves pages across an **engine** restart, not a **manager** restart.
+manager command. The current SSD cache file is truncated on manager startup;
+it is not durable across a manager restart. vLLM SSD restoration after DRAM
+eviction is measured. SGLang's pending-query handling is unfinished: its
+requests can recompute while SSD reads run in the background. See the
+[SSD experiment](ssd-performance.md) before enabling that tier for SGLang.
 See [manager options](server.md) for the other capacity and queue controls.
 
 The manager, each engine process, and their GPU buffers must be on the same
@@ -165,9 +168,11 @@ curl --fail http://127.0.0.1:9091/metrics | \
   grep -E 'orbitkv_(save_bytes_total|load_bytes_total|cache_block_hits_total)'
 ```
 
-Cold requests populate external DRAM/SSD only after their save completes;
-later requests can restore matching blocks. On a local miss the engine computes
-the state normally. HBM pressure and active-page eviction remain engine
+Save completion confirms the GPU-to-DRAM copy. SSD writes proceed
+asynchronously and may be dropped under pressure; a completed save does not
+guarantee an SSD replica. Later requests can restore ready matching blocks,
+subject to each adapter's readiness handling. On a cache miss the engine
+computes the state normally. HBM pressure and active-page eviction remain engine
 decisions; OrbitKV's `--pool-size` and SSD options control only external cache
 capacity. Pinning too much host memory or saving every low-reuse block can
 increase latency, so size and admission policy should be measured against the
@@ -185,7 +190,7 @@ adapter today.
 
 | Topology | vLLM | SGLang |
 | --- | --- | --- |
-| One engine and one manager on a host | Validated external-cache recovery on the pinned release | Validated single-rank full-attention recovery on the pinned release |
+| One engine and one manager on a host | Validated DRAM recovery and measured SSD restoration on the pinned release | Validated single-rank full-attention DRAM recovery; SSD readiness handling is unfinished |
 | Multiple engine instances sharing one host manager | Instances can use the same local socket; use immutable model identities and qualify concurrency for the workload | Instances can use the same local socket; rank/layout-scoped namespaces isolate incompatible pages, and concurrent multi-rank recovery still needs a GPU gate |
 | Replicas on separate hosts | One manager per host plus the current MetaServer and Mooncake fetch; experimental | The same node-local adapter connection with one manager per host; remote fetch and multi-rank behavior still need qualification |
 | One TP replica split across hosts | Unsupported by the current scheduler-to-manager query fan-out | Not qualified by the current single-rank GPU gate |

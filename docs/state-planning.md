@@ -2,7 +2,7 @@
 
 Status: design proposal, not an implemented planner. The existing cache API,
 engine-owned HBM, and one Cache Manager per host remain the foundation.
-The [SSD experiment](../benches/README.md#ssd-restoration) supplies initial
+The [SSD experiment](ssd-performance.md) supplies initial
 measurements; predictive policies require separate evaluation.
 
 ## What can be known ahead of time
@@ -33,7 +33,8 @@ SGLang 0.5.20's `UnifiedCacheLinker.lookup` returns a list of restorable prefix
 boundaries. OrbitKV currently maps `QueryLoading` to an empty list. The caller
 can proceed with recomputation; an SSD read started by that lookup is not proof
 that the request used it. A common cache transport has not removed this
-scheduler-contract difference. First measure it. A production solution needs
+scheduler-contract difference. The SSD experiment observed this on all 15
+SGLang requests after DRAM eviction. A production solution needs
 early request observation and a pending/readiness callback, or a source lease
 that guarantees the future restore can succeed. Do not block the scheduling
 thread in an unbounded lookup loop or label pending bytes as resident.
@@ -174,6 +175,9 @@ require comparisons against compatible implementations on the same workloads.
    concurrency 1/4/8/16, host working sets larger than capacity, partial-prefix
    hits, cancellation, and mixed read/write traffic. Report goodput under TTFT
    and inter-token-latency limits, unused prefetch bytes, and correctness.
+   Measure latency from request arrival, including added scheduler waiting;
+   do not hide prefetch time by resetting the timer at admission. Report any
+   application-provided hint lead time separately.
 5. Extend the same plan to remote replicas after directory recovery is qualified.
    Keep an oracle with perfect next-use knowledge as an upper-bound experiment,
    clearly separate from deployable policies. Run ablations for earlier demand,

@@ -2,7 +2,7 @@
 
 | Mode | Processes | Status |
 | --- | --- | --- |
-| Single-node vLLM or SGLang cache | Engine + one local Cache Manager | GPU recovery validated on pinned releases |
+| Single-node vLLM or SGLang cache | Engine + one local Cache Manager | DRAM recovery validated on both; SSD restoration measured on vLLM, SGLang readiness handling unfinished |
 | Shared cache across nodes | One Cache Manager per host + current MetaServer | Experimental; directory is not HA |
 | vLLM P/D through OrbitKV `PdConnector` | Prefill, decode, P/D proxy; Mooncake transfers KV | Experimental; does not need Cache Manager or MetaServer for the handoff |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
@@ -11,8 +11,9 @@ For exact wheel installation, vLLM and SGLang commands, socket/container
 requirements, capacity settings, and external-hit verification, follow the
 [single-node guide](single-node.md). The engine owns HBM capacity and
 allocation; configure OrbitKV's pinned host-memory and optional SSD capacity
-independently. Current SSD cache files are truncated on manager startup, so
-they are not durable across a Cache Manager restart. For cross-node cache
+independently. See the [SSD measurements](ssd-performance.md) for the current
+SGLang limitation and tier-specific evidence. SSD cache files are truncated on
+manager startup, so they are not durable across a Cache Manager restart. For cross-node cache
 sharing, run the
 [current MetaServer and a local Cache Manager on each host](p2p.md); inference
 processes still connect only to their *own* host's UDS endpoint. Multi-host TP

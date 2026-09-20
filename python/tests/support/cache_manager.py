@@ -327,6 +327,7 @@ class CacheManagerProcess:
         channel_service: str | None = None,
         channel_session_epoch: int | None = None,
         bootstrap_socket: str | None = None,
+        ssd_cache_path: Path | None = None,
     ):
         self.port = port
         self.pool_size = pool_size
@@ -335,6 +336,7 @@ class CacheManagerProcess:
         self.channel_service = channel_service
         self.channel_session_epoch = channel_session_epoch
         self.bootstrap_socket = bootstrap_socket or f"/tmp/orbitkv-{port}.sock"
+        self.ssd_cache_path = ssd_cache_path
         self.process: subprocess.Popen | None = None
         self._binary_path = find_cache_manager_binary()
         self._log_path: Path | None = None
@@ -378,6 +380,16 @@ class CacheManagerProcess:
         ]
         if self.http_port is not None:
             cmd.extend(["--http-addr", f"127.0.0.1:{self.http_port}"])
+        if self.ssd_cache_path is not None:
+            cmd.extend(
+                [
+                    "--ssd-cache-path",
+                    str(self.ssd_cache_path),
+                    "--ssd-cache-capacity",
+                    "256mb",
+                    "--enable-prometheus",
+                ]
+            )
         if self.channel_service is not None:
             cmd.extend(["--channel-service", self.channel_service])
         if self.channel_session_epoch is not None:

@@ -5,11 +5,15 @@ from __future__ import annotations
 import hashlib
 import queue
 import threading
+import time
 import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call
 
 import pytest
+import requests
+
+from tests.support.metrics import fetch_orbitkv_metrics
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
@@ -106,8 +110,15 @@ def test_restore_window_never_acknowledges_a_partially_completed_batch():
 
 
 @pytest.mark.parametrize(
-    ("layer_count", "page_count", "page_first"),
-    [(2, 2, False), (36, 64, False), (36, 64, True)],
+    ("layer_count", "page_count", "page_first", "channel_server"),
+    [
+        (2, 2, False, "dram"),
+        (36, 64, False, "dram"),
+        (36, 64, True, "dram"),
+        (36, 64, False, "ssd"),
+        (36, 64, True, "ssd"),
+    ],
+    indirect=["channel_server"],
 )
 def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
     channel_server, layer_count, page_count, page_first
@@ -170,6 +181,23 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             [(name, list(range(1, page_count + 1)), hashes) for name in names],
         )
         assert success, message
+        if channel_server.ssd_cache_path is not None:
+            saved_bytes = sum(tensor.numel() * tensor.element_size() for tensor in expected)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                observed = fetch_orbitkv_metrics(channel_server.http_port)
+                if observed.get("orbitkv_ssd_write_bytes_total", 0) == saved_bytes:
+                    break
+                time.sleep(0.01)
+            else:
+                pytest.fail(f"SSD writes did not complete: {observed}")
+            response = requests.post(
+                f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup", timeout=10
+            )
+            response.raise_for_status()
+            cleanup = response.json()
+            assert cleanup["evicted_blocks"] == page_count
+            assert cleanup["still_referenced_blocks"] == 0
         for tensor in tensors:
             tensor.zero_()
         torch.cuda.synchronize()
@@ -188,7 +216,12 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         for start in range(0, page_count, 4):
             end = min(start + 4, page_count)
             rid = f"sglang-poison-{start}"
-            lookup = client.query_prefetch(instance, hashes[start:end], rid)
+            deadline = time.monotonic() + 30
+            while True:
+                lookup = client.query_prefetch(instance, hashes[start:end], rid)
+                if isinstance(lookup, QueryReady) or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.001)
             assert isinstance(lookup, QueryReady)
             assert lookup.num_hit_blocks == end - start
             pending.append(_Load(rid, lookup.lease, tuple(range(start + 3, end + 3))))
@@ -207,6 +240,10 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         torch.cuda.synchronize()
         for tensor, original in zip(tensors, expected, strict=True):
             assert torch.equal(tensor[page_size * 3 : page_size * (page_count + 3)], original)
+        if channel_server.ssd_cache_path is not None:
+            observed = fetch_orbitkv_metrics(channel_server.http_port)
+            assert observed["orbitkv_ssd_prefetch_bytes_total"] == saved_bytes
+            assert observed["orbitkv_load_bytes_total"] == saved_bytes
     finally:
         client.unregister_context(instance)
         client.close()

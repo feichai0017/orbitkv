@@ -95,6 +95,14 @@ and a passing gate; design text alone does not close an item.
   vLLM CPU offload and SGLang HiCache, with equal payload budgets and verified
   cache sources; retain raw measurements and commands in
   `docs/single-node-performance.md`.
+- [x] Measure forced SSD restores with live `O_DIRECT` evidence on both engines;
+  retain SGLang's unsuccessful prefetches as misses in `docs/ssd-performance.md`.
+- [x] Verify both stored page layouts through SSD write, DRAM eviction, and
+  exact GPU-byte restoration with explicitly polled readiness.
+- [ ] Resolve SGLang pending-query readiness and terminal ownership; the current
+  lookup can recompute while an SSD prefetch remains unconsumed.
+- [ ] Add bounded request-driven DRAM warming and measured restore-versus-recompute
+  scheduling using `docs/state-planning.md`; speculative hints remain optional.
 - [ ] Profile the measured restore latency gap to both built-in CPU caches;
   measure transfer batching, completion observation, and inference overlap.
 - [ ] Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,

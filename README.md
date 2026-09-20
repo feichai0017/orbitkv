@@ -15,7 +15,7 @@
 OrbitKV runs one Cache Manager beside each inference node. vLLM uses a KV
 connector and SGLang uses a direct GPU-page linker. Both register engine-owned
 GPU KV buffers through CUDA IPC and use the same UDS + iceoryx2 cache API.
-Single-node recovery has been validated against the pinned releases on a GPU.
+Single-node DRAM recovery has been validated against the pinned releases on a GPU.
 The framework release targets as of 2026-09-20 are
 [vLLM `0.29.0`](https://github.com/vllm-project/vllm/releases/tag/v0.29.0)
 and [SGLang `0.5.20`](https://github.com/sgl-project/sglang/releases/tag/v0.5.20);
@@ -34,6 +34,11 @@ the SGLang source submodule is pinned to that release. See
 - an experimental **vLLM-only** Mooncake P/D connector, separate from the
   Cache Manager's remote-cache fetch path. vLLM also provides its own NIXL P/D
   connector; OrbitKV does not ship a NIXL connector.
+
+The [Qwen3-8B SSD experiment](docs/ssd-performance.md) verified vLLM restores
+after DRAM eviction. SGLang currently starts SSD reads but does not wait for
+their readiness, so the measured requests recomputed instead of restoring.
+That scheduler integration remains unfinished.
 
 The initial storage and control data plane was imported from PegaFlow `0.24.5`
 and renamed throughout. The copied remote transfer stacks have since been
@@ -66,7 +71,9 @@ span evidence is not carried by both adapters, and bundle completeness is a
 component-presence check. The MetaServer is a separate, non-HA, in-memory directory without complete
 resident-inventory replay after restart. See [architecture](docs/architecture.md)
 and the [model-aware state plan](docs/state-identity.md) for the implementation
-boundary. Single-node correctness is validated for the pinned adapter layouts;
+boundary. [State demand and transfer planning](docs/state-planning.md) describes
+the proposed early-prefetch and admission policies; these are not implemented.
+Single-node correctness is validated for the pinned adapter layouts;
 the revised local path has not yet passed a full throughput and tail-latency
 qualification against native-engine and no-cache baselines.
 

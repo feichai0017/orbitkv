@@ -254,6 +254,12 @@ require repeated experiments, additional workloads, and capacity sweeps.
 
 ## Single-node optimization order
 
+The follow-up [SSD measurements](ssd-performance.md) cover 120 requests and
+identify a SGLang pending-query gap: background SSD reads currently do not
+become restores for those serving requests. vLLM successfully restores all 15
+SSD-phase requests. Resolve this readiness boundary before comparing SGLang
+SSD latency or adding speculative prefetch policies.
+
 Benchmark code and committed results are maintained in [`benches/`](../benches/README.md).
 The SGLang adapter now submits up to eight independent restores before waiting
 for their completions. This bounds its contribution to the manager's operation

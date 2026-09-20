@@ -1,0 +1,25 @@
+run,engine,backend,length,phase,n,ttft_p50_ms,ttft_p95_ms,e2e_p50_ms,output_mismatches,cache_sources,orbitkv_load_bytes,orbitkv_ssd_read_bytes,ssd_reads_without_gpu_restore,load_task_p50_ms,ssd_prefetch_p50_ms
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,1024,cold,5,118.7639869749546,119.66916993260384,209.52581614255905,0,"{""miss"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,1024,hbm_hit,5,19.702769815921783,21.645160764455795,109.90889370441437,0,"{""mixed"": 5}",47185920.0,0,0,0.34191899999999953,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,1024,after_pressure,5,23.777693510055542,24.64223951101303,113.95814642310143,0,"{""external"": 5}",754974720.0,0,0,4.625535,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,1024,after_host_eviction,5,47.26849868893623,50.70365220308304,137.52451539039612,0,"{""external"": 5}",754974720.0,754974720.0,0,4.658894,23.536674999999995
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,4096,cold,5,474.929828196764,475.1713588833809,567.3685111105442,0,"{""miss"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,4096,hbm_hit,5,22.841528058052063,23.161927610635757,115.13429507613182,1,"{""mixed"": 5}",47185920.0,0,0,0.3490280000000012,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,4096,after_pressure,5,37.06945851445198,37.502455711364746,129.38617542386055,1,"{""external"": 5}",3019898880.0,0,0,15.470035999999993,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,4096,after_host_eviction,5,140.3629295527935,153.29556465148926,232.6292209327221,1,"{""external"": 5}",3019898880.0,3019898880.0,0,18.476037,99.580435
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,8192,cold,5,1002.8277859091759,1003.6308690905571,1099.2621444165707,0,"{""miss"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,8192,hbm_hit,5,25.286249816417694,26.577317714691162,121.76230177283287,0,"{""mixed"": 5}",47185920.0,0,0,0.3559969999999968,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,8192,after_pressure,5,57.70648270845413,59.171848744153976,154.022216796875,0,"{""external"": 5}",6039797760.0,0,0,31.407032999999974,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/vllm,vllm,orbitkv,8192,after_host_eviction,5,244.88161504268646,247.8745460510254,341.26633405685425,0,"{""external"": 5}",6039797760.0,6039797760.0,0,36.83124800000004,182.785506
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,1024,cold,5,116.7999841272831,117.22874268889427,204.88160848617554,0,"{""miss"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,1024,hbm_hit,5,28.757911175489426,35.4156456887722,116.87679961323738,0,"{""hbm"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,1024,after_pressure,5,32.13466331362724,32.36728236079216,119.99156326055527,0,"{""external"": 5}",707788800.0,0,0,2.908104,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,1024,after_host_eviction,5,116.71564728021622,116.83551296591759,204.92655411362648,0,"{""miss"": 5}",0,707788800.0,5,0,24.260498
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,4096,cold,5,469.8564149439335,470.8641320466995,561.1241534352303,0,"{""miss"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,4096,hbm_hit,5,29.222138226032257,29.638567566871643,120.79298496246338,0,"{""hbm"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,4096,after_pressure,5,42.17340797185898,47.56093844771385,133.7260790169239,0,"{""external"": 5}",2972712960.0,0,0,12.355452000000003,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,4096,after_host_eviction,5,469.7212018072605,470.00657320022583,561.0729828476906,0,"{""miss"": 5}",0,2972712960.0,5,0,92.66081999999997
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,8192,cold,5,994.1596016287804,994.6502290666103,1091.1155194044113,0,"{""miss"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,8192,hbm_hit,5,29.929693788290024,30.563746392726898,127.2188313305378,0,"{""hbm"": 5}",0,0,0,0,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,8192,after_pressure,5,56.802213191986084,57.41647332906723,153.87780591845512,0,"{""external"": 5}",5992611840.0,0,0,25.975173000000005,0
+/workspace/orbitkv/benches/results/runs/qwen3-8b-ssd-20260921/sglang,sglang,orbitkv,8192,after_host_eviction,5,994.2480400204659,994.9030302464962,1091.249842196703,0,"{""miss"": 5}",0,5992611840.0,5,0,186.78724400000002

@@ -78,11 +78,15 @@ Gate:
 - adapter code contains no tier-selection or bundle-completeness policy;
 - load/save throughput is not regressed against the M0 baseline.
 
-The immediate performance sequence is notification-driven restore completion,
-measured transfer batching, real per-layer readiness, then bounded concurrent
-restore/publish scheduling. Use the [single-node measurements and gates](single-node-performance.md)
-to compare against each engine's native CPU cache, LMCache, and FlexKV before
-expanding distributed scheduling.
+The [SSD measurements](ssd-performance.md) exposed an immediate prerequisite:
+SGLang must observe pending-query readiness before it can use asynchronously
+fetched state. Then add bounded request-driven DRAM warming, generation-safe
+per-layer readiness, and measured copy/compute overlap. The
+[state demand and transfer proposal](state-planning.md) defines the signals,
+resource limits, and evaluation order. Use the
+[single-node measurements and gates](single-node-performance.md) to compare
+against each engine's native CPU cache, LMCache, and FlexKV before expanding
+distributed scheduling.
 
 ## M2.5: recoverable multi-node cache
 

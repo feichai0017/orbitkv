@@ -188,6 +188,13 @@ pool; hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state need a more
 complete recovery contract. SGLang retains authority over HBM allocation and
 prefix-tree nodes.
 
+DRAM recovery is GPU-validated. SSD measurements exposed a readiness gap:
+`lookup` returns no match while `query_prefetch` is still loading, and the
+current SGLang request proceeds with recomputation. vLLM can instead report
+an unresolved lookup and let its scheduler retry. Shared transport does not
+remove this engine-contract difference. See [SSD results](ssd-performance.md)
+and the proposed [demand/readiness contract](state-planning.md).
+
 ### Future: Radix lifecycle bridge for routing
 
 Publish prefix materialization, match, release, promotion, demotion, and removal
