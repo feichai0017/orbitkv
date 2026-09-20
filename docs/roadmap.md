@@ -53,8 +53,17 @@ Gate:
 
 ## M2: common StateBundle query and native local transport
 
+The current namespace-plus-hash keys and component-presence check are not a
+safe, model-aware recovery proof. [State identity and recovery](state-identity.md)
+defines the migration and gates. Complete those local semantics before using
+cache metadata as evidence for distributed routing.
+
 Deliver:
 
+- introduce a versioned model fingerprint and key it into Query, Publish,
+  storage, and remote lookup; invalidate old entries during migration;
+- validate token spans, model/format compatibility, and required components at
+  each recovery boundary;
 - move vLLM hybrid reconciliation from the adapter into common bundle logic;
 - use local restore operations and eventfd wakeups for both adapters;
 - define framework-neutral region registration and transfer-plan operations;
@@ -62,6 +71,8 @@ Deliver:
 
 Gate:
 
+- immutable matching deployments hit while weight, tokenizer/processor,
+  adapter, dtype/layout/rank, and span changes cannot produce a false hit;
 - vLLM and SGLang generate equivalent recovery contracts for a shared test
   model;
 - adapter code contains no tier-selection or bundle-completeness policy;

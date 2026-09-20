@@ -60,6 +60,11 @@ the service binaries and shared libraries, then checks the completed wheel.
 
 ## Usage
 
+For a complete one-manager-per-host deployment, installable wheel commands,
+capacity controls, and a warm-hit check for both engines, follow the
+[single-node guide](../docs/single-node.md). The examples below describe the
+adapter-specific configuration.
+
 ### Cache Manager client
 
 ```python
