@@ -2,44 +2,51 @@
 
 ## Mission
 
-OrbitKV is a framework-neutral state cache and physical planner for vLLM and
-SGLang. It does not schedule model execution and it is not a second inference
-server. Framework adapters expose logical model state and local pages; OrbitKV
-owns external replicas, transfer leases, storage tiers, and eventually the
-policy that chooses placement, movement, reclamation, routing, or recomputation.
+OrbitKV is a KV cache for vLLM and SGLang and a proposed framework-neutral
+state planner. It does not schedule model execution. Each framework owns its
+HBM allocation and active GPU page lifecycle. Its adapter exposes block
+identity and registered GPU buffers; OrbitKV currently owns external pinned
+DRAM/SSD replicas and transfer leases. Shared recovery semantics and joint
+placement/routing policy are future work.
 
 The data plane is derived from PegaFlow 0.24.5. The vLLM connector and SGLang
 direct GPU linker have passed single-node GPU recovery tests.
 
 ## Process topology
 
-The recommended deployment is one OrbitKV Cache Manager per inference node. Framework
-adapters run inside the inference workers. The same cache API is used whether a
-hit is in node memory, SSD, or on a peer. A cluster index/router may run as a
-separate service after the cache data plane is qualified.
+Run one OrbitKV Cache Manager per inference host. Framework adapters run in the
+inference processes and use the same cache API for local DRAM, SSD, and remote
+fetches. The cache manager decides where to source a hit; the inference engine
+still decides when to query and save. Remote fetch is experimental. There is no
+OrbitKV KV-aware request router today.
 
 ```text
-                 cluster replica index / router
-                 hash · tier · load · topology
-                              |
-            +-----------------+-----------------+
-            |                                   |
-   inference node A                    inference node B
- +-------------------+              +-------------------+
- | vLLM or SGLang    |              | vLLM or SGLang    |
- | framework adapter |              | framework adapter |
- +---------+---------+              +---------+---------+
-           | local control / registered pages |
- +---------v---------+  Mooncake    +---------v---------+
- | OrbitKV Cache Manager |<--------->| OrbitKV Cache Manager |
- | pinned DRAM / SSD |              | pinned DRAM / SSD |
- +-------------------+              +-------------------+
+       current multi-node cache (experimental)
+   host A                                      host B
+   vLLM or SGLang                             vLLM or SGLang
+   engine-owned HBM                           engine-owned HBM
+        | CUDA IPC + UDS/iceoryx2                   | CUDA IPC + UDS/iceoryx2
+   Cache Manager A ---- Mooncake RDMA/TCP ---- Cache Manager B
+   pinned DRAM / SSD                         pinned DRAM / SSD
+            \                                   /
+             \---- MetaServer (in-memory) -----/
+                    candidate locations only
 ```
+
+Single-node deployment consists of one engine and one Cache Manager on the same
+host and needs neither MetaServer nor peer gRPC. Current SSD backing is a cache
+file truncated on Cache Manager startup, not durable KV storage across manager
+restarts. In the current multi-node path,
+each manager asynchronously advertises sealed block hashes to the separate
+MetaServer, asks it for candidates after a local miss, then authorizes/pins a
+source through peer gRPC before Mooncake reads bytes. That directory can lose
+remote-hit information on restart; it is not a high-availability deployment.
 
 Standalone deployment has no gRPC listener. Registration, health, sessions, and
 cleanup use the authenticated bootstrap UDS. `--metaserver-addr` enables a
-peer-only gRPC listener for transfer authorization and lock release. The process IPC supports query, publish, asynchronous
-restore completion, and lease release:
+peer-only gRPC listener for transfer authorization and lock release. Process
+IPC supports query, publish, asynchronous restore completion, and lease
+release:
 iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
 passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
 The vLLM adapter requires this path and fails fast if the Cache Manager socket
@@ -49,9 +56,8 @@ iceoryx2 reply until D2H finishes, so the caller does not release source HBM
 pages early while the dispatcher remains free. The Python cache client opens a
 separate descriptor session for Publish on its first save, so an in-flight
 save does not serialize the worker's Query/Restore calls behind that reply.
-Instance cleanup serializes
-against registration, drains GPU
-load/save queues, and only then releases imported CUDA mappings. Superseded
+Instance cleanup serializes against registration, drains GPU load/save queues,
+and only then releases imported CUDA mappings. Superseded
 sessions cannot clean up a replacement session. Both vLLM and the SGLang
 direct linker register CUDA IPC pages and use iceoryx2 descriptors on the hot
 path. Remote transfers use the Mooncake-backed `TransferEngine`.
@@ -125,7 +131,9 @@ blind cross-framework byte reuse.
 
 ### Framework adapters
 
-The adapters translate framework-native state into `orbitkv-contract`:
+The adapters currently translate framework-native hashes and GPU layouts into
+the cache API. Full translation into `orbitkv-contract` is the intended next
+step:
 
 | Concern | vLLM | SGLang |
 | --- | --- | --- |
@@ -142,8 +150,8 @@ logic belongs in the common recovery contract.
 
 The current core provides content-addressed sealed blocks, NUMA-aware pinned
 memory, leases, LRU/TinyLFU admission, SSD, remote fetch, and session cleanup.
-During M0/M1 it continues accepting the current vLLM-oriented key and page
-registration APIs while new APIs are introduced beside them.
+It still accepts namespace + hash keys and raw engine page IDs. The common
+`StateKey` and generation-qualified page types are not enforced in the hot path.
 
 ### Transfer and backing domains
 
@@ -154,7 +162,7 @@ The native physical domains are:
 - local SSD;
 - remote OrbitKV replicas over Mooncake-selected RDMA or TCP.
 
-Mooncake Transfer Engine is the sole production remote-movement backend. It
+Mooncake Transfer Engine is the sole remote-movement backend in this codebase. It
 contributes Segment/BatchTransfer, multi-NIC topology selection, endpoint
 pooling, and rail failover. Mooncake Store Master is not OrbitKV's
 semantic authority: bundle completeness, leases, generations, and planning
@@ -177,17 +185,18 @@ pool; hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state need a more
 complete recovery contract. SGLang retains authority over HBM allocation and
 prefix-tree nodes.
 
-### Stage 2: Radix lifecycle bridge for routing
+### Future: Radix lifecycle bridge for routing
 
 Publish prefix materialization, match, release, promotion, demotion, and removal
 events from RadixAttention. OrbitKV uses the events to maintain a global replica
 index and estimate next touch. It does not maintain a competing radix tree.
 
-### Stage 3: page authority
+### Future: generation-safe page references
 
-Radix nodes consume generation-qualified OrbitKV page handles. This is the point
-where OrbitKV may truthfully become the sole authority for page identity and
-safe reuse.
+Adapters pass generation-qualified references for engine-owned HBM pages.
+OrbitKV validates the registration session and page generation before copying,
+while the engine still allocates and reuses its HBM slots. OrbitKV can assign
+handles to its own external replicas without taking over the GPU allocator.
 
 ## Safety invariant
 
@@ -230,19 +239,37 @@ resident-inventory replay with a catalog epoch, bounded batched lookup and a
 Cache Manager-side candidate cache; verify behavior across service restart, node
 failure, and stale transfer capabilities.
 
-The next deployment shape keeps one Cache Manager per inference node and uses a
-separately deployed replica directory for discovery. Keep etcd, if adopted, for
-small strongly consistent membership/configuration and directory epochs, not
-for per-block reads or writes. The block catalog itself can remain a purpose-
-built soft-state service with sharded replicas and Cache Manager-local snapshots.
-Only a verified remote miss needs a control-plane round trip; the source
-Cache Manager remains the authority for an actual transfer. The router can later
-consume the same catalog without entering the cache data path. This is a
-design target, not current implementation.
+The proposed target keeps one Cache Manager per host and embeds a sharded,
+replicated soft-state directory in those managers. Rendezvous hashing can
+assign each block's metadata to a small owner set; every manager keeps a local
+candidate cache so a warm lookup does not visit a central service. A miss can
+query the appropriate shard, but the actual source manager remains authoritative
+for current residency and must revalidate and pin bytes before transfer.
+Catalog epochs, bounded batched updates, inventory replay, liveness, and
+anti-entropy reconstruct soft state after restarts. A small consensus service
+such as etcd may be used for membership and epoch coordination, never for each
+block read or write. This design removes the standalone MetaServer from the
+steady-state data path; it is **not implemented yet** and must be qualified
+against a dedicated-directory fallback. A router can later consume the same
+replica evidence without entering the cache transfer path.
+
+```text
+host A                                           host B
+engine HBM                                      engine HBM
+    | UDS + iceoryx2 / CUDA IPC                      | UDS + iceoryx2 / CUDA IPC
+Cache Manager A  <---- Mooncake KV bytes ---->  Cache Manager B
+  DRAM / SSD · local candidate index              DRAM / SSD · local candidate index
+  catalog shards  <---- replicated metadata ---> catalog shards
+         \________ optional membership/epochs ________/
+                           |
+                   future KV-aware router
+                   (reads summaries only)
+```
 
 ## Planning direction
 
-The target optimization problem is Minimum Persistent State Realization: find
+After the cache and catalog are reliable, the target optimization problem is
+Minimum Persistent State Realization: find
 the smallest complete `StateBundle` that can resume legal execution, then choose
 its physical realization. The planner compares:
 
@@ -266,6 +293,7 @@ KV-aware worker scorer is the routing baseline, not the final planner.
 | M0 | local page identity and execution | external replicas and current data plane |
 | M1 | GPU pages | Pinned DRAM/SSD replicas and direct GPU restore |
 | M2 | GPU pages | Common recovery contracts and transfer operations |
-| M3 | execution and local page identity | replica catalog, routing, and restore plans |
-| M4 | execution and radix topology | page identity, generations, and all placements |
+| M2.5 | GPU pages and execution | recoverable replica catalog and remote cache fetch |
+| M3 | execution and local page identity | KV-aware routing and restore plans |
+| M4 | HBM allocation, physical GPU page IDs, and execution | external replica handles, validated GPU references, and transfer fences |
 | M5+ | execution | semantic lifetime and compiled physical plans |

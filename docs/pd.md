@@ -1,96 +1,49 @@
-# OrbitKV P/D Disaggregation Design
+# Prefill/decode transfer and NIXL
 
-> **⚠️ Experimental** — This feature is functional but not recommended for production deployments.
+P/D (prefill/decode disaggregation) places the prompt prefill and token decode
+phases on different inference workers. The decode worker needs the prefill
+worker's KV for the *same request* before it can continue. This is a request
+handoff, not a cache lookup for a repeated prefix. A router or proxy also has
+to coordinate the request; a KV transfer connector alone does not route it.
 
-## Overview
+NIXL ([NVIDIA Inference Xfer Library](https://github.com/ai-dynamo/nixl)) is a
+data-movement library used by inference systems. The pinned vLLM
+release registers its own `NixlConnector`, `NixlPullConnector`, and
+`NixlPushConnector` for P/D transfer. OrbitKV does not vendor or register a
+NIXL connector. NIXL is not intrinsically vLLM-only: SGLang also documents
+[P/D transfer with NIXL or Mooncake](https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/pd_disaggregation.mdx).
+The NIXL integration described here is
+[vLLM's implementation](https://github.com/vllm-project/vllm/blob/main/docs/features/nixl_connector_usage.md).
 
-Prefill/Decode disaggregation separates the prefill (P) and decode (D) phases to different vLLM instances, improving resource utilization.
+| Path | Trigger | KV destination | Discovery/control | OrbitKV status |
+| --- | --- | --- | --- | --- |
+| OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; experimental remote MetaServer + peer lease | GPU-validated locally; multi-node experimental |
+| OrbitKV `PdConnector` | P-to-D request handoff | Decode worker's GPU KV pages | P/D request handshake and proxy; Mooncake Transfer Engine moves bytes | Experimental vLLM adapter |
+| vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
 
-```
-┌────────┐         ┌────────┐         ┌────────┐
-│ Router │ ──1──→  │   P    │         │   D    │
-│        │ ←─2───  │        │         │        │
-│        │         │ async  │         │        │
-│        │         │ save   │         │        │
-│        │ ←─3───  │ done!  │         │        │
-│        │ ──4──────────────────────→ │        │
-└────────┘         └────────┘         └────────┘
-            ↓               ↓
-         OrbitKVEngine (shared CPU storage)
-```
+The OrbitKV P/D connector lives in `orbitkv.vllm.pd` and uses Mooncake to push
+KV directly from prefill to decode. It does not require an OrbitKV Cache
+Manager, MetaServer, or the remote-cache replica directory for that transfer.
+See [the Mooncake P/D protocol](pd-mooncake-push.md) and the local
+[`run_pd_local.sh`](../scripts/run_pd_local.sh) example. Its local proxy is
+for P/D handoff and testing; it is not the planned KV-aware cache router.
 
-## Flow
+The alternative is vLLM's built-in NIXL connector. The local
+[`run_nixl_local.sh`](../scripts/run_nixl_local.sh) example uses that upstream
+connector and a separate example proxy. You may also compose vLLM's NIXL
+connector with `OrbitKVConnector` in `MultiConnector`: NIXL hands off the live
+request, while OrbitKV can save completed blocks for reuse by later requests.
+The two paths have different ownership and failure modes. See the
+[deployment example](deployment.md).
 
-1. Router sends request to P node (max_tokens=1)
-2. P returns first token immediately (non-blocking)
-3. P's save worker completes async KV write, callbacks Router
-4. Router receives callback, forwards request to D node
-5. D node's `get_num_new_matched_tokens()` queries OrbitKVEngine, finds KV exists
-6. D loads KV via `start_load_kv()` and continues decode
+SGLang has its own disaggregated-serving facilities (including NIXL), but OrbitKV currently
+provides **only** an SGLang external-cache linker. It does not provide a
+SGLang P/D adapter or NIXL connector. P/D support for SGLang would require a
+separate integration against SGLang's handoff protocol and a tested recovery
+contract.
 
-## Key Design Decisions
-
-### Why Callback Instead of Blocking
-
-`wait_for_save()` blocking would hurt throughput. Callback allows P to continue processing other requests while KV is being saved.
-
-### Why Router Doesn't Need block_hashes
-
-D node receives the same prompt, computes the same block_hashes (via vLLM's internal logic), and queries OrbitKVEngine directly. No need to pass block_hashes through Router.
-
-### Multi-P Multi-D Support
-
-As long as all P/D instances:
-- Connect to the same OrbitKVEngine
-- Use the same TP size
-- Use the same block_size
-
-Router only needs to do load balancing.
-
-## Implementation
-
-### Environment Variables
-
-```bash
-# P node
-ORBITKV_ROUTER_ENDPOINT=http://router:8080
-
-# D node (no special config needed)
-```
-
-### Connector Changes (planned, not yet implemented)
-
-The async callback path (`_notify_router` → `/kv_ready`) is not yet implemented in the connector.
-The current Router uses a synchronous flow: it waits for P's HTTP response before forwarding to D.
-
-### Router Implementation
-
-The Rust router lives at `crates/orbitkv-server/src/bin/orbitkv-router.rs`. It is a standalone binary (not part of the default build) that can be run with:
-
-```bash
-cargo run --release --bin orbitkv-router -- \
-    --prefill http://p-node:8000 \
-    --decode http://d-node:8001
-```
-
-See `examples/run_vllm_pd_with_pega.py` for a complete multi-GPU launch script.
-
-## Benchmark Results (H800, Qwen3-8B, 5K input tokens)
-
-| Configuration  | TTFT mean (ms) | TPOT mean (ms) | TPOT p99 (ms) | ITL p99 (ms) |
-| -------------- | -------------- | -------------- | ------------- | ------------ |
-| P/D (1P+1D)    | 573.78         | 15.68          | 15.89         | 21.71        |
-| Baseline (DP2) | 438.24         | 22.67          | 24.32         | 142.70       |
-
-The P/D setup trades higher TTFT for **significantly more stable decode latency** — TPOT p99 drops from 24.32ms to 15.89ms, and ITL p99 improves dramatically from 142.70ms to 21.71ms.
-
-## Limitations
-
-- Decode's `query_prefetch` may race prefill's async save. The
-  `wait_for_full_prefix` option does not cover this topology: it only waits
-  on remote producers discovered via MetaServer + RDMA, and a shared
-  engine's own blocks are never remote. It is also a no-op when RDMA is not
-  configured.
-- Router uses synchronous P→D handoff (no async KV-ready callback yet)
-- No built-in timeout/retry for P or D node failures
-- No Prometheus metrics for P/D latency breakdown
+Neither OrbitKV's P/D path nor the current MetaServer provides production KV-aware
+request routing. Production qualification still needs real multi-GPU and
+cross-machine correctness, cancellation/restart tests, and throughput/latency
+comparison against the vLLM NIXL baseline. Historical benchmark figures from
+earlier PegaFlow-based experiments are not OrbitKV release results.

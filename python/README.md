@@ -8,8 +8,9 @@ adapters for the releases below.
 
 - **LocalDataClient**: UDS/iceoryx2 client for the node-local Cache Manager
 - **CacheDataClient**: Framework-neutral cache operations for every storage tier
-- **OrbitKVConnector**: vLLM KV connector for distributed inference with KV cache transfer
+- **OrbitKVConnector**: vLLM external-cache connector for local DRAM/SSD and experimental remote fetch
 - **OrbitKVLinker**: SGLang direct GPU-page cache through CUDA IPC and iceoryx2
+- **PdConnector**: experimental vLLM P/D handoff through Mooncake; independent of the external-cache connector
 
 ## Installation
 
@@ -56,14 +57,6 @@ cd ..
 For a CUDA 12 wheel, run `./scripts/build-wheel.sh --release` instead. A
 standalone `maturin build` only builds the extension; the script also stages
 the service binaries and shared libraries, then checks the completed wheel.
-
-### From PyPI (when published)
-
-```bash
-pip install 'orbitkv-llm[vllm]==0.1.0'  # CUDA 12 + vLLM
-# Or, in a separate CUDA 13 environment:
-pip install 'orbitkv-llm-cu13[sglang]==0.1.0'
-```
 
 ## Usage
 
@@ -199,11 +192,16 @@ vllm serve Qwen/Qwen3-0.6B \
 
 Valid values are `read_write` and `save_only`.
 
-#### TP Shards Across Hosts
+#### TP shards and host boundary
 
 CUDA IPC is host-local. When one tensor-parallel replica spans multiple hosts,
-run one OrbitKV server on each host and configure the connector with every
-server endpoint in global TP-rank order:
+one Cache Manager per host is necessary, but the current vLLM scheduler still
+has to query **every** TP shard through a local UDS socket. Thus cross-host TP
+sharding is not supported by this adapter yet. Configuring remote HTTP
+endpoints does not create an inference-to-Cache-Manager network path.
+
+For multiple Cache Managers on the *same* scheduler host, list their endpoints
+in global TP-rank order:
 
 ```json
 {
@@ -219,10 +217,9 @@ server endpoint in global TP-rank order:
 }
 ```
 
-For TP8 and two endpoints, global ranks 0-3 register with the first server and
-ranks 4-7 register with the second. Each server sees a local TP4 topology and
-must manage the four GPUs on its own host. Every vLLM process must receive the
-same ordered endpoint list.
+For TP8 and two endpoints, global ranks 0-3 register with the first manager and
+ranks 4-7 with the second. Both managers and the scheduler must be on the same
+host, and every vLLM process must receive the same ordered endpoint list.
 
 The scheduler queries every shard and only reuses the prefix available from all
 of them. Each worker loads with the lease issued by its local server. The
@@ -233,8 +230,8 @@ TP sharding currently requires equal contiguous shards and TP-only parallelism.
 Pipeline, decode-context, and prefill-context parallelism are rejected when
 more than one endpoint is configured.
 
-When every TP shard Cache Manager is on the scheduler host, the connector derives
-one socket from each endpoint and requires all sockets to exist:
+The connector derives one socket from each endpoint and requires all sockets
+to exist:
 
 ```json
 {
@@ -245,15 +242,16 @@ one socket from each endpoint and requires all sockets to exist:
 }
 ```
 
-An explicit `orbitkv.tp_shard_bootstrap_sockets` list is only needed for custom
-paths. A Unix socket cannot cross a host boundary. Cross-host TP sharding needs
-node-local query fan-out and is not supported by this adapter yet.
+An explicit `orbitkv.tp_shard_bootstrap_sockets` list is needed only for custom
+paths. Cross-host TP sharding needs a future node-local query fan-out design.
 
 #### P/D Partial Tail Blocks
 
 vLLM normally exposes hashes only for complete KV blocks. In a P/D deployment,
 enable `orbitkv.pd_tail_save` on prefill and `orbitkv.pd_tail_load` on decode
-to reuse the final partial prompt block as well. Start both vLLM processes with
+to reuse the final partial prompt block through the **external-cache**
+`OrbitKVConnector` path. These options are separate from the direct Mooncake
+`PdConnector`. Start both vLLM processes with
 the same explicit `PYTHONHASHSEED` and `--prefix-caching-hash-algo xxhash_cbor`.
 
 Prefill: `{"orbitkv.pd_tail_save": true}`
@@ -269,6 +267,9 @@ configured.
 ## Development
 
 See the [examples](../examples/) directory for more usage examples.
+For P/D transfer, NIXL, and the difference from remote-cache sharing, see
+[P/D and NIXL](../docs/pd.md). OrbitKV's `PdConnector` currently targets vLLM
+only; SGLang has no OrbitKV P/D adapter.
 
 ## Testing
 
@@ -344,4 +345,4 @@ def test_query(client_context):
 
 ## License
 
-MIT
+Apache-2.0

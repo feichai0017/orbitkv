@@ -17,10 +17,7 @@ Cache Manager → Prometheus → Grafana
 - OrbitKV exposes `/metrics` endpoint directly
 - Use `examples/metric-prometheus/`
 
-### Method 2: OTLP via OpenTelemetry Collector (Deprecated)
-
-> **DEPRECATED**: This method is deprecated now, but we will keep it.
-> Please use Method 1 (Direct Prometheus) instead.
+### Method 2: OTLP via OpenTelemetry Collector (Optional)
 
 ```
 Cache Manager → OpenTelemetry Collector → Prometheus → Grafana
@@ -238,10 +235,6 @@ does not enter the legacy denominator. New dashboards should use
 `orbitkv_cache_tier_block_requests_total{tier}` instead of mixing legacy and
 tier counters.
 
-### RPC Metrics
-- **orbitkv_rpc_requests_total** (Counter) - Total RPC requests by method and status
-- **orbitkv_rpc_duration_seconds** (Histogram) - RPC latency distribution
-
 ## Configuration
 
 ### Cache Manager Parameters
@@ -250,7 +243,7 @@ tier counters.
 
 - `--http-addr`: HTTP server address for health check and Prometheus metrics (default: `0.0.0.0:9091`)
   - Always enabled for health check at `/health`
-  - Use `--enable-prometheus` to also expose `/metrics` endpoint
+  - `/metrics` is enabled by default
 
 - `--enable-prometheus`: Enable Prometheus `/metrics` endpoint (default: `true`)
   - When enabled, metrics are available at `http://<http-addr>/metrics`
@@ -260,7 +253,7 @@ tier counters.
   - Example: `http://127.0.0.1:4321`
   - Leave unset to disable OTLP export
 
-- `--metrics-period-secs`: Metric export interval in seconds (default: `5`)
+- `--metrics-period-secs`: Metric export interval in seconds (default: `10`)
   - Only used when `--metrics-otel-endpoint` is set
 
 - `--metric-hll-windows`: Comma-separated HLL sliding windows for estimated
@@ -279,31 +272,16 @@ tier counters.
 **Example: Prometheus Metrics**
 ```bash
 cargo run -r --bin orbitkv-cache-manager -- \
-  --addr 0.0.0.0:50055 \
-  --device 0 \
+  --addr 127.0.0.1:50055 \
+  --devices 0 \
   --pool-size 30gb \
   --http-addr 0.0.0.0:9091 \
   --enable-prometheus
 ```
 
-**Example: OTLP Export Only**
-```bash
-cargo run -r --bin orbitkv-cache-manager -- \
-  --addr 0.0.0.0:50055 \
-  --device 0 \
-  --pool-size 30gb \
-  --enable-prometheus=false \
-  --metrics-otel-endpoint http://127.0.0.1:4321
-```
-
-**Example: Health Check Only (No Metrics)**
-```bash
-cargo run -r --bin orbitkv-cache-manager -- \
-  --addr 0.0.0.0:50055 \
-  --device 0 \
-  --pool-size 30gb \
-  --enable-prometheus=false
-```
+For an existing OpenTelemetry deployment, add
+`--metrics-otel-endpoint http://127.0.0.1:4321` with the collector's configured
+endpoint. Direct Prometheus remains available.
 
 ### Environment Variables
 
@@ -318,8 +296,8 @@ The `examples/metric-prometheus/` directory provides a simple monitoring stack.
 ```bash
 # From repository root
 cargo run -r --bin orbitkv-cache-manager -- \
-  --addr 0.0.0.0:50055 \
-  --device 0 \
+  --addr 127.0.0.1:50055 \
+  --devices 0 \
   --pool-size 30gb \
   --http-addr 0.0.0.0:9091 \
   --enable-prometheus
@@ -350,73 +328,14 @@ This starts two services:
 curl http://localhost:9091/metrics
 ```
 
-## Quick Start: OTLP Method
+## Architecture details
 
-The `examples/metric/` directory provides a full OTel-based monitoring stack using the OTLP exporter.
-
-### 1. Start the Monitoring Stack
-
-```bash
-cd examples/metric
-
-docker compose up -d
-```
-
-This starts three services:
-- **OpenTelemetry Collector** (ports: 4320, 4321, 8889)
-- **Prometheus** (port: 9090)
-- **Grafana** (port: 3000)
-
-### 2. Start Cache Manager
-
-```bash
-cargo run -r --bin orbitkv-cache-manager -- \
-  --addr 0.0.0.0:50055 \
-  --device 0 \
-  --pool-size 30gb \
-  --metrics-otel-endpoint http://127.0.0.1:4321
-```
-
-### 3. Access Grafana Dashboard
-
-Same as above: http://localhost:3000
-
-## Architecture Details
-
-### Direct Prometheus Architecture (Recommended)
+### Direct Prometheus
 
 ```
 ┌─────────────────┐
-│ Cache Manager │
-│   :50055 gRPC   │
-│   :9091 /metrics│
-└────────┬────────┘
-         │ Prometheus scrape
-         ▼
-┌─────────────────┐
-│   Prometheus    │
-│     :9090       │
-└────────┬────────┘
-         │ PromQL queries
-         ▼
-┌─────────────────┐
-│    Grafana      │
-│     :3000       │
-└─────────────────┘
-```
-
-### OTLP Architecture (Deprecated)
-
-```
-┌─────────────────┐
-│ Cache Manager │
-│   :50055 gRPC   │
-└────────┬────────┘
-         │ OTLP/gRPC (4321)
-         ▼
-┌─────────────────┐
-│ OTel Collector  │
-│     :8889       │
+│ Cache Manager   │
+│ :9091 /metrics  │
 └────────┬────────┘
          │ Prometheus scrape
          ▼
@@ -437,10 +356,9 @@ Same as above: http://localhost:3000
 | Service | Port or path | Protocol | Purpose |
 | --- | --- | --- | --- |
 | Cache Manager | `/tmp/orbitkv-<addr-port>.sock` | UDS and iceoryx2 | Inference process connection |
-| Cache Manager | 50055 | gRPC | Peer control in distributed mode |
+| Cache Manager | 50055 | gRPC | Peer authorization and lease control only when `--metaserver-addr` is set |
 | Cache Manager | 9091 | HTTP | Health and Prometheus metrics |
-| OTel Collector | 4321 | gRPC | OTLP gRPC receiver (deprecated) |
-| OTel Collector | 8889 | HTTP | Prometheus exporter (deprecated) |
+| OTel Collector | configured endpoint | gRPC | Optional OTLP receiver |
 | Prometheus | 9090 | HTTP | Query API and Web UI |
 | Grafana | 3000 | HTTP | Dashboard UI |
 
@@ -543,21 +461,9 @@ orbitkv_hll_estimated_hit_rate{window="1h"}
      - "host.docker.internal:host-gateway"
    ```
 
-### Metrics not appearing (OTLP) - Deprecated
-
-1. Check OTel Collector is receiving data:
-   ```bash
-   docker-compose logs otel-collector | grep orbitkv
-   ```
-
-2. Check Prometheus is scraping OTel Collector:
-   - Open http://localhost:9090/targets
-   - Verify `otel-collector` target is UP
-
 ## Best Practices
 
-1. **Monitor tier-attributed hit ratio**: Aim for >80% hit rate in production
-   using `orbitkv_cache_tier_block_requests_total`
+1. **Monitor tier-attributed hit ratio** using `orbitkv_cache_tier_block_requests_total`
    - Low hit rate → consider increasing `--pool-size`
 
 2. **Watch eviction rate**: High evictions indicate memory pressure

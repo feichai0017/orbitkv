@@ -52,7 +52,11 @@ orbitkv-cache-manager
 
 ## MetaServer
 
-For multi-node setups, start a MetaServer to coordinate block hashes across nodes. Each Cache Manager registers its block hashes with the MetaServer, enabling cross-node KV cache discovery.
+For the current experimental multi-node path, start a MetaServer to coordinate
+block hashes across nodes. Each Cache Manager registers sealed blocks and
+queries candidate owners after local misses. The directory is in-memory and
+does not replay every resident key after restart; it is not HA. The planned
+recoverable catalog is described in [architecture](architecture.md).
 
 ```bash
 orbitkv-metaserver

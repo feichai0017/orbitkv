@@ -1,7 +1,8 @@
 # OrbitKV roadmap
 
-Every milestone ends with an executable gate. Future design is not reported as
-current capability. The detailed work queue lives in [TODO.md](../TODO.md).
+The order is local correctness, recoverable distributed cache, then KV-aware
+routing. Milestones describe intended gates, not deployed capabilities. The
+detailed work queue lives in [TODO.md](../TODO.md).
 
 ## M0: framework-neutral foundation
 
@@ -66,12 +67,34 @@ Gate:
 - adapter code contains no tier-selection or bundle-completeness policy;
 - load/save throughput is not regressed against the M0 baseline.
 
-## M3: KV-aware routing and replica catalog
+## M2.5: recoverable multi-node cache
+
+Deliver:
+
+- replay resident inventory with catalog epochs after directory restart;
+- bound and batch directory registration, lookup, and invalidation;
+- maintain a Cache Manager-local candidate index while the selected source
+  manager revalidates leases and residency;
+- reconcile node failure, stale candidates, and transfer interruption;
+- prototype replicated catalog shards inside Cache Managers, compare with a
+  dedicated directory fallback, and keep per-block operations off a consensus
+  hot path;
+- qualify Mooncake RDMA/TCP fetch and transfer-plan retry under real failures.
+
+Gate:
+
+- a directory restart or owner loss cannot cause an incorrect KV hit;
+- remote hits recover after inventory replay, without restarting managers;
+- cache misses remain bounded when discovery or transfer fails;
+- multi-node measurements include hit rate, latency, bandwidth, and metadata
+  request rate under load.
+
+## M3: KV-aware routing and physical planning
 
 Deliver:
 
 - consume vLLM and SGLang KV placement events;
-- track replicas by worker and tier;
+- consume the recovered catalog to track replicas by worker and tier;
 - reproduce a Dynamo-style weighted-overlap worker selector as a baseline;
 - add queue, transfer, recompute, and eviction costs;
 - return target worker plus source/restore plan.
@@ -84,20 +107,22 @@ Gate:
 - joint planning beats load-only and overlap-only baselines on a held-out trace;
 - stale events and worker restarts cannot route to a dead replica.
 
-## M4: OrbitKV page authority
+## M4: generation-safe page references
 
 Deliver:
 
-- generation-qualified page handles;
+- generation-qualified GPU registrations and external page handles;
 - explicit semantic and execution frontiers;
 - CUDA/RDMA/SSD completions advance one execution-fence abstraction;
-- SGLang Radix nodes and vLLM adapter consume manager-authored handles.
+- SGLang and vLLM adapters pass page generations and consume manager-authored
+  handles for external replicas; engine HBM allocation remains engine-owned.
 
 Gate:
 
 - generation reuse cannot race an outstanding operation under stress and fault
   injection;
-- the frameworks no longer mint external page identities;
+- external page identities come from the Cache Manager; engine-owned HBM page
+  IDs are validated at transfer boundaries;
 - cache cleanup is safe across cancellation, preemption, and process death.
 
 ## M5: semantic state compiler

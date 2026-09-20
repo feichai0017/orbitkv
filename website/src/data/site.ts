@@ -16,13 +16,13 @@ export const layers = [
     name: "orbitkv-contract",
     role: "Name the state.",
     detail:
-      "Framework-neutral identity, byte compatibility, page generations, and recovery bundles.",
+      "State identity, page, and recovery types; full validation is not yet in the cache hot path.",
     path: "crates/orbitkv-contract/src/lib.rs",
   },
   {
     name: "orbitkv-local",
     role: "Control the Cache Manager.",
-    detail: "Versioned iceoryx2 request/response with shared descriptor arenas.",
+    detail: "Versioned iceoryx2 requests plus UDS bootstrap and lifecycle for both adapters.",
     path: "crates/orbitkv-local/src/lib.rs",
   },
   {
@@ -35,25 +35,31 @@ export const layers = [
   {
     name: "orbitkv-transfer",
     role: "Move the bytes.",
-    detail: "Pinned Mooncake Transfer Engine for RDMA, TCP fallback, and completion notifications.",
+    detail: "Pinned Mooncake Transfer Engine for experimental remote cache fetch and vLLM P/D.",
     path: "crates/orbitkv-transfer/README.md",
   },
   {
     name: "Cache Manager",
     role: "Share the cache.",
-    detail: "Node-local UDS/iceoryx2 lifecycle, peer transfer control, health, and metrics.",
+    detail: "Node-local cache operations, pinned DRAM/SSD, health, and peer transfer control.",
     path: "crates/orbitkv-server/README.md",
   },
   {
-    name: "orbitkv-sglang",
-    role: "Integrate the runtime.",
+    name: "orbitkv.sglang",
+    role: "Link SGLang GPU pages.",
     detail:
-      "A direct GPU-page linker for full-attention models, followed by complete hybrid recovery contracts.",
-    path: "docs/roadmap.md",
+      "A direct linker for full-attention MHA/MLA models; hybrid state is not yet supported.",
+    path: "python/orbitkv/sglang/linker.py",
+  },
+  {
+    name: "orbitkv.vllm",
+    role: "Connect vLLM.",
+    detail: "External KV cache connector plus a separate experimental Mooncake P/D adapter.",
+    path: "python/orbitkv/vllm/connector.py",
   },
 ];
 
-export const compilerStages = [
+export const plannerStages = [
   { name: "Describe", detail: "Attention visibility and state contracts." },
   { name: "Prove", detail: "Derive semantic death and safe reuse conditions." },
   { name: "Place", detail: "Choose HBM, DRAM, SSD, or a remote replica." },
@@ -61,10 +67,10 @@ export const compilerStages = [
 ];
 
 export const providers = [
-  { name: "HBM", role: "Active pages on the execution path." },
+  { name: "HBM", role: "Active pages allocated and scheduled by the inference engine." },
   { name: "Pinned DRAM", role: "NUMA-aware warm storage and staging." },
-  { name: "SSD", role: "Durable capacity for colder prefixes." },
-  { name: "RDMA", role: "Replica-aware cross-node reuse." },
+  { name: "SSD", role: "Optional backing for colder prefixes." },
+  { name: "Remote", role: "Experimental Mooncake fetch over RDMA or TCP." },
 ];
 
 export const docs = [
@@ -74,6 +80,7 @@ export const docs = [
   { name: "Server configuration", path: "docs/server.md" },
   { name: "Cross-node sharing", path: "docs/p2p.md" },
   { name: "P/D disaggregation", path: "docs/pd.md" },
+  { name: "Deployment examples", path: "docs/deployment.md" },
   { name: "Metrics", path: "docs/metrics.md" },
   { name: "Implementation TODO", path: "TODO.md" },
 ];

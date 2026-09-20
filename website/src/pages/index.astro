@@ -12,12 +12,13 @@ const quickstart = [
 <SiteLayout active="Overview">
   <section class="hero container" aria-labelledby="hero-title">
     <div class="hero-copy">
-      <p class="eyebrow">State cache for vLLM and SGLang</p>
+      <p class="eyebrow">KV cache for vLLM and SGLang</p>
       <h1 id="hero-title">
-        Compile<br />the life<br /><span class="highlight">of state.</span>
+        Reuse KV.<br />Across<br /><span class="highlight">cache tiers.</span>
       </h1>
       <p class="hero-description">
-        Compile what must stay. <br />Move only what execution will need.
+        GPU-validated single-node caching with one Cache Manager per host.<br />
+        Distributed recovery and KV-aware routing are the next steps.
       </p>
       <div class="hero-actions">
         <a class="button primary" href={localUrl("/docs/")}>
@@ -30,7 +31,7 @@ const quickstart = [
   </section>
   <section class="stack-section container" aria-labelledby="stack-title">
     <header class="section-heading">
-      <div><p class="eyebrow">01 / The system</p><h2 id="stack-title">One cache.<br />Every tier.</h2></div>
+      <div><p class="eyebrow">01 / The system</p><h2 id="stack-title">One cache API.<br />Several tiers.</h2></div>
       <a class="text-link" href={sourceUrl("docs/roadmap.md")}>Read the roadmap <span aria-hidden="true">↗</span></a>
     </header>
     <div class="layer-grid">
@@ -41,12 +42,12 @@ const quickstart = [
         </article>
       ))}
     </div>
-    <p class="provider-line"><span>Physical tiers</span> HBM · pinned DRAM · SSD · RDMA replicas</p>
+    <p class="provider-line"><span>Now</span> Engine-owned HBM · pinned DRAM · optional SSD <span>Experimental</span> Mooncake remote fetch</p>
   </section>
   <section class="proof-band" aria-labelledby="evidence-title">
     <div class="container proof-inner">
-      <div><p class="eyebrow">02 / Integration</p><h2 id="evidence-title">Two adapters.<br />One state contract.</h2><p>vLLM connector · SGLang GPU linker · one Cache Manager</p></div>
-      <div class="proof-note"><p>Both adapters register GPU pages through CUDA IPC. The Cache Manager stores reusable blocks in pinned DRAM and SSD.</p><a class="text-link" href={localUrl("/integration/")}>Integration status <span aria-hidden="true">↗</span></a></div>
+      <div><p class="eyebrow">02 / Integration</p><h2 id="evidence-title">Two adapters.<br />One cache API.</h2><p>vLLM connector · SGLang GPU linker · node-local Cache Manager</p></div>
+      <div class="proof-note"><p>Both adapters register GPU pages through CUDA IPC. A complete cross-framework recovery contract is still planned.</p><a class="text-link" href={localUrl("/integration/")}>Integration status <span aria-hidden="true">↗</span></a></div>
     </div>
   </section>
   <section class="get-started container" id="get-started" aria-labelledby="start-title">

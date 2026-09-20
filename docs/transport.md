@@ -1,8 +1,6 @@
 # OrbitKV transport architecture
 
-This document records the transport decision after validating the current
-vLLM path, benchmarking local IPC, and reviewing Mooncake `v0.3.13.post1`. It
-separates local control, remote data movement, and replica
+This document separates local control, remote data movement, and replica
 discovery so none of them becomes an accidental second source of KV truth.
 
 ## Decision
@@ -10,17 +8,16 @@ discovery so none of them becomes an accidental second source of KV truth.
 | Boundary | Control | Payload | Status |
 | --- | --- | --- | --- |
 | inference process to local Cache Manager | iceoryx2 request/response and UDS lifecycle | registered CUDA IPC pages | integrated |
-| local bootstrap and region registration | Unix socket with credential and file-descriptor passing | memfd handles only | descriptor bootstrap implemented; page-region registration planned |
+| local bootstrap and lifecycle | Unix socket with credential and file-descriptor passing | memfd/eventfd handles and registration metadata | implemented; explicit region protocol planned |
 | Cache Manager to Cache Manager | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | stable Mooncake runtime integrated |
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
 | administration | HTTP | no KV bytes | existing |
 
-The vLLM adapter requires `orbitkv-local` for hot data operations. Every
+Both framework adapters require `orbitkv-local` for hot data operations. Every
 inference process must connect to a Cache Manager on its own host; a missing
 Unix socket fails fast.
-Registration, health,
-session watching, and unregistration use the authenticated bootstrap UDS. SGLang has
-not yet made this cutover.
+Registration, health, session watching, and unregistration use the
+authenticated bootstrap UDS for both adapters.
 
 ## Local IPC
 
@@ -42,9 +39,9 @@ One inference process gets one iceoryx2 client endpoint. The Cache Manager exclu
 creates and owns the server endpoint; clients only open it. The endpoint uses
 iceoryx2's thread-safe IPC service because the server owns it on a dedicated
 control thread. Calls spin only for a bounded number of iterations and then
-yield. The lifecycle-only server uses a short idle sleep instead of consuming a
-core; the data-command phase must add event-driven wakeup before claiming the
-measured busy-poll latency.
+yield. The server uses a short idle sleep instead of consuming a core. The
+measurements below are historical baselines, not a latency guarantee for this
+revision.
 UDS remains necessary for bootstrap, `SO_PEERCRED`, memfd/eventfd passing, and
 process-death detection.
 
@@ -73,7 +70,7 @@ the existing in-process GPU load, returns an operation ID, signals its session's
 eventfd at terminal completion, and is consumed through a follow-up poll. Python
 exposes both non-blocking `restore_submit`/`restore_poll` plus the notification
 fd and a synchronous `restore` convenience wrapper. The
-vLLM uses these operations on a same-host deployment; KV payload bytes
+Both adapters use these operations on a same-host deployment; KV payload bytes
 do not travel through the descriptor arena. The adapter exposes one cache API:
 scheduler Query/Release and worker Publish/Restore use the local endpoint.
 Lifecycle calls use the
@@ -141,54 +138,15 @@ needs one answer before committing a recovery boundary.
 The iceoryx2 result can be reproduced with the two binaries documented in
 [`crates/orbitkv-local/README.md`](../crates/orbitkv-local/README.md).
 
-## Historical validation (before inference gRPC removal)
+## Current local validation
 
-The earlier UDS lifecycle revision passed the Python unit gate, Rust cache/control
-unit tests, the real two-process iceoryx2 test, and workspace Clippy.
-On one H20, the 36 Rust cache integration tests pass, including all 11 SSD
-roundtrips with io_uring enabled. The 8 Python GPU integration cases also pass:
-local health/register/publish/query/restore/release with gRPC disabled, retained
-gRPC client contracts, and SIGKILL-triggered CUDA IPC cleanup over both UDS and
-gRPC. Those gRPC inference tests were removed with the transport. The Cache
-Manager and Python extension were built together; test helpers can
-pin the Cache Manager artifact through `ORBITKV_CACHE_MANAGER_BINARY`.
-
-On one H20 with vLLM `0.26.0` and `Qwen2.5-0.5B-Instruct`, the revised
-local-only E2E passed all six applicable gates; the hybrid-only gate was
-skipped. It compares the same ordered prompt plan with native vLLM prefix
-caching and requires exact text equality at every step. Native `long_warm`
-records a prefix-cache hit, and OrbitKV `long_warm` loads saved KV after the
-vLLM process restarts. The Cache Manager ran without gRPC. A prior cold-prefill
-baseline had diverged at `long_warm`; the matched native-prefix baseline
-removed that comparison error. This validates the pure-attention local path,
-not hybrid models or multi-GPU deployments.
-The same six applicable gates pass with the official vLLM `0.29.0` release,
-PyTorch `2.13.0+cu130`, and the same model on the H20. That run saved 74
-blocks / 14.5 MB and hit 40 blocks / 7.9 MB, again with no gRPC listener.
-With `Qwen3.5-0.8B` on the same vLLM release, all seven gates pass, including
-the same-process HMA restore gate and exact agreement with the native
-prefix-cache control across the 12-step plan. It saved 25 blocks / 167.1 MB
-and hit 14 blocks / 234.0 MB. The HMA scheduler boundary-state hand-off is
-present in this release; vLLM `0.26.0` lacks it and the adapter rejects that
-hybrid configuration at startup.
-
-## vLLM path evidence
-
-Before the UDS lifecycle migration, the compatibility gRPC path and the opt-in
-local data path were exercised with vLLM `0.26.0`, PyTorch `2.11.0`, CUDA 13,
-`Qwen2.5-0.5B-Instruct`, and a separate OrbitKV Cache Manager. The local run selected
-`transport=local` in both vLLM processes and:
-
-- registered 24 attention layers through CUDA IPC;
-- saved 74 blocks / 14.5 MB;
-- hit 40 blocks and loaded 7.9 MB after a vLLM process restart;
-- exercised exact and partial prefixes;
-- reported no connector/server data-path failures and no KV load failures.
-
-The former full-prefill versus warm-prefix comparison differed in one strict
-text assertion. An independent native prefix-cache control reproduced the
-same divergence at the same output position. The revised matched-prefix
-comparison passes on this setup, as recorded above.
+With the pinned vLLM `0.29.0`, a single-node H20 run passed the applicable
+pure-attention E2E recovery gates after an inference-process restart, comparing
+ordered generated text to vLLM native prefix caching. SGLang `0.5.20` passed
+its direct GPU-page restore gate after a radix-cache flush. These are local
+correctness checks, not multi-host reliability or throughput measurements.
+The SGLang multi-rank and cross-host TP paths still need qualification. See
+[Python test gates](../python/tests/README.md) and the [roadmap](roadmap.md).
 
 ## Mooncake findings
 
@@ -230,8 +188,9 @@ Mooncake C ABI. There is no runtime backend selector and no OrbitKV-owned verbs
 implementation. Authorized plans are lowered directly to Mooncake Segment
 addresses, BatchTransfer operations, and notifications.
 
-OrbitKV does not adopt Mooncake Store Master as its semantic authority. The
-following remain above every mover:
+OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
+the cache engine handles namespace/hash lookup and leases above Mooncake. The
+target common contract additionally includes:
 
 - `StateKey`, `StateBundle`, and `RecoveryContract`;
 - replica selection and restore-versus-recompute planning;
@@ -239,31 +198,26 @@ following remain above every mover:
 - semantic and execution frontiers;
 - publication only after every required component is complete.
 
-The global directory stores candidate node/tier/session information. It does
-not store permanent raw addresses or rkeys. A selected source issues a short
-lived transfer capability after validating a lease.
+The current MetaServer advertises candidate owners, not durable KV data or
+permanent raw addresses/rkeys. A selected source authorizes and pins current
+bytes before transfer. A sharded, recoverable catalog is future work.
 
 ## Remote operation choice
 
-- demand-driven remote cache reuse uses Mooncake READ; the consumer controls
-  destination allocation and can retry another replica;
-- P/D transfer and proactive replication use Mooncake WRITE; the destination first
-  reserves pages and publishes them only after completion;
-- final WRITE completion uses a Mooncake notification after all batches complete;
-- failures invalidate only the physical plan and fall back to another replica
-  or recomputation.
+- current demand-driven remote cache reuse uses Mooncake READ into destination
+  pinned memory before restoring into framework HBM;
+- the experimental vLLM P/D connector uses Mooncake WRITE into the decode
+  worker's allocated GPU pages and waits for completion notification;
+- proactive replica placement, retry across replicas, and bundle-aware
+  publication are planning targets, not current guarantees.
 
-No remote backend may claim a bundle is available before the bundle recovery
-contract is complete.
+The target recovery contract must reject incomplete or incompatible bundles;
+the current hot path does not enforce `StateBundle` completeness.
 
-## Migration sequence
+## Remaining work
 
-1. Land the versioned `orbitkv-local` ABI, Cache Manager lifecycle endpoint,
-   Python client, and cross-process tests. (complete)
-2. Add UDS bootstrap and a shared descriptor arena. (complete for control
-   descriptors; framework-owned page registration remains)
-3. Move `QueryBundle`, `Publish`, `Release`, and `Restore` to iceoryx2; remove
-   inference gRPC and per-load shared-memory status objects. (complete for vLLM)
-4. Keep the pinned stable Mooncake runtime as the remote transfer backend.
-5. Qualify Mooncake RDMA/GPUDirect against the transfer-plan and P/D gates.
-6. Keep peer control RPCs for transfer authorization and leases.
+The hot path now uses UDS + iceoryx2 for both adapters. The next transport
+work is an explicit GPU-region registration protocol (replacing the Python
+CUDA IPC wrapper pickle), page-generation validation, multi-node inventory
+replay, and Mooncake RDMA failure/retry qualification. Peer gRPC remains only
+for remote transfer authorization and lease release in the current design.

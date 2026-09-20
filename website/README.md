@@ -29,14 +29,15 @@ contrast, overflow, and links. Browser tooling stays outside production dependen
 src/data/site.ts             navigation and crate descriptions
 src/data/models.ts           model support and imported results/*/performance.json
 src/layouts/SiteLayout.astro metadata, header, and footer
-src/components/             compilation illustration
-src/pages/                  overview, architecture, SGLang integration, and 404
+src/components/             local cache path illustration
+src/pages/                  overview, architecture, framework integration, and 404
 src/styles/global.css       shared tokens, layout, and responsive styles
 public/                     SVG mark and README wordmark
 ```
 
 Keep public copy brief; link to repository documents for detailed contracts.
-Capability claims must match recorded evidence.
+Separate GPU-validated single-node behavior, experimental remote/P-D paths,
+and the target catalog/router/planner. Capability claims must match evidence.
 
 ## Publish
 
