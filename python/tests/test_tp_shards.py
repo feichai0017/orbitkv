@@ -29,7 +29,8 @@ from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _available_local_sockets(monkeypatch):
-    monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
+    monkeypatch.setattr("orbitkv.vllm.connector.derive_namespace", lambda *_a, **_k: "identity")
+    monkeypatch.setattr("orbitkv.client.connection._is_unix_socket", lambda _path: True)
     monkeypatch.setattr(
         "orbitkv.vllm.connector.get_pp_group", lambda: SimpleNamespace(rank_in_group=0)
     )
@@ -53,7 +54,7 @@ def _context(**kwargs) -> ConnectorContext:
         "world_size": 8,
         "tp_rank": 0,
         "device_id": 0,
-        "engine_client": MagicMock(),
+        "client": MagicMock(),
         "state_manager": MagicMock(),
         "tp_shards": _topology(),
     }
@@ -192,9 +193,9 @@ def test_scheduler_maps_each_tp_shard_to_its_local_socket(monkeypatch):
 
     connector = OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
     try:
-        assert connector._ctx.data_client is clients[0]
+        assert connector._ctx.client is clients[0]
         assert connector._scheduler._tp_shard_client._clients == tuple(clients)
-        assert connector._lifecycle_clients == tuple(clients)
+        assert connector._connections.clients == tuple(clients)
         for client in clients:
             client.start_session_watcher.assert_called_once()
     finally:
@@ -214,7 +215,7 @@ def test_scheduler_derives_distinct_local_sockets(monkeypatch):
 
     connector = OrbitKVConnector(_vllm_config(), KVConnectorRole.SCHEDULER)
     try:
-        assert connector._ctx.data_client is clients[0]
+        assert connector._ctx.client is clients[0]
     finally:
         connector.shutdown()
     assert factory.call_args_list == [
@@ -224,7 +225,7 @@ def test_scheduler_derives_distinct_local_sockets(monkeypatch):
 
 
 def test_scheduler_rejects_remote_inference_shard(monkeypatch):
-    monkeypatch.setattr("orbitkv.client.data_plane._endpoint_is_local", lambda _endpoint: False)
+    monkeypatch.setattr("orbitkv.client.connection._endpoint_is_local", lambda _endpoint: False)
     local_factory = MagicMock()
     monkeypatch.setattr("orbitkv.client.connection.CacheManagerClient", local_factory)
     monkeypatch.setattr("orbitkv.vllm.connector.ServiceStateManager", MagicMock())
@@ -257,8 +258,8 @@ def test_worker_uses_only_its_tp_shard_socket(monkeypatch):
     )
     connector = OrbitKVConnector(config, KVConnectorRole.WORKER)
     try:
-        assert connector._ctx.data_client is client
-        assert connector._worker._data_client is client
+        assert connector._ctx.client is client
+        assert connector._worker._client is client
     finally:
         connector.shutdown()
     factory.assert_called_once_with("/run/orbitkv/b.sock", timeout_ms=5_000, spin_iterations=64)
@@ -271,7 +272,7 @@ def test_worker_uses_its_local_shard_when_other_shards_are_remote(monkeypatch):
     monkeypatch.setattr("orbitkv.client.connection.CacheManagerClient", factory)
     monkeypatch.setattr("orbitkv.vllm.connector.ServiceStateManager", MagicMock())
     monkeypatch.setattr(
-        "orbitkv.client.data_plane._endpoint_is_local",
+        "orbitkv.client.connection._endpoint_is_local",
         lambda endpoint: endpoint == "http://node-b:50055",
     )
     config = _vllm_config(
@@ -281,7 +282,7 @@ def test_worker_uses_its_local_shard_when_other_shards_are_remote(monkeypatch):
     )
     connector = OrbitKVConnector(config, KVConnectorRole.WORKER)
     try:
-        assert connector._ctx.data_client is client
+        assert connector._ctx.client is client
     finally:
         connector.shutdown()
     factory.assert_called_once_with("/tmp/orbitkv-50055.sock", timeout_ms=5_000, spin_iterations=64)
@@ -294,7 +295,7 @@ def test_worker_uses_selected_socket_when_other_shards_are_remote(monkeypatch):
     monkeypatch.setattr("orbitkv.client.connection.CacheManagerClient", factory)
     monkeypatch.setattr("orbitkv.vllm.connector.ServiceStateManager", MagicMock())
     monkeypatch.setattr(
-        "orbitkv.client.data_plane._endpoint_is_local",
+        "orbitkv.client.connection._endpoint_is_local",
         lambda endpoint: endpoint == "http://node-b:50055",
     )
     config = _vllm_config(
@@ -305,7 +306,7 @@ def test_worker_uses_selected_socket_when_other_shards_are_remote(monkeypatch):
     )
     connector = OrbitKVConnector(config, KVConnectorRole.WORKER)
     try:
-        assert connector._ctx.data_client is client
+        assert connector._ctx.client is client
     finally:
         connector.shutdown()
     factory.assert_called_once_with("/run/b.sock", timeout_ms=5_000, spin_iterations=64)
@@ -313,13 +314,15 @@ def test_worker_uses_selected_socket_when_other_shards_are_remote(monkeypatch):
 
 def test_full_prefix_prefetch_uses_local_client(monkeypatch):
     client = MagicMock(transport="iceoryx2")
-    monkeypatch.setattr("orbitkv.client.connection.CacheManagerClient", MagicMock(return_value=client))
+    monkeypatch.setattr(
+        "orbitkv.client.connection.CacheManagerClient", MagicMock(return_value=client)
+    )
     monkeypatch.setattr("orbitkv.vllm.connector.ServiceStateManager", MagicMock())
     config = _vllm_config(extra_overrides={"orbitkv.wait_for_full_prefix": True})
     connector = OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
     try:
         assert connector._ctx.wait_for_full_prefix
-        assert connector._ctx.engine_client is client
+        assert connector._ctx.client is client
     finally:
         connector.shutdown()
     assert client.close.called
@@ -356,7 +359,7 @@ def test_scheduler_uses_common_prefix_and_exact_per_shard_leases():
         QueryReady(2, b"first-exact"),
     ]
     second.query_prefetch.return_value = QueryReady(2, b"second-exact")
-    scheduler = SchedulerConnector(_context(), data_clients=(first, second))
+    scheduler = SchedulerConnector(_context(), clients=(first, second))
     hashes = [b"h0", b"h1", b"h2"]
 
     ready = scheduler._count_available_block_prefix(hashes, "request")
@@ -387,7 +390,7 @@ def test_scheduler_releases_ready_shards_when_another_shard_is_loading():
     second = MagicMock()
     first.query_prefetch.return_value = QueryReady(2, b"first")
     second.query_prefetch.return_value = QueryLoading()
-    scheduler = SchedulerConnector(_context(), data_clients=(first, second))
+    scheduler = SchedulerConnector(_context(), clients=(first, second))
 
     assert scheduler._count_available_block_prefix([b"h0", b"h1"], "request") is None
     first.release.assert_called_once_with(b"first")
@@ -402,7 +405,7 @@ def test_scheduler_discards_drifted_prefetch_before_querying_new_hashes():
         QueryLoading(),
     ]
     second.query_prefetch.return_value = QueryReady(4, b"second-old")
-    scheduler = SchedulerConnector(_context(), data_clients=(first, second))
+    scheduler = SchedulerConnector(_context(), clients=(first, second))
     request = SimpleNamespace(
         request_id="request",
         block_hashes=[b"h0", b"h1", b"h2", b"h3"],
@@ -451,7 +454,7 @@ def test_scheduler_rejects_invalid_shard_query_results_without_leaking_lease(inv
     second = MagicMock()
     first.query_prefetch.return_value = QueryReady(2, b"first")
     second.query_prefetch.return_value = invalid_ready
-    scheduler = SchedulerConnector(_context(), data_clients=(first, second))
+    scheduler = SchedulerConnector(_context(), clients=(first, second))
 
     with pytest.raises(RuntimeError, match="TP shard 1"):
         scheduler._count_available_block_prefix([b"h0", b"h1"], "request")
@@ -468,7 +471,7 @@ def test_worker_selects_the_lease_for_its_local_server():
         tp_rank=5,
         device_id=1,
         namespace="namespace:tp-shard-1-of-2",
-        engine_client=engine_client,
+        client=engine_client,
     )
     worker = WorkerConnector(context)
     worker._registered_layers = ["layer"]
@@ -496,7 +499,7 @@ def test_each_tp_shard_has_a_local_unregister_leader():
     for tp_rank in range(8):
         engine_client = MagicMock()
         engine_client.unregister_context.return_value = (True, "")
-        worker = WorkerConnector(_context(tp_rank=tp_rank, engine_client=engine_client))
+        worker = WorkerConnector(_context(tp_rank=tp_rank, client=engine_client))
         worker._registered_layers = ["layer"]
 
         worker.unregister_context()

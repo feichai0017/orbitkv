@@ -12,7 +12,7 @@ use tokio::task::JoinHandle;
 #[cfg(feature = "mooncake")]
 use crate::backing::MooncakeFetchStore;
 use crate::backing::{PrefetchResult, SsdBackingStore};
-use crate::block::{BlockKey, PrefetchStatus, SealedBlock};
+use crate::block::{PrefetchStatus, SealedBlock, StateKey};
 use crate::internode::MetaServerClient;
 use crate::metrics::core_metrics;
 
@@ -121,7 +121,7 @@ struct PrefixScan<'a> {
 struct PrefetchStart<'a> {
     req_id: &'a str,
     namespace: &'a str,
-    remaining: &'a [BlockKey],
+    remaining: &'a [StateKey],
     prefix_blocks: Vec<Arc<SealedBlock>>,
     total: usize,
     hit: usize,
@@ -139,7 +139,7 @@ struct PrefetchTaskDeps {
 struct PrefetchTaskInput {
     req_id: String,
     namespace: String,
-    remaining_keys: Vec<BlockKey>,
+    remaining_keys: Vec<StateKey>,
     prefix_blocks: Vec<Arc<SealedBlock>>,
     total: usize,
     hit: usize,
@@ -314,10 +314,10 @@ impl PrefetchScheduler {
         let total_start = Instant::now();
 
         let key_build_start = Instant::now();
-        let keys: Vec<BlockKey> = scan
+        let keys: Vec<StateKey> = scan
             .hashes
             .iter()
-            .map(|hash| BlockKey::new(scan.namespace.to_string(), hash.clone()))
+            .map(|hash| StateKey::new(scan.namespace.to_string(), hash.clone()))
             .collect();
         let key_build = key_build_start.elapsed();
 
@@ -516,7 +516,7 @@ fn build_ready_result(
     total: usize,
     source: Option<PrefetchSource>,
     found: usize,
-    requested_keys: &[BlockKey],
+    requested_keys: &[StateKey],
     cache_inserts: PrefetchResult,
 ) -> PrefetchTaskResult {
     let mut ready_blocks = prefix_blocks;
@@ -541,7 +541,7 @@ fn build_ready_result(
 
 fn remote_registration_from_resident_keys(
     source: Option<PrefetchSource>,
-    resident_keys: &[BlockKey],
+    resident_keys: &[StateKey],
 ) -> Option<(String, Vec<Vec<u8>>)> {
     if source != Some(PrefetchSource::Remote) || resident_keys.is_empty() {
         return None;
@@ -668,8 +668,8 @@ enum PollResult {
 mod tests {
     use super::*;
 
-    fn key(n: u8) -> BlockKey {
-        BlockKey::new("ns".to_string(), vec![n])
+    fn key(n: u8) -> StateKey {
+        StateKey::new("ns".to_string(), vec![n])
     }
 
     fn block() -> Arc<SealedBlock> {

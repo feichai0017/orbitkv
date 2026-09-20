@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use super::ssd::SsdBackingStore;
 use super::uring::UringIoEngine;
-use crate::block::{BlockKey, RawBlock, SealedBlock};
+use crate::block::{RawBlock, SealedBlock, StateKey};
 use crate::metrics::core_metrics;
 use crate::pinned_pool::PinnedAllocation;
 use crate::seal_offload::{self, SlotMeta};
@@ -44,7 +44,7 @@ const SSD_PREFETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Result of a single prefetch I/O.
 type SinglePrefetchResult = (
-    BlockKey,
+    StateKey,
     SsdIndexEntry,
     Option<Arc<SealedBlock>>,
     f64,
@@ -136,7 +136,7 @@ struct SsdShardRing {
     capacity: u64,
     head: u64,
     tail: u64,
-    order: VecDeque<BlockKey>,
+    order: VecDeque<StateKey>,
 }
 
 /// SSD ring buffer: unified state for space allocation + block index.
@@ -152,7 +152,7 @@ pub(super) struct SsdRingBuffer {
     /// Round-robin cursor for selecting the next write shard.
     next_shard: usize,
     /// Fast lookup: key -> state (Writing or Committed)
-    entries: HashMap<BlockKey, SsdEntryState>,
+    entries: HashMap<StateKey, SsdEntryState>,
 }
 
 impl SsdRingBuffer {
@@ -183,7 +183,7 @@ impl SsdRingBuffer {
 
     /// Check if key has a valid Committed entry (not yet overwritten).
     #[cfg(test)]
-    pub(super) fn has_valid_entry(&self, key: &BlockKey) -> bool {
+    pub(super) fn has_valid_entry(&self, key: &StateKey) -> bool {
         match self.entries.get(key) {
             Some(SsdEntryState::Committed(e)) => self.is_offset_valid(e),
             _ => false,
@@ -191,7 +191,7 @@ impl SsdRingBuffer {
     }
 
     /// Lookup a Committed entry by key, returning None if Writing or expired.
-    pub(super) fn get(&self, key: &BlockKey) -> Option<&SsdIndexEntry> {
+    pub(super) fn get(&self, key: &StateKey) -> Option<&SsdIndexEntry> {
         match self.entries.get(key) {
             Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) => Some(e),
             _ => None,
@@ -254,7 +254,7 @@ impl SsdRingBuffer {
 
     /// Commit a write: success=true transitions Writing→Committed, success=false removes.
     /// Returns false if entry was already expired or missing.
-    pub(super) fn commit(&mut self, key: &BlockKey, success: bool) -> bool {
+    pub(super) fn commit(&mut self, key: &StateKey, success: bool) -> bool {
         let Some(state) = self.entries.get(key) else {
             // Already removed by advance_tail or previous abort
             return false;
@@ -293,7 +293,7 @@ impl SsdRingBuffer {
     /// Returns list of blocks to write with their allocated offsets.
     pub(super) fn prepare_batch(
         &mut self,
-        candidates: Vec<(BlockKey, Arc<SealedBlock>)>,
+        candidates: Vec<(StateKey, Arc<SealedBlock>)>,
     ) -> PreparedBatch {
         // 1. Filter: skip keys that already exist (Writing or Committed)
         let to_write: Vec<_> = candidates
@@ -363,7 +363,7 @@ impl Default for SsdRingBuffer {
 
 /// Info for a single block write within a batch.
 pub(super) struct WriteInfo {
-    pub key: BlockKey,
+    pub key: StateKey,
     pub block: Arc<SealedBlock>,
     pub entry: SsdIndexEntry,
 }
@@ -385,7 +385,7 @@ impl PreparedBatch {
 
 /// Batch of sealed blocks to write to SSD
 pub(super) struct SsdWriteBatch {
-    pub blocks: Vec<(BlockKey, Weak<SealedBlock>)>,
+    pub blocks: Vec<(StateKey, Weak<SealedBlock>)>,
 }
 
 /// Commands sent to the SSD writer task.
@@ -396,7 +396,7 @@ pub(super) enum SsdWriteCommand {
 
 /// Request to prefetch a block from SSD (metadata only, allocation done in worker)
 pub(super) struct PrefetchRequest {
-    pub key: BlockKey,
+    pub key: StateKey,
     pub entry: SsdIndexEntry,
 }
 
@@ -423,7 +423,7 @@ impl BatchContext {
         }
     }
 
-    fn complete_one(&self, key: BlockKey, block: Option<Arc<SealedBlock>>) {
+    fn complete_one(&self, key: StateKey, block: Option<Arc<SealedBlock>>) {
         if let Some(block) = block {
             self.results.lock().push((key, block));
         }
@@ -444,7 +444,7 @@ struct SlotAlloc {
 
 /// Internal: single block prefetch task with per-slot allocated memory.
 struct PrefetchTask {
-    key: BlockKey,
+    key: StateKey,
     entry: SsdIndexEntry,
     /// One per slot (parallel to `entry.slots`), each from the correct NUMA pool.
     slot_allocs: Vec<SlotAlloc>,
@@ -454,13 +454,13 @@ struct PrefetchTask {
 
 /// Internal: single block write task
 struct WriteTask {
-    key: BlockKey,
+    key: StateKey,
     block: Arc<SealedBlock>,
     entry: SsdIndexEntry,
 }
 
 /// Result of a single write operation: (key, success, duration_secs, block_size)
-type WriteResult = (BlockKey, bool, f64, u64);
+type WriteResult = (StateKey, bool, f64, u64);
 
 // ============================================================================
 // SSD Writer Loop
@@ -1049,8 +1049,8 @@ mod tests {
     use super::*;
     use smallvec::smallvec;
 
-    fn make_key(n: u8) -> BlockKey {
-        BlockKey::new("test".to_string(), vec![n])
+    fn make_key(n: u8) -> StateKey {
+        StateKey::new("test".to_string(), vec![n])
     }
 
     impl SsdRingBuffer {
@@ -1065,7 +1065,7 @@ mod tests {
         }
 
         /// Insert a Committed entry for testing. Returns the key.
-        fn insert_committed(&mut self, n: u8, begin: u64, len: u64) -> BlockKey {
+        fn insert_committed(&mut self, n: u8, begin: u64, len: u64) -> StateKey {
             let key = make_key(n);
             let entry = self.test_entry(0, begin, len);
             self.entries
@@ -1075,7 +1075,7 @@ mod tests {
         }
 
         /// Insert a Writing entry for testing. Returns the key.
-        fn insert_writing(&mut self, n: u8, begin: u64, len: u64) -> BlockKey {
+        fn insert_writing(&mut self, n: u8, begin: u64, len: u64) -> StateKey {
             let key = make_key(n);
             let entry = self.test_entry(0, begin, len);
             self.entries

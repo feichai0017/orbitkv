@@ -820,7 +820,7 @@ async fn unregister_current_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::{BlockKey, SealedBlock};
+    use crate::block::{SealedBlock, StateKey};
     use orbitkv_proto::proto::engine::meta_server_server::{MetaServer, MetaServerServer};
     use orbitkv_proto::proto::engine::{
         HeartbeatNodeResponse, InsertBlockHashesResponse, QueryPrefixBlocksRequest,
@@ -1094,7 +1094,7 @@ mod tests {
             .map(|value| value.to_le_bytes().to_vec())
             .collect();
         let hinted_hash = hashes[0].clone();
-        let hinted_key = BlockKey::new("ns".to_string(), hinted_hash.clone());
+        let hinted_key = StateKey::new("ns".to_string(), hinted_hash.clone());
         read_cache.insert_retained_for_test(
             hinted_key.clone(),
             Arc::new(SealedBlock::from_slots(Vec::new())),

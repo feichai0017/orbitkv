@@ -35,6 +35,7 @@ use log::info;
 use crate::layout::KVCacheLayout;
 use crate::{EngineError, TransferMode, gpu_worker::GpuWorkerPool};
 use orbitkv_common::NumaNode;
+use orbitkv_state::{StorageSlot, storage_namespace};
 
 /// Registration state protected by a single mutex.
 struct RegistrationState {
@@ -58,6 +59,7 @@ struct RegistrationState {
 /// even though attention groups save every block.
 #[derive(Debug)]
 pub(crate) struct LayerTopology {
+    pub(crate) cache_namespace: String,
     name_to_id: HashMap<String, usize>,
     tp_size: usize,
     /// Storage group id per layer, indexed by layer_id. All zeros for
@@ -70,7 +72,7 @@ pub(crate) struct LayerTopology {
     layer_group_rank: Vec<usize>,
     /// Page-first layout when `Some`: each block's layers collapse into
     /// contiguous per-shard pages, so `total_slots = num_shards`. `None` is the
-    /// legacy layer-first layout (`total_slots = num_layers * tp_size`).
+    /// layer-first layout (`total_slots = num_layers * tp_size`).
     page_layout: Option<PageLayout>,
 }
 
@@ -670,6 +672,23 @@ impl InstanceContext {
         };
 
         Ok(LayerTopology {
+            cache_namespace: storage_namespace(
+                &self.namespace,
+                self.page_first,
+                gpus()
+                    .flat_map(|gpu| {
+                        gpu.kv_caches.iter().map(|(name, layout)| StorageSlot {
+                            layer: name.clone(),
+                            group: gpu.group_of_layer(name),
+                            tp_rank: gpu.tp_rank,
+                            pp_rank: gpu.pp_rank,
+                            segment_bytes: layout.segment_bytes(),
+                            padded_block_bytes: layout.padded_block_bytes(),
+                            split: layout.is_split(),
+                        })
+                    })
+                    .collect(),
+            ),
             name_to_id,
             tp_size: self.tp_size,
             layer_group,
@@ -832,11 +851,6 @@ impl InstanceContext {
         Ok(())
     }
 
-    /// Access the instance namespace.
-    pub(crate) fn namespace(&self) -> &str {
-        &self.namespace
-    }
-
     /// Total worker count registered for this instance.
     pub(crate) fn world_size(&self) -> usize {
         self.world_size
@@ -845,16 +859,22 @@ impl InstanceContext {
     /// Verify that the topology matches expected values.
     ///
     /// Returns `Ok(())` if matches, or an error message describing the mismatch.
-    pub(crate) fn verify_topology(
+    pub(crate) fn verify_identity(
         &self,
+        namespace: &str,
         tp_size: usize,
         world_size: usize,
-        page_first: bool,
+        page_first: Option<bool>,
     ) -> Result<(), String> {
-        if self.tp_size != tp_size || self.world_size != world_size || self.page_first != page_first
+        if self.namespace != namespace {
+            return Err("registered with a different state identity".into());
+        }
+        if self.tp_size != tp_size
+            || self.world_size != world_size
+            || page_first.is_some_and(|value| self.page_first != value)
         {
             return Err(format!(
-                "exists with tp={}, world={}, page_first={}; requested tp={}, world={}, page_first={}",
+                "exists with tp={}, world={}, page_first={}; requested tp={}, world={}, page_first={:?}",
                 self.tp_size, self.world_size, self.page_first, tp_size, world_size, page_first
             ));
         }

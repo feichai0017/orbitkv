@@ -139,12 +139,18 @@ linker accepts ordinary full-attention MHA and MLA with one KV pool. It rejects
 hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state at startup because
 a partial component set cannot safely resume those models.
 
-The namespace includes configured model and layout details, but it does not
-hash the weight files. If a model path is reused for different weights without
-a new configured revision, set `ORBITKV_SGLANG_NAMESPACE` to a new immutable
-weight identity before starting SGLang. For the validated recovery check, keep
-the manager alive, flush the radix cache or restart SGLang, repeat the prompt,
-compare output against a cold run, and verify the manager's load counter rose.
+Both engines fingerprint local weights, tokenizer and processor artifacts at
+startup, and bind the computation and registered storage layout to the cache
+identity. Hub models require a full commit in `--revision`. Large deployments
+can set `ORBITKV_MODEL_FINGERPRINT` to their verified 64-digit SHA-256 artifact
+digest to avoid startup file reads. Change that digest when covered artifacts
+change. `ORBITKV_CACHE_SCOPE` provides optional tenant/experiment isolation; it
+does not override the model identity. Dynamic LoRA is rejected; live weight
+updates require an engine restart. See [state identity](state-identity.md).
+
+For a recovery check, keep the manager alive, flush the radix cache or restart
+SGLang, repeat the prompt, compare against a cold run, and verify that the
+manager's load counter rose.
 
 ## Check behavior and capacity
 

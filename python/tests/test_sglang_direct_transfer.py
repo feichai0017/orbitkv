@@ -14,8 +14,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 def test_direct_page_transfer_overwrites_poisoned_gpu_slots(channel_server):
     torch = pytest.importorskip("torch")
     from orbitkv import QueryReady
-    from orbitkv.client.data_plane import CacheManagerClient
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+    from orbitkv.client.manager import CacheManagerClient
 
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")

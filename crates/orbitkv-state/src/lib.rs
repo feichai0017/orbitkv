@@ -16,5 +16,8 @@ mod page;
 pub use bundle::{BundleComponent, RecoveryContract, StateBundle};
 pub use component::StateComponent;
 pub use format::{StateDType, StateFormat, StateLayout};
-pub use key::{ContractError, Digest, StateKey, TokenRange};
+pub use key::{
+    ContractError, Digest, StateDescriptor, StateKey, StorageSlot, TokenRange, group_hash,
+    storage_namespace,
+};
 pub use page::{LocalPageRef, RegionId};

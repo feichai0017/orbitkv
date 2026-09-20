@@ -172,21 +172,16 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             all_shards=role == KVConnectorRole.SCHEDULER,
             get_option=vllm_config.kv_transfer_config.get_from_extra_config,
         )
-        lifecycle_clients = self._connections.lifecycle_clients
-        data_clients = self._connections.data_clients
-        engine_client = self._connections.lifecycle
-        data_client = self._connections.data
-        self._lifecycle_clients = lifecycle_clients
-        logger.debug(
-            "[OrbitKVConnector] Connected to Cache Manager at %s", self._connections.target
-        )
+        clients = self._connections.clients
+        client = clients[self._connections.selected_index]
+        logger.debug("[OrbitKVConnector] Connected to Cache Manager at %s", client.bootstrap_socket)
         logger.info(
             "[OrbitKVConnector] Cache Manager channel: transport=%s target=%s",
-            data_client.transport,
-            self._connections.target,
+            client.transport,
+            client.bootstrap_socket,
         )
 
-        self._state_manager = ServiceStateManager(engine_client)
+        self._state_manager = ServiceStateManager(client)
 
         self._ctx = ConnectorContext(
             instance_id=instance_id,
@@ -196,8 +191,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             world_size=world_size,
             tp_rank=tp_rank,
             device_id=device_id,
-            engine_client=engine_client,
-            data_client=data_client,
+            client=client,
             state_manager=self._state_manager,
             is_mla=is_mla,
             collapse_mla_tp=collapse_mla_tp,
@@ -237,7 +231,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             )
             self._scheduler = SchedulerConnector(
                 self._ctx,
-                data_clients=data_clients,
+                clients=clients,
                 pd_tail_save=pd_tail_save,
                 pd_tail_load=pd_tail_load,
                 vllm_config=vllm_config,
@@ -247,7 +241,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             # stream per vllm replica is enough — if any tp worker crashes,
             # the scheduler dies too, closing this stream and triggering
             # server-side cleanup of the instance's CUDA IPC mappings.
-            for index, client in enumerate(lifecycle_clients):
+            for index, client in enumerate(clients):
                 client.start_session_watcher(
                     instance_id,
                     tp_shards.namespace(base_namespace, index),
@@ -286,7 +280,7 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             tp_shards.shard_count,
             mode.value,
             wait_for_full_prefix,
-            data_client.transport,
+            client.transport,
         )
 
     # ==============================

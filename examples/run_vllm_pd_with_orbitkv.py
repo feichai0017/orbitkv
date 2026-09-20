@@ -8,8 +8,8 @@ Launches:
 - D (decode) nodes starting from port 8200
 
 Usage:
-    python run_vllm_pd_with_pega.py --model <model_path>
-    python run_vllm_pd_with_pega.py --model Qwen/Qwen3-8B --num-p 1 --num-d 1
+    python run_vllm_pd_with_orbitkv.py --model <model_path>
+    python run_vllm_pd_with_orbitkv.py --model /path/to/immutable-model --num-p 1 --num-d 1
 
 Note: Start OrbitKV Cache Manager separately before running this script.
 """

@@ -176,7 +176,7 @@ class ClientContext:
 
     def __init__(
         self,
-        engine_client,
+        client,
         instance_id: str,
         namespace: str,
         device_id: int = 0,
@@ -198,7 +198,7 @@ class ClientContext:
                 f"device_id {device_id} >= available GPUs ({torch.cuda.device_count()})"
             )
 
-        self.engine_client = engine_client
+        self.client = client
         self.instance_id = instance_id
         self.namespace = namespace
         self.device_id = device_id
@@ -265,7 +265,7 @@ class ClientContext:
 
         # One batch per device, like the production worker: the engine seals
         # the instance topology once all world_size devices have registered.
-        ok, message = self.engine_client.register_context_batch(
+        ok, message = self.client.register_context_batch(
             self.instance_id,
             self.namespace,
             0,  # tp_rank
@@ -294,7 +294,7 @@ class ClientContext:
             return
 
         try:
-            ok, message = self.engine_client.unregister_context(self.instance_id)
+            ok, message = self.client.unregister_context(self.instance_id)
             if not ok:
                 logger.warning(f"Unregister context failed: {message}")
         except Exception as e:
@@ -311,7 +311,7 @@ class ClientContext:
         Returns:
             Query result dict
         """
-        return self.engine_client.query_prefetch(self.instance_id, block_hashes, req_id="test")
+        return self.client.query_prefetch(self.instance_id, block_hashes, req_id="test")
 
     def get_kv_cache(self, layer: int = 0) -> "torch.Tensor":
         """Get KV cache tensor for a specific layer."""
@@ -541,7 +541,7 @@ def channel_client_context(
 
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
     ctx = ClientContext(
-        engine_client=orbitkv_native.ChannelClient(channel_server.bootstrap_socket),
+        client=orbitkv_native.ChannelClient(channel_server.bootstrap_socket),
         instance_id=instance_id,
         namespace=namespace,
         device_id=0,
@@ -555,9 +555,9 @@ def channel_client_context(
 
 
 @pytest.fixture
-def engine_client(orbitkv_server: CacheManagerProcess):
+def client(orbitkv_server: CacheManagerProcess):
     """Create a local Cache Manager client for integration tests."""
-    from orbitkv.client.data_plane import CacheManagerClient
+    from orbitkv.client.manager import CacheManagerClient
 
     client = CacheManagerClient(orbitkv_server.bootstrap_socket)
     yield client
@@ -566,12 +566,12 @@ def engine_client(orbitkv_server: CacheManagerProcess):
 
 @pytest.fixture
 def client_context(
-    engine_client, instance_id: str, namespace: str
+    client, instance_id: str, namespace: str
 ) -> Generator[ClientContext, None, None]:
     """Fixture that provides a ClientContext representing a vLLM instance.
 
     Args:
-        engine_client: CacheManagerClient connected to the Cache Manager
+        client: CacheManagerClient connected to the Cache Manager
         instance_id: Unique instance identifier
         namespace: Namespace for the instance
 
@@ -583,7 +583,7 @@ def client_context(
         pytest.skip("CUDA is not available")
 
     ctx = ClientContext(
-        engine_client=engine_client,
+        client=client,
         instance_id=instance_id,
         namespace=namespace,
         device_id=0,

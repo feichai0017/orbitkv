@@ -48,7 +48,7 @@ def _scheduler(hash_block_size: int | None = HASH_BLOCK) -> SchedulerConnector:
         world_size=1,
         tp_rank=0,
         device_id=0,
-        engine_client=MagicMock(),
+        client=MagicMock(),
         state_manager=MagicMock(),
         hash_block_size=hash_block_size,
     )
@@ -150,20 +150,11 @@ def test_hash_past_a_popped_last_token_is_dropped():
     assert _scheduler()._build_query(req, 0)[0] == tuple(_key(i) for i in range(30))
 
 
-def test_hash_block_size_isolates_namespace():
-    cfg = SimpleNamespace(
-        model_config=SimpleNamespace(
-            model="/data/models/Kimi-K3",
-            dtype="bfloat16",
-            get_total_num_kv_heads=lambda: 1,
-            get_head_size=lambda: 576,
-            get_total_num_hidden_layers=lambda: 61,
-        ),
-        cache_config=SimpleNamespace(cache_dtype="fp8"),
-        scheduler_config=SimpleNamespace(disable_hybrid_kv_cache_manager=False),
-        parallel_config=SimpleNamespace(pipeline_parallel_size=1),
-        additional_config={},
-    )
+def test_hash_block_size_isolates_namespace(monkeypatch):
+    from .test_derive_namespace import _make_vllm_config
+
+    monkeypatch.setattr("orbitkv.vllm.common.version", lambda _: "0.29.0")
+    cfg = _make_vllm_config()
     assert derive_namespace(cfg, 8, hash_block_size=VBS) != derive_namespace(
         cfg, 8, hash_block_size=HASH_BLOCK
     )

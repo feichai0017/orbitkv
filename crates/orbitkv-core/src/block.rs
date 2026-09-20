@@ -11,10 +11,10 @@ use crate::pinned_pool::{MappedPinnedPtr, PinnedAllocation};
 use orbitkv_common::NumaNode;
 
 // ============================================================================
-// BlockKey
+// StateKey
 // ============================================================================
 
-pub use orbitkv_common::BlockKey;
+pub use orbitkv_state::StateKey;
 
 pub type BlockHash = Vec<u8>;
 

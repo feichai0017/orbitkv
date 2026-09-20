@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 
-from orbitkv.client.data_plane import RestoreHandle, RestoreStatus
 from orbitkv.client.gpu import serialize_gpu_buffer
+from orbitkv.client.manager import RestoreHandle, RestoreStatus
 from orbitkv.vllm.common import (
     CacheGroupLayout,
     ConnectorContext,
@@ -207,8 +207,7 @@ class WorkerConnector:
         kv_cache_config=None,
     ):
         self._ctx = context
-        assert context.data_client is not None
-        self._data_client = context.data_client
+        self._client = context.client
         self._kv_cache_config = kv_cache_config
         self._cache_groups = CacheGroupLayout.from_config(kv_cache_config)
         self._layer_to_group = self._cache_groups.layer_to_group()
@@ -270,7 +269,7 @@ class WorkerConnector:
             return
 
         if self._ctx.local_physical_tp_rank == 0:
-            ok, message = self._ctx.engine_client.unregister_context(self._ctx.instance_id)
+            ok, message = self._ctx.client.unregister_context(self._ctx.instance_id)
             if not ok:
                 logger.warning("[OrbitKVConnector] Unregister context failed: %s", message)
 
@@ -393,7 +392,7 @@ class WorkerConnector:
             for name in layer_names
         ]
 
-        ok, message = self._ctx.engine_client.register_context_batch(
+        ok, message = self._ctx.client.register_context_batch(
             self._ctx.instance_id,
             self._ctx.namespace,
             self._ctx.effective_tp_rank,
@@ -474,7 +473,7 @@ class WorkerConnector:
             should_poll_restores = False
             if self._pending_load_reqs:
                 try:
-                    should_poll_restores = self._data_client.restore_completions_ready()
+                    should_poll_restores = self._client.restore_completions_ready()
                 except Exception as error:
                     logger.exception("[OrbitKVConnector] restore notification check failed")
                     completion_error = error
@@ -498,7 +497,7 @@ class WorkerConnector:
                     )
                 elif should_poll_restores:
                     try:
-                        status = self._data_client.poll_restore(restore)
+                        status = self._client.poll_restore(restore)
                     except Exception as error:
                         logger.exception(
                             "[OrbitKVConnector] restore completion poll failed: reqs=%s",
@@ -694,7 +693,7 @@ class WorkerConnector:
             return
 
         try:
-            restore = self._data_client.start_restore(
+            restore = self._client.start_restore(
                 self._ctx.instance_id,
                 self._ctx.effective_tp_rank,
                 self._ctx.device_id,
@@ -744,7 +743,7 @@ class WorkerConnector:
             total_requests,
             schedule_time_us,
             restore_key,
-            self._data_client.transport,
+            self._client.transport,
         )
 
     def wait_for_layer_load(self, layer_name: str) -> None:
@@ -757,7 +756,7 @@ class WorkerConnector:
                 continue
             seen.add(lease)
             try:
-                self._data_client.release(lease)
+                self._client.release(lease)
             except Exception:
                 logger.exception(
                     "[OrbitKVConnector] load failure lease release exception: lease_len=%d",
@@ -947,7 +946,7 @@ class WorkerConnector:
         success = False
 
         try:
-            ok, message = self._data_client.save(
+            ok, message = self._client.save(
                 self._ctx.instance_id,
                 self._ctx.effective_tp_rank,
                 self._ctx.pp_rank,

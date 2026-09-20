@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from orbitkv.logging_utils import get_connector_logger
 
 if TYPE_CHECKING:
-    from orbitkv.client.data_plane import CacheLifecycleClient
+    from orbitkv.client.manager import CacheManagerClient
 
 logger = get_connector_logger()
 
@@ -29,10 +29,10 @@ class ServiceStateManager:
 
     def __init__(
         self,
-        engine_client: "CacheLifecycleClient",
+        client: "CacheManagerClient",
         health_check_interval: float = 10.0,
     ):
-        self._client = engine_client
+        self._client = client
         self._interval = health_check_interval
         self._available = True
         self._lock = threading.Lock()

@@ -2,11 +2,12 @@
 Shared types and helpers for the OrbitKV vLLM connector.
 """
 
-import hashlib
+import json
 import os
 import uuid
 from dataclasses import dataclass
 from enum import Enum
+from importlib.metadata import version
 from typing import TYPE_CHECKING
 
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
@@ -14,7 +15,8 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorWorkerMetadata,
 )
 
-from orbitkv.client.data_plane import CacheDataClient, CacheLifecycleClient
+from orbitkv.client.manager import CacheManagerClient
+from orbitkv.identity import model_config_identity, model_identity, state_namespace
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.vllm.connector_metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
 
@@ -131,9 +133,8 @@ class ConnectorContext:
     world_size: int
     tp_rank: int | None
     device_id: int | None
-    engine_client: CacheLifecycleClient
+    client: CacheManagerClient
     state_manager: "ServiceStateManager"
-    data_client: CacheDataClient | None = None
     is_mla: bool = False
     collapse_mla_tp: bool = True
     transfer_backend: str = "direct"
@@ -148,12 +149,6 @@ class ConnectorContext:
     # Token span of one `Request.block_hashes` entry; `None` means one per
     # scheduler block.
     hash_block_size: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.data_client is None:
-            # Directly constructed contexts use one client for both surfaces.
-            # The production connector always supplies CacheManagerClient.
-            object.__setattr__(self, "data_client", self.engine_client)
 
     @property
     def read_enabled(self) -> bool:
@@ -570,32 +565,33 @@ def derive_namespace(
     cross_layer_blocks: bool = False,
     hash_block_size: int | None = None,
 ) -> str:
-    """
-    Derive namespace for storage isolation.
-
-    Every factor that changes the on-storage KV block layout must be included,
-    otherwise two incompatible layouts share one namespace and a load hits the
-    server-side slot-count guard (`stored block has N slots but instance
-    expects M`). Beyond DCP/PCP and cross-layer, this covers:
-
-    - `pp_size`: the pipeline-parallel degree decides how the model's layers
-      are split across stages, so a given server registers a different layer
-      subset (and slot count) per degree.
-    - `mla_layer_split_kv_cache`: MLA layer-split registration shards each
-      block's slots across ranks, a different per-block layout than the
-      default full-slot registration.
-    - `is_hma_enabled`: vLLM's hybrid cache manager changes whether hybrid
-      cache layouts can share one logical block namespace.
-    - `hash_block_size` / `block_size`: decide which chained hash keys a block
-      and how many tokens it spans; `mamba_*`: recurrent state layout.
-    """
+    """Resolve the model computation and cache representation once per connector."""
     model_config = vllm_config.model_config
     cache_config = vllm_config.cache_config
     additional_config = getattr(vllm_config, "additional_config", None) or {}
 
+    if vllm_config.lora_config is not None:
+        raise ValueError(
+            "OrbitKV requires immutable adapter identities; dynamic LoRA is unsupported"
+        )
+    artifacts = model_identity(
+        model_config.model,
+        revision=model_config.revision,
+        tokenizer=model_config.tokenizer,
+        tokenizer_revision=model_config.tokenizer_revision,
+    )
+    computation = {
+        "hf_config": model_config_identity(json.loads(model_config.hf_config.to_json_string())),
+        "quantization": model_config.quantization,
+        "attention": vllm_config.attention_config.compute_hash(),
+        "kernel": vllm_config.kernel_config.compute_hash(),
+        "hash_algorithm": cache_config.prefix_caching_hash_algo,
+        "hash_seed": os.environ.get("PYTHONHASHSEED"),
+    }
     factors = {
-        "model": model_config.model,
         "dtype": str(model_config.dtype),
+        "kv_cache_layout": cache_config.kv_cache_layout,
+        "cache_config": cache_config.compute_hash(),
         "tp_size": tp_size,
         "pp_size": vllm_config.parallel_config.pipeline_parallel_size,
         "num_kv_heads": model_config.get_total_num_kv_heads(),
@@ -613,9 +609,13 @@ def derive_namespace(
         "mamba_ssm_cache_dtype": getattr(cache_config, "mamba_ssm_cache_dtype", None),
     }
 
-    factor_str = str(sorted(factors.items()))
-    hash_suffix = hashlib.sha256(factor_str.encode()).hexdigest()[:8]
-    return f"{hash_suffix}"
+    return state_namespace(
+        engine="vllm",
+        engine_version=version("vllm"),
+        model=artifacts,
+        computation=computation,
+        representation=factors,
+    )
 
 
 def detect_mla(vllm_config) -> bool:

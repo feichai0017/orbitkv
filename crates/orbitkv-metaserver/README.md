@@ -176,8 +176,8 @@ Register a list of block hashes. The request must include the current `node_id`.
 **Request:**
 ```protobuf
 message InsertBlockHashesRequest {
-  string namespace = 1;         // Model namespace (part of BlockKey)
-  repeated bytes block_hashes = 2;  // List of block hashes to insert (part of BlockKey)
+  string namespace = 1;         // Model namespace (part of StateKey)
+  repeated bytes block_hashes = 2;  // List of block hashes to insert (part of StateKey)
   string node = 3;              // The Cache Manager peer-control address that owns these blocks
   string node_id = 4;           // Server-generated session id announced by HeartbeatNode
 }
@@ -262,8 +262,8 @@ Graceful shutdown trigger.
 
 ## Storage Implementation
 
-- **Data structure**: `blocks: DashMap<BlockKey, HashMap<Arc<str>, OwnerRecord>>` and `nodes: DashMap<Arc<str>, NodeRecord>`
-- **BlockKey**: `{ namespace: String, hash: Vec<u8> }` — matches orbitkv-core's BlockKey
+- **Data structure**: `blocks: DashMap<StateKey, HashMap<Arc<str>, OwnerRecord>>` and `nodes: DashMap<Arc<str>, NodeRecord>`
+- **StateKey**: `{ namespace: String, hash: Vec<u8> }` — defined by orbitkv-state and shared with the cache engine
 - **Multi-owner**: Multiple nodes can register the same block hash (e.g., after replication or shared prefill)
 - **Lifecycle sweep**: An inactive-node deletion or pending takeover triggers a block scan that removes owners with a missing node or a mismatched session. Superseded sessions are immediately hidden from queries and reconciled by the next sweep, even while the replacement session stays active.
 - **Concurrency**: DashMap uses shard-level locking for high-throughput concurrent access

@@ -121,7 +121,7 @@ class ReplicaWorker:
             world_size=world_size,
             tp_rank=tp_rank,
             device_id=tp_rank,
-            engine_client=engine_client,
+            client=engine_client,
             state_manager=ServiceStateManager(engine_client),
             is_mla=True,
         )

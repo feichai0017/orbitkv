@@ -8,17 +8,18 @@ from orbitkv import (
     QueryLoading,
     QueryReady,
 )
-from orbitkv.client.connection import CacheConnections, connect_cache, connect_data_client
-from orbitkv.client.data_plane import (
-    CacheDataClient,
+from orbitkv.client.connection import (
+    CacheConnections,
+    connect_cache,
+    resolve_bootstrap_sockets,
+)
+from orbitkv.client.manager import (
     CacheManagerClient,
     RestoreHandle,
     RestoreStatus,
-    resolve_bootstrap_sockets,
 )
 
 __all__ = [
-    "CacheDataClient",
     "CacheConnections",
     "CacheManagerClient",
     "OrbitKVError",
@@ -29,5 +30,4 @@ __all__ = [
     "RestoreStatus",
     "resolve_bootstrap_sockets",
     "connect_cache",
-    "connect_data_client",
 ]

@@ -70,7 +70,7 @@ def _make_scheduler(world_size: int = 1) -> tuple[SchedulerConnector, _FakePool]
         world_size=world_size,
         tp_rank=0,
         device_id=0,
-        engine_client=MagicMock(),
+        client=MagicMock(),
         state_manager=MagicMock(),
     )
     scheduler = SchedulerConnector(ctx)

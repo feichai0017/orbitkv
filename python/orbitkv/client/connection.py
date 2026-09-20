@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import socket
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
-from orbitkv.client.data_plane import (
-    CacheDataClient,
-    CacheLifecycleClient,
+from orbitkv.client.manager import (
     CacheManagerClient,
-    resolve_bootstrap_sockets,
 )
 
 
@@ -24,24 +25,12 @@ def _int_option(value: object, name: str, *, minimum: int) -> int:
 class CacheConnections:
     """Per-shard clients with one selected endpoint for this adapter."""
 
-    lifecycle_clients: tuple[CacheLifecycleClient, ...]
-    data_clients: tuple[CacheDataClient, ...]
-    lifecycle: CacheLifecycleClient
-    data: CacheDataClient
-    target: str
+    clients: tuple[CacheManagerClient, ...]
+    selected_index: int
 
     def close(self) -> None:
-        for client in self.lifecycle_clients:
-            close = getattr(client, "close", None)
-            if callable(close):
-                close()
-
-
-def connect_data_client(
-    bootstrap_socket: str, *, timeout_ms: int = 5_000, spin_iterations: int = 64
-) -> CacheManagerClient:
-    """Open the node-local data path used by every inference adapter."""
-    return CacheManagerClient(bootstrap_socket, timeout_ms=timeout_ms, spin_iterations=spin_iterations)
+        for client in self.clients:
+            client.close()
 
 
 def connect_cache(
@@ -92,17 +81,104 @@ def connect_cache(
     try:
         for socket in selected_sockets:
             opened.append(
-                connect_data_client(socket, timeout_ms=timeout_ms, spin_iterations=spin_iterations)
+                CacheManagerClient(socket, timeout_ms=timeout_ms, spin_iterations=spin_iterations)
             )
     except Exception:
         for client in opened:
             client.close()
         raise
     clients = tuple(opened)
-    return CacheConnections(
-        lifecycle_clients=clients,
-        data_clients=clients,
-        lifecycle=clients[selected_index],
-        data=clients[selected_index],
-        target=selected_sockets[selected_index],
-    )
+    return CacheConnections(clients=clients, selected_index=selected_index)
+
+
+def resolve_bootstrap_sockets(
+    *,
+    endpoints: tuple[str, ...],
+    bootstrap_socket: object = None,
+    shard_bootstrap_sockets: object = None,
+) -> tuple[str, ...]:
+    """Resolve the process endpoint for same-host cache clients.
+
+    Every inference shard must connect to a Cache Manager on its own host.
+    """
+    if not endpoints:
+        raise ValueError("cache client requires at least one endpoint")
+    if not all(_endpoint_is_local(endpoint) for endpoint in endpoints):
+        raise ValueError(
+            "inference clients require a node-local Cache Manager; "
+            "configure a Cache Manager on each inference host"
+        )
+
+    if bootstrap_socket is not None and shard_bootstrap_sockets is not None:
+        raise ValueError(
+            "configure either orbitkv.bootstrap_socket or "
+            "orbitkv.tp_shard_bootstrap_sockets, not both"
+        )
+
+    if shard_bootstrap_sockets is not None:
+        if not isinstance(shard_bootstrap_sockets, (list, tuple)):
+            raise ValueError("orbitkv.tp_shard_bootstrap_sockets must be a list of socket paths")
+        sockets = tuple(shard_bootstrap_sockets)
+    elif bootstrap_socket is not None:
+        if len(endpoints) > 1:
+            raise ValueError(
+                "orbitkv.bootstrap_socket only supports one TP shard; "
+                "use orbitkv.tp_shard_bootstrap_sockets"
+            )
+        sockets = (bootstrap_socket,)
+    else:
+        sockets = tuple(_default_bootstrap_socket(endpoint) for endpoint in endpoints)
+
+    if len(sockets) != len(endpoints):
+        raise ValueError(
+            f"configured {len(sockets)} local bootstrap sockets for {len(endpoints)} TP shards"
+        )
+    if any(not isinstance(socket, str) or not socket for socket in sockets):
+        raise ValueError("local bootstrap socket configuration must contain non-empty strings")
+    if len(set(sockets)) != len(sockets):
+        raise ValueError("local bootstrap sockets must be distinct for TP shards")
+    missing = [socket_path for socket_path in sockets if not _is_unix_socket(socket_path)]
+    if missing:
+        raise ConnectionError(
+            "OrbitKV Cache Manager Unix socket is unavailable: "
+            + ", ".join(missing)
+            + "; start the node-local Cache Manager"
+        )
+    return sockets
+
+
+def _default_bootstrap_socket(endpoint: str) -> str:
+    port = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").port
+    if port is None:
+        raise ValueError(
+            "cannot derive the process socket from the configured endpoint; "
+            "set orbitkv.bootstrap_socket"
+        )
+    return f"/tmp/orbitkv-{port}.sock"
+
+
+def _is_unix_socket(path: str) -> bool:
+    try:
+        return stat.S_ISSOCK(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _endpoint_is_local(endpoint: str) -> bool:
+    host = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").hostname
+    if host is None:
+        return False
+    if host in {"localhost", "::1"} or host.startswith("127."):
+        return True
+    try:
+        addresses = socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    for family, socket_type, protocol, _, address in addresses:
+        try:
+            with socket.socket(family, socket_type, protocol) as probe:
+                probe.bind(address)
+        except OSError:
+            continue
+        return True
+    return False

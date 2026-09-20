@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-from types import SimpleNamespace
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -19,7 +18,7 @@ from orbitkv.client import (  # noqa: E402
 
 
 def test_local_socket_defaults_to_the_cache_manager_addr_port(monkeypatch):
-    monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
+    monkeypatch.setattr("orbitkv.client.connection._is_unix_socket", lambda _path: True)
     assert resolve_bootstrap_sockets(
         endpoints=("http://127.0.0.1:50055",),
     ) == ("/tmp/orbitkv-50055.sock",)
@@ -27,7 +26,7 @@ def test_local_socket_defaults_to_the_cache_manager_addr_port(monkeypatch):
 
 def test_local_socket_requires_same_host_socket(monkeypatch):
     monkeypatch.setattr(
-        "orbitkv.client.data_plane._is_unix_socket",
+        "orbitkv.client.connection._is_unix_socket",
         lambda path: path == "/tmp/orbitkv-50055.sock",
     )
 
@@ -39,7 +38,7 @@ def test_local_socket_requires_same_host_socket(monkeypatch):
 
 
 def test_local_socket_derives_every_tp_shard(monkeypatch):
-    monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
+    monkeypatch.setattr("orbitkv.client.connection._is_unix_socket", lambda _path: True)
 
     assert resolve_bootstrap_sockets(
         endpoints=("http://127.0.0.1:50055", "http://127.0.0.1:50056"),
@@ -76,7 +75,7 @@ def test_cache_manager_client_translates_hot_operations(monkeypatch):
     native.restore_submit.return_value = 13
     native.restore_poll.side_effect = [("pending", ""), ("succeeded", "")]
     factory = MagicMock(side_effect=[native, publisher])
-    monkeypatch.setattr("orbitkv.client.data_plane.ChannelClient", factory)
+    monkeypatch.setattr("orbitkv.client.manager.ChannelClient", factory)
 
     client = CacheManagerClient("/tmp/orbitkv.sock", timeout_ms=123, spin_iterations=8)
     query_result = client.query_prefetch(
@@ -145,7 +144,7 @@ def test_blocked_publish_does_not_serialize_queries(monkeypatch):
 
     primary, publisher = Session(), Session()
     factory = MagicMock(side_effect=[primary, publisher])
-    monkeypatch.setattr("orbitkv.client.data_plane.ChannelClient", factory)
+    monkeypatch.setattr("orbitkv.client.manager.ChannelClient", factory)
     client = CacheManagerClient("/tmp/orbitkv.sock")
 
     save_thread = threading.Thread(target=client.save, args=("instance", 0, 0, 0, []))
@@ -164,22 +163,3 @@ def test_blocked_publish_does_not_serialize_queries(monkeypatch):
         client.close()
     assert not save_thread.is_alive()
     assert not query_thread.is_alive()
-
-
-def test_context_uses_one_client_for_direct_construction():
-    from orbitkv.vllm.common import ConnectorContext
-
-    engine = MagicMock()
-    context = ConnectorContext(
-        instance_id="instance",
-        namespace="namespace",
-        block_size=16,
-        tp_size=1,
-        world_size=1,
-        tp_rank=0,
-        device_id=0,
-        engine_client=engine,
-        state_manager=SimpleNamespace(),
-    )
-
-    assert context.data_client is engine

@@ -49,9 +49,7 @@ def test_channel_lifecycle_runs_with_no_grpc_listener(channel_server):
         client.health()
 
 
-def test_query_bundle_uses_bootstrapped_arena_and_core(
-    channel_server, channel_client_context
-):
+def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_client_context):
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
     torch = pytest.importorskip("torch")
     bootstrap_socket = channel_server.bootstrap_socket
@@ -160,11 +158,9 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(
         query_client.release(third.lease, request_id=302)
 
 
-def test_cache_client_runs_publish_query_restore_release(
-    channel_server, channel_client_context
-):
+def test_cache_client_runs_publish_query_restore_release(channel_server, channel_client_context):
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
-    CacheManagerClient = importlib.import_module("orbitkv.client.data_plane").CacheManagerClient
+    CacheManagerClient = importlib.import_module("orbitkv.client.manager").CacheManagerClient
     torch = pytest.importorskip("torch")
     bootstrap_socket = channel_server.bootstrap_socket
     assert bootstrap_socket is not None

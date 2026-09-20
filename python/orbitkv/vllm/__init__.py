@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from orbitkv.vllm.connector import KVConnectorRole, NoopKVConnector, OrbitKVConnector
+    from orbitkv.vllm.connector import (
+        KVConnectorRole,
+        NoopKVConnector,
+        OrbitKVConnector,
+    )
 
 __all__ = ["OrbitKVConnector", "NoopKVConnector", "KVConnectorRole"]
 

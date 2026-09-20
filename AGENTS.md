@@ -75,7 +75,9 @@ orbitkv/
 - `python/orbitkv/vllm/connector.py`: vLLM connector entry point
 - `python/orbitkv/vllm/pd/`: P/D connector
 - `python/orbitkv/sglang/linker.py`: direct SGLang GPU-page linker
+- `python/orbitkv/client/manager.py`: Cache Manager operations and restore/publish lifetime
 - `python/orbitkv/client/connection.py`: Cache Manager socket selection for adapters
+- `python/orbitkv/identity.py`: shared model-artifact and computation fingerprinting
 - `python/orbitkv/orbitkv.pyi`: Python type stubs
 
 ## Build, Check, Test
@@ -132,7 +134,7 @@ Do not default to running all of `python/tests`. Current project taste is `uv` +
 ### Benchmarks and Examples
 
 ```bash
-uv run python examples/basic_vllm.py
+uv run python examples/basic_vllm.py --model /path/to/immutable-model
 uv run python examples/bench_kv_cache.py --model /path/to/model --num-prompts 10
 ```
 
@@ -156,6 +158,7 @@ cargo run -r --bin orbitkv-metaserver
 - Use English in comments
 - Use `.venv` for the Python virtual environment
 - Keep changes scoped and aligned with the existing module structure
+- Before 1.0, remove obsolete APIs and compatibility code instead of adding aliases or fallback paths. Keep boundaries that own behavior; remove classes and functions that only forward calls without a separate responsibility.
 - Code should be self-documenting. If a comment seems necessary, first try refactoring so the code explains itself.
 
 ### Rust
@@ -192,6 +195,7 @@ cargo run -r --bin orbitkv-metaserver
 
 ## Git Workflow
 
+- Use `feichai0017 <songguocheng348@gmail.com>` for commits in this repository.
 - Do not commit directly to `master`
 - Create a `feat/`, `fix/`, `chore/`, `refactor/`, `style/`, or `ci/` branch first
 - We use Commitizen commit message format

@@ -27,7 +27,7 @@ def make_worker() -> WorkerConnector:
         world_size=1,
         tp_rank=0,
         device_id=0,
-        engine_client=MagicMock(),
+        client=MagicMock(),
         state_manager=MagicMock(),
     )
     with patch("orbitkv.vllm.worker.threading.Thread.start"):
@@ -77,7 +77,7 @@ def test_blocks_are_not_reused_until_every_save_task_completes():
                 stored_blocks[block_hash] = gpu_blocks[block_id]
         return True, ""
 
-    worker._ctx.engine_client.save.side_effect = save
+    worker._ctx.client.save.side_effect = save
     enqueue_save(worker, 1, b"first hash")
     enqueue_save(worker, 2, b"second hash")
     process_next_save(worker)
@@ -128,7 +128,7 @@ def test_boundary_state_saves_run_async_and_report_job_completion():
         saved.extend(saves)
         return False, "store unavailable"
 
-    worker._ctx.engine_client.save.side_effect = save
+    worker._ctx.client.save.side_effect = save
     worker._current_metadata = OrbitKVConnectorMetadata(
         boundary_save_intents={
             7: SaveIntent(
@@ -139,7 +139,7 @@ def test_boundary_state_saves_run_async_and_report_job_completion():
     )
 
     worker.wait_for_save()
-    worker._ctx.engine_client.save.assert_not_called()
+    worker._ctx.client.save.assert_not_called()
     assert worker.build_connector_worker_meta() is None
 
     process_next_save(worker)
@@ -168,7 +168,7 @@ def test_hma_request_saves_run_async():
     worker = make_worker()
     worker._cache_groups = SimpleNamespace(has_recurrent_state=True, group_count=1)
     worker._registered_layers = ["layer"]
-    worker._ctx.engine_client.save.return_value = (True, "")
+    worker._ctx.client.save.return_value = (True, "")
     worker._current_metadata = OrbitKVConnectorMetadata(
         save_intents={
             "request": SaveIntent(
@@ -179,10 +179,10 @@ def test_hma_request_saves_run_async():
     )
 
     worker.wait_for_save()
-    worker._ctx.engine_client.save.assert_not_called()
+    worker._ctx.client.save.assert_not_called()
 
     process_next_save(worker)
-    worker._ctx.engine_client.save.assert_called_once()
+    worker._ctx.client.save.assert_called_once()
     finished_sending, _ = worker.get_finished({"request"})
     assert finished_sending == {"request"}
 
@@ -192,13 +192,13 @@ def test_save_uses_the_selected_data_plane():
     worker._registered_layers = ["layer"]
     cache_client = MagicMock(transport="iceoryx2")
     cache_client.save.return_value = (True, "")
-    worker._data_client = cache_client
+    worker._client = cache_client
     enqueue_save(worker)
 
     process_next_save(worker)
 
     cache_client.save.assert_called_once_with("test", 0, 0, 0, [("layer", [1], [b"hash"])])
-    worker._ctx.engine_client.save.assert_not_called()
+    worker._ctx.client.save.assert_not_called()
 
 
 def test_preemption_waits_for_every_save_task():
@@ -245,7 +245,7 @@ def test_malformed_save_intent_is_skipped_and_still_completes():
     still reach the store."""
     worker = make_worker()
     worker._registered_layers = ["layer"]
-    worker._ctx.engine_client.save.return_value = (True, "")
+    worker._ctx.client.save.return_value = (True, "")
     worker._current_metadata = OrbitKVConnectorMetadata(
         save_intents={
             "torn": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h0", b"h1")),
@@ -256,7 +256,7 @@ def test_malformed_save_intent_is_skipped_and_still_completes():
 
     process_next_save(worker)
 
-    (_, _, _, _, saves), _ = worker._ctx.engine_client.save.call_args
+    (_, _, _, _, saves), _ = worker._ctx.client.save.call_args
     assert saves == [("layer", [2], [b"h2"])]
     finished_sending, _ = worker.get_finished({"torn", "good"})
     assert finished_sending == {"torn", "good"}
@@ -291,8 +291,8 @@ def test_shutdown_publishes_pending_saves_before_unregistering():
         calls.append("unregister")
         return True, ""
 
-    worker._ctx.engine_client.save.side_effect = save
-    worker._ctx.engine_client.unregister_context.side_effect = unregister
+    worker._ctx.client.save.side_effect = save
+    worker._ctx.client.unregister_context.side_effect = unregister
     # Process the queued batch and shutdown sentinel deterministically at join.
     worker._save_thread = MagicMock()
     worker._save_thread.join.side_effect = worker._save_worker

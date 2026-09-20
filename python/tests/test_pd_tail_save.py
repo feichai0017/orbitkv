@@ -41,7 +41,7 @@ def _make_ctx() -> ConnectorContext:
             "world_size": 1,
             "tp_rank": 0,
             "device_id": 0,
-            "engine_client": MagicMock(),
+            "client": MagicMock(),
             "state_manager": MagicMock(),
             "is_mla": False,
             "dcp_world_size": 1,
@@ -85,7 +85,7 @@ def _make_connector(req, allocated: list[int]) -> SchedulerConnector:
 
 def _make_load_connector(req, hit_blocks: int) -> SchedulerConnector:
     ctx = _make_ctx()
-    ctx.engine_client.query_prefetch.return_value = QueryReady(hit_blocks, b"lease")
+    ctx.client.query_prefetch.return_value = QueryReady(hit_blocks, b"lease")
     sc = SchedulerConnector(ctx)
     sc._tail_load_enabled = True
     sc._tail_hash_fn = object()
@@ -230,7 +230,7 @@ class TestTailLoad:
         sc = _make_load_connector(req, hit_blocks=4)
 
         assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, True)
-        sc._ctx.engine_client.query_prefetch.assert_called_once_with(
+        sc._ctx.client.query_prefetch.assert_called_once_with(
             "test",
             [*req.block_hashes, b"tail:2"],
             req_id="r1",
@@ -308,7 +308,7 @@ class TestTailLoad:
         sc = _make_load_connector(req, hit_blocks=3)
 
         assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (48, True)
-        queried_hashes = sc._ctx.engine_client.query_prefetch.call_args.args[1]
+        queried_hashes = sc._ctx.client.query_prefetch.call_args.args[1]
         assert queried_hashes == req.block_hashes
 
     def test_sub_block_prompt_loads_one_page_and_recomputes_last_token(self):

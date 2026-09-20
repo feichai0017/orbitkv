@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from orbitkv.client.data_plane import CacheDataClient
+from orbitkv.client.manager import CacheManagerClient
 from orbitkv.orbitkv import QueryLoading, QueryReady
 from orbitkv.vllm.common import RecurrentLoadHold, logger
 
@@ -25,7 +25,7 @@ class ShardedQueryReady:
 
 
 class TpShardQueryClient:
-    def __init__(self, clients: tuple[CacheDataClient, ...]):
+    def __init__(self, clients: tuple[CacheManagerClient, ...]):
         self._clients = clients
 
     def query(
@@ -164,7 +164,7 @@ class TpShardQueryClient:
             )
 
     @staticmethod
-    def _release_one(client: CacheDataClient, lease: bytes, req_id: str) -> bool:
+    def _release_one(client: CacheManagerClient, lease: bytes, req_id: str) -> bool:
         if not lease:
             return True
         try:

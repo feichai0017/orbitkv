@@ -7,25 +7,48 @@ OrbitKV must reject an ambiguous candidate and let the engine recompute it.
 
 ## Current implementation
 
-The hot storage key is `BlockKey { namespace, hash }`. vLLM derives an
-eight-hex-character namespace digest from the model path and selected dtype,
-cache, layout, and parallelism settings. SGLang derives a SHA-256 namespace
-from configured model/revision/weight version, quantization, page and tensor
-layout, and rank settings. Each adapter passes its engine's native block or
-radix hash. These namespaces isolate many ordinary layouts; they are **not** a
-verified digest of the model weights, tokenizer/processor, implementation, or
-all request-specific state. In-place weight replacement at the same identity
-cannot be assumed safe. Use immutable model deployments and a new identity for
-weight changes until the stronger contract below is implemented.
+Both adapters resolve a versioned SHA-256 computation identity at startup.
+Local model, tokenizer, processor and model-code artifacts are fingerprinted by
+content; identical artifact copies can keep the same identity after relocation.
+Hub deployments require a full immutable commit revision. For large models,
+`ORBITKV_MODEL_FINGERPRINT` accepts a lowercase 64-digit deployment digest and
+skips artifact reads: the operator owns the accuracy of that assertion. It
+must cover weights, tokenizer, processor and model code. Configuration still
+participates in the identity even with an explicit artifact digest.
 
-`orbitkv-state` already defines `StateKey` (content, token span, component,
-format), `StateFormat`, `StateBundle`, and `LocalPageRef`. The adapters do not
-yet put these types into Query/Publish or the manager's storage and directory
-keys. `StateBundle::has_required_components` only checks that component kinds
-are present; it does not prove contiguous token coverage, compatible formats,
-or a valid recovery boundary. Publish still carries raw engine block IDs, so
-registered GPU page generations are not validated at the transfer boundary.
-The current SGLang linker therefore rejects state it cannot restore completely.
+The identity also includes the engine release, computation settings and cache
+representation. vLLM includes its HF configuration, quantization, attention and
+kernel configuration, resolved KV dimension order, cache configuration hash,
+hash algorithm/seed, dtype, block sizes and parallelism.
+SGLang includes weight version, model overrides, quantization, attention
+backend, rank, dtype, page size and buffer shape/strides. The Cache Manager
+binds this identity to the actual registered storage slots, groups, segment
+geometry and page layout when registration seals. GPU addresses and pool
+capacity do not affect the stored representation. Workers and the scheduler
+session must agree on identity and topology for a given instance.
+
+`orbitkv-state::StateKey { namespace, hash }` is now the index type used by
+DRAM, SSD and the remote directory. The namespace is the complete storage
+identity; the hash is a versioned, length-framed native chained prefix hash and
+cache group, including group zero. Query and Publish derive the same key from
+the registered instance. Hashing model files and storage layouts stays out of
+the per-block hot path. Old raw-hash keys and process protocol versions are
+invalidated; there is no compatibility lookup or old client alias.
+
+This is computation and storage isolation, **not a complete recovery proof**.
+`StateDescriptor` carries the future logical token span/component/format
+evidence; `StateBundle::has_required_components` only checks component presence.
+SGLang's current `PoolTransfer` provides chained hashes without absolute token
+ranges, so its adapter must not invent ranges by numbering a partial transfer
+from zero. Publish still uses raw engine block IDs without generation checks.
+Cross-engine reuse, dynamic LoRA and live weight updates are unsupported: LoRA
+is rejected at startup; weight changes require an engine restart and a new
+artifact identity. Engine-specific hashes remain in separate identity domains.
+
+`ORBITKV_CACHE_SCOPE` optionally separates tenants or experiments within the
+same deployment. It never replaces the model fingerprint. Both engines use
+these same environment variables; inference processes still connect to their
+Cache Manager over UDS/iceoryx2 regardless of the tier holding the bytes.
 
 ## Target contract
 
@@ -77,8 +100,8 @@ implementation check or a conversion path.
 | 5 | Tune admission, batching, prefetch, and copy backend from measured traces | Tail latency and throughput improve or stay within an agreed budget versus the baseline, with bounded memory and save-worker stalls |
 | 6 | Make the distributed directory recoverable, then add KV-aware routing | Remote candidates are revalidated by their owner; router decisions use complete, versioned state evidence |
 
-The design is a work plan, not a current guarantee. Today, single-node GPU
-recovery works for the validated adapters and layouts, but the semantic key,
-complete bundle proof, page-generation enforcement, and revised performance
-qualification remain open. See [single-node deployment](single-node.md),
+The remaining design is a work plan. Single-node GPU recovery and model/storage
+identity isolation are implemented for the validated adapters and layouts;
+absolute-span evidence, complete bundle proof, page-generation enforcement and
+full performance qualification remain open. See [single-node deployment](single-node.md),
 [architecture](architecture.md), and [the implementation checklist](../TODO.md).

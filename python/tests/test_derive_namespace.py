@@ -9,11 +9,18 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from .unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
 from orbitkv.vllm.common import derive_namespace  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _engine_version(monkeypatch):
+    monkeypatch.setattr("orbitkv.vllm.common.version", lambda _: "0.29.0")
 
 
 def _make_vllm_config(
@@ -25,13 +32,26 @@ def _make_vllm_config(
     model_config = SimpleNamespace(
         model="/data/models/GLM-5.2-FP8",
         dtype="bfloat16",
+        revision="a" * 40,
+        tokenizer=None,
+        tokenizer_revision=None,
+        quantization=None,
+        hf_config=SimpleNamespace(to_json_string=lambda: '{"hidden_size":576}'),
         get_total_num_kv_heads=lambda: 1,
         get_head_size=lambda: 576,
         get_total_num_hidden_layers=lambda: 78,
     )
     return SimpleNamespace(
         model_config=model_config,
-        cache_config=SimpleNamespace(cache_dtype="fp8"),
+        cache_config=SimpleNamespace(
+            cache_dtype="fp8",
+            prefix_caching_hash_algo="sha256",
+            kv_cache_layout="LBNHC",
+            compute_hash=lambda: "cache-config-v1",
+        ),
+        lora_config=None,
+        attention_config=SimpleNamespace(compute_hash=lambda: "attention-v1"),
+        kernel_config=SimpleNamespace(compute_hash=lambda: "kernel-v1"),
         scheduler_config=SimpleNamespace(
             disable_hybrid_kv_cache_manager=disable_hma,
         ),
@@ -62,6 +82,16 @@ def test_hma_enablement_isolates_namespace():
 
 def test_namespace_is_stable_for_same_config():
     assert _ns(pp_size=4, mla_layer_split=True) == _ns(pp_size=4, mla_layer_split=True)
+
+
+def test_resolved_byte_layout_and_cache_config_isolate_identical_geometry():
+    cfg = _make_vllm_config()
+    original = derive_namespace(cfg, tp_size=8)
+    cfg.cache_config.kv_cache_layout = "LBHNC"
+    assert derive_namespace(cfg, tp_size=8) != original
+    cfg.cache_config.kv_cache_layout = "LBNHC"
+    cfg.cache_config.compute_hash = lambda: "different-quantization-or-state-format"
+    assert derive_namespace(cfg, tp_size=8) != original
 
 
 def test_missing_additional_config_defaults_to_no_split():

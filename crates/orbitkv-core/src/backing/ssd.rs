@@ -6,7 +6,7 @@ use log::{debug, info, warn};
 use mea::oneshot;
 use parking_lot::Mutex;
 
-use crate::block::{BlockKey, SealedBlock};
+use crate::block::{SealedBlock, StateKey};
 use crate::metrics::core_metrics;
 use crate::pinned_pool::PinnedAllocation;
 use orbitkv_common::NumaNode;
@@ -113,12 +113,12 @@ impl SsdBackingStore {
 
     pub(super) fn prepare_batch(
         &self,
-        candidates: Vec<(BlockKey, Arc<SealedBlock>)>,
+        candidates: Vec<(StateKey, Arc<SealedBlock>)>,
     ) -> PreparedBatch {
         self.inner.lock().ring.prepare_batch(candidates)
     }
 
-    pub(super) fn commit_write(&self, key: &BlockKey, success: bool) {
+    pub(super) fn commit_write(&self, key: &StateKey, success: bool) {
         self.inner.lock().ring.commit(key, success);
     }
 
@@ -154,7 +154,7 @@ impl SsdBackingStore {
     ///
     /// `blocks` holds `Weak` references so the backing store cannot prevent
     /// cache eviction from freeing the pinned memory before the write completes.
-    pub(crate) fn ingest_batch(&self, blocks: Vec<(BlockKey, Weak<SealedBlock>)>) {
+    pub(crate) fn ingest_batch(&self, blocks: Vec<(StateKey, Weak<SealedBlock>)>) {
         if blocks.is_empty() {
             return;
         }
@@ -181,7 +181,7 @@ impl SsdBackingStore {
     }
 
     /// Count consecutive SSD-resident keys from the start of `keys`.
-    pub(crate) fn prefix_len(&self, keys: &[BlockKey]) -> usize {
+    pub(crate) fn prefix_len(&self, keys: &[StateKey]) -> usize {
         let inner = self.inner.lock();
         keys.iter()
             .map_while(|key| inner.ring.get(key).map(|_| ()))
@@ -191,7 +191,7 @@ impl SsdBackingStore {
     /// Submit prefix reads: scan `keys` in order, submit reads for consecutive hits, stop at first miss.
     ///
     /// Returns `(submitted, done_rx)` where `done_rx` delivers completed blocks.
-    fn submit_prefix(&self, keys: Vec<BlockKey>) -> (usize, oneshot::Receiver<PrefetchResult>) {
+    fn submit_prefix(&self, keys: Vec<StateKey>) -> (usize, oneshot::Receiver<PrefetchResult>) {
         let (done_tx, done_rx) = oneshot::channel();
 
         // Prefix-scan the ring buffer: stop at first miss.
@@ -227,7 +227,7 @@ impl SsdBackingStore {
     }
 
     /// Prefetch prefix reads and await completion.
-    pub(crate) async fn prefetch_prefix(&self, keys: Vec<BlockKey>) -> (usize, PrefetchResult) {
+    pub(crate) async fn prefetch_prefix(&self, keys: Vec<StateKey>) -> (usize, PrefetchResult) {
         let (found, done_rx) = self.submit_prefix(keys);
         if found == 0 {
             return (0, Vec::new());

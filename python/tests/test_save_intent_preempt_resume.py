@@ -46,7 +46,7 @@ def _make_scheduler(mode: OrbitKVConnectorMode | None = None) -> SchedulerConnec
         world_size=1,
         tp_rank=0,
         device_id=0,
-        engine_client=MagicMock(),
+        client=MagicMock(),
         state_manager=MagicMock(),
         **kwargs,
     )  # type: ignore[arg-type]

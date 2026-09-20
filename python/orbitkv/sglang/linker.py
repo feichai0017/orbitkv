@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import queue
@@ -27,8 +26,9 @@ from sglang.srt.mem_cache.unified_cache.components import ComponentType
 from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinker
 from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
-from orbitkv.client.connection import connect_data_client
+from orbitkv.client import CacheManagerClient
 from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+from orbitkv.identity import model_identity, state_namespace
 
 logger = logging.getLogger(__name__)
 
@@ -152,22 +152,25 @@ class OrbitKVLinker(UnifiedCacheLinker):
         if len(set(self._num_blocks)) != 1:
             raise ValueError("SGLang GPU KV buffers have different page counts")
 
-        model = os.environ.get("ORBITKV_SGLANG_NAMESPACE") or server_args.model_path
-        if not model:
-            raise ValueError("OrbitKV direct GPU linker requires a model identity")
+        if server_args.enable_lora:
+            raise ValueError(
+                "OrbitKV requires immutable adapter identities; dynamic LoRA is unsupported"
+            )
         from sglang.srt.runtime_context import get_parallel
 
         parallel = get_parallel()
         tp_rank = parallel.tp_rank
         tp_size = parallel.tp_size
-        namespace_identity = {
-            "adapter": "sglang-direct-v1",
-            "sglang_version": version("sglang"),
-            "model": model,
-            "revision": getattr(server_args, "revision", None),
+        computation = {
             "weight_version": getattr(server_args, "weight_version", None),
             "quantization": getattr(server_args, "quantization", None),
             "model_overrides": getattr(server_args, "json_model_override_args", None),
+            "dtype": server_args.dtype,
+            "attention_backend": server_args.attention_backend,
+            "prefill_attention_backend": server_args.prefill_attention_backend,
+            "decode_attention_backend": server_args.decode_attention_backend,
+        }
+        representation = {
             "kv_cache_dtype": getattr(server_args, "kv_cache_dtype", None),
             "tp": [tp_rank, tp_size],
             "pp": [params.pp_rank, params.pp_size],
@@ -183,14 +186,24 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 for tensor, block_bytes in zip(self.pool.kv_buffer, self._block_bytes, strict=True)
             ],
         }
-        digest = hashlib.sha256(json.dumps(namespace_identity, sort_keys=True).encode()).hexdigest()
-        self.namespace = f"sglang:direct:{digest}"
+        self.namespace = state_namespace(
+            engine="sglang",
+            engine_version=version("sglang"),
+            model=model_identity(
+                server_args.model_path,
+                revision=server_args.revision,
+                tokenizer=server_args.tokenizer_path,
+                tokenizer_revision=server_args.revision,
+            ),
+            computation=computation,
+            representation=representation,
+        )
         self.instance_id = f"sglang-{uuid.uuid4().hex}"
         self.device_id = resolve_device_id()
         endpoint = os.environ.get("ORBITKV_SGLANG_ENDPOINT", "unix:///run/orbitkv/orbitkv.sock")
         if not endpoint.startswith("unix://"):
             raise ValueError("ORBITKV_SGLANG_ENDPOINT must be a unix:// socket")
-        self.client = connect_data_client(endpoint.removeprefix("unix://"))
+        self.client = CacheManagerClient(endpoint.removeprefix("unix://"))
         try:
             self.client.start_session_watcher(self.instance_id, self.namespace, 1, 1)
             wrappers = [serialize_gpu_buffer(tensor) for tensor in self.pool.kv_buffer]

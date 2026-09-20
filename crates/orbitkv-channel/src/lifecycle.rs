@@ -5,7 +5,7 @@ use std::io;
 pub const LIFECYCLE_HEADER_BYTES: usize = 20;
 pub const MAX_LIFECYCLE_PAYLOAD: usize = 64 * 1024 * 1024;
 const MAGIC: u32 = 0x4f52_424c;
-const VERSION: u16 = 2;
+const VERSION: u16 = 3;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(u16)]

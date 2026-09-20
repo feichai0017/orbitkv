@@ -12,16 +12,17 @@ use std::sync::Arc;
 
 use log::{debug, info};
 
-use crate::block::{BlockKey, LayerSave, RawBlock, Segment};
+use crate::block::{LayerSave, RawBlock, Segment, StateKey};
 
 /// Grouped insert entries: each hash maps to its per-slot `RawBlock`s.
-pub(crate) type InsertEntries = Vec<(BlockKey, Vec<(usize, RawBlock)>)>;
+pub(crate) type InsertEntries = Vec<(StateKey, Vec<(usize, RawBlock)>)>;
 use crate::gpu_worker::{HostBlock, LayerTransferData, TransferBlock};
 use crate::layout::KVCacheLayout;
 use crate::metrics::core_metrics;
 use crate::pinned_pool::PinnedAllocation;
 use crate::{EngineError, OrbitKVEngine};
-use orbitkv_common::{NumaNode, group_hash};
+use orbitkv_common::NumaNode;
+use orbitkv_state::group_hash;
 
 // ============================================================================
 // Types sent to the insert worker (deferred Phase 4)
@@ -68,7 +69,7 @@ struct LayerContext {
 /// Build insert entries from a raw batch (called by the insert worker).
 ///
 /// Returns `(entries, total_bytes, total_blocks)` where entries is grouped
-/// by hash: `Vec<(BlockKey, Vec<(slot_id, RawBlock)>)>`.
+/// by hash: `Vec<(StateKey, Vec<(slot_id, RawBlock)>)>`.
 pub(crate) fn build_insert_entries(batch: RawSaveBatch) -> (InsertEntries, u64, usize) {
     let mut total_bytes: u64 = 0;
     let mut total_blocks: usize = 0;
@@ -116,7 +117,7 @@ fn build_ordered_insert_entries(namespace: String, layers: Vec<RawSaveLayer>) ->
     hashes
         .into_iter()
         .zip(per_block_slots)
-        .map(|(hash, slots)| (BlockKey::new(namespace.clone(), hash), slots))
+        .map(|(hash, slots)| (StateKey::new(namespace.clone(), hash), slots))
         .collect()
 }
 
@@ -136,7 +137,7 @@ fn build_hashed_insert_entries(namespace: String, layers: Vec<RawSaveLayer>) -> 
 
     hash_entries
         .into_iter()
-        .map(|(hash, slots)| (BlockKey::new(namespace.clone(), hash), slots))
+        .map(|(hash, slots)| (StateKey::new(namespace.clone(), hash), slots))
         .collect()
 }
 
@@ -305,7 +306,7 @@ impl OrbitKVEngine {
 
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
-        let namespace = instance.namespace().to_string();
+        let namespace = topology.cache_namespace.clone();
 
         // ── Phase 0: Resolve per-layer metadata and build valid_blocks ──
         trace_scope!("save.resolve_metadata", _s);
@@ -589,8 +590,7 @@ impl OrbitKVEngine {
 
         // Build per-group RawSaveBatches and send to the insert worker
         // (fire-and-forget). Each group seals blocks against its own slot
-        // count and stores them under group-encoded hashes (group 0 keeps raw
-        // hashes, so single-group instances produce byte-identical keys).
+        // count and stores them under the same versioned group encoding.
         if page_first {
             // Page-first collapses a shard's layers into one page slot per
             // block, so a whole shard is a single RawSaveLayer regardless of
@@ -603,7 +603,7 @@ impl OrbitKVEngine {
             let block_hashes: Vec<Vec<u8>> = layer_contexts[0]
                 .blocks_to_save
                 .iter()
-                .map(|(_, hash)| hash.clone())
+                .map(|(_, hash)| group_hash(hash, 0))
                 .collect();
             let blocks: Vec<RawBlock> = pages
                 .into_iter()

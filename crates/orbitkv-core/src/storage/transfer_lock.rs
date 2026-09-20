@@ -10,11 +10,11 @@ use log::{debug, info, warn};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
-use crate::block::{BlockKey, SealedBlock};
+use crate::block::{SealedBlock, StateKey};
 use crate::metrics::core_metrics;
 
 struct TransferSession {
-    blocks: Vec<(BlockKey, Arc<SealedBlock>)>,
+    blocks: Vec<(StateKey, Arc<SealedBlock>)>,
     created_at: Instant,
     requester_id: String,
 }
@@ -43,7 +43,7 @@ impl TransferLockManager {
     pub(crate) fn lock_blocks(
         &self,
         requester_id: &str,
-        blocks: Vec<(BlockKey, Arc<SealedBlock>)>,
+        blocks: Vec<(StateKey, Arc<SealedBlock>)>,
     ) -> String {
         let session_id = Uuid::new_v4().to_string();
         let block_count = blocks.len();
@@ -155,8 +155,8 @@ impl TransferLockManager {
 mod tests {
     use super::*;
 
-    fn make_test_block() -> (BlockKey, Arc<SealedBlock>) {
-        let key = BlockKey::new("ns".into(), vec![1, 2, 3]);
+    fn make_test_block() -> (StateKey, Arc<SealedBlock>) {
+        let key = StateKey::new("ns".into(), vec![1, 2, 3]);
         let block = Arc::new(SealedBlock::from_slots(Vec::new()));
         (key, block)
     }
@@ -202,7 +202,7 @@ mod tests {
     fn multiple_concurrent_sessions() {
         let mgr = TransferLockManager::new(Duration::from_secs(30));
         let (key1, block1) = make_test_block();
-        let key2 = BlockKey::new("ns".into(), vec![4, 5, 6]);
+        let key2 = StateKey::new("ns".into(), vec![4, 5, 6]);
         let block2 = Arc::new(SealedBlock::from_slots(Vec::new()));
 
         let s1 = mgr.lock_blocks("node-a", vec![(key1.clone(), block1.clone())]);
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn arc_keeps_memory_alive() {
         let mgr = TransferLockManager::new(Duration::from_secs(30));
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         let block = Arc::new(SealedBlock::from_slots(Vec::new()));
 
         // Lock holds an Arc clone
@@ -282,9 +282,9 @@ mod tests {
         let num_sessions = 100;
 
         for i in 0..num_sessions {
-            let blocks: Vec<(BlockKey, Arc<SealedBlock>)> = (0..blocks_per_session)
+            let blocks: Vec<(StateKey, Arc<SealedBlock>)> = (0..blocks_per_session)
                 .map(|j| {
-                    let key = BlockKey::new("ns".into(), vec![i as u8, j as u8]);
+                    let key = StateKey::new("ns".into(), vec![i as u8, j as u8]);
                     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
                     (key, block)
                 })
@@ -338,7 +338,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
 
         // Session 2: fresh, should NOT expire
-        let key2 = BlockKey::new("ns".into(), vec![7, 8, 9]);
+        let key2 = StateKey::new("ns".into(), vec![7, 8, 9]);
         let block2 = Arc::new(SealedBlock::from_slots(Vec::new()));
         let s2 = mgr.lock_blocks("node-b", vec![(key2, block2)]);
 

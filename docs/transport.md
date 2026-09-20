@@ -193,10 +193,10 @@ implementation. Authorized plans are lowered directly to Mooncake Segment
 addresses, BatchTransfer operations, and notifications.
 
 OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
-the cache engine handles namespace/hash lookup and leases above Mooncake. The
-target common contract additionally includes:
+the cache engine handles versioned model/storage keys and leases above Mooncake.
+The common recovery plan additionally includes:
 
-- `StateKey`, `StateBundle`, and `RecoveryContract`;
+- validated `StateDescriptor`, `StateBundle`, and `RecoveryContract` evidence;
 - replica selection and restore-versus-recompute planning;
 - query leases and generation validation;
 - semantic and execution frontiers;

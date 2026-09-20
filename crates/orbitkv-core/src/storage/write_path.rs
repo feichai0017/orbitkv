@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use tokio::sync::oneshot;
 
 use crate::backing::SsdBackingStore;
-use crate::block::{BlockKey, InflightBlock, SealedBlock, SlotInsertResult};
+use crate::block::{InflightBlock, SealedBlock, SlotInsertResult, StateKey};
 use crate::internode::MetaServerClient;
 use crate::metrics::core_metrics;
 use crate::offload::InsertEntries;
@@ -72,7 +72,7 @@ pub(super) struct InsertDeps {
 }
 
 pub(super) fn insert_worker_loop(rx: Receiver<InsertWorkerCommand>, deps: Weak<InsertDeps>) {
-    let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+    let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
 
     while let Ok(cmd) = rx.recv() {
         let mut cmds = vec![cmd];
@@ -103,7 +103,7 @@ pub(super) fn insert_worker_loop(rx: Receiver<InsertWorkerCommand>, deps: Weak<I
 }
 
 fn process_raw_save_batch(
-    inflight: &mut HashMap<BlockKey, InflightBlock>,
+    inflight: &mut HashMap<StateKey, InflightBlock>,
     deps: &Weak<InsertDeps>,
     batch: crate::offload::RawSaveBatch,
 ) {
@@ -125,14 +125,14 @@ fn process_raw_save_batch(
 }
 
 fn process_insert_batch(
-    inflight: &mut HashMap<BlockKey, InflightBlock>,
+    inflight: &mut HashMap<StateKey, InflightBlock>,
     deps: &Weak<InsertDeps>,
     entries: InsertEntries,
     total_slots: usize,
     numa_node: NumaNode,
     namespace: &str,
 ) -> usize {
-    let mut sealed_blocks: Vec<(BlockKey, Arc<SealedBlock>)> = Vec::new();
+    let mut sealed_blocks: Vec<(StateKey, Arc<SealedBlock>)> = Vec::new();
     let mut inflight_bytes_added: u64 = 0;
     let mut inflight_bytes_removed: u64 = 0;
     let mut ordered_fast_path_seals = 0usize;
@@ -211,13 +211,13 @@ fn process_insert_batch(
     reason = "insert worker threads batch-local accounting through the fallback path"
 )]
 fn insert_partial_slots(
-    inflight: &mut HashMap<BlockKey, InflightBlock>,
-    key: BlockKey,
+    inflight: &mut HashMap<StateKey, InflightBlock>,
+    key: StateKey,
     slots: Vec<(usize, crate::block::RawBlock)>,
     total_slots: usize,
     numa_node: NumaNode,
     namespace: &str,
-    sealed_blocks: &mut Vec<(BlockKey, Arc<SealedBlock>)>,
+    sealed_blocks: &mut Vec<(StateKey, Arc<SealedBlock>)>,
     inflight_bytes_added: &mut u64,
     inflight_bytes_removed: &mut u64,
 ) {
@@ -268,8 +268,8 @@ fn insert_partial_slots(
 fn send_backing_batches(
     deps: &InsertDeps,
     namespace: &str,
-    blocks: &[(BlockKey, Arc<SealedBlock>)],
-    resident_keys: Vec<BlockKey>,
+    blocks: &[(StateKey, Arc<SealedBlock>)],
+    resident_keys: Vec<StateKey>,
 ) {
     if blocks.is_empty() {
         return;
@@ -278,7 +278,7 @@ fn send_backing_batches(
         return;
     }
     if let Some(ssd) = &deps.ssd_store {
-        let weak_blocks: Vec<(BlockKey, Weak<SealedBlock>)> = blocks
+        let weak_blocks: Vec<(StateKey, Weak<SealedBlock>)> = blocks
             .iter()
             .map(|(k, b)| (k.clone(), Arc::downgrade(b)))
             .collect();
@@ -291,7 +291,7 @@ fn send_backing_batches(
     }
 }
 
-fn register_block_hashes(client: &MetaServerClient, namespace: &str, resident_keys: Vec<BlockKey>) {
+fn register_block_hashes(client: &MetaServerClient, namespace: &str, resident_keys: Vec<StateKey>) {
     if resident_keys.is_empty() {
         return;
     }
@@ -300,7 +300,7 @@ fn register_block_hashes(client: &MetaServerClient, namespace: &str, resident_ke
 }
 
 fn gc_inflight(
-    inflight: &mut HashMap<BlockKey, InflightBlock>,
+    inflight: &mut HashMap<StateKey, InflightBlock>,
     max_age: std::time::Duration,
 ) -> usize {
     let before = inflight.len();
@@ -363,11 +363,11 @@ mod tests {
         let deps = make_deps(&engine);
         let weak_deps = Arc::downgrade(&deps);
 
-        let key = BlockKey::new("ns".into(), vec![1, 2, 3]);
+        let key = StateKey::new("ns".into(), vec![1, 2, 3]);
         let block = make_raw_block(&engine, 64);
 
         let entries: InsertEntries = vec![(key.clone(), vec![(0, block)])];
-        let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+        let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
 
         process_insert_batch(
             &mut inflight,
@@ -392,7 +392,7 @@ mod tests {
         let deps = make_deps(&engine);
         let weak_deps = Arc::downgrade(&deps);
 
-        let key = BlockKey::new("ns".into(), vec![4, 5, 6]);
+        let key = StateKey::new("ns".into(), vec![4, 5, 6]);
         let block0 = make_raw_block(&engine, 64);
         let block1 = make_raw_block(&engine, 96);
         let block2 = make_raw_block(&engine, 128);
@@ -401,7 +401,7 @@ mod tests {
 
         let entries: InsertEntries =
             vec![(key.clone(), vec![(0, block0), (1, block1), (2, block2)])];
-        let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+        let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
 
         let ordered_fast_path_seals =
             process_insert_batch(&mut inflight, &weak_deps, entries, 3, NumaNode(1), "ns");
@@ -427,8 +427,8 @@ mod tests {
         let deps = make_deps(&engine);
         let weak_deps = Arc::downgrade(&deps);
 
-        let key = BlockKey::new("ns".into(), vec![1]);
-        let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+        let key = StateKey::new("ns".into(), vec![1]);
+        let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
 
         let block0 = make_raw_block(&engine, 64);
         let entries: InsertEntries = vec![(key.clone(), vec![(0, block0)])];
@@ -479,8 +479,8 @@ mod tests {
         let deps = make_deps(&engine);
         let weak_deps = Arc::downgrade(&deps);
 
-        let key = BlockKey::new("ns".into(), vec![1]);
-        let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+        let key = StateKey::new("ns".into(), vec![1]);
+        let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
 
         let block_a = make_raw_block(&engine, 64);
         let block_b = make_raw_block(&engine, 64);
@@ -507,8 +507,8 @@ mod tests {
         let deps = make_deps(&engine);
         let weak_deps = Arc::downgrade(&deps);
 
-        let key = BlockKey::new("ns".into(), vec![1]);
-        let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+        let key = StateKey::new("ns".into(), vec![1]);
+        let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
 
         let block0 = make_raw_block(&engine, 64);
         let entries: InsertEntries = vec![(key.clone(), vec![(0, block0)])];
@@ -547,8 +547,8 @@ mod tests {
         let deps = make_deps(&engine);
         let weak_deps = Arc::downgrade(&deps);
 
-        let key = BlockKey::new("ns".into(), vec![9]);
-        let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+        let key = StateKey::new("ns".into(), vec![9]);
+        let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
 
         // Seal the block: both slots arrive, block moves to the read cache.
         let block0 = make_raw_block(&engine, 64);
@@ -590,8 +590,8 @@ mod tests {
 
     #[tokio::test]
     async fn gc_inflight_removes_old_blocks() {
-        let key = BlockKey::new("ns".into(), vec![1]);
-        let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+        let key = StateKey::new("ns".into(), vec![1]);
+        let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
         inflight.insert(key, InflightBlock::new(2));
 
         let cleaned = gc_inflight(&mut inflight, std::time::Duration::from_secs(60));
@@ -610,10 +610,10 @@ mod tests {
         let deps = make_deps(&engine);
         let weak_deps = Arc::downgrade(&deps);
 
-        let key = BlockKey::new("ns".into(), vec![7]);
+        let key = StateKey::new("ns".into(), vec![7]);
         let block = make_raw_block(&engine, 64);
         let entries: InsertEntries = vec![(key.clone(), vec![(0, block)])];
-        let mut inflight: HashMap<BlockKey, InflightBlock> = HashMap::new();
+        let mut inflight: HashMap<StateKey, InflightBlock> = HashMap::new();
 
         process_insert_batch(
             &mut inflight,

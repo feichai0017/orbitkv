@@ -68,14 +68,14 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     env["FLASHINFER_WORKSPACE_BASE"] = str(tmp_path / "flashinfer")
     log_path = tmp_path / "sglang-direct.log"
 
-    def start_server(namespace: str | None = None) -> tuple[subprocess.Popen, str]:
+    def start_server(fingerprint: str | None = None) -> tuple[subprocess.Popen, str]:
         port = find_available_port()
         base_url = f"http://127.0.0.1:{port}"
         launch_cmd = list(cmd)
         launch_cmd[launch_cmd.index("--port") + 1] = str(port)
         launch_env = dict(env)
-        if namespace is not None:
-            launch_env["ORBITKV_SGLANG_NAMESPACE"] = namespace
+        if fingerprint is not None:
+            launch_env["ORBITKV_MODEL_FINGERPRINT"] = fingerprint
         with log_path.open("a") as log_file:
             process = subprocess.Popen(
                 launch_cmd,
@@ -147,9 +147,9 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     finally:
         stop_server(process)
 
-    # A distinct namespace gives us a truly cold control while keeping the
+    # A changed model identity must miss even with identical page hashes and the
     # same model, sampling seed, and Cache Manager process.
-    process, base_url = start_server(namespace="orbitkv-sglang-e2e-cold-control")
+    process, base_url = start_server(fingerprint="9" * 64)
     try:
         cold = requests.post(f"{base_url}/generate", json=payload, timeout=90)
         cold.raise_for_status()

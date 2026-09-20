@@ -9,13 +9,9 @@ from __future__ import annotations
 
 import os
 import select
-import socket
-import stat
 import threading
 import time
 from dataclasses import dataclass
-from typing import Protocol
-from urllib.parse import urlsplit
 
 from orbitkv import ChannelClient, QueryLoading, QueryReady
 
@@ -29,87 +25,8 @@ class RestoreStatus:
     message: str = ""
 
 
-class RestoreHandle(Protocol):
-    """Opaque restore identity owned by one data-plane client."""
-
-    @property
-    def key(self) -> str: ...
-
-
-class CacheDataClient(Protocol):
-    """Hot cache operations shared by framework adapters."""
-
-    @property
-    def transport(self) -> str: ...
-
-    def query_prefetch(
-        self,
-        instance_id: str,
-        block_hashes: list[bytes],
-        req_id: str,
-        wait_for_full_prefix: bool = False,
-        group_id: int = 0,
-    ) -> QueryLoading | QueryReady: ...
-
-    def release(self, lease: bytes) -> None: ...
-
-    def save(
-        self,
-        instance_id: str,
-        tp_rank: int,
-        pp_rank: int,
-        device_id: int,
-        saves: list[tuple[str, list[int], list[bytes]]],
-    ) -> tuple[bool, str]: ...
-
-    def start_restore(
-        self,
-        instance_id: str,
-        tp_rank: int,
-        device_id: int,
-        layer_groups: list[list[str]],
-        loads: list[tuple[bytes, list[list[int | None]]]],
-    ) -> RestoreHandle: ...
-
-    def restore_completions_ready(self) -> bool: ...
-
-    def poll_restore(self, handle: RestoreHandle) -> RestoreStatus: ...
-
-
-class CacheLifecycleClient(Protocol):
-    """Lifecycle surface of the local Cache Manager connection."""
-
-    def health(self) -> tuple[bool, str]: ...
-
-    def register_context_batch(
-        self,
-        instance_id: str,
-        namespace: str,
-        tp_rank: int,
-        pp_rank: int,
-        tp_size: int,
-        world_size: int,
-        device_id: int,
-        layer_names: list[str],
-        wrapper_bytes_list: list[bytes],
-        num_blocks_list: list[int],
-        bytes_per_block_list: list[int],
-        kv_stride_bytes_list: list[int],
-        segments_list: list[int],
-        transfer_backend: str,
-        page_first: bool,
-        layer_group_ids: list[int] | None = None,
-    ) -> tuple[bool, str]: ...
-
-    def unregister_context(self, instance_id: str) -> tuple[bool, str]: ...
-
-    def start_session_watcher(
-        self, instance_id: str, namespace: str, tp_size: int, world_size: int
-    ) -> None: ...
-
-
 @dataclass(frozen=True, slots=True)
-class _RestoreOperation:
+class RestoreHandle:
     operation_id: int
     session_epoch: int
 
@@ -243,7 +160,7 @@ class CacheManagerClient:
             loads,
             request_id=self._request_id(),
         )
-        return _RestoreOperation(
+        return RestoreHandle(
             operation_id=operation_id,
             session_epoch=self._client.session_epoch,
         )
@@ -266,7 +183,7 @@ class CacheManagerClient:
         return True
 
     def poll_restore(self, handle: RestoreHandle) -> RestoreStatus:
-        if not isinstance(handle, _RestoreOperation):
+        if not isinstance(handle, RestoreHandle):
             raise TypeError("restore handle does not belong to this Cache Manager client")
         if handle.session_epoch != self._client.session_epoch:
             raise RuntimeError("restore handle belongs to a stale Cache Manager session")
@@ -291,103 +208,8 @@ class CacheManagerClient:
         return request_id
 
 
-def resolve_bootstrap_sockets(
-    *,
-    endpoints: tuple[str, ...],
-    bootstrap_socket: object = None,
-    shard_bootstrap_sockets: object = None,
-) -> tuple[str, ...]:
-    """Resolve the process endpoint for same-host cache clients.
-
-    Every inference shard must connect to a Cache Manager on its own host.
-    """
-    if not endpoints:
-        raise ValueError("cache client requires at least one endpoint")
-    if not all(_endpoint_is_local(endpoint) for endpoint in endpoints):
-        raise ValueError(
-            "inference clients require a node-local Cache Manager; "
-            "configure a Cache Manager on each inference host"
-        )
-
-    if bootstrap_socket is not None and shard_bootstrap_sockets is not None:
-        raise ValueError(
-            "configure either orbitkv.bootstrap_socket or "
-            "orbitkv.tp_shard_bootstrap_sockets, not both"
-        )
-
-    if shard_bootstrap_sockets is not None:
-        if not isinstance(shard_bootstrap_sockets, (list, tuple)):
-            raise ValueError("orbitkv.tp_shard_bootstrap_sockets must be a list of socket paths")
-        sockets = tuple(shard_bootstrap_sockets)
-    elif bootstrap_socket is not None:
-        if len(endpoints) > 1:
-            raise ValueError(
-                "orbitkv.bootstrap_socket only supports one TP shard; "
-                "use orbitkv.tp_shard_bootstrap_sockets"
-            )
-        sockets = (bootstrap_socket,)
-    else:
-        sockets = tuple(_default_bootstrap_socket(endpoint) for endpoint in endpoints)
-
-    if len(sockets) != len(endpoints):
-        raise ValueError(
-            f"configured {len(sockets)} local bootstrap sockets for {len(endpoints)} TP shards"
-        )
-    if any(not isinstance(socket, str) or not socket for socket in sockets):
-        raise ValueError("local bootstrap socket configuration must contain non-empty strings")
-    if len(set(sockets)) != len(sockets):
-        raise ValueError("local bootstrap sockets must be distinct for TP shards")
-    missing = [socket_path for socket_path in sockets if not _is_unix_socket(socket_path)]
-    if missing:
-        raise ConnectionError(
-            "OrbitKV Cache Manager Unix socket is unavailable: "
-            + ", ".join(missing)
-            + "; start the node-local Cache Manager"
-        )
-    return sockets
-
-
-def _default_bootstrap_socket(endpoint: str) -> str:
-    port = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").port
-    if port is None:
-        raise ValueError(
-            "cannot derive the process socket from the configured endpoint; "
-            "set orbitkv.bootstrap_socket"
-        )
-    return f"/tmp/orbitkv-{port}.sock"
-
-
-def _is_unix_socket(path: str) -> bool:
-    try:
-        return stat.S_ISSOCK(os.stat(path).st_mode)
-    except OSError:
-        return False
-
-
-def _endpoint_is_local(endpoint: str) -> bool:
-    host = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").hostname
-    if host is None:
-        return False
-    if host in {"localhost", "::1"} or host.startswith("127."):
-        return True
-    try:
-        addresses = socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM)
-    except OSError:
-        return False
-    for family, socket_type, protocol, _, address in addresses:
-        try:
-            with socket.socket(family, socket_type, protocol) as probe:
-                probe.bind(address)
-        except OSError:
-            continue
-        return True
-    return False
-
-
 __all__ = [
-    "CacheDataClient",
     "CacheManagerClient",
     "RestoreHandle",
     "RestoreStatus",
-    "resolve_bootstrap_sockets",
 ]
