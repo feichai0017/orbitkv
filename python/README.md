@@ -1,22 +1,22 @@
 # OrbitKV Python Package
 
 Framework adapters and Python bindings for the OrbitKV state cache, built with
-Rust and PyO3. The vLLM adapter is validated today; the SGLang runtime backend
-is tracked as the next milestone.
+Rust and PyO3. Both vLLM and SGLang single-node cache paths have GPU-validated
+adapters for the releases below.
 
 ## Features
 
 - **LocalDataClient**: UDS/iceoryx2 client for the node-local Cache Manager
 - **CacheDataClient**: Framework-neutral cache operations for every storage tier
 - **OrbitKVConnector**: vLLM KV connector for distributed inference with KV cache transfer
-- **SGLang contracts**: Configuration and state-pool mapping without claiming a completed backend
+- **OrbitKVHiCacheStorage**: SGLang dynamic HiCache L3 backend with KV and
+  named auxiliary pool recovery
 
 ## Installation
 
 The framework release baseline verified on 2026-09-20 is vLLM `0.29.0` and
 SGLang `0.5.20`. Keep their GPU dependencies in separate environments. The
-SGLang source submodule is pinned to its `v0.5.20` release; its executable
-OrbitKV HiCache backend is still in development.
+SGLang source submodule is pinned to its `v0.5.20` release.
 
 The Cache Manager currently imports PyTorch at startup for CUDA IPC handling.
 Run the wheel in an environment with a compatible PyTorch/CUDA runtime; the
@@ -81,6 +81,35 @@ llm = LLM(
     kv_transfer_config=kv_transfer_config,
 )
 ```
+
+### SGLang HiCache L3
+
+Start a Cache Manager on the inference host, then launch SGLang with the
+dynamic storage backend. The endpoint must match the Cache Manager's UDS
+socket. The example reserves 1 GiB for SGLang's own HiCache host tier and
+2 GiB for the Cache Manager's bounded cache.
+
+```bash
+orbitkv-cache-manager --addr 127.0.0.1:50055 --pool-size 2gb
+
+sglang serve --model-path Qwen/Qwen3-0.6B \
+  --enable-hierarchical-cache \
+  --hicache-size 1 \
+  --page-size 64 \
+  --hicache-write-policy write_through \
+  --hicache-storage-backend dynamic \
+  --hicache-storage-backend-extra-config '{"backend_name":"orbitkv","module_path":"orbitkv.sglang.storage","class_name":"OrbitKVHiCacheStorage","endpoint":"unix:///tmp/orbitkv-50055.sock","allocator":"shm"}'
+```
+
+SGLang owns HBM and its L2 host pool. OrbitKV copies completed pages to its
+own pinned DRAM/SSD tier and restores them through the same SGLang HiCache
+interface. This stage has one L2-to-L3 host copy; direct shared-region
+registration is future work. A GPU end-to-end test with SGLang `0.5.20`
+restored 256 prompt tokens after `/flush_cache` and reproduced the output.
+Model name, parallel rank, pool, dtype, layout, and page size are part of the
+storage namespace; use `namespace` in the extra config to distinguish model
+revisions stored at the same path. The Cache Manager must remain running if
+its DRAM-resident pages should survive an SGLang process restart.
 
 #### Local data plane
 

@@ -8,9 +8,8 @@ server. Framework adapters expose logical model state and local pages; OrbitKV
 owns external replicas, transfer leases, storage tiers, and eventually the
 policy that chooses placement, movement, reclamation, routing, or recomputation.
 
-The data plane is derived from PegaFlow 0.24.5. The validated integration today
-is vLLM. SGLang support currently consists of adapter contracts and source-pinned
-integration targets; the executable HiCache backend remains an M1 deliverable.
+The data plane is derived from PegaFlow 0.24.5. The vLLM connector and SGLang
+dynamic HiCache L3 backend have both passed single-node GPU recovery tests.
 
 ## Process topology
 
@@ -53,12 +52,13 @@ save does not serialize the worker's Query/Restore calls behind that reply.
 Instance cleanup serializes
 against registration, drains GPU
 load/save queues, and only then releases imported CUDA mappings. Superseded
-sessions cannot clean up a replacement session. The SGLang adapter has not yet
-been switched. KV bytes
-must not travel through either control protocol: vLLM uses
-registered CUDA IPC pages, SGLang will use a shared pinned host pool, and remote
-transfers use the Mooncake-backed `TransferEngine`. See [transport.md](transport.md) for the
-measured decision.
+sessions cannot clean up a replacement session. SGLang currently sends bounded
+opaque host pages over the UDS lifecycle channel into Cache Manager-owned
+pinned memory, then reads them through the same channel for HiCache restore.
+vLLM uses registered CUDA IPC pages and iceoryx2 descriptors for its hot path;
+remote transfers use the Mooncake-backed `TransferEngine`. Shared host page
+registration is the next optimization. See [transport.md](transport.md) for the
+measured process-transport baseline.
 
 ## API and crate boundaries
 
@@ -84,7 +84,7 @@ kept because it describes one IPC implementation, not a different cache API.
 
 ```text
 vLLM adapter                SGLang adapter
-block hashes / CUDA IPC     radix hashes / HiCache pools / shared host pages
+block hashes / CUDA IPC     radix hashes / HiCache host pages
                              /
        python/orbitkv/client (cache API)
                     |
@@ -134,7 +134,7 @@ The adapters translate framework-native state into `orbitkv-contract`:
 | --- | --- | --- |
 | Prefix identity | `Request.block_hashes` | Radix page hashes |
 | Local GPU pages | vLLM block IDs + CUDA IPC | Radix/HiCache page indices |
-| Host pages | OrbitKV-owned pinned blocks today | shared HiCache host pool |
+| Host pages | OrbitKV-owned pinned blocks today | SGLang L2 pages copied to OrbitKV-owned L3 blocks |
 | Hybrid state | KV cache groups and checkpoints | `PoolTransfer` components |
 | Lifecycle | KVConnector callbacks | Radix/HiCache events |
 
@@ -167,16 +167,16 @@ remain in OrbitKV.
 
 ### Stage 1: HiCache L3 backend
 
-Implement `orbitkv.sglang.OrbitKVHiCacheStorage` against SGLang's dynamic
-`HiCacheStorage` interface. It must support `batch_exists_v2`, `batch_get_v2`,
-`batch_set_v2`, and named auxiliary pools. SGLang remains owner of GPU and host
-allocation in this stage.
-With the pinned SGLang `v0.5.20` API, `batch_exists_v2` can return
-`restorable_prefix_pages`; OrbitKV must preserve this set when auxiliary pools
-use trailing-page hit policies, rather than flattening it to one hit count.
-
-The host pool must use SGLang's shared-memory allocator. The Cache Manager maps that
-same memory; it must not allocate a second DRAM copy.
+`orbitkv.sglang.storage.OrbitKVHiCacheStorage` implements SGLang's dynamic
+`HiCacheStorage` interface, including `batch_exists_v2`, `batch_get_v2`,
+`batch_set_v2`, and named auxiliary pools. SGLang remains owner of HBM and
+its L2 host pool. A completed L2 page is copied into Cache Manager-owned
+bounded pinned memory, with the core SSD tier available for eviction.
+The adapter scopes keys by model, parallel rank, pool, dtype, layout, and page
+size. `batch_exists_v2` returns legal `restorable_prefix_pages` for trailing
+auxiliary state, and only reports a prefix as a hit when all required pools
+are available. The simple path uses per-page UDS operations; shared-region
+registration and batched query/transfer are pending performance work.
 
 ### Stage 2: Radix lifecycle bridge
 

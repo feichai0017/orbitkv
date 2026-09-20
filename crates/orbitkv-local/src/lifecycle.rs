@@ -3,7 +3,7 @@
 use std::io;
 
 pub const LIFECYCLE_HEADER_BYTES: usize = 20;
-pub const MAX_LIFECYCLE_PAYLOAD: usize = 16 * 1024 * 1024;
+pub const MAX_LIFECYCLE_PAYLOAD: usize = 64 * 1024 * 1024;
 const MAGIC: u32 = 0x4f52_424c;
 const VERSION: u16 = 1;
 
@@ -14,6 +14,9 @@ pub enum LifecycleCommand {
     Register = 2,
     Unregister = 3,
     Session = 4,
+    PagePut = 5,
+    PageGet = 6,
+    PageExists = 7,
 }
 
 impl TryFrom<u16> for LifecycleCommand {
@@ -25,6 +28,9 @@ impl TryFrom<u16> for LifecycleCommand {
             2 => Ok(Self::Register),
             3 => Ok(Self::Unregister),
             4 => Ok(Self::Session),
+            5 => Ok(Self::PagePut),
+            6 => Ok(Self::PageGet),
+            7 => Ok(Self::PageExists),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unknown lifecycle command",

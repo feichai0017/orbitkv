@@ -81,6 +81,12 @@ class CacheLifecycleClient(Protocol):
 
     def health(self) -> tuple[bool, str]: ...
 
+    def put_host_page(self, namespace: str, key: bytes, data: bytes) -> None: ...
+
+    def get_host_page(self, namespace: str, key: bytes) -> bytes | None: ...
+
+    def has_host_page(self, namespace: str, key: bytes) -> bool: ...
+
     def register_context_batch(
         self,
         instance_id: str,
@@ -161,6 +167,15 @@ class LocalDataClient:
 
     def health(self) -> tuple[bool, str]:
         return self._client.health()
+
+    def put_host_page(self, namespace: str, key: bytes, data: bytes) -> None:
+        self._client.put_host_page(namespace, key, data)
+
+    def get_host_page(self, namespace: str, key: bytes) -> bytes | None:
+        return self._client.get_host_page(namespace, key)
+
+    def has_host_page(self, namespace: str, key: bytes) -> bool:
+        return self._client.has_host_page(namespace, key)
 
     def register_context_batch(self, *args, **kwargs) -> tuple[bool, str]:
         return self._client.register_context_batch(*args, **kwargs)

@@ -91,6 +91,15 @@ impl LocalQueryClient {
         command: LifecycleCommand,
         payload: &[u8],
     ) -> Result<(), LocalQueryError> {
+        self.lifecycle_bytes(command, payload).map(|_| ())
+    }
+
+    /// Exchange one bounded lifecycle frame; page operations return binary data.
+    pub fn lifecycle_bytes(
+        &self,
+        command: LifecycleCommand,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, LocalQueryError> {
         let _guard = self
             .lifecycle_lock
             .lock()
@@ -98,7 +107,7 @@ impl LocalQueryClient {
         if self.poisoned.load(Ordering::Acquire) {
             return Err(LocalQueryError::SessionRequiresReconnect);
         }
-        let exchange = || -> std::io::Result<(u16, String)> {
+        let exchange = || -> std::io::Result<(u16, Vec<u8>)> {
             let header = LifecycleHeader {
                 code: command as u16,
                 epoch: self.session_epoch(),
@@ -107,8 +116,11 @@ impl LocalQueryClient {
             .encode()?;
             let mut stream = self.bootstrap.stream();
             let timeout = match command {
-                LifecycleCommand::Register | LifecycleCommand::Unregister => {
-                    self.options.timeout.max(Duration::from_secs(120))
+                LifecycleCommand::Register
+                | LifecycleCommand::Unregister
+                | LifecycleCommand::PagePut => self.options.timeout.max(Duration::from_secs(120)),
+                LifecycleCommand::PageGet | LifecycleCommand::PageExists => {
+                    self.options.timeout.max(Duration::from_secs(45))
                 }
                 _ => self.options.timeout,
             };
@@ -126,13 +138,14 @@ impl LocalQueryClient {
             }
             let mut body = vec![0; header.payload_len];
             stream.read_exact(&mut body)?;
-            let message = String::from_utf8(body)
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-            Ok((header.code, message))
+            Ok((header.code, body))
         };
         match exchange() {
-            Ok((0, _)) => Ok(()),
-            Ok((code, message)) => Err(LocalQueryError::Lifecycle { code, message }),
+            Ok((0, body)) => Ok(body),
+            Ok((code, message)) => Err(LocalQueryError::Lifecycle {
+                code,
+                message: String::from_utf8_lossy(&message).into_owned(),
+            }),
             Err(error) => {
                 self.close();
                 // A partial frame must never be reused as a new request.

@@ -3,14 +3,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use orbitkv_local::lifecycle::{LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader};
+use orbitkv_local::lifecycle::{
+    LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader, MAX_LIFECYCLE_PAYLOAD,
+};
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::sync::Notify;
 
 use crate::cache::lifecycle::{ControlError, LifecycleService};
-use crate::proto::engine::{RegisterContextRequest, SessionRequest, UnregisterRequest};
+use crate::proto::engine::{
+    CachePageRequest, RegisterContextRequest, SessionRequest, UnregisterRequest,
+};
 
 pub(crate) async fn serve(
     stream: std::os::unix::net::UnixStream,
@@ -40,19 +44,25 @@ pub(crate) async fn serve(
             tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut payload))
                 .await??;
             let result = dispatch(command, &payload, &lifecycle, &mut owners).await;
-            let (code, message) = match result {
-                Ok(()) => (0, String::new()),
-                Err(error) => (error.code, error.message),
+            let (code, body) = match result {
+                Ok(body) => (0, body),
+                Err(error) => (error.code, error.message.into_bytes()),
             };
+            if body.len() > MAX_LIFECYCLE_PAYLOAD {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "lifecycle response exceeds limit",
+                ));
+            }
             let response = LifecycleHeader {
                 code,
                 epoch,
-                payload_len: message.len(),
+                payload_len: body.len(),
             }
             .encode()?;
-            tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::time::timeout(Duration::from_secs(120), async {
                 stream.write_all(&response).await?;
-                stream.write_all(message.as_bytes()).await
+                stream.write_all(&body).await
             })
             .await??;
         }
@@ -74,7 +84,7 @@ async fn dispatch(
     payload: &[u8],
     lifecycle: &LifecycleService,
     owners: &mut HashMap<String, u64>,
-) -> Result<(), ControlError> {
+) -> Result<Vec<u8>, ControlError> {
     match command {
         LifecycleCommand::Health => {
             if !payload.is_empty() {
@@ -119,6 +129,51 @@ async fn dispatch(
                 .await?;
             owners.insert(instance_id, token);
         }
+        LifecycleCommand::PagePut | LifecycleCommand::PageGet | LifecycleCommand::PageExists => {
+            let request = CachePageRequest::decode(payload)
+                .map_err(|error| ControlError::invalid_argument(error.to_string()))?;
+            if request.namespace.is_empty() || request.key.is_empty() {
+                return Err(ControlError::invalid_argument(
+                    "page requires a namespace and key",
+                ));
+            }
+            match command {
+                LifecycleCommand::PagePut => {
+                    lifecycle
+                        .put_host_page(&request.namespace, &request.key, &request.data)
+                        .await?;
+                }
+                LifecycleCommand::PageGet => {
+                    if !request.data.is_empty() {
+                        return Err(ControlError::invalid_argument("page get has data payload"));
+                    }
+                    let page = lifecycle
+                        .get_host_page(&request.namespace, &request.key)
+                        .await?;
+                    return Ok(match page {
+                        Some(data) => {
+                            let mut response = Vec::with_capacity(data.len() + 1);
+                            response.push(1);
+                            response.extend(data);
+                            response
+                        }
+                        None => vec![0],
+                    });
+                }
+                LifecycleCommand::PageExists => {
+                    if !request.data.is_empty() {
+                        return Err(ControlError::invalid_argument(
+                            "page exists has data payload",
+                        ));
+                    }
+                    let exists = lifecycle
+                        .has_host_page(&request.namespace, &request.key)
+                        .await?;
+                    return Ok(vec![u8::from(exists)]);
+                }
+                _ => unreachable!(),
+            }
+        }
     }
-    Ok(())
+    Ok(Vec::new())
 }
