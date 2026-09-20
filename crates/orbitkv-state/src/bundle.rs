@@ -2,12 +2,12 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{StateComponent, StateKey};
+use crate::{StateComponent, StateDescriptor};
 
 /// One component participating in an atomic recovery boundary.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleComponent {
-    pub key: StateKey,
+    pub descriptor: StateDescriptor,
     pub available: bool,
 }
 
@@ -41,19 +41,12 @@ impl StateBundle {
             .components
             .iter()
             .filter(|component| component.available)
-            .map(|component| &component.key.component)
+            .map(|component| &component.descriptor.component)
             .collect::<BTreeSet<_>>();
         self.recovery
             .required
             .iter()
             .all(|required| available.contains(required))
-    }
-
-    #[deprecated(
-        note = "this only checks component presence; use has_required_components until a recovery validator is available"
-    )]
-    pub fn is_restorable(&self) -> bool {
-        self.has_required_components()
     }
 }
 
@@ -62,8 +55,8 @@ mod tests {
     use super::*;
     use crate::{StateDType, StateFormat, StateLayout, TokenRange};
 
-    fn key(component: StateComponent) -> StateKey {
-        StateKey {
+    fn descriptor(component: StateComponent) -> StateDescriptor {
+        StateDescriptor {
             content: [1; 32],
             span: TokenRange::new(0, 16).unwrap(),
             component,
@@ -88,11 +81,11 @@ mod tests {
             boundary: 16,
             components: vec![
                 BundleComponent {
-                    key: key(attention.clone()),
+                    descriptor: descriptor(attention.clone()),
                     available: true,
                 },
                 BundleComponent {
-                    key: key(recurrent.clone()),
+                    descriptor: descriptor(recurrent.clone()),
                     available: false,
                 },
             ],

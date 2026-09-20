@@ -7,7 +7,7 @@ adapters for the releases below.
 ## Features
 
 - **CacheManagerClient**: UDS/iceoryx2 client for the node-local Cache Manager
-- **CacheDataClient**: Framework-neutral cache operations for every storage tier
+- **CacheManagerClient**: One client for lifecycle, queries, publication and asynchronous restores across storage tiers
 - **OrbitKVConnector**: vLLM external-cache connector; Cache Manager selects RAM, SSD, or configured remote fetch
 - **OrbitKVLinker**: SGLang direct GPU-page cache through the same Cache Manager channel
 - **PdConnector**: experimental vLLM P/D handoff through Mooncake; independent of the external-cache connector
@@ -120,11 +120,15 @@ commands; GPU data is copied directly between the registered buffers and the
 Cache Manager's pinned memory. Its DRAM/SSD tiers can preserve pages across a
 SGLang restart while the Cache Manager remains running.
 
-The cache namespace includes the model identity, SGLang release, configured
-model revision, weight version, quantization, parallel ranks, page size, GPU
-layout, and dtype. Set `ORBITKV_SGLANG_NAMESPACE` to a unique weight identity
-if the files at a model path change without changing their path or configured
-revision. Each tensor-parallel rank registers its local buffers; SGLang
+Both engines fingerprint local model artifacts and bind their configuration and
+registered storage layout to a versioned cache identity. Hub models must use
+an immutable commit revision. `ORBITKV_MODEL_FINGERPRINT` can supply a verified
+64-digit SHA-256 deployment digest to avoid reading large artifacts at startup;
+`ORBITKV_CACHE_SCOPE` optionally isolates tenants or experiments. Dynamic LoRA
+is rejected. Restart the engine when weights change; live refits are unsupported.
+See [state identity](../docs/state-identity.md) for the exact boundary.
+
+Each tensor-parallel rank registers its local buffers; SGLang
 intersects restorable prefixes across ranks. This direct path currently accepts
 full-attention MHA and MLA layouts with one KV pool. It rejects hybrid
 SWA/Mamba, DSA, draft-model, and auxiliary GPU state until their complete

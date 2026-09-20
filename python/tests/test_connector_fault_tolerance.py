@@ -25,7 +25,7 @@ install_connector_unit_stubs()
 
 from vllm.v1.kv_cache_interface import FullAttentionSpec  # noqa: E402
 
-from orbitkv.client.data_plane import RestoreStatus  # noqa: E402
+from orbitkv.client.manager import RestoreStatus  # noqa: E402
 from orbitkv.vllm.common import (  # noqa: E402
     ConnectorContext,
     LoadIntent,
@@ -121,7 +121,7 @@ def _make_worker(
         "world_size": 1,
         "tp_rank": 0,
         "device_id": 0,
-        "engine_client": client,
+        "client": client,
         "state_manager": state_manager,
         "pp_rank": pp_rank,
         "pp_size": pp_size,
@@ -358,13 +358,13 @@ def test_load_uses_registered_layer_names_before_forward_context_names():
     worker.shutdown()
 
 
-def test_worker_uses_local_restore_completion_without_grpc_load():
+def test_worker_consumes_restore_completion():
     data_client = MagicMock(transport="iceoryx2")
     restore = SimpleNamespace(key="local:41:9")
     data_client.start_restore.return_value = restore
     data_client.restore_completions_ready.return_value = True
     data_client.poll_restore.return_value = RestoreStatus(done=True, success=True)
-    worker, engine_client, _state_manager = _make_worker(data_client=data_client)
+    worker, _unused_client, _state_manager = _make_worker(client=data_client)
 
     worker.start_load_kv(_load_metadata("local-restore", (3, 4)), _stub_forward_context())
     _, finished_recving = worker.get_finished(set())
@@ -378,7 +378,6 @@ def test_worker_uses_local_restore_completion_without_grpc_load():
         [(b"lease-local-restore", [[3, 4]])],
     )
     data_client.poll_restore.assert_called_once_with(restore)
-    assert engine_client.load_calls == []
     worker.shutdown()
 
 

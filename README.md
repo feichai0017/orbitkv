@@ -59,9 +59,11 @@ a declarative state-liveness contract into physical plans:
 - both frameworks retain their serving schedulers while OrbitKV develops a
   shared, validated state identity and safe-reuse contract.
 
-Today the `StateKey` and `StateBundle` types do **not** enforce those semantics
-in the cache hot path: actual keys still use namespace + hash, Publish carries
-raw block IDs, and bundle completeness is a component-presence check. The
+The cache hot path now uses a versioned `StateKey` bound to model-artifact
+content, engine configuration and registered storage geometry. Complete
+recovery semantics remain open: Publish carries raw block IDs, absolute token
+span evidence is not carried by both adapters, and bundle completeness is a
+component-presence check. The
 MetaServer is a separate, non-HA, in-memory directory without complete
 resident-inventory replay after restart. See [architecture](docs/architecture.md)
 and the [model-aware state plan](docs/state-identity.md) for the implementation

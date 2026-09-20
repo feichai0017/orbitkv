@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use crate::block::{BlockKey, SealedBlock};
+use crate::block::{SealedBlock, StateKey};
 
 // ============================================================================
 // Constants
@@ -40,7 +40,7 @@ pub(crate) enum CacheInsertOutcome {
     Rejected,
 }
 
-impl TinyLfuCache<BlockKey, ArcSealedBlock> {
+impl TinyLfuCache<StateKey, ArcSealedBlock> {
     pub(crate) fn new_unbounded(
         capacity_bytes: usize,
         enable_lfu_admission: bool,
@@ -57,7 +57,7 @@ impl TinyLfuCache<BlockKey, ArcSealedBlock> {
     }
 
     /// Returns a cloned value and bumps frequency on hit.
-    pub(crate) fn get(&mut self, key: &BlockKey) -> Option<ArcSealedBlock> {
+    pub(crate) fn get(&mut self, key: &StateKey) -> Option<ArcSealedBlock> {
         let hit = self.lru.get(key).cloned();
         if hit.is_some()
             && let Some(freq) = &self.freq
@@ -68,7 +68,7 @@ impl TinyLfuCache<BlockKey, ArcSealedBlock> {
     }
 
     /// Checks membership without updating TinyLFU frequency.
-    pub(crate) fn contains_key(&self, key: &BlockKey) -> bool {
+    pub(crate) fn contains_key(&self, key: &StateKey) -> bool {
         self.lru.contains_key(key)
     }
 
@@ -76,7 +76,7 @@ impl TinyLfuCache<BlockKey, ArcSealedBlock> {
     ///
     /// Weak references from fire-and-forget backing-store work do not pin the
     /// resident block: they may fail to upgrade after pressure eviction.
-    pub(crate) fn is_cache_owned_only(&self, key: &BlockKey) -> bool {
+    pub(crate) fn is_cache_owned_only(&self, key: &StateKey) -> bool {
         self.lru
             .peek(key)
             .is_some_and(|block| Arc::strong_count(block) == 1)
@@ -84,7 +84,7 @@ impl TinyLfuCache<BlockKey, ArcSealedBlock> {
 
     /// Insert with TinyLFU admission. If the candidate is colder than the
     /// current LRU victim it is dropped.
-    pub(crate) fn insert(&mut self, key: BlockKey, value: ArcSealedBlock) -> CacheInsertOutcome {
+    pub(crate) fn insert(&mut self, key: StateKey, value: ArcSealedBlock) -> CacheInsertOutcome {
         // Always record the access so future attempts have a chance.
         if let Some(freq) = &self.freq {
             freq.incr(&key);
@@ -109,11 +109,11 @@ impl TinyLfuCache<BlockKey, ArcSealedBlock> {
         CacheInsertOutcome::InsertedNew
     }
 
-    pub(crate) fn remove(&mut self, key: &BlockKey) -> Option<ArcSealedBlock> {
+    pub(crate) fn remove(&mut self, key: &StateKey) -> Option<ArcSealedBlock> {
         self.lru.remove(key)
     }
 
-    pub(crate) fn remove_all(&mut self) -> Vec<(BlockKey, ArcSealedBlock)> {
+    pub(crate) fn remove_all(&mut self) -> Vec<(StateKey, ArcSealedBlock)> {
         self.lru.drain().collect()
     }
 }
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn contains_key_does_not_bump_frequency() {
         let mut cache = TinyLfuCache::new_unbounded(1024, true, Some(1));
-        let key = BlockKey::new("ns".to_string(), vec![1, 2, 3, 4]);
+        let key = StateKey::new("ns".to_string(), vec![1, 2, 3, 4]);
         let value = Arc::new(SealedBlock::from_slots(Vec::new()));
 
         let _ = cache.insert(key.clone(), value);

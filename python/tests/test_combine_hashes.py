@@ -50,7 +50,7 @@ def _make_ctx(
         "world_size": 1,
         "tp_rank": 0,
         "device_id": 0,
-        "engine_client": MagicMock(),
+        "client": MagicMock(),
         "state_manager": MagicMock(),
         "is_mla": False,
         "dcp_world_size": dcp_world_size,
@@ -340,7 +340,7 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
     worker._registered_layers = ["a", "b", "c"]
     worker._page_first = True
     worker._torch_device = None
-    ctx.engine_client.save.return_value = (True, "")
+    ctx.client.save.return_value = (True, "")
 
     meta = OrbitKVConnectorMetadata(
         save_intents={
@@ -357,8 +357,8 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
         worker._registered_layers = []  # skip mock unregister on shutdown
         worker.shutdown()
 
-    ctx.engine_client.save.assert_called_once()
-    saves_list = ctx.engine_client.save.call_args.args[4]
+    ctx.client.save.assert_called_once()
+    saves_list = ctx.client.save.call_args.args[4]
     # Every layer is saved (the whole page)...
     assert {name for name, _ids, _hashes in saves_list} == {"a", "b", "c"}
     # ...but only rank 1's block stripe (odd block ids), hashes kept aligned.
@@ -376,7 +376,7 @@ def test_recurrent_save_omits_null_group_target():
     worker._registered_layers = ["attention", "recurrent"]
     worker._layer_to_group = {"attention": 0, "recurrent": 1}
     worker._torch_device = None
-    ctx.engine_client.save.return_value = (True, "")
+    ctx.client.save.return_value = (True, "")
     metadata = OrbitKVConnectorMetadata(
         save_intents={
             "r1": SaveIntent(
@@ -393,7 +393,7 @@ def test_recurrent_save_omits_null_group_target():
         worker._registered_layers = []
         worker.shutdown()
 
-    saves = ctx.engine_client.save.call_args.args[4]
+    saves = ctx.client.save.call_args.args[4]
     assert saves == [("attention", [11], [b"h0"])]
 
 
@@ -412,7 +412,7 @@ def test_page_first_layer_split_saves_own_layers_for_all_blocks():
     worker._registered_layers = ["b", "d"]
     worker._page_first = True
     worker._torch_device = None
-    ctx.engine_client.save.return_value = (True, "")
+    ctx.client.save.return_value = (True, "")
 
     meta = OrbitKVConnectorMetadata(
         save_intents={
@@ -429,8 +429,8 @@ def test_page_first_layer_split_saves_own_layers_for_all_blocks():
         worker._registered_layers = []  # skip mock unregister on shutdown
         worker.shutdown()
 
-    ctx.engine_client.save.assert_called_once()
-    saves_list = ctx.engine_client.save.call_args.args[4]
+    ctx.client.save.assert_called_once()
+    saves_list = ctx.client.save.call_args.args[4]
     # Only this rank's shard layers...
     assert {name for name, _ids, _hashes in saves_list} == {"b", "d"}
     # ...and every block (no striping), hashes kept aligned.
@@ -687,7 +687,7 @@ class TestSchedulerQueryProbeReuse:
         engine_client.release.return_value = None
         state_manager = MagicMock()
         ctx = _make_ctx(
-            engine_client=engine_client,
+            client=engine_client,
             state_manager=state_manager,
         )
         return SchedulerConnector(ctx), engine_client
@@ -720,7 +720,7 @@ class TestSchedulerQueryProbeReuse:
     def test_wait_for_full_prefix_is_forwarded(self):
         engine_client = MagicMock()
         engine_client.query_prefetch.return_value = QueryLoading()
-        sc = SchedulerConnector(_make_ctx(engine_client=engine_client, wait_for_full_prefix=True))
+        sc = SchedulerConnector(_make_ctx(client=engine_client, wait_for_full_prefix=True))
         hashes = [_hash(i) for i in range(4)]
 
         assert sc._count_available_block_prefix(hashes, "r1") is None
@@ -748,7 +748,7 @@ class TestSchedulerQueryProbeReuse:
     def test_save_only_mode_skips_query(self):
         engine_client = MagicMock()
         sc = SchedulerConnector(
-            _make_ctx(engine_client=engine_client, mode=OrbitKVConnectorMode.SAVE_ONLY)
+            _make_ctx(client=engine_client, mode=OrbitKVConnectorMode.SAVE_ONLY)
         )
         req = _make_fake_request("r1", [_hash(i) for i in range(4)])
 

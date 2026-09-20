@@ -20,7 +20,7 @@ use opentelemetry::KeyValue;
 
 use super::transfer_lock_guard::TransferLockGuard;
 use super::{AllocateFn, MooncakeTransport, PrefetchResult};
-use crate::block::{BlockKey, RawBlock, SealedBlock, Segment};
+use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::internode::MetaServerClient;
 use crate::metrics::core_metrics;
 
@@ -567,7 +567,7 @@ async fn fetch_blocks_via_mooncake(
     let rebuild_start = Instant::now();
     let mut result: PrefetchResult = Vec::with_capacity(block_allocs.len());
     for (hash, slot_allocs) in block_allocs {
-        let key = BlockKey::new(namespace.to_string(), hash);
+        let key = StateKey::new(namespace.to_string(), hash);
         let slots: Vec<(RawBlock, NumaNode)> = slot_allocs
             .into_iter()
             .map(|(segs, numa)| {
@@ -848,9 +848,9 @@ mod tests {
         }
     }
 
-    fn fetched_block(hash: u8) -> (BlockKey, Arc<SealedBlock>) {
+    fn fetched_block(hash: u8) -> (StateKey, Arc<SealedBlock>) {
         (
-            BlockKey::new("ns".to_string(), vec![hash]),
+            StateKey::new("ns".to_string(), vec![hash]),
             Arc::new(SealedBlock::from_slots(Vec::new())),
         )
     }

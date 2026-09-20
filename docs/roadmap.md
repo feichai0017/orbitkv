@@ -53,15 +53,15 @@ Gate:
 
 ## M2: common StateBundle query and native local transport
 
-The current namespace-plus-hash keys and component-presence check are not a
-safe, model-aware recovery proof. [State identity and recovery](state-identity.md)
+Versioned model/storage keys now isolate deployments. The component-presence
+check is not a safe, model-aware recovery proof. [State identity and recovery](state-identity.md)
 defines the migration and gates. Complete those local semantics before using
 cache metadata as evidence for distributed routing.
 
 Deliver:
 
-- introduce a versioned model fingerprint and key it into Query, Publish,
-  storage, and remote lookup; invalidate old entries during migration;
+- extend the implemented model/storage key with absolute token spans and
+  request-specific adapter evidence;
 - validate token spans, model/format compatibility, and required components at
   each recovery boundary;
 - move vLLM hybrid reconciliation from the adapter into common bundle logic;

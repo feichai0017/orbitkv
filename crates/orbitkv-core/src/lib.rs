@@ -34,7 +34,7 @@ pub use backing::{
     DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig,
 };
 pub use block::{
-    BlockHash, BlockKey, LayerBlock, LayerSave, PrefetchStatus, RawBlock, SealedBlock,
+    BlockHash, LayerBlock, LayerSave, PrefetchStatus, RawBlock, SealedBlock, StateKey,
 };
 use instance::GpuRegistration;
 pub use instance::{GpuContext, InstanceContext};
@@ -44,10 +44,11 @@ pub use internode::{
 use layout::KVCacheLayout;
 pub use lease::QueryLeaseId;
 pub use orbitkv_common::NumaNode;
-use orbitkv_common::{NumaTopology, group_hash};
+use orbitkv_common::NumaTopology;
+use orbitkv_state::group_hash;
 pub use orbitkv_state::{
-    BundleComponent, LocalPageRef, RecoveryContract, StateBundle, StateComponent, StateFormat,
-    StateKey, TokenRange,
+    BundleComponent, LocalPageRef, RecoveryContract, StateBundle, StateComponent, StateDescriptor,
+    StateFormat, TokenRange,
 };
 pub use pinned_pool::PinnedAllocation;
 pub use seal_offload::SlotMeta;
@@ -199,7 +200,7 @@ impl OrbitKVEngine {
         if let Some(instance) = instances.get(instance_id) {
             // Already exists, verify topology
             instance
-                .verify_topology(tp_size, world_size, page_first)
+                .verify_identity(namespace, tp_size, world_size, Some(page_first))
                 .map_err(|e| {
                     EngineError::TopologyMismatch(format!("instance {instance_id} {e}"))
                 })?;
@@ -494,9 +495,35 @@ impl OrbitKVEngine {
             .collect()
     }
 
+    /// A scheduler session may arrive before or after GPU registration. Once an
+    /// instance exists it must describe the same computation and worker set.
+    pub fn validate_session_identity(
+        &self,
+        instance_id: &str,
+        namespace: &str,
+        tp_size: usize,
+        world_size: usize,
+    ) -> Result<(), EngineError> {
+        if let Some(instance) = self
+            .instances
+            .read()
+            .expect("instances read lock poisoned")
+            .get(instance_id)
+        {
+            instance
+                .verify_identity(namespace, tp_size, world_size, None)
+                .map_err(EngineError::TopologyMismatch)?;
+        }
+        Ok(())
+    }
+
     /// Return the namespace associated with a registered instance.
     pub fn instance_namespace(&self, instance_id: &str) -> Result<String, EngineError> {
-        Ok(self.get_instance(instance_id)?.namespace().to_string())
+        Ok(self
+            .get_instance(instance_id)?
+            .sealed_topology()?
+            .cache_namespace
+            .clone())
     }
 
     /// Count prefix hit blocks with SSD prefetch support.
@@ -522,11 +549,16 @@ impl OrbitKVEngine {
         wait_for_full_prefix: bool,
     ) -> Result<PrefetchStatus, EngineError> {
         let instance = self.get_instance(instance_id)?;
-        let namespace = instance.namespace();
+        let topology = instance.sealed_topology()?;
+        let namespace = &topology.cache_namespace;
+        let encoded: Vec<Vec<u8>> = block_hashes
+            .iter()
+            .map(|hash| group_hash(hash, 0))
+            .collect();
 
         let status = self
             .storage
-            .check_prefix_and_prefetch(req_id, namespace, block_hashes, wait_for_full_prefix)
+            .check_prefix_and_prefetch(req_id, namespace, &encoded, wait_for_full_prefix)
             .await;
 
         match &status {
@@ -569,7 +601,7 @@ impl OrbitKVEngine {
         // bug in the caller, not an all-miss answer.
         topology.group_total_slots(group_id)?;
 
-        let namespace = instance.namespace();
+        let namespace = &topology.cache_namespace;
         let encoded: Vec<Vec<u8>> = block_hashes
             .iter()
             .map(|hash| group_hash(hash, group_id))
@@ -597,7 +629,7 @@ impl OrbitKVEngine {
     /// is the sealed block for `block_hashes[i]` in `group_id`, or `None` on
     /// miss. Sparse hit patterns are the point — callers (e.g. the vLLM
     /// connector's hybrid reconcile) pick the rightmost hit themselves.
-    /// Group 0 keeps raw-hash keys, so classic instances observe no change.
+    /// Every group uses the same versioned content-hash encoding.
     ///
     /// The returned blocks hold plain `Arc` refs, not leases: pin what you
     /// need via [`Self::create_query_lease`].
@@ -613,7 +645,7 @@ impl OrbitKVEngine {
         // a contract bug, not an answer of "all miss".
         topology.group_total_slots(group_id)?;
 
-        let namespace = instance.namespace();
+        let namespace = &topology.cache_namespace;
         let encoded: Vec<Vec<u8>> = block_hashes
             .iter()
             .map(|hash| group_hash(hash, group_id))
@@ -967,10 +999,10 @@ impl OrbitKVEngine {
         namespace: &str,
         block_hashes: &[Vec<u8>],
         requester_id: &str,
-    ) -> (String, Vec<(BlockKey, Arc<SealedBlock>)>) {
-        let keys: Vec<BlockKey> = block_hashes
+    ) -> (String, Vec<(StateKey, Arc<SealedBlock>)>) {
+        let keys: Vec<StateKey> = block_hashes
             .iter()
-            .map(|h| BlockKey::new(namespace.to_string(), h.clone()))
+            .map(|h| StateKey::new(namespace.to_string(), h.clone()))
             .collect();
 
         let found = self.storage.get_blocks_for_transfer(&keys);

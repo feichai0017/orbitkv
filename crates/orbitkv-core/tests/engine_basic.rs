@@ -253,19 +253,52 @@ async fn kernel_backend_roundtrip_split_storage() {
 
 /// Namespace isolation: blocks in one namespace are invisible to another.
 #[tokio::test]
-async fn namespace_isolation() {
+async fn shared_manager_reuses_only_matching_model_and_storage_identity() {
     let a = TestEnvBuilder::new("inst-a", "ns-alpha")
         .layer("layer_0", 2, 1024)
         .build();
-    let b = TestEnvBuilder::new("inst-b", "ns-beta")
-        .layer("layer_0", 2, 1024)
-        .build();
     let hashes = make_block_hashes(2, 11);
-
     a.save_and_wait(&hashes).await;
-    assert_eq!(
-        b.count_hits_then_release(&hashes).await,
-        0,
-        "namespace isolation violated"
-    );
+
+    // All readers use the same manager and native hashes. Changing the GPU pool
+    // capacity is safe; changing model identity or stored geometry must miss.
+    for (id, namespace, block_size, num_blocks, page_first, expected) in [
+        ("same", "ns-alpha", 1024, 2, false, 2),
+        ("capacity", "ns-alpha", 1024, 1, false, 2),
+        ("model", "ns-beta", 1024, 2, false, 0),
+        ("geometry", "ns-alpha", 512, 2, false, 0),
+        ("page-first", "ns-alpha", 1024, 2, true, 0),
+    ] {
+        register_layers(
+            &a.engine,
+            id,
+            namespace,
+            &[LayerInfo {
+                name: "layer_0".into(),
+                gpu_ptr: a.data().ptr(),
+                total_size: a.data().total_size(),
+                num_blocks,
+                block_size,
+                kv_stride: 0,
+                segments: 1,
+                group: 0,
+            }],
+            0,
+            0,
+            0,
+            1,
+            1,
+            TransferMode::Direct,
+            page_first,
+        );
+        let result = a
+            .engine
+            .count_prefix_hit_blocks_with_prefetch(id, id, &hashes, false)
+            .await
+            .unwrap();
+        let orbitkv_core::PrefetchStatus::Ready { blocks, .. } = result else {
+            panic!("resident query unexpectedly loading for {id}");
+        };
+        assert_eq!(blocks.len(), expected, "cache identity case {id}");
+    }
 }

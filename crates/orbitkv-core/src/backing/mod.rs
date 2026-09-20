@@ -20,7 +20,7 @@ pub use ssd_cache::{
     DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig,
 };
 
-use crate::block::{BlockKey, SealedBlock};
+use crate::block::{SealedBlock, StateKey};
 use crate::pinned_pool::PinnedAllocation;
 use orbitkv_common::NumaNode;
 
@@ -31,7 +31,7 @@ pub(crate) use mooncake_fetch::MooncakeFetchStore;
 pub(crate) use ssd::SsdBackingStore;
 pub(crate) use ssd::new_ssd;
 
-pub(crate) type PrefetchResult = Vec<(BlockKey, Arc<SealedBlock>)>;
+pub(crate) type PrefetchResult = Vec<(StateKey, Arc<SealedBlock>)>;
 
 /// Allocator closure for pinned memory, passed to the SSD backing store.
 pub(crate) type AllocateFn =

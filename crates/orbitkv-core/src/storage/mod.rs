@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::backing::{AllocateFn, DEFAULT_MAX_PREFETCH_BLOCKS, SsdBackingStore, SsdCacheConfig};
 #[cfg(feature = "mooncake")]
 use crate::backing::{MooncakeFetchStore, MooncakeTransport};
-use crate::block::{BlockKey, PrefetchStatus, SealedBlock};
+use crate::block::{PrefetchStatus, SealedBlock, StateKey};
 use crate::internode::MetaServerClient;
 use crate::internode::metaserver_client::MetaServerClientConfig;
 use crate::metrics::core_metrics;
@@ -372,9 +372,9 @@ impl StorageEngine {
     ) {
         let namespace = namespace.to_string();
         let hash_vec: Vec<Vec<u8>> = hashes.iter().cloned().collect();
-        let keys: Vec<BlockKey> = hash_vec
+        let keys: Vec<StateKey> = hash_vec
             .iter()
-            .map(|hash| BlockKey::new(namespace.clone(), hash.clone()))
+            .map(|hash| StateKey::new(namespace.clone(), hash.clone()))
             .collect();
         let present = self.read_cache.contains_keys(&keys);
         for (hash, is_present) in hash_vec.into_iter().zip(present) {
@@ -392,9 +392,9 @@ impl StorageEngine {
         namespace: &str,
         hashes: &[Vec<u8>],
     ) -> Vec<Option<Arc<crate::block::SealedBlock>>> {
-        let keys: Vec<BlockKey> = hashes
+        let keys: Vec<StateKey> = hashes
             .iter()
-            .map(|hash| BlockKey::new(namespace.to_string(), hash.clone()))
+            .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
             .collect();
         self.read_cache.get_blocks_aligned(&keys)
     }
@@ -589,8 +589,8 @@ impl StorageEngine {
     /// Look up specific blocks by key (non-prefix). For cross-node transfer.
     pub(crate) fn get_blocks_for_transfer(
         &self,
-        keys: &[BlockKey],
-    ) -> Vec<(BlockKey, Arc<SealedBlock>)> {
+        keys: &[StateKey],
+    ) -> Vec<(StateKey, Arc<SealedBlock>)> {
         self.read_cache.get_blocks(keys)
     }
 
@@ -598,7 +598,7 @@ impl StorageEngine {
     pub(crate) fn lock_blocks_for_transfer(
         &self,
         requester_id: &str,
-        blocks: &[(BlockKey, Arc<SealedBlock>)],
+        blocks: &[(StateKey, Arc<SealedBlock>)],
     ) -> String {
         self.transfer_lock
             .lock_blocks(requester_id, blocks.to_vec())
@@ -650,7 +650,7 @@ impl StorageEngine {
 #[cfg(test)]
 impl StorageEngine {
     /// Insert a block directly into the in-memory cache (test only).
-    pub(crate) fn test_insert_cache(&self, key: BlockKey, block: Arc<SealedBlock>) {
+    pub(crate) fn test_insert_cache(&self, key: StateKey, block: Arc<SealedBlock>) {
         self.read_cache.batch_insert(vec![(key, block)]);
     }
 }
@@ -675,8 +675,8 @@ mod tests {
     #[tokio::test]
     async fn cleanup_memory_cache_evicts_all_resident_blocks() {
         let storage = make_engine();
-        let key1 = BlockKey::new("ns".into(), vec![1]);
-        let key2 = BlockKey::new("ns".into(), vec![2]);
+        let key1 = StateKey::new("ns".into(), vec![1]);
+        let key2 = StateKey::new("ns".into(), vec![2]);
         let block1 = Arc::new(SealedBlock::from_slots(Vec::new()));
         let block2 = Arc::new(SealedBlock::from_slots(Vec::new()));
 
@@ -720,8 +720,8 @@ mod tests {
     #[tokio::test]
     async fn filter_hashes_not_in_cache_removes_cached() {
         let storage = make_engine();
-        let key1 = BlockKey::new("ns".into(), vec![1]);
-        let key2 = BlockKey::new("ns".into(), vec![2]);
+        let key1 = StateKey::new("ns".into(), vec![1]);
+        let key2 = StateKey::new("ns".into(), vec![2]);
         let block = Arc::new(SealedBlock::from_slots(Vec::new()));
 
         storage.test_insert_cache(key1, block.clone());
@@ -740,9 +740,9 @@ mod tests {
     #[tokio::test]
     async fn get_blocks_for_transfer_returns_correct_blocks() {
         let storage = make_engine();
-        let key1 = BlockKey::new("ns".into(), vec![1]);
-        let key2 = BlockKey::new("ns".into(), vec![2]);
-        let key3 = BlockKey::new("ns".into(), vec![3]);
+        let key1 = StateKey::new("ns".into(), vec![1]);
+        let key2 = StateKey::new("ns".into(), vec![2]);
+        let key3 = StateKey::new("ns".into(), vec![3]);
         let block = Arc::new(SealedBlock::from_slots(Vec::new()));
 
         storage.test_insert_cache(key1.clone(), block.clone());
@@ -780,7 +780,7 @@ mod tests {
     #[tokio::test]
     async fn lock_and_release_transfer_when_enabled() {
         let storage = make_engine();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         let block = Arc::new(SealedBlock::from_slots(Vec::new()));
 
         storage.test_insert_cache(key.clone(), block.clone());

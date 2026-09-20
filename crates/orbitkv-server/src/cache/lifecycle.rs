@@ -6,7 +6,7 @@ use log::{info, warn};
 use orbitkv_core::{EngineError, OrbitKVEngine, TransferMode};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
-use crate::cache::session::SessionRegistry;
+use crate::cache::session::{SessionRegistry, SessionTopology};
 use crate::registry::RegistryHandle;
 
 pub(crate) struct SessionSpec {
@@ -106,12 +106,30 @@ impl LifecycleService {
                 "Cache Manager is shutting down",
             ));
         }
-        if request.instance_id.is_empty() || request.tp_size == 0 || request.world_size == 0 {
+        if request.instance_id.is_empty()
+            || request.namespace.is_empty()
+            || request.tp_size == 0
+            || request.world_size == 0
+        {
             return Err(ControlError::invalid_argument(
                 "session requires instance_id and nonzero topology",
             ));
         }
         let _guard = self.lock_instance(&request.instance_id).await;
+        self.validate_session_topology(
+            &request.instance_id,
+            &request.namespace,
+            request.tp_size,
+            request.world_size,
+        )?;
+        self.engine
+            .validate_session_identity(
+                &request.instance_id,
+                &request.namespace,
+                request.tp_size as usize,
+                request.world_size as usize,
+            )
+            .map_err(Self::map_engine_error)?;
         Ok(self.sessions.install(
             request.instance_id,
             request.namespace,
@@ -164,6 +182,12 @@ impl LifecycleService {
         }
         Self::validate_register_context_request(&req)?;
         let _guard = self.lock_instance(&req.instance_id).await;
+        self.validate_session_topology(
+            &req.instance_id,
+            &req.namespace,
+            req.tp_size,
+            req.world_size,
+        )?;
 
         let transfer_mode = req.transfer_mode;
 
@@ -271,6 +295,28 @@ impl LifecycleService {
             return Err(status);
         }
 
+        Ok(())
+    }
+
+    fn validate_session_topology(
+        &self,
+        instance_id: &str,
+        namespace: &str,
+        tp_size: u32,
+        world_size: u32,
+    ) -> Result<(), ControlError> {
+        if let Some(existing) = self.sessions.topology(instance_id)
+            && existing
+                != (SessionTopology {
+                    namespace: namespace.to_string(),
+                    tp_size,
+                    world_size,
+                })
+        {
+            return Err(ControlError::failed_precondition(
+                "state identity or topology differs from the active session",
+            ));
+        }
         Ok(())
     }
     fn context_key(instance_id: &str, tp_rank: u32, pp_rank: u32, device_id: i32) -> String {
@@ -433,6 +479,17 @@ mod tests {
             first
                 .lifecycle(LifecycleCommand::Session, &session)
                 .unwrap();
+            let incompatible = SessionRequest {
+                instance_id: "inst".into(),
+                namespace: "different-model".into(),
+                tp_size: 1,
+                world_size: 1,
+            }
+            .encode_to_vec();
+            assert!(matches!(
+                first.lifecycle(LifecycleCommand::Session, &incompatible),
+                Err(ChannelError::Lifecycle { code: 2, .. })
+            ));
             let second = ChannelClient::connect(&socket, CallOptions::default()).unwrap();
             second
                 .lifecycle(LifecycleCommand::Session, &session)

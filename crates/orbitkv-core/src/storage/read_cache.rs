@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 use hashlink::LruCache;
 use parking_lot::Mutex;
 
-use crate::block::{BlockKey, SealedBlock};
+use crate::block::{SealedBlock, StateKey};
 use crate::cache::{CacheInsertOutcome, TinyLfuCache};
 use crate::metrics::{
     CACHE_CLASS_RECLAIMABLE, CACHE_CLASS_RETAINED, CACHE_RESIDENCE_REASON_CLEANUP,
@@ -15,9 +15,9 @@ pub(crate) struct ReadCache {
 }
 
 struct ReadCacheInner {
-    cache: TinyLfuCache<BlockKey, Arc<SealedBlock>>,
-    reclaimable: LruCache<BlockKey, ResidentMetadata>,
-    retained: LruCache<BlockKey, ResidentMetadata>,
+    cache: TinyLfuCache<StateKey, Arc<SealedBlock>>,
+    reclaimable: LruCache<StateKey, ResidentMetadata>,
+    retained: LruCache<StateKey, ResidentMetadata>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -26,7 +26,7 @@ struct ResidentMetadata {
 }
 
 struct RemovedResident {
-    key: BlockKey,
+    key: StateKey,
     block: Arc<SealedBlock>,
     /// Insertion time taken from the block's replacement-class metadata.
     inserted_at: Instant,
@@ -55,13 +55,13 @@ impl ReadCache {
         }
     }
 
-    pub(super) fn contains_keys(&self, keys: &[BlockKey]) -> Vec<bool> {
+    pub(super) fn contains_keys(&self, keys: &[StateKey]) -> Vec<bool> {
         let inner = self.inner.lock();
         keys.iter().map(|k| inner.cache.contains_key(k)).collect()
     }
 
     /// Scan cache for a prefix of `keys`, stopping at the first miss.
-    pub(super) fn get_prefix_blocks(&self, keys: &[BlockKey]) -> (usize, Vec<Arc<SealedBlock>>) {
+    pub(super) fn get_prefix_blocks(&self, keys: &[StateKey]) -> (usize, Vec<Arc<SealedBlock>>) {
         let mut hit = 0usize;
         let mut blocks = Vec::with_capacity(keys.len());
         {
@@ -79,7 +79,7 @@ impl ReadCache {
         (hit, blocks)
     }
 
-    pub(super) fn batch_insert(&self, blocks: Vec<(BlockKey, Arc<SealedBlock>)>) {
+    pub(super) fn batch_insert(&self, blocks: Vec<(StateKey, Arc<SealedBlock>)>) {
         let mut inner = self.inner.lock();
         for (key, block) in blocks {
             insert_block(&mut inner, key, block, ResidentClass::Retained);
@@ -88,8 +88,8 @@ impl ReadCache {
 
     pub(super) fn batch_insert_resident_keys(
         &self,
-        blocks: Vec<(BlockKey, Arc<SealedBlock>)>,
-    ) -> Vec<BlockKey> {
+        blocks: Vec<(StateKey, Arc<SealedBlock>)>,
+    ) -> Vec<StateKey> {
         let mut inner = self.inner.lock();
         let mut resident_keys = Vec::new();
         for (key, block) in blocks {
@@ -105,8 +105,8 @@ impl ReadCache {
 
     pub(super) fn batch_insert_refs(
         &self,
-        blocks: &[(BlockKey, Arc<SealedBlock>)],
-    ) -> Vec<BlockKey> {
+        blocks: &[(StateKey, Arc<SealedBlock>)],
+    ) -> Vec<StateKey> {
         let mut inner = self.inner.lock();
         let mut resident_keys = Vec::new();
         for (key, block) in blocks {
@@ -128,7 +128,7 @@ impl ReadCache {
 
     /// Look up specific blocks by key without prefix-scan semantics (does not
     /// stop at first miss). Used by the serving side of cross-node transfer.
-    pub(super) fn get_blocks(&self, keys: &[BlockKey]) -> Vec<(BlockKey, Arc<SealedBlock>)> {
+    pub(super) fn get_blocks(&self, keys: &[StateKey]) -> Vec<(StateKey, Arc<SealedBlock>)> {
         let mut inner = self.inner.lock();
         let mut found = Vec::new();
         for key in keys {
@@ -145,7 +145,7 @@ impl ReadCache {
     /// the first gap — hybrid-cache checkpoint groups (recurrent state) have
     /// sparse hit patterns by design, where the caller picks the rightmost
     /// hit instead of a prefix.
-    pub(super) fn get_blocks_aligned(&self, keys: &[BlockKey]) -> Vec<Option<Arc<SealedBlock>>> {
+    pub(super) fn get_blocks_aligned(&self, keys: &[StateKey]) -> Vec<Option<Arc<SealedBlock>>> {
         let mut inner = self.inner.lock();
         keys.iter()
             .map(|key| {
@@ -156,7 +156,7 @@ impl ReadCache {
             .collect()
     }
 
-    pub(super) fn remove_lru_batch(&self, batch_size: usize) -> Vec<(BlockKey, Arc<SealedBlock>)> {
+    pub(super) fn remove_lru_batch(&self, batch_size: usize) -> Vec<(StateKey, Arc<SealedBlock>)> {
         let removed = {
             let mut inner = self.inner.lock();
             let mut removed = Vec::with_capacity(batch_size);
@@ -179,7 +179,7 @@ impl ReadCache {
         record_residence_durations(removed, &*CACHE_RESIDENCE_REASON_PRESSURE)
     }
 
-    pub(super) fn remove_all(&self) -> Vec<(BlockKey, Arc<SealedBlock>)> {
+    pub(super) fn remove_all(&self) -> Vec<(StateKey, Arc<SealedBlock>)> {
         let removed = {
             let mut inner = self.inner.lock();
             let reclaimable_blocks = inner.reclaimable.len() as i64;
@@ -235,7 +235,7 @@ impl ReadCache {
         let mut inner = self.inner.lock();
         let mut moved = 0;
         for hash in hashes {
-            let key = BlockKey::new(namespace.to_string(), hash.clone());
+            let key = StateKey::new(namespace.to_string(), hash.clone());
             if mark_reclaimable(&mut inner, &key) {
                 moved += 1;
             }
@@ -252,13 +252,13 @@ impl ReadCache {
     }
 
     #[cfg(test)]
-    pub(crate) fn insert_retained_for_test(&self, key: BlockKey, block: Arc<SealedBlock>) {
+    pub(crate) fn insert_retained_for_test(&self, key: StateKey, block: Arc<SealedBlock>) {
         let mut inner = self.inner.lock();
         insert_block(&mut inner, key, block, ResidentClass::Retained);
     }
 
     #[cfg(test)]
-    pub(crate) fn is_reclaimable_for_test(&self, key: &BlockKey) -> bool {
+    pub(crate) fn is_reclaimable_for_test(&self, key: &StateKey) -> bool {
         self.inner.lock().reclaimable.contains_key(key)
     }
 }
@@ -274,7 +274,7 @@ impl ResidentClass {
 
 fn insert_block(
     inner: &mut ReadCacheInner,
-    key: BlockKey,
+    key: StateKey,
     block: Arc<SealedBlock>,
     class: ResidentClass,
 ) -> CacheInsertOutcome {
@@ -304,14 +304,14 @@ fn insert_block(
 fn class_lru(
     inner: &mut ReadCacheInner,
     class: ResidentClass,
-) -> &mut LruCache<BlockKey, ResidentMetadata> {
+) -> &mut LruCache<StateKey, ResidentMetadata> {
     match class {
         ResidentClass::Reclaimable => &mut inner.reclaimable,
         ResidentClass::Retained => &mut inner.retained,
     }
 }
 
-fn refresh_recency(inner: &mut ReadCacheInner, key: &BlockKey) {
+fn refresh_recency(inner: &mut ReadCacheInner, key: &StateKey) {
     let classified = inner.reclaimable.get(key).is_some() || inner.retained.get(key).is_some();
     debug_assert!(
         classified || !inner.cache.contains_key(key),
@@ -319,7 +319,7 @@ fn refresh_recency(inner: &mut ReadCacheInner, key: &BlockKey) {
     );
 }
 
-fn mark_reclaimable(inner: &mut ReadCacheInner, key: &BlockKey) -> bool {
+fn mark_reclaimable(inner: &mut ReadCacheInner, key: &StateKey) -> bool {
     if !inner.cache.contains_key(key) {
         return false;
     }
@@ -391,7 +391,7 @@ fn remove_lru_batch_from_class(
 fn record_residence_durations(
     removed: Vec<RemovedResident>,
     attributes: &[opentelemetry::KeyValue],
-) -> Vec<(BlockKey, Arc<SealedBlock>)> {
+) -> Vec<(StateKey, Arc<SealedBlock>)> {
     let removed_at = Instant::now();
     let metrics = core_metrics();
     removed
@@ -426,7 +426,7 @@ mod tests {
         Arc::new(SealedBlock::from_slots(Vec::new()))
     }
 
-    fn assert_class(cache: &ReadCache, key: &BlockKey, expected: ResidentClass) {
+    fn assert_class(cache: &ReadCache, key: &StateKey, expected: ResidentClass) {
         let inner = cache.inner.lock();
         assert!(inner.cache.contains_key(key));
         assert_eq!(
@@ -439,7 +439,7 @@ mod tests {
         );
     }
 
-    fn resident_metadata(cache: &ReadCache, key: &BlockKey) -> Option<ResidentMetadata> {
+    fn resident_metadata(cache: &ReadCache, key: &StateKey) -> Option<ResidentMetadata> {
         let inner = cache.inner.lock();
         inner
             .reclaimable
@@ -448,7 +448,7 @@ mod tests {
             .copied()
     }
 
-    fn backdate_resident(cache: &ReadCache, key: &BlockKey, age: Duration) -> Instant {
+    fn backdate_resident(cache: &ReadCache, key: &StateKey, age: Duration) -> Instant {
         let inserted_at = Instant::now() - age;
         let mut inner = cache.inner.lock();
         let metadata = if let Some(metadata) = inner.reclaimable.peek_mut(key) {
@@ -466,9 +466,9 @@ mod tests {
     #[test]
     fn new_blocks_are_classified_by_source() {
         let cache = make_cache();
-        let local = BlockKey::new("ns".into(), vec![1]);
-        let ssd = BlockKey::new("ns".into(), vec![2]);
-        let remote = BlockKey::new("ns".into(), vec![3]);
+        let local = StateKey::new("ns".into(), vec![1]);
+        let ssd = StateKey::new("ns".into(), vec![2]);
+        let remote = StateKey::new("ns".into(), vec![3]);
         let local_block = make_block();
 
         cache.batch_insert_refs(&[(local.clone(), local_block)]);
@@ -483,8 +483,8 @@ mod tests {
     #[test]
     fn reclaimable_blocks_are_evicted_before_retained_blocks() {
         let cache = make_cache();
-        let retained = BlockKey::new("ns".into(), vec![1]);
-        let reclaimable = BlockKey::new("ns".into(), vec![2]);
+        let retained = StateKey::new("ns".into(), vec![1]);
+        let reclaimable = StateKey::new("ns".into(), vec![2]);
 
         cache.batch_insert(vec![(retained.clone(), make_block())]);
         cache.batch_insert_resident_keys(vec![(reclaimable.clone(), make_block())]);
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn pressure_reclaim_ignores_weak_references() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         let block = make_block();
         let weak = Arc::downgrade(&block);
         cache.batch_insert(vec![(key.clone(), block)]);
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn pressure_reclaim_waits_for_external_strong_reference() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         let block = make_block();
         let external = Arc::clone(&block);
         let weak = Arc::downgrade(&block);
@@ -528,8 +528,8 @@ mod tests {
     #[test]
     fn local_hit_refreshes_recency_without_changing_class() {
         let cache = make_cache();
-        let hit = BlockKey::new("ns".into(), vec![1]);
-        let oldest = BlockKey::new("ns".into(), vec![2]);
+        let hit = StateKey::new("ns".into(), vec![1]);
+        let oldest = StateKey::new("ns".into(), vec![2]);
 
         cache.batch_insert_resident_keys(vec![
             (hit.clone(), make_block()),
@@ -550,8 +550,8 @@ mod tests {
     #[test]
     fn serving_hit_refreshes_recency_without_changing_class() {
         let cache = make_cache();
-        let hit = BlockKey::new("ns".into(), vec![1]);
-        let oldest = BlockKey::new("ns".into(), vec![2]);
+        let hit = StateKey::new("ns".into(), vec![1]);
+        let oldest = StateKey::new("ns".into(), vec![2]);
 
         cache.batch_insert(vec![
             (hit.clone(), make_block()),
@@ -571,10 +571,10 @@ mod tests {
     #[test]
     fn already_existing_insert_keeps_original_class() {
         let cache = make_cache();
-        let remote_first = BlockKey::new("ns".into(), vec![1]);
-        let remote_other = BlockKey::new("ns".into(), vec![2]);
-        let local_first = BlockKey::new("ns".into(), vec![3]);
-        let local_other = BlockKey::new("ns".into(), vec![4]);
+        let remote_first = StateKey::new("ns".into(), vec![1]);
+        let remote_other = StateKey::new("ns".into(), vec![2]);
+        let local_first = StateKey::new("ns".into(), vec![3]);
+        let local_other = StateKey::new("ns".into(), vec![4]);
 
         cache.batch_insert_resident_keys(vec![(remote_first.clone(), make_block())]);
         cache.batch_insert_resident_keys(vec![(remote_other.clone(), make_block())]);
@@ -594,7 +594,7 @@ mod tests {
     #[test]
     fn already_existing_insert_preserves_residence_start() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         cache.batch_insert(vec![(key.clone(), make_block())]);
         let inserted_at = backdate_resident(&cache, &key, Duration::from_secs(60));
 
@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn class_migration_preserves_residence_start() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         cache.batch_insert(vec![(key.clone(), make_block())]);
         let inserted_at = backdate_resident(&cache, &key, Duration::from_secs(60));
 
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn reinsert_after_eviction_starts_new_residence_episode() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         cache.batch_insert(vec![(key.clone(), make_block())]);
         let first_inserted_at = backdate_resident(&cache, &key, Duration::from_secs(60));
 
@@ -650,7 +650,7 @@ mod tests {
     #[test]
     fn local_save_reports_resident_keys() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
 
         assert_eq!(
             cache.batch_insert_refs(&[(key.clone(), make_block())]),
@@ -665,9 +665,9 @@ mod tests {
     #[test]
     fn reclaimable_hashes_move_only_matching_residents() {
         let cache = make_cache();
-        let retained = BlockKey::new("ns".into(), vec![1]);
-        let reclaimable = BlockKey::new("ns".into(), vec![2]);
-        let other_namespace = BlockKey::new("other".into(), vec![1]);
+        let retained = StateKey::new("ns".into(), vec![1]);
+        let reclaimable = StateKey::new("ns".into(), vec![2]);
+        let other_namespace = StateKey::new("other".into(), vec![1]);
 
         cache.batch_insert(vec![
             (retained.clone(), make_block()),
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn reclaimable_hash_for_evicted_block_is_noop() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         cache.batch_insert(vec![(key.clone(), make_block())]);
         cache.remove_lru_batch(1);
 
@@ -696,9 +696,9 @@ mod tests {
     #[test]
     fn get_blocks_returns_existing_skips_missing() {
         let cache = make_cache();
-        let key1 = BlockKey::new("ns".into(), vec![1]);
-        let key2 = BlockKey::new("ns".into(), vec![2]);
-        let key3 = BlockKey::new("ns".into(), vec![3]);
+        let key1 = StateKey::new("ns".into(), vec![1]);
+        let key2 = StateKey::new("ns".into(), vec![2]);
+        let key3 = StateKey::new("ns".into(), vec![3]);
 
         cache.batch_insert(vec![
             (key1.clone(), make_block()),
@@ -722,8 +722,8 @@ mod tests {
     #[test]
     fn get_blocks_all_missing_returns_empty() {
         let cache = make_cache();
-        let key1 = BlockKey::new("ns".into(), vec![10]);
-        let key2 = BlockKey::new("ns".into(), vec![20]);
+        let key1 = StateKey::new("ns".into(), vec![10]);
+        let key2 = StateKey::new("ns".into(), vec![20]);
 
         let result = cache.get_blocks(&[key1, key2]);
         assert!(result.is_empty());
@@ -732,7 +732,7 @@ mod tests {
     #[test]
     fn get_blocks_is_idempotent() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         cache.batch_insert(vec![(key.clone(), make_block())]);
 
         // Call get_blocks twice; both should return the same result
@@ -747,8 +747,8 @@ mod tests {
     fn get_blocks_does_not_break_at_first_miss() {
         // Contrast with get_prefix_blocks which stops at first miss
         let cache = make_cache();
-        let keys: Vec<BlockKey> = (0u8..5)
-            .map(|i| BlockKey::new("ns".into(), vec![i]))
+        let keys: Vec<StateKey> = (0u8..5)
+            .map(|i| StateKey::new("ns".into(), vec![i]))
             .collect();
 
         // Insert only even-indexed keys: 0, 2, 4
@@ -768,8 +768,8 @@ mod tests {
     #[test]
     fn remove_all_evicts_resident_blocks() {
         let cache = make_cache();
-        let key1 = BlockKey::new("ns".into(), vec![1]);
-        let key2 = BlockKey::new("ns".into(), vec![2]);
+        let key1 = StateKey::new("ns".into(), vec![1]);
+        let key2 = StateKey::new("ns".into(), vec![2]);
 
         cache.batch_insert(vec![
             (key1.clone(), make_block()),
@@ -789,8 +789,8 @@ mod tests {
     #[test]
     fn batch_insert_resident_keys_excludes_lfu_rejected_blocks() {
         let cache = ReadCache::new(1, true, Some(1));
-        let hot_key = BlockKey::new("ns".into(), vec![1]);
-        let cold_key = BlockKey::new("ns".into(), vec![2]);
+        let hot_key = StateKey::new("ns".into(), vec![1]);
+        let cold_key = StateKey::new("ns".into(), vec![2]);
 
         assert_eq!(
             cache.batch_insert_resident_keys(vec![(hot_key.clone(), make_block())]),
@@ -814,7 +814,7 @@ mod tests {
     #[test]
     fn batch_insert_resident_keys_includes_already_existing_blocks() {
         let cache = make_cache();
-        let key = BlockKey::new("ns".into(), vec![1]);
+        let key = StateKey::new("ns".into(), vec![1]);
         cache.batch_insert(vec![(key.clone(), make_block())]);
 
         assert_eq!(

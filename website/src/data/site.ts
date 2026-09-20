@@ -16,7 +16,7 @@ export const layers = [
     name: "orbitkv-state",
     role: "Name the state.",
     detail:
-      "State identity, page, and recovery types; full validation is not yet in the cache hot path.",
+      "Versioned model and storage keys across cache tiers; complete token-span and recovery validation is still planned.",
     path: "crates/orbitkv-state/src/lib.rs",
   },
   {

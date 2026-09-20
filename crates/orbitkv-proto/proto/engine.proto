@@ -55,127 +55,8 @@ message RegisterContextRequest {
   repeated uint32 layer_group_ids = 19;
 }
 
-message RegisterContextResponse {
-  ResponseStatus status = 1;
-}
-
-message SaveLayer {
-  string layer_name = 1;
-  repeated uint32 block_ids = 2;
-  repeated bytes block_hashes = 3;
-}
-
-message SaveRequest {
-  string instance_id = 1;
-  uint32 tp_rank = 2;
-  int32 device_id = 3;
-  repeated SaveLayer saves = 4;
-  uint32 pp_rank = 5;
-}
-
-message SaveResponse {
-  ResponseStatus status = 1;
-}
-
-message LoadRequest {
-  string instance_id = 1;
-  uint32 tp_rank = 2;
-  int32 device_id = 3;
-  string load_state_shm = 4;
-  repeated LoadGroup groups = 5;
-  repeated LeaseLoad loads = 6;
-}
-
-message LoadGroup {
-  repeated string layer_names = 1;
-}
-
-message LoadBlockIds {
-  repeated LoadBlockTarget targets = 1;
-}
-
-message LoadBlockTarget {
-  // Absent for cache groups that have no physical destination for this
-  // logical block (for example historical recurrent-state blocks in HMA).
-  oneof target {
-    uint32 block_id = 1;
-  }
-}
-
-message LeaseLoad {
-  bytes lease = 1;
-  repeated LoadBlockIds block_ids_by_group = 2;
-}
-
-message LoadResponse {
-  ResponseStatus status = 1;
-}
-
-message QueryRequest {
-  string instance_id = 1;
-  repeated bytes block_hashes = 2;
-  string req_id = 3;
-  // Keep the query in Loading until the full remaining prefix is fetchable
-  // from a remote node via MetaServer + Mooncake. Does not observe saves landing
-  // in the local engine; no effect when remote transfer is not configured. On groups > 0
-  // this switches the membership query to an all-or-nothing set fetch: the
-  // hash list is an exact want-set, misses are pulled from SSD / remote
-  // peers, and a Ready answer shorter than the request means the set could
-  // not be completed anywhere: callers treat it as a miss, and it carries no
-  // lease (the short hit count is reported for observability only).
-  bool wait_for_full_prefix = 4;
-  // Hybrid-cache storage group to query. 0 (default) is the attention group
-  // and uses prefix semantics (hit count + lease over the contiguous prefix,
-  // SSD/remote prefetch eligible). Groups > 0 use membership semantics: every
-  // position reports independently (QueryReady.hit_positions), hits are not
-  // prefix-clamped, and the lease pins exactly the hit blocks; local-only
-  // unless wait_for_full_prefix requests the remote-fetching set form.
-  uint32 group_id = 5;
-}
-
-message QueryResponse {
-  oneof outcome {
-    QueryLoading loading = 1;
-    QueryReady ready = 2;
-  }
-}
-
-message QueryLoading {}
-
-message QueryReady {
-  // Prefix query (group_id = 0): number of leading hit blocks.
-  // Membership query (group_id > 0): number of hit positions in total.
-  uint64 num_hit_blocks = 1;
-  // Lease over the hit blocks: the prefix for group 0, or exactly the blocks
-  // at hit_positions (in that order) for membership queries. Empty on 0 hits.
-  bytes lease = 2;
-  // Membership queries only: indices into QueryRequest.block_hashes whose
-  // block is cached, in ascending order. The lease's i-th block corresponds
-  // to query position hit_positions[i]. Position-aligned so hybrid callers
-  // can pick e.g. the rightmost recurrent checkpoint within the attention
-  // prefix without a second round trip.
-  repeated uint32 hit_positions = 3;
-}
-
-message ReleaseRequest {
-  bytes lease = 1;
-}
-
-message ReleaseResponse {
-}
-
 message UnregisterRequest {
   string instance_id = 1;
-}
-
-message UnregisterResponse {
-  ResponseStatus status = 1;
-}
-
-message ShutdownRequest {}
-
-message ShutdownResponse {
-  ResponseStatus status = 1;
 }
 
 message HealthRequest {}
@@ -184,18 +65,13 @@ message HealthResponse {
   ResponseStatus status = 1;
 }
 
-// Liveness session: vllm opens a server-streaming RPC at startup and holds
-// it for the lifetime of the instance. Server detects client disconnect
-// (process death → TCP FIN) and auto-releases the instance's CUDA IPC
-// mappings. Stream events are reserved for future server→client hints.
+// Liveness session carried over the authenticated UDS bootstrap connection.
+// Closing the socket releases the instance and its imported GPU mappings.
 message SessionRequest {
   string instance_id = 1;
   string namespace   = 2;
   uint32 tp_size     = 3;
   uint32 world_size  = 4;
-}
-
-message SessionEvent {
 }
 
 // Cross-node transfer: authorized Mooncake-visible ranges.

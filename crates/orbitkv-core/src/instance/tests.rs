@@ -97,10 +97,23 @@ fn single_worker_registration_seals_topology() {
     assert_eq!(topology.slot_index(2, 0).unwrap(), 2);
     assert_eq!(topology.total_slots(), 4);
 
-    // Topology parameters are pinned at creation.
-    assert!(instance.verify_topology(1, 1, false).is_ok());
-    assert!(instance.verify_topology(2, 1, false).is_err());
-    assert!(instance.verify_topology(1, 2, false).is_err());
+    // State identity and topology are pinned at creation.
+    assert!(instance.verify_identity("other-model", 1, 1, None).is_err());
+    assert!(
+        instance
+            .verify_identity("model-ns", 1, 1, Some(false))
+            .is_ok()
+    );
+    assert!(
+        instance
+            .verify_identity("model-ns", 2, 1, Some(false))
+            .is_err()
+    );
+    assert!(
+        instance
+            .verify_identity("model-ns", 1, 2, Some(false))
+            .is_err()
+    );
 
     // A sealed instance accepts no further devices.
     let err = instance
@@ -153,8 +166,16 @@ fn page_first_collapses_slots_and_lays_out_page() {
 
     // page_first is part of the topology contract: a mismatched re-registration
     // intent is rejected.
-    assert!(instance.verify_topology(1, 1, true).is_ok());
-    assert!(instance.verify_topology(1, 1, false).is_err());
+    assert!(
+        instance
+            .verify_identity("page-ns", 1, 1, Some(true))
+            .is_ok()
+    );
+    assert!(
+        instance
+            .verify_identity("page-ns", 1, 1, Some(false))
+            .is_err()
+    );
 }
 
 /// Full-replica: identical registered sets collapse to one shard whose page is

@@ -1,9 +1,34 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
 use crate::{StateComponent, StateFormat};
 
 pub type Digest = [u8; 32];
+
+/// One stored slot's geometry, independent of GPU address and pool capacity.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct StorageSlot {
+    pub layer: String,
+    pub group: u32,
+    pub tp_rank: usize,
+    pub pp_rank: usize,
+    pub segment_bytes: usize,
+    pub padded_block_bytes: usize,
+    pub split: bool,
+}
+
+/// Bind the adapter identity to the representation the manager actually stores.
+/// Called once when registration seals, never while probing individual blocks.
+pub fn storage_namespace(identity: &str, page_first: bool, mut slots: Vec<StorageSlot>) -> String {
+    slots.sort_unstable();
+    slots.dedup();
+    let mut digest = Sha256::new();
+    digest.update(b"orbitkv.storage-identity.v1\0");
+    // Only strings, booleans and integers are serialized; serialization cannot fail.
+    digest.update(serde_json::to_vec(&(identity, page_first, slots)).expect("storage identity"));
+    format!("orbitkv:v1:{:x}", digest.finalize())
+}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ContractError {
@@ -35,11 +60,129 @@ impl TokenRange {
     }
 }
 
-/// Stable logical identity of one restorable state component.
+/// Logical recovery evidence. Adapters must supply real token coverage before
+/// using this descriptor to prove a recovery boundary.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct StateKey {
+pub struct StateDescriptor {
     pub content: Digest,
     pub span: TokenRange,
     pub component: StateComponent,
     pub format: StateFormat,
+}
+
+/// Materialized cache key used by DRAM, SSD and the peer directory.
+///
+/// `namespace` binds immutable model artifacts, computation and representation.
+/// `hash` is the versioned encoding of the engine-native chained prefix hash and
+/// cache group. A key match alone does not prove a multi-component boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StateKey {
+    pub namespace: String,
+    pub hash: Vec<u8>,
+}
+
+impl StateKey {
+    pub fn new(namespace: String, hash: Vec<u8>) -> Self {
+        Self { namespace, hash }
+    }
+
+    pub fn estimated_size(&self) -> u64 {
+        (self.namespace.capacity() + self.hash.capacity() + std::mem::size_of::<Self>()) as u64
+    }
+}
+
+/// Domain and length-framed engine-native content hash, including group zero.
+/// There is no legacy/raw-hash key form.
+pub fn group_hash(hash: &[u8], group_id: u32) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(16 + hash.len());
+    encoded.extend_from_slice(b"OKS\x01");
+    encoded.extend_from_slice(&group_id.to_le_bytes());
+    encoded.extend_from_slice(&(hash.len() as u64).to_le_bytes());
+    encoded.extend_from_slice(hash);
+    encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_identity_is_stable_and_isolates_incompatible_slots() {
+        let first = StorageSlot {
+            layer: "layer.0".into(),
+            group: 0,
+            tp_rank: 0,
+            pp_rank: 0,
+            segment_bytes: 128,
+            padded_block_bytes: 256,
+            split: true,
+        };
+        let mut second = first.clone();
+        second.layer = "layer.1".into();
+        let namespace = storage_namespace("model-v1", false, vec![first.clone(), second.clone()]);
+        assert_eq!(
+            namespace,
+            storage_namespace(
+                "model-v1",
+                false,
+                vec![second.clone(), first.clone(), first.clone()]
+            )
+        );
+        for changed in [
+            StorageSlot {
+                group: 1,
+                ..first.clone()
+            },
+            StorageSlot {
+                tp_rank: 1,
+                ..first.clone()
+            },
+            StorageSlot {
+                pp_rank: 1,
+                ..first.clone()
+            },
+            StorageSlot {
+                segment_bytes: 256,
+                ..first.clone()
+            },
+            StorageSlot {
+                padded_block_bytes: 512,
+                ..first.clone()
+            },
+            StorageSlot {
+                split: false,
+                ..first.clone()
+            },
+        ] {
+            assert_ne!(
+                namespace,
+                storage_namespace("model-v1", false, vec![changed, second.clone()])
+            );
+        }
+        assert_ne!(
+            namespace,
+            storage_namespace("model-v2", false, vec![first.clone(), second.clone()])
+        );
+        assert_ne!(
+            namespace,
+            storage_namespace("model-v1", true, vec![first, second])
+        );
+    }
+
+    #[test]
+    fn group_encoding_is_versioned_and_unambiguous_for_every_hash_length() {
+        assert_eq!(
+            group_hash(&[0xaa, 0xbb], 0),
+            [
+                b"OKS\x01".as_slice(),
+                &0u32.to_le_bytes(),
+                &2u64.to_le_bytes(),
+                &[0xaa, 0xbb]
+            ]
+            .concat()
+        );
+        assert_ne!(group_hash(&[1, 2], 0), vec![1, 2]);
+        assert_ne!(group_hash(&[1, 2], 1), group_hash(&[1, 2], 2));
+        assert_ne!(group_hash(&[1, 2], 1), group_hash(&[1, 2, 0, 0, 0, 1], 0));
+    }
 }

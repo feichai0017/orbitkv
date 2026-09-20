@@ -18,10 +18,6 @@ pub(crate) struct SessionTopology {
 
 struct SessionEntry {
     token: u64,
-    #[allow(
-        dead_code,
-        reason = "session topology is retained for registration validation"
-    )]
     topology: SessionTopology,
 }
 
@@ -61,7 +57,6 @@ impl SessionRegistry {
         token
     }
 
-    #[cfg(test)]
     pub(crate) fn topology(&self, instance_id: &str) -> Option<SessionTopology> {
         self.sessions
             .get(instance_id)

@@ -1,6 +1,6 @@
 use dashmap::{DashMap, mapref::entry::Entry};
 use log::{info, warn};
-use orbitkv_common::BlockKey;
+use orbitkv_state::StateKey;
 use std::collections::HashMap;
 use std::sync::{
     Arc,
@@ -139,7 +139,7 @@ impl RedundancyCounters {
 /// `blocks` maps each block key to node URL ownership records. `nodes` tracks
 /// the current MetaServer session and liveness for each node URL.
 pub struct BlockHashStore {
-    blocks: DashMap<BlockKey, HashMap<Arc<str>, OwnerRecord>>,
+    blocks: DashMap<StateKey, HashMap<Arc<str>, OwnerRecord>>,
     nodes: DashMap<Arc<str>, NodeRecord>,
     config: StoreConfig,
     reconcile_needed: AtomicBool,
@@ -243,7 +243,7 @@ impl BlockHashStore {
         let now = Instant::now();
         let mut reclaimable_hashes = Vec::new();
         for hash in hashes {
-            let key = BlockKey::new(namespace.to_string(), hash.clone());
+            let key = StateKey::new(namespace.to_string(), hash.clone());
             // Lock blocks before nodes, and keep session validation valid through the write.
             let entry = self.blocks.entry(key);
             let record = self
@@ -291,7 +291,7 @@ impl BlockHashStore {
         self.touch_node_session(node, node_id)?;
         let mut removed = 0;
         for hash in hashes {
-            let key = BlockKey::new(namespace.to_string(), hash.clone());
+            let key = StateKey::new(namespace.to_string(), hash.clone());
             if let Entry::Occupied(mut entry) = self.blocks.entry(key) {
                 let owners = entry.get_mut();
                 let before = owners.len();
@@ -316,7 +316,7 @@ impl BlockHashStore {
         let now = Instant::now();
         let mut result = Vec::new();
         for hash in hashes {
-            let key = BlockKey::new(namespace.to_string(), hash.clone());
+            let key = StateKey::new(namespace.to_string(), hash.clone());
             let Some(owners) = self.blocks.get(&key) else {
                 break;
             };
@@ -535,7 +535,7 @@ pub(crate) mod tests {
             let stale = Instant::now() - Duration::from_secs(31);
             store.nodes.get_mut("a").unwrap().last_seen = stale;
             std::thread::scope(|scope| {
-                let mut entry = store.blocks.entry(BlockKey::new("ns".into(), vec![1]));
+                let mut entry = store.blocks.entry(StateKey::new("ns".into(), vec![1]));
                 let insert = scope.spawn(|| store.insert_hashes("ns", &[vec![1]], "a", old));
                 wait_until(|| store.nodes.get("a").unwrap().last_seen > stale);
                 store.nodes.get_mut("a").unwrap().last_seen = stale;
@@ -564,7 +564,7 @@ pub(crate) mod tests {
         std::thread::scope(|scope| {
             let guard = store
                 .blocks
-                .get_mut(&BlockKey::new("ns".into(), vec![1]))
+                .get_mut(&StateKey::new("ns".into(), vec![1]))
                 .unwrap();
             let sweep = scope.spawn(|| store.sweep_expired());
             wait_until(|| !store.reconcile_needed.load(Ordering::Acquire));
@@ -587,7 +587,7 @@ pub(crate) mod tests {
         std::thread::scope(|scope| {
             let mut owners = store
                 .blocks
-                .get_mut(&BlockKey::new("ns".into(), vec![1]))
+                .get_mut(&StateKey::new("ns".into(), vec![1]))
                 .unwrap();
             let unregister = scope.spawn(|| store.unregister_node("a", old));
             wait_until(|| !store.nodes.contains_key("a"));
@@ -611,7 +611,7 @@ pub(crate) mod tests {
         // Healthy sweeps and entry metrics must not wait for block shard locks.
         let guard = store
             .blocks
-            .get_mut(&BlockKey::new("ns".into(), vec![1]))
+            .get_mut(&StateKey::new("ns".into(), vec![1]))
             .unwrap();
         std::thread::scope(|scope| {
             let (tx, rx) = std::sync::mpsc::channel();
@@ -1159,7 +1159,7 @@ pub(crate) mod tests {
                 .unwrap();
             store
                 .blocks
-                .get_mut(&BlockKey::new("ns".into(), hash.clone()))
+                .get_mut(&StateKey::new("ns".into(), hash.clone()))
                 .unwrap()
                 .get_mut("node-a")
                 .unwrap()

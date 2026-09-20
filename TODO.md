@@ -46,10 +46,13 @@ and a passing gate; design text alone does not close an item.
 
 ## M2 — common bundle and local IPC
 
-- [ ] Define a versioned model fingerprint covering immutable weight revision,
-  tokenizer/processor, adapters, and implementation identity in both adapters.
-- [ ] Replace namespace-plus-hash hot keys with canonical `StateKey` in Query,
-  Publish, DRAM/SSD, and remote catalog records; invalidate old entries.
+- [x] Fingerprint immutable model artifacts and bind computation/configuration in
+  both adapters; reject dynamic LoRA until adapter-content identities are available.
+- [x] Use the shared versioned `StateKey` across DRAM/SSD and remote directory
+  records; include actual registered storage geometry and invalidate old keys.
+- [ ] Carry absolute token spans and component evidence from both engines into
+  shared recovery validation; SGLang PoolTransfer currently supplies only hashes.
+- [ ] Support adapter identities and invalidate caches on live weight updates.
 - [ ] Convert the vLLM cache-group layout to `StateBundle`.
 - [ ] Define a recovery validator for matching token coverage, model/format,
   and complete hybrid component sets before using bundles for cache hits.

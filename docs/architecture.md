@@ -68,7 +68,7 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Layer | Code | Owns |
 | --- | --- | --- |
 | Framework adapters | `python/orbitkv/vllm`, `python/orbitkv/sglang` | Framework-specific hashes, layout, and page-lifetime events |
-| Cache client | `python/orbitkv/client/data_plane.py`, `connection.py` | Query, publish, restore, release, lifecycle through the node-local connection |
+| Cache client | `python/orbitkv/client/manager.py`, `connection.py` | Query, publish, restore, release, lifecycle through the node-local connection |
 | State contract | `orbitkv-state` | State identity, format compatibility, bundles, page-reference types |
 | Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
@@ -112,7 +112,8 @@ block hashes / CUDA IPC     radix hashes / CUDA IPC
 This crate contains no framework or CUDA dependencies. Its first public types
 are:
 
-- `StateKey`: content identity, logical token span, component, and byte format;
+- `StateKey`: the materialized model/storage namespace and versioned native prefix/group key;
+- `StateDescriptor`: logical token span, component and format evidence for future recovery validation;
 - `StateFormat`: model/implementation digest, dtype, layout, and parallel shape;
 - `StateComponent`: attention KV, MLA, recurrent, convolution, SWA, draft, and
   indexer state;
@@ -131,9 +132,9 @@ blind cross-framework byte reuse.
 
 ### Framework adapters
 
-The adapters currently translate framework-native hashes and GPU layouts into
-the cache API. Full translation into `orbitkv-state` is the intended next
-step:
+The adapters resolve a shared versioned identity at startup and translate native
+hashes and GPU layouts into the cache API. The manager binds registered storage
+geometry and uses `StateKey` across tiers. Full recovery evidence is the next step:
 
 | Concern | vLLM | SGLang |
 | --- | --- | --- |
@@ -150,8 +151,10 @@ logic belongs in the common recovery contract.
 
 The current core provides content-addressed sealed blocks, NUMA-aware pinned
 memory, leases, LRU/TinyLFU admission, SSD, remote fetch, and session cleanup.
-It still accepts namespace + hash keys and raw engine page IDs. The common
-`StateKey` and generation-qualified page types are not enforced in the hot path.
+DRAM, SSD and the directory share `orbitkv-state::StateKey`; registration binds
+model identity to stored layout before Query/Publish. Engine page IDs remain raw,
+and generation-qualified page types and complete recovery proofs are not yet
+enforced. See [state identity](state-identity.md) for fingerprint configuration.
 
 ### Transfer and backing domains
 

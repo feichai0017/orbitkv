@@ -27,14 +27,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 def test_query_prefetch_ready_zero_contract(
     case: str,
     hash_count: int,
-    engine_client,
+    client,
     registered_instance: str,
     block_hashes: list[bytes],
 ):
     """A fresh server query returns Ready(0), not a dict or miss sentinel."""
     requested_hashes = block_hashes[:hash_count]
 
-    result = engine_client.query_prefetch(
+    result = client.query_prefetch(
         registered_instance,
         requested_hashes,
         req_id=f"query-contract-{case}",
