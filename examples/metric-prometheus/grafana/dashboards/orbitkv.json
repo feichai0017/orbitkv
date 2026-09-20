@@ -870,14 +870,9 @@
           "expr": "rate(orbitkv_inflight_gc_cleaned_total[1m])",
           "legendFormat": "inflight gc cleaned/sec",
           "refId": "A"
-        },
-        {
-          "expr": "rate(orbitkv_prefetch_stale_gc_total[1m])",
-          "legendFormat": "prefetch stale gc/sec",
-          "refId": "B"
         }
       ],
-      "title": "Background GC Rates",
+      "title": "Write GC Rate",
       "type": "timeseries"
     },
     {

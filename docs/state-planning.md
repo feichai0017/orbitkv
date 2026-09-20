@@ -347,6 +347,13 @@ stale-entry sweep. Fault tests must retain pages when DMA completion is unknown.
 
 ### P2: qualify actual SGLang SSD recovery
 
+The single-rank serving gate and the
+[Qwen3-8B SSD follow-up](ssd-performance.md#query-readiness-follow-up) now pass:
+both engines consume all 15 forced-SSD restores with matching SSD-read and
+GPU-load bytes. Cold and DRAM controls are retained, including the observed
+vLLM 1K storage-stage latency increase. Concurrent and multi-rank serving remain
+unqualified; controlled admission tests only cover the scheduling decisions.
+
 Connect the P0 admission lifecycle to P1. A ready, leased result must be consumed
 by the request's subsequent prefix match and restore. A verified miss, bounded
 waiting-policy expiration, or pre-transfer failure may lead to recomputation

@@ -83,7 +83,7 @@ Install the validated vLLM release and the wheel in one environment:
 ```bash
 uv venv .venv/vllm-release --python 3.11
 uv pip install --python .venv/vllm-release/bin/python 'vllm==0.29.0' --torch-backend=cu130
-uv pip install --python .venv/vllm-release/bin/python "$WHEEL"
+uv pip install --python .venv/vllm-release/bin/python --reinstall "$WHEEL"
 ```
 
 In terminal 1, start the manager with
@@ -125,7 +125,7 @@ environment:
 ```bash
 uv venv .venv/sglang-release --python 3.11
 uv pip install --python .venv/sglang-release/bin/python 'sglang==0.5.20' --torch-backend=cu130
-uv pip install --python .venv/sglang-release/bin/python "$WHEEL"
+uv pip install --python .venv/sglang-release/bin/python --reinstall "$WHEEL"
 ```
 
 Start the manager from this environment if it is not already running. Then:
