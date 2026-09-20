@@ -180,9 +180,9 @@ async fn wait_for_cache(
             )
             .await
             .expect("count_prefix_hit_blocks_with_prefetch");
-        let hit = match status {
-            PrefetchStatus::Ready { blocks, .. } => blocks.len(),
-            PrefetchStatus::Loading => 0,
+        let hit = {
+            let QueryResult { blocks, .. } = status;
+            blocks.len()
         };
         if hit >= expected_hit {
             return;
@@ -241,50 +241,6 @@ async fn wait_for_metaserver_ownership(
             "timed out waiting for MetaServer ownership by {node} ({owned} / {expected})"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-async fn wait_for_prefetch_done(
-    engine: &OrbitKVEngine,
-    instance_id: &str,
-    req_id: &str,
-    block_hashes: &[Vec<u8>],
-    expected_hit: usize,
-    timeout: Duration,
-    wait_for_full_prefix: bool,
-) -> QueryLeaseId {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let status = engine
-            .count_prefix_hit_blocks_with_prefetch(
-                instance_id,
-                req_id,
-                block_hashes,
-                wait_for_full_prefix,
-            )
-            .await
-            .expect("count_prefix_hit_blocks_with_prefetch");
-        match status {
-            PrefetchStatus::Ready { blocks, .. } if blocks.len() >= expected_hit => {
-                return engine
-                    .create_query_lease(instance_id, blocks)
-                    .expect("create query lease");
-            }
-            PrefetchStatus::Ready { blocks, missing } => {
-                assert!(
-                    Instant::now() < deadline,
-                    "prefetch done but hit={} missing={missing}, \
-                     expected hit>={expected_hit}",
-                    blocks.len()
-                );
-            }
-            PrefetchStatus::Loading => {}
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for prefetch done"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -440,16 +396,17 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // ── 8. Start the remote query before the producer registers the blocks ──
     let delayed_hashes = make_block_hashes(NUM_BLOCKS, 43);
-    let status = engine_b
-        .count_prefix_hit_blocks_with_prefetch(
-            "inst-b",
-            "req-wait-for-producer",
-            &delayed_hashes,
-            true,
-        )
-        .await
-        .expect("start producer wait");
-    assert!(matches!(status, PrefetchStatus::Loading));
+    let mut waiting = Box::pin(engine_b.count_prefix_hit_blocks_with_prefetch(
+        "inst-b",
+        "req-wait-for-producer",
+        &delayed_hashes,
+        true,
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+            .await
+            .is_err()
+    );
 
     engine_a
         .batch_save_kv_blocks_from_ipc(
@@ -476,16 +433,14 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     .await;
 
     // ── 9. Engine B observes the producer and fetches via Mooncake READ ──
-    let lease = wait_for_prefetch_done(
-        &engine_b,
-        "inst-b",
-        "req-wait-for-producer",
-        &delayed_hashes,
-        NUM_BLOCKS,
-        Duration::from_secs(30),
-        true,
-    )
-    .await;
+    let result = tokio::time::timeout(Duration::from_secs(30), waiting)
+        .await
+        .expect("remote fetch timeout")
+        .expect("remote fetch");
+    assert_eq!(result.blocks.len(), NUM_BLOCKS);
+    let lease = engine_b
+        .create_query_lease("inst-b", result.blocks)
+        .expect("lease");
 
     // ── 9b. Verify Engine B re-registered fetched blocks to MetaServer ──
     // Mooncake-fetched blocks are now resident on B, so B must advertise them so

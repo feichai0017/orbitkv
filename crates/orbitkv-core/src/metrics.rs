@@ -34,8 +34,6 @@ pub(crate) struct CoreMetrics {
     pub inflight_bytes: UpDownCounter<i64>,
     pub inflight_gc_cleaned: Counter<u64>,
     /// Prefetch tasks older than the background GC age threshold (default 5m).
-    pub prefetch_stale_gc_total: Counter<u64>,
-
     // Cache (sealed blocks in memory)
     pub cache_resident_bytes: UpDownCounter<i64>,
     pub cache_block_hits: Counter<u64>,
@@ -231,12 +229,6 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             inflight_gc_cleaned: meter
                 .u64_counter("orbitkv_inflight_gc_cleaned")
                 .with_description("Stale inflight blocks cleaned by background GC")
-                .build(),
-            prefetch_stale_gc_total: meter
-                .u64_counter("orbitkv_prefetch_stale_gc_total")
-                .with_description(
-                    "Stale prefetch active entries removed by background GC (potential hang)",
-                )
                 .build(),
 
             // Cache

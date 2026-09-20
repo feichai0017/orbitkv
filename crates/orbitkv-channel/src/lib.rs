@@ -28,9 +28,9 @@ pub use bootstrap::{
     PeerCredentials,
 };
 pub use cache_protocol::{
-    PublishLayer, PublishRequest, QueryBundleRequest, QueryBundleResponse, QueryCodecError,
-    QueryOutcomeCode, ReleaseRequest, RestoreCommand, RestoreLease, RestoreRequest,
-    RestoreResponse, RestoreState,
+    CancelQueryRequest, PublishLayer, PublishRequest, QueryBundleRequest, QueryBundleResponse,
+    QueryCodecError, QueryOutcomeCode, ReleaseRequest, RestoreCommand, RestoreLease,
+    RestoreRequest, RestoreResponse, RestoreState,
 };
 #[cfg(target_os = "linux")]
 pub use client::{ChannelClient, ChannelError};

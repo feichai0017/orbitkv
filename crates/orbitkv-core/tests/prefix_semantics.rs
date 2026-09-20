@@ -7,7 +7,7 @@
 mod common;
 
 use common::*;
-use orbitkv_core::PrefetchStatus;
+use orbitkv_core::QueryResult;
 
 /// Save first 3 of 5 blocks; prefix scan should stop at block 3.
 #[tokio::test]
@@ -21,12 +21,10 @@ async fn partial_prefix_reports_contiguous_hit_count() {
 
     env.save_layer_and_flush(0, &save_hashes).await;
 
-    match env.query(&query_hashes).await {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), 3);
-            assert_eq!(missing, 2);
-        }
-        other => panic!("expected Ready, got {other:?}"),
+    {
+        let QueryResult { blocks, missing } = env.query(&query_hashes).await;
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(missing, 2);
     }
 }
 
@@ -48,12 +46,10 @@ async fn gap_in_cached_blocks_breaks_prefix() {
 
     env.save_layer_and_flush(0, &save_hashes).await;
 
-    match env.query(&all_hashes).await {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), 1, "prefix should stop at first gap");
-            assert_eq!(missing, 3);
-        }
-        other => panic!("expected Ready, got {other:?}"),
+    {
+        let QueryResult { blocks, missing } = env.query(&all_hashes).await;
+        assert_eq!(blocks.len(), 1, "prefix should stop at first gap");
+        assert_eq!(missing, 3);
     }
 }
 
@@ -73,12 +69,10 @@ async fn first_block_missing_yields_zero_prefix_hit() {
 
     env.save_layer_and_flush(0, &save_hashes).await;
 
-    match env.query(&all_hashes).await {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), 0);
-            assert_eq!(missing, 4);
-        }
-        other => panic!("expected Ready, got {other:?}"),
+    {
+        let QueryResult { blocks, missing } = env.query(&all_hashes).await;
+        assert_eq!(blocks.len(), 0);
+        assert_eq!(missing, 4);
     }
     // hit=0, no lease would be created by the server.
 }
@@ -92,22 +86,18 @@ async fn ram_miss_does_not_poison_later_same_req_id_hit() {
         .build();
 
     let hashes = env.hashes(40);
-    match env.query(&hashes).await {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), 0);
-            assert_eq!(missing, hashes.len());
-        }
-        other => panic!("expected Ready, got {other:?}"),
+    {
+        let QueryResult { blocks, missing } = env.query(&hashes).await;
+        assert_eq!(blocks.len(), 0);
+        assert_eq!(missing, hashes.len());
     }
 
     env.save_layer_and_flush(0, &hashes).await;
 
-    match env.query(&hashes).await {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), hashes.len());
-            assert_eq!(missing, 0);
-        }
-        other => panic!("expected Ready, got {other:?}"),
+    {
+        let QueryResult { blocks, missing } = env.query(&hashes).await;
+        assert_eq!(blocks.len(), hashes.len());
+        assert_eq!(missing, 0);
     }
 }
 
@@ -118,11 +108,9 @@ async fn empty_query_returns_zero() {
         .layer("layer_0", 1, 1024)
         .build();
 
-    match env.query(&[]).await {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), 0);
-            assert_eq!(missing, 0);
-        }
-        other => panic!("expected Ready, got {other:?}"),
+    {
+        let QueryResult { blocks, missing } = env.query(&[]).await;
+        assert_eq!(blocks.len(), 0);
+        assert_eq!(missing, 0);
     }
 }

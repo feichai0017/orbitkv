@@ -35,10 +35,10 @@ the SGLang source submodule is pinned to that release. See
   Cache Manager's remote-cache fetch path. vLLM also provides its own NIXL P/D
   connector; OrbitKV does not ship a NIXL connector.
 
-The [Qwen3-8B SSD experiment](docs/ssd-performance.md) verified vLLM restores
-after DRAM eviction. SGLang currently starts SSD reads but does not wait for
-their readiness, so the measured requests recomputed instead of restoring.
-That scheduler integration remains unfinished.
+Both engines now pass single-rank GPU recovery gates after DRAM eviction.
+SGLang uses a plugin admission hook to wait for a leased result before
+allocating restore destinations. The [SSD measurements](docs/ssd-performance.md)
+retain the original failed-readiness baseline and the follow-up results.
 
 The initial storage and control data plane was imported from PegaFlow `0.24.5`
 and renamed throughout. The copied remote transfer stacks have since been

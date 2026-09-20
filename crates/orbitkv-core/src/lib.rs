@@ -33,9 +33,7 @@ pub use backing::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
     DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig,
 };
-pub use block::{
-    BlockHash, LayerBlock, LayerSave, PrefetchStatus, RawBlock, SealedBlock, StateKey,
-};
+pub use block::{BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, SealedBlock, StateKey};
 use instance::GpuRegistration;
 pub use instance::{GpuContext, InstanceContext};
 pub use internode::{
@@ -547,7 +545,7 @@ impl OrbitKVEngine {
         req_id: &str,
         block_hashes: &[Vec<u8>],
         wait_for_full_prefix: bool,
-    ) -> Result<PrefetchStatus, EngineError> {
+    ) -> Result<QueryResult, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
         let namespace = &topology.cache_namespace;
@@ -561,15 +559,13 @@ impl OrbitKVEngine {
             .check_prefix_and_prefetch(req_id, namespace, &encoded, wait_for_full_prefix)
             .await;
 
-        match &status {
-            PrefetchStatus::Ready { blocks, missing } => {
-                let metrics = core_metrics();
-                metrics.cache_block_hits.add(blocks.len() as u64, &[]);
-                if *missing > 0 {
-                    metrics.cache_block_misses.add(*missing as u64, &[]);
-                }
+        {
+            let QueryResult { blocks, missing } = &status;
+            let metrics = core_metrics();
+            metrics.cache_block_hits.add(blocks.len() as u64, &[]);
+            if *missing > 0 {
+                metrics.cache_block_misses.add(*missing as u64, &[]);
             }
-            PrefetchStatus::Loading => {}
         }
 
         Ok(status)
@@ -581,12 +577,12 @@ impl OrbitKVEngine {
     ///
     /// Where [`Self::query_group_membership`] answers from the resident read
     /// cache only, this treats `block_hashes` as an exact want-set: misses are
-    /// pulled from remote tiers, and the query stays `Loading` until the whole
+    /// pulled from remote tiers, and the future waits until the whole
     /// set is fetchable (the prefix machinery over an explicit key list *is*
     /// a set fetch once the full length is required). Use it when partial
     /// state is useless — e.g. restoring a recurrent-state checkpoint on a
     /// prefill/decode handoff, where the peer that saved the set holds every
-    /// member. A `Ready` result with fewer blocks than requested means the
+    /// member. A result with fewer blocks than requested means the
     /// set could not be completed anywhere; callers treat that as a miss.
     pub async fn query_group_membership_with_fetch(
         &self,
@@ -594,7 +590,7 @@ impl OrbitKVEngine {
         req_id: &str,
         group_id: u32,
         block_hashes: &[Vec<u8>],
-    ) -> Result<PrefetchStatus, EngineError> {
+    ) -> Result<QueryResult, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
         // Same contract as the local membership query: an unknown group is a
@@ -612,7 +608,8 @@ impl OrbitKVEngine {
             .check_prefix_and_prefetch(req_id, namespace, &encoded, true)
             .await;
 
-        if let PrefetchStatus::Ready { blocks, missing } = &status {
+        {
+            let QueryResult { blocks, missing } = &status;
             let metrics = core_metrics();
             metrics.cache_block_hits.add(blocks.len() as u64, &[]);
             if *missing > 0 {
@@ -975,17 +972,9 @@ impl OrbitKVEngine {
         self.storage.flush_ssd().await;
     }
 
-    /// Remove stale inflight blocks and failed_remote entries (background GC).
-    ///
-    /// Should be called periodically (e.g., every 30 seconds).
-    pub async fn gc_stale_inflight(
-        &self,
-        inflight_max_age: std::time::Duration,
-        failed_remote_max_age: std::time::Duration,
-    ) -> (usize, usize) {
-        self.storage
-            .gc_stale_inflight(inflight_max_age, failed_remote_max_age)
-            .await
+    /// Remove abandoned writes. Query futures drain independently of polling.
+    pub async fn gc_stale_inflight(&self, max_age: std::time::Duration) -> usize {
+        self.storage.gc_stale_inflight(max_age).await
     }
 
     // =========================================================================

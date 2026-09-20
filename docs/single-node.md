@@ -10,7 +10,7 @@ No MetaServer or peer gRPC listener is needed for this deployment.
 | Adapter | Validated release | Single-node path | Current limit |
 | --- | --- | --- | --- |
 | vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Cross-host TP query fan-out is unsupported; model-specific hybrid layouts need their own recovery qualification |
-| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA with one KV pool; single-rank DRAM recovery qualified, SSD readiness and multi-rank TP need further integration and validation |
+| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA with one KV pool; single-rank DRAM/SSD recovery qualified; multi-rank TP needs separate serving validation |
 
 These are tested release targets, not an assertion that every model or GPU
 topology is qualified. The local cache has correctness gates, but no current
@@ -63,10 +63,10 @@ engine's HBM allocator. Set `--pool-size` according to host RAM and the desired
 cache budget. To enable an SSD backing cache, add for example
 `--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb` to the
 manager command. The current SSD cache file is truncated on manager startup;
-it is not durable across a manager restart. vLLM SSD restoration after DRAM
-eviction is measured. SGLang's pending-query handling is unfinished: its
-requests can recompute while SSD reads run in the background. See the
-[SSD experiment](ssd-performance.md) before enabling that tier for SGLang.
+it is not durable across a manager restart. Both engines have single-rank recovery gates after forced DRAM eviction.
+SGLang holds a pending request in its scheduler queue until a leased result is
+available, with a five-second preparation budget before recomputation.
+See the [SSD measurements](ssd-performance.md) for latency and scope.
 See [manager options](server.md) for the other capacity and queue controls.
 
 The manager, each engine process, and their GPU buffers must be on the same
@@ -141,7 +141,11 @@ ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
 
 The OrbitKV wheel registers the SGLang plugin. Both linker flags are required:
 the external-linker flag makes SGLang schedule GPU restores and process their
-completion events. SGLang owns the radix tree and HBM pages; OrbitKV saves
+completion events. The plugin also registers a general `HookRegistry` admission
+hook on the pinned release's `PrefillAdder.add_one_req`. Pending queries keep
+only their request queued, and the next prefix match consumes the ready lease.
+Changed keys, request cancellation, and reset cancel pending manager queries;
+submitted GPU loads retain their existing completion fences. SGLang owns the radix tree and HBM pages; OrbitKV saves
 page-aligned KV externally and restores it into SGLang-owned slots. The current
 linker accepts ordinary full-attention MHA and MLA with one KV pool. It rejects
 hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state at startup because
@@ -190,7 +194,7 @@ adapter today.
 
 | Topology | vLLM | SGLang |
 | --- | --- | --- |
-| One engine and one manager on a host | Validated DRAM recovery and measured SSD restoration on the pinned release | Validated single-rank full-attention DRAM recovery; SSD readiness handling is unfinished |
+| One engine and one manager on a host | Validated DRAM recovery and measured SSD restoration on the pinned release | Validated single-rank full-attention DRAM and SSD recovery through plugin admission |
 | Multiple engine instances sharing one host manager | Instances can use the same local socket; use immutable model identities and qualify concurrency for the workload | Instances can use the same local socket; rank/layout-scoped namespaces isolate incompatible pages, and concurrent multi-rank recovery still needs a GPU gate |
 | Replicas on separate hosts | One manager per host plus the current MetaServer and Mooncake fetch; experimental | The same node-local adapter connection with one manager per host; remote fetch and multi-rank behavior still need qualification |
 | One TP replica split across hosts | Unsupported by the current scheduler-to-manager query fan-out | Not qualified by the current single-rank GPU gate |

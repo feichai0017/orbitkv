@@ -1,5 +1,9 @@
 # Qwen3-8B SSD restoration measurements
 
+The original experiment below records the pre-admission implementation. The
+[query-readiness follow-up](#query-readiness-follow-up) describes the current
+serving path; keep the baseline results when comparing revisions.
+
 Measured September 21, 2026 at source commit `45caecfb`, with the same H20,
 Qwen3-8B revision `b968826d9c46dd6066d109eabc6255188de91218`, vLLM 0.29.0,
 SGLang 0.5.20, BF16, TP=1, and 64-token pages as the
@@ -61,7 +65,7 @@ bytes into GPU memory and reported zero cached tokens. Its `lookup` returns an
 empty match on `QueryLoading`, so the scheduler continues with prefill. The
 last 64-token page is not part of SGLang's restore boundary for these prompts.
 The vLLM connector can return an unresolved match to its scheduler and retry;
-the SGLang linker does not currently have equivalent pending-query handling.
+the baseline SGLang linker had no equivalent pending-query handling.
 
 This is an integration readiness gap, not evidence that SSD copies are too
 slow to help SGLang. Never advertise the SGLang recomputation row as an SSD
@@ -107,8 +111,10 @@ inference; these output observations are not a proof of byte integrity.
 
 The separate GPU integration test exercises SSD write completion, DRAM
 eviction, explicit polling to `QueryReady`, and restoration into poisoned GPU
-destinations for both stored page layouts. Its explicit readiness polling is
-not the current SGLang serving adapter and does not fix the gap above.
+destinations for both stored page layouts. Its explicit readiness polling was
+separate from the baseline serving adapter. The subsequent serving gate now
+checks forced-SSD recovery through the plugin admission hook; see the follow-up
+results below.
 
 Five observations do not establish a tail-latency SLO. This experiment does
 not measure concurrent goodput, sustained read/write contention, natural
@@ -141,3 +147,20 @@ cd python
 ../.venv/sglang-release/bin/python -m pytest -m integration \
   tests/integration/test_sglang_direct_transfer.py -k ssd
 ```
+
+## Query-readiness follow-up
+
+The SGLang 0.5.20 plugin now uses `HookRegistry` admission to keep a pending
+request queued and consume its ready lease on a later prefix match. Its
+five-second preparation budget allows recomputation before GPU submission;
+GPU restores still require a confirmed completion.
+
+Both DRAM and forced-SSD serving recovery pass with Qwen3-8B at TP=1 across
+engine restart. The SSD gate checks positive disk-read and H2D byte counters,
+cached tokens, and equal deterministic output against a cold identity. Real
+GPU-buffer tests separately verify cancellation and disconnect during SSD
+reads leave no unconsumed lease, and validate exact restored bytes for both
+stored page layouts. Controlled admission tests cover delayed completion and
+other-request progress; they do not qualify concurrent goodput or multi-rank
+serving. The old 0/15 SGLang measurement remains a baseline, not a description
+of the new serving path.

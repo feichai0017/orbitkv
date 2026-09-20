@@ -5,7 +5,7 @@ pub(crate) mod transfer_lock;
 mod write_path;
 
 use bytesize::ByteSize;
-use log::{debug, info, warn};
+use log::{debug, info};
 use std::collections::HashSet;
 use std::num::NonZeroU64;
 use std::sync::{Arc, Weak};
@@ -14,7 +14,7 @@ use std::time::Duration;
 use crate::backing::{AllocateFn, DEFAULT_MAX_PREFETCH_BLOCKS, SsdBackingStore, SsdCacheConfig};
 #[cfg(feature = "mooncake")]
 use crate::backing::{MooncakeFetchStore, MooncakeTransport};
-use crate::block::{PrefetchStatus, SealedBlock, StateKey};
+use crate::block::{QueryResult, SealedBlock, StateKey};
 use crate::internode::MetaServerClient;
 use crate::internode::metaserver_client::MetaServerClientConfig;
 use crate::metrics::core_metrics;
@@ -473,7 +473,7 @@ impl StorageEngine {
         namespace: &str,
         hashes: &[Vec<u8>],
         wait_for_full_prefix: bool,
-    ) -> PrefetchStatus {
+    ) -> QueryResult {
         self.prefetch
             .check_and_prefetch(
                 &self.read_cache,
@@ -559,29 +559,8 @@ impl StorageEngine {
         (freed_blocks, freed_bytes, largest_free)
     }
 
-    /// Remove stale inflight blocks and failed_remote entries.
-    pub(crate) async fn gc_stale_inflight(
-        &self,
-        inflight_max_age: std::time::Duration,
-        failed_remote_max_age: std::time::Duration,
-    ) -> (usize, usize) {
-        let cleaned = self
-            .write_pipeline
-            .gc_stale_inflight(inflight_max_age)
-            .await;
-        let (stale_prefetch, failed) = self
-            .prefetch
-            .gc_stale_entries(inflight_max_age, failed_remote_max_age);
-        if stale_prefetch > 0 {
-            core_metrics()
-                .prefetch_stale_gc_total
-                .add(stale_prefetch as u64, &[]);
-            warn!("Prefetch GC: removed {stale_prefetch} stale active entries (age > threshold)");
-        }
-        if failed > 0 {
-            log::debug!("gc: cleared {failed} stale failed_remote entries");
-        }
-        (cleaned, failed)
+    pub(crate) async fn gc_stale_inflight(&self, max_age: std::time::Duration) -> usize {
+        self.write_pipeline.gc_stale_inflight(max_age).await
     }
 
     // ---- Cross-node transfer: serving side ----
@@ -707,14 +686,10 @@ mod tests {
     #[tokio::test]
     async fn gc_stale_inflight_returns_zero_when_empty() {
         let storage = make_engine();
-        let (cleaned, failed) = storage
-            .gc_stale_inflight(
-                std::time::Duration::from_secs(60),
-                std::time::Duration::from_secs(60),
-            )
+        let cleaned = storage
+            .gc_stale_inflight(std::time::Duration::from_secs(60))
             .await;
         assert_eq!(cleaned, 0);
-        assert_eq!(failed, 0);
     }
 
     #[tokio::test]

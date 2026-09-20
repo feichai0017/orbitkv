@@ -150,18 +150,28 @@ fn ssd_custom_capacity_env(
 }
 
 async fn wait_query_ready(env: &TestEnv, hashes: &[Vec<u8>]) -> (usize, usize) {
-    let deadline = std::time::Instant::now() + PREFETCH_WAIT_TIMEOUT;
-    loop {
-        match env.query(hashes).await {
-            PrefetchStatus::Ready { blocks, missing } => return (blocks.len(), missing),
-            PrefetchStatus::Loading => {}
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for SSD prefetch to complete"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    let QueryResult { blocks, missing } =
+        tokio::time::timeout(PREFETCH_WAIT_TIMEOUT, env.query(hashes))
+            .await
+            .expect("SSD query timed out");
+    (blocks.len(), missing)
+}
+
+#[tokio::test]
+async fn concurrent_queries_with_the_same_request_id_own_distinct_results() {
+    skip_without_io_uring!();
+    let (env, _cache_path, _temp_dir) = ssd_env("test-query-ownership");
+    let first = env.hashes(91);
+    let second = env.hashes(92);
+    env.save_and_wait(&first).await;
+    env.save_and_wait(&second).await;
+    env.engine.flush_all().await;
+    cleanup_resident_memory(&env);
+    // TestEnv::query deliberately uses the same logical request ID.
+    let (a, b) = tokio::join!(env.query(&first[..2]), env.query(&second));
+    assert_eq!((a.blocks.len(), a.missing), (2, 0));
+    assert_eq!((b.blocks.len(), b.missing), (second.len(), 0));
+    assert!(!std::sync::Arc::ptr_eq(&a.blocks[0], &b.blocks[0]));
 }
 
 fn cleanup_resident_memory(env: &TestEnv) {
@@ -421,11 +431,6 @@ async fn ssd_prefetch_combines_ram_prefix_with_ssd_suffix() {
 
     let ram_prefix = target[..2].to_vec();
     env.save_and_wait(&ram_prefix).await;
-
-    match env.query(&target).await {
-        PrefetchStatus::Loading => {}
-        other => panic!("expected SSD suffix prefetch to start, got {other:?}"),
-    }
 
     let (hit, missing) = wait_query_ready(&env, &target).await;
     assert_eq!(hit, target.len());

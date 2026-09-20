@@ -122,6 +122,9 @@ class ChannelClient:
         request_id: int = 1,
     ) -> QueryLoading | QueryReady: ...
     def release(self, lease: bytes, request_id: int = 1) -> None: ...
+    def cancel_query(
+        self, instance_id: str, req_id: str, group_id: int = 0, request_id: int = 1
+    ) -> None: ...
     def publish(
         self,
         instance_id: str,

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::QueryLeaseId;
-use orbitkv_core::{EngineError, LayerSave, OrbitKVEngine, PrefetchStatus};
+use orbitkv_core::{EngineError, LayerSave, OrbitKVEngine, QueryResult};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -175,25 +175,23 @@ pub(crate) async fn execute_query(
                 &input.block_hashes,
             )
             .await?;
-        return match status {
-            PrefetchStatus::Ready { blocks, .. } => {
-                let complete = blocks.len() == input.block_hashes.len();
-                let hit_positions: Vec<u32> = (0..blocks.len() as u32).collect();
-                let lease = if complete && !blocks.is_empty() {
-                    engine
-                        .create_query_lease(&input.instance_id, blocks)?
-                        .to_bytes()
-                        .to_vec()
-                } else {
-                    Vec::new()
-                };
-                Ok(QueryOutcome::Ready {
-                    num_hit_blocks: hit_positions.len() as u64,
-                    lease,
-                    hit_positions,
-                })
-            }
-            PrefetchStatus::Loading => Ok(QueryOutcome::Loading),
+        return {
+            let QueryResult { blocks, .. } = status;
+            let complete = blocks.len() == input.block_hashes.len();
+            let hit_positions: Vec<u32> = (0..blocks.len() as u32).collect();
+            let lease = if complete && !blocks.is_empty() {
+                engine
+                    .create_query_lease(&input.instance_id, blocks)?
+                    .to_bytes()
+                    .to_vec()
+            } else {
+                Vec::new()
+            };
+            Ok(QueryOutcome::Ready {
+                num_hit_blocks: hit_positions.len() as u64,
+                lease,
+                hit_positions,
+            })
         };
     }
 
@@ -234,35 +232,33 @@ pub(crate) async fn execute_query(
             input.wait_for_full_prefix,
         )
         .await?;
-    match status {
-        PrefetchStatus::Ready { blocks, missing } => {
-            let hit = blocks.len();
-            let miss_count = missing.min(input.block_hashes.len());
-            let miss_start = input.block_hashes.len() - miss_count;
-            debug_assert_eq!(hit + miss_count, input.block_hashes.len());
-            if let Ok(namespace) = engine.instance_namespace(&input.instance_id)
-                && let Ok(mut tracker) = hll_tracker.lock()
-            {
-                tracker.record_namespaced_misses(
-                    &namespace,
-                    input.block_hashes.len() as u64,
-                    &input.block_hashes[miss_start..],
-                );
-            }
-            let lease = if hit == 0 {
-                Vec::new()
-            } else {
-                engine
-                    .create_query_lease(&input.instance_id, blocks)?
-                    .to_bytes()
-                    .to_vec()
-            };
-            Ok(QueryOutcome::Ready {
-                num_hit_blocks: hit as u64,
-                lease,
-                hit_positions: Vec::new(),
-            })
+    {
+        let QueryResult { blocks, missing } = status;
+        let hit = blocks.len();
+        let miss_count = missing.min(input.block_hashes.len());
+        let miss_start = input.block_hashes.len() - miss_count;
+        debug_assert_eq!(hit + miss_count, input.block_hashes.len());
+        if let Ok(namespace) = engine.instance_namespace(&input.instance_id)
+            && let Ok(mut tracker) = hll_tracker.lock()
+        {
+            tracker.record_namespaced_misses(
+                &namespace,
+                input.block_hashes.len() as u64,
+                &input.block_hashes[miss_start..],
+            );
         }
-        PrefetchStatus::Loading => Ok(QueryOutcome::Loading),
+        let lease = if hit == 0 {
+            Vec::new()
+        } else {
+            engine
+                .create_query_lease(&input.instance_id, blocks)?
+                .to_bytes()
+                .to_vec()
+        };
+        Ok(QueryOutcome::Ready {
+            num_hit_blocks: hit as u64,
+            lease,
+            hit_positions: Vec::new(),
+        })
     }
 }

@@ -413,8 +413,8 @@ impl TestEnv {
         self.engine.flush_saves().await;
     }
 
-    /// Query prefix hits. Returns raw PrefetchStatus.
-    pub async fn query(&self, hashes: &[Vec<u8>]) -> PrefetchStatus {
+    /// Query prefix hits. Returns raw QueryResult.
+    pub async fn query(&self, hashes: &[Vec<u8>]) -> QueryResult {
         self.engine
             .count_prefix_hit_blocks_with_prefetch(&self.instance_id, "test", hashes, false)
             .await
@@ -423,15 +423,13 @@ impl TestEnv {
 
     /// Query, assert all hit, and return a lease owning those blocks.
     pub async fn assert_all_hit_lease(&self, hashes: &[Vec<u8>]) -> QueryLeaseId {
-        match self.query(hashes).await {
-            PrefetchStatus::Ready { blocks, missing } => {
-                assert_eq!(blocks.len(), hashes.len(), "expected all blocks hit");
-                assert_eq!(missing, 0);
-                self.engine
-                    .create_query_lease(&self.instance_id, blocks)
-                    .expect("create query lease")
-            }
-            other => panic!("expected Ready, got {:?}", other),
+        {
+            let QueryResult { blocks, missing } = self.query(hashes).await;
+            assert_eq!(blocks.len(), hashes.len(), "expected all blocks hit");
+            assert_eq!(missing, 0);
+            self.engine
+                .create_query_lease(&self.instance_id, blocks)
+                .expect("create query lease")
         }
     }
 
@@ -441,19 +439,17 @@ impl TestEnv {
 
     /// Count cache hits, then release the lease (for probing without consuming).
     pub async fn count_hits_then_release(&self, hashes: &[Vec<u8>]) -> usize {
-        match self.query(hashes).await {
-            PrefetchStatus::Ready { blocks, .. } => {
-                let hit = blocks.len();
-                if hit > 0 {
-                    let lease = self
-                        .engine
-                        .create_query_lease(&self.instance_id, blocks)
-                        .expect("create query lease");
-                    self.release(&lease);
-                }
-                hit
+        {
+            let QueryResult { blocks, .. } = self.query(hashes).await;
+            let hit = blocks.len();
+            if hit > 0 {
+                let lease = self
+                    .engine
+                    .create_query_lease(&self.instance_id, blocks)
+                    .expect("create query lease");
+                self.release(&lease);
             }
-            PrefetchStatus::Loading => 0,
+            hit
         }
     }
 

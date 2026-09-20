@@ -7,6 +7,7 @@ import logging
 import os
 import queue
 import threading
+import time
 import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -91,6 +92,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
     """
 
     _RESTORE_WINDOW = 8
+    _QUERY_WAIT_SECONDS = 5.0
 
     def __init__(self, server_args: Any, params: Any, *, components: set[ComponentType]):
         if components != {ComponentType.FULL}:
@@ -132,6 +134,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
 
         self.layer_done_counter = _LayerDoneCounter(self.layout.pool_group.num_layers)
         self._lookups: dict[str, _Lookup] = {}
+        self._pending_queries: dict[str, tuple[tuple[str, ...], float]] = {}
+        self._expired_queries: set[str] = set()
         self._queued_loads: dict[str, _Load] = {}
         self._load_queue: queue.Queue[tuple[int, list[_Load], torch.cuda.Event] | None] = (
             queue.Queue()
@@ -163,15 +167,42 @@ class OrbitKVLinker(UnifiedCacheLinker):
 
     def _release_lookup(self, rid: str) -> None:
         lookup = self._lookups.pop(rid, None)
-        if lookup is not None:
+        if lookup is not None and lookup.lease:
             self.client.release(lookup.lease)
 
-    def lookup(self, rid: str, transfers: list[PoolTransfer]) -> list[int]:
+    def cancel_pending_query(self, rid: str) -> None:
+        if self._pending_queries.pop(rid, None) is not None:
+            self.client.cancel_query(self.instance_id, rid)
+
+    def expire_query(self, rid: str) -> None:
+        self.cancel_pending_query(rid)
         self._release_lookup(rid)
+        self._expired_queries.add(rid)
+
+    def query_state(self, rid: str) -> int:
+        if rid in self._expired_queries:
+            return 2
+        return int(rid in self._pending_queries)
+
+    def lookup(self, rid: str, transfers: list[PoolTransfer]) -> list[int]:
         if len(transfers) != 1 or transfers[0].name != PoolName.KV:
             raise ValueError("OrbitKV direct linker expected one KV lookup")
         keys = tuple(transfers[0].keys or ())
-        if not keys:
+        if not keys or rid in self._expired_queries:
+            return []
+        lookup = self._lookups.get(rid)
+        if lookup is not None:
+            if lookup.keys == keys:
+                return list(range(1, lookup.hit_pages + 1))
+            self._release_lookup(rid)
+        pending = self._pending_queries.get(rid)
+        if pending is not None and pending[0] != keys:
+            self.cancel_pending_query(rid)
+            pending = None
+        started = pending[1] if pending is not None else time.monotonic()
+        if time.monotonic() - started >= self._QUERY_WAIT_SECONDS:
+            logger.warning("Cache query wait expired; recomputing request %s", rid)
+            self.expire_query(rid)
             return []
         from orbitkv import QueryReady
 
@@ -179,12 +210,13 @@ class OrbitKVLinker(UnifiedCacheLinker):
             self.instance_id, self._hashes(keys), rid, wait_for_full_prefix=False
         )
         if not isinstance(result, QueryReady):
+            self._pending_queries[rid] = (keys, started)
             return []
+        self._pending_queries.pop(rid, None)
         hit_pages = result.num_hit_blocks
-        if hit_pages:
-            if not result.lease:
-                raise RuntimeError("OrbitKV reported GPU page hits without a restore lease")
-            self._lookups[rid] = _Lookup(keys, result.lease, hit_pages)
+        if hit_pages and not result.lease:
+            raise RuntimeError("OrbitKV reported GPU page hits without a restore lease")
+        self._lookups[rid] = _Lookup(keys, result.lease, hit_pages)
         return list(range(1, hit_pages + 1))
 
     def load(self, rid: str, transfers: list[PoolTransfer]) -> bool:
@@ -276,6 +308,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 self._load_queue.task_done()
 
     def cancel_queued_load(self, rid: str) -> bool:
+        self.cancel_pending_query(rid)
+        self._expired_queries.discard(rid)
         self._release_lookup(rid)
         load = self._queued_loads.pop(rid, None)
         if load is None:
@@ -342,6 +376,9 @@ class OrbitKVLinker(UnifiedCacheLinker):
     def reset(self) -> None:
         self._load_queue.join()
         self._offload_queue.join()
+        for rid in list(self._pending_queries):
+            self.cancel_pending_query(rid)
+        self._expired_queries.clear()
         for rid in list(self._lookups):
             self._release_lookup(rid)
         for rid in list(self._queued_loads):

@@ -15,7 +15,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use cudarc::driver::{CudaContext, sys};
 use orbitkv_core::sync_state::{LOAD_STATE_ERROR, LOAD_STATE_SUCCESS};
 use orbitkv_core::{
-    LayerSave, LoadState, OrbitKVEngine, PrefetchStatus, QueryLeaseId, StorageConfig, TransferMode,
+    LayerSave, LoadState, OrbitKVEngine, QueryLeaseId, QueryResult, StorageConfig, TransferMode,
 };
 use tokio::runtime::Runtime;
 
@@ -184,20 +184,17 @@ impl BenchFixture {
     }
 
     async fn query_lease(&self, req_id: &str, hashes: &[Vec<u8>]) -> QueryLeaseId {
-        match self
-            .engine
-            .count_prefix_hit_blocks_with_prefetch(INSTANCE_ID, req_id, hashes, false)
-            .await
-            .expect("query")
         {
-            PrefetchStatus::Ready { blocks, missing } => {
-                assert_eq!(blocks.len(), hashes.len());
-                assert_eq!(missing, 0);
-                self.engine
-                    .create_query_lease(INSTANCE_ID, blocks)
-                    .expect("create query lease")
-            }
-            PrefetchStatus::Loading => panic!("memory-only bench should not return Loading"),
+            let QueryResult { blocks, missing } = self
+                .engine
+                .count_prefix_hit_blocks_with_prefetch(INSTANCE_ID, req_id, hashes, false)
+                .await
+                .expect("query");
+            assert_eq!(blocks.len(), hashes.len());
+            assert_eq!(missing, 0);
+            self.engine
+                .create_query_lease(INSTANCE_ID, blocks)
+                .expect("create query lease")
         }
     }
 

@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-pub const ABI_VERSION: u16 = 2;
+pub const ABI_VERSION: u16 = 3;
 pub const WIRE_MESSAGE_BYTES: usize = 64;
 /// Response `value1` bit set after a descriptor-backed request has been
 /// accepted and its generation consumed, including business-error responses.
@@ -24,6 +24,7 @@ pub enum CommandCode {
     Publish = 4,
     Release = 5,
     Shutdown = 6,
+    CancelQuery = 7,
 }
 
 impl TryFrom<u16> for CommandCode {
@@ -37,6 +38,7 @@ impl TryFrom<u16> for CommandCode {
             4 => Ok(Self::Publish),
             5 => Ok(Self::Release),
             6 => Ok(Self::Shutdown),
+            7 => Ok(Self::CancelQuery),
             _ => Err(ProtocolError::UnknownCode(value)),
         }
     }

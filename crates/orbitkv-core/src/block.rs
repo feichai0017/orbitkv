@@ -29,28 +29,19 @@ pub struct LayerSave {
 // Prefetch Status
 // ============================================================================
 
-/// Result of checking prefix hits with SSD prefetch support
+/// Terminal prefix result. The query future owns all source blocks until return.
 #[derive(Clone)]
-pub enum PrefetchStatus {
-    /// Blocks are being prefetched - caller should retry
-    Loading,
-    /// Terminal state: all ready prefix blocks are owned by the caller.
-    Ready {
-        blocks: Vec<Arc<SealedBlock>>,
-        missing: usize,
-    },
+pub struct QueryResult {
+    pub blocks: Vec<Arc<SealedBlock>>,
+    pub missing: usize,
 }
 
-impl fmt::Debug for PrefetchStatus {
+impl fmt::Debug for QueryResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Loading => f.write_str("Loading"),
-            Self::Ready { blocks, missing } => f
-                .debug_struct("Ready")
-                .field("blocks", &blocks.len())
-                .field("missing", missing)
-                .finish(),
-        }
+        f.debug_struct("QueryResult")
+            .field("blocks", &self.blocks.len())
+            .field("missing", &self.missing)
+            .finish()
     }
 }
 

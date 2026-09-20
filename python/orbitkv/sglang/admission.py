@@ -1,0 +1,28 @@
+"""Nonblocking request admission through SGLang's general plugin hooks."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+
+
+def admit_request(original: Callable, adder: Any, req: Any, *args: Any, **kwargs: Any) -> Any:
+    from .linker import OrbitKVLinker
+
+    wrapper = getattr(adder.tree_cache, "linker", None)
+    linker = getattr(wrapper, "cache_linker", None)
+    if isinstance(linker, OrbitKVLinker):
+        import torch
+        from sglang.srt.managers.schedule_policy import AddReqResult
+
+        if len(req.full_untruncated_fill_ids) - len(req.prefix_indices) < linker.page_size:
+            linker.cancel_pending_query(req.rid)
+        # Every attention rank takes the same admission decision even when its
+        # SSD read finishes in a different scheduler iteration.
+        state = torch.tensor([linker.query_state(req.rid)], dtype=torch.int)
+        adder.tree_cache._all_reduce_attn_groups(state, torch.distributed.ReduceOp.MAX)
+        if state.item() == 1:
+            return AddReqResult.CONTINUE
+        if state.item() == 2:
+            linker.expire_query(req.rid)
+    return original(adder, req, *args, **kwargs)

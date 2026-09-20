@@ -643,25 +643,19 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             storage_config,
         )?);
         let lifecycle = cache::lifecycle::LifecycleService::new(Arc::clone(&engine), registry);
-        let (
+        let (service_name, session_epoch, bootstrap_socket, arena_size, slot_size) = channel_config;
+        let mut channel_endpoint = endpoint::ProcessEndpoint::start(
             service_name,
             session_epoch,
             bootstrap_socket,
             arena_size,
             slot_size,
-        ) = channel_config;
-        let mut channel_endpoint = endpoint::ProcessEndpoint::start(
-                service_name,
-                session_epoch,
-                bootstrap_socket,
-                arena_size,
-                slot_size,
-                Arc::clone(&engine),
-                runtime_handle,
-                Arc::clone(&hll_tracker),
-                Arc::clone(&shutdown),
-                lifecycle.clone(),
-            )?;
+            Arc::clone(&engine),
+            runtime_handle,
+            Arc::clone(&hll_tracker),
+            Arc::clone(&shutdown),
+            lifecycle.clone(),
+        )?;
 
         // Spawn background GC task for stale inflight blocks and expired transfer locks
         {
@@ -670,21 +664,18 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             tokio::spawn(async move {
                 const GC_INTERVAL: Duration = Duration::from_secs(60);
                 const INFLIGHT_MAX_AGE: Duration = Duration::from_secs(300); // 5 min
-                const FAILED_REMOTE_MAX_AGE: Duration = Duration::from_secs(300); // 5 min
+
                 let mut interval = tokio::time::interval(GC_INTERVAL);
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
-                            let (cleaned, failed) = engine
-                                .gc_stale_inflight(INFLIGHT_MAX_AGE, FAILED_REMOTE_MAX_AGE)
+                            let cleaned = engine
+                                .gc_stale_inflight(INFLIGHT_MAX_AGE)
                                 .await;
                             if cleaned > 0 {
                                 info!("Inflight GC: cleaned {} stale blocks", cleaned);
-                            }
-                            if failed > 0 {
-                                info!("Inflight GC: cleared {} stale failed_remote entries", failed);
                             }
 
                             let expired_locks = engine.gc_expired_transfer_locks();
@@ -699,7 +690,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     }
                 }
             });
-            info!("Background GC task started (interval=60s, inflight_max_age=5m, failed_remote_max_age=5m)");
+            info!("Background GC task started (interval=60s, inflight_max_age=5m)");
         }
 
         // Start HTTP server for health check (always enabled)
@@ -713,7 +704,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )
         .await?;
 
-        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         let shutdown_signal = {
             let notify = Arc::clone(&shutdown);
             async move {

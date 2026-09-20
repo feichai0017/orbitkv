@@ -298,31 +298,17 @@ class SchedulerConnector:
 
         probe = self._pending_query_probes.get(req_id)
 
-        # Ready result already cached.  Reuse it only if the request identity
-        # has not drifted since the query was issued.
-        if probe is not None and probe.is_ready:
-            if probe.matches(computed_blocks, query_hashes, tail_tokens):
-                return self._complete_cache_lookup(
-                    request=request,
-                    probe=probe,
-                    lookup_us=None,
-                    reused=True,
-                )
-
-            # Cached Ready is stale.  It has a lease, so release it.
+        if probe is not None and not probe.matches(computed_blocks, query_hashes, tail_tokens):
             self._release_pending_query_probe(req_id)
             probe = None
-
-        # A Loading task is keyed by req_id server-side. If the current query
-        # drifted, finish polling with the original identity so the TP layer can
-        # validate the stale Ready before we release it below.
-        backend_query_hashes = query_hashes
-        if probe is not None and not probe.matches(computed_blocks, query_hashes, tail_tokens):
-            backend_query_hashes = probe.query_hashes
+        if probe is not None and probe.is_ready:
+            return self._complete_cache_lookup(
+                request=request, probe=probe, lookup_us=None, reused=True
+            )
 
         # No reusable Ready result. Ask backend.
         lookup_start = time.perf_counter()
-        ready = self._count_available_block_prefix(backend_query_hashes, req_id)
+        ready = self._count_available_block_prefix(query_hashes, req_id)
         lookup_us = (time.perf_counter() - lookup_start) * 1e6
 
         # Backend is still loading.  Keep the original snapshot.
@@ -333,26 +319,6 @@ class SchedulerConnector:
                     query_hashes=query_hashes,
                     tail_tokens=tail_tokens,
                 )
-            return (None, False)
-
-        # A previous Loading probe exists, but the request has moved on.
-        # This Ready belongs to the old query.  Do not consume it.
-        if probe is not None and not probe.matches(computed_blocks, query_hashes, tail_tokens):
-            logger.warning(
-                "[OrbitKVConnector] req=%s query identity drifted: "
-                "snapshot computed=%d/%d hashes, current computed=%d/%d hashes "
-                "- discarding stale Ready",
-                req_id,
-                probe.computed_blocks,
-                len(probe.query_hashes),
-                computed_blocks,
-                len(query_hashes),
-            )
-            self._release_leases(ready.leases, req_id)
-            if ready.recurrent_hold is not None:
-                for group_index, group_leases in enumerate(ready.recurrent_hold.leases):
-                    self._tp_shard_client.release(group_leases, f"{req_id}:g{group_index}")
-            self._pending_query_probes.pop(req_id, None)
             return (None, False)
 
         # Either:
@@ -1303,9 +1269,11 @@ class SchedulerConnector:
         )
 
     def _cancel_prefetch_tracking(self, req_id: str) -> None:
-        """Drop in-flight prefetch metrics when polling stops before QueryReady."""
+        """Withdraw pending query interest and finish its metrics."""
         if req_id not in self._prefetch_start_times:
             return
+
+        self._tp_shard_client.cancel(self._ctx.instance_id, req_id)
 
         started_at = self._prefetch_start_times.pop(req_id)
         self._prefetch_tracker.on_prefetch_cancel()

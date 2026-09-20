@@ -51,7 +51,13 @@ iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
 passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
 The vLLM adapter requires this path and fails fast if the Cache Manager socket
 is missing. Each inference process must reach a Cache Manager on its own host.
-Pending queries return `Loading` and continue on Tokio. Publish holds its
+Pending queries return `Loading` and continue on Tokio. The endpoint owns one
+session/instance/request/group registry; the core query future owns its backing
+reads and returns a terminal result. Cancelling or disconnecting drops reply
+ownership while submitted reads drain, including cache admission and lease
+release, without another poll. SGLang's plugin admission hook keeps pending
+requests queued until a leased result or bounded fallback is available.
+Publish holds its
 iceoryx2 reply until D2H finishes, so the caller does not release source HBM
 pages early while the dispatcher remains free. The Python cache client opens a
 separate descriptor session for Publish on its first save, so an in-flight

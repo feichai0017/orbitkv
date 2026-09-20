@@ -174,6 +174,16 @@ impl ChannelClient {
         }
     }
 
+    pub fn cancel_query(
+        &self,
+        request_id: u64,
+        request: &crate::CancelQueryRequest,
+    ) -> Result<(), ChannelError> {
+        let payload = request.encode()?;
+        self.call_descriptor(CommandCode::CancelQuery, request_id, &payload)?;
+        Ok(())
+    }
+
     pub fn release(&self, request_id: u64, lease: Vec<u8>) -> Result<(), ChannelError> {
         let payload = ReleaseRequest { lease }.encode()?;
         let _ = self.call_descriptor(CommandCode::Release, request_id, &payload)?;

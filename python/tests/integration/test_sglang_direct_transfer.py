@@ -124,7 +124,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
     channel_server, layer_count, page_count, page_first
 ):
     torch = pytest.importorskip("torch")
-    from orbitkv import QueryReady
+    from orbitkv import QueryLoading, QueryReady
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
     from orbitkv.client.manager import CacheManagerClient
     from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
@@ -198,6 +198,38 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             cleanup = response.json()
             assert cleanup["evicted_blocks"] == page_count
             assert cleanup["still_referenced_blocks"] == 0
+
+            # Lose interest while SSD work owns real source buffers. A late
+            # result must release its lease without a readiness poll or GC.
+            abandoned = CacheManagerClient(channel_server.bootstrap_socket)
+            try:
+                outcome = abandoned.query_prefetch(instance, hashes, "abandoned")
+                assert isinstance(outcome, QueryLoading)
+                if page_first:
+                    abandoned.close()
+                else:
+                    abandoned.cancel_query(instance, "abandoned")
+                    abandoned.cancel_query(instance, "abandoned")
+                deadline = time.monotonic() + 5
+                quiet = 0
+                while quiet < 3:
+                    observed = fetch_orbitkv_metrics(channel_server.http_port)
+                    complete = (
+                        observed.get("orbitkv_ssd_prefetch_bytes_total", 0) >= saved_bytes
+                        and observed.get("orbitkv_ssd_prefetch_inflight", 0) == 0
+                    )
+                    quiet = quiet + 1 if complete else 0
+                    assert time.monotonic() < deadline, observed
+                    time.sleep(0.02)
+                response = requests.post(
+                    f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup",
+                    timeout=10,
+                )
+                response.raise_for_status()
+                assert response.json()["evicted_blocks"] > 0
+                assert response.json()["still_referenced_blocks"] == 0
+            finally:
+                abandoned.close()
         for tensor in tensors:
             tensor.zero_()
         torch.cuda.synchronize()
@@ -242,7 +274,8 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             assert torch.equal(tensor[page_size * 3 : page_size * (page_count + 3)], original)
         if channel_server.ssd_cache_path is not None:
             observed = fetch_orbitkv_metrics(channel_server.http_port)
-            assert observed["orbitkv_ssd_prefetch_bytes_total"] == saved_bytes
+            # One drained read after cancellation, then the consumed restore.
+            assert observed["orbitkv_ssd_prefetch_bytes_total"] == 2 * saved_bytes
             assert observed["orbitkv_load_bytes_total"] == saved_bytes
     finally:
         client.unregister_context(instance)
