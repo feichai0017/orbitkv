@@ -31,7 +31,9 @@ jobs:
       - name: Install commitizen
         run: pip install commitizen
       - name: Check last commit message
-        run: cz check --rev-range HEAD~1..HEAD
+        run: |
+          git log -1 --format=%B "${{ github.event.pull_request.head.sha || github.sha }}" > "$RUNNER_TEMP/commit-message.txt"
+          cz check --commit-msg-file "$RUNNER_TEMP/commit-message.txt"
 
   version-consistency-check:
     name: version consistency check
@@ -119,6 +121,13 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: '12.8.1'
+          linux-local-args: '["--toolkit"]'
+          method: 'network'
+          sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
       - name: Install protobuf compiler and RDMA headers
         run: |
           sudo apt-get update
@@ -220,7 +229,7 @@ jobs:
 
   build-wheel:
     name: build Python 3.14 wheel (${{ matrix.cuda-variant }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:

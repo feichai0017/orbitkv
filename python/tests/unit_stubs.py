@@ -204,7 +204,9 @@ def _install_native_extension_stub() -> None:
             self.num_hit_blocks = num_hit_blocks
             self.lease = lease
 
+    module.LocalControlClient = getattr(module, "LocalControlClient", MagicMock)
     module.LocalQueryClient = getattr(module, "LocalQueryClient", MagicMock)
+    module.MooncakeTransferEngine = getattr(module, "MooncakeTransferEngine", MagicMock)
     module.OrbitKVError = getattr(module, "OrbitKVError", type("OrbitKVError", (Exception,), {}))
     module.OrbitKVInternal = getattr(
         module, "OrbitKVInternal", type("OrbitKVInternal", (Exception,), {})
