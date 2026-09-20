@@ -354,7 +354,7 @@ mod tests {
     use crate::proto::engine::{RegisterContextRequest, SessionRequest};
     use crate::registry::CudaTensorRegistry;
     use orbitkv_channel::lifecycle::LifecycleCommand;
-    use orbitkv_channel::{CallOptions, LocalQueryClient, LocalQueryError, QueryBundleRequest};
+    use orbitkv_channel::{CallOptions, ChannelClient, ChannelError, QueryBundleRequest};
     use orbitkv_common::hll::MultiWindowHllTracker;
     use orbitkv_core::StorageConfig;
     use prost::Message;
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn local_lifecycle_and_cache_control_need_no_grpc() {
+    async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
         let engine = test_engine();
         let lifecycle = LifecycleService::new(
             Arc::clone(&engine),
@@ -392,11 +392,11 @@ mod tests {
         )
         .unwrap();
         let (first, second) = tokio::task::spawn_blocking(move || {
-            let first = LocalQueryClient::connect(&socket, CallOptions::default()).unwrap();
+            let first = ChannelClient::connect(&socket, CallOptions::default()).unwrap();
             first.lifecycle(LifecycleCommand::Health, &[]).unwrap();
             assert!(matches!(
                 first.lifecycle(LifecycleCommand::Register, &[0xff]),
-                Err(LocalQueryError::Lifecycle { code: 1, .. })
+                Err(ChannelError::Lifecycle { code: 1, .. })
             ));
             let bad_version = RegisterContextRequest {
                 instance_id: "inst".into(),
@@ -406,7 +406,7 @@ mod tests {
             };
             assert!(matches!(
                 first.lifecycle(LifecycleCommand::Register, &bad_version.encode_to_vec()),
-                Err(LocalQueryError::Lifecycle { code: 2, .. })
+                Err(ChannelError::Lifecycle { code: 2, .. })
             ));
             first.lifecycle(LifecycleCommand::Health, &[]).unwrap();
             assert!(
@@ -433,7 +433,7 @@ mod tests {
             first
                 .lifecycle(LifecycleCommand::Session, &session)
                 .unwrap();
-            let second = LocalQueryClient::connect(&socket, CallOptions::default()).unwrap();
+            let second = ChannelClient::connect(&socket, CallOptions::default()).unwrap();
             second
                 .lifecycle(LifecycleCommand::Session, &session)
                 .unwrap();
@@ -455,7 +455,7 @@ mod tests {
         .expect("disconnect must clean up the current session");
         assert!(matches!(
             second.lifecycle(LifecycleCommand::Health, &[]),
-            Err(LocalQueryError::SessionRequiresReconnect)
+            Err(ChannelError::SessionRequiresReconnect)
         ));
         endpoint.stop();
         shutdown.notify_waiters();

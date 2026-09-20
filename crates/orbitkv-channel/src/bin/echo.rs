@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use orbitkv_channel::{CommandCode, LocalServer, Response, StatusCode};
+use orbitkv_channel::{CommandCode, Response, StatusCode, TransportServer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service_name = std::env::args()
@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|value| value.parse())
         .transpose()?
         .unwrap_or(1);
-    let server = LocalServer::bind(&service_name)?;
+    let server = TransportServer::bind(&service_name)?;
     println!("READY");
     std::io::stdout().flush()?;
 

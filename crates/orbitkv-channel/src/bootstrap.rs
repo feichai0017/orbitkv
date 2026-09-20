@@ -77,7 +77,7 @@ pub enum BootstrapError {
     ClientTokenExhausted,
     #[error("descriptor belongs to slot {actual}, but client owns slot {expected}")]
     SlotMismatch { expected: usize, actual: usize },
-    #[error("local client token does not match the bootstrap session")]
+    #[error("client token does not match the bootstrap session")]
     ClientTokenMismatch,
     #[error("unexpected request generation: expected {expected}, got {actual}")]
     UnexpectedGeneration { expected: u64, actual: u64 },

@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 use log::{error, info};
 use orbitkv_channel::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
-    DeferredResponse, LocalServer, PublishRequest as LocalPublishRequest, QueryBundleRequest,
+    DeferredResponse, PublishRequest as ChannelPublishRequest, QueryBundleRequest,
     QueryBundleResponse, QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED,
-    ReleaseRequest as LocalReleaseRequest, Response, RestoreCommand, RestoreResponse, RestoreState,
-    StatusCode, TransportError,
+    ReleaseRequest as ChannelReleaseRequest, Response, RestoreCommand, RestoreResponse,
+    RestoreState, StatusCode, TransportError, TransportServer,
 };
 use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::{EngineError, OrbitKVEngine};
@@ -74,7 +74,7 @@ impl ProcessEndpoint {
         shutdown: Arc<Notify>,
         lifecycle: crate::cache::lifecycle::LifecycleService,
     ) -> Result<Self, ProcessEndpointError> {
-        let server = LocalServer::bind(&service_name)?;
+        let server = TransportServer::bind(&service_name)?;
         let bootstrap = BootstrapServer::bind(
             &bootstrap_socket,
             &service_name,
@@ -91,7 +91,7 @@ impl ProcessEndpoint {
             .name("orbitkv-channel-control".to_string())
             .spawn(move || {
                 info!(
-                    "Local control endpoint ready: service={} session_epoch={} bootstrap={}",
+                    "Process channel endpoint ready: service={} session_epoch={} bootstrap={}",
                     thread_service,
                     session_epoch,
                     bootstrap_socket.display()
@@ -121,7 +121,7 @@ impl ProcessEndpoint {
                             let alive = match session.is_alive() {
                                 Ok(alive) => alive,
                                 Err(error) => {
-                                    error!("Local bootstrap liveness check failed: {error}");
+                                    error!("Bootstrap liveness check failed: {error}");
                                     false
                                 }
                             };
@@ -169,12 +169,12 @@ impl ProcessEndpoint {
                         Ok(true) => {}
                         Ok(false) => thread::sleep(IDLE_POLL_INTERVAL),
                         Err(error) => {
-                            error!("Local control request failed: {error}");
+                            error!("Process channel request failed: {error}");
                             thread::sleep(IDLE_POLL_INTERVAL);
                         }
                     }
                 }
-                info!("Local control endpoint stopped: service={thread_service}");
+                info!("Process channel endpoint stopped: service={thread_service}");
             })
             .map_err(|error| TransportError::Thread(error.to_string()))?;
 
@@ -189,7 +189,7 @@ impl ProcessEndpoint {
         if let Some(thread) = self.thread.take()
             && thread.join().is_err()
         {
-            error!("Local control thread panicked during shutdown");
+            error!("Process channel thread panicked during shutdown");
         }
     }
 }
@@ -212,7 +212,7 @@ fn accept_pending_sessions(
         match bootstrap.try_accept() {
             Ok(Some(session)) => {
                 info!(
-                    "Local client bootstrapped: pid={} uid={} slot={}",
+                    "Inference client bootstrapped: pid={} uid={} slot={}",
                     session.credentials().pid,
                     session.credentials().uid,
                     session.slot_index()
@@ -227,7 +227,7 @@ fn accept_pending_sessions(
                         ));
                     }
                     Err(error) => {
-                        error!("Cannot start local lifecycle: {error}");
+                        error!("Cannot start process-channel lifecycle: {error}");
                         continue;
                     }
                 }
@@ -235,7 +235,7 @@ fn accept_pending_sessions(
             }
             Ok(None) => break,
             Err(error) => {
-                error!("Local bootstrap accept failed: {error}");
+                error!("Bootstrap accept failed: {error}");
                 break;
             }
         }
@@ -453,7 +453,7 @@ fn dispatch_restore(
                 operations.remove(&key);
             }
         }
-        Err(error) => return error_response(response, local_error_status(&error), &error),
+        Err(error) => return error_response(response, arena_error_status(&error), &error),
     }
     response
 }
@@ -469,7 +469,7 @@ fn consume_descriptor(
         Err(error) => {
             return Err(error_response(
                 *response,
-                local_error_status(&error),
+                arena_error_status(&error),
                 &error,
             ));
         }
@@ -494,7 +494,7 @@ fn consume_descriptor(
         Err(error) => {
             return Err(error_response(
                 *response,
-                local_error_status(&error),
+                arena_error_status(&error),
                 &error,
             ));
         }
@@ -524,7 +524,7 @@ fn dispatch_publish(
         Ok(payload) => payload,
         Err(response) => return reply.send(response),
     };
-    let request = match LocalPublishRequest::decode(&payload) {
+    let request = match ChannelPublishRequest::decode(&payload) {
         Ok(request) => request,
         Err(error) => return reply.send(error_response(response, StatusCode::Invalid, &error)),
     };
@@ -540,7 +540,7 @@ fn dispatch_publish(
     match bootstrap.arena().write_response(command.descriptor, &[]) {
         Ok(descriptor) => response.descriptor = descriptor,
         Err(error) => {
-            return reply.send(error_response(response, local_error_status(&error), &error));
+            return reply.send(error_response(response, arena_error_status(&error), &error));
         }
     }
     let engine = Arc::clone(engine);
@@ -578,7 +578,7 @@ fn dispatch_release(
         Ok(payload) => payload,
         Err(response) => return response,
     };
-    let request = match LocalReleaseRequest::decode(&payload) {
+    let request = match ChannelReleaseRequest::decode(&payload) {
         Ok(request) => request,
         Err(error) => return error_response(response, StatusCode::Invalid, &error),
     };
@@ -587,7 +587,7 @@ fn dispatch_release(
     }
     match bootstrap.arena().write_response(command.descriptor, &[]) {
         Ok(descriptor) => response.descriptor = descriptor,
-        Err(error) => return error_response(response, local_error_status(&error), &error),
+        Err(error) => return error_response(response, arena_error_status(&error), &error),
     }
     response
 }
@@ -651,7 +651,7 @@ fn dispatch_query(
                 reply.delivered();
             }
         }
-        Err(error) => return error_response(response, local_error_status(&error), &error),
+        Err(error) => return error_response(response, arena_error_status(&error), &error),
     }
     response
 }
@@ -661,13 +661,13 @@ fn error_response(
     status: StatusCode,
     error: &impl std::fmt::Display,
 ) -> Response {
-    error!("Local control command failed: {error}");
+    error!("Process channel command failed: {error}");
     response.status = status;
     response.value0 = 0;
     response
 }
 
-fn local_error_status(error: &ArenaError) -> StatusCode {
+fn arena_error_status(error: &ArenaError) -> StatusCode {
     match error {
         ArenaError::StaleGeneration { .. } => StatusCode::StaleGeneration,
         ArenaError::InvalidOffset { .. }

@@ -1,7 +1,7 @@
 """OrbitKV - High-performance key-value storage engine with Python bindings.
 
 This package provides:
-1. LocalQueryClient: node-local Cache Manager client
+1. ChannelClient: node-local Cache Manager client
 2. OrbitKVConnector: vLLM KV connector for distributed inference
 """
 
@@ -10,8 +10,8 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 _NATIVE_EXPORTS = {
-    "LocalControlClient",
-    "LocalQueryClient",
+    "ChannelProbeClient",
+    "ChannelClient",
     "MooncakeTransferEngine",
     "OrbitKVError",
     "OrbitKVInternal",
@@ -52,8 +52,8 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "__version__",
-    "LocalControlClient",
-    "LocalQueryClient",
+    "ChannelProbeClient",
+    "ChannelClient",
     "MooncakeTransferEngine",
     "OrbitKVError",
     "OrbitKVInternal",

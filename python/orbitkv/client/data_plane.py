@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from orbitkv import LocalQueryClient, QueryLoading, QueryReady
+from orbitkv import ChannelClient, QueryLoading, QueryReady
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,17 +109,17 @@ class CacheLifecycleClient(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class _LocalRestoreHandle:
+class _RestoreOperation:
     operation_id: int
     session_epoch: int
 
     @property
     def key(self) -> str:
-        return f"local:{self.session_epoch}:{self.operation_id}"
+        return f"manager:{self.session_epoch}:{self.operation_id}"
 
 
-class LocalDataClient:
-    """Local data plane backed by UDS bootstrap and iceoryx2 commands."""
+class CacheManagerClient:
+    """Cache operations through the same-host Cache Manager process channel."""
 
     _FALLBACK_POLL_SECONDS = 0.05
 
@@ -131,13 +131,13 @@ class LocalDataClient:
         spin_iterations: int = 64,
     ):
         self._bootstrap_socket = bootstrap_socket
-        self._client = LocalQueryClient(
+        self._client = ChannelClient(
             bootstrap_socket,
             timeout_ms=timeout_ms,
             spin_iterations=spin_iterations,
         )
         self._client_options = (timeout_ms, spin_iterations)
-        self._publish_client: LocalQueryClient | None = None
+        self._publish_client: ChannelClient | None = None
         self._publish_lock = threading.Lock()
         self._closed = False
         self._request_lock = threading.Lock()
@@ -146,7 +146,7 @@ class LocalDataClient:
 
     @property
     def transport(self) -> str:
-        return "local"
+        return "iceoryx2"
 
     @property
     def bootstrap_socket(self) -> str:
@@ -214,13 +214,13 @@ class LocalDataClient:
         )
         return True, ""
 
-    def _publisher(self) -> LocalQueryClient:
+    def _publisher(self) -> ChannelClient:
         with self._publish_lock:
             if self._closed:
-                raise RuntimeError("local data client is closed")
+                raise RuntimeError("Cache Manager client is closed")
             if self._publish_client is None:
                 timeout_ms, spin_iterations = self._client_options
-                self._publish_client = LocalQueryClient(
+                self._publish_client = ChannelClient(
                     self._bootstrap_socket,
                     timeout_ms=timeout_ms,
                     spin_iterations=spin_iterations,
@@ -243,7 +243,7 @@ class LocalDataClient:
             loads,
             request_id=self._request_id(),
         )
-        return _LocalRestoreHandle(
+        return _RestoreOperation(
             operation_id=operation_id,
             session_epoch=self._client.session_epoch,
         )
@@ -266,8 +266,8 @@ class LocalDataClient:
         return True
 
     def poll_restore(self, handle: RestoreHandle) -> RestoreStatus:
-        if not isinstance(handle, _LocalRestoreHandle):
-            raise TypeError("restore handle does not belong to the local data client")
+        if not isinstance(handle, _RestoreOperation):
+            raise TypeError("restore handle does not belong to this Cache Manager client")
         if handle.session_epoch != self._client.session_epoch:
             raise RuntimeError("restore handle belongs to a stale Cache Manager session")
         state, message = self._client.restore_poll(
@@ -280,18 +280,18 @@ class LocalDataClient:
             return RestoreStatus(done=True, success=True)
         if state == "failed":
             return RestoreStatus(done=True, success=False, message=message)
-        raise RuntimeError(f"unknown local restore state {state!r}")
+        raise RuntimeError(f"unknown restore state {state!r}")
 
     def _request_id(self) -> int:
         with self._request_lock:
             request_id = self._next_request_id
             if request_id == (1 << 64) - 1:
-                raise OverflowError("local data request ids exhausted")
+                raise OverflowError("Cache Manager request ids exhausted")
             self._next_request_id += 1
         return request_id
 
 
-def resolve_local_bootstrap_sockets(
+def resolve_bootstrap_sockets(
     *,
     endpoints: tuple[str, ...],
     bootstrap_socket: object = None,
@@ -311,7 +311,7 @@ def resolve_local_bootstrap_sockets(
 
     if bootstrap_socket is not None and shard_bootstrap_sockets is not None:
         raise ValueError(
-            "configure either orbitkv.local_bootstrap_socket or "
+            "configure either orbitkv.bootstrap_socket or "
             "orbitkv.tp_shard_bootstrap_sockets, not both"
         )
 
@@ -322,7 +322,7 @@ def resolve_local_bootstrap_sockets(
     elif bootstrap_socket is not None:
         if len(endpoints) > 1:
             raise ValueError(
-                "orbitkv.local_bootstrap_socket only supports one TP shard; "
+                "orbitkv.bootstrap_socket only supports one TP shard; "
                 "use orbitkv.tp_shard_bootstrap_sockets"
             )
         sockets = (bootstrap_socket,)
@@ -352,7 +352,7 @@ def _default_bootstrap_socket(endpoint: str) -> str:
     if port is None:
         raise ValueError(
             "cannot derive the process socket from the configured endpoint; "
-            "set orbitkv.local_bootstrap_socket"
+            "set orbitkv.bootstrap_socket"
         )
     return f"/tmp/orbitkv-{port}.sock"
 
@@ -386,8 +386,8 @@ def _endpoint_is_local(endpoint: str) -> bool:
 
 __all__ = [
     "CacheDataClient",
-    "LocalDataClient",
+    "CacheManagerClient",
     "RestoreHandle",
     "RestoreStatus",
-    "resolve_local_bootstrap_sockets",
+    "resolve_bootstrap_sockets",
 ]

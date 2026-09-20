@@ -152,7 +152,7 @@ class ConnectorContext:
     def __post_init__(self) -> None:
         if self.data_client is None:
             # Directly constructed contexts use one client for both surfaces.
-            # The production connector always supplies LocalDataClient.
+            # The production connector always supplies CacheManagerClient.
             object.__setattr__(self, "data_client", self.engine_client)
 
     @property

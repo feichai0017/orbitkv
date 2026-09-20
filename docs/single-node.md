@@ -103,7 +103,7 @@ not by itself demonstrate an OrbitKV restore.
 The default connector endpoint derives the same socket from
 `http://127.0.0.1:50055`. If you choose a different manager port, set
 `orbitkv.port` in `kv_connector_extra_config` or `ORBITKV_PORT` in the vLLM
-environment. Use `orbitkv.local_bootstrap_socket` for a custom socket path.
+environment. Use `orbitkv.bootstrap_socket` for a custom socket path.
 For multiple **same-host** TP shards, see
 [the ordered shard endpoint configuration](../python/README.md#tp-shards-and-host-boundary).
 Do not configure a scheduler to query TP shards on another host through this

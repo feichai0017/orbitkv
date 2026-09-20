@@ -19,7 +19,7 @@ from .vllm_helpers import fetch_orbitkv_metrics
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 
-def test_sglang_direct_gpu_cache_recovery(local_control_server, request, tmp_path):
+def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     pytest.importorskip("sglang")
     model = request.config.getoption("--model")
     if not Path(model).exists():
@@ -64,7 +64,7 @@ def test_sglang_direct_gpu_cache_recovery(local_control_server, request, tmp_pat
     env["PYTHONPATH"] = os.pathsep.join(
         [str(Path(__file__).parents[1]), str(tmp_path), env.get("PYTHONPATH", "")]
     )
-    env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{local_control_server.local_bootstrap_socket}"
+    env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
     env["FLASHINFER_WORKSPACE_BASE"] = str(tmp_path / "flashinfer")
     log_path = tmp_path / "sglang-direct.log"
 
@@ -132,7 +132,7 @@ def test_sglang_direct_gpu_cache_recovery(local_control_server, request, tmp_pat
         stop_server(process)
 
     # Keep the Cache Manager alive while SGLang's HBM prefix tree disappears.
-    before_restart_load = fetch_orbitkv_metrics(local_control_server.http_port).get(
+    before_restart_load = fetch_orbitkv_metrics(channel_server.http_port).get(
         "orbitkv_load_bytes_total", 0
     )
     process, base_url = start_server()
@@ -140,7 +140,7 @@ def test_sglang_direct_gpu_cache_recovery(local_control_server, request, tmp_pat
         third = requests.post(f"{base_url}/generate", json=payload, timeout=90)
         third.raise_for_status()
         assert third.json()["meta_info"]["cached_tokens"] >= 64
-        after_restart_load = fetch_orbitkv_metrics(local_control_server.http_port).get(
+        after_restart_load = fetch_orbitkv_metrics(channel_server.http_port).get(
             "orbitkv_load_bytes_total", 0
         )
         assert after_restart_load > before_restart_load, "Cache Manager did not restore GPU KV"

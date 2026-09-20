@@ -85,7 +85,7 @@ OrbitKV can claim a reusable prefix for them.
 | [`orbitkv-metaserver`](crates/orbitkv-metaserver) | Cross-node replica discovery |
 | [`python/orbitkv/vllm`](python/orbitkv/vllm) | vLLM cache connector, Mooncake P/D adapter, plugin entry point |
 | [`python/orbitkv/sglang`](python/orbitkv/sglang) | SGLang GPU-page linker and plugin entry point |
-| [`python/orbitkv/client`](python/orbitkv/client) | Framework-neutral cache API and transport selection |
+| [`python/orbitkv/client`](python/orbitkv/client) | Framework-neutral cache API and Cache Manager connection |
 | [`third-party/sglang`](third-party/sglang) | Pinned SGLang source used to develop and validate integration |
 | [`third-party/vllm`](third-party/vllm) | Pinned vLLM release source used to develop and validate integration |
 | [`website`](website) | OrbitKV project website and brand assets |

@@ -190,7 +190,7 @@ impl Response {
 pub enum ProtocolError {
     #[error("invalid wire magic: {0:#x}")]
     InvalidMagic(u32),
-    #[error("unsupported local-control ABI version: {0}")]
+    #[error("unsupported process channel ABI version: {0}")]
     UnsupportedVersion(u16),
     #[error("unknown wire code: {0}")]
     UnknownCode(u16),

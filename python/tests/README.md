@@ -52,12 +52,11 @@ uv run --extra test pytest -m integration
 
 Runs tests that start or require a local `orbitkv-cache-manager` but do not run vLLM:
 
-- `test_local_control.py` proves Python-to-Cache Manager iceoryx2 ping, epoch fencing,
+- `test_channel.py` proves Python-to-Cache Manager iceoryx2 ping, epoch fencing,
   UDS/memfd bootstrap, lifecycle registration/health with gRPC disabled,
   local publish, cold and warm `QueryBundle`, asynchronous
   restore with GPU byte verification, local lease release, and shutdown across
   a real process boundary;
-- `test_cache_manager_client.py`
 - `test_session_watcher.py`
 - `test_sglang_direct_transfer.py` writes SGLang-shaped GPU pages through CUDA
   IPC, clears their source slots, and verifies a byte-exact restore into new

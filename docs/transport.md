@@ -1,7 +1,10 @@
 # OrbitKV transport architecture
 
-This document separates local control, remote data movement, and replica
-discovery so none of them becomes an accidental second source of KV truth.
+This document separates the inference-to-Cache-Manager channel, remote data
+movement, and replica discovery so none of them becomes an accidental second
+source of KV truth. "Same-host" describes where the client connects; the
+Cache Manager decides whether a requested block is resident in RAM, needs SSD
+prefetch, or can be fetched from a peer with Mooncake.
 
 ## Decision
 
@@ -19,7 +22,7 @@ Unix socket fails fast.
 Registration, health, session watching, and unregistration use the
 authenticated bootstrap UDS for both adapters.
 
-## Local IPC
+## Process channel
 
 `orbitkv-channel` uses iceoryx2 `0.10.0`. The workspace minimum Rust version is
 therefore `1.89`. Its first ABI is a fixed 64-byte message carrying:
@@ -46,7 +49,7 @@ UDS remains necessary for bootstrap, `SO_PEERCRED`, memfd/eventfd passing, and
 process-death detection.
 
 The Cache Manager process endpoint supports `Ping`, `QueryBundle`,
-stale-session fencing, and `Shutdown`. `LocalQueryClient` obtains the service
+stale-session fencing, and `Shutdown`. `ChannelClient` obtains the service
 identity, an exclusive arena slot, a client token, the arena memfd, and a
 notification eventfd through a mode-0600 Unix socket. `SO_PEERCRED` restricts the
 bootstrap to the Cache Manager's uid. Each request has an odd generation and each
@@ -69,16 +72,17 @@ pipeline seals them. `Restore` submits
 the existing in-process GPU load, returns an operation ID, signals its session's
 eventfd at terminal completion, and is consumed through a follow-up poll. Python
 exposes both non-blocking `restore_submit`/`restore_poll` plus the notification
-fd and a synchronous `restore` convenience wrapper. The
-Both adapters use these operations on a same-host deployment; KV payload bytes
-do not travel through the descriptor arena. The adapter exposes one cache API:
-scheduler Query/Release and worker Publish/Restore use the local endpoint.
+fd and a synchronous `restore` convenience wrapper.
+Both adapters use these operations through their same-host Cache Manager; KV
+payload bytes do not travel through the descriptor arena. The adapter exposes
+one cache API:
+scheduler Query/Release and worker Publish/Restore use the process channel.
 Lifecycle calls use the
-persistent bootstrap UDS. Local restore completion uses the session eventfd with bounded fallback
+persistent bootstrap UDS. Restore completion uses the session eventfd with bounded fallback
 polling.
 
 For one Cache Manager, the adapter derives `/tmp/orbitkv-<addr-port>.sock` unless
-`orbitkv.local_bootstrap_socket` is set. A scheduler querying multiple TP shards
+`orbitkv.bootstrap_socket` is set. A scheduler querying multiple TP shards
 uses the socket derived from each shard endpoint; custom paths can be supplied
 through `orbitkv.tp_shard_bootstrap_sockets`. In today's centralized vLLM
 scheduler topology this requires all configured TP shards to be on the scheduler
@@ -115,7 +119,7 @@ the same instance lock, so stale disconnects cannot remove the new session.
 SIGTERM, Ctrl+C, and control-plane shutdown close sessions and drain registered
 workers before service exit.
 
-## Measured local-control baseline
+## Measured process-channel baseline
 
 Measurements were collected on one H20 node with two Linux processes and a
 64-byte request/response descriptor, before bootstrap version 2. They are

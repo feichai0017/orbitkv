@@ -11,10 +11,10 @@ import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
-def test_direct_page_transfer_overwrites_poisoned_gpu_slots(local_control_server):
+def test_direct_page_transfer_overwrites_poisoned_gpu_slots(channel_server):
     torch = pytest.importorskip("torch")
     from orbitkv import QueryReady
-    from orbitkv.client.data_plane import LocalDataClient
+    from orbitkv.client.data_plane import CacheManagerClient
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
 
     if not torch.cuda.is_available():
@@ -34,7 +34,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(local_control_server
     hashes = [hashlib.sha256(f"page-{i}".encode()).digest() for i in range(2)]
     instance = f"sglang-layout-{uuid.uuid4().hex}"
     namespace = f"sglang-layout:{instance}"
-    client = LocalDataClient(local_control_server.local_bootstrap_socket)
+    client = CacheManagerClient(channel_server.bootstrap_socket)
     try:
         client.start_session_watcher(instance, namespace, 1, 1)
         wrappers = [serialize_gpu_buffer(tensor) for tensor in tensors]

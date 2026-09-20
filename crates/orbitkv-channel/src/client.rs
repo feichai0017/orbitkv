@@ -11,26 +11,26 @@ use thiserror::Error;
 
 use crate::lifecycle::{LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader};
 use crate::{
-    BootstrapClient, BootstrapError, CallOptions, Command, CommandCode, LocalClient,
-    PublishRequest, QueryBundleRequest, QueryBundleResponse, QueryCodecError,
-    RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest, RestoreCommand, RestoreRequest,
-    RestoreResponse, RestoreState, StatusCode, TransportError,
+    BootstrapClient, BootstrapError, CallOptions, Command, CommandCode, PublishRequest,
+    QueryBundleRequest, QueryBundleResponse, QueryCodecError, RESPONSE_FLAG_REQUEST_CONSUMED,
+    ReleaseRequest, RestoreCommand, RestoreRequest, RestoreResponse, RestoreState, StatusCode,
+    TransportClient, TransportError,
 };
 
 const RESTORE_NOTIFICATION_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(50);
 
 #[derive(Debug, Error)]
-pub enum LocalQueryError {
+pub enum ChannelError {
     #[error(transparent)]
     Bootstrap(#[from] BootstrapError),
     #[error(transparent)]
     Transport(#[from] TransportError),
     #[error(transparent)]
     Codec(#[from] QueryCodecError),
-    #[error("local query returned {0:?}")]
+    #[error("cache request returned {0:?}")]
     Status(StatusCode),
-    #[error("local query session is ambiguous after a failed call; reconnect required")]
+    #[error("cache session is ambiguous after a failed call; reconnect required")]
     SessionRequiresReconnect,
     #[error("restore operation {operation_id} timed out")]
     RestoreTimeout { operation_id: u64 },
@@ -38,13 +38,13 @@ pub enum LocalQueryError {
     RestoreFailed { operation_id: u64, message: String },
     #[error("cannot observe Cache Manager process death; refusing to start a publish")]
     PublishPeerUnobservable,
-    #[error("local lifecycle rejected operation ({code}): {message}")]
+    #[error("Cache Manager rejected lifecycle operation ({code}): {message}")]
     Lifecycle { code: u16, message: String },
 }
 
-pub struct LocalQueryClient {
+pub struct ChannelClient {
     bootstrap: BootstrapClient,
-    client: LocalClient,
+    client: TransportClient,
     options: CallOptions,
     call_lock: Mutex<()>,
     lifecycle_lock: Mutex<()>,
@@ -52,11 +52,11 @@ pub struct LocalQueryClient {
     publish_peer: Option<OwnedFd>,
 }
 
-impl LocalQueryClient {
+impl ChannelClient {
     pub fn connect(
         bootstrap_socket: impl AsRef<Path>,
         options: CallOptions,
-    ) -> Result<Self, LocalQueryError> {
+    ) -> Result<Self, ChannelError> {
         let bootstrap = BootstrapClient::connect(bootstrap_socket)?;
         let publish_peer = socket_peercred(bootstrap.stream())
             .ok()
@@ -69,7 +69,7 @@ impl LocalQueryClient {
             .stream()
             .set_write_timeout(Some(options.timeout))
             .map_err(BootstrapError::Io)?;
-        let client = LocalClient::connect(&bootstrap.info().service_name)?;
+        let client = TransportClient::connect(&bootstrap.info().service_name)?;
         Ok(Self {
             bootstrap,
             client,
@@ -86,17 +86,13 @@ impl LocalQueryClient {
     }
 
     /// Registration and liveness metadata use UDS, independently of the hot descriptor slot.
-    pub fn lifecycle(
-        &self,
-        command: LifecycleCommand,
-        payload: &[u8],
-    ) -> Result<(), LocalQueryError> {
+    pub fn lifecycle(&self, command: LifecycleCommand, payload: &[u8]) -> Result<(), ChannelError> {
         let _guard = self
             .lifecycle_lock
             .lock()
-            .map_err(|_| LocalQueryError::SessionRequiresReconnect)?;
+            .map_err(|_| ChannelError::SessionRequiresReconnect)?;
         if self.poisoned.load(Ordering::Acquire) {
-            return Err(LocalQueryError::SessionRequiresReconnect);
+            return Err(ChannelError::SessionRequiresReconnect);
         }
         let exchange = || -> std::io::Result<(u16, Vec<u8>)> {
             let header = LifecycleHeader {
@@ -130,11 +126,11 @@ impl LocalQueryClient {
         };
         match exchange() {
             Ok((0, body)) if body.is_empty() => Ok(()),
-            Ok((0, _)) => Err(LocalQueryError::Lifecycle {
+            Ok((0, _)) => Err(ChannelError::Lifecycle {
                 code: 0,
                 message: "unexpected lifecycle response body".to_string(),
             }),
-            Ok((code, message)) => Err(LocalQueryError::Lifecycle {
+            Ok((code, message)) => Err(ChannelError::Lifecycle {
                 code,
                 message: String::from_utf8_lossy(&message).into_owned(),
             }),
@@ -146,7 +142,7 @@ impl LocalQueryClient {
         }
     }
 
-    /// End the local session explicitly, without waiting for client destruction.
+    /// End the process-channel session explicitly, without waiting for client destruction.
     pub fn close(&self) {
         self.poisoned.store(true, Ordering::Release);
         let _ = self.bootstrap.stream().shutdown(std::net::Shutdown::Both);
@@ -166,7 +162,7 @@ impl LocalQueryClient {
         &self,
         request_id: u64,
         request: &QueryBundleRequest,
-    ) -> Result<QueryBundleResponse, LocalQueryError> {
+    ) -> Result<QueryBundleResponse, ChannelError> {
         let payload = request.encode()?;
         let payload = self.call_descriptor(CommandCode::QueryBundle, request_id, &payload)?;
         match QueryBundleResponse::decode(&payload) {
@@ -178,21 +174,17 @@ impl LocalQueryClient {
         }
     }
 
-    pub fn release(&self, request_id: u64, lease: Vec<u8>) -> Result<(), LocalQueryError> {
+    pub fn release(&self, request_id: u64, lease: Vec<u8>) -> Result<(), ChannelError> {
         let payload = ReleaseRequest { lease }.encode()?;
         let _ = self.call_descriptor(CommandCode::Release, request_id, &payload)?;
         Ok(())
     }
 
-    pub fn publish(
-        &self,
-        request_id: u64,
-        request: &PublishRequest,
-    ) -> Result<(), LocalQueryError> {
+    pub fn publish(&self, request_id: u64, request: &PublishRequest) -> Result<(), ChannelError> {
         let peer = self
             .publish_peer
             .as_ref()
-            .ok_or(LocalQueryError::PublishPeerUnobservable)?;
+            .ok_or(ChannelError::PublishPeerUnobservable)?;
         let payload = request.encode()?;
         let _ = self.call_descriptor_with_peer(CommandCode::Publish, request_id, &payload, peer)?;
         Ok(())
@@ -202,14 +194,14 @@ impl LocalQueryClient {
         &self,
         request_id: u64,
         request: &RestoreRequest,
-    ) -> Result<u64, LocalQueryError> {
+    ) -> Result<u64, ChannelError> {
         let payload = RestoreCommand::Submit(request.clone()).encode()?;
         let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload)?;
         let response = RestoreResponse::decode(&payload)?;
         match response.state {
             RestoreState::Pending => Ok(response.operation_id),
             RestoreState::Succeeded => Ok(response.operation_id),
-            RestoreState::Failed => Err(LocalQueryError::RestoreFailed {
+            RestoreState::Failed => Err(ChannelError::RestoreFailed {
                 operation_id: response.operation_id,
                 message: response.message,
             }),
@@ -220,7 +212,7 @@ impl LocalQueryClient {
         &self,
         request_id: u64,
         operation_id: u64,
-    ) -> Result<RestoreResponse, LocalQueryError> {
+    ) -> Result<RestoreResponse, ChannelError> {
         let payload = RestoreCommand::Poll { operation_id }.encode()?;
         let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload)?;
         Ok(RestoreResponse::decode(&payload)?)
@@ -231,7 +223,7 @@ impl LocalQueryClient {
         request_id: u64,
         operation_id: u64,
         timeout: std::time::Duration,
-    ) -> Result<(), LocalQueryError> {
+    ) -> Result<(), ChannelError> {
         let deadline = std::time::Instant::now() + timeout;
         let mut poll_request_id = request_id;
         loop {
@@ -239,7 +231,7 @@ impl LocalQueryClient {
             match response.state {
                 RestoreState::Succeeded => return Ok(()),
                 RestoreState::Failed => {
-                    return Err(LocalQueryError::RestoreFailed {
+                    return Err(ChannelError::RestoreFailed {
                         operation_id,
                         message: response.message,
                     });
@@ -248,10 +240,10 @@ impl LocalQueryClient {
             }
             poll_request_id = poll_request_id
                 .checked_add(1)
-                .ok_or(LocalQueryError::SessionRequiresReconnect)?;
+                .ok_or(ChannelError::SessionRequiresReconnect)?;
             let now = std::time::Instant::now();
             if now >= deadline {
-                return Err(LocalQueryError::RestoreTimeout { operation_id });
+                return Err(ChannelError::RestoreTimeout { operation_id });
             }
             let wait = deadline
                 .saturating_duration_since(now)
@@ -265,7 +257,7 @@ impl LocalQueryClient {
         code: CommandCode,
         request_id: u64,
         payload: &[u8],
-    ) -> Result<Vec<u8>, LocalQueryError> {
+    ) -> Result<Vec<u8>, ChannelError> {
         self.call_descriptor_inner(code, request_id, payload, None)
     }
 
@@ -275,7 +267,7 @@ impl LocalQueryClient {
         request_id: u64,
         payload: &[u8],
         peer: &OwnedFd,
-    ) -> Result<Vec<u8>, LocalQueryError> {
+    ) -> Result<Vec<u8>, ChannelError> {
         self.call_descriptor_inner(code, request_id, payload, Some(peer))
     }
 
@@ -285,13 +277,13 @@ impl LocalQueryClient {
         request_id: u64,
         payload: &[u8],
         peer: Option<&OwnedFd>,
-    ) -> Result<Vec<u8>, LocalQueryError> {
+    ) -> Result<Vec<u8>, ChannelError> {
         let _call = self
             .call_lock
             .lock()
             .map_err(|_| BootstrapError::Arena(crate::ArenaError::Poisoned))?;
         if self.poisoned.load(Ordering::Acquire) {
-            return Err(LocalQueryError::SessionRequiresReconnect);
+            return Err(ChannelError::SessionRequiresReconnect);
         }
         let descriptor = self.bootstrap.write_request(payload)?;
         let info = self.bootstrap.info();
@@ -319,7 +311,7 @@ impl LocalQueryClient {
                         TransportError::PeerExited { .. } | TransportError::Send(_)
                     )
                 {
-                    LocalClient::wait_for_peer_exit(peer);
+                    TransportClient::wait_for_peer_exit(peer);
                 }
                 return Err(error.into());
             }
@@ -332,11 +324,11 @@ impl LocalQueryClient {
             } else {
                 self.close();
             }
-            return Err(LocalQueryError::Status(response.status));
+            return Err(ChannelError::Status(response.status));
         }
         if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED == 0 {
             self.close();
-            return Err(LocalQueryError::SessionRequiresReconnect);
+            return Err(ChannelError::SessionRequiresReconnect);
         }
         let payload = self
             .bootstrap

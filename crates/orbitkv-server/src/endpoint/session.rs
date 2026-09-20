@@ -67,7 +67,7 @@ pub(crate) async fn serve(
     }
     .await;
     if let Err(error) = result {
-        log::debug!("Local lifecycle connection closed: {error}");
+        log::debug!("Process-channel lifecycle connection closed: {error}");
     }
     if let Some(connection) = connection {
         let _ = connection.shutdown(std::net::Shutdown::Both);
