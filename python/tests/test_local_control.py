@@ -11,7 +11,7 @@ import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
-def test_python_local_control_lifecycle_reaches_real_sidecar(local_control_server):
+def test_python_local_control_lifecycle_reaches_real_cache_manager(local_control_server):
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
     service_name = local_control_server.local_control_service
     session_epoch = local_control_server.local_control_session_epoch
@@ -32,6 +32,21 @@ def test_python_local_control_lifecycle_reaches_real_sidecar(local_control_serve
     client.shutdown(request_id=103)
     assert local_control_server.process is not None
     assert local_control_server.process.wait(timeout=5) == 0, local_control_server.read_logs()
+
+
+def test_local_lifecycle_runs_with_no_grpc_listener(local_control_server):
+    import socket
+
+    native = importlib.import_module("orbitkv.orbitkv")
+    with socket.socket() as probe:
+        assert probe.connect_ex(("127.0.0.1", local_control_server.port)) != 0
+    client = native.LocalQueryClient(local_control_server.local_bootstrap_socket)
+    assert client.health()[0]
+    client.start_session_watcher("local-session", "test", 1, 1)
+    assert client.unregister_context("local-session")[0]
+    client.close()
+    with pytest.raises(native.OrbitKVError, match="reconnect"):
+        client.health()
 
 
 def test_query_bundle_uses_bootstrapped_arena_and_core(

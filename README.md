@@ -15,6 +15,11 @@ OrbitKV combines a production-oriented Rust storage and transfer engine with a
 new control plane that will compile attention semantics and workload evidence
 into cache placement, retention, prefetch, movement, and routing decisions.
 vLLM is the currently validated adapter; SGLang is the next first-class adapter.
+The framework release targets as of 2026-09-20 are
+[vLLM `0.29.0`](https://github.com/vllm-project/vllm/releases/tag/v0.29.0)
+and [SGLang `0.5.20`](https://github.com/sgl-project/sglang/releases/tag/v0.5.20);
+the SGLang source submodule is pinned to that release. See
+[`python/README.md`](python/README.md) for separate GPU environments.
 
 ## What exists now
 
@@ -50,19 +55,19 @@ correct and measured.
 | Path | Responsibility |
 | --- | --- |
 | [`orbitkv-contract`](crates/orbitkv-contract) | Framework-neutral state identity, format, page and recovery contracts |
-| [`orbitkv-local`](crates/orbitkv-local) | Versioned iceoryx2 control path between inference processes and the local sidecar |
+| [`orbitkv-local`](crates/orbitkv-local) | Versioned iceoryx2 and UDS process IPC implementation |
 | [`orbitkv-core`](crates/orbitkv-core) | Content-addressed blocks, leases, eviction, SSD and remote tiers |
 | [`orbitkv-transfer`](crates/orbitkv-transfer) | Pinned upstream Mooncake Transfer Engine wrapper |
-| [`orbitkv-server`](crates/orbitkv-server) | Local sidecar, health/metrics endpoints, and P/D router |
+| [`orbitkv-server`](crates/orbitkv-server) | Cache Manager crate: shared cache operations, process endpoint, peer control, health and metrics |
 | [`orbitkv-metaserver`](crates/orbitkv-metaserver) | Cross-node replica discovery |
 | [`python/orbitkv/vllm`](python/orbitkv/vllm) | vLLM adapter |
 | [`python/orbitkv/sglang`](python/orbitkv/sglang) | SGLang adapter contracts and upcoming HiCache backend |
-| [`python/orbitkv/client`](python/orbitkv/client) | Framework-neutral local client exports |
+| [`python/orbitkv/client`](python/orbitkv/client) | Framework-neutral cache API and transport selection |
 | [`third-party/sglang`](third-party/sglang) | Pinned SGLang source used to develop and validate integration |
 | [`website`](website) | OrbitKV project website and brand assets |
 
-The local and remote transport split, Mooncake integration boundary, and
-measured IPC baselines are documented in
+The process IPC, network control, Mooncake integration boundary, and measured
+IPC baselines are documented in
 [`docs/transport.md`](docs/transport.md).
 
 ## Build
@@ -87,15 +92,19 @@ git submodule update --init --recursive third-party/mooncake
 To run the vLLM adapter while SGLang support is under construction:
 
 ```sh
-orbitkv-server
+orbitkv-cache-manager
 vllm serve Qwen/Qwen3-0.6B \
   --kv-transfer-config '{"kv_connector":"OrbitKVConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.vllm"}'
 ```
 
-For a same-host sidecar, the connector automatically uses UDS-bootstrap +
-iceoryx2 for Query/Publish/Restore/Release when the derived local socket is
-available. Set `orbitkv.local_data=false` only to force the compatibility gRPC
-data path. Lifecycle calls currently stay on gRPC.
+For a same-host Cache Manager, the connector uses UDS bootstrap +
+iceoryx2 for Query/Publish/Restore/Release. If the derived same-host socket is
+missing, startup fails with a clear error instead of switching to gRPC.
+Registration, health, sessions, and cleanup use the same authenticated
+Unix socket. Standalone mode does not start a gRPC listener. Distributed mode
+(`--metaserver-addr`) enables a peer-only gRPC control endpoint; remote KV
+bytes still use Mooncake. Every inference process connects to a Cache Manager
+on its own host.
 
 OrbitKV's current workspace is Apache-2.0 licensed. Earlier experiments remain
 available in repository history but are not part of the current build.

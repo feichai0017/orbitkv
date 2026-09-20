@@ -18,8 +18,7 @@ examples/pd_logs/
 python/tests/*.log
 
 # Built binaries staged into the Python wheel.
-python/orbitkv/orbitkv-server
-python/orbitkv/orbitkv-server-py
+python/orbitkv/orbitkv-cache-manager-py
 python/orbitkv/orbitkv-metaserver-py
 python/orbitkv/libtransfer_engine.so
 python/orbitkv/libmooncake_common.so

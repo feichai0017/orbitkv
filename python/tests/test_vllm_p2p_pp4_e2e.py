@@ -224,7 +224,7 @@ class MetaServer(ManagedProcess):
         )
 
 
-class OrbitKVServer(ManagedProcess):
+class CacheManager(ManagedProcess):
     def __init__(
         self,
         label: str,
@@ -239,7 +239,7 @@ class OrbitKVServer(ManagedProcess):
         self.http_port = find_available_port()
         self.grpc_host = advertise_host
 
-        cmd = _server_cmd("orbitkv-server")
+        cmd = _server_cmd("orbitkv-cache-manager")
         cmd.extend(
             [
                 "--addr",
@@ -284,7 +284,7 @@ class VllmReplica(ManagedProcess):
         model: str,
         port: int,
         devices: str,
-        orbitkv_server: OrbitKVServer,
+        orbitkv_server: CacheManager,
         log_dir: Path,
         max_model_len: int,
         transfer_backend: str,
@@ -535,7 +535,7 @@ def test_pp4_p2p_matches_local_cache_load(
     with ExitStack() as stack:
         metaserver = stack.enter_context(MetaServer(log_dir, server_host))
         source_orbitkv = stack.enter_context(
-            OrbitKVServer(
+            CacheManager(
                 "source",
                 source_devices,
                 log_dir,
@@ -595,7 +595,7 @@ def test_pp4_p2p_matches_local_cache_load(
             )
 
         remote_orbitkv = stack.enter_context(
-            OrbitKVServer(
+            CacheManager(
                 "remote",
                 consumer_devices,
                 log_dir,

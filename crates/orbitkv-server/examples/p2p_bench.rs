@@ -44,8 +44,6 @@ use orbitkv_core::*;
 use orbitkv_metaserver::{BlockHashStore, GrpcMetaService};
 use orbitkv_proto::proto::engine::meta_server_server::MetaServerServer;
 use orbitkv_server::proto::engine::engine_server::EngineServer;
-use orbitkv_server::{CudaTensorRegistry, GrpcEngineService, RegistryHandle};
-use tokio::sync::Notify;
 use tonic::transport::Server;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -500,18 +498,7 @@ async fn run_holder(cli: &Cli, shape: &Shape, pool_bytes: usize) {
             .expect("holder engine"),
     );
 
-    // The bench saves in-process (no gRPC IPC saves), so the registry stays
-    // empty; `empty()` avoids dragging an embedded-Python torch import into
-    // a bench that never registers IPC tensors.
-    let registry = RegistryHandle::spawn(CudaTensorRegistry::empty());
-    let shutdown = Arc::new(Notify::new());
-    let hll = Arc::new(std::sync::Mutex::new(
-        orbitkv_common::hll::MultiWindowHllTracker::new(
-            vec![("24h".into(), Duration::from_secs(86400))],
-            14,
-        ),
-    ));
-    let service = GrpcEngineService::new(Arc::clone(&engine), registry, shutdown, hll);
+    let service = P2pTransferService::new(Arc::clone(&engine));
     let listen: SocketAddr = ([0, 0, 0, 0], cli.port).into();
     tokio::spawn(async move {
         Server::builder()

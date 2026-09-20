@@ -1,7 +1,7 @@
 """Standalone worker used by test_session_watcher::test_crashed_client_releases_ipc.
 
 Allocates a GPU tensor, registers it as a CUDA IPC context with
-orbitkv-server, opens the liveness Session stream, signals the parent
+Cache Manager, opens the liveness Session stream, signals the parent
 that it is ready, then blocks forever waiting to be SIGKILLed.
 
 Run as: python session_crash_helper.py <endpoint> <instance_id> <ready_file>
@@ -23,7 +23,7 @@ def main() -> int:
     endpoint, instance_id, ready_file = sys.argv[1], sys.argv[2], sys.argv[3]
 
     orbitkv_module = importlib.import_module("orbitkv.orbitkv")
-    client = orbitkv_module.EngineRpcClient(endpoint)
+    client = orbitkv_module.LocalQueryClient(endpoint)
 
     device = torch.device("cuda:0")
     kv = torch.rand((2, 16, 16, 8, 128), dtype=torch.bfloat16, device=device).contiguous()

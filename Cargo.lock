@@ -2088,7 +2088,6 @@ dependencies = [
 name = "orbitkv-py"
 version = "0.1.0"
 dependencies = [
- "log",
  "orbitkv-common",
  "orbitkv-core",
  "orbitkv-local",
@@ -2096,9 +2095,9 @@ dependencies = [
  "orbitkv-proto",
  "orbitkv-server",
  "orbitkv-transfer",
+ "prost",
  "pyo3",
  "tokio",
- "tonic",
 ]
 
 [[package]]
@@ -2122,6 +2121,7 @@ dependencies = [
  "orbitkv-proto",
  "parking_lot",
  "prometheus",
+ "prost",
  "pyo3",
  "pyo3-build-config",
  "reqwest 0.13.2",

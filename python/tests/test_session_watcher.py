@@ -1,7 +1,7 @@
 """Contract test for the Session-stream liveness feature.
 
 When a vllm process dies while holding registered CUDA IPC mappings,
-orbitkv-server must release them. Without this, the IPC handles pin
+Cache Manager must release them. Without this, the IPC handles pin
 the GPU memory on the server side and a DaemonSet-restarted vllm will
 OOM at `torch.cuda.init()`.
 
@@ -47,12 +47,14 @@ def _worker_env() -> dict[str, str]:
     return env
 
 
-def test_crashed_client_releases_ipc(orbitkv_server, tmp_path):
+def test_crashed_client_releases_ipc(local_control_server, tmp_path):
+    orbitkv_server = local_control_server
+    endpoint = orbitkv_server.local_bootstrap_socket
     instance_id = f"inst-crash-{os.getpid()}"
     ready_file = tmp_path / "ready"
 
     worker = subprocess.Popen(
-        [sys.executable, str(HELPER), orbitkv_server.endpoint, instance_id, str(ready_file)],
+        [sys.executable, str(HELPER), endpoint, instance_id, str(ready_file)],
         env=_worker_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

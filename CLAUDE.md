@@ -33,7 +33,7 @@ Run all CI checks locally before committing:
 
 | Gate | When to run | Command | Notes |
 |------|-------------|---------|-------|
-| Default unit | Every Python PR before review | `cd python && uv run --extra test pytest` | Must not start vLLM, `orbitkv-server`, or GPU runtime. Collection still imports deselected files, so top-level imports must be in `python[test]` or moved behind fixtures. |
+| Default unit | Every Python PR before review | `cd python && uv run --extra test pytest` | Must not start vLLM, `orbitkv-cache-manager`, or GPU runtime. Collection still imports deselected files, so top-level imports must be in `python[test]` or moved behind fixtures. |
 | Source-only default | CI and dependency-boundary checks | `cd python && uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Proves default gate does not need torch, vLLM, CUDA, native extension build, or a running server. |
 | Integration | Server/native/client/session lifecycle changes | `cd python && uv run --extra test pytest -m integration` | Requires built native extension, server binary, and GPU where the test uses CUDA IPC. |
 | vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && uv run --extra test pytest -m e2e tests/test_vllm_e2e_correctness.py --model /data/models/Qwen3-4B --max-model-len 4096` | Merge-before gate: code author runs it, reviewer reruns it on the GPU machine. |
@@ -93,8 +93,9 @@ workspace and intentionally has no `src/`. The Python distribution remains at
 5. **orbitkv-proto** (Rust): Protobuf definitions
    - gRPC service definitions built with prost/tonic
 
-6. **orbitkv-server** (Rust): sidecar service
-   - `service.rs`: Tonic gRPC service implementation
+6. **orbitkv-server** (Rust): Cache Manager service
+   - `endpoint/`: UDS/iceoryx2 inference endpoint
+   - `orbitkv-core/src/internode/p2p_service.rs`: peer transfer gRPC service
    - `registry.rs`: Instance/worker registration
    - `http_server.rs`: HTTP health check and Prometheus metrics endpoint
    - `bin/orbitkv-router.rs`: P/D request router (coordinates P/D nodes; OrbitKV itself is a KV store)
@@ -102,7 +103,7 @@ workspace and intentionally has no `src/`. The Python distribution remains at
 7. **orbitkv-metaserver** (Rust): Cross-node block hash registry
    - `service.rs`: gRPC MetaServer service (insert/query block hashes)
    - `store.rs`: Multi-owner block hash store with TTL sweep (backed by DashMap)
-   - Used for multi-node KV cache coordination — each orbitkv-server registers its block hashes here
+   - Used for multi-node KV cache coordination — each Cache Manager registers its block hashes here
 
 8. **orbitkv-transfer** (Rust): pinned upstream Mooncake Transfer Engine provider
    - `mooncake.rs`: Segment/BatchTransfer/notification wrapper for READ and WRITE
@@ -112,14 +113,14 @@ workspace and intentionally has no `src/`. The Python distribution remains at
    - `orbitkv/vllm/`: canonical vLLM v1 connector
    - `orbitkv/connector/`: backward-compatible alias for `orbitkv.vllm`
    - `orbitkv/sglang/`: SGLang config and pool contracts; no runtime backend yet
-   - `orbitkv/client/`: framework-neutral sidecar client exports
+   - `orbitkv/client/`: framework-neutral Cache Manager client exports
    - `orbitkv/ipc_wrapper.py`: CUDA IPC handle wrapper
-   - CLI binaries: `orbitkv-server`, `orbitkv-metaserver` (installed via pip)
+   - CLI binaries: `orbitkv-cache-manager`, `orbitkv-metaserver` (installed via pip)
 
 ### Data Flow
 
 ```
-vLLM/SGLang adapter <--control--> OrbitKV sidecar <--registered pages--> framework memory
+vLLM/SGLang adapter <--control--> OrbitKV Cache Manager <--registered pages--> framework memory
                                     |
                              Pinned CPU Memory (KV cache storage)
                                    / \
@@ -203,7 +204,7 @@ remote data moves through Mooncake over RDMA or TCP. See `docs/architecture.md` 
 - `crates/orbitkv-core/src/storage/write_path.rs`: Async insert worker thread
 - `crates/orbitkv-core/src/backing/ssd.rs`: SSD backing store coordinator
 - `crates/orbitkv-core/src/internode/metaserver_client.rs`: MetaServer registration, query, and node heartbeat
-- `crates/orbitkv-server/src/service.rs`: gRPC service implementation
+- `crates/orbitkv-core/src/internode/p2p_service.rs`: peer transfer gRPC service
 - `crates/orbitkv-metaserver/src/lib.rs`: MetaServer entry point and CLI
 - `crates/orbitkv-metaserver/src/service.rs`: MetaServer gRPC service
 - `crates/orbitkv-metaserver/src/store.rs`: Block hash store (LRU + TTL)

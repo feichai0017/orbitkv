@@ -12,10 +12,10 @@ workspace = true
 name = "orbitkv"
 crate-type = ["cdylib"]
 
-# Binary for orbitkv-server (will be included in wheel by maturin)
+# Cache Manager binary included in the wheel by maturin.
 [[bin]]
-name = "orbitkv-server-py"
-path = "src/bin/server.rs"
+name = "orbitkv-cache-manager-py"
+path = "src/bin/cache_manager.rs"
 
 # Binary for orbitkv-metaserver (will be included in wheel by maturin)
 [[bin]]
@@ -38,5 +38,4 @@ orbitkv-server = { path = "../crates/orbitkv-server", default-features = false }
 orbitkv-metaserver = { path = "../crates/orbitkv-metaserver", default-features = false }
 orbitkv-transfer = { workspace = true, optional = true }
 tokio.workspace = true
-tonic.workspace = true
-log.workspace = true
+prost.workspace = true

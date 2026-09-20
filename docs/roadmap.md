@@ -14,12 +14,12 @@ Deliver:
   compatibility alias;
 - establish `orbitkv.sglang` and `orbitkv.client` package boundaries;
 - establish the `orbitkv-local` iceoryx2 control ABI;
-- connect lifecycle probes, epoch fencing, and shutdown to the real sidecar and
+- connect lifecycle probes, epoch fencing, and shutdown to the real Cache Manager and
   Python client;
 - bootstrap a generation-checked descriptor arena over UDS and execute
-  `QueryBundle` through the same core path as compatibility gRPC;
-- add a framework-neutral Python data-plane facade and an explicit vLLM local
-  mode for query, publish, restore, and lease release;
+  `QueryBundle` through the cache service;
+- add a framework-neutral Python cache client for local query, publish,
+  restore, and lease release;
 - integrate a pinned upstream Mooncake Transfer Engine as the single remote
   movement implementation;
 - preserve current vLLM behavior.
@@ -37,7 +37,7 @@ Gate:
 Deliver:
 
 - implement the dynamic `HiCacheStorage` backend;
-- register SGLang shared host regions with the sidecar over UDS;
+- register SGLang shared host regions with the Cache Manager over UDS;
 - switch framework adapters to the available local `QueryBundle`, publish,
   restore, completion, and lease-release APIs;
 - support KV, MLA, Mamba/recurrent, SWA, and explicit opaque pools;
@@ -48,7 +48,7 @@ Gate:
 
 - numerical parity with SGLang's file backend;
 - no second host-page copy in the steady state;
-- SGLang worker restart preserves sidecar-resident cache;
+- SGLang worker restart preserves Cache Manager-resident cache;
 - multi-pool queries never report a boundary with missing required state.
 
 ## M2: common StateBundle query and native local transport

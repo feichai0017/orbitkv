@@ -1,9 +1,8 @@
-"""Framework-neutral cache data-plane clients.
+"""Framework-neutral cache operations.
 
-The vLLM and SGLang adapters should depend on this narrow surface instead of
-depending directly on either the compatibility gRPC client or the local IPC
-protocol. Lifecycle operations such as registration, health, and session
-watching intentionally remain outside this module.
+The connection module opens a process connection. A cache hit can come from
+DRAM, SSD, or a peer node without changing this interface. The process-local
+transport uses UDS for lifecycle and iceoryx2 descriptors for hot commands.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from orbitkv import EngineRpcClient, LocalQueryClient, PyLoadState, QueryLoading, QueryReady
+from orbitkv import LocalQueryClient, QueryLoading, QueryReady
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,98 +76,36 @@ class CacheDataClient(Protocol):
     def poll_restore(self, handle: RestoreHandle) -> RestoreStatus: ...
 
 
-@dataclass(frozen=True, slots=True)
-class _GrpcRestoreHandle:
-    state: PyLoadState
-    shm_name: str
+class CacheLifecycleClient(Protocol):
+    """Lifecycle surface of the local Cache Manager connection."""
 
-    @property
-    def key(self) -> str:
-        return self.shm_name
+    def health(self) -> tuple[bool, str]: ...
 
-
-class GrpcDataClient:
-    """Compatibility data plane backed by the existing gRPC client."""
-
-    def __init__(self, client: EngineRpcClient):
-        self._client = client
-
-    @property
-    def transport(self) -> str:
-        return "grpc"
-
-    def query_prefetch(
+    def register_context_batch(
         self,
         instance_id: str,
-        block_hashes: list[bytes],
-        req_id: str,
-        wait_for_full_prefix: bool = False,
-        group_id: int = 0,
-    ) -> QueryLoading | QueryReady:
-        if group_id:
-            return self._client.query_prefetch(
-                instance_id,
-                block_hashes,
-                req_id=req_id,
-                wait_for_full_prefix=wait_for_full_prefix,
-                group_id=group_id,
-            )
-        return self._client.query_prefetch(
-            instance_id,
-            block_hashes,
-            req_id=req_id,
-            wait_for_full_prefix=wait_for_full_prefix,
-        )
-
-    def release(self, lease: bytes) -> None:
-        self._client.release(lease)
-
-    def save(
-        self,
-        instance_id: str,
+        namespace: str,
         tp_rank: int,
         pp_rank: int,
+        tp_size: int,
+        world_size: int,
         device_id: int,
-        saves: list[tuple[str, list[int], list[bytes]]],
-    ) -> tuple[bool, str]:
-        return self._client.save(instance_id, tp_rank, pp_rank, device_id, saves)
+        layer_names: list[str],
+        wrapper_bytes_list: list[bytes],
+        num_blocks_list: list[int],
+        bytes_per_block_list: list[int],
+        kv_stride_bytes_list: list[int],
+        segments_list: list[int],
+        transfer_backend: str,
+        page_first: bool,
+        layer_group_ids: list[int] | None = None,
+    ) -> tuple[bool, str]: ...
 
-    def start_restore(
-        self,
-        instance_id: str,
-        tp_rank: int,
-        device_id: int,
-        layer_groups: list[list[str]],
-        loads: list[tuple[bytes, list[list[int | None]]]],
-    ) -> RestoreHandle:
-        state = PyLoadState()
-        shm_name = state.shm_name()
-        ok, message = self._client.load(
-            instance_id,
-            tp_rank,
-            device_id,
-            shm_name,
-            layer_groups,
-            loads,
-        )
-        if not ok:
-            raise RuntimeError(message or "gRPC restore submission failed")
-        return _GrpcRestoreHandle(state=state, shm_name=shm_name)
+    def unregister_context(self, instance_id: str) -> tuple[bool, str]: ...
 
-    def restore_completions_ready(self) -> bool:
-        return True
-
-    def poll_restore(self, handle: RestoreHandle) -> RestoreStatus:
-        if not isinstance(handle, _GrpcRestoreHandle):
-            raise TypeError("restore handle does not belong to the gRPC data client")
-        if not handle.state.is_ready():
-            return RestoreStatus(done=False, success=False)
-        state = handle.state.get_state()
-        return RestoreStatus(
-            done=True,
-            success=state >= 0,
-            message="" if state >= 0 else f"load state {state}",
-        )
+    def start_session_watcher(
+        self, instance_id: str, namespace: str, tp_size: int, world_size: int
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +136,10 @@ class LocalDataClient:
             timeout_ms=timeout_ms,
             spin_iterations=spin_iterations,
         )
+        self._client_options = (timeout_ms, spin_iterations)
+        self._publish_client: LocalQueryClient | None = None
+        self._publish_lock = threading.Lock()
+        self._closed = False
         self._request_lock = threading.Lock()
         self._next_request_id = 1
         self._last_completion_poll = time.monotonic()
@@ -210,6 +151,27 @@ class LocalDataClient:
     @property
     def bootstrap_socket(self) -> str:
         return self._bootstrap_socket
+
+    def close(self) -> None:
+        with self._publish_lock:
+            self._closed = True
+            self._client.close()
+            if self._publish_client is not None:
+                self._publish_client.close()
+
+    def health(self) -> tuple[bool, str]:
+        return self._client.health()
+
+    def register_context_batch(self, *args, **kwargs) -> tuple[bool, str]:
+        return self._client.register_context_batch(*args, **kwargs)
+
+    def unregister_context(self, instance_id: str) -> tuple[bool, str]:
+        return self._client.unregister_context(instance_id)
+
+    def start_session_watcher(
+        self, instance_id: str, namespace: str, tp_size: int, world_size: int
+    ) -> None:
+        self._client.start_session_watcher(instance_id, namespace, tp_size, world_size)
 
     def query_prefetch(
         self,
@@ -239,7 +201,10 @@ class LocalDataClient:
         device_id: int,
         saves: list[tuple[str, list[int], list[bytes]]],
     ) -> tuple[bool, str]:
-        self._client.publish(
+        # Publish retains its descriptor until D2H finishes. Give it a
+        # separate session so one long save cannot serialize later restores
+        # behind the query/restore session's descriptor lock.
+        self._publisher().publish(
             instance_id,
             tp_rank,
             pp_rank,
@@ -248,6 +213,19 @@ class LocalDataClient:
             request_id=self._request_id(),
         )
         return True, ""
+
+    def _publisher(self) -> LocalQueryClient:
+        with self._publish_lock:
+            if self._closed:
+                raise RuntimeError("local data client is closed")
+            if self._publish_client is None:
+                timeout_ms, spin_iterations = self._client_options
+                self._publish_client = LocalQueryClient(
+                    self._bootstrap_socket,
+                    timeout_ms=timeout_ms,
+                    spin_iterations=spin_iterations,
+                )
+            return self._publish_client
 
     def start_restore(
         self,
@@ -291,7 +269,7 @@ class LocalDataClient:
         if not isinstance(handle, _LocalRestoreHandle):
             raise TypeError("restore handle does not belong to the local data client")
         if handle.session_epoch != self._client.session_epoch:
-            raise RuntimeError("restore handle belongs to a stale local sidecar session")
+            raise RuntimeError("restore handle belongs to a stale Cache Manager session")
         state, message = self._client.restore_poll(
             handle.operation_id,
             request_id=self._request_id(),
@@ -315,30 +293,21 @@ class LocalDataClient:
 
 def resolve_local_bootstrap_sockets(
     *,
-    enabled: object,
     endpoints: tuple[str, ...],
     bootstrap_socket: object = None,
     shard_bootstrap_sockets: object = None,
-) -> tuple[str, ...] | None:
-    """Resolve the local data plane, using it automatically when available.
+) -> tuple[str, ...]:
+    """Resolve the process endpoint for same-host cache clients.
 
-    ``enabled="auto"`` selects local IPC only when every derived bootstrap
-    path is a live Unix socket. Explicit ``True`` remains fail-fast, while
-    explicit ``False`` forces the compatibility gRPC data plane.
+    Every inference shard must connect to a Cache Manager on its own host.
     """
-    if enabled == "auto":
-        automatic = True
-    elif isinstance(enabled, bool):
-        automatic = False
-    else:
-        raise ValueError("orbitkv.local_data must be true, false, or 'auto'")
-
-    if enabled is False:
-        if bootstrap_socket is not None or shard_bootstrap_sockets is not None:
-            raise ValueError("local bootstrap sockets require orbitkv.local_data=true or 'auto'")
-        return None
     if not endpoints:
-        raise ValueError("local data requires at least one gRPC endpoint")
+        raise ValueError("cache client requires at least one endpoint")
+    if not all(_endpoint_is_local(endpoint) for endpoint in endpoints):
+        raise ValueError(
+            "inference clients require a node-local Cache Manager; "
+            "configure a Cache Manager on each inference host"
+        )
 
     if bootstrap_socket is not None and shard_bootstrap_sockets is not None:
         raise ValueError(
@@ -366,14 +335,15 @@ def resolve_local_bootstrap_sockets(
         )
     if any(not isinstance(socket, str) or not socket for socket in sockets):
         raise ValueError("local bootstrap socket configuration must contain non-empty strings")
-    if automatic:
-        if len(set(sockets)) != len(sockets) or not all(
-            _endpoint_is_local(endpoint) and _is_unix_socket(socket_path)
-            for endpoint, socket_path in zip(endpoints, sockets, strict=True)
-        ):
-            return None
-    elif len(set(sockets)) != len(sockets):
-        raise ValueError("orbitkv.tp_shard_bootstrap_sockets must not contain duplicates")
+    if len(set(sockets)) != len(sockets):
+        raise ValueError("local bootstrap sockets must be distinct for TP shards")
+    missing = [socket_path for socket_path in sockets if not _is_unix_socket(socket_path)]
+    if missing:
+        raise ConnectionError(
+            "OrbitKV Cache Manager Unix socket is unavailable: "
+            + ", ".join(missing)
+            + "; start the node-local Cache Manager"
+        )
     return sockets
 
 
@@ -381,7 +351,7 @@ def _default_bootstrap_socket(endpoint: str) -> str:
     port = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").port
     if port is None:
         raise ValueError(
-            "cannot derive the local bootstrap socket from the gRPC endpoint; "
+            "cannot derive the process socket from the configured endpoint; "
             "set orbitkv.local_bootstrap_socket"
         )
     return f"/tmp/orbitkv-{port}.sock"
@@ -416,7 +386,6 @@ def _endpoint_is_local(endpoint: str) -> bool:
 
 __all__ = [
     "CacheDataClient",
-    "GrpcDataClient",
     "LocalDataClient",
     "RestoreHandle",
     "RestoreStatus",

@@ -237,29 +237,18 @@ message ReleaseTransferLockResponse {
 }
 
 service Engine {
-  rpc RegisterContextBatch(RegisterContextRequest) returns (RegisterContextResponse);
-  rpc Save(SaveRequest) returns (SaveResponse);
-  rpc Load(LoadRequest) returns (LoadResponse);
-  // Prefetch query: check memory + trigger SSD or remote fetch for missing blocks
-  rpc QueryPrefetch(QueryRequest) returns (QueryResponse);
-  rpc Release(ReleaseRequest) returns (ReleaseResponse);
-  rpc UnregisterContext(UnregisterRequest) returns (UnregisterResponse);
   // Cross-node transfer: authorize and pin specific blocks (serving side)
   rpc QueryBlocksForTransfer(QueryBlocksForTransferRequest) returns (QueryBlocksForTransferResponse);
   // Cross-node transfer: release block locks after Mooncake transfer completes
   rpc ReleaseTransferLock(ReleaseTransferLockRequest) returns (ReleaseTransferLockResponse);
-  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
-  // Liveness channel: server drops the instance's CUDA IPC mappings when
-  // this stream closes (vllm process dies or disconnects).
-  rpc Session(SessionRequest) returns (stream SessionEvent);
 }
 
 // MetaServer service for managing block hash keys across multi-node instances
 message InsertBlockHashesRequest {
   string namespace = 1;
   repeated bytes block_hashes = 2;
-  // The orbitkv-server address that owns these blocks, as ip:port (e.g., "10.0.0.1:50055")
+  // The Cache Manager peer-control address that owns these blocks, as ip:port (e.g., "10.0.0.1:50055")
   string node = 3;
   // Server-generated session id announced by HeartbeatNode.
   string node_id = 4;

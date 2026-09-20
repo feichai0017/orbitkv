@@ -1,12 +1,10 @@
+mod cache;
 mod check_cuda_version;
+mod endpoint;
 pub mod http_server;
-mod local_control;
 pub mod metric;
 pub mod proto;
-mod query;
 pub mod registry;
-pub mod service;
-pub mod session;
 #[cfg(feature = "tracing")]
 mod trace;
 #[cfg(not(feature = "tracing"))]
@@ -15,9 +13,9 @@ mod trace {
     pub(crate) fn flush() {}
 }
 mod utils;
+mod wire;
 
 pub use registry::{CudaTensorRegistry, RegistryHandle};
-pub use service::GrpcEngineService;
 
 use clap::Parser;
 use cudarc::driver::result as cuda_driver;
@@ -28,7 +26,7 @@ use opentelemetry_sdk::metrics::SdkMeterProvider;
 use orbitkv_common::grpc::{
     GRPC_SERVER_HTTP2_KEEPALIVE_INTERVAL, GRPC_SERVER_HTTP2_KEEPALIVE_TIMEOUT,
 };
-use orbitkv_core::OrbitKVEngine;
+use orbitkv_core::{OrbitKVEngine, P2pTransferService};
 use prometheus::Registry;
 use proto::engine::engine_server::EngineServer;
 use pyo3::{PyErr, Python, types::PyAnyMethods};
@@ -49,12 +47,13 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "orbitkv-engine-server",
+    name = "orbitkv-cache-manager",
+    bin_name = "orbitkv-cache-manager",
     version,
-    about = "OrbitKVEngine gRPC server with CUDA IPC registry"
+    about = "OrbitKV local cache with optional distributed control"
 )]
 pub struct Cli {
-    /// Address to bind, e.g. 0.0.0.0:50055
+    /// Peer control address in distributed mode; its port also names the default local socket.
     #[arg(long, default_value = "127.0.0.1:50055")]
     pub addr: SocketAddr,
 
@@ -189,17 +188,13 @@ pub struct Cli {
     #[arg(long)]
     pub local_control_service: Option<String>,
 
-    /// Explicit sidecar session epoch for stale-client fencing. A random epoch
+    /// Explicit Cache Manager session epoch for stale-client fencing. A random epoch
     /// is generated when omitted.
     #[arg(long)]
     pub local_control_session_epoch: Option<u64>,
 
-    /// Disable the node-local iceoryx2 endpoint.
-    #[arg(long, default_value_t = false)]
-    pub disable_local_control: bool,
-
     /// Unix socket used to bootstrap local clients and pass descriptor arena FDs.
-    /// Defaults to /tmp/orbitkv-<grpc-port>.sock.
+    /// Defaults to /tmp/orbitkv-<addr-port>.sock.
     #[arg(long)]
     pub local_bootstrap_socket: Option<std::path::PathBuf>,
 
@@ -457,12 +452,12 @@ fn init_metrics(
     })
 }
 
-/// Main entry point for orbitkv-server
+/// Main entry point for the Cache Manager.
 pub fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     orbitkv_common::logging::init_stdout_colored(&cli.log_level);
     info!(
-        "Starting orbitkv-engine-server v{}",
+        "Starting orbitkv-cache-manager v{}",
         env!("CARGO_PKG_VERSION")
     );
     trace::init();
@@ -563,6 +558,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         None
     };
 
+    let peer_control_enabled = cli.metaserver_addr.is_some();
     let storage_config = orbitkv_core::StorageConfig {
         enable_lfu_admission: cli.enable_lfu_admission,
         hint_value_size_bytes: cli.hint_value_size,
@@ -616,9 +612,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     crate::metric::register_hll_gauges(&hll_tracker);
 
     let shutdown = Arc::new(Notify::new());
-    let local_control_config = if cli.disable_local_control {
-        None
-    } else {
+    let local_control_config = {
         let service_name = cli
             .local_control_service
             .clone()
@@ -632,15 +626,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         let bootstrap_socket = cli.local_bootstrap_socket.clone().unwrap_or_else(|| {
             std::path::PathBuf::from(format!("/tmp/orbitkv-{}.sock", cli.addr.port()))
         });
-        Some((
+        (
             service_name,
             session_epoch,
             bootstrap_socket,
             cli.local_descriptor_arena_size,
             cli.local_descriptor_slot_size,
-        ))
+        )
     };
-
     let runtime_handle = runtime.handle().clone();
     runtime.block_on(async move {
         // Create OrbitKVEngine inside tokio runtime context (needed for SSD cache tokio::spawn)
@@ -649,15 +642,15 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             cli.use_hugepages,
             storage_config,
         )?);
-        let mut local_control = if let Some((
+        let lifecycle = cache::lifecycle::LifecycleService::new(Arc::clone(&engine), registry);
+        let (
             service_name,
             session_epoch,
             bootstrap_socket,
             arena_size,
             slot_size,
-        )) = local_control_config
-        {
-            Some(local_control::LocalControlEndpoint::start(
+        ) = local_control_config;
+        let mut local_control = endpoint::ProcessEndpoint::start(
                 service_name,
                 session_epoch,
                 bootstrap_socket,
@@ -667,18 +660,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 runtime_handle,
                 Arc::clone(&hll_tracker),
                 Arc::clone(&shutdown),
-            )?)
-        } else {
-            info!("Local iceoryx2 control endpoint disabled");
-            None
-        };
-
-        let service = GrpcEngineService::new(
-            Arc::clone(&engine),
-            registry.clone(),
-            Arc::clone(&shutdown),
-            Arc::clone(&hll_tracker),
-        );
+                lifecycle.clone(),
+            )?;
 
         // Spawn background GC task for stale inflight blocks and expired transfer locks
         {
@@ -720,16 +703,17 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
 
         // Start HTTP server for health check (always enabled)
-        let http_server_handle = http_server::start_http_server(
+        let http_server_handle = http_server::start_http_server_with_lifecycle(
             cli.http_addr,
             Arc::clone(&engine),
-            registry,
+            lifecycle.clone(),
             cli.enable_prometheus,
             metrics_state.prometheus_registry.clone(),
             Arc::clone(&shutdown),
         )
         .await?;
 
+        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         let shutdown_signal = {
             let notify = Arc::clone(&shutdown);
             async move {
@@ -737,39 +721,48 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     _ = tokio::signal::ctrl_c() => {
                         info!("Ctrl+C received, shutting down");
                     }
+                    _ = terminate.recv() => {
+                        info!("SIGTERM received, shutting down");
+                    }
                     _ = notify.notified() => {
-                        info!("Shutdown requested via RPC");
+                        info!("Shutdown requested via control endpoint");
                     }
                 }
+                notify.notify_waiters();
             }
         };
 
-        info!("OrbitKVEngine gRPC server listening on {}", cli.addr);
+        if peer_control_enabled {
+            let service = P2pTransferService::new(Arc::clone(&engine));
+            info!("Cache Manager peer control listening on {}", cli.addr);
 
-        const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
+            const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
 
-        let grpc_service = EngineServer::new(service)
-            .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
-            .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
+            let grpc_service = EngineServer::new(service)
+                .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
+                .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
 
-        if let Err(err) = Server::builder()
-            .http2_keepalive_interval(Some(GRPC_SERVER_HTTP2_KEEPALIVE_INTERVAL))
-            .http2_keepalive_timeout(Some(GRPC_SERVER_HTTP2_KEEPALIVE_TIMEOUT))
-            .add_service(grpc_service)
-            .serve_with_shutdown(cli.addr, shutdown_signal)
-            .await
-        {
-            error!("Server error: {err}");
-            return Err(err.into());
+            if let Err(err) = Server::builder()
+                .http2_keepalive_interval(Some(GRPC_SERVER_HTTP2_KEEPALIVE_INTERVAL))
+                .http2_keepalive_timeout(Some(GRPC_SERVER_HTTP2_KEEPALIVE_TIMEOUT))
+                .add_service(grpc_service)
+                .serve_with_shutdown(cli.addr, shutdown_signal)
+                .await
+            {
+                error!("Server error: {err}");
+                return Err(err.into());
+            }
+        } else {
+            info!("Standalone Cache Manager ready; peer control is disabled");
+            shutdown_signal.await;
         }
 
-        info!("Server stopped");
-        if let Some(endpoint) = local_control.as_mut() {
-            endpoint.stop();
-        }
+        info!("Cache Manager stopped");
+        local_control.stop();
 
         // Stop HTTP server
         shutdown.notify_waiters();
+        lifecycle.shutdown().await?;
         let _ = http_server_handle.await;
 
         engine.shutdown_metaserver_client().await;
@@ -809,7 +802,7 @@ mod tests {
 
     #[test]
     fn cli_default_metric_hll_windows_parses_without_panic() {
-        let cli = Cli::try_parse_from(["orbitkv-server"]).unwrap();
+        let cli = Cli::try_parse_from(["orbitkv-cache-manager"]).unwrap();
 
         assert_eq!(
             parse_hll_windows(&cli.metric_hll_windows).unwrap(),
@@ -821,7 +814,7 @@ mod tests {
     #[test]
     fn cli_accepts_local_control_options() {
         let cli = Cli::try_parse_from([
-            "orbitkv-server",
+            "orbitkv-cache-manager",
             "--local-control-service",
             "orbitkv/test/server",
             "--local-control-session-epoch",
@@ -845,13 +838,14 @@ mod tests {
         );
         assert_eq!(cli.local_descriptor_arena_size, 4 * 1024 * 1024);
         assert_eq!(cli.local_descriptor_slot_size, 32 * 1024);
-        assert!(!cli.disable_local_control);
+        assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--enable-grpc"]).is_err());
+        assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--disable-local-control"]).is_err());
     }
 
     #[test]
     fn cli_nics_accepts_comma_separated_values() {
-        let cli =
-            Cli::try_parse_from(["orbitkv-server", "--nics", "mlx5_0,mlx5_1,mlx5_2"]).unwrap();
+        let cli = Cli::try_parse_from(["orbitkv-cache-manager", "--nics", "mlx5_0,mlx5_1,mlx5_2"])
+            .unwrap();
 
         assert_eq!(
             cli.nics.unwrap(),
@@ -866,7 +860,8 @@ mod tests {
     #[test]
     fn cli_nics_trims_comma_separated_values() {
         let cli =
-            Cli::try_parse_from(["orbitkv-server", "--nics", "mlx5_0, mlx5_1, mlx5_2"]).unwrap();
+            Cli::try_parse_from(["orbitkv-cache-manager", "--nics", "mlx5_0, mlx5_1, mlx5_2"])
+                .unwrap();
 
         assert_eq!(
             cli.nics.unwrap(),
@@ -880,15 +875,22 @@ mod tests {
 
     #[test]
     fn cli_nics_rejects_empty_comma_separated_values() {
-        let err = Cli::try_parse_from(["orbitkv-server", "--nics", "mlx5_0,,mlx5_1"]).unwrap_err();
+        let err =
+            Cli::try_parse_from(["orbitkv-cache-manager", "--nics", "mlx5_0,,mlx5_1"]).unwrap_err();
 
         assert!(err.to_string().contains("empty NIC name"), "{err}");
     }
 
     #[test]
     fn cli_nics_accepts_repeated_values_after_flag() {
-        let cli = Cli::try_parse_from(["orbitkv-server", "--nics", "mlx5_0", "mlx5_1", "mlx5_2"])
-            .unwrap();
+        let cli = Cli::try_parse_from([
+            "orbitkv-cache-manager",
+            "--nics",
+            "mlx5_0",
+            "mlx5_1",
+            "mlx5_2",
+        ])
+        .unwrap();
 
         assert_eq!(
             cli.nics.unwrap(),
@@ -902,8 +904,12 @@ mod tests {
 
     #[test]
     fn cli_explicit_metric_hll_windows_parses_without_panic() {
-        let cli =
-            Cli::try_parse_from(["orbitkv-server", "--metric-hll-windows", "15m,1h,24h"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "orbitkv-cache-manager",
+            "--metric-hll-windows",
+            "15m,1h,24h",
+        ])
+        .unwrap();
 
         assert_eq!(
             parse_hll_windows(&cli.metric_hll_windows).unwrap(),
@@ -913,8 +919,8 @@ mod tests {
 
     #[test]
     fn cli_rejects_invalid_metric_hll_windows() {
-        let err =
-            Cli::try_parse_from(["orbitkv-server", "--metric-hll-windows", "15m,,1h"]).unwrap_err();
+        let err = Cli::try_parse_from(["orbitkv-cache-manager", "--metric-hll-windows", "15m,,1h"])
+            .unwrap_err();
 
         assert!(err.to_string().contains("empty window"), "{err}");
     }

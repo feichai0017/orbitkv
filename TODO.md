@@ -10,6 +10,8 @@ and a passing gate; design text alone does not close an item.
 - [x] Remove the unused repository-root `src/main.rs`.
 - [x] Add `orbitkv-contract` with state identity, format, page generation, and
   recovery-bundle types.
+- [x] Name the bundle's current component-presence check honestly; it is not
+  yet a restorable-state proof.
 - [x] Move the canonical vLLM package to `orbitkv.vllm`.
 - [x] Preserve `orbitkv.connector` as a compatibility alias.
 - [x] Add `orbitkv.client` and `orbitkv.sglang` package boundaries.
@@ -37,6 +39,8 @@ and a passing gate; design text alone does not close an item.
 - [x] Add Python bindings for the iceoryx2 local client.
 - [ ] Map SGLang `PoolName` values to `StateComponent`.
 - [ ] Map `ALL_PAGES` and `TRAILING_PAGES` into recovery contracts.
+- [ ] Return SGLang `PoolTransferResult.restorable_prefix_pages` for hybrid
+  checkpoints; a largest-hit count alone cannot express legal trailing pages.
 - [ ] Implement `batch_exists_v2`.
 - [ ] Implement zero-copy `batch_get_v2` and `batch_set_v2`.
 - [ ] Add fail-open behavior for non-hybrid requests.
@@ -48,34 +52,56 @@ and a passing gate; design text alone does not close an item.
 ## M2 — common bundle and local IPC
 
 - [ ] Convert the vLLM cache-group layout to `StateBundle`.
+- [ ] Define a recovery validator for matching token coverage, model/format,
+  and complete hybrid component sets before using bundles for cache hits.
 - [ ] Move hybrid-boundary reconciliation out of `orbitkv.vllm`.
 - [ ] Define framework-neutral region registration RPCs.
 - [x] Pass the descriptor-arena memfd and notification eventfd over UDS.
 - [ ] Pass framework-owned shared-page file descriptors over UDS.
 - [x] Add bounded local restore operations that replace per-load `PyLoadState`
   for `LocalQueryClient`.
-- [ ] Switch SGLang from its future compatibility transport to local restore
-  operations.
-- [x] Switch vLLM Query/Publish/Restore/Release to an auto-selected local data client;
-  keep registration, health, session watching, and unregister on gRPC.
-- [x] Remove per-load `PyLoadState` from the opt-in vLLM local data path.
+- [ ] Implement SGLang restore through the local Cache Manager endpoint.
+- [x] Switch vLLM Query/Publish/Restore/Release to the local data client.
+- [x] Move registration, health, session watching, and unregister to UDS;
+  remove the inference gRPC endpoint.
+- [x] Require the node-local process endpoint; fail fast if its socket is missing.
+- [x] Group the Cache Manager's cache operations and process endpoint separately;
+  convert protobuf registration messages before entering the cache lifecycle.
+- [ ] Replace framework CUDA IPC wrapper pickle in the Cache Manager with an explicit
+  region registration contract after the existing vLLM path is qualified.
+- [x] Serialize lifecycle operations and drain GPU queues before unmapping CUDA IPC.
+- [x] Remove per-load `PyLoadState` from the vLLM path.
 - [x] Keep local control messages descriptor-only; prohibit KV payload bytes in
-  UDS or iceoryx2 messages. The gRPC compatibility path still carries block
-  descriptors until it is retired.
+  UDS or iceoryx2 messages.
 - [x] Move vLLM hot local control off gRPC automatically when the local socket
   is available; retain explicit gRPC fallback.
-- [ ] Qualify vLLM correctness E2E with `--orbitkv-local-data` on the GPU/vLLM
-  environment (transport, activity, and failure gates pass; strict warm-prefix
-  text equality retains the known vLLM execution-path divergence).
+- [x] Qualify the revised vLLM correctness E2E with `--orbitkv-local-data` on a
+  GPU/vLLM host. It compares the same prompt/reuse plan against native prefix
+  caching, checks the native prefix hit, and requires `long_warm` to load KV
+  bytes after process restart;
+  the earlier cold-vs-warm comparison reproduced native vLLM divergence.
+- [x] Requalify the vLLM E2E against release 0.29.0, including a hybrid model
+  that exercises scheduler boundary-state hand-offs.
 - [ ] Add generation validation to every local page reference.
 - [ ] Benchmark the M2 path against the current CUDA IPC baseline.
-- [ ] Make local QueryBundle asynchronous before supporting
-  `orbitkv.wait_for_full_prefix` without head-of-line blocking.
+- [x] Make waiting local QueryBundle operations asynchronous; support
+  `orbitkv.wait_for_full_prefix` without blocking other descriptor requests.
+- [x] Move Publish D2H completion off the shared dispatcher while retaining
+  its reply until framework-owned source pages may be reused.
+- [x] Give Publish a separate on-demand local descriptor session so a blocked
+  save does not serialize Query/Restore calls from the same worker.
+- [ ] Profile the deferred Publish path under concurrent Query/Publish load.
+- [x] Make Publish wait fail closed: keep vLLM source pages pinned until D2H
+  completion or confirmed Cache Manager process death, even past the normal IPC timeout.
+- [ ] Add an operational watchdog for a live Cache Manager that never finishes a
+  Publish; correctness currently takes priority over save-worker availability.
 
 ## M3 — routing and replica planning
 
 - [ ] Normalize vLLM and SGLang KV events.
 - [ ] Build a worker/tier replica catalog with sequence recovery.
+- [ ] Delegate cross-host TP query fan-out to node-local agents before removing
+  compatibility Query/Save/Load gRPC methods from the network service.
 - [ ] Reproduce Dynamo's weighted-overlap selector.
 - [ ] Add measured HBM/DRAM/SSD/RDMA restore cost.
 - [ ] Add recompute and queue-delay estimates.
@@ -114,6 +140,8 @@ and a passing gate; design text alone does not close an item.
 ## Hygiene and release
 
 - [ ] Keep all public capability claims tied to a reproducible test.
+- [ ] Separate client, Cache Manager, and directory release artifacts once the local
+  and multi-node contracts are stable; retain one source workspace.
 - [ ] Keep heavy GPU/RDMA gates explicitly marked.
 - [ ] Preserve license and upstream provenance requirements.
 - [ ] Publish SGLang support only after the M1 E2E gate.

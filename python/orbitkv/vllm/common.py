@@ -14,9 +14,8 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorWorkerMetadata,
 )
 
-from orbitkv.client.data_plane import CacheDataClient, GrpcDataClient
+from orbitkv.client.data_plane import CacheDataClient, CacheLifecycleClient
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.orbitkv import EngineRpcClient
 from orbitkv.vllm.connector_metrics import OrbitKVConnectorStats, OrbitKVPromMetrics
 
 if TYPE_CHECKING:
@@ -132,7 +131,7 @@ class ConnectorContext:
     world_size: int
     tp_rank: int | None
     device_id: int | None
-    engine_client: EngineRpcClient
+    engine_client: CacheLifecycleClient
     state_manager: "ServiceStateManager"
     data_client: CacheDataClient | None = None
     is_mla: bool = False
@@ -152,7 +151,9 @@ class ConnectorContext:
 
     def __post_init__(self) -> None:
         if self.data_client is None:
-            object.__setattr__(self, "data_client", GrpcDataClient(self.engine_client))
+            # Directly constructed contexts use one client for both surfaces.
+            # The production connector always supplies LocalDataClient.
+            object.__setattr__(self, "data_client", self.engine_client)
 
     @property
     def read_enabled(self) -> bool:

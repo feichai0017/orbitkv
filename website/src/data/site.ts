@@ -21,7 +21,7 @@ export const layers = [
   },
   {
     name: "orbitkv-local",
-    role: "Control the sidecar.",
+    role: "Control the Cache Manager.",
     detail: "Versioned iceoryx2 request/response with shared descriptor arenas.",
     path: "crates/orbitkv-local/src/lib.rs",
   },
@@ -39,9 +39,9 @@ export const layers = [
     path: "crates/orbitkv-transfer/README.md",
   },
   {
-    name: "orbitkv-server",
+    name: "Cache Manager",
     role: "Share the cache.",
-    detail: "Compatibility gRPC, process lifecycle, P/D routing, health, and metrics.",
+    detail: "Node-local UDS/iceoryx2 lifecycle, peer transfer control, health, and metrics.",
     path: "crates/orbitkv-server/README.md",
   },
   {

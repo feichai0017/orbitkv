@@ -9,7 +9,7 @@ OrbitKV supports two methods for exposing metrics:
 ### Method 1: Direct Prometheus (Recommended)
 
 ```
-OrbitKV Server → Prometheus → Grafana
+Cache Manager → Prometheus → Grafana
    (/metrics)      (scrape)    (visualize)
 ```
 
@@ -23,7 +23,7 @@ OrbitKV Server → Prometheus → Grafana
 > Please use Method 1 (Direct Prometheus) instead.
 
 ```
-OrbitKV Server → OpenTelemetry Collector → Prometheus → Grafana
+Cache Manager → OpenTelemetry Collector → Prometheus → Grafana
    (OTLP/gRPC)         (HTTP scrape)       (HTTP queries)
 ```
 
@@ -244,7 +244,7 @@ tier counters.
 
 ## Configuration
 
-### OrbitKV Server Parameters
+### Cache Manager Parameters
 
 **Metrics Parameters:**
 
@@ -278,7 +278,7 @@ tier counters.
 
 **Example: Prometheus Metrics**
 ```bash
-cargo run -r -p orbitkv-server -- \
+cargo run -r --bin orbitkv-cache-manager -- \
   --addr 0.0.0.0:50055 \
   --device 0 \
   --pool-size 30gb \
@@ -288,7 +288,7 @@ cargo run -r -p orbitkv-server -- \
 
 **Example: OTLP Export Only**
 ```bash
-cargo run -r -p orbitkv-server -- \
+cargo run -r --bin orbitkv-cache-manager -- \
   --addr 0.0.0.0:50055 \
   --device 0 \
   --pool-size 30gb \
@@ -298,7 +298,7 @@ cargo run -r -p orbitkv-server -- \
 
 **Example: Health Check Only (No Metrics)**
 ```bash
-cargo run -r -p orbitkv-server -- \
+cargo run -r --bin orbitkv-cache-manager -- \
   --addr 0.0.0.0:50055 \
   --device 0 \
   --pool-size 30gb \
@@ -313,11 +313,11 @@ cargo run -r -p orbitkv-server -- \
 
 The `examples/metric-prometheus/` directory provides a simple monitoring stack.
 
-### 1. Start OrbitKV Server
+### 1. Start Cache Manager
 
 ```bash
 # From repository root
-cargo run -r -p orbitkv-server -- \
+cargo run -r --bin orbitkv-cache-manager -- \
   --addr 0.0.0.0:50055 \
   --device 0 \
   --pool-size 30gb \
@@ -367,10 +367,10 @@ This starts three services:
 - **Prometheus** (port: 9090)
 - **Grafana** (port: 3000)
 
-### 2. Start OrbitKV Server
+### 2. Start Cache Manager
 
 ```bash
-cargo run -r -p orbitkv-server -- \
+cargo run -r --bin orbitkv-cache-manager -- \
   --addr 0.0.0.0:50055 \
   --device 0 \
   --pool-size 30gb \
@@ -387,7 +387,7 @@ Same as above: http://localhost:3000
 
 ```
 ┌─────────────────┐
-│ OrbitKV Server │
+│ Cache Manager │
 │   :50055 gRPC   │
 │   :9091 /metrics│
 └────────┬────────┘
@@ -409,7 +409,7 @@ Same as above: http://localhost:3000
 
 ```
 ┌─────────────────┐
-│ OrbitKV Server │
+│ Cache Manager │
 │   :50055 gRPC   │
 └────────┬────────┘
          │ OTLP/gRPC (4321)
@@ -434,14 +434,15 @@ Same as above: http://localhost:3000
 
 ### Port Reference
 
-| Service            | Port  | Protocol | Purpose                              |
-|--------------------|-------|----------|--------------------------------------|
-| OrbitKV Server    | 50055 | gRPC     | Engine service                       |
-| OrbitKV Server    | 9091  | HTTP     | Prometheus metrics endpoint          |
-| OTel Collector     | 4321  | gRPC     | OTLP gRPC receiver (deprecated)      |
-| OTel Collector     | 8889  | HTTP     | Prometheus exporter (deprecated)     |
-| Prometheus         | 9090  | HTTP     | Query API & Web UI                   |
-| Grafana            | 3000  | HTTP     | Dashboard UI                         |
+| Service | Port or path | Protocol | Purpose |
+| --- | --- | --- | --- |
+| Cache Manager | `/tmp/orbitkv-<addr-port>.sock` | UDS and iceoryx2 | Inference process connection |
+| Cache Manager | 50055 | gRPC | Peer control in distributed mode |
+| Cache Manager | 9091 | HTTP | Health and Prometheus metrics |
+| OTel Collector | 4321 | gRPC | OTLP gRPC receiver (deprecated) |
+| OTel Collector | 8889 | HTTP | Prometheus exporter (deprecated) |
+| Prometheus | 9090 | HTTP | Query API and Web UI |
+| Grafana | 3000 | HTTP | Dashboard UI |
 
 ## PromQL Query Examples
 

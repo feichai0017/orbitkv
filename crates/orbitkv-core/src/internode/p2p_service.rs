@@ -2,12 +2,8 @@
 //!
 //! A node that serves cross-node fetches exposes `QueryBlocksForTransfer`
 //! (authorize and pin blocks, returning Mooncake addresses) and
-//! `ReleaseTransferLock`. The full
-//! `orbitkv-server` binary provides them alongside the CUDA-IPC registration
-//! surface — which an in-process Rust embedder (one that registers raw device
-//! pointers and drives saves/loads through `OrbitKVEngine` directly) has no use
-//! for. This service is that minimal serving surface: the three transfer RPCs
-//! plus `Health`, everything else answered with `unimplemented`.
+//! `ReleaseTransferLock`. The Cache Manager serves only these peer RPCs plus
+//! `Health`; inference processes use the node-local UDS/iceoryx2 endpoint.
 //!
 //! The embedder remains responsible for periodic GC of expired transfer locks
 //! (`OrbitKVEngine::gc_expired_transfer_locks`), mirroring orbitkv-server's
@@ -20,12 +16,9 @@ use tonic::{Request, Response, Status, async_trait};
 
 use orbitkv_proto::proto::engine::engine_server::{Engine, EngineServer};
 use orbitkv_proto::proto::engine::{
-    HealthRequest, HealthResponse, LoadRequest, LoadResponse, QueryBlocksForTransferRequest,
-    QueryBlocksForTransferResponse, QueryRequest, QueryResponse, RegisterContextRequest,
-    RegisterContextResponse, ReleaseRequest, ReleaseResponse, ReleaseTransferLockRequest,
-    ReleaseTransferLockResponse, ResponseStatus, SaveRequest, SaveResponse, SessionEvent,
-    SessionRequest, ShutdownRequest, ShutdownResponse, TransferBlockInfo, TransferSlotInfo,
-    UnregisterRequest, UnregisterResponse,
+    HealthRequest, HealthResponse, QueryBlocksForTransferRequest, QueryBlocksForTransferResponse,
+    ReleaseTransferLockRequest, ReleaseTransferLockResponse, ResponseStatus, TransferBlockInfo,
+    TransferSlotInfo,
 };
 
 use crate::{LayerBlock, OrbitKVEngine};
@@ -35,8 +28,8 @@ use crate::{LayerBlock, OrbitKVEngine};
 /// default 4 MiB limit on large batches.
 const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 
-/// The minimal gRPC surface an `OrbitKVEngine` embedder exposes so remote peers can
-/// fetch blocks from it. See the module docs for scope.
+/// Peer-only gRPC service for fetching blocks from this Cache Manager or
+/// an embedded `OrbitKVEngine`.
 pub struct P2pTransferService {
     engine: Arc<OrbitKVEngine>,
 }
@@ -109,13 +102,6 @@ impl P2pTransferService {
             v_size: layer_block.v_size().unwrap_or(0) as u64,
             numa_node: numa_node.0,
         }
-    }
-
-    fn not_served<T>(rpc: &str) -> Result<T, Status> {
-        Err(Status::unimplemented(format!(
-            "{rpc} is not served by the embedded P2P transfer service; \
-             the embedder drives the engine in-process"
-        )))
     }
 }
 
@@ -201,59 +187,5 @@ impl Engine for P2pTransferService {
         Ok(Response::new(HealthResponse {
             status: Some(Self::ok_status()),
         }))
-    }
-
-    // ── In-process embedders drive these through `OrbitKVEngine` directly ──
-
-    async fn register_context_batch(
-        &self,
-        _request: Request<RegisterContextRequest>,
-    ) -> Result<Response<RegisterContextResponse>, Status> {
-        Self::not_served("register_context_batch")
-    }
-
-    async fn save(&self, _request: Request<SaveRequest>) -> Result<Response<SaveResponse>, Status> {
-        Self::not_served("save")
-    }
-
-    async fn load(&self, _request: Request<LoadRequest>) -> Result<Response<LoadResponse>, Status> {
-        Self::not_served("load")
-    }
-
-    async fn query_prefetch(
-        &self,
-        _request: Request<QueryRequest>,
-    ) -> Result<Response<QueryResponse>, Status> {
-        Self::not_served("query_prefetch")
-    }
-
-    async fn release(
-        &self,
-        _request: Request<ReleaseRequest>,
-    ) -> Result<Response<ReleaseResponse>, Status> {
-        Self::not_served("release")
-    }
-
-    async fn unregister_context(
-        &self,
-        _request: Request<UnregisterRequest>,
-    ) -> Result<Response<UnregisterResponse>, Status> {
-        Self::not_served("unregister_context")
-    }
-
-    async fn shutdown(
-        &self,
-        _request: Request<ShutdownRequest>,
-    ) -> Result<Response<ShutdownResponse>, Status> {
-        Self::not_served("shutdown")
-    }
-
-    type SessionStream = futures::stream::Empty<Result<SessionEvent, Status>>;
-
-    async fn session(
-        &self,
-        _request: Request<SessionRequest>,
-    ) -> Result<Response<Self::SessionStream>, Status> {
-        Self::not_served("session")
     }
 }

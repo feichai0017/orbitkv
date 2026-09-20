@@ -443,6 +443,13 @@ impl OrbitKVEngine {
         Ok(())
     }
 
+    /// Drain all GPU transfers before callers release imported CUDA mappings.
+    /// Callers must serialize registration and cleanup for this instance.
+    pub async fn unregister_instance_and_wait(&self, instance_id: &str) -> Result<(), EngineError> {
+        self.get_instance(instance_id)?.drain_workers().await?;
+        self.unregister_instance(instance_id)
+    }
+
     /// Unregister an instance and release all associated resources.
     pub fn unregister_instance(&self, instance_id: &str) -> Result<(), EngineError> {
         let removed = self

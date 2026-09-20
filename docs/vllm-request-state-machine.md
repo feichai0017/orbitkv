@@ -313,7 +313,7 @@ start_load_kv(): consume reservation and submit load
 request_finished()/preemption/release/TTL: clean up unconsumed reservations
 ```
 
-## Implications for OrbitKV Server-Side State
+## Implications for OrbitKV Cache Manager State
 
 OrbitKV currently uses the older one-RPC contract where `QueryPrefetch` both
 reports prefix hits and pins the hit blocks for the later load. The current

@@ -37,12 +37,12 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from orbitkv.orbitkv import EngineRpcClient, PyLoadState, QueryReady  # noqa: E402
+from orbitkv.client import LocalDataClient, QueryReady  # noqa: E402
 from orbitkv.vllm.common import ConnectorContext, detect_mla  # noqa: E402
 from orbitkv.vllm.state_manager import ServiceStateManager  # noqa: E402
 from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
-from .conftest import OrbitKVServerProcess, find_available_port  # noqa: E402
+from .conftest import CacheManagerProcess, find_available_port  # noqa: E402
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
@@ -141,10 +141,10 @@ class ReplicaWorker:
 
 @pytest.fixture(scope="module")
 def dual_device_server():
-    """A orbitkv-server managing two CUDA devices (production manages all 8)."""
-    server = OrbitKVServerProcess(port=find_available_port(), devices="0,1")
+    """A Cache Manager managing two CUDA devices (production manages all 8)."""
+    server = CacheManagerProcess(port=find_available_port(), devices="0,1")
     if not server.start():
-        pytest.skip("OrbitKVServer binary not found or failed to start")
+        pytest.skip("Cache Manager binary not found or failed to start")
     yield server
     server.stop()
 
@@ -169,7 +169,7 @@ def _wait_for_ready_lease(engine_client, instance_id: str, block_hashes: list[by
 def test_mla_replica_devices_save_and_load(dual_device_server):
     hf_config, layer_names = _glm51_topology()
 
-    engine_client = EngineRpcClient(dual_device_server.endpoint)
+    engine_client = LocalDataClient(dual_device_server.local_bootstrap_socket)
     instance_id = f"glm51-mla-{uuid.uuid4().hex[:8]}"
     workers: list[ReplicaWorker] = []
     try:
@@ -208,22 +208,21 @@ def test_mla_replica_devices_save_and_load(dual_device_server):
         lease = _wait_for_ready_lease(engine_client, instance_id, block_hashes)
 
         # Every replica device must be able to load the blocks back.
-        load_state = PyLoadState()
-        ok, message = engine_client.load(
+        restore = engine_client.start_restore(
             instance_id,
             workers[1].ctx.effective_tp_rank,
             workers[1].ctx.device_id,
-            load_state.shm_name(),
             [layer_names],
             [(lease, [LOAD_DST_BLOCK_IDS])],
         )
-        assert ok, f"load into the second MLA replica device must succeed, got: {message}"
 
         deadline = time.time() + WAIT_TIMEOUT_SECONDS
-        while not load_state.is_ready() and time.time() < deadline:
+        status = engine_client.poll_restore(restore)
+        while not status.done and time.time() < deadline:
             time.sleep(0.05)
-        assert load_state.is_ready(), "load did not complete in time"
-        assert load_state.get_state() == 1, f"load failed with state {load_state.get_state()}"
+            status = engine_client.poll_restore(restore)
+        assert status.done, "load did not complete in time"
+        assert status.success, f"load failed: {status.message}"
 
         src_blocks = slice(SAVED_BLOCK_IDS[0], SAVED_BLOCK_IDS[-1] + 1)
         dst_blocks = slice(LOAD_DST_BLOCK_IDS[0], LOAD_DST_BLOCK_IDS[-1] + 1)
@@ -234,4 +233,5 @@ def test_mla_replica_devices_save_and_load(dual_device_server):
     finally:
         for worker in workers:
             worker.close()
+        engine_client.close()
         torch.cuda.empty_cache()

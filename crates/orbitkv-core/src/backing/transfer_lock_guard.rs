@@ -81,11 +81,8 @@ mod tests {
 
     use orbitkv_proto::proto::engine::engine_server::{Engine, EngineServer};
     use orbitkv_proto::proto::engine::{
-        HealthRequest, HealthResponse, LoadRequest, LoadResponse, QueryBlocksForTransferRequest,
-        QueryBlocksForTransferResponse, QueryRequest, QueryResponse, RegisterContextRequest,
-        RegisterContextResponse, ReleaseRequest, ReleaseResponse, ReleaseTransferLockResponse,
-        SaveRequest, SaveResponse, SessionEvent, SessionRequest, ShutdownRequest, ShutdownResponse,
-        UnregisterRequest, UnregisterResponse,
+        HealthRequest, HealthResponse, QueryBlocksForTransferRequest,
+        QueryBlocksForTransferResponse, ReleaseTransferLockResponse,
     };
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::transport::Endpoint;
@@ -117,55 +114,6 @@ mod tests {
             &self,
             _request: Request<HealthRequest>,
         ) -> Result<Response<HealthResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        async fn register_context_batch(
-            &self,
-            _request: Request<RegisterContextRequest>,
-        ) -> Result<Response<RegisterContextResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        async fn save(
-            &self,
-            _request: Request<SaveRequest>,
-        ) -> Result<Response<SaveResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        async fn load(
-            &self,
-            _request: Request<LoadRequest>,
-        ) -> Result<Response<LoadResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        async fn query_prefetch(
-            &self,
-            _request: Request<QueryRequest>,
-        ) -> Result<Response<QueryResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        async fn release(
-            &self,
-            _request: Request<ReleaseRequest>,
-        ) -> Result<Response<ReleaseResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        async fn unregister_context(
-            &self,
-            _request: Request<UnregisterRequest>,
-        ) -> Result<Response<UnregisterResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        async fn shutdown(
-            &self,
-            _request: Request<ShutdownRequest>,
-        ) -> Result<Response<ShutdownResponse>, Status> {
-            Err(Status::unimplemented("stub"))
-        }
-        type SessionStream = futures::stream::Empty<Result<SessionEvent, Status>>;
-        async fn session(
-            &self,
-            _request: Request<SessionRequest>,
-        ) -> Result<Response<Self::SessionStream>, Status> {
             Err(Status::unimplemented("stub"))
         }
     }

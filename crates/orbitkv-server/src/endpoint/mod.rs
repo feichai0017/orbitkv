@@ -1,3 +1,6 @@
+mod pending;
+mod session;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
@@ -12,17 +15,18 @@ use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::{EngineError, OrbitKVEngine};
 use orbitkv_local::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
-    LocalServer, PublishRequest as LocalPublishRequest, QueryBundleRequest, QueryBundleResponse,
-    QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest as LocalReleaseRequest,
-    Response, RestoreCommand, RestoreResponse, RestoreState, StatusCode, TransportError,
+    DeferredResponse, LocalServer, PublishRequest as LocalPublishRequest, QueryBundleRequest,
+    QueryBundleResponse, QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED,
+    ReleaseRequest as LocalReleaseRequest, Response, RestoreCommand, RestoreResponse, RestoreState,
+    StatusCode, TransportError,
 };
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
 
-use crate::query::{
-    PublishInput, PublishLayerInput, QueryInput, QueryOutcome, RestoreInput, RestoreLeaseInput,
-    execute_publish, execute_query, execute_release, execute_restore,
+use crate::cache::operations::{
+    PublishInput, PublishLayerInput, QueryOutcome, RestoreInput, RestoreLeaseInput,
+    execute_publish, execute_release, execute_restore,
 };
 
 const IDLE_POLL_INTERVAL: Duration = Duration::from_micros(50);
@@ -37,23 +41,23 @@ enum RestoreOperation {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum LocalControlError {
+pub(crate) enum ProcessEndpointError {
     #[error(transparent)]
     Transport(#[from] TransportError),
     #[error(transparent)]
     Bootstrap(#[from] BootstrapError),
 }
 
-/// Dedicated iceoryx2 endpoint owned by one sidecar process.
+/// Dedicated iceoryx2 endpoint owned by one Cache Manager process.
 ///
 /// QueryBundle uses a generation-checked memfd arena bootstrapped over UDS.
-/// Restore remains an explicit `Invalid` response.
-pub(crate) struct LocalControlEndpoint {
+/// Lifecycle metadata uses the authenticated bootstrap UDS.
+pub(crate) struct ProcessEndpoint {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
-impl LocalControlEndpoint {
+impl ProcessEndpoint {
     #[allow(
         clippy::too_many_arguments,
         reason = "endpoint construction names each transport-owned resource"
@@ -68,7 +72,8 @@ impl LocalControlEndpoint {
         runtime: Handle,
         hll_tracker: Arc<std::sync::Mutex<MultiWindowHllTracker>>,
         shutdown: Arc<Notify>,
-    ) -> Result<Self, LocalControlError> {
+        lifecycle: crate::cache::lifecycle::LifecycleService,
+    ) -> Result<Self, ProcessEndpointError> {
         let server = LocalServer::bind(&service_name)?;
         let bootstrap = BootstrapServer::bind(
             &bootstrap_socket,
@@ -93,13 +98,21 @@ impl LocalControlEndpoint {
                 );
                 let mut sessions = HashMap::new();
                 let mut operations = HashMap::new();
+                let mut queries = pending::PendingQueries::default();
                 let mut next_operation_id = 1u64;
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
                     let now = Instant::now();
                     if now >= next_bootstrap_poll {
-                        accept_pending_sessions(&bootstrap, &mut sessions);
+                        accept_pending_sessions(
+                            &bootstrap,
+                            &mut sessions,
+                            &runtime,
+                            &lifecycle,
+                            session_epoch,
+                            &shutdown,
+                        );
                         next_bootstrap_poll = now + BOOTSTRAP_POLL_INTERVAL;
                     }
                     if now >= next_liveness_poll {
@@ -118,23 +131,36 @@ impl LocalControlEndpoint {
                             alive
                         });
                         operations.retain(|(token, _), _| !dead_sessions.contains(token));
+                        queries.retain_sessions(|token| sessions.contains_key(&token));
                         next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
                     }
                     advance_restore_operations(&sessions, &mut operations);
 
                     let mut request_shutdown = false;
-                    match server.try_serve_for_epoch(session_epoch, |command| {
-                        dispatch(
-                            command,
-                            &bootstrap,
-                            &mut sessions,
-                            &engine,
-                            &runtime,
-                            &hll_tracker,
-                            &mut operations,
-                            &mut next_operation_id,
-                            &mut request_shutdown,
-                        )
+                    match server.try_serve_deferred_for_epoch(session_epoch, |command, reply| {
+                        if command.code == CommandCode::Publish {
+                            dispatch_publish(
+                                command,
+                                &bootstrap,
+                                &mut sessions,
+                                &engine,
+                                &runtime,
+                                reply,
+                            )
+                        } else {
+                            reply.send(dispatch(
+                                command,
+                                &bootstrap,
+                                &mut sessions,
+                                &engine,
+                                &runtime,
+                                &hll_tracker,
+                                &mut operations,
+                                &mut queries,
+                                &mut next_operation_id,
+                                &mut request_shutdown,
+                            ))
+                        }
                     }) {
                         Ok(true) if request_shutdown => {
                             shutdown.notify_waiters();
@@ -168,7 +194,7 @@ impl LocalControlEndpoint {
     }
 }
 
-impl Drop for LocalControlEndpoint {
+impl Drop for ProcessEndpoint {
     fn drop(&mut self) {
         self.stop();
     }
@@ -177,6 +203,10 @@ impl Drop for LocalControlEndpoint {
 fn accept_pending_sessions(
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
+    runtime: &Handle,
+    lifecycle: &crate::cache::lifecycle::LifecycleService,
+    epoch: u64,
+    shutdown: &Arc<Notify>,
 ) {
     loop {
         match bootstrap.try_accept() {
@@ -187,6 +217,20 @@ fn accept_pending_sessions(
                     session.credentials().uid,
                     session.slot_index()
                 );
+                match session.stream().try_clone() {
+                    Ok(stream) => {
+                        runtime.spawn(session::serve(
+                            stream,
+                            epoch,
+                            lifecycle.clone(),
+                            Arc::clone(shutdown),
+                        ));
+                    }
+                    Err(error) => {
+                        error!("Cannot start local lifecycle: {error}");
+                        continue;
+                    }
+                }
                 sessions.insert(session.client_token(), session);
             }
             Ok(None) => break,
@@ -200,7 +244,7 @@ fn accept_pending_sessions(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "dispatch names each sidecar-owned subsystem explicitly"
+    reason = "dispatch names each Cache Manager-owned subsystem explicitly"
 )]
 fn dispatch(
     command: Command,
@@ -210,6 +254,7 @@ fn dispatch(
     runtime: &Handle,
     hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
     operations: &mut HashMap<(u64, u64), RestoreOperation>,
+    queries: &mut pending::PendingQueries,
     next_operation_id: &mut u64,
     request_shutdown: &mut bool,
 ) -> Response {
@@ -223,14 +268,20 @@ fn dispatch(
             *request_shutdown = true;
         }
         CommandCode::QueryBundle => {
-            response = dispatch_query(command, bootstrap, sessions, engine, runtime, hll_tracker);
+            response = dispatch_query(
+                command,
+                bootstrap,
+                sessions,
+                engine,
+                runtime,
+                hll_tracker,
+                queries,
+            );
         }
         CommandCode::Release => {
             response = dispatch_release(command, bootstrap, sessions, engine);
         }
-        CommandCode::Publish => {
-            response = dispatch_publish(command, bootstrap, sessions, engine, runtime);
-        }
+        CommandCode::Publish => unreachable!("publish uses deferred response handling"),
         CommandCode::Restore => {
             response = dispatch_restore(
                 command,
@@ -463,18 +514,19 @@ fn dispatch_publish(
     command: Command,
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
-    engine: &OrbitKVEngine,
+    engine: &Arc<OrbitKVEngine>,
     runtime: &Handle,
-) -> Response {
+    reply: DeferredResponse,
+) -> Result<(), TransportError> {
     let mut response = Response::ok(command);
     response.value1 = 0;
     let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
         Ok(payload) => payload,
-        Err(response) => return response,
+        Err(response) => return reply.send(response),
     };
     let request = match LocalPublishRequest::decode(&payload) {
         Ok(request) => request,
-        Err(error) => return error_response(response, StatusCode::Invalid, &error),
+        Err(error) => return reply.send(error_response(response, StatusCode::Invalid, &error)),
     };
     let layers = request
         .layers
@@ -485,23 +537,33 @@ fn dispatch_publish(
             block_hashes: layer.block_hashes,
         })
         .collect();
-    if let Err(error) = runtime.block_on(execute_publish(
-        engine,
-        PublishInput {
-            instance_id: request.instance_id,
-            tp_rank: request.tp_rank,
-            pp_rank: request.pp_rank,
-            device_id: request.device_id,
-            layers,
-        },
-    )) {
-        return error_response(response, engine_error_status(&error), &error);
-    }
     match bootstrap.arena().write_response(command.descriptor, &[]) {
         Ok(descriptor) => response.descriptor = descriptor,
-        Err(error) => return error_response(response, local_error_status(&error), &error),
+        Err(error) => {
+            return reply.send(error_response(response, local_error_status(&error), &error));
+        }
     }
-    response
+    let engine = Arc::clone(engine);
+    runtime.spawn(async move {
+        let result = execute_publish(
+            &engine,
+            PublishInput {
+                instance_id: request.instance_id,
+                tp_rank: request.tp_rank,
+                pp_rank: request.pp_rank,
+                device_id: request.device_id,
+                layers,
+            },
+        )
+        .await;
+        if let Err(error) = result {
+            response = error_response(response, engine_error_status(&error), &error);
+        }
+        if let Err(error) = reply.send(response) {
+            error!("Failed to reply to completed publish: {error}");
+        }
+    });
+    Ok(())
 }
 
 fn dispatch_release(
@@ -530,6 +592,10 @@ fn dispatch_release(
     response
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "dispatch owns transport and query state"
+)]
 fn dispatch_query(
     command: Command,
     bootstrap: &BootstrapServer,
@@ -537,6 +603,7 @@ fn dispatch_query(
     engine: &Arc<OrbitKVEngine>,
     runtime: &Handle,
     hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
+    queries: &mut pending::PendingQueries,
 ) -> Response {
     let mut response = Response::ok(command);
     response.value1 = 0;
@@ -548,19 +615,14 @@ fn dispatch_query(
         Ok(request) => request,
         Err(error) => return error_response(response, StatusCode::Invalid, &error),
     };
-    let outcome = match runtime.block_on(execute_query(
-        engine,
-        hll_tracker,
-        QueryInput {
-            instance_id: request.instance_id,
-            block_hashes: request.block_hashes,
-            request_id: request.request_id,
-            wait_for_full_prefix: request.wait_for_full_prefix,
-            group_id: request.group_id,
-        },
-    )) {
-        Ok(outcome) => outcome,
+    let mut reply = match queries.poll(command.arg0, request, engine, runtime, hll_tracker) {
+        Ok(reply) => reply,
         Err(error) => return error_response(response, engine_error_status(&error), &error),
+    };
+    let outcome = match reply.as_ref().map(|reply| &reply.outcome) {
+        Some(Ok(outcome)) => outcome.clone(),
+        Some(Err(error)) => return error_response(response, engine_error_status(error), error),
+        None => QueryOutcome::Loading,
     };
     let payload = match outcome {
         QueryOutcome::Loading => QueryBundleResponse::loading(),
@@ -583,7 +645,12 @@ fn dispatch_query(
         .arena()
         .write_response(command.descriptor, &payload)
     {
-        Ok(descriptor) => response.descriptor = descriptor,
+        Ok(descriptor) => {
+            response.descriptor = descriptor;
+            if let Some(reply) = reply.as_mut() {
+                reply.delivered();
+            }
+        }
         Err(error) => return error_response(response, local_error_status(&error), &error),
     }
     response

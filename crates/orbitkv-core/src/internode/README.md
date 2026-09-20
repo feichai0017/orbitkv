@@ -59,10 +59,10 @@ the MetaServer lost state.
 
 ## Configuration
 
-MetaServer registration is enabled via CLI flags on `orbitkv-server`:
+MetaServer registration is enabled via CLI flags on `orbitkv-cache-manager`:
 
 ```bash
-orbitkv-server \
+orbitkv-cache-manager \
   --addr 10.0.0.1:50055 \
   --pool-size 30gb \
   --metaserver-addr http://127.0.0.1:50056

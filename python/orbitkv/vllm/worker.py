@@ -262,9 +262,9 @@ class WorkerConnector:
         self._stats_lock = threading.Lock()
 
     def shutdown(self) -> None:
-        self.unregister_context()
         self._save_queue.put(None)
         self._save_thread.join()
+        self.unregister_context()
 
     def unregister_context(self) -> None:
         if not self._registered_layers:
@@ -874,6 +874,8 @@ class WorkerConnector:
                     t = self._save_queue.get_nowait()
                     if t is None:
                         self._run_save_batch(batch)
+                        for _ in batch:
+                            self._save_queue.task_done()
                         self._save_queue.task_done()
                         logger.debug("[OrbitKVConnector] Save worker thread stopped")
                         return

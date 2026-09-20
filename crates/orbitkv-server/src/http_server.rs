@@ -15,7 +15,7 @@ use crate::registry::RegistryHandle;
 #[derive(Clone)]
 struct AppState {
     engine: Arc<OrbitKVEngine>,
-    registry: RegistryHandle,
+    lifecycle: crate::cache::lifecycle::LifecycleService,
     prometheus_registry: Option<Registry>,
 }
 
@@ -80,60 +80,29 @@ async fn cleanup_handler(
     State(state): State<AppState>,
     Query(query): Query<CleanupQuery>,
 ) -> impl IntoResponse {
-    match query.id {
-        None => {
-            let removed_tensors = state.registry.clear().await;
-            let removed_instances = state.engine.unregister_all_instances();
-
-            if !removed_instances.is_empty() || removed_tensors > 0 {
-                warn!(
-                    "Cleanup all: removed {:?}, {} CUDA tensor(s) released",
-                    removed_instances, removed_tensors
-                );
-            } else {
-                info!("Cleanup all: nothing to remove");
+    let ids = query
+        .id
+        .map_or_else(|| state.engine.list_instance_ids(), |id| vec![id]);
+    let mut removed_tensors = 0;
+    let mut removed_instances = Vec::new();
+    for id in ids {
+        match state.lifecycle.cleanup(&id).await {
+            Ok(removed) => {
+                removed_tensors += removed;
+                removed_instances.push(id);
             }
-
-            (
-                StatusCode::OK,
-                Json(CleanupResponse {
-                    removed_instances,
-                    removed_tensors,
-                })
-                .into_response(),
-            )
-        }
-        Some(instance_id) => {
-            let removed_tensors = state.registry.drop_instance(instance_id.clone()).await;
-            match state.engine.unregister_instance(&instance_id) {
-                Ok(()) => {
-                    warn!(
-                        "Cleanup instance {}: {} CUDA tensor(s) released",
-                        instance_id, removed_tensors
-                    );
-                    cleanup_ok_response(instance_id, removed_tensors)
-                }
-                Err(_) if removed_tensors > 0 => {
-                    warn!(
-                        "Instance {} not in engine but cleaned {} CUDA tensor(s)",
-                        instance_id, removed_tensors
-                    );
-                    cleanup_ok_response(instance_id, removed_tensors)
-                }
-                Err(e) => (StatusCode::NOT_FOUND, format!("{e}").into_response()),
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error.to_string().into_response(),
+                );
             }
         }
     }
-}
-
-fn cleanup_ok_response(
-    instance_id: String,
-    removed_tensors: usize,
-) -> (StatusCode, axum::response::Response) {
     (
         StatusCode::OK,
         Json(CleanupResponse {
-            removed_instances: vec![instance_id],
+            removed_instances,
             removed_tensors,
         })
         .into_response(),
@@ -164,11 +133,31 @@ pub async fn start_http_server(
     prometheus_registry: Option<Registry>,
     shutdown: Arc<Notify>,
 ) -> Result<tokio::task::JoinHandle<()>, std::io::Error> {
+    let lifecycle = crate::cache::lifecycle::LifecycleService::new(Arc::clone(&engine), registry);
+    start_http_server_with_lifecycle(
+        addr,
+        engine,
+        lifecycle,
+        enable_prometheus,
+        prometheus_registry,
+        shutdown,
+    )
+    .await
+}
+
+pub(crate) async fn start_http_server_with_lifecycle(
+    addr: std::net::SocketAddr,
+    engine: Arc<OrbitKVEngine>,
+    lifecycle: crate::cache::lifecycle::LifecycleService,
+    enable_prometheus: bool,
+    prometheus_registry: Option<Registry>,
+    shutdown: Arc<Notify>,
+) -> Result<tokio::task::JoinHandle<()>, std::io::Error> {
     let listener = TcpListener::bind(addr).await?;
 
     let state = AppState {
         engine,
-        registry,
+        lifecycle,
         prometheus_registry: if enable_prometheus {
             prometheus_registry
         } else {

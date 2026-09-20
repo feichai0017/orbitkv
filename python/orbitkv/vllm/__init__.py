@@ -16,13 +16,9 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
 )
 from vllm.distributed.parallel_state import get_pp_group, get_tensor_model_parallel_rank
 
-from orbitkv.client.data_plane import (
-    GrpcDataClient,
-    LocalDataClient,
-    resolve_local_bootstrap_sockets,
-)
-from orbitkv.orbitkv import EngineRpcClient
+from orbitkv.client.connection import connect_cache
 from orbitkv.vllm.common import (
+    CacheGroupLayout,
     ConnectorContext,
     OrbitKVConnectorMetadata,
     OrbitKVConnectorMode,
@@ -40,18 +36,6 @@ from orbitkv.vllm.state_manager import ServiceStateManager
 from orbitkv.vllm.worker import WorkerConnector
 
 
-def _positive_int_config(value: object, name: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise ValueError(f"{name} must be a positive integer")
-    return value
-
-
-def _non_negative_int_config(value: object, name: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError(f"{name} must be a non-negative integer")
-    return value
-
-
 class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
     """v1 KV connector for OrbitKV with separated scheduler/worker logic."""
 
@@ -63,6 +47,18 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         world_size = vllm_config.parallel_config.world_size
         is_mla = detect_mla(vllm_config)
         cache_groups = tuple(getattr(kv_cache_config, "kv_cache_groups", ()) or ())
+        if cache_groups and CacheGroupLayout.from_config(kv_cache_config).has_recurrent_state:
+            from vllm.v1.core.sched.output import SchedulerOutput
+
+            if "kv_connector_block_state" not in getattr(
+                SchedulerOutput, "__dataclass_fields__", {}
+            ):
+                raise RuntimeError(
+                    "OrbitKV HMA requires vLLM SchedulerOutput.kv_connector_block_state "
+                    "to hand off pinned Mamba boundary states; this vLLM build does not "
+                    "provide it. Use a build with the boundary-state hand-off before "
+                    "enabling OrbitKV for hybrid models."
+                )
         collapse_mla_tp = is_mla and len(cache_groups) <= 1
         dcp_world_size = (
             getattr(vllm_config.parallel_config, "decode_context_parallel_size", 1) or 1
@@ -166,123 +162,27 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                 f"got tp_size={tp_size}, world_size={world_size}, "
                 f"dcp_world_size={dcp_world_size}, pcp_world_size={pcp_world_size}"
             )
-        local_data = vllm_config.kv_transfer_config.get_from_extra_config(
-            "orbitkv.local_data", "auto"
-        )
-        local_auto = local_data == "auto"
-        bootstrap_socket = vllm_config.kv_transfer_config.get_from_extra_config(
-            "orbitkv.local_bootstrap_socket", None
-        )
-        shard_bootstrap_sockets = vllm_config.kv_transfer_config.get_from_extra_config(
-            "orbitkv.tp_shard_bootstrap_sockets", None
-        )
         shard_index = tp_shards.shard_index(tp_rank) if tp_rank is not None else 0
-        local_endpoints = tp_shards.endpoints
-        local_bootstrap_socket = bootstrap_socket
-        local_shard_sockets = shard_bootstrap_sockets
-        worker_local_socket_index = shard_index
-        if role != KVConnectorRole.SCHEDULER and shard_bootstrap_sockets is None:
-            local_endpoints = (tp_shards.endpoints[shard_index],)
-            worker_local_socket_index = 0
-            if tp_shards.shard_count > 1:
-                local_bootstrap_socket = None
-        local_sockets = resolve_local_bootstrap_sockets(
-            enabled=local_data,
-            endpoints=local_endpoints,
-            bootstrap_socket=local_bootstrap_socket,
-            shard_bootstrap_sockets=local_shard_sockets,
-        )
-        if local_sockets is not None and wait_for_full_prefix:
-            if local_auto:
-                local_sockets = None
-            else:
-                raise ValueError(
-                    "orbitkv.local_data cannot be combined with "
-                    "orbitkv.wait_for_full_prefix yet; use the gRPC data path for "
-                    "blocking remote prefetch"
-                )
-        if local_sockets is not None:
-            local_timeout_ms = _positive_int_config(
-                vllm_config.kv_transfer_config.get_from_extra_config(
-                    "orbitkv.local_timeout_ms", 5_000
-                ),
-                "orbitkv.local_timeout_ms",
-            )
-            local_spin_iterations = _non_negative_int_config(
-                vllm_config.kv_transfer_config.get_from_extra_config(
-                    "orbitkv.local_spin_iterations", 64
-                ),
-                "orbitkv.local_spin_iterations",
-            )
-        else:
-            local_timeout_ms = 5_000
-            local_spin_iterations = 64
         namespace = tp_shards.namespace(base_namespace, shard_index)
         self._engine_endpoint = tp_shards.endpoints[shard_index]
-        engine_client = EngineRpcClient(self._engine_endpoint)
-        if role == KVConnectorRole.SCHEDULER:
-            lifecycle_clients = tuple(
-                engine_client if index == shard_index else EngineRpcClient(endpoint)
-                for index, endpoint in enumerate(tp_shards.endpoints)
-            )
-            data_clients = None
-            if local_sockets is not None:
-                try:
-                    data_clients = tuple(
-                        LocalDataClient(
-                            socket,
-                            timeout_ms=local_timeout_ms,
-                            spin_iterations=local_spin_iterations,
-                        )
-                        for socket in local_sockets
-                    )
-                except Exception:
-                    if not local_auto:
-                        raise
-                    logger.warning(
-                        "[OrbitKVConnector] local data bootstrap failed; falling back to gRPC",
-                        exc_info=True,
-                    )
-            if data_clients is None:
-                data_clients = tuple(GrpcDataClient(client) for client in lifecycle_clients)
-            data_client = data_clients[shard_index]
-        else:
-            lifecycle_clients = (engine_client,)
-            data_client = None
-            if local_sockets is not None:
-                try:
-                    data_client = LocalDataClient(
-                        local_sockets[worker_local_socket_index],
-                        timeout_ms=local_timeout_ms,
-                        spin_iterations=local_spin_iterations,
-                    )
-                except Exception:
-                    if not local_auto:
-                        raise
-                    logger.warning(
-                        "[OrbitKVConnector] local data bootstrap failed; falling back to gRPC",
-                        exc_info=True,
-                    )
-            if data_client is None:
-                data_client = GrpcDataClient(engine_client)
-            data_clients = (data_client,)
-        # In local-data mode the scheduler no longer retains the secondary
-        # gRPC clients through its query fan-out. Keep every client alive so
-        # each server-streaming session watcher remains open.
+        self._connections = connect_cache(
+            endpoints=tp_shards.endpoints,
+            shard_index=shard_index,
+            all_shards=role == KVConnectorRole.SCHEDULER,
+            get_option=vllm_config.kv_transfer_config.get_from_extra_config,
+        )
+        lifecycle_clients = self._connections.lifecycle_clients
+        data_clients = self._connections.data_clients
+        engine_client = self._connections.lifecycle
+        data_client = self._connections.data
         self._lifecycle_clients = lifecycle_clients
-        logger.debug("[OrbitKVConnector] Connected to engine server at %s", self._engine_endpoint)
+        logger.debug(
+            "[OrbitKVConnector] Connected to Cache Manager at %s", self._connections.target
+        )
         logger.info(
             "[OrbitKVConnector] data plane selected: transport=%s target=%s",
             data_client.transport,
-            (
-                local_sockets[shard_index]
-                if role == KVConnectorRole.SCHEDULER
-                and data_client.transport == "local"
-                and local_sockets is not None
-                else local_sockets[worker_local_socket_index]
-                if data_client.transport == "local" and local_sockets is not None
-                else self._engine_endpoint
-            ),
+            self._connections.target,
         )
 
         self._state_manager = ServiceStateManager(engine_client)
@@ -568,12 +468,15 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         return None
 
     def shutdown(self):
-        if self._scheduler:
-            self._scheduler.shutdown()
-        if self._worker:
-            self._worker.shutdown()
-        if self._state_manager:
-            self._state_manager.shutdown()
+        try:
+            if self._scheduler:
+                self._scheduler.shutdown()
+            if self._worker:
+                self._worker.shutdown()
+        finally:
+            if self._state_manager:
+                self._state_manager.shutdown()
+            self._connections.close()
 
 
 class NoopKVConnector(KVConnectorBase_V1, SupportsHMA):

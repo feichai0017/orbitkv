@@ -1,6 +1,6 @@
 //! Liveness session registry.
 //!
-//! Tracks an active `Session` RPC per instance_id. Each install produces a
+//! Tracks an active inference session per instance_id. Each install produces a
 //! monotonically increasing token; a new session for the same instance_id
 //! supersedes the previous token, so a stale session's cleanup hook becomes
 //! a no-op.
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SessionTopology {
+pub(crate) struct SessionTopology {
     pub namespace: String,
     pub tp_size: u32,
     pub world_size: u32,
@@ -18,24 +18,28 @@ pub struct SessionTopology {
 
 struct SessionEntry {
     token: u64,
+    #[allow(
+        dead_code,
+        reason = "session topology is retained for registration validation"
+    )]
     topology: SessionTopology,
 }
 
 #[derive(Default)]
-pub struct SessionRegistry {
+pub(crate) struct SessionRegistry {
     sessions: DashMap<String, SessionEntry>,
     next_token: AtomicU64,
 }
 
 impl SessionRegistry {
-    pub fn new() -> Arc<Self> {
+    pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
     /// Install a new session for `instance_id`, returning the token that
     /// identifies it. Overwrites any existing token (the old session's
     /// cleanup will observe `is_current == false` and skip).
-    pub fn install(
+    pub(crate) fn install(
         &self,
         instance_id: String,
         namespace: String,
@@ -57,7 +61,8 @@ impl SessionRegistry {
         token
     }
 
-    pub fn topology(&self, instance_id: &str) -> Option<SessionTopology> {
+    #[cfg(test)]
+    pub(crate) fn topology(&self, instance_id: &str) -> Option<SessionTopology> {
         self.sessions
             .get(instance_id)
             .map(|entry| entry.topology.clone())
@@ -65,7 +70,7 @@ impl SessionRegistry {
 
     /// CAS-remove: only removes if `token` is still the current one.
     /// Returns true if this caller owns the cleanup.
-    pub fn take(&self, instance_id: &str, token: u64) -> bool {
+    pub(crate) fn take(&self, instance_id: &str, token: u64) -> bool {
         let mut owned = false;
         self.sessions.remove_if(instance_id, |_, entry| {
             if entry.token == token {

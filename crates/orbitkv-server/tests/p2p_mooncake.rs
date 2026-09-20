@@ -18,8 +18,6 @@ use orbitkv_core::*;
 use orbitkv_metaserver::{BlockHashStore, GrpcMetaService};
 use orbitkv_proto::proto::engine::meta_server_server::MetaServerServer;
 use orbitkv_server::proto::engine::engine_server::EngineServer;
-use orbitkv_server::{CudaTensorRegistry, GrpcEngineService, RegistryHandle};
-use tokio::sync::Notify;
 use tonic::transport::Server;
 
 // ── GPU buffer (from crates/orbitkv-core/tests/common/gpu_buffer.rs) ──────────────
@@ -152,16 +150,7 @@ async fn spawn_metaserver(port: u16) -> Arc<BlockHashStore> {
 }
 
 async fn spawn_engine_server(engine: Arc<OrbitKVEngine>, port: u16) {
-    let registry = CudaTensorRegistry::new().expect("CudaTensorRegistry::new");
-    let registry = RegistryHandle::spawn(registry);
-    let shutdown = Arc::new(Notify::new());
-    let hll_tracker = Arc::new(std::sync::Mutex::new(
-        orbitkv_common::hll::MultiWindowHllTracker::new(
-            vec![("24h".into(), Duration::from_secs(86400))],
-            14,
-        ),
-    ));
-    let service = GrpcEngineService::new(engine, registry, shutdown, hll_tracker);
+    let service = P2pTransferService::new(engine);
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     tokio::spawn(async move {
         Server::builder()

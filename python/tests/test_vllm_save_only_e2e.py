@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from .vllm_helpers import (
-    OrbitKVServer,
+    CacheManager,
     VLLMServer,
     call_openai_api,
     fetch_orbitkv_metrics,
@@ -119,7 +119,7 @@ def test_save_only_external_full_hit_is_saved_for_later_orbitkv_read(
 
     log_dir = tmp_path / "save_only_e2e_logs"
     log_dir.mkdir()
-    server_log = log_dir / "orbitkv-server.log"
+    server_log = log_dir / "orbitkv-cache-manager.log"
     save_only_log = log_dir / "save-only-multi.log"
     read_write_log = log_dir / "orbitkv-read-write.log"
 
@@ -133,7 +133,7 @@ def test_save_only_external_full_hit_is_saved_for_later_orbitkv_read(
     vllm_env = {"VLLM_USE_FLASHINFER_SAMPLER": "0"}
     server_max_model_len = max_model_len or SAVE_ONLY_MAX_MODEL_LEN
 
-    with OrbitKVServer(
+    with CacheManager(
         log_file=server_log,
         pool_size="1gb",
         log_level="debug",
@@ -144,12 +144,12 @@ def test_save_only_external_full_hit_is_saved_for_later_orbitkv_read(
         with VLLMServer(
             model,
             save_port,
-            orbitkv_port=orbitkv_server.grpc_port,
+            orbitkv_port=orbitkv_server.cache_port,
             log_file=save_only_log,
             max_model_len=server_max_model_len,
             extra_args=vllm_extra_args,
             startup_timeout=SAVE_ONLY_STARTUP_TIMEOUT,
-            kv_transfer_config=_save_only_multi_config(orbitkv_server.grpc_port),
+            kv_transfer_config=_save_only_multi_config(orbitkv_server.cache_port),
             server_label="SaveOnlyMulti",
             env_overrides=vllm_env,
         ):
@@ -172,12 +172,12 @@ def test_save_only_external_full_hit_is_saved_for_later_orbitkv_read(
         with VLLMServer(
             model,
             read_port,
-            orbitkv_port=orbitkv_server.grpc_port,
+            orbitkv_port=orbitkv_server.cache_port,
             log_file=read_write_log,
             max_model_len=server_max_model_len,
             extra_args=vllm_extra_args,
             startup_timeout=SAVE_ONLY_STARTUP_TIMEOUT,
-            kv_transfer_config=_orbitkv_read_write_config(orbitkv_server.grpc_port),
+            kv_transfer_config=_orbitkv_read_write_config(orbitkv_server.cache_port),
             server_label="OrbitKVReadWrite",
             env_overrides=vllm_env,
         ):

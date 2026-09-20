@@ -16,7 +16,7 @@ import pytest
 import requests
 
 from .vllm_helpers import (
-    OrbitKVServer,
+    CacheManager,
     VLLMServer,
     call_openai_api,
     fetch_orbitkv_metrics,
@@ -96,14 +96,14 @@ def test_warm_hit_pressure_on_single_gpu_profile(
     log_dir = tmp_path / "warm_hit_stress_logs"
     log_dir.mkdir()
     orbitkv_log = log_dir / "orbitkv-vllm.log"
-    server_log = log_dir / "orbitkv-server.log"
+    server_log = log_dir / "orbitkv-cache-manager.log"
 
-    with OrbitKVServer(log_file=server_log) as orbitkv_server:
+    with CacheManager(log_file=server_log) as orbitkv_server:
         with VLLMServer(
             model,
             base_port,
             use_orbitkv=True,
-            orbitkv_port=orbitkv_server.grpc_port,
+            orbitkv_port=orbitkv_server.cache_port,
             log_file=orbitkv_log,
             max_model_len=max_model_len or STRESS_MAX_MODEL_LEN,
             gpu_memory_utilization=STRESS_GPU_MEMORY_UTILIZATION,

@@ -14,9 +14,10 @@ integration targets; the executable HiCache backend remains an M1 deliverable.
 
 ## Process topology
 
-The recommended deployment is one OrbitKV sidecar per inference node. Framework
-adapters run inside the inference workers. A cluster index/router may run as a
-separate service.
+The recommended deployment is one OrbitKV Cache Manager per inference node. Framework
+adapters run inside the inference workers. The same cache API is used whether a
+hit is in node memory, SSD, or on a peer. A cluster index/router may run as a
+separate service after the cache data plane is qualified.
 
 ```text
                  cluster replica index / router
@@ -31,22 +32,53 @@ separate service.
  +---------+---------+              +---------+---------+
            | local control / registered pages |
  +---------v---------+  Mooncake    +---------v---------+
- | OrbitKV sidecar   |<------------>| OrbitKV sidecar   |
+ | OrbitKV Cache Manager |<--------->| OrbitKV Cache Manager |
  | pinned DRAM / SSD |              | pinned DRAM / SSD |
  +-------------------+              +-------------------+
 ```
 
-The lifecycle and compatibility planes still use gRPC. The native local API now
-supports query, publish, asynchronous restore completion, and lease release:
+Standalone deployment has no gRPC listener. Registration, health, sessions, and
+cleanup use the authenticated bootstrap UDS. `--metaserver-addr` enables a
+peer-only gRPC listener for transfer authorization and lock release. The process IPC supports query, publish, asynchronous
+restore completion, and lease release:
 iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
 passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
-The vLLM adapter automatically selects this path when the sidecar's derived
-Unix socket is available; `orbitkv.local_data=true|false` forces either path.
-The SGLang adapter has not yet been switched. KV bytes
+The vLLM adapter requires this path and fails fast if the Cache Manager socket
+is missing. Each inference process must reach a Cache Manager on its own host.
+Pending queries return `Loading` and continue on Tokio. Publish holds its
+iceoryx2 reply until D2H finishes, so the caller does not release source HBM
+pages early while the dispatcher remains free. The Python cache client opens a
+separate descriptor session for Publish on its first save, so an in-flight
+save does not serialize the worker's Query/Restore calls behind that reply.
+Instance cleanup serializes
+against registration, drains GPU
+load/save queues, and only then releases imported CUDA mappings. Superseded
+sessions cannot clean up a replacement session. The SGLang adapter has not yet
+been switched. KV bytes
 must not travel through either control protocol: vLLM uses
 registered CUDA IPC pages, SGLang will use a shared pinned host pool, and remote
 transfers use the Mooncake-backed `TransferEngine`. See [transport.md](transport.md) for the
 measured decision.
+
+## API and crate boundaries
+
+| Layer | Code | Owns |
+| --- | --- | --- |
+| Framework adapters | `python/orbitkv/vllm`, `python/orbitkv/sglang` | Framework-specific hashes, layout, and page-lifetime events |
+| Cache client | `python/orbitkv/client/data_plane.py`, `connection.py` | Query, publish, restore, release, lifecycle through the node-local connection |
+| State contract | `orbitkv-contract` | State identity, format compatibility, bundles, page-reference types |
+| Process IPC | `orbitkv-local`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
+| Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
+| Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
+| Peer control | `orbitkv-proto`, `orbitkv-core/src/internode/p2p_service.rs` | Network authorization and transfer locks |
+| Replica catalog | `orbitkv-metaserver`, `orbitkv-core/src/internode` | Candidate ownership and node liveness; currently a single in-memory service |
+| Byte movement | `orbitkv-transfer`, `orbitkv-mooncake-sys` | Mooncake Segment/BatchTransfer over RDMA or TCP |
+
+Transport-specific names belong at physical boundaries. Cache operations and
+framework adapters use placement-neutral names and results. Moving a cache hit
+from DRAM to SSD or another node should not change `query_prefetch`, `save`,
+`start_restore`, or `release` for the caller. The `orbitkv-local` crate name is
+kept because it describes one IPC implementation, not a different cache API.
 
 ## Layering
 
@@ -54,17 +86,22 @@ measured decision.
 vLLM adapter                SGLang adapter
 block hashes / CUDA IPC     radix hashes / HiCache pools / shared host pages
                              /
-            +---- orbitkv-contract ----+
-                 state identity
-                 format compatibility
-                 local page generations
-                 recovery bundles
+       python/orbitkv/client (cache API)
+                    |
+    orbitkv-local / iceoryx2 + UDS
+                    |
+              orbitkv-server/cache/operations
                            |
                     orbitkv-core
                  cache · leases · tiers
-                  /                    \
-       orbitkv-local              Mooncake Transfer / SSD
-       iceoryx2 + UDS             RDMA · TCP fallback
+                    /           \
+                  SSD      Mooncake Transfer
+                           |
+                    peer DRAM / SSD
+
+     peer control: tonic / gRPC, only with --metaserver-addr
+
+    orbitkv-contract: shared state identity and recovery semantics
 ```
 
 ### `orbitkv-contract`
@@ -79,6 +116,11 @@ are:
 - `LocalPageRef`: generation-qualified CUDA IPC or shared-host page reference;
 - `StateBundle` and `RecoveryContract`: the components needed to claim that a
   logical boundary is restorable.
+
+`StateBundle::has_required_components` currently checks availability by
+component kind only. It is not yet a proof of restorable state: token coverage,
+model/format compatibility, and the framework's recovery rule must be checked
+before a bundle is used to skip prefill or route a request.
 
 Physical bytes may be shared across vLLM and SGLang only when their
 `StateFormat` values are compatible. Sharing the core and policy never implies
@@ -129,8 +171,11 @@ Implement `orbitkv.sglang.OrbitKVHiCacheStorage` against SGLang's dynamic
 `HiCacheStorage` interface. It must support `batch_exists_v2`, `batch_get_v2`,
 `batch_set_v2`, and named auxiliary pools. SGLang remains owner of GPU and host
 allocation in this stage.
+With the pinned SGLang `v0.5.20` API, `batch_exists_v2` can return
+`restorable_prefix_pages`; OrbitKV must preserve this set when auxiliary pools
+use trailing-page hit policies, rather than flattening it to one hit count.
 
-The host pool must use SGLang's shared-memory allocator. The sidecar maps that
+The host pool must use SGLang's shared-memory allocator. The Cache Manager maps that
 same memory; it must not allocate a second DRAM copy.
 
 ### Stage 2: Radix lifecycle bridge
@@ -159,6 +204,42 @@ Semantic death proves that no future legal execution can read the state.
 Execution completion proves that no submitted CUDA, SSD, or network operation
 still references the generation. A lease or refcount supplies execution
 evidence; it does not by itself prove semantic death.
+
+The descriptor arena validates its slot generation and Cache Manager session epoch,
+and vLLM pins save-source blocks until Publish returns. These checks do not
+yet validate a framework HBM page's reuse generation. `LocalPageRef` defines
+the future contract, but current Publish still carries raw block IDs;
+generation enforcement requires page-lifecycle information from the adapter
+before a stale ID can be rejected at the Cache Manager boundary.
+
+## Multi-node cache path and deployment
+
+Today, `orbitkv-metaserver` is a separate in-memory gRPC service. A Cache Manager
+registers sealed block hashes asynchronously and heartbeats its node session.
+After a local miss, it queries the service for candidate owners. A selected
+source Cache Manager authorizes and pins its blocks through gRPC, then Mooncake reads
+the bytes into the destination's pinned memory. The destination can cache that
+replica and restore it to framework HBM through its normal cache API. Network
+gRPC carries control metadata and leases; Mooncake carries KV bytes. Mooncake's
+P2P handshake supplies transport endpoint metadata, not KV ownership.
+
+The present catalog is soft state, has no replicated persistence, and does not
+backfill all resident keys after a metadata-service restart. It is therefore a
+single-node failure and remote-hit-rate risk, even though local cache hits can
+continue without it. Before declaring distributed cache production-ready, add
+resident-inventory replay with a catalog epoch, bounded batched lookup and a
+Cache Manager-side candidate cache; verify behavior across service restart, node
+failure, and stale transfer capabilities.
+
+The next deployment shape keeps one Cache Manager per inference node and uses a
+separately deployed replica directory for discovery. Keep etcd, if adopted, for
+small strongly consistent membership/configuration and directory epochs, not
+for per-block reads or writes. The block catalog itself can remain a purpose-
+built soft-state service with sharded replicas and Cache Manager-local snapshots.
+Only a verified remote miss needs a control-plane round trip; the source
+Cache Manager remains the authority for an actual transfer. The router can later
+consume the same catalog without entering the cache data path. This is a
+design target, not current implementation.
 
 ## Planning direction
 

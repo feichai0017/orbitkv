@@ -196,16 +196,6 @@ def _install_native_extension_stub() -> None:
         module = types.ModuleType(module_name)
         sys.modules[module_name] = module
 
-    class _FakeLoadState:
-        def shm_name(self) -> str:
-            return "test-shm"
-
-        def is_ready(self) -> bool:
-            return False
-
-        def get_state(self) -> int:
-            return 0
-
     class _QueryLoading:
         pass
 
@@ -214,13 +204,11 @@ def _install_native_extension_stub() -> None:
             self.num_hit_blocks = num_hit_blocks
             self.lease = lease
 
-    module.EngineRpcClient = getattr(module, "EngineRpcClient", MagicMock)
     module.LocalQueryClient = getattr(module, "LocalQueryClient", MagicMock)
     module.OrbitKVError = getattr(module, "OrbitKVError", type("OrbitKVError", (Exception,), {}))
     module.OrbitKVInternal = getattr(
         module, "OrbitKVInternal", type("OrbitKVInternal", (Exception,), {})
     )
-    module.PyLoadState = getattr(module, "PyLoadState", _FakeLoadState)
     module.QueryLoading = getattr(module, "QueryLoading", _QueryLoading)
     module.QueryReady = getattr(module, "QueryReady", _QueryReady)
     module.__version__ = getattr(module, "__version__", "test")

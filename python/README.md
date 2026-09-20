@@ -6,12 +6,29 @@ is tracked as the next milestone.
 
 ## Features
 
-- **EngineRpcClient**: Thin Python client for the local OrbitKV sidecar
-- **CacheDataClient**: Common hot-path facade with gRPC and local IPC implementations
+- **LocalDataClient**: UDS/iceoryx2 client for the node-local Cache Manager
+- **CacheDataClient**: Framework-neutral cache operations for every storage tier
 - **OrbitKVConnector**: vLLM KV connector for distributed inference with KV cache transfer
 - **SGLang contracts**: Configuration and state-pool mapping without claiming a completed backend
 
 ## Installation
+
+The framework release baseline verified on 2026-09-20 is vLLM `0.29.0` and
+SGLang `0.5.20`. Keep their GPU dependencies in separate environments. The
+SGLang source submodule is pinned to its `v0.5.20` release; its executable
+OrbitKV HiCache backend is still in development.
+
+The Cache Manager currently imports PyTorch at startup for CUDA IPC handling.
+Run the wheel in an environment with a compatible PyTorch/CUDA runtime; the
+base `orbitkv-llm` dependency set does not install PyTorch for you.
+
+```bash
+cd python
+uv venv ../.venv/vllm-release --python 3.11
+uv pip install --python ../.venv/vllm-release/bin/python 'vllm==0.29.0' pytest requests --torch-backend=cu130
+uv venv ../.venv/sglang-release --python 3.11
+uv pip install --python ../.venv/sglang-release/bin/python 'sglang==0.5.20' --torch-backend=cu130
+```
 
 ### From Source
 
@@ -35,13 +52,14 @@ pip install orbitkv
 
 ## Usage
 
-### Sidecar client
+### Cache Manager client
 
 ```python
-from orbitkv.client import EngineRpcClient
+from orbitkv.client import LocalDataClient
 
-client = EngineRpcClient("http://127.0.0.1:50055")
+client = LocalDataClient("/tmp/orbitkv-50055.sock")
 ok, message = client.health()
+client.close()
 ```
 
 ### vLLM KV Connector
@@ -66,34 +84,27 @@ llm = LLM(
 
 #### Local data plane
 
-The connector defaults to `orbitkv.local_data="auto"`. It derives the
-sidecar's Unix socket from the configured endpoint and uses local IPC for
-scheduler Query/Release and worker Publish/Restore whenever every required
-socket is available. No extra configuration is needed for the normal
-single-node deployment.
-
-Use `true` to require local IPC, or `false` to force the compatibility gRPC
-data plane:
-
-```json
-{
-  "kv_connector": "OrbitKVConnector",
-  "kv_role": "kv_both",
-  "kv_connector_module_path": "orbitkv.vllm",
-  "kv_connector_extra_config": {
-    "orbitkv.local_data": false
-  }
-}
-```
+The connector derives the Cache Manager's Unix socket from the configured
+endpoint. Scheduler Query/Release and worker Publish/Restore use iceoryx2;
+registration, health, session ownership, and cleanup use the bootstrap UDS.
+Each inference process requires a Cache Manager on its own host. A missing
+socket fails at startup. No extra configuration is needed on one node.
 
 The local path connects to `/tmp/orbitkv-<orbitkv.port>.sock`, matching the
-sidecar default. Use `orbitkv.local_bootstrap_socket` for a custom single-sidecar
-path. `orbitkv.local_timeout_ms` (default 5000) bounds each local request and
-`orbitkv.local_spin_iterations` defaults to 64. Registration, health, session
-watching, and unregister remain on gRPC in this mode. The current local
-dispatcher is serial, so `orbitkv.wait_for_full_prefix` is rejected together
-with local data until QueryBundle has an asynchronous completion protocol; use
-the gRPC data path for blocking remote prefetch.
+Cache Manager default. Use `orbitkv.local_bootstrap_socket` for a custom single-manager
+path. `orbitkv.local_timeout_ms` (default 5000) bounds hot requests and health;
+registration and unregister allow at least 120 seconds for CUDA setup/draining.
+`orbitkv.local_spin_iterations` defaults to 64. Standalone Cache Managers do
+not start gRPC. Client and Cache Manager must use matching
+bootstrap protocol versions (currently version 2).
+
+`orbitkv.wait_for_full_prefix` is supported on the local path: pending queries
+return `QueryLoading`, and repeated queries with the same instance/request/group
+identity retrieve the result. Query arguments must remain unchanged while
+pending. Each session permits 128 pending queries with a 60-second lifetime.
+Undelivered results release their leases when discarded. Connector shutdown
+explicitly closes the UDS session; imported CUDA mappings are released after
+queued GPU transfers finish.
 
 #### Connector Modes
 
@@ -167,8 +178,8 @@ TP sharding currently requires equal contiguous shards and TP-only parallelism.
 Pipeline, decode-context, and prefill-context parallelism are rejected when
 more than one endpoint is configured.
 
-When every TP shard sidecar is on the scheduler host, auto mode derives one
-socket from each endpoint and uses local IPC only when all sockets exist:
+When every TP shard Cache Manager is on the scheduler host, the connector derives
+one socket from each endpoint and requires all sockets to exist:
 
 ```json
 {
@@ -180,8 +191,8 @@ socket from each endpoint and uses local IPC only when all sockets exist:
 ```
 
 An explicit `orbitkv.tp_shard_bootstrap_sockets` list is only needed for custom
-paths. A Unix socket cannot cross a host boundary, so auto mode falls back to
-gRPC when one or more shard sockets are not local.
+paths. A Unix socket cannot cross a host boundary. Cross-host TP sharding needs
+node-local query fan-out and is not supported by this adapter yet.
 
 #### P/D Partial Tail Blocks
 
@@ -208,7 +219,7 @@ See the [examples](../examples/) directory for more usage examples.
 
 ### Running Unit Tests
 
-The test suite includes integration tests that verify the `EngineRpcClient` can correctly communicate with a running `orbitkv-server` instance.
+The test suite includes integration tests that verify the local client can communicate with a running Cache Manager.
 
 #### Prerequisites
 
@@ -223,7 +234,7 @@ The test suite includes integration tests that verify the `EngineRpcClient` can 
 
    ```bash
    cd ..
-   cargo build --release --bin orbitkv-server
+   cargo build --release --bin orbitkv-cache-manager
    ```
 
 3. **Ensure CUDA is available** (tests require GPU):
@@ -240,7 +251,7 @@ cd python
 pytest tests/ -v
 
 # Run specific test file
-pytest tests/test_engine_client.py -v
+pytest tests/test_cache_manager_client.py -v
 
 # Run with coverage
 pytest tests/ --cov=orbitkv --cov-report=html
@@ -250,12 +261,12 @@ pytest tests/ --cov=orbitkv --cov-report=html
 
 - **`tests/conftest.py`**: Contains pytest fixtures for:
 
-  - `orbitkv_server`: Automatically starts/stops `orbitkv-server` for integration tests
-  - `engine_client`: Creates an `EngineRpcClient` connected to the test server
+  - `orbitkv_server`: Automatically starts/stops the Cache Manager for integration tests
+  - `engine_client`: Creates a local Cache Manager client for the test
   - `client_context`: Provides a `ClientContext` representing a vLLM instance with GPU KV cache tensors
   - `registered_instance`: Provides a registered instance ID for query tests
 
-- **`tests/test_engine_client.py`**: Integration tests for:
+- **`tests/test_cache_manager_client.py`**: Integration tests for:
   - Server connectivity
   - Query operations with various inputs
 

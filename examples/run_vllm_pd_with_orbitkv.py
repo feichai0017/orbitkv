@@ -11,7 +11,7 @@ Usage:
     python run_vllm_pd_with_pega.py --model <model_path>
     python run_vllm_pd_with_pega.py --model Qwen/Qwen3-8B --num-p 1 --num-d 1
 
-Note: Start OrbitKVEngine server separately before running this script.
+Note: Start OrbitKV Cache Manager separately before running this script.
 """
 
 import argparse

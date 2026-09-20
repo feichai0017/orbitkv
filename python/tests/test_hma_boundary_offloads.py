@@ -18,7 +18,8 @@ The connector must:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -233,6 +234,43 @@ def test_hma_requires_boundary_state_hand_off_api():
 
     with pytest.raises(RuntimeError, match="kv_connector_block_state"):
         scheduler.build_connector_meta(_scheduler_output({}, with_block_state=False))
+
+
+def test_hma_rejects_incompatible_vllm_before_opening_cache_connections(monkeypatch):
+    from vllm.v1.kv_cache_interface import FullAttentionSpec, MambaSpec
+
+    import orbitkv.vllm as vllm
+
+    attention = FullAttentionSpec()
+    attention.block_size = VBS
+    recurrent = MambaSpec()
+    recurrent.block_size = VBS
+    recurrent.mamba_cache_mode = "align"
+    groups = (
+        SimpleNamespace(layer_names=("attention",), kv_cache_spec=attention),
+        SimpleNamespace(layer_names=("recurrent",), kv_cache_spec=recurrent),
+    )
+    output_module = ModuleType("vllm.v1.core.sched.output")
+    output_module.SchedulerOutput = type("SchedulerOutput", (), {})
+    for name in ("vllm.v1.core", "vllm.v1.core.sched"):
+        monkeypatch.setitem(sys.modules, name, ModuleType(name))
+    monkeypatch.setitem(sys.modules, output_module.__name__, output_module)
+    connect_cache = MagicMock()
+    monkeypatch.setattr(vllm, "connect_cache", connect_cache)
+    config = SimpleNamespace(
+        kv_transfer_config=SimpleNamespace(engine_id="test"),
+        parallel_config=SimpleNamespace(tensor_parallel_size=1, world_size=1),
+        model_config=SimpleNamespace(hf_text_config=SimpleNamespace()),
+    )
+
+    with pytest.raises(RuntimeError, match="kv_connector_block_state"):
+        vllm.OrbitKVConnector(
+            config,
+            vllm.KVConnectorRole.SCHEDULER,
+            SimpleNamespace(kv_cache_groups=groups),
+        )
+
+    connect_cache.assert_not_called()
 
 
 def test_mid_request_attention_save_never_touches_recurrent_rows():

@@ -1,15 +1,15 @@
-"""Integration tests for EngineRpcClient against OrbitKVServer.
+"""Integration tests for the local Cache Manager client.
 
-These tests verify the gRPC client can correctly communicate with
-a running OrbitKVServer instance. The server is automatically started
+These tests verify the UDS/iceoryx2 client can communicate with
+a running Cache Manager instance. The server is automatically started
 by the `orbitkv_server` fixture.
 
 Requirements:
 - Rust extension built: maturin develop --release
-- GPU available for OrbitKVServer
+- GPU available for Cache Manager
 
 Run with:
-    cd python && pytest -m integration tests/test_engine_client.py -v
+    cd python && pytest -m integration tests/test_cache_manager_client.py -v
 """
 
 import pytest

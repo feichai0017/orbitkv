@@ -444,6 +444,14 @@ impl InstanceContext {
         })
     }
 
+    pub(crate) async fn drain_workers(&self) -> Result<(), EngineError> {
+        let gpus: Vec<_> = self.state.lock().gpu_contexts.values().cloned().collect();
+        for gpu in gpus {
+            gpu.worker_pool().drain().await?;
+        }
+        Ok(())
+    }
+
     /// Access the sealed layer topology.
     ///
     /// # Errors

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-default-run = "orbitkv-server"
+default-run = "orbitkv-cache-manager"
 
 [lints]
 workspace = true
@@ -21,7 +21,7 @@ name = "orbitkv_server"
 path = "src/lib.rs"
 
 [[bin]]
-name = "orbitkv-server"
+name = "orbitkv-cache-manager"
 path = "src/main.rs"
 
 [dependencies]
@@ -32,6 +32,7 @@ orbitkv-proto = { path = "../orbitkv-proto" }
 pyo3 = { workspace = true, features = ["auto-initialize"] }
 cudarc.workspace = true
 tonic.workspace = true
+prost.workspace = true
 tokio.workspace = true
 clap.workspace = true
 log.workspace = true

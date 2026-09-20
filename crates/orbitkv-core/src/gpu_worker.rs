@@ -3,7 +3,8 @@ use std::sync::{Arc, mpsc as std_mpsc};
 use cudarc::driver::{CudaContext, CudaStream};
 use log::{debug, error, info, warn};
 use logforth::diagnostic::ThreadLocalDiagnostic;
-use tokio::sync::{mpsc, oneshot};
+use parking_lot::Mutex;
+use tokio::sync::{OnceCell, mpsc, oneshot};
 
 use crate::EngineError;
 use crate::block::{RawBlock, SealedBlock};
@@ -112,11 +113,18 @@ pub(crate) struct SaveTask {
     pub trace_ctx: Option<::fastrace::prelude::SpanContext>,
 }
 
+enum WorkerCommand<T> {
+    Transfer(T),
+    Drain(oneshot::Sender<Result<(), String>>),
+}
+
 /// Per-GPU worker pool with dedicated load and save threads
 pub(crate) struct GpuWorkerPool {
     device_id: i32,
-    load_tx: mpsc::UnboundedSender<LoadTask>,
-    save_tx: mpsc::UnboundedSender<SaveTask>,
+    load_tx: mpsc::UnboundedSender<WorkerCommand<LoadTask>>,
+    save_tx: mpsc::UnboundedSender<WorkerCommand<SaveTask>>,
+    closed: Mutex<bool>,
+    drained: OnceCell<Result<(), String>>,
 }
 
 impl GpuWorkerPool {
@@ -197,17 +205,25 @@ impl GpuWorkerPool {
             device_id,
             load_tx,
             save_tx,
+            closed: Mutex::new(false),
+            drained: OnceCell::new(),
         })
     }
 
     /// Submit a load task (CPU -> GPU) - fire and forget
     pub(crate) fn submit_load(&self, task: LoadTask) -> Result<(), EngineError> {
-        self.load_tx.send(task).map_err(|_| {
-            EngineError::Storage(format!(
-                "Load worker channel closed for device {}",
-                self.device_id
-            ))
-        })
+        let closed = self.closed.lock();
+        if *closed {
+            return Err(EngineError::Storage("GPU worker is draining".into()));
+        }
+        self.load_tx
+            .send(WorkerCommand::Transfer(task))
+            .map_err(|_| {
+                EngineError::Storage(format!(
+                    "Load worker channel closed for device {}",
+                    self.device_id
+                ))
+            })
     }
 
     /// Submit a multi-layer save task (GPU -> CPU) - async, wait for completion.
@@ -225,12 +241,20 @@ impl GpuWorkerPool {
             trace_ctx: ::fastrace::prelude::SpanContext::current_local_parent(),
         };
 
-        self.save_tx.send(task).map_err(|_| {
-            EngineError::Storage(format!(
-                "Save worker channel closed for device {}",
-                self.device_id
-            ))
-        })?;
+        {
+            let closed = self.closed.lock();
+            if *closed {
+                return Err(EngineError::Storage("GPU worker is draining".into()));
+            }
+            self.save_tx
+                .send(WorkerCommand::Transfer(task))
+                .map_err(|_| {
+                    EngineError::Storage(format!(
+                        "Save worker channel closed for device {}",
+                        self.device_id
+                    ))
+                })?;
+        }
 
         // Await the result (this is async, won't block tokio runtime)
         reply_rx.await.map_err(|_| {
@@ -239,6 +263,31 @@ impl GpuWorkerPool {
                 self.device_id
             ))
         })?
+    }
+    /// Reject new work and wait until both streams no longer use imported pointers.
+    pub(crate) async fn drain(&self) -> Result<(), EngineError> {
+        self.drained
+            .get_or_init(|| async {
+                let (load_tx, load_rx) = oneshot::channel();
+                let (save_tx, save_rx) = oneshot::channel();
+                {
+                    let mut closed = self.closed.lock();
+                    *closed = true;
+                    self.load_tx
+                        .send(WorkerCommand::Drain(load_tx))
+                        .map_err(|_| "load worker unavailable while draining".to_string())?;
+                    self.save_tx
+                        .send(WorkerCommand::Drain(save_tx))
+                        .map_err(|_| "save worker unavailable while draining".to_string())?;
+                }
+                let (load, save) = tokio::join!(load_rx, save_rx);
+                load.map_err(|_| "load worker exited before draining".to_string())??;
+                save.map_err(|_| "save worker exited before draining".to_string())??;
+                Ok(())
+            })
+            .await
+            .clone()
+            .map_err(EngineError::Storage)
     }
 }
 
@@ -300,10 +349,21 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
 /// Load worker thread main loop
 fn load_worker_loop(
     device_id: i32,
-    mut rx: mpsc::UnboundedReceiver<LoadTask>,
+    mut rx: mpsc::UnboundedReceiver<WorkerCommand<LoadTask>>,
     runtime: WorkerRuntime,
 ) {
-    while let Some(task) = rx.blocking_recv() {
+    while let Some(command) = rx.blocking_recv() {
+        let task = match command {
+            WorkerCommand::Transfer(task) => task,
+            WorkerCommand::Drain(reply) => {
+                let result = runtime
+                    .stream
+                    .synchronize()
+                    .map_err(|e| format!("GPU drain failed: {e}"));
+                let _ = reply.send(result);
+                break;
+            }
+        };
         let LoadTask { layers, completion } = task;
         let result = process_load_task(&layers, &runtime.stream, runtime.backend.as_ref());
 
@@ -320,10 +380,21 @@ fn load_worker_loop(
 /// Save worker thread main loop
 fn save_worker_loop(
     device_id: i32,
-    mut rx: mpsc::UnboundedReceiver<SaveTask>,
+    mut rx: mpsc::UnboundedReceiver<WorkerCommand<SaveTask>>,
     runtime: WorkerRuntime,
 ) {
-    while let Some(task) = rx.blocking_recv() {
+    while let Some(command) = rx.blocking_recv() {
+        let task = match command {
+            WorkerCommand::Transfer(task) => task,
+            WorkerCommand::Drain(reply) => {
+                let result = runtime
+                    .stream
+                    .synchronize()
+                    .map_err(|e| format!("GPU drain failed: {e}"));
+                let _ = reply.send(result);
+                break;
+            }
+        };
         let SaveTask {
             layers,
             reply,
@@ -520,4 +591,58 @@ fn process_save_task(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod drain_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn drain_rejects_new_transfers_and_waits_for_both_workers() {
+        let (load_tx, mut load_rx) = mpsc::unbounded_channel();
+        let (save_tx, mut save_rx) = mpsc::unbounded_channel();
+        let pool = Arc::new(GpuWorkerPool {
+            device_id: 0,
+            load_tx,
+            save_tx,
+            closed: Mutex::new(false),
+            drained: OnceCell::new(),
+        });
+        let (reply, _result) = oneshot::channel();
+        pool.submit_load(LoadTask {
+            layers: vec![],
+            completion: LoadCompletion::Channel(reply),
+        })
+        .unwrap();
+        let draining = Arc::clone(&pool);
+        let waiter = tokio::spawn(async move { draining.drain().await });
+        assert!(matches!(
+            load_rx.recv().await,
+            Some(WorkerCommand::Transfer(_))
+        ));
+        let Some(WorkerCommand::Drain(load_ack)) = load_rx.recv().await else {
+            panic!("missing load barrier")
+        };
+        let Some(WorkerCommand::Drain(save_ack)) = save_rx.recv().await else {
+            panic!("missing save barrier")
+        };
+        let (reply, _) = oneshot::channel();
+        assert!(
+            pool.submit_load(LoadTask {
+                layers: vec![],
+                completion: LoadCompletion::Channel(reply)
+            })
+            .is_err()
+        );
+        assert!(pool.batch_save(vec![]).await.is_err());
+        load_ack.send(Ok(())).unwrap();
+        tokio::task::yield_now().await;
+        assert!(
+            !waiter.is_finished(),
+            "load completion alone must not release mappings"
+        );
+        save_ack.send(Ok(())).unwrap();
+        waiter.await.unwrap().unwrap();
+        pool.drain().await.unwrap();
+    }
 }

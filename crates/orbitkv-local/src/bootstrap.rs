@@ -20,7 +20,8 @@ use thiserror::Error;
 use crate::{ArenaError, DescriptorArena, DescriptorRef};
 
 const BOOTSTRAP_MAGIC: u32 = 0x4f52_4242; // ORBB
-const BOOTSTRAP_VERSION: u16 = 1;
+// Version 2 requires lifecycle framing on the persistent bootstrap socket.
+const BOOTSTRAP_VERSION: u16 = 2;
 const BOOTSTRAP_BYTES: usize = 256;
 const BOOTSTRAP_FD_COUNT: usize = 2;
 const SERVICE_NAME_OFFSET: usize = 64;
@@ -376,6 +377,8 @@ pub struct BootstrapClient {
 impl BootstrapClient {
     pub fn connect(socket_path: impl AsRef<Path>) -> Result<Self, BootstrapError> {
         let stream = UnixStream::connect(socket_path)?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         let (info, mut fds) = receive_bootstrap(&stream)?;
         let notification = fds.pop().ok_or(BootstrapError::FileDescriptorCount {
             expected: BOOTSTRAP_FD_COUNT,

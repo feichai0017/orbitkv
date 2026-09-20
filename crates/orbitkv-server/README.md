@@ -1,6 +1,12 @@
-# OrbitKV Engine gRPC Server
+# OrbitKV Cache Manager
 
-This crate wraps the Rust `OrbitKVEngine` and exposes the same functionality as `python/orbitkv/engine_server.py`, but over a tonic gRPC service.
+This crate runs the cache engine and exposes it to inference processes. The
+default single-node path uses `endpoint/` for iceoryx2 commands and UDS lifecycle
+frames. `endpoint/pending.rs` owns in-flight query
+state; `cache/lifecycle.rs` serializes
+registration and cleanup. `wire.rs` converts shared protobuf registration
+messages into cache-layer inputs. The distributed listener serves only peer
+transfer control RPCs. Mooncake transfers KV bytes between nodes.
 
 ## Building
 
@@ -12,13 +18,12 @@ export PYO3_PYTHON="$(pwd)/.venv/bin/python"
 
 export PYTHONPATH="$(pwd)/python:$PYTHONPATH"
 
-cargo run -r --bin orbitkv-server -- --addr 0.0.0.0:50055 --device 0 --pool-size 30gb
+cargo run -r --bin orbitkv-cache-manager -- --pool-size 30gb
 ```
 
 Adjust the Python path if your venv uses a different minor version.
 
-## Flags
-
-- `--addr`: Bind address for the tonic server (`127.0.0.1:50055` by default).
-- `--device`: Default CUDA device id. This matches the Python server's behavior
-  and ensures Torch/CUDA are initialized on the correct GPU.
+For peer control, configure `--metaserver-addr` and a routable `--addr`.
+`--devices` selects CUDA device IDs; omitting it detects available devices
+automatically. Keep the Python extension and Cache Manager from
+the same build because the bootstrap protocol is versioned.

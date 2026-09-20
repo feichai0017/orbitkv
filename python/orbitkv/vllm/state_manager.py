@@ -7,13 +7,12 @@ Current implementation scope:
 """
 
 import threading
-import time
 from typing import TYPE_CHECKING
 
 from orbitkv.logging_utils import get_connector_logger
 
 if TYPE_CHECKING:
-    from orbitkv.orbitkv import EngineRpcClient
+    from orbitkv.client.data_plane import CacheLifecycleClient
 
 logger = get_connector_logger()
 
@@ -30,7 +29,7 @@ class ServiceStateManager:
 
     def __init__(
         self,
-        engine_client: "EngineRpcClient",
+        engine_client: "CacheLifecycleClient",
         health_check_interval: float = 10.0,
     ):
         self._client = engine_client
@@ -77,9 +76,7 @@ class ServiceStateManager:
     def _health_check_loop(self) -> None:
         """Background thread: periodically check health until recovered."""
         while not self._stop_event.is_set():
-            time.sleep(self._interval)
-
-            if self._stop_event.is_set():
+            if self._stop_event.wait(self._interval):
                 break
 
             try:

@@ -1,8 +1,8 @@
-"""E2E correctness test: verify OrbitKV produces identical outputs to baseline vLLM.
+"""E2E correctness test: compare OrbitKV with equivalent vLLM reuse paths.
 
 The single most important test for OrbitKV. Verifies the core contract:
 
-    Given the same prompt + model + greedy sampling,
+    Given the same prompt + model + greedy sampling + prefix reuse plan,
     output must be identical with or without OrbitKV.
 
 Covers all critical KV cache paths in one deterministic test:
@@ -16,7 +16,7 @@ Covers all critical KV cache paths in one deterministic test:
 Usage:
     pytest python/tests/test_vllm_e2e_correctness.py -v -s
 
-    orbitkv-server is auto-started (via cargo run -r) and stopped by the test.
+    Cache Manager is auto-started (via cargo run -r) and stopped by the test.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from .vllm_helpers import (
-    OrbitKVServer,
+    CacheManager,
     VLLMServer,
     _uses_linear_attention,
     adapt_prompt_for_hybrid_cache,
@@ -34,6 +34,7 @@ from .vllm_helpers import (
     e2e_max_tokens,
     fetch_orbitkv_metrics,
     fetch_orbitkv_rpc_failures,
+    fetch_vllm_prefix_cache_hits,
 )
 
 # ---------------------------------------------------------------------------
@@ -156,7 +157,7 @@ MULTI_ROUND = [
 ]
 
 
-# Ordered execution plan for OrbitKV phase.
+# Ordered execution plan shared by the native-prefix and OrbitKV phases.
 # Each entry: (label, prompt, cache_expectation)
 # cache_expectation: "cold" = first time, "warm" = exact repeat, "partial" = prefix hit
 EXECUTION_PLAN: list[tuple[str, str, str]] = [
@@ -179,36 +180,6 @@ EXECUTION_PLAN: list[tuple[str, str, str]] = [
     ("multi_r3", MULTI_ROUND[2], "partial"),
 ]
 
-# All unique prompts for baseline collection
-ALL_PROMPTS: dict[str, str] = {
-    "short": SHORT_PROMPT,
-    "long": LONG_PROMPT,
-    "prefix_base": PREFIX_BASE,
-    "prefix_extend": PREFIX_EXTEND,
-    "rollback_long": ROLLBACK_LONG,
-    "rollback_short": ROLLBACK_SHORT,
-    "multi_r1": MULTI_ROUND[0],
-    "multi_r2": MULTI_ROUND[1],
-    "multi_r3": MULTI_ROUND[2],
-}
-
-# Map execution plan labels to their baseline prompt key
-_LABEL_TO_BASELINE: dict[str, str] = {
-    "short_cold": "short",
-    "long_cold": "long",
-    "prefix_base": "prefix_base",
-    "rollback_long": "rollback_long",
-    "multi_r1": "multi_r1",
-    "short_same_process": "short",
-    "short_warm": "short",
-    "long_warm": "long",
-    "prefix_extend": "prefix_extend",
-    "rollback_short": "rollback_short",
-    "multi_r2": "multi_r2",
-    "multi_r3": "multi_r3",
-}
-
-
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
@@ -220,8 +191,11 @@ class TestE2ECorrectness:
     """E2E correctness: baseline vLLM vs OrbitKV-enabled vLLM.
 
     Two-phase structure:
-      Phase 1 — run all unique prompts through baseline vLLM, collect golden outputs.
-      Phase 2 — run execution plan through OrbitKV vLLM, collect outputs + metrics.
+      Phase 1 — run the plan with native vLLM prefix caching, no OrbitKV.
+      Phase 2 — run the plan with OrbitKV; restart vLLM before warm loads.
+    The native phase keeps one vLLM process alive because its HBM prefix cache
+    does not survive restart. The comparison is between reuse paths, while
+    OrbitKV's restart separately proves Cache Manager persistence.
     The equality test walks every execution-plan label and reports the label
     that failed, so one expensive fixture run does not pretend each path is an
     independent test.
@@ -238,9 +212,9 @@ class TestE2ECorrectness:
         orbitkv_use_hugepages: bool,
         orbitkv_pool_size: str,
     ):
-        """Auto-start orbitkv-server with prometheus metrics."""
-        with OrbitKVServer(
-            log_file=log_dir / "orbitkv-server.log",
+        """Auto-start Cache Manager with prometheus metrics."""
+        with CacheManager(
+            log_file=log_dir / "orbitkv-cache-manager.log",
             pool_size=orbitkv_pool_size,
             use_hugepages=orbitkv_use_hugepages,
         ) as server:
@@ -256,8 +230,8 @@ class TestE2ECorrectness:
         pipeline_parallel_size: int,
         max_model_len: int | None,
     ) -> dict[str, str]:
-        """Phase 1: collect golden outputs from baseline vLLM (no OrbitKV)."""
-        print("\n[Phase 1] Baseline vLLM — collecting golden outputs")
+        """Phase 1: execute the same plan using native vLLM prefix caching."""
+        print("\n[Phase 1] Native vLLM prefix cache — executing cache plan")
         outputs: dict[str, str] = {}
 
         with VLLMServer(
@@ -265,22 +239,31 @@ class TestE2ECorrectness:
             base_port,
             use_orbitkv=False,
             use_noop_connector=True,
+            prefix_caching=True,
             log_file=log_dir / "baseline.log",
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
         ):
-            for key, prompt in ALL_PROMPTS.items():
+            for label, prompt, expectation in EXECUTION_PLAN:
+                if label == "long_warm":
+                    before_long_warm = fetch_vllm_prefix_cache_hits(base_port)
                 result = call_openai_api(
                     base_port,
                     model,
                     adapt_prompt_for_hybrid_cache(model, prompt),
                     max_tokens=e2e_max_tokens(model),
                 )
-                outputs[key] = result["text"]
-                print(f"  [{key}] {len(result['text'])} chars")
+                outputs[label] = result["text"]
+                print(f"  [{label}] ({expectation}) {len(result['text'])} chars")
+                if label == "long_warm":
+                    native_hit_tokens = fetch_vllm_prefix_cache_hits(base_port) - before_long_warm
+                    assert native_hit_tokens > 0, (
+                        "native long_warm performed no prefix reuse; "
+                        "the control path would be another cold prefill"
+                    )
 
-        print(f"[Phase 1] Done — {len(outputs)} golden outputs collected\n")
+        print(f"[Phase 1] Done — {len(outputs)} native-path outputs collected\n")
         return outputs
 
     @pytest.fixture(scope="class")
@@ -288,9 +271,8 @@ class TestE2ECorrectness:
         self,
         model: str,
         base_port: int,
-        orbitkv_server: OrbitKVServer,
+        orbitkv_server: CacheManager,
         orbitkv_transfer_backend: str,
-        orbitkv_local_data: bool,
         log_dir: Path,
         tensor_parallel_size: int,
         pipeline_parallel_size: int,
@@ -302,18 +284,18 @@ class TestE2ECorrectness:
         outputs: dict[str, str] = {}
         metrics_port = orbitkv_server.metrics_port
         metrics_start = fetch_orbitkv_metrics(metrics_port)
+        long_warm_load_bytes = 0.0
 
         with VLLMServer(
             model,
             orbitkv_port,
             use_orbitkv=True,
-            orbitkv_port=orbitkv_server.grpc_port,
+            orbitkv_port=orbitkv_server.cache_port,
             log_file=log_dir / "orbitkv.log",
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
             transfer_backend=orbitkv_transfer_backend,
-            local_data=orbitkv_local_data,
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
                 if expectation not in {"cold", "warm-same-process"}:
@@ -333,18 +315,19 @@ class TestE2ECorrectness:
             model,
             orbitkv_port,
             use_orbitkv=True,
-            orbitkv_port=orbitkv_server.grpc_port,
+            orbitkv_port=orbitkv_server.cache_port,
             log_file=log_dir / "orbitkv-load.log",
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
             transfer_backend=orbitkv_transfer_backend,
-            local_data=orbitkv_local_data,
             server_label="OrbitKV load",
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
                 if expectation in {"cold", "warm-same-process"}:
                     continue
+                if label == "long_warm":
+                    before_long_warm = fetch_orbitkv_metrics(metrics_port)
                 result = call_openai_api(
                     orbitkv_port,
                     model,
@@ -353,6 +336,11 @@ class TestE2ECorrectness:
                 )
                 outputs[label] = result["text"]
                 print(f"  [{label}] ({expectation}) {len(result['text'])} chars")
+                if label == "long_warm":
+                    after_long_warm = fetch_orbitkv_metrics(metrics_port)
+                    long_warm_load_bytes = after_long_warm.get(
+                        "orbitkv_load_bytes_total", 0
+                    ) - before_long_warm.get("orbitkv_load_bytes_total", 0)
 
             metrics_end = fetch_orbitkv_metrics(metrics_port)
 
@@ -362,6 +350,7 @@ class TestE2ECorrectness:
             "metrics_start": metrics_start,
             "metrics_same_process": metrics_same_process,
             "metrics_end": metrics_end,
+            "long_warm_load_bytes": long_warm_load_bytes,
             "connector_logs": (
                 (log_dir / "orbitkv.log").read_text(errors="replace")
                 + (log_dir / "orbitkv-load.log").read_text(errors="replace")
@@ -369,11 +358,10 @@ class TestE2ECorrectness:
         }
 
     def test_execution_plan_outputs_match_baseline(self, baseline_outputs, orbitkv_results):
-        """Every cache-path prompt in EXECUTION_PLAN must match baseline vLLM."""
+        """Each OrbitKV output must match native vLLM on the same reuse plan."""
         mismatches: list[str] = []
         for label, _prompt, expectation in EXECUTION_PLAN:
-            baseline_key = _LABEL_TO_BASELINE[label]
-            baseline = baseline_outputs[baseline_key]
+            baseline = baseline_outputs[label]
             orbitkv = orbitkv_results["outputs"][label]
             if baseline != orbitkv:
                 mismatches.append(
@@ -407,8 +395,15 @@ class TestE2ECorrectness:
             f"hits={hits:.0f} blocks ({load_bytes / 1e6:.1f}MB)"
         )
 
-    def test_selected_data_plane(self, orbitkv_results, orbitkv_local_data: bool):
-        expected = "local" if orbitkv_local_data else "grpc"
+    def test_cross_process_warm_request_loads_kv(self, orbitkv_results):
+        """A warm response must use saved bytes after the vLLM process restarts."""
+        assert orbitkv_results["long_warm_load_bytes"] > 0, (
+            "long_warm performed no KV restore after restart; text equality alone "
+            "cannot distinguish a cache hit from local recomputation"
+        )
+
+    def test_selected_data_plane(self, orbitkv_results):
+        expected = "local"
         assert (
             f"[OrbitKVConnector] data plane selected: transport={expected}"
             in orbitkv_results["connector_logs"]
@@ -431,7 +426,7 @@ class TestE2ECorrectness:
             f"hit_delta={hit_delta}, load_delta={load_delta}"
         )
 
-    def test_no_data_path_rpc_failures(self, orbitkv_results, orbitkv_server: OrbitKVServer):
+    def test_no_data_path_rpc_failures(self, orbitkv_results, orbitkv_server: CacheManager):
         """Every connector<->server RPC must return ok during a correct run.
 
         Generalizes the 0.22.5 empty-lease regression: that bug surfaced as
@@ -451,7 +446,7 @@ class TestE2ECorrectness:
         failures = fetch_orbitkv_rpc_failures(orbitkv_server.metrics_port)
         assert not failures, f"non-ok data-path RPCs during run: {failures}"
 
-    def test_no_kv_load_failures(self, orbitkv_results, orbitkv_server: OrbitKVServer):
+    def test_no_kv_load_failures(self, orbitkv_results, orbitkv_server: CacheManager):
         """KV loads must not fail.
 
         A load failure is silently masked by test_execution_plan_outputs_match_baseline:

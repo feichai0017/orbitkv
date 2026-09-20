@@ -34,7 +34,7 @@ module-name = "orbitkv.orbitkv"
 python-source = "."
 # Automatically include binaries defined in Cargo.toml [[bin]] sections
 include = [
-    "orbitkv/orbitkv-server-py",
+    "orbitkv/orbitkv-cache-manager-py",
     "orbitkv/orbitkv-metaserver-py",
     "orbitkv/libtransfer_engine.so",
     "orbitkv/libmooncake_common.so",
@@ -57,7 +57,7 @@ dev = [
 ]
 
 [project.scripts]
-orbitkv-server = "orbitkv._server:main"
+orbitkv-cache-manager = "orbitkv._cache_manager:main"
 orbitkv-metaserver = "orbitkv._metaserver:main"
 
 [project.entry-points."vllm.general_plugins"]
@@ -76,7 +76,7 @@ addopts = [
     "not integration and not e2e and not stress and not gpu",
 ]
 markers = [
-    "integration: starts or requires orbitkv-server but does not run vLLM",
+    "integration: starts or requires Cache Manager but does not run vLLM",
     "e2e: runs baseline vLLM plus OrbitKV connector correctness checks",
     "stress: long-running vLLM scenario for concurrency or pressure behavior",
     "gpu: requires CUDA-capable GPU",

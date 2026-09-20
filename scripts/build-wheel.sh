@@ -23,10 +23,10 @@ EXTRA_ARGS=("$@")
 
 echo "==> Building binaries ($PROFILE mode)..."
 cd "$PROJECT_ROOT"
-cargo build $RELEASE_FLAG "${EXTRA_ARGS[@]}" -p orbitkv-py --bin orbitkv-server-py --bin orbitkv-metaserver-py
+cargo build $RELEASE_FLAG "${EXTRA_ARGS[@]}" -p orbitkv-py --bin orbitkv-cache-manager-py --bin orbitkv-metaserver-py
 
 echo "==> Copying binaries to Python package..."
-for bin in orbitkv-server-py orbitkv-metaserver-py; do
+for bin in orbitkv-cache-manager-py orbitkv-metaserver-py; do
     cp "$PROJECT_ROOT/target/$PROFILE/$bin" "$PYTHON_DIR/orbitkv/$bin"
     chmod +x "$PYTHON_DIR/orbitkv/$bin"
 done
@@ -44,7 +44,7 @@ fi
 for lib in libtransfer_engine.so libmooncake_common.so libasio.so; do
     cp "$MOONCAKE_LINK_DIR/$lib" "$PYTHON_DIR/orbitkv/$lib"
 done
-for bin in orbitkv-server-py orbitkv-metaserver-py; do
+for bin in orbitkv-cache-manager-py orbitkv-metaserver-py; do
     patchelf --set-rpath '$ORIGIN' "$PYTHON_DIR/orbitkv/$bin"
 done
 

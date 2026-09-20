@@ -70,7 +70,7 @@ Mooncake P2P endpoint use that host with separate ports.
 **Node A** (e.g. `10.0.0.1`):
 
 ```bash
-orbitkv-server \
+orbitkv-cache-manager \
   --addr 10.0.0.1:50055 \
   --pool-size 30gb \
   --nics mlx5_0 \
@@ -80,7 +80,7 @@ orbitkv-server \
 **Node B** (e.g. `10.0.0.2`):
 
 ```bash
-orbitkv-server \
+orbitkv-cache-manager \
   --addr 10.0.0.2:50055 \
   --pool-size 30gb \
   --nics mlx5_0 \
@@ -121,7 +121,7 @@ For pools >64 GB, hugepages significantly reduce RDMA memory registration overhe
 # Allocate hugepages (example: 64 GB of 2MB pages)
 echo 32768 > /proc/sys/vm/nr_hugepages
 
-orbitkv-server --pool-size 64gb --use-hugepages --nics mlx5_0 ...
+orbitkv-cache-manager --pool-size 64gb --use-hugepages --nics mlx5_0 ...
 ```
 
 ### NUMA affinity

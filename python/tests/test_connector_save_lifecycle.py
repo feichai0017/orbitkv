@@ -274,3 +274,28 @@ def test_save_worker_survives_a_failing_batch():
     assert completion.is_set()
     finished_sending, _ = worker.get_finished({"request"})
     assert finished_sending == {"request"}
+
+
+def test_shutdown_publishes_pending_saves_before_unregistering():
+    worker = make_worker()
+    worker._registered_layers = ["layer"]
+    completion = enqueue_save(worker)
+    calls = []
+
+    def save(*args):
+        calls.append("save")
+        return True, ""
+
+    def unregister(*args):
+        assert completion.is_set(), "source mappings must outlive pending saves"
+        calls.append("unregister")
+        return True, ""
+
+    worker._ctx.engine_client.save.side_effect = save
+    worker._ctx.engine_client.unregister_context.side_effect = unregister
+    # Process the queued batch and shutdown sentinel deterministically at join.
+    worker._save_thread = MagicMock()
+    worker._save_thread.join.side_effect = worker._save_worker
+    worker.shutdown()
+    assert calls == ["save", "unregister"]
+    assert worker._save_queue.unfinished_tasks == 0

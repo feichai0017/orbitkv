@@ -81,14 +81,14 @@ class VLLMServer:
         server_label: str | None = None,
         env_overrides: dict[str, str] | None = None,
         transfer_backend: str | None = None,
-        local_data: bool = False,
+        prefix_caching: bool | None = None,
     ):
         self.model = model
         self.port = port
         self.use_orbitkv = use_orbitkv
         self.orbitkv_port = orbitkv_port
         self.transfer_backend = transfer_backend
-        self.local_data = local_data
+        self.prefix_caching = prefix_caching
         self.log_file = log_file
         self.max_model_len = max_model_len
         self.tensor_parallel_size = tensor_parallel_size
@@ -136,6 +136,11 @@ class VLLMServer:
         venv_bin = str(Path(sys.executable).parent)
         env["PATH"] = venv_bin + ":" + env.get("PATH", "")
 
+        prefix_caching = (
+            _uses_linear_attention(self.model)
+            if self.prefix_caching is None
+            else self.prefix_caching
+        )
         cmd = [
             "vllm",
             "serve",
@@ -143,11 +148,7 @@ class VLLMServer:
             "--port",
             str(self.port),
             "--trust-remote-code",
-            (
-                "--enable-prefix-caching"
-                if _uses_linear_attention(self.model)
-                else "--no-enable-prefix-caching"
-            ),
+            "--enable-prefix-caching" if prefix_caching else "--no-enable-prefix-caching",
             "--gpu-memory-utilization",
             str(self.gpu_memory_utilization),
             "--attention-backend",
@@ -172,7 +173,7 @@ class VLLMServer:
                     "--max-num-seqs",
                     "1",
                     "--max-num-batched-tokens",
-                    "528",
+                    "1024",
                 ]
             )
 
@@ -191,10 +192,6 @@ class VLLMServer:
             extra_config: dict[str, object] = {}
             if self.use_orbitkv and self.transfer_backend is not None:
                 extra_config["orbitkv.transfer_backend"] = self.transfer_backend
-            if self.use_orbitkv:
-                # Keep E2E transport selection explicit now that production
-                # defaults to automatic same-host local IPC discovery.
-                extra_config["orbitkv.local_data"] = self.local_data
             if extra_config:
                 kv_config["kv_connector_extra_config"] = extra_config
             cmd.extend(["--kv-transfer-config", json.dumps(kv_config)])
@@ -297,6 +294,25 @@ def fetch_orbitkv_metrics(metrics_port: int) -> dict[str, float]:
     return metrics
 
 
+def fetch_vllm_prefix_cache_hits(port: int) -> float:
+    """Read vLLM's native (not external-connector) prefix-hit token counter."""
+    response = requests.get(f"http://localhost:{port}/metrics", timeout=5)
+    response.raise_for_status()
+    hits = 0.0
+    found = False
+    for line in response.text.splitlines():
+        match = re.match(
+            r"^vllm:prefix_cache_hits(?:_total)?(?:\{[^}]*\})?\s+([\d.eE+-]+)$",
+            line,
+        )
+        if match:
+            found = True
+            hits += float(match.group(1))
+    if not found:
+        raise AssertionError("vLLM native prefix-cache hit counter is absent from /metrics")
+    return hits
+
+
 def fetch_orbitkv_rpc_failures(metrics_port: int, method: str | None = None) -> dict[str, float]:
     """Return non-ok RPC counts keyed by ``"method/status"``.
 
@@ -344,11 +360,11 @@ def find_available_port() -> int:
         return s.getsockname()[1]
 
 
-class OrbitKVServer:
-    """Context manager for orbitkv-server lifecycle.
+class CacheManager:
+    """Context manager for Cache Manager lifecycle.
 
-    Auto-starts orbitkv-server with prometheus metrics enabled.
-    Picks random available ports for gRPC and HTTP endpoints.
+    Auto-starts Cache Manager with prometheus metrics enabled.
+    Picks random available ports for local socket naming and HTTP.
     """
 
     def __init__(
@@ -361,13 +377,13 @@ class OrbitKVServer:
         devices: str | None = None,
         server_binary: str | None = None,
     ):
-        self.grpc_port = find_available_port()
+        self.cache_port = find_available_port()
         self.http_port = find_available_port()
         self.pool_size = pool_size
         self.log_level = log_level
         self.use_hugepages = use_hugepages
         self.devices = devices
-        self.server_binary = server_binary
+        self.server_binary = server_binary or os.environ.get("ORBITKV_CACHE_MANAGER_BINARY")
         self.cargo_features = (
             cargo_features if cargo_features is not None else _detect_orbitkv_cargo_features()
         )
@@ -381,7 +397,7 @@ class OrbitKVServer:
 
     @property
     def local_bootstrap_socket(self) -> str:
-        return f"/tmp/orbitkv-{self.grpc_port}.sock"
+        return f"/tmp/orbitkv-{self.cache_port}.sock"
 
     def __enter__(self):
         project_root = Path(__file__).parent.parent.parent
@@ -391,13 +407,13 @@ class OrbitKVServer:
             if self.cargo_features:
                 cmd.append("--no-default-features")
                 cmd.extend(["--features", ",".join(self.cargo_features)])
-            cmd.extend(["--bin", "orbitkv-server", "--"])
+            cmd.extend(["--bin", "orbitkv-cache-manager", "--"])
         else:
             cmd = [self.server_binary]
         cmd.extend(
             [
                 "--addr",
-                f"127.0.0.1:{self.grpc_port}",
+                f"127.0.0.1:{self.cache_port}",
                 "--http-addr",
                 f"0.0.0.0:{self.http_port}",
                 "--pool-size",
@@ -412,7 +428,7 @@ class OrbitKVServer:
         if self.log_level is not None:
             cmd.extend(["--log-level", self.log_level])
 
-        # orbitkv-server embeds Python via PyO3 (for CUDA device detection via torch)
+        # Cache Manager embeds Python via PyO3 (for CUDA device detection via torch)
         import sys
         import sysconfig
 
@@ -439,10 +455,12 @@ class OrbitKVServer:
             launch_label = f"cargo run -r features={','.join(self.cargo_features) or 'default'}"
         else:
             launch_label = self.server_binary
-        print(f"\n[OrbitKV Server] {launch_label} on gRPC={self.grpc_port}, HTTP={self.http_port}")
+        print(
+            f"\n[Cache Manager] {launch_label} on UDS={self.local_bootstrap_socket}, HTTP={self.http_port}"
+        )
 
         if self.log_file:
-            print(f"[OrbitKV Server] Logging to: {self.log_file}")
+            print(f"[Cache Manager] Logging to: {self.log_file}")
             self.log_handle = open(self.log_file, "w")
             self.process = subprocess.Popen(
                 cmd,
@@ -466,26 +484,26 @@ class OrbitKVServer:
         return self
 
     def _wait_for_ready(self, timeout: int = 300):
-        """Wait for orbitkv-server HTTP health endpoint."""
+        """Wait for Cache Manager HTTP health endpoint."""
         start = time.time()
-        print("Waiting for orbitkv-server to be ready...")
+        print("Waiting for Cache Manager to be ready...")
         while time.time() - start < timeout:
             if self.process.poll() is not None:
-                raise RuntimeError(f"orbitkv-server exited with code {self.process.returncode}")
+                raise RuntimeError(f"Cache Manager exited with code {self.process.returncode}")
             try:
                 resp = requests.get(f"http://localhost:{self.http_port}/health", timeout=1)
                 if resp.status_code == 200:
-                    print("orbitkv-server is ready!\n")
+                    print("Cache Manager is ready!\n")
                     return
             except requests.exceptions.RequestException:
                 pass
             time.sleep(2)
 
-        raise TimeoutError(f"orbitkv-server did not become ready within {timeout}s")
+        raise TimeoutError(f"Cache Manager did not become ready within {timeout}s")
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.process:
-            print("\n[OrbitKV Server] Stopping...")
+            print("\n[Cache Manager] Stopping...")
             try:
                 os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                 self.process.wait(timeout=30)
@@ -496,8 +514,8 @@ class OrbitKVServer:
                     try:
                         self.process.wait(timeout=30)
                     except subprocess.TimeoutExpired:
-                        print("orbitkv-server did not exit after SIGKILL")
-            print("orbitkv-server stopped.\n")
+                        print("Cache Manager did not exit after SIGKILL")
+            print("Cache Manager stopped.\n")
         if self.log_handle:
             self.log_handle.close()
 

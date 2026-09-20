@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from .vllm_helpers import (
-    OrbitKVServer,
+    CacheManager,
     VLLMServer,
     call_openai_api,
     fetch_orbitkv_metrics,
@@ -92,9 +92,9 @@ def test_vllm_tp_replica_uses_every_orbitkv_shard(
     if pipeline_parallel_size != 1:
         pytest.skip("TP-shard E2E covers TP-only parallelism")
 
-    server_binary = Path(__file__).parents[2] / "target/release/orbitkv-server"
+    server_binary = Path(__file__).parents[2] / "target/release/orbitkv-cache-manager"
     if not server_binary.is_file():
-        pytest.skip("TP-shard E2E requires a release orbitkv-server build")
+        pytest.skip("TP-shard E2E requires a release orbitkv-cache-manager build")
 
     devices = _test_devices(tensor_parallel_size)
     middle = tensor_parallel_size // 2
@@ -103,7 +103,7 @@ def test_vllm_tp_replica_uses_every_orbitkv_shard(
     with ExitStack() as stack:
         servers = tuple(
             stack.enter_context(
-                OrbitKVServer(
+                CacheManager(
                     log_file=tmp_path / f"orbitkv-shard-{index}.log",
                     pool_size=POOL_SIZE,
                     devices=",".join(map(str, shard)),
@@ -112,7 +112,7 @@ def test_vllm_tp_replica_uses_every_orbitkv_shard(
             )
             for index, shard in enumerate(device_shards)
         )
-        endpoints = [f"http://127.0.0.1:{server.grpc_port}" for server in servers]
+        endpoints = [f"http://127.0.0.1:{server.cache_port}" for server in servers]
         kv_config = {
             "kv_connector": "OrbitKVConnector",
             "kv_role": "kv_both",

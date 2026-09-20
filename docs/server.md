@@ -1,14 +1,14 @@
-# Server Configuration
+# Cache Manager Configuration
 
-## OrbitKV Server
+## OrbitKV Cache Manager
 
 ```bash
-orbitkv-server
+orbitkv-cache-manager
 ```
 
 ### Options
 
-- `--addr`: Bind address (default: `127.0.0.1:50055`)
+- `--addr`: Peer control bind address in distributed mode and local socket port seed (default: `127.0.0.1:50055`)
 - `--devices`: CUDA device IDs to initialize, comma-separated (default: auto-detect all available GPUs, e.g., `--devices 0,1,2,3`)
 - `--pool-size`: Pinned memory pool size (default: `30gb`, supports: `kb`, `mb`, `gb`, `tb`)
 - `--hint-value-size`: Hint for typical value size to tune cache and allocator (optional, supports: `kb`, `mb`, `gb`, `tb`)
@@ -52,16 +52,16 @@ orbitkv-server
 
 ## MetaServer
 
-For multi-node setups, start a MetaServer to coordinate block hashes across nodes. Each orbitkv-server registers its block hashes with the MetaServer, enabling cross-node KV cache discovery.
+For multi-node setups, start a MetaServer to coordinate block hashes across nodes. Each Cache Manager registers its block hashes with the MetaServer, enabling cross-node KV cache discovery.
 
 ```bash
 orbitkv-metaserver
 ```
 
-Then point each orbitkv-server to the MetaServer:
+Then point each Cache Manager to the MetaServer:
 
 ```bash
-orbitkv-server --metaserver-addr http://<metaserver-host>:50056
+orbitkv-cache-manager --addr <routable-ip>:50055 --metaserver-addr http://<metaserver-host>:50056
 ```
 
 ### Options

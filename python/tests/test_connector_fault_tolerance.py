@@ -35,11 +35,13 @@ from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 
 class FakeEngineClient:
-    """Minimal stand-in for EngineRpcClient covering the load surface.
+    """Minimal Cache Manager client for restore and lifecycle tests.
 
     Only implements what WorkerConnector touches in the load path. Save path is
     not exercised here since these tests are focused on load fault tolerance.
     """
+
+    transport = "local"
 
     def __init__(self) -> None:
         self.fail_load_with_ok_false = False
@@ -52,22 +54,21 @@ class FakeEngineClient:
         self.unregister_calls: list[str] = []
         self.release_calls: list[bytes] = []
 
-    def load(
+    def start_restore(
         self,
         instance_id: str,
         tp_rank: int,
         device_id: int,
-        load_state_shm: str,
         layer_groups,
         loads,
-    ) -> tuple[bool, str]:
+    ) -> SimpleNamespace:
         block_ids = [block_id for _, groups in loads for ids in groups for block_id in ids]
         self.load_calls.append(
             (
                 instance_id,
                 tp_rank,
                 device_id,
-                load_state_shm,
+                None,
                 [list(group) for group in layer_groups],
                 list(block_ids),
             )
@@ -75,8 +76,14 @@ class FakeEngineClient:
         if self.fail_load_with_exception is not None:
             raise self.fail_load_with_exception
         if self.fail_load_with_ok_false:
-            return (False, "simulated load failure")
-        return (True, "ok")
+            raise RuntimeError("simulated restore submission failure")
+        return SimpleNamespace(key=f"restore-{len(self.load_calls)}")
+
+    def restore_completions_ready(self) -> bool:
+        return False
+
+    def poll_restore(self, _handle) -> RestoreStatus:
+        return RestoreStatus(done=False, success=False)
 
     def register_context_batch(self, *args, **kwargs) -> tuple[bool, str]:
         self.register_calls.append(args)

@@ -34,7 +34,9 @@ pub struct StateBundle {
 }
 
 impl StateBundle {
-    pub fn is_restorable(&self) -> bool {
+    /// Checks component presence only. A planner must also verify token coverage,
+    /// model/format compatibility, and framework-specific recovery semantics.
+    pub fn has_required_components(&self) -> bool {
         let available = self
             .components
             .iter()
@@ -45,6 +47,13 @@ impl StateBundle {
             .required
             .iter()
             .all(|required| available.contains(required))
+    }
+
+    #[deprecated(
+        note = "this only checks component presence; use has_required_components until a recovery validator is available"
+    )]
+    pub fn is_restorable(&self) -> bool {
+        self.has_required_components()
     }
 }
 
@@ -72,7 +81,7 @@ mod tests {
     }
 
     #[test]
-    fn bundle_requires_every_declared_component() {
+    fn bundle_tracks_presence_of_every_declared_component() {
         let attention = StateComponent::AttentionKv;
         let recurrent = StateComponent::RecurrentCheckpoint;
         let mut bundle = StateBundle {
@@ -90,8 +99,8 @@ mod tests {
             recovery: RecoveryContract::all([attention, recurrent]),
         };
 
-        assert!(!bundle.is_restorable());
+        assert!(!bundle.has_required_components());
         bundle.components[1].available = true;
-        assert!(bundle.is_restorable());
+        assert!(bundle.has_required_components());
     }
 }

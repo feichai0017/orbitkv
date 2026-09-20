@@ -5,8 +5,9 @@ This file provides guidance for agents working in the OrbitKV repository.
 ## Project Overview
 
 OrbitKV is a framework-neutral state cache and physical-planning system for
-LLM inference. The current data plane is validated with vLLM; SGLang support
-is being added through HiCache and RadixAttention integration.
+LLM inference. The current data plane is validated with vLLM `0.29.0`;
+SGLang `0.5.20` support is being added through HiCache and RadixAttention
+integration.
 
 - Single-node KV cache offloading between GPU and host memory
 - Cross-node KV cache sharing via Mooncake Transfer Engine (RDMA/TCP)
@@ -20,11 +21,11 @@ is being added through HiCache and RadixAttention integration.
 orbitkv/
 ├── crates/
 │   ├── orbitkv-contract/         # Framework-neutral state and recovery contracts
-│   ├── orbitkv-local/            # iceoryx2 local control transport
+│   ├── orbitkv-local/            # iceoryx2/UDS process transport
 │   ├── orbitkv-common/           # Logging, NUMA, and shared utilities
 │   ├── orbitkv-core/             # Cache engine, storage, and backing tiers
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
-│   ├── orbitkv-server/           # Sidecar, router, health, and metrics
+│   ├── orbitkv-server/           # Cache Manager orchestration and protocol adapters
 │   ├── orbitkv-metaserver/       # Cross-node block metadata registry
 │   ├── orbitkv-mooncake-sys/     # Pinned native build and dynamic C ABI
 │   └── orbitkv-transfer/         # Mooncake transfer wrapper
@@ -40,11 +41,11 @@ orbitkv/
 | Target | Location |
 |--------|----------|
 | State identity and recovery contracts | `crates/orbitkv-contract/` |
-| Local inference-sidecar IPC | `crates/orbitkv-local/` |
+| Local inference-Cache Manager IPC | `crates/orbitkv-local/` |
 | Shared Rust utilities | `crates/orbitkv-common/` |
 | Core engine and storage path | `crates/orbitkv-core/` |
 | gRPC protocol changes | `crates/orbitkv-proto/` |
-| Server and router logic | `crates/orbitkv-server/` |
+| Cache Manager cache operations and process endpoint | `crates/orbitkv-server/src/cache/`, `endpoint/` |
 | Cross-node metadata service | `crates/orbitkv-metaserver/` |
 | Mooncake remote transfer path | `crates/orbitkv-transfer/` |
 | PyO3 bindings | `python/src/lib.rs` |
@@ -61,7 +62,10 @@ orbitkv/
 - `crates/orbitkv-core/src/storage/mod.rs`: storage pipeline
 - `crates/orbitkv-core/src/backing/`: SSD and Mooncake-backed remote tiers
 - `crates/orbitkv-core/src/internode/`: cross-node coordination
-- `crates/orbitkv-server/src/service.rs`: gRPC service
+- `crates/orbitkv-core/src/internode/p2p_service.rs`: peer transfer control service
+- `crates/orbitkv-server/src/cache/`: cache operations, lifecycle, and pending queries
+- `crates/orbitkv-server/src/endpoint/`: two-process iceoryx2 endpoint and authenticated UDS lifecycle channel
+- `crates/orbitkv-server/src/wire.rs`: protobuf-to-cache registration conversion
 - `crates/orbitkv-server/src/http_server.rs`: HTTP health and metrics
 - `crates/orbitkv-metaserver/src/`: metaserver implementation
 - `crates/orbitkv-transfer/src/`: transfer engine implementation
@@ -69,6 +73,7 @@ orbitkv/
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
 - `python/orbitkv/vllm/worker.py`: vLLM worker-side connector
 - `python/orbitkv/sglang/`: SGLang contracts; the executable backend is not implemented yet
+- `python/orbitkv/client/connection.py`: transport selection hidden from adapters
 - `python/orbitkv/orbitkv.pyi`: Python type stubs
 
 ## Build, Check, Test
@@ -105,10 +110,10 @@ Notes:
 
 | Gate | When to run | Command | Notes |
 |------|-------------|---------|-------|
-| Default unit | Every Python PR before review | `cd python && uv run --extra test pytest` | Must not start vLLM, `orbitkv-server`, or GPU runtime. Collection still imports deselected files, so top-level imports must be in `python[test]` or moved behind fixtures. |
+| Default unit | Every Python PR before review | `cd python && uv run --extra test pytest` | Must not start vLLM, `orbitkv-cache-manager`, or GPU runtime. Collection still imports deselected files, so top-level imports must be in `python[test]` or moved behind fixtures. |
 | Source-only default | CI and dependency-boundary checks | `cd python && uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Proves default gate does not need torch, vLLM, CUDA, native extension build, or a running server. |
 | Integration | Server/native/client/session lifecycle changes | `cd python && uv run --extra test pytest -m integration` | Requires built native extension, server binary, and GPU where the test uses CUDA IPC. |
-| vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && uv run --extra test pytest -m e2e tests/test_vllm_e2e_correctness.py --model /data/models/Qwen3-4B --max-model-len 4096` | Merge-before gate: code author runs it, reviewer reruns it on the GPU machine. |
+| vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && ../.venv/vllm-release/bin/python -m pytest -m e2e tests/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` | Use the vLLM `0.29.0` release environment described in `python/README.md`; reviewer reruns the gate on the GPU machine. |
 | Stress | Warm-hit pressure, pending unpin, scheduler/cache concurrency | `cd python && uv run --extra test pytest -m stress tests/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Targeted single-GPU evidence, not default PR feedback. |
 | Release smoke | Published wheel/image, loader path, installed console script, CUDA runtime | See `python/tests/README.md` | Validates final installed artifact, not the source checkout. |
 
@@ -126,7 +131,7 @@ uv run python examples/bench_kv_cache.py --model /path/to/model --num-prompts 10
 ### Server
 
 ```bash
-cargo run -r --bin orbitkv-server -- --addr 0.0.0.0:50055 --pool-size 30gb
+cargo run -r --bin orbitkv-cache-manager -- --addr 127.0.0.1:50055 --pool-size 30gb
 ```
 
 ### MetaServer

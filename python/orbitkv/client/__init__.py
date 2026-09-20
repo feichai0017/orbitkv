@@ -1,9 +1,8 @@
-"""Framework-neutral access to the local OrbitKV sidecar."""
+"""Framework-neutral access to OrbitKV cache services."""
 
 from __future__ import annotations
 
 from orbitkv import (
-    EngineRpcClient,
     LocalControlClient,
     LocalQueryClient,
     OrbitKVError,
@@ -11,9 +10,9 @@ from orbitkv import (
     QueryLoading,
     QueryReady,
 )
+from orbitkv.client.connection import CacheConnections, connect_cache
 from orbitkv.client.data_plane import (
     CacheDataClient,
-    GrpcDataClient,
     LocalDataClient,
     RestoreHandle,
     RestoreStatus,
@@ -21,11 +20,10 @@ from orbitkv.client.data_plane import (
 )
 
 __all__ = [
-    "EngineRpcClient",
     "LocalControlClient",
     "LocalQueryClient",
     "CacheDataClient",
-    "GrpcDataClient",
+    "CacheConnections",
     "LocalDataClient",
     "OrbitKVError",
     "OrbitKVInternal",
@@ -34,4 +32,5 @@ __all__ = [
     "RestoreHandle",
     "RestoreStatus",
     "resolve_local_bootstrap_sockets",
+    "connect_cache",
 ]

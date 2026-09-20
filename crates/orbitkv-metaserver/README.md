@@ -178,7 +178,7 @@ Register a list of block hashes. The request must include the current `node_id`.
 message InsertBlockHashesRequest {
   string namespace = 1;         // Model namespace (part of BlockKey)
   repeated bytes block_hashes = 2;  // List of block hashes to insert (part of BlockKey)
-  string node = 3;              // The orbitkv-server gRPC address that owns these blocks
+  string node = 3;              // The Cache Manager peer-control address that owns these blocks
   string node_id = 4;           // Server-generated session id announced by HeartbeatNode
 }
 ```

@@ -1,6 +1,6 @@
 """Pytest fixtures for OrbitKV connector integration tests.
 
-Provides fixtures for automatically starting/stopping OrbitKVServer
+Provides fixtures for automatically starting/stopping the Cache Manager
 and test helpers for connector testing against a running server.
 """
 
@@ -61,20 +61,26 @@ def find_available_port() -> int:
         return s.getsockname()[1]
 
 
-def find_server_binary() -> str | None:
+def find_cache_manager_binary() -> str | None:
     """
-    Locate the orbitkv-server binary.
+    Locate the Cache Manager binary.
 
     Search order:
-    1. Installed orbitkv-server-py in package directory
-    2. cargo target/release/orbitkv-server
-    3. cargo target/debug/orbitkv-server
+    1. Installed orbitkv-cache-manager-py in package directory
+    2. cargo target/release/orbitkv-cache-manager
+    3. cargo target/debug/orbitkv-cache-manager
     """
+    if configured := os.environ.get("ORBITKV_CACHE_MANAGER_BINARY"):
+        binary = Path(configured).resolve()
+        if not binary.is_file():
+            raise FileNotFoundError(binary)
+        return str(binary)
+
     # 1. Check installed package binary
     try:
-        from orbitkv._server import get_server_binary
+        from orbitkv._cache_manager import get_cache_manager_binary
 
-        binary = get_server_binary()
+        binary = get_cache_manager_binary()
         if Path(binary).exists():
             return binary
     except ImportError:
@@ -83,7 +89,7 @@ def find_server_binary() -> str | None:
     # 2. Check cargo build outputs
     project_root = Path(__file__).parent.parent.parent  # python/tests -> orbitkv
     for build_type in ["release", "debug"]:
-        cargo_binary = project_root / "target" / build_type / "orbitkv-server"
+        cargo_binary = project_root / "target" / build_type / "orbitkv-cache-manager"
         if cargo_binary.exists():
             return str(cargo_binary)
 
@@ -91,16 +97,15 @@ def find_server_binary() -> str | None:
 
 
 def wait_for_server_ready(
-    endpoint: str,
+    bootstrap_socket: str,
     timeout: float = SERVER_STARTUP_TIMEOUT,
     process: subprocess.Popen | None = None,
 ) -> bool:
-    """Wait for server to become ready by attempting connections."""
+    """Wait for the local Cache Manager to accept lifecycle connections."""
     # Import directly from submodule to avoid triggering __init__.py imports (vllm dependency)
     import importlib
 
     orbitkv_module = importlib.import_module("orbitkv.orbitkv")
-    EngineRpcClient = orbitkv_module.EngineRpcClient
 
     start_time = time.time()
     last_error = None
@@ -108,8 +113,9 @@ def wait_for_server_ready(
         if process is not None and process.poll() is not None:
             return False
         try:
-            client = EngineRpcClient(endpoint)
+            client = orbitkv_module.LocalQueryClient(bootstrap_socket)
             ok, _ = client.health()
+            client.close()
             if ok:
                 return True
         except Exception as e:
@@ -351,8 +357,8 @@ def block_hashes() -> list[bytes]:
 # =============================================================================
 
 
-class OrbitKVServerProcess:
-    """Manages a OrbitKVServer subprocess for testing."""
+class CacheManagerProcess:
+    """Manages a Cache Manager subprocess for testing."""
 
     def __init__(
         self,
@@ -371,10 +377,9 @@ class OrbitKVServerProcess:
         self.http_port = http_port
         self.local_control_service = local_control_service
         self.local_control_session_epoch = local_control_session_epoch
-        self.local_bootstrap_socket = local_bootstrap_socket
-        self.endpoint = f"http://127.0.0.1:{port}"
+        self.local_bootstrap_socket = local_bootstrap_socket or f"/tmp/orbitkv-{port}.sock"
         self.process: subprocess.Popen | None = None
-        self._binary_path = find_server_binary()
+        self._binary_path = find_cache_manager_binary()
         self._log_path: Path | None = None
         self._log_file = None
 
@@ -425,14 +430,13 @@ class OrbitKVServerProcess:
                     str(self.local_control_session_epoch),
                 ]
             )
-        if self.local_bootstrap_socket is not None:
-            cmd.extend(["--local-bootstrap-socket", self.local_bootstrap_socket])
+        cmd.extend(["--local-bootstrap-socket", self.local_bootstrap_socket])
 
         # Route logs to a tempfile so the pipe buffer cannot fill up and
         # block the server mid-startup, and so tests can read the log
         # contents via read_logs() (used by integration tests that assert
         # on server-side log signals).
-        fd, path = tempfile.mkstemp(prefix=f"orbitkv-server-{self.port}-", suffix=".log")
+        fd, path = tempfile.mkstemp(prefix=f"orbitkv-cache-manager-{self.port}-", suffix=".log")
         self._log_path = Path(path)
         self._log_file = os.fdopen(fd, "wb")
 
@@ -449,7 +453,7 @@ class OrbitKVServerProcess:
             self._close_log()
             return False
 
-        return wait_for_server_ready(self.endpoint, process=self.process)
+        return wait_for_server_ready(self.local_bootstrap_socket, process=self.process)
 
     def stop(self) -> None:
         """Stop the server process."""
@@ -494,24 +498,24 @@ class OrbitKVServerProcess:
 
 
 @pytest.fixture(scope="session")
-def orbitkv_server() -> Generator[OrbitKVServerProcess, None, None]:
-    """Session-scoped fixture that starts a OrbitKVServer for integration tests."""
+def orbitkv_server() -> Generator[CacheManagerProcess, None, None]:
+    """Session-scoped fixture that starts a Cache Manager for integration tests."""
     port = find_available_port()
-    server = OrbitKVServerProcess(port=port)
+    server = CacheManagerProcess(port=port)
 
     if not server.start() or not server._binary_path:
-        pytest.skip("OrbitKVServer binary not found or failed to start")
+        pytest.skip("Cache Manager binary not found or failed to start")
 
     yield server
     server.stop()
 
 
 @pytest.fixture
-def local_control_server() -> Generator[OrbitKVServerProcess, None, None]:
+def local_control_server() -> Generator[CacheManagerProcess, None, None]:
     """Start an isolated server with a known local-control identity."""
     service_name = f"orbitkv/test/python/{os.getpid()}/{uuid.uuid4().hex}"
     bootstrap_socket = f"/tmp/orbitkv-python-{os.getpid()}-{uuid.uuid4().hex}.sock"
-    server = OrbitKVServerProcess(
+    server = CacheManagerProcess(
         port=find_available_port(),
         http_port=find_available_port(),
         local_control_service=service_name,
@@ -520,11 +524,11 @@ def local_control_server() -> Generator[OrbitKVServerProcess, None, None]:
     )
 
     if not server._binary_path:
-        pytest.skip("OrbitKVServer binary not found")
+        pytest.skip("Cache Manager binary not found")
     if not server.start():
         logs = server.read_logs()
         server.stop()
-        pytest.fail(f"OrbitKVServer failed to start:\n{logs}")
+        pytest.fail(f"Cache Manager failed to start:\n{logs}")
 
     yield server
     server.stop()
@@ -532,14 +536,14 @@ def local_control_server() -> Generator[OrbitKVServerProcess, None, None]:
 
 @pytest.fixture
 def local_control_client_context(
-    local_control_server: OrbitKVServerProcess, instance_id: str, namespace: str
+    local_control_server: CacheManagerProcess, instance_id: str, namespace: str
 ) -> Generator[ClientContext, None, None]:
     """Register a minimal GPU context on the isolated local-control server."""
     import importlib
 
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
     ctx = ClientContext(
-        engine_client=orbitkv_native.EngineRpcClient(local_control_server.endpoint),
+        engine_client=orbitkv_native.LocalQueryClient(local_control_server.local_bootstrap_socket),
         instance_id=instance_id,
         namespace=namespace,
         device_id=0,
@@ -553,21 +557,13 @@ def local_control_client_context(
 
 
 @pytest.fixture
-def server_endpoint(orbitkv_server: OrbitKVServerProcess) -> str:
-    """Return the endpoint URL of the running test server."""
-    return orbitkv_server.endpoint
+def engine_client(orbitkv_server: CacheManagerProcess):
+    """Create a local Cache Manager client for integration tests."""
+    from orbitkv.client.data_plane import LocalDataClient
 
-
-@pytest.fixture
-def engine_client(orbitkv_server: OrbitKVServerProcess):
-    """Create an EngineRpcClient connected to the test server."""
-    # Import directly from submodule to avoid triggering __init__.py imports (vllm dependency)
-    import importlib
-
-    orbitkv_module = importlib.import_module("orbitkv.orbitkv")
-    EngineRpcClient = orbitkv_module.EngineRpcClient
-
-    return EngineRpcClient(orbitkv_server.endpoint)
+    client = LocalDataClient(orbitkv_server.local_bootstrap_socket)
+    yield client
+    client.close()
 
 
 @pytest.fixture
@@ -577,7 +573,7 @@ def client_context(
     """Fixture that provides a ClientContext representing a vLLM instance.
 
     Args:
-        engine_client: EngineRpcClient connected to server
+        engine_client: LocalDataClient connected to the Cache Manager
         instance_id: Unique instance identifier
         namespace: Namespace for the instance
 
@@ -666,11 +662,6 @@ def orbitkv_pool_size(request) -> str:
     return request.config.getoption("--orbitkv-pool-size")
 
 
-@pytest.fixture(scope="module")
-def orbitkv_local_data(request) -> bool:
-    return request.config.getoption("--orbitkv-local-data")
-
-
 # =============================================================================
 # Pytest Configuration
 # =============================================================================
@@ -730,7 +721,7 @@ def pytest_addoption(parser):
         "--orbitkv-use-hugepages",
         action="store_true",
         default=False,
-        help="Start orbitkv-server with --use-hugepages for E2E tests",
+        help="Start Cache Manager with --use-hugepages for E2E tests",
     )
     parser.addoption(
         "--orbitkv-pool-size",
@@ -738,19 +729,13 @@ def pytest_addoption(parser):
         default="30gb",
         help="OrbitKV server pinned memory pool size for E2E tests",
     )
-    parser.addoption(
-        "--orbitkv-local-data",
-        action="store_true",
-        default=False,
-        help="Run vLLM E2E hot cache operations over the local iceoryx2 data plane",
-    )
 
 
 def pytest_configure(config):
     """Configure custom pytest markers."""
     config.addinivalue_line(
         "markers",
-        "integration: marks tests as integration tests (require OrbitKVServer with GPU)",
+        "integration: marks tests as integration tests (require Cache Manager with GPU)",
     )
     config.addinivalue_line(
         "markers",
