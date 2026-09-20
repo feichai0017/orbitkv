@@ -1,0 +1,1055 @@
+// Remote block fetch: MetaServer query -> OrbitKV authorization -> Mooncake READ.
+
+use std::collections::HashMap;
+use std::ptr::NonNull;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use dashmap::DashMap;
+use log::{debug, info, warn};
+use orbitkv_proto::proto::engine::engine_client::EngineClient;
+use orbitkv_proto::proto::engine::{
+    FetchSegment, QueryBlocksForTransferRequest, QueryBlocksForTransferResponse, TransferBlockInfo,
+};
+use orbitkv_transfer::{TransferOp, TransferSlice};
+use tonic::transport::{Channel, Endpoint};
+
+use orbitkv_common::NumaNode;
+
+use opentelemetry::KeyValue;
+
+use super::transfer_lock_guard::TransferLockGuard;
+use super::{AllocateFn, MooncakeTransport, PrefetchResult};
+use crate::block::{BlockKey, RawBlock, SealedBlock, Segment};
+use crate::internode::MetaServerClient;
+use crate::metrics::core_metrics;
+
+/// Minimum usable transfer timeout. If the server's lock timeout minus the
+/// safety margin falls below this, we use this floor to avoid instant timeouts.
+const MIN_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Safety margin subtracted from the server's lock timeout. The client must
+/// finish the Mooncake transfer before the server releases the lock.
+const LOCK_TIMEOUT_MARGIN: Duration = Duration::from_secs(60);
+
+/// Upper bound for a single pinned-pool allocation while staging a Mooncake fetch.
+/// LRU reclaim must carve a contiguous hole of the requested size, so a
+/// whole-prefix slab can force eviction of far more bytes than the fetch needs.
+const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Mooncake remote block fetch backing store.
+///
+/// When all requested blocks are missing locally, queries MetaServer for their
+/// location, picks the best remote node, and uses gRPC authorization plus a
+/// Mooncake READ to fetch them.
+pub(crate) struct MooncakeFetchStore {
+    metaserver_client: Arc<MetaServerClient>,
+    transfer: Arc<MooncakeTransport>,
+    allocate_fn: AllocateFn,
+    advertise_addr: String,
+    /// Lazy gRPC channel cache keyed by remote address. Tonic channels multiplex
+    /// requests over a single HTTP/2 connection; cloning is cheap.
+    grpc_channels: Arc<DashMap<String, EngineClient<Channel>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FetchPlanSegment {
+    node: String,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FetchPlan {
+    segments: Vec<FetchPlanSegment>,
+    block_count: usize,
+}
+
+impl FetchPlan {
+    pub(crate) fn block_count(&self) -> usize {
+        self.block_count
+    }
+
+    fn segment_blocks_summary(&self) -> String {
+        self.segments
+            .iter()
+            .map(|segment| (segment.end - segment.start).to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+fn validate_fetch_plan(
+    segments: Vec<FetchSegment>,
+    hash_count: usize,
+    exclude_node: &str,
+) -> Result<Option<FetchPlan>, String> {
+    if segments.is_empty() {
+        return Ok(None);
+    }
+
+    let mut validated = Vec::with_capacity(segments.len());
+    let mut offset = 0usize;
+    for (index, segment) in segments.into_iter().enumerate() {
+        if segment.node.is_empty() {
+            return Err(format!("segment {index} has an empty node"));
+        }
+        if segment.node == exclude_node {
+            return Err(format!("segment {index} selects the excluded requester"));
+        }
+        if segment.block_count == 0 {
+            return Err(format!("segment {index} has zero blocks"));
+        }
+        if validated
+            .last()
+            .is_some_and(|previous: &FetchPlanSegment| previous.node == segment.node)
+        {
+            return Err(format!(
+                "segment {index} repeats the previous node instead of merging"
+            ));
+        }
+
+        let count = usize::try_from(segment.block_count)
+            .map_err(|_| format!("segment {index} block count exceeds usize"))?;
+        let end = offset
+            .checked_add(count)
+            .ok_or_else(|| format!("segment {index} block count overflows"))?;
+        if end > hash_count {
+            return Err(format!(
+                "segment {index} ends at block {end}, beyond request length {hash_count}"
+            ));
+        }
+        validated.push(FetchPlanSegment {
+            node: segment.node,
+            start: offset,
+            end,
+        });
+        offset = end;
+    }
+
+    Ok(Some(FetchPlan {
+        segments: validated,
+        block_count: offset,
+    }))
+}
+
+#[tonic::async_trait]
+trait SegmentFetcher {
+    async fn fetch_segment(&self, remote_addr: &str, hashes: &[Vec<u8>]) -> PrefetchResult;
+}
+
+struct MooncakeSegmentFetcher<'a> {
+    store: &'a MooncakeFetchStore,
+    req_id: &'a str,
+    namespace: &'a str,
+}
+
+#[tonic::async_trait]
+impl SegmentFetcher for MooncakeSegmentFetcher<'_> {
+    async fn fetch_segment(&self, remote_addr: &str, hashes: &[Vec<u8>]) -> PrefetchResult {
+        self.store
+            .fetch_blocks(remote_addr, self.req_id, self.namespace, hashes)
+            .await
+    }
+}
+
+async fn execute_fetch_plan<F: SegmentFetcher>(
+    fetcher: &F,
+    plan: &FetchPlan,
+    namespace: &str,
+    hashes: &[Vec<u8>],
+) -> (PrefetchResult, usize, Option<(usize, usize, usize)>) {
+    let mut fetched = Vec::with_capacity(plan.block_count);
+    let mut completed_segments = 0usize;
+    let mut failed_segment = None;
+
+    for (index, segment) in plan.segments.iter().enumerate() {
+        let expected = &hashes[segment.start..segment.end];
+        let returned = fetcher.fetch_segment(&segment.node, expected).await;
+        let contiguous = returned
+            .iter()
+            .zip(expected)
+            .take_while(|((key, _), hash)| key.namespace == namespace && key.hash == **hash)
+            .count();
+        let returned_count = returned.len();
+        fetched.extend(returned.into_iter().take(contiguous));
+
+        if contiguous != expected.len() || returned_count != expected.len() {
+            failed_segment = Some((index, expected.len(), contiguous));
+            break;
+        }
+        completed_segments += 1;
+    }
+
+    (fetched, completed_segments, failed_segment)
+}
+
+impl MooncakeFetchStore {
+    pub(crate) fn new(
+        metaserver_client: Arc<MetaServerClient>,
+        transfer: Arc<MooncakeTransport>,
+        allocate_fn: AllocateFn,
+        advertise_addr: String,
+    ) -> Self {
+        info!(
+            "Mooncake remote fetch enabled (advertise={})",
+            advertise_addr
+        );
+        Self {
+            metaserver_client,
+            transfer,
+            allocate_fn,
+            advertise_addr,
+            grpc_channels: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Query MetaServer for a validated ordered plan covering a prefix of `hashes`.
+    pub(crate) async fn query_plan(
+        &self,
+        namespace: &str,
+        hashes: &[Vec<u8>],
+    ) -> Option<FetchPlan> {
+        if hashes.is_empty() {
+            return None;
+        }
+
+        let segments = match self
+            .metaserver_client
+            .query_plan(namespace, hashes, &self.advertise_addr)
+            .await
+        {
+            Ok(segments) => segments,
+            Err(e) => {
+                warn!("MetaServer query failed for remote fetch: {e}");
+                return None;
+            }
+        };
+
+        let plan = match validate_fetch_plan(segments, hashes.len(), &self.advertise_addr) {
+            Ok(plan) => plan?,
+            Err(error) => {
+                warn!("MetaServer returned invalid remote fetch plan: {error}");
+                return None;
+            }
+        };
+
+        debug!(
+            "Remote prefix query: segments={} prefix={}/{}",
+            plan.segments.len(),
+            plan.block_count,
+            hashes.len(),
+        );
+
+        Some(plan)
+    }
+
+    pub(crate) async fn fetch_plan(
+        &self,
+        plan: &FetchPlan,
+        req_id: &str,
+        namespace: &str,
+        hashes: &[Vec<u8>],
+    ) -> PrefetchResult {
+        let started_at = Instant::now();
+        let fetcher = MooncakeSegmentFetcher {
+            store: self,
+            req_id,
+            namespace,
+        };
+        let (fetched, completed_segments, failure) =
+            execute_fetch_plan(&fetcher, plan, namespace, hashes).await;
+        let metrics = core_metrics();
+        metrics
+            .remote_fetch_plan_segments
+            .record(plan.segments.len() as u64, &[]);
+        metrics
+            .remote_fetch_plan_completed_segments
+            .record(completed_segments as u64, &[]);
+        let (failed_segment, failed_planned_blocks, failed_returned_blocks) = failure
+            .map(|(index, planned, returned)| {
+                (index.to_string(), planned.to_string(), returned.to_string())
+            })
+            .unwrap_or_else(|| ("none".into(), "none".into(), "none".into()));
+
+        info!(
+            "Mooncake multi-node fetch plan summary: req_id={} planned_segments={} completed_segments={} planned_blocks={} segment_blocks={} fetched_blocks={} failed_segment={} failed_segment_planned_blocks={} failed_segment_returned_blocks={} total_ms={:.2}",
+            req_id,
+            plan.segments.len(),
+            completed_segments,
+            plan.block_count,
+            plan.segment_blocks_summary(),
+            fetched.len(),
+            failed_segment,
+            failed_planned_blocks,
+            failed_returned_blocks,
+            started_at.elapsed().as_secs_f64() * 1000.0,
+        );
+
+        fetched
+    }
+
+    /// Fetch `hashes` from `remote_addr`.
+    pub(crate) async fn fetch_blocks(
+        &self,
+        remote_addr: &str,
+        req_id: &str,
+        namespace: &str,
+        hashes: &[Vec<u8>],
+    ) -> PrefetchResult {
+        mooncake_fetch_task(
+            &self.transfer,
+            &self.allocate_fn,
+            &self.grpc_channels,
+            remote_addr,
+            req_id,
+            &self.advertise_addr,
+            namespace,
+            hashes,
+        )
+        .await
+    }
+}
+
+/// Execute a Mooncake fetch against a single remote node.
+///
+/// 1. gRPC QueryBlocksForTransfer authorizes and pins the blocks.
+/// 2. Mooncake opens the returned segment and READs all block ranges.
+/// 3. ReleaseTransferLock is fire-and-forget and crash-safe via timeout.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Mooncake task arguments are the per-fetch context passed from the scheduler"
+)]
+async fn mooncake_fetch_task(
+    transfer: &Arc<MooncakeTransport>,
+    allocate_fn: &AllocateFn,
+    grpc_channels: &DashMap<String, EngineClient<Channel>>,
+    remote_addr: &str,
+    req_id: &str,
+    advertise_addr: &str,
+    namespace: &str,
+    block_hashes: &[Vec<u8>],
+) -> PrefetchResult {
+    let t0 = Instant::now();
+
+    // Query the OrbitKV authority before exposing any physical addresses.
+    let query_start = Instant::now();
+    let (client, mut response) = match query_remote_blocks(
+        grpc_channels,
+        remote_addr,
+        namespace,
+        block_hashes,
+        advertise_addr,
+    )
+    .await
+    {
+        Ok(cr) => cr,
+        Err(e) => {
+            warn!("Remote query to {remote_addr} failed: {e}");
+            core_metrics()
+                .remote_fetch_total
+                .add(1, &[KeyValue::new("status", "error")]);
+            return Vec::new();
+        }
+    };
+    let query_elapsed = query_start.elapsed();
+
+    // The holder pinned the blocks when the query created this session, so
+    // every exit from here — completion, error, panic, or this future being
+    // dropped — must send ReleaseTransferLock. The guard's Drop covers the
+    // paths no explicit call can reach.
+    let lock_guard = TransferLockGuard::new(
+        client,
+        std::mem::take(&mut response.transfer_session_id),
+        remote_addr,
+        req_id,
+    );
+    if response.transfer_endpoint.is_empty() {
+        warn!("Remote query to {remote_addr} returned an empty Mooncake endpoint");
+        lock_guard.release();
+        core_metrics()
+            .remote_fetch_total
+            .add(1, &[KeyValue::new("status", "error")]);
+        return Vec::new();
+    }
+
+    // Mooncake READ all blocks + build SealedBlocks.
+    let transfer_timeout = transfer_timeout_from_server(response.lock_timeout_secs);
+    let blocks = response.blocks;
+    let total_bytes: u64 = blocks
+        .iter()
+        .flat_map(|b| &b.slots)
+        .map(|s| s.k_size + s.v_size)
+        .sum();
+    let (result, transfer_timing) = match fetch_blocks_via_mooncake(
+        transfer,
+        allocate_fn,
+        namespace,
+        &response.transfer_endpoint,
+        &blocks,
+        transfer_timeout,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            warn!("Mooncake transfer from {remote_addr} failed: {e}");
+            transfer
+                .engine()
+                .invalidate_segment(&response.transfer_endpoint);
+            lock_guard.release();
+            core_metrics()
+                .remote_fetch_total
+                .add(1, &[KeyValue::new("status", "error")]);
+            return Vec::new();
+        }
+    };
+
+    // 4. Release transfer lock (fire-and-forget: spawns a detached task)
+    lock_guard.release();
+
+    let elapsed = t0.elapsed();
+    let mb = total_bytes as f64 / (1024.0 * 1024.0);
+    let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+    let throughput_mib_s = if elapsed.as_secs_f64() > 0.0 {
+        mb / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
+    info!(
+        "Mooncake fetch summary: req_id={req_id} remote={remote_addr} blocks={}/{} slots={} descs={} slabs={} bytes_mib={mb:.1} total_ms={elapsed_ms:.2} tp_mib_s={throughput_mib_s:.0}",
+        result.len(),
+        block_hashes.len(),
+        transfer_timing.slot_count,
+        transfer_timing.transfer_desc_count,
+        transfer_timing.numa_slab_count,
+    );
+    info!(
+        "Mooncake fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
+        query_elapsed.as_secs_f64() * 1000.0,
+        transfer_timing.build_transfer_tasks.as_secs_f64() * 1000.0,
+        transfer_timing.mooncake_wait.as_secs_f64() * 1000.0,
+        transfer_timing.rebuild.as_secs_f64() * 1000.0,
+    );
+    let m = core_metrics();
+    let ok = &[KeyValue::new("status", "ok")];
+    m.remote_fetch_total.add(1, ok);
+    m.remote_fetch_duration_seconds
+        .record(elapsed.as_secs_f64(), ok);
+    m.remote_fetch_bytes.add(total_bytes, ok);
+    result
+}
+
+/// One fetched slot: its Mooncake-staged segments plus the NUMA node they sit on.
+/// The NUMA travels with the slot so a re-served block advertises real topology.
+type StagedSlot = (Vec<SegmentAlloc>, NumaNode);
+/// A staged block awaiting SealedBlock rebuild: its hash and per-slot allocations.
+type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
+
+/// Allocate local memory, execute one Mooncake READ batch, and rebuild blocks.
+async fn fetch_blocks_via_mooncake(
+    transfer: &Arc<MooncakeTransport>,
+    allocate_fn: &AllocateFn,
+    namespace: &str,
+    transfer_endpoint: &str,
+    blocks: &[TransferBlockInfo],
+    transfer_timeout: Duration,
+) -> Result<(PrefetchResult, TransferTiming), String> {
+    if blocks.is_empty() {
+        return Ok((Vec::new(), TransferTiming::default()));
+    }
+
+    let mut slabs = ChunkedSlabs::new(
+        allocate_fn,
+        FETCH_CHUNK_BYTES,
+        sum_segment_bytes_by_numa(blocks)?,
+    );
+
+    // (block_hash, Vec<(slot_segments, slot_numa)>) — for building SealedBlock afterwards.
+    // The per-slot NUMA is preserved so a re-served fetched block advertises real topology.
+    let mut block_allocs: Vec<StagedBlock> = Vec::new();
+    let mut slot_count = 0usize;
+    let build_start = Instant::now();
+
+    let (all_descs, mut timing) = {
+        let mut all_descs: Vec<TransferSlice> = Vec::new();
+
+        for block_info in blocks {
+            slot_count += block_info.slots.len();
+            let mut slot_allocs = Vec::with_capacity(block_info.slots.len());
+
+            for slot in &block_info.slots {
+                let mut segments = Vec::new();
+                let numa = NumaNode(slot.numa_node);
+
+                // K segment
+                if slot.k_size > 0 {
+                    let len = usize::try_from(slot.k_size)
+                        .map_err(|_| format!("K size exceeds usize: {}", slot.k_size))?;
+                    let (local_ptr, alloc) = slabs.alloc_segment(numa, len, "K")?;
+                    if slot.k_ptr == 0 {
+                        return Err("remote K ptr is null".to_string());
+                    }
+                    all_descs.push(TransferSlice {
+                        local: local_ptr,
+                        remote_address: slot.k_ptr,
+                        length: len,
+                    });
+                    segments.push(SegmentAlloc {
+                        ptr_addr: local_ptr.as_ptr() as u64,
+                        alloc,
+                        size: len,
+                    });
+                }
+
+                // V segment (split KV)
+                if slot.v_size > 0 && slot.v_ptr != 0 {
+                    let len = usize::try_from(slot.v_size)
+                        .map_err(|_| format!("V size exceeds usize: {}", slot.v_size))?;
+                    let (local_ptr, alloc) = slabs.alloc_segment(numa, len, "V")?;
+                    all_descs.push(TransferSlice {
+                        local: local_ptr,
+                        remote_address: slot.v_ptr,
+                        length: len,
+                    });
+                    segments.push(SegmentAlloc {
+                        ptr_addr: local_ptr.as_ptr() as u64,
+                        alloc,
+                        size: len,
+                    });
+                }
+
+                slot_allocs.push((segments, numa));
+            }
+
+            block_allocs.push((block_info.block_hash.clone(), slot_allocs));
+        }
+
+        if all_descs.is_empty() {
+            let timing = TransferTiming {
+                build_transfer_tasks: build_start.elapsed(),
+                slot_count,
+                numa_slab_count: slabs.chunk_count,
+                ..TransferTiming::default()
+            };
+            return Ok((Vec::new(), timing));
+        }
+
+        let transfer_desc_count = all_descs.len();
+
+        let timing = TransferTiming {
+            build_transfer_tasks: build_start.elapsed(),
+            transfer_desc_count,
+            slot_count,
+            numa_slab_count: slabs.chunk_count,
+            ..TransferTiming::default()
+        };
+        (all_descs, timing)
+    };
+
+    let wait_start = Instant::now();
+    let transfer = Arc::clone(transfer);
+    let transfer_endpoint = transfer_endpoint.to_string();
+    tokio::task::spawn_blocking(move || {
+        transfer.engine().submit_and_wait(
+            TransferOp::Read,
+            &transfer_endpoint,
+            &all_descs,
+            transfer_timeout,
+        )
+    })
+    .await
+    .map_err(|error| format!("Mooncake READ task failed: {error}"))?
+    .map_err(|error| format!("Mooncake READ failed: {error}"))?;
+    timing.mooncake_wait = wait_start.elapsed();
+
+    // Build SealedBlocks from allocated memory
+    let rebuild_start = Instant::now();
+    let mut result: PrefetchResult = Vec::with_capacity(block_allocs.len());
+    for (hash, slot_allocs) in block_allocs {
+        let key = BlockKey::new(namespace.to_string(), hash);
+        let slots: Vec<(RawBlock, NumaNode)> = slot_allocs
+            .into_iter()
+            .map(|(segs, numa)| {
+                let segments: Vec<Segment> = segs
+                    .into_iter()
+                    .map(|sa| {
+                        let ptr = NonNull::new(sa.ptr_addr as *mut u8)
+                            .expect("slab segment pointer must be non-null");
+                        Segment::new(ptr, sa.size, sa.alloc)
+                    })
+                    .collect();
+                (RawBlock::new(segments), numa)
+            })
+            .collect();
+        let sealed = Arc::new(SealedBlock::from_slots(slots));
+        result.push((key, sealed));
+    }
+    timing.rebuild = rebuild_start.elapsed();
+
+    Ok((result, timing))
+}
+
+/// Total staged bytes per NUMA node for one fetch batch. Used to right-size
+/// the last chunk of each NUMA so small fetches don't over-allocate.
+fn sum_segment_bytes_by_numa(
+    blocks: &[TransferBlockInfo],
+) -> Result<HashMap<NumaNode, u64>, String> {
+    let mut bytes_per_numa: HashMap<NumaNode, u64> = HashMap::new();
+    for block_info in blocks {
+        for slot in &block_info.slots {
+            let numa = NumaNode(slot.numa_node);
+            let mut add = 0u64;
+            if slot.k_size > 0 {
+                add += slot.k_size;
+            }
+            if slot.v_size > 0 && slot.v_ptr != 0 {
+                add = add
+                    .checked_add(slot.v_size)
+                    .ok_or_else(|| format!("segment bytes overflow on {numa}"))?;
+            }
+            let total = bytes_per_numa.entry(numa).or_insert(0);
+            *total = total
+                .checked_add(add)
+                .ok_or_else(|| format!("numa bytes overflow while summing segments on {numa}"))?;
+        }
+    }
+    Ok(bytes_per_numa)
+}
+
+/// Bump allocator over bounded pinned chunks, one active chunk per NUMA node.
+/// Each staged segment holds an Arc to its own chunk, so starting a fresh
+/// chunk never invalidates previously staged segments, and fetched blocks are
+/// freed chunk-by-chunk on eviction instead of all-or-nothing per fetch.
+///
+/// A chunk is sized `min(remaining bytes on that NUMA, chunk_bytes)`: the cap
+/// bounds LRU-reclaim amplification on large fetches, the remaining-bytes
+/// clamp keeps small fetches from grabbing a whole `chunk_bytes` slab (which
+/// would fail outright on pools smaller than the cap).
+struct ChunkedSlabs<'a> {
+    allocate_fn: &'a AllocateFn,
+    chunk_bytes: u64,
+    current: HashMap<NumaNode, NumaSlab>,
+    /// Bytes of this batch not yet staged, per NUMA.
+    remaining: HashMap<NumaNode, u64>,
+    chunk_count: usize,
+}
+
+impl<'a> ChunkedSlabs<'a> {
+    fn new(
+        allocate_fn: &'a AllocateFn,
+        chunk_bytes: u64,
+        remaining: HashMap<NumaNode, u64>,
+    ) -> Self {
+        Self {
+            allocate_fn,
+            chunk_bytes,
+            current: HashMap::new(),
+            remaining,
+            chunk_count: 0,
+        }
+    }
+
+    fn alloc_segment(
+        &mut self,
+        numa: NumaNode,
+        len: usize,
+        segment_kind: &str,
+    ) -> Result<(NonNull<u8>, Arc<crate::pinned_pool::PinnedAllocation>), String> {
+        if let Some(slab) = self.current.get_mut(&numa)
+            && let Ok(seg) = slab.allocate(len, segment_kind)
+        {
+            self.consume_remaining(numa, len);
+            return Ok(seg);
+        }
+
+        // No chunk on this NUMA yet, or the current one can't fit the segment.
+        let remaining = *self
+            .remaining
+            .get(&numa)
+            .expect("remaining bytes tracked for every NUMA in the batch");
+        let chunk = remaining.min(self.chunk_bytes).max(len as u64);
+        let allocation = (self.allocate_fn)(chunk, Some(numa)).ok_or_else(|| {
+            format!("failed to allocate fetch chunk ({chunk} bytes) on {numa} for {segment_kind}")
+        })?;
+        let capacity = usize::try_from(chunk)
+            .map_err(|_| format!("fetch chunk size exceeds usize: {chunk}"))?;
+        self.chunk_count += 1;
+        self.current.insert(
+            numa,
+            NumaSlab {
+                allocation,
+                next_offset: 0,
+                capacity,
+            },
+        );
+        self.consume_remaining(numa, len);
+        self.current
+            .get_mut(&numa)
+            .expect("chunk just inserted")
+            .allocate(len, segment_kind)
+    }
+
+    fn consume_remaining(&mut self, numa: NumaNode, len: usize) {
+        let rem = self
+            .remaining
+            .get_mut(&numa)
+            .expect("remaining bytes tracked for every NUMA in the batch");
+        *rem = rem.saturating_sub(len as u64);
+    }
+}
+
+struct NumaSlab {
+    allocation: Arc<crate::pinned_pool::PinnedAllocation>,
+    next_offset: usize,
+    capacity: usize,
+}
+
+impl NumaSlab {
+    fn allocate(
+        &mut self,
+        len: usize,
+        segment_kind: &str,
+    ) -> Result<(NonNull<u8>, Arc<crate::pinned_pool::PinnedAllocation>), String> {
+        let end = self.next_offset.checked_add(len).ok_or_else(|| {
+            format!(
+                "slab offset overflow while allocating {segment_kind}: offset={} len={len} capacity={}",
+                self.next_offset, self.capacity
+            )
+        })?;
+        if end > self.capacity {
+            return Err(format!(
+                "slab exhausted while allocating {segment_kind}: offset={} len={len} capacity={}",
+                self.next_offset, self.capacity
+            ));
+        }
+
+        let ptr = unsafe { self.allocation.as_non_null().as_ptr().add(self.next_offset) };
+        self.next_offset = end;
+        let ptr = NonNull::new(ptr).ok_or_else(|| "slab pointer is null".to_string())?;
+        Ok((ptr, Arc::clone(&self.allocation)))
+    }
+}
+
+struct SegmentAlloc {
+    ptr_addr: u64,
+    alloc: Arc<crate::pinned_pool::PinnedAllocation>,
+    size: usize,
+}
+
+#[derive(Default)]
+struct TransferTiming {
+    build_transfer_tasks: Duration,
+    mooncake_wait: Duration,
+    rebuild: Duration,
+    transfer_desc_count: usize,
+    slot_count: usize,
+    numa_slab_count: usize,
+}
+
+fn get_or_create_channel(
+    cache: &DashMap<String, EngineClient<Channel>>,
+    addr: &str,
+) -> Result<EngineClient<Channel>, String> {
+    if let Some(client) = cache.get(addr) {
+        return Ok(client.clone());
+    }
+    let url = if addr.starts_with("http://") || addr.starts_with("https://") {
+        addr.to_string()
+    } else {
+        format!("http://{addr}")
+    };
+    let channel = Endpoint::from_shared(url)
+        .map_err(|e| format!("invalid remote address: {e}"))?
+        .connect_timeout(Duration::from_secs(5))
+        .connect_lazy();
+    // Match the engine server's 64 MiB message cap: a QueryBlocksForTransfer
+    // response carries per-slot transfer descriptors, so a large block batch
+    // overflows tonic's default 4 MiB decode limit.
+    const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
+    let client = EngineClient::new(channel)
+        .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
+        .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
+    cache.insert(addr.to_string(), client.clone());
+    Ok(client)
+}
+
+/// Get/create gRPC channel and call QueryBlocksForTransfer.
+async fn query_remote_blocks(
+    grpc_channels: &DashMap<String, EngineClient<Channel>>,
+    remote_addr: &str,
+    namespace: &str,
+    block_hashes: &[Vec<u8>],
+    advertise_addr: &str,
+) -> Result<(EngineClient<Channel>, QueryBlocksForTransferResponse), String> {
+    let mut client = get_or_create_channel(grpc_channels, remote_addr)?;
+
+    let request = QueryBlocksForTransferRequest {
+        namespace: namespace.to_string(),
+        block_hashes: block_hashes.to_vec(),
+        requester_id: advertise_addr.to_string(),
+    };
+
+    let response = client
+        .query_blocks_for_transfer(request)
+        .await
+        .map_err(|e| format!("QueryBlocksForTransfer RPC failed: {e}"))?
+        .into_inner();
+
+    if let Some(st) = &response.status
+        && !st.ok
+    {
+        return Err(format!("remote returned error: {}", st.message));
+    }
+
+    Ok((client, response))
+}
+
+/// Compute client-side transfer timeout from server's lock timeout.
+/// Returns `max(server_timeout - 60s, 10s)` so the client always finishes
+/// before the server force-releases the lock.
+fn transfer_timeout_from_server(lock_timeout_secs: u32) -> Duration {
+    let server = Duration::from_secs(lock_timeout_secs as u64);
+    server
+        .saturating_sub(LOCK_TIMEOUT_MARGIN)
+        .max(MIN_TRANSFER_TIMEOUT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::num::NonZeroU64;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    fn test_allocate_fn(calls: Arc<AtomicUsize>) -> AllocateFn {
+        let allocator = Arc::new(crate::pinned_pool::PinnedAllocator::new_global(
+            32 * 1024 * 1024,
+            1,
+            false,
+            false,
+            None,
+        ));
+        Arc::new(move |size, _numa| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            allocator.allocate(NonZeroU64::new(size)?, NumaNode::UNKNOWN)
+        })
+    }
+
+    fn remaining(bytes: u64) -> HashMap<NumaNode, u64> {
+        HashMap::from([(NumaNode(0), bytes)])
+    }
+
+    fn segment(node: &str, block_count: u32) -> FetchSegment {
+        FetchSegment {
+            node: node.to_string(),
+            block_count,
+        }
+    }
+
+    fn fetched_block(hash: u8) -> (BlockKey, Arc<SealedBlock>) {
+        (
+            BlockKey::new("ns".to_string(), vec![hash]),
+            Arc::new(SealedBlock::from_slots(Vec::new())),
+        )
+    }
+
+    #[derive(Default)]
+    struct FakeSegmentFetcher {
+        calls: Mutex<Vec<(String, Vec<Vec<u8>>)>>,
+        responses: Mutex<VecDeque<PrefetchResult>>,
+    }
+
+    #[tonic::async_trait]
+    impl SegmentFetcher for FakeSegmentFetcher {
+        async fn fetch_segment(&self, remote_addr: &str, hashes: &[Vec<u8>]) -> PrefetchResult {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((remote_addr.to_string(), hashes.to_vec()));
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_default()
+        }
+    }
+
+    #[test]
+    fn validates_ordered_fetch_plan_offsets() {
+        let plan = validate_fetch_plan(
+            vec![segment("node-a", 2), segment("node-b", 1)],
+            3,
+            "requester",
+        )
+        .expect("plan should be valid")
+        .expect("plan should be non-empty");
+
+        assert_eq!(plan.block_count, 3);
+        assert_eq!(plan.segment_blocks_summary(), "2,1");
+        assert_eq!(
+            plan.segments,
+            vec![
+                FetchPlanSegment {
+                    node: "node-a".into(),
+                    start: 0,
+                    end: 2,
+                },
+                FetchPlanSegment {
+                    node: "node-b".into(),
+                    start: 2,
+                    end: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_fetch_plans() {
+        for (segments, expected) in [
+            (vec![segment("", 1)], "empty node"),
+            (vec![segment("node-a", 0)], "zero blocks"),
+            (vec![segment("requester", 1)], "excluded requester"),
+            (vec![segment("node-a", 2)], "beyond request length"),
+            (
+                vec![segment("node-a", 1), segment("node-a", 1)],
+                "repeats the previous node",
+            ),
+        ] {
+            let error =
+                validate_fetch_plan(segments, 1, "requester").expect_err("plan should be rejected");
+            assert!(error.contains(expected), "unexpected error: {error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_plan_executes_segments_in_order() {
+        let plan = validate_fetch_plan(
+            vec![segment("node-a", 2), segment("node-b", 1)],
+            3,
+            "requester",
+        )
+        .unwrap()
+        .unwrap();
+        let fetcher = FakeSegmentFetcher {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(VecDeque::from([
+                vec![fetched_block(1), fetched_block(2)],
+                vec![fetched_block(3)],
+            ])),
+        };
+        let hashes = vec![vec![1], vec![2], vec![3]];
+
+        let (fetched, completed, failure) =
+            execute_fetch_plan(&fetcher, &plan, "ns", &hashes).await;
+
+        assert_eq!(fetched.len(), 3);
+        assert_eq!(completed, 2);
+        assert_eq!(failure, None);
+        assert_eq!(
+            *fetcher.calls.lock().unwrap(),
+            vec![
+                ("node-a".into(), vec![vec![1], vec![2]]),
+                ("node-b".into(), vec![vec![3]]),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_plan_stops_after_first_short_segment() {
+        let plan = validate_fetch_plan(
+            vec![
+                segment("node-a", 1),
+                segment("node-b", 1),
+                segment("node-c", 1),
+            ],
+            3,
+            "requester",
+        )
+        .unwrap()
+        .unwrap();
+        let fetcher = FakeSegmentFetcher {
+            calls: Mutex::new(Vec::new()),
+            responses: Mutex::new(VecDeque::from([
+                vec![fetched_block(1)],
+                Vec::new(),
+                vec![fetched_block(3)],
+            ])),
+        };
+        let hashes = vec![vec![1], vec![2], vec![3]];
+
+        let (fetched, completed, failure) =
+            execute_fetch_plan(&fetcher, &plan, "ns", &hashes).await;
+
+        assert_eq!(fetched.len(), 1);
+        assert_eq!(completed, 1);
+        assert_eq!(failure, Some((1, 1, 0)));
+        assert_eq!(fetcher.calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn chunked_slabs_bump_within_chunk_then_refill() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let allocate_fn = test_allocate_fn(Arc::clone(&calls));
+        let mut slabs = ChunkedSlabs::new(&allocate_fn, 1024, remaining(1536));
+
+        let (p1, a1) = slabs.alloc_segment(NumaNode(0), 512, "K").expect("first");
+        let (p2, _a2) = slabs.alloc_segment(NumaNode(0), 512, "V").expect("second");
+        assert_eq!(p2.as_ptr() as usize - p1.as_ptr() as usize, 512);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        // Third segment exceeds the current chunk: a fresh chunk is allocated
+        // while earlier segments stay valid through their own chunk Arc.
+        let (_p3, a3) = slabs.alloc_segment(NumaNode(0), 512, "K").expect("third");
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert_eq!(slabs.chunk_count, 2);
+        assert!(!Arc::ptr_eq(&a1, &a3));
+    }
+
+    #[test]
+    fn chunked_slabs_oversized_segment_gets_dedicated_chunk() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let allocate_fn = test_allocate_fn(Arc::clone(&calls));
+        let mut slabs = ChunkedSlabs::new(&allocate_fn, 1024, remaining(4096));
+
+        slabs
+            .alloc_segment(NumaNode(0), 4096, "K")
+            .expect("oversized segment");
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(slabs.chunk_count, 1);
+    }
+
+    #[test]
+    fn chunked_slabs_allocation_failure_is_an_error() {
+        let allocate_fn: AllocateFn = Arc::new(|_, _| None);
+        let mut slabs = ChunkedSlabs::new(&allocate_fn, 1024, remaining(512));
+
+        let err = match slabs.alloc_segment(NumaNode(0), 512, "K") {
+            Ok(_) => panic!("allocation should fail"),
+            Err(err) => err,
+        };
+        assert!(err.contains("failed to allocate fetch chunk"));
+    }
+
+    #[test]
+    fn chunked_slabs_chunk_clamped_to_batch_remaining() {
+        // A small fetch must not request the whole chunk_bytes cap — that
+        // fails outright on pools smaller than the cap (jz p2p IT regression).
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&sizes);
+        let inner = test_allocate_fn(Arc::new(AtomicUsize::new(0)));
+        let allocate_fn: AllocateFn = Arc::new(move |size, numa| {
+            recorded.lock().unwrap().push(size);
+            inner(size, numa)
+        });
+        let mut slabs = ChunkedSlabs::new(&allocate_fn, 256 << 20, remaining(4096));
+
+        slabs.alloc_segment(NumaNode(0), 1024, "K").expect("first");
+        slabs.alloc_segment(NumaNode(0), 3072, "V").expect("second");
+
+        // One chunk sized to the batch total, not to the 256 MiB cap.
+        assert_eq!(*sizes.lock().unwrap(), vec![4096]);
+        assert_eq!(slabs.chunk_count, 1);
+    }
+}

@@ -1,6 +1,5 @@
 export const repositoryUrl = "https://github.com/feichai0017/orbitkv";
 
-// Keep deployed documentation on the same source revision as the website.
 export const sourceUrl = (path: string) =>
   `${repositoryUrl}/blob/${import.meta.env.PUBLIC_SOURCE_REF}/${path}`;
 export const localUrl = (path: string) =>
@@ -9,81 +8,72 @@ export const localUrl = (path: string) =>
 export const navigation = [
   { label: "Overview", href: "/" },
   { label: "Architecture", href: "/docs/" },
-  { label: "Models", href: "/models/" },
+  { label: "Integration", href: "/integration/" },
 ];
 
 export const layers = [
   {
-    name: "orbitkv",
-    role: "Own the state.",
+    name: "orbitkv-contract",
+    role: "Name the state.",
     detail:
-      "Compile attention lifetimes. Manage pages, prefix sharing, and safe reuse. Use the core independently.",
-    path: "crates/orbitkv/README.md",
+      "Framework-neutral identity, byte compatibility, page generations, and recovery bundles.",
+    path: "crates/orbitkv-contract/src/lib.rs",
   },
   {
-    name: "orbitkv-compiler",
-    role: "Explore equivalent programs.",
-    detail:
-      "Build symbolic tensor graphs and legal implementation search spaces.",
-    path: "crates/orbitkv-compiler/README.md",
+    name: "orbitkv-local",
+    role: "Control the Cache Manager.",
+    detail: "Versioned iceoryx2 request/response with shared descriptor arenas.",
+    path: "crates/orbitkv-local/src/lib.rs",
   },
   {
-    name: "orbitkv-ops",
-    role: "Describe the computation.",
-    detail: "Express inference semantics independently of CUDA providers.",
-    path: "crates/orbitkv-ops/README.md",
+    name: "orbitkv-core",
+    role: "Own the blocks.",
+    detail:
+      "Content-addressed KV blocks, leases, admission, eviction, and tier coordination.",
+    path: "crates/orbitkv-core/src/lib.rs",
   },
   {
-    name: "orbitkv-cuda",
-    role: "Measure and execute.",
-    detail:
-      "Compile kernels, compare legal candidates on the GPU, and execute selected programs.",
-    path: "crates/orbitkv-cuda/README.md",
+    name: "orbitkv-transfer",
+    role: "Move the bytes.",
+    detail: "Pinned Mooncake Transfer Engine for RDMA, TCP fallback, and completion notifications.",
+    path: "crates/orbitkv-transfer/README.md",
   },
   {
-    name: "orbitkv-tracing",
-    role: "Make costs visible.",
-    detail:
-      "Record compiler stages, search decisions, and execution measurements.",
-    path: "crates/orbitkv-tracing/README.md",
+    name: "Cache Manager",
+    role: "Share the cache.",
+    detail: "Node-local UDS/iceoryx2 lifecycle, peer transfer control, health, and metrics.",
+    path: "crates/orbitkv-server/README.md",
   },
   {
-    name: "orbitkv-executor",
-    role: "Compile the work.",
+    name: "orbitkv-sglang",
+    role: "Integrate the runtime.",
     detail:
-      "Import model graphs, bind state arenas, profile CUDA candidates, and save execution artifacts.",
-    path: "crates/orbitkv-executor/README.md",
-  },
-  {
-    name: "orbitkv-engine",
-    role: "Serve the model.",
-    detail:
-      "Schedule batches, stream tokens, and coordinate cancellation through an optional OpenAI-compatible frontend.",
-    path: "crates/orbitkv-engine/README.md",
+      "A native HiCache path first, followed by an OrbitKV-authored page and lifetime boundary.",
+    path: "docs/roadmap.md",
   },
 ];
 
 export const compilerStages = [
-  { name: "Describe", detail: "Model math and state contracts." },
-  { name: "Compile", detail: "Admit compatible graph implementations." },
-  { name: "Measure", detail: "Profile candidates on the target GPU." },
-  { name: "Replay", detail: "Load the selected schedule and CUDA images." },
+  { name: "Describe", detail: "Attention visibility and state contracts." },
+  { name: "Prove", detail: "Derive semantic death and safe reuse conditions." },
+  { name: "Place", detail: "Choose HBM, DRAM, SSD, or a remote replica." },
+  { name: "Adapt", detail: "Re-plan from measured cost and next-touch evidence." },
 ];
 
 export const providers = [
-  { name: "cuBLASLt", role: "Dense and batched matrix products." },
-  { name: "DeepGEMM", role: "SM90 block-scaled FP8 linear." },
-  { name: "FlashInfer", role: "Paged decode and packed prefill." },
-  { name: "FlashAttention-3", role: "Optional SM90 F16/BF16 paged attention." },
+  { name: "HBM", role: "Active pages on the execution path." },
+  { name: "Pinned DRAM", role: "NUMA-aware warm storage and staging." },
+  { name: "SSD", role: "Durable capacity for colder prefixes." },
+  { name: "RDMA", role: "Replica-aware cross-node reuse." },
 ];
 
 export const docs = [
   { name: "System architecture", path: "docs/architecture.md" },
-  { name: "Model compiler", path: "docs/compiler.md" },
-  { name: "CUDA backend and providers", path: "docs/cuda-backend.md" },
-  { name: "State lifecycle", path: "docs/runtime-session.md" },
-  { name: "Execution artifacts", path: "docs/module-artifacts.md" },
-  { name: "Joint compilation", path: "docs/joint-compilation.md" },
-  { name: "Model support", path: "docs/capability-matrix.md" },
-  { name: "Code and test layout", path: "docs/code-layout.md" },
+  { name: "Local and remote transport", path: "docs/transport.md" },
+  { name: "Roadmap and validation gates", path: "docs/roadmap.md" },
+  { name: "Server configuration", path: "docs/server.md" },
+  { name: "Cross-node sharing", path: "docs/p2p.md" },
+  { name: "P/D disaggregation", path: "docs/pd.md" },
+  { name: "Metrics", path: "docs/metrics.md" },
+  { name: "Implementation TODO", path: "TODO.md" },
 ];

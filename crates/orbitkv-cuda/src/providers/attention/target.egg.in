@@ -1,6 +1,0 @@
-(rule
-    ((= ?major (cuda-target-major))
-     (>= ?major {minimum_major}) (<= ?major {maximum_major}))
-    ((cuda-attention-target "{provider}"))
-    :ruleset matmul_backend
-    :name "{provider} execution target")

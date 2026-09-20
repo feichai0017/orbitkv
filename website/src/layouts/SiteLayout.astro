@@ -10,7 +10,7 @@ interface Props {
 
 const {
   title = "OrbitKV — Compile the lifetime of state",
-  description = "A state-aware compiled inference engine in Rust, with measured CUDA implementations and native serving.",
+  description = "A framework-neutral state cache and physical planner for vLLM and SGLang.",
   active = "",
 } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
@@ -68,7 +68,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     </main>
     <footer class="site-footer container">
       <p>
-        ORBITKV <span>Rust. CUDA. Open source.</span>
+        ORBITKV <span>Rust. CUDA. vLLM. SGLang.</span>
       </p>
       <div class="footer-links">
         <a href={sourceUrl("docs/roadmap.md")}>
@@ -78,7 +78,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
           Source <span aria-hidden="true">↗</span>
         </a>
         <a href={sourceUrl("LICENSE")}>
-          MIT <span aria-hidden="true">↗</span>
+          Apache-2.0 <span aria-hidden="true">↗</span>
         </a>
       </div>
     </footer>

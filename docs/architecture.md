@@ -1,134 +1,272 @@
-# Architecture
+# OrbitKV architecture
 
-OrbitKV is a state-aware inference engine in Rust. It combines a standalone
-state manager, an integrated tensor compiler, a CUDA backend and an optional
-OpenAI-compatible server. [Qwen3.8-27B-FP8](capability-matrix.md) is the current
-validated model on one H20.
+## Mission
 
-## Workspace boundaries
+OrbitKV is a framework-neutral state cache and physical planner for vLLM and
+SGLang. It does not schedule model execution and it is not a second inference
+server. Framework adapters expose logical model state and local pages; OrbitKV
+owns external replicas, transfer leases, storage tiers, and eventually the
+policy that chooses placement, movement, reclamation, routing, or recomputation.
 
-| Crate | Owns | Must not own |
+The data plane is derived from PegaFlow 0.24.5. The validated integration today
+is vLLM. SGLang support currently consists of adapter contracts and source-pinned
+integration targets; the executable HiCache backend remains an M1 deliverable.
+
+## Process topology
+
+The recommended deployment is one OrbitKV Cache Manager per inference node. Framework
+adapters run inside the inference workers. The same cache API is used whether a
+hit is in node memory, SSD, or on a peer. A cluster index/router may run as a
+separate service after the cache data plane is qualified.
+
+```text
+                 cluster replica index / router
+                 hash · tier · load · topology
+                              |
+            +-----------------+-----------------+
+            |                                   |
+   inference node A                    inference node B
+ +-------------------+              +-------------------+
+ | vLLM or SGLang    |              | vLLM or SGLang    |
+ | framework adapter |              | framework adapter |
+ +---------+---------+              +---------+---------+
+           | local control / registered pages |
+ +---------v---------+  Mooncake    +---------v---------+
+ | OrbitKV Cache Manager |<--------->| OrbitKV Cache Manager |
+ | pinned DRAM / SSD |              | pinned DRAM / SSD |
+ +-------------------+              +-------------------+
+```
+
+Standalone deployment has no gRPC listener. Registration, health, sessions, and
+cleanup use the authenticated bootstrap UDS. `--metaserver-addr` enables a
+peer-only gRPC listener for transfer authorization and lock release. The process IPC supports query, publish, asynchronous
+restore completion, and lease release:
+iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
+passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
+The vLLM adapter requires this path and fails fast if the Cache Manager socket
+is missing. Each inference process must reach a Cache Manager on its own host.
+Pending queries return `Loading` and continue on Tokio. Publish holds its
+iceoryx2 reply until D2H finishes, so the caller does not release source HBM
+pages early while the dispatcher remains free. The Python cache client opens a
+separate descriptor session for Publish on its first save, so an in-flight
+save does not serialize the worker's Query/Restore calls behind that reply.
+Instance cleanup serializes
+against registration, drains GPU
+load/save queues, and only then releases imported CUDA mappings. Superseded
+sessions cannot clean up a replacement session. The SGLang adapter has not yet
+been switched. KV bytes
+must not travel through either control protocol: vLLM uses
+registered CUDA IPC pages, SGLang will use a shared pinned host pool, and remote
+transfers use the Mooncake-backed `TransferEngine`. See [transport.md](transport.md) for the
+measured decision.
+
+## API and crate boundaries
+
+| Layer | Code | Owns |
 | --- | --- | --- |
-| `orbitkv` | State semantics, manifests, pages, generations, Prefix/COW, retirement and reuse | CUDA, kernel selection or request transport |
-| `orbitkv-compiler` | Symbolic graphs, egglog equivalences and search infrastructure | GPU execution or page lifecycle |
-| `orbitkv-ops` | Portable operation semantics and inference graph builders | Provider selection |
-| `orbitkv-cuda` | Generated/library implementations, resource validation, GPU profiling and execution | Logical state ownership |
-| `orbitkv-tracing` | Compiler/search/runtime diagnostic records | Execution policy |
-| `orbitkv-executor` | Checkpoint import, model graph, arena bindings, compilation and artifacts | Page reuse authority or HTTP |
-| `orbitkv-engine` | Request admission, scheduling, token streaming and optional frontend | Provider rewrites or a second KV allocator |
+| Framework adapters | `python/orbitkv/vllm`, `python/orbitkv/sglang` | Framework-specific hashes, layout, and page-lifetime events |
+| Cache client | `python/orbitkv/client/data_plane.py`, `connection.py` | Query, publish, restore, release, lifecycle through the node-local connection |
+| State contract | `orbitkv-contract` | State identity, format compatibility, bundles, page-reference types |
+| Process IPC | `orbitkv-local`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
+| Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
+| Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
+| Peer control | `orbitkv-proto`, `orbitkv-core/src/internode/p2p_service.rs` | Network authorization and transfer locks |
+| Replica catalog | `orbitkv-metaserver`, `orbitkv-core/src/internode` | Candidate ownership and node liveness; currently a single in-memory service |
+| Byte movement | `orbitkv-transfer`, `orbitkv-mooncake-sys` | Mooncake Segment/BatchTransfer over RDMA or TCP |
 
-All seven crates share the root workspace and lockfile. The state manager remains
-usable independently. Compiler source and its original licenses are maintained
-in this repository; see [maintenance](compiler-maintenance.md) and
-[code layout](code-layout.md).
+Transport-specific names belong at physical boundaries. Cache operations and
+framework adapters use placement-neutral names and results. Moving a cache hit
+from DRAM to SSD or another node should not change `query_prefetch`, `save`,
+`start_restore`, or `release` for the caller. The `orbitkv-local` crate name is
+kept because it describes one IPC implementation, not a different cache API.
 
-## Model initialization
+## Layering
 
-1. **Import semantics.** The executor normalizes explicit checkpoint architecture,
-   quantization and tensor metadata. Unsupported or contradictory inputs fail
-   before weight loading. Topology assigns each layer to token KV or a matching
-   recurrent/convolution state pair.
-2. **Compile state.** The manager derives a `RuntimeManifest`. Stable arena
-   registrations join backend-neutral `StateLayoutFacts` to produce compiler
-   facts and typed bindings. Persistent writes must alias their registered state.
-3. **Build the graph.** Portable attention, block-scaled linear and recurrent
-   semantics are composed with normalization, projections and sampling.
-   Model names do not select CUDA implementations.
-4. **Search or replay.** `Graph::build_search_space` saturates egglog for feasible
-   workload buckets. The CUDA runtime extracts candidates, rejects invalid
-   aliases/resources, prepares native code and measures complete programs.
-   Retained finalists are compared on the CUDA Graph deployment path.
-   A compatible artifact instead restores the selected schedules and images.
-5. **Prepare serving.** Weights upload into owned device buffers; profiling
-   scratch is replaced with manager-bound arenas. Configured bucket residency
-   controls preparation before readiness. A saved artifact removes graph search;
-   provider plans and dynamic specialization can still require preparation.
+```text
+vLLM adapter                SGLang adapter
+block hashes / CUDA IPC     radix hashes / HiCache pools / shared host pages
+                             /
+       python/orbitkv/client (cache API)
+                    |
+    orbitkv-local / iceoryx2 + UDS
+                    |
+              orbitkv-server/cache/operations
+                           |
+                    orbitkv-core
+                 cache · leases · tiers
+                    /           \
+                  SSD      Mooncake Transfer
+                           |
+                    peer DRAM / SSD
 
-The [compiler](compiler.md), [search policy](search-coverage.md),
-[weight loader](weight-loading.md) and [artifact contract](module-artifacts.md)
-describe these boundaries in detail.
+     peer control: tonic / gRPC, only with --metaserver-addr
 
-## Request execution
+    orbitkv-contract: shared state identity and recovery semantics
+```
 
-The HTTP frontend tokenizes and submits logical generation requests. One model
-worker owns the compiled decoder, active requests and `RuntimeSession`. It
-admits work within configured request, sequence, query-token and state budgets,
-and may combine a new prefill with existing decode requests.
+### `orbitkv-contract`
 
-For each batch, the session prepares state transitions. The executor lowers
-manager-issued bindings to page CSR metadata, positions and fixed-state slots
-inside stable-capacity input allocations. It selects an already compiled bucket
-whose guards admit the actual batch. Provider metadata and captures are refreshed
-when their dependency contracts require it.
+This crate contains no framework or CUDA dependencies. Its first public types
+are:
 
-CUDA executes generated regions and library calls on the owning stream. Full
-attention reads a typed paged view; recurrent layers read/update their own state
-arenas. Required alias checks preserve storage identity. The serving graph
-produces logits and greedy token IDs for all query rows; the worker selects
-the final token ID of each request. `DecoderCompileConfig.output_rows` binds
-output geometry to the artifact. `LastTokenPerRequest` selects hidden rows
-before final normalization/projection and produces one token ID per request.
-Both modes execute all layer and state updates. The reduced-row mode remains
-an explicit executor option while full-model equivalence is under qualification;
-serving keeps `AllTokens`. Logit readback is explicit. Tokens return to the
-frontend for ordered streaming.
+- `StateKey`: content identity, logical token span, component, and byte format;
+- `StateFormat`: model/implementation digest, dtype, layout, and parallel shape;
+- `StateComponent`: attention KV, MLA, recurrent, convolution, SWA, draft, and
+  indexer state;
+- `LocalPageRef`: generation-qualified CUDA IPC or shared-host page reference;
+- `StateBundle` and `RecoveryContract`: the components needed to claim that a
+  logical boundary is restorable.
 
-The row-selection policy follows the work elimination used by
-[vLLM's model runner](https://github.com/vllm-project/vllm/blob/v0.29.0/vllm/v1/worker/gpu_model_runner.py)
-and [SGLang's logits processor](https://github.com/sgl-project/sglang/blob/095ec6c997bfdd25d3864cb0ce77a6562a934b96/python/sglang/srt/layers/logits_processor.py).
-OrbitKV expresses it with the existing gather operation before final
-normalization/projection, preserving explicit dtype boundaries and symbolic CSR
-request geometry. It does not require their Python runtime or model dispatch.
+`StateBundle::has_required_components` currently checks availability by
+component kind only. It is not yet a proof of restorable state: token coverage,
+model/format compatibility, and the framework's recovery rule must be checked
+before a bundle is used to skip prefill or route a request.
 
-Event-backed completion receipts are tied to the exact state bindings. The
-session commits completed transitions, publishes state and applies compiled
-retirement. Cancellation and output termination release ownership. Generations
-become reusable only after execution and acknowledgement make reuse safe.
-Provider-local last use never grants that authority.
+Physical bytes may be shared across vLLM and SGLang only when their
+`StateFormat` values are compatible. Sharing the core and policy never implies
+blind cross-framework byte reuse.
 
-See [runtime sessions](runtime-session.md), [state lifecycle](state-lifecycle.md)
-and [graph residency](graph-residency.md) for transition and capture lifetimes.
+### Framework adapters
 
-## Compute implementations
+The adapters translate framework-native state into `orbitkv-contract`:
 
-| Implementation | Role |
-| --- | --- |
-| Generated CUDA | Elementwise/reduction/index operations and admitted fused regions, including recurrent state operations |
-| cuBLASLt | Dense and batched matrix products |
-| DeepGEMM | SM90 block-scaled FP8 linear candidates; optional shared activation preparation |
-| FlashInfer | Explicit paged decode and packed-prefill attention algorithms |
-| FlashAttention-3 | Optional SM90 F16/BF16 paged attention candidates |
+| Concern | vLLM | SGLang |
+| --- | --- | --- |
+| Prefix identity | `Request.block_hashes` | Radix page hashes |
+| Local GPU pages | vLLM block IDs + CUDA IPC | Radix/HiCache page indices |
+| Host pages | OrbitKV-owned pinned blocks today | shared HiCache host pool |
+| Hybrid state | KV cache groups and checkpoints | `PoolTransfer` components |
+| Lifecycle | KVConnector callbacks | Radix/HiCache events |
 
-Logical attention and its KV view are separate contracts. Provider rules check
-semantics, dtype, geometry, device and workspace before adding equivalent
-implementations. Loading a library does not fuse its internals with surrounding
-operators. General algorithm-region compilation and persistent megakernels are
-future compiler work.
+Adapters do not decide which component set is a legal recovery point. That
+logic belongs in the common recovery contract.
 
-Provider revisions and dependencies share one lockfile and native build/cache
-policy. The [CUDA map](cuda-backend.md), [attention contracts](attention-providers.md)
-and [compiler extension points](compiler-boundaries.md) define the interfaces.
+### `orbitkv-core`
 
-## Joint compilation
+The current core provides content-addressed sealed blocks, NUMA-aware pinned
+memory, leases, LRU/TinyLFU admission, SSD, remote fetch, and session cleanup.
+During M0/M1 it continues accepting the current vLLM-oriented key and page
+registration APIs while new APIs are introduced beside them.
 
-Today, state facts constrain compute search and all deployment buckets share one
-validated persistent realization. Search uses private scratch, so measurement
-cannot mutate live request state. General competition between physical KV layouts,
-resident executable policies and external restore/recomputation is still planned.
+### Transfer and backing domains
 
-The executor will coordinate that outer search under a shared memory and compile
-budget. The manager will continue validating manifests and owning runtime state.
-[Joint compilation](joint-compilation.md) defines the proposed design;
-[external KV](external-kv.md) defines the existing byte-transport boundary.
+The native physical domains are:
 
-## Verification
+- framework GPU pages;
+- shared or OrbitKV-owned pinned DRAM;
+- local SSD;
+- remote OrbitKV replicas over Mooncake-selected RDMA or TCP.
 
-`tools/verify_active_source.py` checks dependency edges, source/test layout and
-removed compatibility surfaces. Host tests cover transaction and failure
-invariants. CUDA tests add independent operator references, alias/resource checks
-and capture lifetime regressions. Model tests add teacher-forced logits and
-state drain; HTTP tests add completion, cancellation and serving behavior.
+Mooncake Transfer Engine is the sole production remote-movement backend. It
+contributes Segment/BatchTransfer, multi-NIC topology selection, endpoint
+pooling, and rail failover. Mooncake Store Master is not OrbitKV's
+semantic authority: bundle completeness, leases, generations, and planning
+remain in OrbitKV.
 
-Only reviewed model measurements enter [results](../results/README.md).
-Compiler timings and kernel diagnostics remain distinct from serving performance.
-The [roadmap](roadmap.md) tracks remaining qualification and optimization work.
+## SGLang integration
+
+### Stage 1: HiCache L3 backend
+
+Implement `orbitkv.sglang.OrbitKVHiCacheStorage` against SGLang's dynamic
+`HiCacheStorage` interface. It must support `batch_exists_v2`, `batch_get_v2`,
+`batch_set_v2`, and named auxiliary pools. SGLang remains owner of GPU and host
+allocation in this stage.
+With the pinned SGLang `v0.5.20` API, `batch_exists_v2` can return
+`restorable_prefix_pages`; OrbitKV must preserve this set when auxiliary pools
+use trailing-page hit policies, rather than flattening it to one hit count.
+
+The host pool must use SGLang's shared-memory allocator. The Cache Manager maps that
+same memory; it must not allocate a second DRAM copy.
+
+### Stage 2: Radix lifecycle bridge
+
+Publish prefix materialization, match, release, promotion, demotion, and removal
+events from RadixAttention. OrbitKV uses the events to maintain a global replica
+index and estimate next touch. It does not maintain a competing radix tree.
+
+### Stage 3: page authority
+
+Radix nodes consume generation-qualified OrbitKV page handles. This is the point
+where OrbitKV may truthfully become the sole authority for page identity and
+safe reuse.
+
+## Safety invariant
+
+A physical generation may be reused only when both conditions hold:
+
+```text
+SemanticDead(page, semantic_frontier)
+and
+ExecutionComplete(page, execution_frontier)
+```
+
+Semantic death proves that no future legal execution can read the state.
+Execution completion proves that no submitted CUDA, SSD, or network operation
+still references the generation. A lease or refcount supplies execution
+evidence; it does not by itself prove semantic death.
+
+The descriptor arena validates its slot generation and Cache Manager session epoch,
+and vLLM pins save-source blocks until Publish returns. These checks do not
+yet validate a framework HBM page's reuse generation. `LocalPageRef` defines
+the future contract, but current Publish still carries raw block IDs;
+generation enforcement requires page-lifecycle information from the adapter
+before a stale ID can be rejected at the Cache Manager boundary.
+
+## Multi-node cache path and deployment
+
+Today, `orbitkv-metaserver` is a separate in-memory gRPC service. A Cache Manager
+registers sealed block hashes asynchronously and heartbeats its node session.
+After a local miss, it queries the service for candidate owners. A selected
+source Cache Manager authorizes and pins its blocks through gRPC, then Mooncake reads
+the bytes into the destination's pinned memory. The destination can cache that
+replica and restore it to framework HBM through its normal cache API. Network
+gRPC carries control metadata and leases; Mooncake carries KV bytes. Mooncake's
+P2P handshake supplies transport endpoint metadata, not KV ownership.
+
+The present catalog is soft state, has no replicated persistence, and does not
+backfill all resident keys after a metadata-service restart. It is therefore a
+single-node failure and remote-hit-rate risk, even though local cache hits can
+continue without it. Before declaring distributed cache production-ready, add
+resident-inventory replay with a catalog epoch, bounded batched lookup and a
+Cache Manager-side candidate cache; verify behavior across service restart, node
+failure, and stale transfer capabilities.
+
+The next deployment shape keeps one Cache Manager per inference node and uses a
+separately deployed replica directory for discovery. Keep etcd, if adopted, for
+small strongly consistent membership/configuration and directory epochs, not
+for per-block reads or writes. The block catalog itself can remain a purpose-
+built soft-state service with sharded replicas and Cache Manager-local snapshots.
+Only a verified remote miss needs a control-plane round trip; the source
+Cache Manager remains the authority for an actual transfer. The router can later
+consume the same catalog without entering the cache data path. This is a
+design target, not current implementation.
+
+## Planning direction
+
+The target optimization problem is Minimum Persistent State Realization: find
+the smallest complete `StateBundle` that can resume legal execution, then choose
+its physical realization. The planner compares:
+
+```text
+queue delay
++ missing-state recomputation
++ restore time by tier and topology
++ transfer queueing
++ destination eviction externality
++ replica failure risk
+```
+
+It returns a worker plus a physical plan: source replica, restore or recompute,
+target tier, prefetch deadline, eviction set, and replication action. Dynamo's
+KV-aware worker scorer is the routing baseline, not the final planner.
+
+## Ownership boundary by milestone
+
+| Milestone | Framework owns | OrbitKV owns |
+| --- | --- | --- |
+| M0 | local page identity and execution | external replicas and current data plane |
+| M1 | GPU + host pages | L3 storage, remote replicas, bundle query |
+| M2 | GPU pages | shared host pages, L3, transfers |
+| M3 | execution and local page identity | replica catalog, routing, and restore plans |
+| M4 | execution and radix topology | page identity, generations, and all placements |
+| M5+ | execution | semantic lifetime and compiled physical plans |

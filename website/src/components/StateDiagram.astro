@@ -1,8 +1,8 @@
 <figure class="state-diagram">
-  <div class="diagram-label">Semantics → state + execution</div>
+  <div class="diagram-label">SGLang → semantic state plan</div>
   <div class="model-sheet">
-    <span class="diagram-label">Input</span>
-    <strong>Model semantics</strong>
+    <span class="diagram-label">Serving runtime</span>
+    <strong>SGLang + workload</strong>
     <span class="model-rule"></span>
     <span class="model-rule short"></span>
   </div>
@@ -17,13 +17,13 @@
   </svg>
   <div class="diagram-branches">
     <div class="state-sheet">
-      <span class="diagram-label">OrbitKV</span>
+      <span class="diagram-label">Lifetime plan</span>
       <strong>
-        STATE
+        LIVE
         <br />
         PLAN
       </strong>
-      <span class="diagram-detail">Lifetimes &amp; arenas</span>
+      <span class="diagram-detail">Semantics &amp; frontiers</span>
       <div class="page-blocks" aria-hidden="true">
         <i></i>
         <i></i>
@@ -32,13 +32,13 @@
       </div>
     </div>
     <div class="program-sheet">
-      <span class="diagram-label">OrbitKV compiler</span>
+      <span class="diagram-label">Physical plan</span>
       <strong>
-        CUDA
+        PLACE
         <br />
-        PROGRAM
+        &amp; MOVE
       </strong>
-      <span class="diagram-detail">Generated + providers</span>
+      <span class="diagram-detail">HBM · DRAM · SSD · RDMA</span>
       <div class="program-blocks" aria-hidden="true">
         <i></i>
         <i></i>
@@ -55,8 +55,8 @@
     <path d="M95 0V20H305V0M200 20V42m-5-6 5 5 5-5" />
   </svg>
   <div class="runtime-sheet">
-    <strong>ONE RUNTIME.</strong>
-    <span class="diagram-label">Own · execute · reuse</span>
+    <strong>ORBITKV DATA PLANE.</strong>
+    <span class="diagram-label">Own · place · reuse</span>
   </div>
-  <figcaption>State contracts bind the program to its memory.</figcaption>
+  <figcaption>State semantics determine what survives and where.</figcaption>
 </figure>

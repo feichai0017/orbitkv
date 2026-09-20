@@ -9,7 +9,7 @@ export default defineConfig({
   base,
   output: "static",
   trailingSlash: "always",
-  redirects: { "/evidence/": `${base}/models/` },
+  redirects: { "/evidence/": `${base}/integration/` },
   vite: {
     define: {
       "import.meta.env.PUBLIC_SOURCE_REF": JSON.stringify(sourceRevision),

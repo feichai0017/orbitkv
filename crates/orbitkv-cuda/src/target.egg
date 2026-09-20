@@ -1,4 +1,0 @@
-; Populated from the context that owns the execution stream. No assumed GPU.
-(function cuda-target-major () i64 :no-merge)
-(function cuda-target-minor () i64 :no-merge)
-(function cuda-target-sm-count () i64 :no-merge)

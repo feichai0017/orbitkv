@@ -1,0 +1,104 @@
+"""Typed definitions for the two kv_transfer_params formats in P/D push.
+
+Router → D (consumer):  ConsumerKvParams  — "do a remote prefill for this request"
+D → P (producer):       ProducerKvParams  — "run prefill and push KV back via Mooncake"
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from orbitkv.pd_connector.metadata import (
+    PdHandshake,
+    handshake_to_compact_dict,
+    handshakes_from_dicts,
+)
+
+
+@dataclass(frozen=True)
+class ConsumerKvParams:
+    """Router → D: tells Decode to wait for a remote prefill."""
+
+    prefill_url: str
+    remote_request_id: str = ""
+    done_request_id: str = ""
+    prefill_max_tokens: int = 1
+    proxy_start_ts_ns: int = 0
+
+    def __post_init__(self) -> None:
+        if self.prefill_max_tokens <= 0:
+            raise ValueError("prefill_max_tokens must be positive")
+        if self.proxy_start_ts_ns < 0:
+            raise ValueError("proxy_start_ts_ns must be non-negative")
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"do_remote_prefill": True, "prefill_url": self.prefill_url}
+        if self.remote_request_id:
+            d["remote_request_id"] = self.remote_request_id
+        if self.done_request_id:
+            d["done_request_id"] = self.done_request_id
+        d["prefill_max_tokens"] = self.prefill_max_tokens
+        if self.proxy_start_ts_ns:
+            d["proxy_start_ts_ns"] = self.proxy_start_ts_ns
+        return d
+
+
+@dataclass(frozen=True)
+class ProducerKvParams:
+    """D → P: tells Prefill to run prefill and push KV to D via Mooncake."""
+
+    target_engine_id: str
+    target_request_id: str
+    handshakes: tuple[PdHandshake, ...] = ()
+    consumer_abort_returns_ack: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "do_remote_prefill_sender": True,
+            "target_engine_id": self.target_engine_id,
+            "target_request_id": self.target_request_id,
+        }
+        if self.handshakes:
+            result["pd_handshakes"] = [
+                handshake_to_compact_dict(handshake) for handshake in self.handshakes
+            ]
+        if self.consumer_abort_returns_ack:
+            result["pd_consumer_abort_returns_ack"] = True
+        return result
+
+
+def parse_consumer(params: dict[str, Any]) -> ConsumerKvParams | None:
+    if not params.get("do_remote_prefill"):
+        return None
+    prefill_url = params.get("prefill_url")
+    if not prefill_url:
+        return None
+    raw_prefill_max_tokens = params.get("prefill_max_tokens", 1)
+    return ConsumerKvParams(
+        prefill_url=str(prefill_url),
+        remote_request_id=str(params.get("remote_request_id") or ""),
+        done_request_id=str(params.get("done_request_id") or ""),
+        prefill_max_tokens=int(raw_prefill_max_tokens),
+        proxy_start_ts_ns=int(params.get("proxy_start_ts_ns") or 0),
+    )
+
+
+def parse_producer(params: dict[str, Any]) -> ProducerKvParams | None:
+    if not params.get("do_remote_prefill_sender"):
+        return None
+    handshakes = handshakes_from_dicts(params.get("pd_handshakes"))
+    return ProducerKvParams(
+        target_engine_id=str(params.get("target_engine_id") or ""),
+        target_request_id=str(params.get("target_request_id") or ""),
+        handshakes=handshakes,
+        consumer_abort_returns_ack=bool(params.get("pd_consumer_abort_returns_ack")),
+    )
+
+
+def is_consumer(params: dict[str, Any]) -> bool:
+    return bool(params.get("do_remote_prefill"))
+
+
+def is_producer(params: dict[str, Any]) -> bool:
+    return bool(params.get("do_remote_prefill_sender"))

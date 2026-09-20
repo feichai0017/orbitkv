@@ -1,0 +1,27 @@
+[package]
+name = "orbitkv-local"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Versioned local control transport for OrbitKV Cache Managers"
+
+[lints]
+workspace = true
+
+[dependencies]
+iceoryx2.workspace = true
+memmap2.workspace = true
+rustix.workspace = true
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "orbitkv-local-echo"
+path = "src/bin/echo.rs"
+
+[[bin]]
+name = "orbitkv-local-bench"
+path = "src/bin/bench.rs"

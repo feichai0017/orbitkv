@@ -1,0 +1,114 @@
+use std::time::{Duration, Instant};
+
+use orbitkv_core::sync_state::{LOAD_STATE_ERROR, LOAD_STATE_SUCCESS};
+use orbitkv_core::*;
+
+pub const LOAD_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Default test pool size: 16 MB — enough for test blocks, small enough to be fast.
+const DEFAULT_TEST_POOL_SIZE: usize = 16 << 20;
+
+pub fn test_engine_with_pool(pool_size: usize, config: StorageConfig) -> OrbitKVEngine {
+    OrbitKVEngine::new_with_config(pool_size, false, config).expect("test engine should start")
+}
+
+/// Layer registration info for batch registration.
+pub struct LayerInfo {
+    pub name: String,
+    pub gpu_ptr: u64,
+    pub total_size: usize,
+    pub num_blocks: usize,
+    pub block_size: usize,
+    pub kv_stride: usize,
+    pub segments: usize,
+    /// Hybrid-cache storage group id; 0 is the default attention group.
+    pub group: u32,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "test registration helper mirrors the production batch registration API"
+)]
+pub fn register_layers(
+    engine: &OrbitKVEngine,
+    instance_id: &str,
+    namespace: &str,
+    layers: &[LayerInfo],
+    device_id: i32,
+    tp_rank: usize,
+    pp_rank: usize,
+    tp_size: usize,
+    world_size: usize,
+    transfer_mode: TransferMode,
+    page_first: bool,
+) {
+    let layer_names: Vec<String> = layers.iter().map(|l| l.name.clone()).collect();
+    let gpu_ptrs: Vec<u64> = layers.iter().map(|l| l.gpu_ptr).collect();
+    let total_sizes: Vec<usize> = layers.iter().map(|l| l.total_size).collect();
+    let num_blocks_list: Vec<usize> = layers.iter().map(|l| l.num_blocks).collect();
+    let block_sizes: Vec<usize> = layers.iter().map(|l| l.block_size).collect();
+    let kv_strides: Vec<usize> = layers.iter().map(|l| l.kv_stride).collect();
+    let segments: Vec<usize> = layers.iter().map(|l| l.segments).collect();
+    let group_ids: Vec<u32> = layers.iter().map(|l| l.group).collect();
+
+    engine
+        .register_context_layer_batch_strided(
+            instance_id,
+            namespace,
+            device_id,
+            tp_rank,
+            pp_rank,
+            tp_size,
+            world_size,
+            &layer_names,
+            &gpu_ptrs,
+            &total_sizes,
+            &num_blocks_list,
+            &block_sizes,
+            &kv_strides,
+            &segments,
+            None,
+            Some(&group_ids),
+            transfer_mode,
+            page_first,
+        )
+        .expect("register_context_layer_batch");
+}
+
+/// Fill `host_data` with a deterministic pattern: block i = byte (i+1) repeated.
+pub fn fill_test_pattern(host_data: &mut [u8], block_size: usize) {
+    assert_eq!(
+        host_data.len() % block_size,
+        0,
+        "host_data must contain full blocks"
+    );
+    for (i, block) in host_data.chunks_exact_mut(block_size).enumerate() {
+        let fill = ((i % 251) + 1) as u8;
+        block.fill(fill);
+    }
+}
+
+pub fn make_block_hashes(num_blocks: usize, salt: u8) -> Vec<Vec<u8>> {
+    (0..num_blocks)
+        .map(|idx| {
+            let mut hash = Vec::with_capacity(5);
+            hash.push(salt);
+            hash.extend_from_slice(&(idx as u32).to_le_bytes());
+            hash
+        })
+        .collect()
+}
+
+/// Poll `LoadState::get()` until success or timeout.
+pub async fn wait_for_load(load_state: &LoadState, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let state = load_state.get();
+        if state == LOAD_STATE_SUCCESS {
+            return;
+        }
+        assert!(state != LOAD_STATE_ERROR, "load reported ERROR");
+        assert!(Instant::now() < deadline, "timed out waiting for load");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}

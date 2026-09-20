@@ -1,4 +1,0 @@
-
-(relation cuda-attention-causal-window (AttentionMask f64))
-(relation cuda-attention-provider (String String i64 f64))
-(relation cuda-attention-target (String))

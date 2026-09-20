@@ -1,4 +1,0 @@
-(cuda-attention-causal-window (CausalAttention) -1.0)
-             (rule ((= ?mask (SlidingAttention ?left)) (>= ?left 0) (<= ?left {}))
-                ((cuda-attention-causal-window ?mask (to-f64 ?left)))
-                :ruleset matmul_backend :name "{} causal window ABI")

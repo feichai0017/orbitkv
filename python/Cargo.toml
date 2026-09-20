@@ -1,0 +1,41 @@
+[package]
+name = "orbitkv-py"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "orbitkv"
+crate-type = ["cdylib"]
+
+# Cache Manager binary included in the wheel by maturin.
+[[bin]]
+name = "orbitkv-cache-manager-py"
+path = "src/bin/cache_manager.rs"
+
+# Binary for orbitkv-metaserver (will be included in wheel by maturin)
+[[bin]]
+name = "orbitkv-metaserver-py"
+path = "src/bin/metaserver.rs"
+
+[features]
+default = ["cuda-12", "mooncake"]
+cuda-12 = ["orbitkv-core/cuda-12", "orbitkv-server/cuda-12", "orbitkv-transfer?/cuda-12"]
+cuda-13 = ["orbitkv-core/cuda-13", "orbitkv-server/cuda-13", "orbitkv-transfer?/cuda-13"]
+mooncake = ["dep:orbitkv-transfer", "orbitkv-core/mooncake", "orbitkv-server/mooncake"]
+
+[dependencies]
+pyo3 = { workspace = true, features = ["extension-module"] }
+orbitkv-common.workspace = true
+orbitkv-core = { workspace = true, default-features = false }
+orbitkv-local.workspace = true
+orbitkv-proto = { path = "../crates/orbitkv-proto" }
+orbitkv-server = { path = "../crates/orbitkv-server", default-features = false }
+orbitkv-metaserver = { path = "../crates/orbitkv-metaserver", default-features = false }
+orbitkv-transfer = { workspace = true, optional = true }
+tokio.workspace = true
+prost.workspace = true

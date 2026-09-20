@@ -1,6 +1,0 @@
-{includes}
-{dyn_defines}
-extern "C" {{
-    __global__ void fused_region_k({signature}{dyn_dims_param}) {{
-{body}    }}
-}}

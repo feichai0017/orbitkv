@@ -1,0 +1,60 @@
+[package]
+name = "orbitkv-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+default-run = "orbitkv-cache-manager"
+
+[lints]
+workspace = true
+
+[features]
+default = ["cuda-12", "mooncake"]
+cuda-12 = ["orbitkv-core/cuda-12"]
+cuda-13 = ["orbitkv-core/cuda-13"]
+mooncake = ["orbitkv-core/mooncake"]
+tracing = ["fastrace", "orbitkv-core/tracing"]
+
+[lib]
+name = "orbitkv_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "orbitkv-cache-manager"
+path = "src/main.rs"
+
+[dependencies]
+orbitkv-common.workspace = true
+orbitkv-core = { workspace = true, default-features = false }
+orbitkv-local.workspace = true
+orbitkv-proto = { path = "../orbitkv-proto" }
+pyo3 = { workspace = true, features = ["auto-initialize"] }
+cudarc.workspace = true
+tonic.workspace = true
+prost.workspace = true
+tokio.workspace = true
+clap.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+dashmap.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio-stream.workspace = true
+uuid.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry-prometheus.workspace = true
+prometheus.workspace = true
+tikv-jemallocator.workspace = true
+fastrace = { workspace = true, features = ["enable"], optional = true }
+thiserror = "2"
+
+[dev-dependencies]
+orbitkv-metaserver = { path = "../orbitkv-metaserver", default-features = false }
+
+[build-dependencies]
+pyo3-build-config.workspace = true

@@ -1,9 +1,0 @@
-{includes}
-{dyn_defines}
-extern "C" {{
-    __global__ void cast_k({out_dtype} *out, const {in_dtype} *in{dyn_dims_param}) {{
-        long long const_z = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-        if (const_z >= {size}) return;
-        out[const_z] = ({out_dtype})in[const_z];
-    }}
-}}

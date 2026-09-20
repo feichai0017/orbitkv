@@ -1,0 +1,827 @@
+"""D-side worker logic for receiving KV through Mooncake."""
+
+from __future__ import annotations
+
+import threading
+import time
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
+
+from orbitkv.logging_utils import get_connector_logger
+from orbitkv.pd_connector.async_runner import AsyncTaskPool
+from orbitkv.pd_connector.layout import KvCacheLayout
+from orbitkv.pd_connector.layout_mapping import (
+    decode_rank_source_counts,
+)
+from orbitkv.pd_connector.metadata import (
+    BlockIds,
+    LayerRemoteLayout,
+    PdHandshake,
+    WaitReqMeta,
+    flatten_block_ids,
+    layer_layout_to_compact_dict,
+)
+from orbitkv.pd_connector.mooncake import MooncakePort
+from orbitkv.pd_connector.prefill import AsyncPrefillSender, PrefillHttpTask
+
+if TYPE_CHECKING:
+    from orbitkv.pd_connector.worker import PdWorkerBase
+
+from orbitkv.pd_connector.config import extra_config_value
+
+logger = get_connector_logger()
+
+
+class _DecodeWaitState:
+    """Thread-safe bookkeeping for in-flight decode receives.
+
+    Groups the seven request-tracking collections that the Mooncake waiter and
+    prefill-sender callbacks mutate concurrently with the vLLM forward thread,
+    behind a single lock (the original ``DecodeHandler._lock``).
+
+    Failure marking writes the three failure channels together, but they are
+    drained by *different* vLLM callbacks (``get_finished`` /
+    ``build_connector_worker_meta`` / ``get_block_ids_with_load_errors``), so
+    they remain separate collections rather than one merged set.
+    """
+
+    def __init__(self, metrics: Any) -> None:
+        self._metrics = metrics
+        self._lock = threading.Lock()
+        self.wait_reqs: dict[str, WaitReqMeta] = {}
+        self.aborted_waits: set[str] = set()
+        self.failed_recving: set[str] = set()
+        self.failed_recving_for_meta: set[str] = set()
+        self.failed_block_ids: set[int] = set()
+        self.finished_aborted_recving: set[str] = set()
+        self.finished_transfer_waits: set[str] = set()
+
+    # -- registration / completion -----------------------------------------
+
+    def has_wait(self, req_id: str) -> bool:
+        with self._lock:
+            return req_id in self.wait_reqs
+
+    def register_wait(self, req_id: str, req: WaitReqMeta) -> None:
+        with self._lock:
+            self.wait_reqs[req_id] = req
+            self._metrics.set_decode_active_waits(len(self.wait_reqs))
+
+    def mark_aborted(self, req_id: str) -> WaitReqMeta | None:
+        with self._lock:
+            req = self.wait_reqs.get(req_id)
+            if req is not None:
+                self.aborted_waits.add(req_id)
+                self._metrics.record_decode_abort()
+            return req
+
+    def finish_recving_one(self, req_id: str) -> tuple[WaitReqMeta | None, bool, bool]:
+        with self._lock:
+            req = self.wait_reqs.pop(req_id, None)
+            was_aborted = req_id in self.aborted_waits
+            self.aborted_waits.discard(req_id)
+            self._metrics.set_decode_active_waits(len(self.wait_reqs))
+            is_failed = req_id in self.failed_recving
+            return req, was_aborted, is_failed
+
+    def record_transfer_done(self, req_id: str) -> WaitReqMeta | None:
+        with self._lock:
+            if req_id not in self.wait_reqs:
+                return None
+            self.finished_transfer_waits.add(req_id)
+            return self.wait_reqs[req_id]
+
+    # -- failure paths ------------------------------------------------------
+
+    def _mark_failed_unlocked(self, req_id: str, req: WaitReqMeta) -> set[int]:
+        failed_blocks = flatten_block_ids(req.local_block_ids)
+        self.failed_recving.add(req_id)
+        self.failed_recving_for_meta.add(req_id)
+        self.failed_block_ids.update(failed_blocks)
+        self.aborted_waits.discard(req_id)
+        self.finished_transfer_waits.discard(req_id)
+        self.finished_aborted_recving.discard(req_id)
+        self.wait_reqs.pop(req_id, None)
+        self._metrics.set_decode_active_waits(len(self.wait_reqs))
+        return failed_blocks
+
+    def mark_prefill_failed(
+        self, remote_request_id: str
+    ) -> tuple[str, WaitReqMeta, set[int]] | None:
+        with self._lock:
+            for req_id, req in list(self.wait_reqs.items()):
+                if req.remote_request_id != remote_request_id:
+                    continue
+                failed_blocks = self._mark_failed_unlocked(req_id, req)
+                return req_id, req, failed_blocks
+        return None
+
+    def mark_wait_failed(self, req_id: str) -> tuple[str, WaitReqMeta | None, set[int] | None]:
+        """Returns (kind, req, failed_blocks) where kind is one of
+        ``"unknown"`` / ``"aborted_finished"`` / ``"failed"``."""
+        with self._lock:
+            req = self.wait_reqs.get(req_id)
+            if req is None:
+                return "unknown", None, None
+            if req_id in self.aborted_waits:
+                self.wait_reqs.pop(req_id, None)
+                self.aborted_waits.discard(req_id)
+                self.finished_aborted_recving.add(req_id)
+                self._metrics.set_decode_active_waits(len(self.wait_reqs))
+                return "aborted_finished", req, None
+            failed_blocks = self._mark_failed_unlocked(req_id, req)
+            return "failed", req, failed_blocks
+
+    # -- drains (one per consuming vLLM callback) --------------------------
+
+    def drain_finished_aborted_recving(self) -> set[str]:
+        with self._lock:
+            finished = self.finished_aborted_recving
+            self.finished_aborted_recving = set()
+            return finished
+
+    def drain_finished_transfer_waits(self) -> set[str]:
+        with self._lock:
+            finished = self.finished_transfer_waits
+            self.finished_transfer_waits = set()
+            return finished
+
+    def drain_failed_recving(self) -> set[str]:
+        with self._lock:
+            failed = self.failed_recving
+            self.failed_recving = set()
+            return failed
+
+    def drain_failed_recving_for_meta(self) -> set[str]:
+        with self._lock:
+            failed = self.failed_recving_for_meta
+            self.failed_recving_for_meta = set()
+            return failed
+
+    def drain_failed_block_ids(self) -> set[int]:
+        with self._lock:
+            failed = self.failed_block_ids
+            self.failed_block_ids = set()
+            return failed
+
+    # -- lifecycle ----------------------------------------------------------
+
+    def is_idle(self) -> bool:
+        with self._lock:
+            return (
+                not self.wait_reqs
+                and not self.failed_recving
+                and not self.failed_block_ids
+                and not self.finished_aborted_recving
+                and not self.finished_transfer_waits
+            )
+
+    def clear(self) -> None:
+        with self._lock:
+            self.wait_reqs.clear()
+            self.failed_recving.clear()
+            self.failed_recving_for_meta.clear()
+            self.failed_block_ids.clear()
+            self.aborted_waits.clear()
+            self.finished_aborted_recving.clear()
+            self.finished_transfer_waits.clear()
+
+    def request_ids(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(self.wait_reqs)
+
+
+class _DecodePeerState:
+    """Peer tensor-parallel topology and notification counts for decode.
+
+    After ``register_kv_caches`` the decode worker all-gathers every peer rank's
+    KV layouts and memory-region descriptors, then derives per-rank layer
+    templates and expected Mooncake notification counts used to build wait
+    handshakes.
+
+    Single-threaded: populated during registration and read while building
+    handshakes on the forward thread; no locking needed.
+    """
+
+    def __init__(self, worker: PdWorkerBase) -> None:
+        self._w = worker
+        self.layouts: dict[int, dict[str, KvCacheLayout]] = {}
+        self.transfer_endpoints: dict[int, str] = {}
+        self.layer_templates: dict[int, tuple[dict[str, Any], ...]] = {}
+        self.expected_notify_counts: dict[int, int] = {}
+
+    @property
+    def block_size(self) -> int:
+        return next(iter(self._w.layouts.values())).block_size
+
+    def gather(self) -> None:
+        assert self._w.transfer is not None
+        transfer_endpoint = self._w.transfer.endpoint()
+        if self._w.tp_size <= 1:
+            self.layouts = {0: self._w.layouts}
+            self.transfer_endpoints = {0: transfer_endpoint}
+            self._refresh_layer_templates()
+            return
+        try:
+            gathered = _all_gather_peer_info(self._w.layouts, transfer_endpoint, self._w.tp_size)
+        except Exception:
+            logger.warning(
+                "[PdConnector] all_gather_object unavailable, rank 0 dispatch limited to local rank",
+            )
+            self.layouts = {self._w.tp_rank: self._w.layouts}
+            self.transfer_endpoints = {self._w.tp_rank: transfer_endpoint}
+            self._refresh_layer_templates()
+            return
+        for rank, (layouts, endpoint) in enumerate(gathered):
+            self.layouts[rank] = layouts
+            self.transfer_endpoints[rank] = endpoint
+        self._refresh_layer_templates()
+
+    def expected_notify_count(self, rank: int) -> int:
+        if not self.expected_notify_counts:
+            self._refresh_expected_notify_counts()
+        return self.expected_notify_counts.get(rank, 1)
+
+    def local_expected_notify_count(self) -> int:
+        return self.expected_notify_count(self._w.tp_rank)
+
+    def build_all_rank_handshake_dicts(
+        self,
+        req_id: str,
+        block_ids: BlockIds,
+    ) -> list[dict[str, Any]]:
+        result = []
+        block_size = self.block_size
+        # Iterate the ranks actually gathered rather than range(tp_size): in the
+        # all_gather fallback gather() populates only the local rank, and the
+        # warning there promises dispatch is limited to it. range(tp_size) would
+        # KeyError on the missing peers and contradict that promise.
+        for rank in sorted(self.layer_templates):
+            layers = []
+            for layer in self.layer_templates[rank]:
+                layer_name = str(layer["layer_name"])
+                layer_block_ids = self._w.block_ids_for_layer(block_ids, layer_name)
+                if not layer_block_ids:
+                    continue
+                layer_dict = dict(layer)
+                layer_dict["block_ids"] = sorted(layer_block_ids)
+                layers.append(layer_dict)
+            assert layers, f"PdConnector D wait req={req_id} has no local KV blocks"
+            block_ids_by_layer = [tuple(layer["block_ids"]) for layer in layers]
+            shared_block_ids = block_ids_by_layer[0]
+            compact = all(ids == shared_block_ids for ids in block_ids_by_layer)
+            if compact:
+                payload_layers = [
+                    {key: value for key, value in layer.items() if key != "block_ids"}
+                    for layer in layers
+                ]
+            else:
+                payload_layers = layers
+            payload: dict[str, Any] = {
+                "request_id": req_id,
+                "engine_id": self._w.engine_id,
+                "transfer_endpoint": self.transfer_endpoints[rank],
+                "tp_rank": rank,
+                "tp_size": self._w.tp_size,
+                "block_size": block_size,
+                "layers": payload_layers,
+                "expected_notify_count": self.expected_notify_count(rank),
+            }
+            if compact:
+                payload["block_ids"] = list(shared_block_ids)
+            result.append(payload)
+        return result
+
+    def _refresh_layer_templates(self) -> None:
+        self.layer_templates = {}
+        for rank, peer_layouts in self.layouts.items():
+            layers = []
+            for layer_idx, name in enumerate(self._w.layer_names):
+                layer = peer_layouts[name].remote_layout(layer_idx, (0,))
+                layers.append(layer_layout_to_compact_dict(layer))
+            self.layer_templates[rank] = tuple(layers)
+        self._refresh_expected_notify_counts()
+
+    def _refresh_expected_notify_counts(self) -> None:
+        if self._w.use_mla:
+            self.expected_notify_counts = dict.fromkeys(range(self._w.tp_size), 1)
+            return
+
+        local_layout = self.layouts.get(self._w.tp_rank, self._w.layouts)
+        first_layout = next(iter(local_layout.values()))
+        remote_heads = int(getattr(first_layout, "num_kv_heads", 1))
+        prefill_tp_size = int(
+            extra_config_value(
+                self._w.vllm_config,
+                "orbitkv.pd.prefill_tp_size",
+                self._w.tp_size,
+            )
+            or self._w.tp_size
+        )
+        total_heads = _total_num_kv_heads_from_config(self._w.vllm_config)
+        if total_heads is None:
+            total_heads = remote_heads * self._w.tp_size
+        local_heads = _ceil_div(total_heads, prefill_tp_size)
+        source_counts = decode_rank_source_counts(
+            prefill_tp_size=prefill_tp_size,
+            decode_tp_size=self._w.tp_size,
+            local_num_kv_heads=local_heads,
+            remote_num_kv_heads=remote_heads,
+            total_num_kv_heads=total_heads,
+            use_mla=False,
+        )
+        self.expected_notify_counts = {
+            rank: source_counts.get(rank, 1) for rank in range(self._w.tp_size)
+        }
+
+
+class DecodeHandler:
+    """Handles D-side requests: Mooncake receive, handshake, prefill dispatch."""
+
+    def __init__(
+        self,
+        worker: PdWorkerBase,
+        prefill_sender: Any | None = None,
+    ) -> None:
+        self._w = worker
+        self._state = _DecodeWaitState(worker.metrics)
+        self._peers = _DecodePeerState(worker)
+        self._transfer_waiter: _AsyncTransferDoneWaiter | None = (
+            _AsyncTransferDoneWaiter(
+                worker.transfer,
+                failure_callback=self._mark_wait_failed,
+                success_callback=self._record_transfer_wait_done,
+            )
+            if worker.transfer is not None
+            else None
+        )
+        prefill_sender_worker_count = int(
+            extra_config_value(
+                worker.vllm_config,
+                "orbitkv.pd.prefill_sender_worker_count",
+                16,
+            )
+        )
+        self._prefill_sender = prefill_sender or AsyncPrefillSender(
+            worker_count=prefill_sender_worker_count,
+            failure_callback=self._mark_prefill_failed,
+        )
+
+    def init_transfer_waiter(self) -> None:
+        """Called after Mooncake port is built (during register_kv_caches)."""
+        if self._transfer_waiter is None and self._w.transfer is not None:
+            self._transfer_waiter = _AsyncTransferDoneWaiter(
+                self._w.transfer,
+                failure_callback=self._mark_wait_failed,
+                success_callback=self._record_transfer_wait_done,
+            )
+
+    def gather_peer_info(self) -> None:
+        self._peers.gather()
+
+    def process_wait_reqs(self, reqs_to_wait: dict[str, WaitReqMeta]) -> None:
+        assert self._w.transfer is not None, "PdConnector Mooncake port is not initialized"
+        assert self._transfer_waiter is not None, "PdConnector Mooncake waiter is not initialized"
+        for req_id, req in reqs_to_wait.items():
+            if self._state.has_wait(req_id):
+                logger.info("[PdConnector] D wait req=%s already registered", req_id)
+                continue
+            process_ts_ns = time.time_ns()
+            self._state.register_wait(req_id, req)
+            block_ids = flatten_block_ids(req.local_block_ids)
+            wait_handshake = self._build_wait_handshake(
+                req.done_request_id,
+                req.local_block_ids,
+            )
+            self._w.transfer.open_request(req_id, wait_handshake)
+            local_block_count = len(block_ids)
+            waiter_queued_ts_ns = time.time_ns()
+            self._transfer_waiter.submit(
+                _TransferWaitTask(
+                    req_id=req_id,
+                    generation=0,
+                    remote_request_id=req.remote_request_id,
+                    done_request_id=req.done_request_id,
+                    prefill_url=req.prefill_url,
+                    rank=self._w.tp_rank,
+                    block_count=local_block_count,
+                    queued_ts_ns=waiter_queued_ts_ns,
+                )
+            )
+            queued_ts_ns = time.time_ns()
+            logger.info(
+                "[PdConnector] D queued async wait req=%s remote_req=%s prefill_url=%s rank=%d blocks=%d "
+                "proxy_to_worker_ms=%.3f matched_to_worker_ms=%.3f scheduler_wait_to_worker_ms=%.3f "
+                "open_request_ms=%.3f ts_ns=%d",
+                req_id,
+                req.remote_request_id,
+                req.prefill_url or "<oob>",
+                self._w.tp_rank,
+                local_block_count,
+                _elapsed_ms(req.proxy_start_ts_ns, queued_ts_ns),
+                _elapsed_ms(req.matched_ts_ns, queued_ts_ns),
+                _elapsed_ms(req.scheduler_wait_ts_ns, queued_ts_ns),
+                _elapsed_ms(process_ts_ns, queued_ts_ns),
+                queued_ts_ns,
+            )
+            if req.prefill_url and self._w.tp_rank == 0:
+                self._dispatch_prefill(req, req.local_block_ids)
+
+    def release(self, req_id: str) -> None:
+        req = self._state.mark_aborted(req_id)
+        cancel_prefill = getattr(self._prefill_sender, "cancel", None)
+        if req is not None and cancel_prefill is not None:
+            cancel_prefill(req.remote_request_id)
+
+    def finish_recving(self, finished_recving: set[str]) -> None:
+        for req_id in finished_recving:
+            req, was_aborted, is_failed = self._state.finish_recving_one(req_id)
+            if req is not None and not was_aborted:
+                self._w.metrics.record_decode_wait(
+                    duration_s=_elapsed_seconds(req.scheduler_wait_ts_ns, time.time_ns()),
+                    transfer_wait_s=None,
+                    blocks=len(flatten_block_ids(req.local_block_ids)),
+                    success=not is_failed,
+                )
+            self._w.transfer.close_request(req_id)
+
+    def pop_finished_aborted_recving(self) -> set[str]:
+        return self._state.drain_finished_aborted_recving()
+
+    def pop_finished_transfer_waits(self) -> set[str]:
+        return self._state.drain_finished_transfer_waits()
+
+    def pop_failed_recving(self) -> set[str]:
+        return self._state.drain_failed_recving()
+
+    def pop_failed_recving_for_meta(self) -> set[str]:
+        return self._state.drain_failed_recving_for_meta()
+
+    def pop_failed_block_ids(self) -> set[int]:
+        return self._state.drain_failed_block_ids()
+
+    def shutdown(self) -> None:
+        active_request_ids = self._state.request_ids()
+        if self._transfer_waiter is not None:
+            for req_id in active_request_ids:
+                self._transfer_waiter.cancel(req_id)
+        if self._w.transfer is not None:
+            for req_id in active_request_ids:
+                self._w.transfer.close_request(req_id)
+        self._state.clear()
+        if self._transfer_waiter is not None:
+            self._transfer_waiter.close()
+        close = getattr(self._prefill_sender, "close", None)
+        if close is not None:
+            close()
+
+    @property
+    def wait_reqs(self) -> dict[str, WaitReqMeta]:
+        return self._state.wait_reqs
+
+    # Backward-compatible field access for tests / worker.py that reach into
+    # the decode handler's internal collections directly.
+    @property
+    def _wait_reqs(self) -> dict[str, WaitReqMeta]:
+        return self._state.wait_reqs
+
+    @_wait_reqs.setter
+    def _wait_reqs(self, value: dict[str, WaitReqMeta]) -> None:
+        self._state.wait_reqs = value
+
+    @property
+    def _finished_transfer_waits(self) -> set[str]:
+        return self._state.finished_transfer_waits
+
+    @property
+    def _peer_layouts(self) -> dict[int, dict[str, KvCacheLayout]]:
+        return self._peers.layouts
+
+    def is_idle(self) -> bool:
+        return self._state.is_idle()
+
+    def _mark_prefill_failed(self, remote_request_id: str, exc: BaseException) -> None:
+        result = self._state.mark_prefill_failed(remote_request_id)
+        if result is None:
+            logger.warning(
+                "[PdConnector] D prefill failed for unknown/finished remote_req=%s: %s",
+                remote_request_id,
+                exc,
+            )
+            return
+        req_id, req, failed_blocks = result
+        self._after_mark_failed(req_id, req, failed_blocks, exc)
+
+    def _mark_wait_failed(self, req_id: str, exc: BaseException) -> None:
+        kind, req, failed_blocks = self._state.mark_wait_failed(req_id)
+        if kind == "unknown":
+            logger.warning(
+                "[PdConnector] D wait failed for unknown/finished req=%s: %s",
+                req_id,
+                exc,
+            )
+            return
+        if kind == "aborted_finished":
+            assert req is not None
+            logger.info(
+                "[PdConnector] D treating aborted wait as finished req=%s remote_req=%s error=%s",
+                req_id,
+                req.remote_request_id,
+                exc,
+            )
+            return
+        assert req is not None and failed_blocks is not None
+        self._after_mark_failed(req_id, req, failed_blocks, exc)
+
+    def _record_transfer_wait_done(self, req_id: str, wait_s: float) -> None:
+        done_ts_ns = time.time_ns()
+        req = self._state.record_transfer_done(req_id)
+        if req is None:
+            return
+        self._w.metrics.record_decode_transfer_wait(wait_s)
+        logger.info(
+            "[PdConnector] D Mooncake wait done req=%s remote_req=%s wait_ms=%.3f proxy_to_transfer_done_ms=%.3f scheduler_wait_to_transfer_done_ms=%.3f ts_ns=%d",
+            req_id,
+            req.remote_request_id,
+            wait_s * 1000,
+            _elapsed_ms(req.proxy_start_ts_ns, done_ts_ns),
+            _elapsed_ms(req.scheduler_wait_ts_ns, done_ts_ns),
+            done_ts_ns,
+        )
+
+    def _after_mark_failed(
+        self,
+        req_id: str,
+        req: WaitReqMeta,
+        failed_blocks: set[int],
+        exc: BaseException,
+    ) -> None:
+        """Side effects after a failure is recorded in state: emit the wait
+        metric, log, and cancel the Mooncake waiter."""
+        self._w.metrics.record_decode_wait(
+            duration_s=_elapsed_seconds(req.scheduler_wait_ts_ns, time.time_ns()),
+            transfer_wait_s=None,
+            blocks=len(failed_blocks),
+            success=False,
+        )
+        logger.error(
+            "[PdConnector] D marked recv failed req=%s remote_req=%s blocks=%d error=%s",
+            req_id,
+            req.remote_request_id,
+            len(failed_blocks),
+            exc,
+        )
+        if self._transfer_waiter is not None:
+            self._transfer_waiter.cancel(req_id)
+
+    def _build_wait_handshake(
+        self,
+        req_id: str,
+        block_ids: BlockIds,
+    ) -> PdHandshake:
+        layers = []
+        for layer_idx, layer_name in enumerate(self._w.layer_names):
+            layer_block_ids = self._w.block_ids_for_layer(block_ids, layer_name)
+            if not layer_block_ids:
+                continue
+            layers.append(
+                self._remote_layout(
+                    layer_name,
+                    layer_idx,
+                    (min(layer_block_ids),),
+                )
+            )
+        assert layers, f"PdConnector D wait req={req_id} has no local KV blocks"
+        return PdHandshake(
+            request_id=req_id,
+            engine_id=self._w.engine_id,
+            transfer_endpoint=self._w.transfer.endpoint(),
+            tp_rank=self._w.tp_rank,
+            tp_size=self._w.tp_size,
+            block_size=self._peers.block_size,
+            layers=tuple(layers),
+            expected_notify_count=self._peers.local_expected_notify_count(),
+        )
+
+    def _dispatch_prefill(
+        self,
+        req: WaitReqMeta,
+        block_ids: BlockIds,
+    ) -> None:
+        started_ts_ns = time.time_ns()
+        all_handshakes = self._peers.build_all_rank_handshake_dicts(
+            req.done_request_id,
+            block_ids,
+        )
+        kv_transfer_params: dict[str, Any] = {
+            "do_remote_prefill_sender": True,
+            "target_engine_id": self._w.engine_id,
+            "target_request_id": req.done_request_id,
+            "pd_handshakes": all_handshakes,
+            "pd_consumer_abort_returns_ack": True,
+        }
+        task = PrefillHttpTask(
+            request_id=req.remote_request_id,
+            prefill_url=req.prefill_url,
+            model=req.model,
+            prompt_token_ids=req.prompt_token_ids,
+            max_tokens=req.prefill_max_tokens,
+            kv_transfer_params=kv_transfer_params,
+        )
+        self._prefill_sender.submit(task)
+        submitted_ts_ns = time.time_ns()
+        self._w.metrics.record_prefill_http_submit(
+            (submitted_ts_ns - started_ts_ns) / 1_000_000_000
+        )
+        logger.info(
+            "[PdConnector] D rank0 dispatched prefill req=%s remote_req=%s ranks=%d blocks=%d "
+            "build_ms=%.3f proxy_to_dispatch_ms=%.3f matched_to_dispatch_ms=%.3f "
+            "scheduler_wait_to_dispatch_ms=%.3f ts_ns=%d",
+            req.remote_request_id,
+            req.done_request_id,
+            len(all_handshakes),
+            len(flatten_block_ids(block_ids)),
+            (submitted_ts_ns - started_ts_ns) / 1_000_000,
+            _elapsed_ms(req.proxy_start_ts_ns, submitted_ts_ns),
+            _elapsed_ms(req.matched_ts_ns, submitted_ts_ns),
+            _elapsed_ms(req.scheduler_wait_ts_ns, submitted_ts_ns),
+            submitted_ts_ns,
+        )
+
+    def _remote_layout(
+        self,
+        layer_name: str,
+        layer_idx: int,
+        block_ids: tuple[int, ...],
+    ) -> LayerRemoteLayout:
+        layout = self._w.layouts[layer_name].remote_layout(layer_idx, block_ids)
+        return layout
+
+
+@dataclass(frozen=True)
+class _TransferWaitTask:
+    req_id: str
+    generation: int
+    remote_request_id: str
+    done_request_id: str
+    prefill_url: str | None
+    rank: int
+    block_count: int
+    queued_ts_ns: int
+
+
+class _AsyncTransferDoneWaiter(AsyncTaskPool):
+    """Background pool blocking on Mooncake completion notification."""
+
+    def __init__(
+        self,
+        transfer: MooncakePort,
+        failure_callback: Any | None = None,
+        success_callback: Any | None = None,
+        max_workers: int = 16,
+    ) -> None:
+        super().__init__("pd-transfer-done-waiter", max_workers=max_workers)
+        self.transfer = transfer
+        self._failure_callback = failure_callback
+        self._success_callback = success_callback
+        self._submitted: dict[str, int] = {}
+        self._cancelled: dict[str, set[int]] = {}
+        self._next_generation: dict[str, int] = {}
+
+    def submit(self, task: _TransferWaitTask) -> _TransferWaitTask | None:
+        with self._lock:
+            if task.req_id in self._submitted:
+                return None
+            generation = self._next_generation.get(task.req_id, 0) + 1
+            self._next_generation[task.req_id] = generation
+            task = replace(task, generation=generation)
+            self._submitted[task.req_id] = generation
+        logger.info(
+            "[PdConnector] D Mooncake wait queued req=%s remote_req=%s done_req=%s rank=%d blocks=%d prefill_url=%s queue_depth=%d",
+            task.req_id,
+            task.remote_request_id,
+            task.done_request_id,
+            task.rank,
+            task.block_count,
+            task.prefill_url or "<oob>",
+            len(self._submitted),
+        )
+        self._spawn(task)
+        return task
+
+    def cancel(self, req_id: str) -> None:
+        with self._lock:
+            generation = self._submitted.pop(req_id, None)
+            if generation is None:
+                return
+            self._cancelled.setdefault(req_id, set()).add(generation)
+
+    def _execute(self, task: _TransferWaitTask) -> None:
+        try:
+            if self._is_cancelled(task.req_id, task.generation):
+                logger.info(
+                    "[PdConnector] D Mooncake done wait cancelled before start req=%s remote_req=%s done_req=%s rank=%d blocks=%d",
+                    task.req_id,
+                    task.remote_request_id,
+                    task.done_request_id,
+                    task.rank,
+                    task.block_count,
+                )
+                return
+            start_ts_ns = time.time_ns()
+            self.transfer.wait_done(task.req_id)
+            done_ts_ns = time.time_ns()
+            if self._is_cancelled(task.req_id, task.generation):
+                logger.info(
+                    "[PdConnector] D Mooncake done wait cancelled req=%s remote_req=%s done_req=%s rank=%d blocks=%d queue_wait_ms=%.3f wait_ms=%.3f ts_ns=%d",
+                    task.req_id,
+                    task.remote_request_id,
+                    task.done_request_id,
+                    task.rank,
+                    task.block_count,
+                    (start_ts_ns - task.queued_ts_ns) / 1_000_000,
+                    (done_ts_ns - start_ts_ns) / 1_000_000,
+                    done_ts_ns,
+                )
+                return
+            logger.info(
+                "[PdConnector] D received Mooncake done req=%s remote_req=%s done_req=%s rank=%d blocks=%d queue_wait_ms=%.3f wait_ms=%.3f ts_ns=%d",
+                task.req_id,
+                task.remote_request_id,
+                task.done_request_id,
+                task.rank,
+                task.block_count,
+                (start_ts_ns - task.queued_ts_ns) / 1_000_000,
+                (done_ts_ns - start_ts_ns) / 1_000_000,
+                done_ts_ns,
+            )
+            if self._success_callback is not None:
+                self._success_callback(task.req_id, (done_ts_ns - start_ts_ns) / 1_000_000_000)
+        except Exception as exc:
+            logger.exception(
+                "[PdConnector] D Mooncake done wait failed req=%s remote_req=%s done_req=%s rank=%d blocks=%d",
+                task.req_id,
+                task.remote_request_id,
+                task.done_request_id,
+                task.rank,
+                task.block_count,
+            )
+            if self._failure_callback is not None:
+                self._failure_callback(task.req_id, exc)
+        finally:
+            with self._lock:
+                if self._submitted.get(task.req_id) == task.generation:
+                    self._submitted.pop(task.req_id, None)
+                cancelled = self._cancelled.get(task.req_id)
+                if cancelled is not None:
+                    cancelled.discard(task.generation)
+                    if not cancelled:
+                        self._cancelled.pop(task.req_id, None)
+
+    def _is_cancelled(self, req_id: str, generation: int) -> bool:
+        with self._lock:
+            return generation in self._cancelled.get(req_id, set())
+
+
+def _all_gather_peer_info(
+    layouts: dict[str, KvCacheLayout],
+    transfer_endpoint: str,
+    tp_size: int,
+) -> list[tuple[dict[str, KvCacheLayout], str]]:
+    import torch.distributed as dist
+
+    gathered: list[tuple[dict[str, KvCacheLayout], str] | None] = [None] * tp_size
+    dist.all_gather_object(gathered, (layouts, transfer_endpoint))
+    return gathered  # type: ignore[return-value]
+
+
+def _elapsed_ms(start_ts_ns: int, end_ts_ns: int) -> float:
+    if start_ts_ns <= 0 or end_ts_ns <= 0 or end_ts_ns < start_ts_ns:
+        return -1.0
+    return (end_ts_ns - start_ts_ns) / 1_000_000
+
+
+def _elapsed_seconds(start_ts_ns: int, end_ts_ns: int) -> float:
+    if start_ts_ns <= 0 or end_ts_ns <= 0 or end_ts_ns < start_ts_ns:
+        return 0.0
+    return (end_ts_ns - start_ts_ns) / 1_000_000_000
+
+
+def _total_num_kv_heads_from_config(vllm_config: Any) -> int | None:
+    model_config = getattr(vllm_config, "model_config", None)
+    getter = getattr(model_config, "get_total_num_kv_heads", None)
+    if getter is not None:
+        value = getter()
+        return int(value) if value is not None else None
+    hf_config = getattr(model_config, "hf_text_config", None)
+    for config in (model_config, hf_config):
+        value = getattr(config, "num_key_value_heads", None)
+        if value is not None:
+            return int(value)
+    return None
+
+
+def _ceil_div(value: int, divisor: int) -> int:
+    assert value > 0
+    assert divisor > 0
+    return (value + divisor - 1) // divisor

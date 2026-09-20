@@ -1,0 +1,13 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { sourceUrl } from "../data/site";
+---
+
+<SiteLayout title="SGLang integration — OrbitKV" description="The staged path from SGLang HiCache storage to OrbitKV-owned page lifetimes." active="Integration">
+  <div class="container interior">
+    <header class="page-hero"><p class="eyebrow">SGLang integration</p><h1>Integrate first.<br /><span class="highlight">Take authority carefully.</span></h1><p>Start at HiCache's storage contract. Move page identity and lifecycle only after correctness and transfer evidence are available.</p></header>
+    <section class="detail-section"><h2>Stage 1 — HiCache backend</h2><p class="reading-copy">OrbitKV will implement batched prefix existence, get, and put for SGLang host pages, including named KV and recurrent-state pools. SGLang retains L1/L2 allocation in this stage.</p></section>
+    <section class="detail-section"><h2>Stage 2 — page authority</h2><p class="reading-copy">OrbitKV-authored handles replace duplicate page identities. Reuse is legal only after semantic death and execution completion. Placement is selected across HBM, pinned DRAM, SSD, and remote replicas.</p></section>
+    <section class="detail-section"><h2>What is verified</h2><p class="reading-copy">The storage and transfer substrate is imported and renamed. SGLang support is the next validation gate; no end-to-end performance claim is made before that gate passes.</p><a class="text-link" href={sourceUrl("docs/roadmap.md")}>Read the implementation gates <span aria-hidden="true">↗</span></a></section>
+  </div>
+</SiteLayout>

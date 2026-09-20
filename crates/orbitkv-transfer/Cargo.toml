@@ -1,0 +1,19 @@
+[package]
+name = "orbitkv-transfer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["cuda-12"]
+cuda-12 = ["orbitkv-mooncake-sys/cuda"]
+cuda-13 = ["orbitkv-mooncake-sys/cuda"]
+
+[dependencies]
+orbitkv-mooncake-sys = { workspace = true, default-features = false }
+thiserror = "2.0"
+libc.workspace = true
