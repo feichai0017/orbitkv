@@ -63,6 +63,9 @@ orbitkv-metaserver = "orbitkv._metaserver:main"
 [project.entry-points."vllm.general_plugins"]
 orbitkv = "orbitkv.vllm_plugin:register"
 
+[project.entry-points."sglang.srt.plugins"]
+orbitkv = "orbitkv.sglang.plugin:register"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -77,7 +80,7 @@ addopts = [
 ]
 markers = [
     "integration: starts or requires Cache Manager but does not run vLLM",
-    "e2e: runs baseline vLLM plus OrbitKV connector correctness checks",
+    "e2e: runs inference-engine correctness and recovery checks",
     "stress: long-running vLLM scenario for concurrency or pressure behavior",
     "gpu: requires CUDA-capable GPU",
     "slow: may take more than a few seconds",

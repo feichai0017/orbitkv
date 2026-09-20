@@ -8,8 +8,9 @@ server. Framework adapters expose logical model state and local pages; OrbitKV
 owns external replicas, transfer leases, storage tiers, and eventually the
 policy that chooses placement, movement, reclamation, routing, or recomputation.
 
-The data plane is derived from PegaFlow 0.24.5. The vLLM connector and SGLang
-dynamic HiCache L3 backend have both passed single-node GPU recovery tests.
+The data plane is derived from PegaFlow 0.24.5. The vLLM connector, SGLang
+direct GPU linker, and SGLang HiCache L3 backend have passed single-node GPU
+recovery tests.
 
 ## Process topology
 
@@ -52,13 +53,12 @@ save does not serialize the worker's Query/Restore calls behind that reply.
 Instance cleanup serializes
 against registration, drains GPU
 load/save queues, and only then releases imported CUDA mappings. Superseded
-sessions cannot clean up a replacement session. SGLang currently sends bounded
-opaque host pages over the UDS lifecycle channel into Cache Manager-owned
-pinned memory, then reads them through the same channel for HiCache restore.
-vLLM uses registered CUDA IPC pages and iceoryx2 descriptors for its hot path;
-remote transfers use the Mooncake-backed `TransferEngine`. Shared host page
-registration is the next optimization. See [transport.md](transport.md) for the
-measured process-transport baseline.
+sessions cannot clean up a replacement session. Both vLLM and the SGLang
+direct linker register CUDA IPC pages and use iceoryx2 descriptors on the hot
+path. The SGLang HiCache L3 compatibility backend still sends bounded host
+pages over UDS; shared host page registration is its next transport
+optimization. Remote transfers use the Mooncake-backed `TransferEngine`.
+See [transport.md](transport.md) for the measured process-transport baseline.
 
 ## API and crate boundaries
 
@@ -84,7 +84,7 @@ kept because it describes one IPC implementation, not a different cache API.
 
 ```text
 vLLM adapter                SGLang adapter
-block hashes / CUDA IPC     radix hashes / HiCache host pages
+block hashes / CUDA IPC     radix hashes / CUDA IPC or HiCache host pages
                              /
        python/orbitkv/client (cache API)
                     |
@@ -133,8 +133,8 @@ The adapters translate framework-native state into `orbitkv-contract`:
 | Concern | vLLM | SGLang |
 | --- | --- | --- |
 | Prefix identity | `Request.block_hashes` | Radix page hashes |
-| Local GPU pages | vLLM block IDs + CUDA IPC | Radix/HiCache page indices |
-| Host pages | OrbitKV-owned pinned blocks today | SGLang L2 pages copied to OrbitKV-owned L3 blocks |
+| Local GPU pages | vLLM block IDs + CUDA IPC | Radix page indices + CUDA IPC on the direct path |
+| Host pages | OrbitKV-owned pinned blocks today | Direct path uses OrbitKV-owned pinned blocks; HiCache L3 copies SGLang L2 pages into them |
 | Hybrid state | KV cache groups and checkpoints | `PoolTransfer` components |
 | Lifecycle | KVConnector callbacks | Radix/HiCache events |
 
@@ -165,7 +165,22 @@ remain in OrbitKV.
 
 ## SGLang integration
 
-### Stage 1: HiCache L3 backend
+### Stage 1: direct GPU linker for full-attention models
+
+`orbitkv.sglang.linker.OrbitKVLinker` is registered through SGLang's plugin
+entry point and selected by `--radix-cache-backend orbitkv` together with
+`--enable-unified-cache-external-linker`. The latter is required for SGLang's
+scheduler to submit GPU restores and drain linker completions. It uses
+`UnifiedCacheLinker` callbacks to look up radix page hashes, pin SGLang-owned
+GPU slots during asynchronous saves and loads, and transfer bytes through the
+same Cache Manager API as vLLM. Each scheduler rank registers its local GPU KV
+buffers through CUDA IPC. A model-, rank-, and layout-scoped namespace prevents
+incompatible byte reuse. The direct path currently requires a single full-KV
+pool; hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state need a more
+complete recovery contract. SGLang retains authority over HBM allocation and
+prefix-tree nodes.
+
+### Stage 1 compatibility: HiCache L3 backend
 
 `orbitkv.sglang.storage.OrbitKVHiCacheStorage` implements SGLang's dynamic
 `HiCacheStorage` interface, including `batch_exists_v2`, `batch_get_v2`,
@@ -178,7 +193,7 @@ auxiliary state, and only reports a prefix as a hit when all required pools
 are available. The simple path uses per-page UDS operations; shared-region
 registration and batched query/transfer are pending performance work.
 
-### Stage 2: Radix lifecycle bridge
+### Stage 2: Radix lifecycle bridge for routing
 
 Publish prefix materialization, match, release, promotion, demotion, and removal
 events from RadixAttention. OrbitKV uses the events to maintain a global replica
