@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://feichai0017.github.io/orbitkv/">Website</a> ·
+  <a href="docs/single-node.md">Single-node guide</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/roadmap.md">Roadmap</a> ·
   <a href="TODO.md">TODO</a>
@@ -63,7 +64,10 @@ in the cache hot path: actual keys still use namespace + hash, Publish carries
 raw block IDs, and bundle completeness is a component-presence check. The
 MetaServer is a separate, non-HA, in-memory directory without complete
 resident-inventory replay after restart. See [architecture](docs/architecture.md)
-and the [roadmap](docs/roadmap.md) for the implementation boundary.
+and the [model-aware state plan](docs/state-identity.md) for the implementation
+boundary. Single-node correctness is validated for the pinned adapter layouts;
+the revised local path has not yet passed a full throughput and tail-latency
+qualification against native-engine and no-cache baselines.
 
 SGLang has a direct GPU-page linker for full-attention MHA and MLA models.
 Hybrid models and auxiliary state require complete recovery contracts before
@@ -89,8 +93,10 @@ OrbitKV can claim a reusable prefix for them.
 The process IPC, network control, Mooncake integration boundary, and measured
 IPC baselines are documented in
 [`docs/transport.md`](docs/transport.md).
-For deployment modes and the distinction between cache sharing, P/D, and NIXL,
-see [`docs/deployment.md`](docs/deployment.md).
+For complete vLLM and SGLang installation, commands, capacity controls, and
+verification, see the [single-node guide](docs/single-node.md). For deployment
+modes and the distinction between cache sharing, P/D, and NIXL, see
+[`docs/deployment.md`](docs/deployment.md).
 
 ## Build
 
@@ -111,12 +117,27 @@ Initialize Mooncake before the first native build:
 git submodule update --init --recursive third-party/mooncake
 ```
 
-To run the vLLM adapter:
+For a quick same-host vLLM run after installing the matching OrbitKV wheel and
+vLLM `0.29.0` in the engine environment, start the Cache Manager in one
+terminal and vLLM in another:
 
 ```sh
 orbitkv-cache-manager
+```
+
+```sh
 vllm serve Qwen/Qwen3-0.6B \
+  --enable-prefix-caching \
   --kv-transfer-config '{"kv_connector":"OrbitKVConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.vllm"}'
+```
+
+For SGLang `0.5.20`, use the same manager and a SGLang environment containing
+the OrbitKV wheel:
+
+```sh
+ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
+  sglang serve --model-path /path/to/model --page-size 64 \
+  --enable-unified-cache-external-linker --radix-cache-backend orbitkv
 ```
 
 For a same-host Cache Manager, the connector uses UDS bootstrap +
@@ -128,8 +149,9 @@ Unix socket. Standalone mode does not start a gRPC listener. Distributed mode
 bytes still use Mooncake. Every inference process connects to a Cache Manager
 on its own host.
 
-For the SGLang GPU-page linker command and supported layouts, see
-[`python/README.md`](python/README.md).
+The SGLang linker currently accepts full-attention MHA/MLA layouts with one KV
+pool. For exact setup steps, supported layouts, and warm-hit verification for
+both engines, use [the single-node guide](docs/single-node.md).
 
 OrbitKV's current workspace is Apache-2.0 licensed. Earlier experiments remain
 available in repository history but are not part of the current build.

@@ -46,6 +46,10 @@ and a passing gate; design text alone does not close an item.
 
 ## M2 — common bundle and local IPC
 
+- [ ] Define a versioned model fingerprint covering immutable weight revision,
+  tokenizer/processor, adapters, and implementation identity in both adapters.
+- [ ] Replace namespace-plus-hash hot keys with canonical `StateKey` in Query,
+  Publish, DRAM/SSD, and remote catalog records; invalidate old entries.
 - [ ] Convert the vLLM cache-group layout to `StateBundle`.
 - [ ] Define a recovery validator for matching token coverage, model/format,
   and complete hybrid component sets before using bundles for cache hits.
@@ -78,6 +82,9 @@ and a passing gate; design text alone does not close an item.
   that exercises scheduler boundary-state hand-offs.
 - [ ] Add generation validation to every local page reference.
 - [ ] Benchmark the M2 path against the current CUDA IPC baseline.
+- [ ] Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,
+  throughput, P50/P95 query/save/restore, and pinned-memory use against
+  native-engine and no-cache baselines.
 - [x] Make waiting local QueryBundle operations asynchronous; support
   `orbitkv.wait_for_full_prefix` without blocking other descriptor requests.
 - [x] Move Publish D2H completion off the shared dispatcher while retaining
