@@ -90,6 +90,15 @@ and a passing gate; design text alone does not close an item.
 - [ ] Add an operational watchdog for a live Cache Manager that never finishes a
   Publish; correctness currently takes priority over save-worker availability.
 
+## M2.5 — distributed cache reliability
+
+- [ ] Replay resident inventories with a catalog epoch after MetaServer restart.
+- [ ] Batch and bound registration/lookups and cache candidates at each manager.
+- [ ] Revalidate source residency and leases after owner churn and stale hints.
+- [ ] Qualify Mooncake remote fetch, retry, and node-loss behavior on multiple hosts.
+- [ ] Prototype embedded replicated catalog shards, compare against a dedicated
+  fallback, and measure metadata request rate without per-block consensus.
+
 ## M3 — routing and replica planning
 
 - [ ] Normalize vLLM and SGLang KV events.
@@ -101,7 +110,6 @@ and a passing gate; design text alone does not close an item.
 - [ ] Add eviction externality and replica-risk terms.
 - [ ] Return a worker plus a transfer/restore plan.
 - [ ] Evaluate load-only, overlap-only, and joint planning on the same trace.
-- [ ] Add catalog epoch plus resident-inventory resynchronization after directory restart.
 
 - [x] Add the pinned Mooncake Transfer Engine native sys/build boundary.
 - [x] Map OrbitKV remote-cache authorization to Mooncake Segment addresses.
@@ -110,9 +118,10 @@ and a passing gate; design text alone does not close an item.
 - [ ] Keep rkeys and raw addresses out of the global replica directory.
 - [x] Delete native v1 and vendored v2 RDMA implementations.
 
-## M4 — page authority and safety
+## M4 — generation-safe page references
 
-- [ ] Introduce manager-authored `PageHandle { pool, page, generation }`.
+- [ ] Introduce manager-authored external `PageHandle { pool, page, generation }`
+  and validate engine-owned GPU page generations at transfer boundaries.
 - [ ] Track the semantic frontier independently from execution completion.
 - [ ] Unify CUDA event, RDMA completion, and SSD completion fences.
 - [ ] Reject stale page generations at every adapter boundary.

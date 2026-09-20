@@ -1,10 +1,17 @@
 # P2P KV Cache Sharing
 
-Share KV cache across OrbitKV nodes through Mooncake Transfer Engine. When node
+Experimentally share KV cache across OrbitKV nodes through Mooncake Transfer Engine. When node
 B needs blocks that node A already has, OrbitKV authorizes the block ranges and
 Mooncake reads them over RDMA (or TCP fallback).
 
-**When to use**: multiple OrbitKV instances serving the same model, shared prefixes are common, and you want to reduce TTFT by avoiding redundant prefill.
+This path is not yet a high-availability deployment. The current MetaServer is
+an independent in-memory directory: it lacks complete resident-inventory
+replay after restart and is a remote-hit-rate and availability risk. The
+Cache Manager verifies and pins source bytes before transfer. The target
+recoverable catalog is described in [architecture](architecture.md).
+
+**When to use**: experimental multiple-node reuse for matching model,
+tokenizer, format, rank topology, and namespace.
 
 ## How It Works
 
@@ -47,7 +54,7 @@ sequenceDiagram
 
 ### 1. Start MetaServer
 
-One per cluster. Lightweight, in-memory only.
+One per test cluster in the current implementation. It is in-memory and not HA.
 
 ```bash
 orbitkv-metaserver --addr 0.0.0.0:50056
@@ -89,7 +96,9 @@ orbitkv-cache-manager \
 
 ### 3. Launch inference engine
 
-Same as single-node — OrbitKV server handles P2P transparently.
+Same adapter setup as single-node; the node-local Cache Manager handles remote
+fetch after a local miss. A vLLM/SGLang process does not connect to a remote
+manager or MetaServer directly.
 
 ```bash
 vllm serve Qwen/Qwen3-0.6B \
@@ -103,11 +112,13 @@ registration, the advertised Mooncake endpoint, and fetch summaries.
 
 ## Fallback Behavior
 
-P2P is opportunistic. Failures degrade gracefully to single-node operation — no crashes, no significant performance impact in most cases.
+P2P is opportunistic. On discovery or transfer failure, the request must fall
+back to local cache or recomputation; timeout and retry costs still affect
+latency and require qualification.
 
 | Scenario | What happens |
 |---|---|
-| MetaServer unreachable | Hash registration silently dropped. No remote discovery attempted. |
+| MetaServer unreachable | Remote discovery is unavailable; local cache operations continue. |
 | Remote node unreachable | Authorization or Mooncake segment open fails; the request proceeds without remote blocks. |
 | Transfer timeout | Mooncake segment cache entry is invalidated and the transfer lease is released. |
 
@@ -130,10 +141,9 @@ OrbitKV automatically detects GPU–NIC NUMA affinity at startup. For best perfo
 
 ### MetaServer sizing
 
-| Cluster size | Recommendation |
-|---|---|
-| 2–8 nodes | Defaults are fine (`120 min` TTL) |
-| 8+ nodes | Memory scales with unique blocks across all nodes; no capacity cap needed. Monitor MetaServer memory. |
+The service is single-process and in-memory. Its footprint grows with owner
+registrations; measure it under your actual block count and churn. There is no
+tested cluster-size or memory-capacity recommendation yet.
 
 ### Metrics
 

@@ -9,13 +9,12 @@
   <a href="TODO.md">TODO</a>
 </p>
 
-**A framework-neutral state cache and physical planner for vLLM and SGLang.**
+**A node-local KV cache for vLLM and SGLang, with an experimental multi-node path.**
 
-OrbitKV combines a production-oriented Rust storage and transfer engine with a
-new control plane that will compile attention semantics and workload evidence
-into cache placement, retention, prefetch, movement, and routing decisions.
-vLLM uses a KV connector and SGLang uses a direct GPU-page linker. Both
-single-node paths have been validated against their pinned releases on a GPU.
+OrbitKV runs one Cache Manager beside each inference node. vLLM uses a KV
+connector and SGLang uses a direct GPU-page linker. Both register engine-owned
+GPU KV buffers through CUDA IPC and use the same UDS + iceoryx2 cache API.
+Single-node recovery has been validated against the pinned releases on a GPU.
 The framework release targets as of 2026-09-20 are
 [vLLM `0.29.0`](https://github.com/vllm-project/vllm/releases/tag/v0.29.0)
 and [SGLang `0.5.20`](https://github.com/sgl-project/sglang/releases/tag/v0.5.20);
@@ -26,27 +25,45 @@ the SGLang source submodule is pinned to that release. See
 
 - content-addressed KV blocks in pinned host memory, with optional SSD backing;
 - NUMA-aware allocation and batched GPU/host transfer;
-- cross-node discovery and Mooncake transfer over RDMA or TCP;
-- prefix lookup, leases, eviction, metrics, and P/D transfer paths;
+- experimental cross-node discovery through an in-memory MetaServer and remote
+  fetch through Mooncake Transfer Engine over RDMA or TCP;
+- prefix lookup, leases, eviction, and metrics;
 - a Rust Cache Manager, Python bindings, the vLLM connector, and an SGLang
-  GPU-page linker that restores prompts after SGLang flushes its radix cache.
+  GPU-page linker that restores prompts after SGLang flushes its radix cache;
+- an experimental **vLLM-only** Mooncake P/D connector, separate from the
+  Cache Manager's remote-cache fetch path. vLLM also provides its own NIXL P/D
+  connector; OrbitKV does not ship a NIXL connector.
 
 The initial storage and control data plane was imported from PegaFlow `0.24.5`
 and renamed throughout. The copied remote transfer stacks have since been
 replaced by a pinned upstream Mooncake Transfer Engine. PegaFlow's published
 measurements are not presented as OrbitKV results.
 
-## Where OrbitKV goes further
+## Target architecture
 
-The target is not another manually tuned external cache. OrbitKV will compile a
-declarative state-liveness contract into physical cache plans:
+The engine continues to own HBM allocation and execution. OrbitKV owns
+external pinned DRAM/SSD replicas and their transfer leases. The intended
+multi-node deployment retains one Cache Manager per node, embeds replicated
+catalog shards and local candidate indexes in those managers, and makes remote
+hits follow the same cache API as local hits. KV-aware routing comes **after**
+local correctness and
+distributed-cache recovery are established. The eventual planner will compile
+a declarative state-liveness contract into physical plans:
 
 - semantic death and execution completion are separate reclamation frontiers;
-- HBM, DRAM, SSD, and remote replicas are placement choices under one cost model;
+- HBM usage, DRAM, SSD, and remote replicas can be compared under one cost model,
+  while engine-owned HBM remains under the engine's allocator;
 - ring buffers, prefix pages, checkpoints, and eviction classes are derived
   physical plans rather than hard-coded product features;
-- SGLang remains the serving scheduler while OrbitKV becomes the authority for
-  cache identity, placement, and safe reuse.
+- both frameworks retain their serving schedulers while OrbitKV develops a
+  shared, validated state identity and safe-reuse contract.
+
+Today the `StateKey` and `StateBundle` types do **not** enforce those semantics
+in the cache hot path: actual keys still use namespace + hash, Publish carries
+raw block IDs, and bundle completeness is a component-presence check. The
+MetaServer is a separate, non-HA, in-memory directory without complete
+resident-inventory replay after restart. See [architecture](docs/architecture.md)
+and the [roadmap](docs/roadmap.md) for the implementation boundary.
 
 SGLang has a direct GPU-page linker for full-attention MHA and MLA models.
 Hybrid models and auxiliary state require complete recovery contracts before
@@ -72,6 +89,8 @@ OrbitKV can claim a reusable prefix for them.
 The process IPC, network control, Mooncake integration boundary, and measured
 IPC baselines are documented in
 [`docs/transport.md`](docs/transport.md).
+For deployment modes and the distinction between cache sharing, P/D, and NIXL,
+see [`docs/deployment.md`](docs/deployment.md).
 
 ## Build
 

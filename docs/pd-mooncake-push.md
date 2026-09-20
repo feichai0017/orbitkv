@@ -1,6 +1,6 @@
-# OrbitKV P/D Transfer with Mooncake
+# Experimental vLLM P/D transfer with Mooncake
 
-OrbitKV's P/D connector streams each completed prefill layer directly into the
+OrbitKV's vLLM-only P/D connector streams each completed prefill layer directly into the
 decode worker's KV pages. The layout and request state machine remain owned by
 OrbitKV; all remote byte movement is performed by the pinned upstream Mooncake
 Transfer Engine.
@@ -68,7 +68,8 @@ Mooncake Store as its state authority.
 - A transfer notification is accepted only for the matching request ID.
 - The decode side waits for the expected number of producer notifications.
 - Failure/abort notifications never publish the destination as complete.
-- Page reuse still requires OrbitKV's semantic and execution frontiers.
+- vLLM retains ownership of source/destination HBM pages; OrbitKV's proposed
+  semantic and execution frontiers are not enforced by the current connector.
 
 ## Qualification gates
 
