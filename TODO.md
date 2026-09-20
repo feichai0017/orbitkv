@@ -91,6 +91,12 @@ and a passing gate; design text alone does not close an item.
 - [x] Split Publish metadata to the negotiated descriptor capacity while
   preserving per-page layer completeness and retaining sources through all chunks.
 - [ ] Benchmark the M2 path against the current CUDA IPC baseline.
+- [x] Record Qwen3-8B serial cold, resident, and post-eviction latency against
+  vLLM CPU offload and SGLang HiCache, with equal payload budgets and verified
+  cache sources; retain raw measurements and commands in
+  `docs/single-node-performance.md`.
+- [ ] Profile the measured restore latency gap to both built-in CPU caches;
+  measure transfer batching, completion observation, and inference overlap.
 - [ ] Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,
   throughput, P50/P95 query/save/restore, and pinned-memory use against
   native-engine and no-cache baselines.

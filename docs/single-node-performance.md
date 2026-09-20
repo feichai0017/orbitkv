@@ -18,6 +18,63 @@ References: [vLLM KV offloading](https://docs.vllm.ai/en/latest/features/kv_offl
 [FlexKV](https://github.com/taco-project/FlexKV),
 [Mooncake](https://github.com/kvcache-ai/Mooncake).
 
+## Qwen3-8B on H20: initial measurements
+
+Measured on one NVIDIA H20 (97,871 MiB reported memory), with vLLM 0.29.0,
+SGLang 0.5.20, PyTorch 2.13.0, Transformers 5.12.1, and Python 3.11.2.
+The model is `Qwen/Qwen3-8B` at revision
+`b968826d9c46dd6066d109eabc6255188de91218`. OrbitKV uses release build
+`1184b09a`. The fixed-capacity workload below produces 270 measured requests.
+
+**Client TTFT p50 after GPU cache pressure, in milliseconds; lower is better:**
+
+| Engine | Cache backend | 1,024 tokens | 4,096 tokens | 8,192 tokens |
+| --- | --- | ---: | ---: | ---: |
+| vLLM | Native HBM cache, now evicted | 117.69 | 475.21 | 1,005.71 |
+| vLLM | Native CPU offload | 22.48 | 32.78 | 47.81 |
+| vLLM | OrbitKV DRAM | 24.16 | 35.02 | 56.02 |
+| SGLang | Native HBM cache, now evicted | 116.82 | 472.19 | 1,000.07 |
+| SGLang | HiCache CPU | 31.85 | 32.99 | 44.81 |
+| SGLang | OrbitKV DRAM | 39.31 | 50.51 | 62.04 |
+
+All native-HBM samples in this table were misses. All CPU/OrbitKV samples were
+verified external restores with no HBM hit. The two engines have different
+restore boundaries: for these aligned prompts vLLM restores the full prefix,
+while SGLang restores all but the final 64-token page. Compare backends within
+each engine; the two OrbitKV rows are not a transport-only comparison.
+
+OrbitKV avoids expensive recomputation, but both engines' built-in CPU caches
+are faster in this experiment. At 8K, OrbitKV adds 8.21 ms over vLLM CPU offload
+and 17.23 ms over HiCache. Manager load-task p50 is 28.79 ms and 26.46 ms,
+respectively; this includes descriptor construction, H2D submission and stream
+synchronization, not just PCIe transfer. Profiling transfer batching, completion
+observation and overlap with inference is the next performance task.
+
+For resident prefixes, OrbitKV TTFT p50 was 20.10/22.27/25.34 ms in vLLM and
+29.66/29.87/30.91 ms in SGLang. vLLM's resident phase includes a small external
+tail-page restore and is therefore classified as a mixed hit.
+
+Output comparison is retained for every sample. The performance runs do not
+enable deterministic inference: two of five 1K prefixes changed output on
+vLLM reuse, including native HBM reuse and native CPU offload. OrbitKV and
+vLLM CPU offload nevertheless matched on **all 45 corresponding requests**.
+SGLang's three backends matched on all 45 corresponding requests, and every
+reuse matched its cold output. These observations do not replace the separate
+deterministic correctness gates.
+
+The first vLLM OrbitKV run exposed a real bug: 4K/8K multi-layer Publish metadata
+exceeded the default 64 KiB descriptor slot, so those prefixes were not saved.
+The shared client now splits metadata at complete per-page layer boundaries
+and retains GPU sources until every chunk finishes. The table uses the full
+rerun after this fix. The earlier failed-offload run and an SGLang CLI startup
+failure are preserved separately in the local benchmark directory.
+
+The [270 request measurements](benchmarks/qwen3-8b-h20.csv) and
+[launch manifests and summaries](benchmarks/qwen3-8b-h20.json) are checked in.
+Complete JSONL responses, counter deltas, and engine/manager logs are retained
+under `/workspace/benchmarks/orbitkv-qwen3-8b` on the measurement host.
+LMCache, FlexKV, and Mooncake Store have **not** been measured in this experiment.
+
 ## Reproduce the latency experiment
 
 Build a **release** wheel using [the single-node setup](single-node.md), and
