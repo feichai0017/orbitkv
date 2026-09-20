@@ -1,6 +1,6 @@
-//! Runtime loader for the pinned upstream Mooncake Transfer Engine.
+//! Raw dynamic bindings for the pinned upstream Mooncake Transfer Engine.
 //!
-//! The provider builds Mooncake from the pinned submodule. At runtime it loads
+//! This sys crate builds Mooncake from the pinned stable submodule. At runtime it loads
 //! the shared libraries next to the final executable/Python extension, from an
 //! explicit `ORBITKV_MOONCAKE_LIB_DIR`, or from Cargo's build output. This
 //! keeps Mooncake's C++ dependency graph out of every Rust final link.
@@ -17,7 +17,8 @@ use std::sync::LazyLock;
 
 use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
 
-pub const SOURCE_REVISION: &str = "ffe013517eaafa8f33e5e0ee034fd6b8f5561e92";
+pub const SOURCE_VERSION: &str = "v0.3.13.post1";
+pub const SOURCE_REVISION: &str = "719735896c86b56fabec6cf3e825fb2ea640597a";
 #[cfg(feature = "cuda")]
 const WORKSPACE_RUNTIME_LIB_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),

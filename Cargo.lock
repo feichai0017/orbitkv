@@ -2067,7 +2067,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "orbitkv-mooncake-provider"
+name = "orbitkv-mooncake-sys"
 version = "0.1.0"
 dependencies = [
  "libc",
@@ -2140,7 +2140,7 @@ name = "orbitkv-transfer"
 version = "0.1.0"
 dependencies = [
  "libc",
- "orbitkv-mooncake-provider",
+ "orbitkv-mooncake-sys",
  "thiserror 2.0.18",
 ]
 

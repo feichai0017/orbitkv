@@ -1,10 +1,10 @@
 [package]
-name = "orbitkv-mooncake-provider"
+name = "orbitkv-mooncake-sys"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-links = "orbitkv_mooncake_transfer_engine"
+links = "orbitkv_mooncake"
 build = "build.rs"
 
 [lints]

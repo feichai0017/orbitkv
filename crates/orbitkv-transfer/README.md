@@ -27,10 +27,14 @@ The public Rust API is deliberately small:
 - `take_notifications` and `send_notification` implement P/D completion and
   failure signals.
 
-The upstream source is pinned by the `third-party/mooncake` submodule.
-`orbitkv-mooncake-provider` builds and stages `libtransfer_engine.so`,
+The upstream source is pinned to stable release `v0.3.13.post1` by the
+`third-party/mooncake` submodule. `orbitkv-mooncake-sys` builds and stages
+`libtransfer_engine.so`,
 `libmooncake_common.so`, and `libasio.so`; the libraries use an `$ORIGIN`
 runpath so the three files can be bundled together in a wheel or container.
+The sys crate is the only raw C ABI boundary. This crate contains the
+OrbitKV-facing safe types, segment cache, batch draining, timeout semantics,
+and notification API.
 
 ## Build and smoke test
 

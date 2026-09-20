@@ -38,7 +38,7 @@ if [[ " ${EXTRA_ARGS[*]} " == *" cuda-12"* || " ${EXTRA_ARGS[*]} " == *" cuda-13
 fi
 MOONCAKE_LINK_DIR="$PROJECT_ROOT/.orbitkv/mooncake/$MOONCAKE_VARIANT/lib"
 if [[ ! -d "$MOONCAKE_LINK_DIR" ]]; then
-    echo "Mooncake provider runtime directory not found: $MOONCAKE_LINK_DIR" >&2
+    echo "Mooncake native runtime directory not found: $MOONCAKE_LINK_DIR" >&2
     exit 1
 fi
 for lib in libtransfer_engine.so libmooncake_common.so libasio.so; do

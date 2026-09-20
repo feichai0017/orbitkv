@@ -26,7 +26,7 @@ orbitkv/
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
 │   ├── orbitkv-server/           # Sidecar, router, health, and metrics
 │   ├── orbitkv-metaserver/       # Cross-node block metadata registry
-│   ├── orbitkv-mooncake-provider/# Pinned Mooncake native build/runtime loader
+│   ├── orbitkv-mooncake-sys/     # Pinned native build and dynamic C ABI
 │   └── orbitkv-transfer/         # Mooncake transfer wrapper
 ├── python/                       # PyO3 package and framework adapters
 ├── examples/                     # Python examples and benchmarks

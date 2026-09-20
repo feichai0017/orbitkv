@@ -1,4 +1,4 @@
-//! Thin Rust boundary over the pinned upstream Mooncake Transfer Engine C ABI.
+//! OrbitKV-facing Mooncake Transfer Engine lifecycle and batch execution.
 //!
 //! OrbitKV owns state identity, leases, generation checks, and transfer plans.
 //! Mooncake exclusively owns transport mechanics: registered segments, RDMA/TCP
@@ -11,74 +11,15 @@ use std::ptr::NonNull;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use orbitkv_mooncake_provider as native;
-use thiserror::Error;
+use orbitkv_mooncake_sys as native;
 
-const INVALID_BATCH: u64 = u64::MAX;
-const STATUS_WAITING: i32 = 0;
-const STATUS_PENDING: i32 = 1;
-const STATUS_COMPLETED: i32 = 4;
-pub const P2P_METADATA: &str = "P2PHANDSHAKE";
-pub const AUTO_MEMORY_LOCATION: &str = "*";
+use crate::error::{MooncakeError, Result};
+use crate::types::{
+    INVALID_BATCH, Notification, STATUS_COMPLETED, STATUS_PENDING, STATUS_WAITING, TransferOp,
+    TransferSlice,
+};
+
 static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TransferOp {
-    Read,
-    Write,
-}
-
-impl TransferOp {
-    fn code(self) -> i32 {
-        match self {
-            Self::Read => 0,
-            Self::Write => 1,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TransferSlice {
-    pub local: NonNull<u8>,
-    pub remote_address: u64,
-    pub length: usize,
-}
-
-unsafe impl Send for TransferSlice {}
-unsafe impl Sync for TransferSlice {}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Notification {
-    pub name: String,
-    pub message: String,
-}
-
-#[derive(Debug, Error)]
-pub enum MooncakeError {
-    #[error("Mooncake native runtime unavailable: {0}")]
-    NativeRuntime(String),
-    #[error("invalid string: {0}")]
-    InvalidString(#[from] std::ffi::NulError),
-    #[error("Mooncake Transfer Engine creation failed")]
-    Create,
-    #[error("Mooncake operation {operation} failed with status {status}")]
-    Operation {
-        operation: &'static str,
-        status: i32,
-    },
-    #[error("Mooncake returned an invalid batch id")]
-    InvalidBatch,
-    #[error("Mooncake transfer task {task} failed with state {state}")]
-    TransferFailed { task: usize, state: i32 },
-    #[error("Mooncake transfer batch timed out")]
-    Timeout,
-    #[error("Mooncake notification buffer has invalid size {0}")]
-    InvalidNotificationCount(i32),
-    #[error("Mooncake returned a null notification buffer for {0} messages")]
-    InvalidNotificationBuffer(i32),
-}
-
-pub type Result<T> = std::result::Result<T, MooncakeError>;
 
 pub struct TransferEngine {
     native: native::NativeEngine,

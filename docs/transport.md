@@ -1,8 +1,8 @@
 # OrbitKV transport architecture
 
 This document records the transport decision after validating the current
-vLLM path, benchmarking local IPC, and reviewing Mooncake at commit
-`ffe01351`. It separates local control, remote data movement, and replica
+vLLM path, benchmarking local IPC, and reviewing Mooncake `v0.3.13.post1`. It
+separates local control, remote data movement, and replica
 discovery so none of them becomes an accidental second source of KV truth.
 
 ## Decision
@@ -11,7 +11,7 @@ discovery so none of them becomes an accidental second source of KV truth.
 | --- | --- | --- | --- |
 | inference process to local sidecar | iceoryx2 request/response | CUDA IPC or shared host pages | lifecycle and QueryBundle integrated |
 | local bootstrap and region registration | Unix socket with credential and file-descriptor passing | memfd handles only | descriptor bootstrap implemented; page-region registration planned |
-| sidecar to sidecar | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | upstream Mooncake provider integrated |
+| sidecar to sidecar | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | stable Mooncake runtime integrated |
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
 | administration | HTTP or compatibility gRPC | no KV bytes | existing |
 
@@ -158,8 +158,9 @@ custom TCP socket daemon, exchanges JSON metadata and QP/MR information, and
 then uses the selected data transport. Larger deployments may instead publish
 Segment metadata through etcd, Redis, or HTTP.
 
-OrbitKV pins Mooncake at `ffe013517eaafa8f33e5e0ee034fd6b8f5561e92` and
-builds its shared Transfer Engine through `orbitkv-mooncake-provider`. Native
+OrbitKV pins Mooncake `v0.3.13.post1` at
+`719735896c86b56fabec6cf3e825fb2ea640597a` and builds its shared Transfer
+Engine through `orbitkv-mooncake-sys`. Native
 loading first checks `ORBITKV_MOONCAKE_LIB_DIR`, then the executable or Python
 extension directory, then the local `.orbitkv/mooncake/{cuda|cpu}/lib` build cache. Wheels
 bundle `libtransfer_engine.so`, `libmooncake_common.so`, and `libasio.so`; system
@@ -209,7 +210,7 @@ contract is complete.
 5. Move `Publish` and `Release`. (complete; vLLM opt-in, SGLang pending)
 6. Move `Restore` and remove per-load shared-memory status objects. (complete
    for the opt-in vLLM local path; gRPC compatibility and SGLang pending)
-7. Keep the pinned Mooncake provider as the only remote transfer backend.
+7. Keep the pinned stable Mooncake runtime as the only remote transfer backend.
 8. Qualify Mooncake RDMA/GPUDirect against the transfer-plan and P/D gates.
 9. Keep network control RPCs for authorization and leases; the custom verbs
    handshake RPC has been removed.

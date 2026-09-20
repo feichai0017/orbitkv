@@ -21,7 +21,7 @@ fn main() {
     let workspace = manifest_dir
         .parent()
         .and_then(Path::parent)
-        .expect("provider lives under <workspace>/crates");
+        .expect("sys crate lives under <workspace>/crates");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
     let build_dir = out_dir.join("native");
     let variant = if env::var_os("CARGO_FEATURE_CUDA").is_some() {

@@ -40,7 +40,7 @@
 4. **Not a Transport Protocol Lab**
 
    Do not duplicate Mooncake transports inside OrbitKV. Portability follows the
-   capabilities of the pinned Mooncake provider; OrbitKV's contribution is the
+   capabilities of the pinned Mooncake runtime; OrbitKV's contribution is the
    cache authority, lifecycle, and physical plan above it.
 
 5. **Not a Security or Compliance Component**

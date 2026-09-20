@@ -7,7 +7,7 @@ members = [
   "crates/orbitkv-proto",
   "crates/orbitkv-server",
   "crates/orbitkv-metaserver",
-  "crates/orbitkv-mooncake-provider",
+  "crates/orbitkv-mooncake-sys",
   "crates/orbitkv-transfer",
   "python",
 ]
@@ -30,7 +30,7 @@ orbitkv-contract = { path = "crates/orbitkv-contract" }
 orbitkv-local = { path = "crates/orbitkv-local" }
 orbitkv-common = { path = "crates/orbitkv-common" }
 orbitkv-core = { path = "crates/orbitkv-core", default-features = false }
-orbitkv-mooncake-provider = { path = "crates/orbitkv-mooncake-provider", default-features = false }
+orbitkv-mooncake-sys = { path = "crates/orbitkv-mooncake-sys", default-features = false }
 orbitkv-transfer = { path = "crates/orbitkv-transfer", default-features = false }
 
 # Core dependencies

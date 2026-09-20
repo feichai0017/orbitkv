@@ -17,8 +17,8 @@ and a passing gate; design text alone does not close an item.
 - [x] Add a real two-process local-control test.
 - [x] Integrate the iceoryx2 lifecycle endpoint into `orbitkv-server`.
 - [x] Add Python `LocalControlClient` bindings with epoch fencing.
-- [x] Replace the copied native RDMA stacks with a pinned Mooncake Transfer
-  Engine provider and one clean transfer API.
+- [x] Replace the copied native RDMA stacks with a pinned stable Mooncake
+  Transfer Engine sys crate and one clean transfer API.
 - [ ] Add Python representations/serialization for `orbitkv-contract`.
 - [x] Add compatibility tests for `orbitkv.connector` and `orbitkv.vllm`.
 - [x] Run the full M0 validation matrix and record results in the commit.
@@ -84,7 +84,7 @@ and a passing gate; design text alone does not close an item.
 - [ ] Evaluate load-only, overlap-only, and joint planning on the same trace.
 - [ ] Add catalog epoch plus resident-inventory resynchronization after directory restart.
 
-- [x] Add the pinned Mooncake Transfer Engine build/runtime provider.
+- [x] Add the pinned Mooncake Transfer Engine native sys/build boundary.
 - [x] Map OrbitKV remote-cache authorization to Mooncake Segment addresses.
 - [ ] Qualify RDMA READ demand fetch and RDMA WRITE replication.
 - [ ] Import topology-aware slicing, endpoint pooling, and alternate-rail retry.

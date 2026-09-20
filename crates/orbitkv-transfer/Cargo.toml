@@ -10,10 +10,10 @@ workspace = true
 
 [features]
 default = ["cuda-12"]
-cuda-12 = ["orbitkv-mooncake-provider/cuda"]
-cuda-13 = ["orbitkv-mooncake-provider/cuda"]
+cuda-12 = ["orbitkv-mooncake-sys/cuda"]
+cuda-13 = ["orbitkv-mooncake-sys/cuda"]
 
 [dependencies]
-orbitkv-mooncake-provider = { workspace = true, default-features = false }
+orbitkv-mooncake-sys = { workspace = true, default-features = false }
 thiserror = "2.0"
 libc.workspace = true
