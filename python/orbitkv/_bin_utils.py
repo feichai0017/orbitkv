@@ -13,30 +13,30 @@ _REPO_ROOT = _MODULE_DIR.parent.parent
 
 
 def find_binary(name: str) -> str:
-    """Locate a orbitkv binary by name.
+    """Locate an OrbitKV binary by name.
 
     Search order:
-    1. Cargo target/release/ (dev mode — always freshest build)
-    2. Cargo target/debug/
-    3. Installed package directory (pip install from wheel)
+    1. Installed package directory (pip install from wheel)
+    2. Cargo target/release/ (source checkout)
+    3. Cargo target/debug/
     4. PATH fallback
     """
-    # 1. Dev mode: cargo target/release/
-    path = _REPO_ROOT / "target" / "release" / name
-    if path.is_file():
-        return str(path)
-
-    # 2. Dev mode: cargo target/debug/
-    path = _REPO_ROOT / "target" / "debug" / name
-    if path.is_file():
-        return str(path)
-
-    # 3. Wheel install: binary next to this module
+    # A wheel must execute its own binary, even inside a source checkout.
     path = _MODULE_DIR / name
     if path.is_file():
         return str(path)
 
-    # 4. Fallback: PATH
+    # Dev mode: cargo target/release/
+    path = _REPO_ROOT / "target" / "release" / name
+    if path.is_file():
+        return str(path)
+
+    # Dev mode: cargo target/debug/
+    path = _REPO_ROOT / "target" / "debug" / name
+    if path.is_file():
+        return str(path)
+
+    # Fallback: PATH
     found = shutil.which(name)
     if found:
         return found

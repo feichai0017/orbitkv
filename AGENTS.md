@@ -29,6 +29,7 @@ orbitkv/
 │   ├── orbitkv-mooncake-sys/     # Pinned native build and dynamic C ABI
 │   └── orbitkv-transfer/         # Mooncake transfer wrapper
 ├── python/                       # PyO3 package and framework adapters
+├── third-party/                  # Pinned Mooncake, vLLM, and SGLang sources
 ├── examples/                     # Python examples and benchmarks
 ├── docs/                         # Architecture and roadmap
 ├── scripts/                      # Project helper scripts
@@ -78,6 +79,12 @@ orbitkv/
 
 ## Build, Check, Test
 
+The supported engine baselines are the pinned `third-party/vllm` v0.29.0 and
+`third-party/sglang` v0.5.20 tags. Keep Python optional dependency pins and
+the source submodules aligned when updating a release. Native builds and wheel
+CI only initialize `third-party/mooncake`; initialize engine submodules for
+source inspection or compatibility work.
+
 ### Rust
 
 ```bash
@@ -94,6 +101,7 @@ On CUDA 13 dev machines, pass `--no-default-features --features cuda-13,mooncake
 cd python
 maturin develop
 maturin develop --release
+../scripts/build-wheel.sh --release  # complete installable wheel
 ```
 
 ### Local Checks

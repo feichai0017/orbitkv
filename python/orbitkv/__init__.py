@@ -24,10 +24,16 @@ try:
 except ImportError:
     _native = None
 
-try:
-    __version__ = _native.__version__ if _native is not None else version("orbitkv-llm")
-except PackageNotFoundError:
+if _native is not None:
+    __version__ = _native.__version__
+else:
     __version__ = "0.0.0"
+    for _distribution in ("orbitkv-llm", "orbitkv-llm-cu13"):
+        try:
+            __version__ = version(_distribution)
+            break
+        except PackageNotFoundError:
+            continue
 
 
 def __getattr__(name: str) -> Any:

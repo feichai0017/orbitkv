@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Check the installable wheel, including files staged outside Cargo's build."""
+
+import argparse
+import configparser
+import email
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+import venv
+from pathlib import Path
+from zipfile import ZipFile
+
+
+def check_wheel(path: Path, variant: str) -> None:
+    expected_name = "orbitkv-llm-cu13" if variant == "cu13" else "orbitkv-llm"
+    required_files = {
+        "orbitkv/__init__.py",
+        "orbitkv/orbitkv.pyi",
+        "orbitkv/vllm_plugin.py",
+        "orbitkv/sglang/plugin.py",
+        "orbitkv/sglang/linker.py",
+        "orbitkv/orbitkv-cache-manager-py",
+        "orbitkv/orbitkv-metaserver-py",
+        "orbitkv/libtransfer_engine.so",
+        "orbitkv/libmooncake_common.so",
+        "orbitkv/libasio.so",
+    }
+    with ZipFile(path) as wheel:
+        files = set(wheel.namelist())
+        missing = required_files - files
+        if missing:
+            raise ValueError(f"missing wheel files: {', '.join(sorted(missing))}")
+        if any("/__pycache__/" in name or name.endswith(".pyc") for name in files):
+            raise ValueError("wheel contains Python build caches")
+        if not any(
+            name.startswith("orbitkv/orbitkv.") and name.endswith(".so")
+            for name in files
+        ):
+            raise ValueError("wheel is missing the Rust extension")
+
+        metadata_files = [
+            name for name in files if name.endswith(".dist-info/METADATA")
+        ]
+        if len(metadata_files) != 1:
+            raise ValueError("wheel must have exactly one METADATA file")
+        metadata = email.message_from_bytes(wheel.read(metadata_files[0]))
+        if metadata["Name"] != expected_name:
+            raise ValueError(f"expected {expected_name}, got {metadata['Name']}")
+        extras = set(metadata.get_all("Provides-Extra", []))
+        if not {"vllm", "sglang", "test", "dev"} <= extras:
+            raise ValueError(f"missing engine or developer extras: {extras}")
+        requirements = metadata.get_all("Requires-Dist", [])
+        for engine in ("vllm", "sglang"):
+            if not any(
+                req.startswith(f"{engine}==") and f"extra == '{engine}'" in req
+                for req in requirements
+            ):
+                raise ValueError(f"missing exact {engine} release dependency")
+        if any("orbitkv-llm[test]" in req for req in requirements):
+            raise ValueError("wheel has a self-dependency on the cu12 package")
+
+        entry_points = metadata_files[0].replace("METADATA", "entry_points.txt")
+        if entry_points not in files:
+            raise ValueError("wheel is missing console and engine entry points")
+        entries = configparser.ConfigParser(interpolation=None)
+        entries.read_string(wheel.read(entry_points).decode())
+        expected_entries = {
+            ("console_scripts", "orbitkv-cache-manager"): "orbitkv._cache_manager:main",
+            ("console_scripts", "orbitkv-metaserver"): "orbitkv._metaserver:main",
+            ("vllm.general_plugins", "orbitkv"): "orbitkv.vllm_plugin:register",
+            ("sglang.srt.plugins", "orbitkv"): "orbitkv.sglang.plugin:register",
+        }
+        for (group, name), target in expected_entries.items():
+            if entries.get(group, name, fallback=None) != target:
+                raise ValueError(f"missing entry point: {group}/{name} -> {target}")
+
+        if not any(name.endswith(".dist-info/licenses/LICENSE") for name in files):
+            raise ValueError("wheel is missing the Apache-2.0 license file")
+
+        for binary in ("orbitkv-cache-manager-py", "orbitkv-metaserver-py"):
+            mode = wheel.getinfo(f"orbitkv/{binary}").external_attr >> 16
+            if not mode & stat.S_IXUSR:
+                raise ValueError(f"{binary} is not executable")
+        corrupt = wheel.testzip()
+        if corrupt:
+            raise ValueError(f"corrupt wheel member: {corrupt}")
+    print(f"Wheel validated: {path.name} ({variant}, {metadata['Version']})")
+
+
+def check_install(path: Path, variant: str) -> None:
+    distribution = "orbitkv-llm-cu13" if variant == "cu13" else "orbitkv-llm"
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+    import_check = (
+        "import importlib.metadata as metadata; import orbitkv; "
+        f"assert orbitkv.__version__ == metadata.version({distribution!r}); "
+        "assert orbitkv.LocalControlClient"
+    )
+    with tempfile.TemporaryDirectory(prefix="orbitkv-wheel-") as directory:
+        root = Path(directory)
+        venv.EnvBuilder(with_pip=True).create(root / "venv")
+        python = root / "venv/bin/python"
+        subprocess.run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                "--no-deps",
+                str(path.resolve()),
+            ],
+            check=True,
+            cwd=root,
+            env=env,
+        )
+        subprocess.run(
+            [str(python), "-c", import_check],
+            check=True,
+            cwd=root,
+            env=env,
+        )
+    print(f"Isolated native import passed: {distribution}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("wheel", type=Path)
+    parser.add_argument("--variant", required=True, choices=("cu12", "cu13"))
+    parser.add_argument("--install-smoke", action="store_true")
+    args = parser.parse_args()
+    try:
+        check_wheel(args.wheel, args.variant)
+        if args.install_smoke:
+            check_install(args.wheel, args.variant)
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        print(f"Wheel validation failed: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

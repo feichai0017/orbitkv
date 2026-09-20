@@ -48,9 +48,9 @@ declarative state-liveness contract into physical cache plans:
 - SGLang remains the serving scheduler while OrbitKV becomes the authority for
   cache identity, placement, and safe reuse.
 
-The SGLang backend currently copies completed HiCache host pages into bounded
-Cache Manager memory for reuse and optional SSD backing. Shared page
-registration and a common recovery contract remain planned work.
+SGLang has a direct GPU-page linker for ordinary full-attention models and a
+HiCache host-page backend for hybrid models and auxiliary state. Both are
+validated against the pinned release; deeper recovery contracts remain planned.
 
 ## Workspace
 
@@ -63,9 +63,10 @@ registration and a common recovery contract remain planned work.
 | [`orbitkv-server`](crates/orbitkv-server) | Cache Manager crate: shared cache operations, process endpoint, peer control, health and metrics |
 | [`orbitkv-metaserver`](crates/orbitkv-metaserver) | Cross-node replica discovery |
 | [`python/orbitkv/vllm`](python/orbitkv/vllm) | vLLM adapter |
-| [`python/orbitkv/sglang`](python/orbitkv/sglang) | SGLang dynamic HiCache backend and pool mapping |
+| [`python/orbitkv/sglang`](python/orbitkv/sglang) | SGLang GPU-page linker, HiCache backend, and pool mapping |
 | [`python/orbitkv/client`](python/orbitkv/client) | Framework-neutral cache API and transport selection |
 | [`third-party/sglang`](third-party/sglang) | Pinned SGLang source used to develop and validate integration |
+| [`third-party/vllm`](third-party/vllm) | Pinned vLLM release source used to develop and validate integration |
 | [`website`](website) | OrbitKV project website and brand assets |
 
 The process IPC, network control, Mooncake integration boundary, and measured
