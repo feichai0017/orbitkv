@@ -5,9 +5,8 @@ This file provides guidance for agents working in the OrbitKV repository.
 ## Project Overview
 
 OrbitKV is a framework-neutral state cache and physical-planning system for
-LLM inference. The current data plane is validated with vLLM `0.29.0`;
-SGLang `0.5.20` support is being added through HiCache and RadixAttention
-integration.
+LLM inference. The single-node data plane is validated with vLLM `0.29.0`
+and SGLang `0.5.20`; deeper RadixAttention integration is still planned.
 
 - Single-node KV cache offloading between GPU and host memory
 - Cross-node KV cache sharing via Mooncake Transfer Engine (RDMA/TCP)
@@ -72,7 +71,7 @@ orbitkv/
 - `python/src/lib.rs`: PyO3 bindings
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
 - `python/orbitkv/vllm/worker.py`: vLLM worker-side connector
-- `python/orbitkv/sglang/`: SGLang contracts; the executable backend is not implemented yet
+- `python/orbitkv/sglang/storage.py`: dynamic SGLang HiCache L3 backend
 - `python/orbitkv/client/connection.py`: transport selection hidden from adapters
 - `python/orbitkv/orbitkv.pyi`: Python type stubs
 
@@ -114,6 +113,7 @@ Notes:
 | Source-only default | CI and dependency-boundary checks | `cd python && uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Proves default gate does not need torch, vLLM, CUDA, native extension build, or a running server. |
 | Integration | Server/native/client/session lifecycle changes | `cd python && uv run --extra test pytest -m integration` | Requires built native extension, server binary, and GPU where the test uses CUDA IPC. |
 | vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && ../.venv/vllm-release/bin/python -m pytest -m e2e tests/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` | Use the vLLM `0.29.0` release environment described in `python/README.md`; reviewer reruns the gate on the GPU machine. |
+| SGLang recovery E2E | SGLang backend or page storage changes | `cd python && ../.venv/sglang-release/bin/python -m pytest -m e2e tests/test_sglang_inference_e2e.py --model /path/to/model` | Requires the Cache Manager, native extension, SGLang `0.5.20`, and GPU. |
 | Stress | Warm-hit pressure, pending unpin, scheduler/cache concurrency | `cd python && uv run --extra test pytest -m stress tests/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Targeted single-GPU evidence, not default PR feedback. |
 | Release smoke | Published wheel/image, loader path, installed console script, CUDA runtime | See `python/tests/README.md` | Validates final installed artifact, not the source checkout. |
 

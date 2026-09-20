@@ -81,6 +81,40 @@ impl LifecycleService {
             locks: Arc::default(),
         }
     }
+
+    pub(crate) async fn put_host_page(
+        &self,
+        namespace: &str,
+        key: &[u8],
+        data: &[u8],
+    ) -> Result<(), ControlError> {
+        self.engine
+            .put_host_page(namespace, key, data)
+            .await
+            .map_err(Self::map_engine_error)
+    }
+
+    pub(crate) async fn get_host_page(
+        &self,
+        namespace: &str,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, ControlError> {
+        self.engine
+            .get_host_page(namespace, key)
+            .await
+            .map_err(Self::map_engine_error)
+    }
+
+    pub(crate) async fn has_host_page(
+        &self,
+        namespace: &str,
+        key: &[u8],
+    ) -> Result<bool, ControlError> {
+        self.engine
+            .has_host_page(namespace, key)
+            .await
+            .map_err(Self::map_engine_error)
+    }
     async fn lock_instance(&self, instance_id: &str) -> OwnedMutexGuard<()> {
         let lock = {
             let mut locks = self.locks.lock();

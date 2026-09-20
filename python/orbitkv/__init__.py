@@ -5,6 +5,7 @@ This package provides:
 2. OrbitKVConnector: vLLM KV connector for distributed inference
 """
 
+from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
@@ -32,10 +33,14 @@ except PackageNotFoundError:
 def __getattr__(name: str) -> Any:
     if name not in _NATIVE_EXPORTS:
         raise AttributeError(name)
+    global _native
     if _native is None:
-        raise ImportError(
-            "orbitkv rust extension is not available, check orbitkv-xxx.so file exists"
-        ) from None
+        try:
+            _native = import_module(".orbitkv", __name__)
+        except ImportError:
+            raise ImportError(
+                "orbitkv rust extension is not available, check orbitkv-xxx.so file exists"
+            ) from None
     return getattr(_native, name)
 
 

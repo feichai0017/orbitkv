@@ -27,9 +27,9 @@ and a passing gate; design text alone does not close an item.
 
 ## M1 — SGLang HiCache backend
 
-- [ ] Implement `OrbitKVHiCacheStorage`.
-- [ ] Add a SGLang entry point or documented dynamic-backend config.
-- [ ] Require `allocator=shm` for the zero-copy host path.
+- [x] Implement `OrbitKVHiCacheStorage` using bounded UDS host-page transfers.
+- [x] Document the SGLang dynamic-backend config.
+- [x] Require `allocator=shm` for SGLang's HiCache host pool.
 - [x] Add UDS bootstrap for the memfd-backed descriptor arena.
 - [ ] Add UDS registration for framework-owned shared host page regions.
 - [x] Bind `orbitkv-local` QueryBundle to the shared core query path.
@@ -37,17 +37,17 @@ and a passing gate; design text alone does not close an item.
 - [x] Bind `orbitkv-local` Publish to the shared core save path.
 - [x] Bind `orbitkv-local` Restore to core oneshot completion and eventfd wakeup.
 - [x] Add Python bindings for the iceoryx2 local client.
-- [ ] Map SGLang `PoolName` values to `StateComponent`.
+- [x] Map SGLang `PoolName` values to `StateComponent`.
 - [ ] Map `ALL_PAGES` and `TRAILING_PAGES` into recovery contracts.
-- [ ] Return SGLang `PoolTransferResult.restorable_prefix_pages` for hybrid
+- [x] Return SGLang `PoolTransferResult.restorable_prefix_pages` for hybrid
   checkpoints; a largest-hit count alone cannot express legal trailing pages.
-- [ ] Implement `batch_exists_v2`.
+- [x] Implement `batch_exists_v2` with all-pages and trailing-pages policies.
 - [ ] Implement zero-copy `batch_get_v2` and `batch_set_v2`.
 - [ ] Add fail-open behavior for non-hybrid requests.
 - [ ] Add explicit fail-closed behavior where incomplete hybrid state cannot be
   recomputed safely.
 - [ ] Add cold-miss, partial-prefix, warm-hit, cancellation, and restart tests.
-- [ ] Run one real SGLang model E2E on H20.
+- [x] Run one real SGLang model E2E on H20, including restore after L1/L2 flush.
 
 ## M2 — common bundle and local IPC
 

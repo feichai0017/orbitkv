@@ -6,7 +6,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class OrbitKVSGLangConfig:
-    """Configuration parsed by the future SGLang HiCache backend."""
+    """Configuration for the node-local SGLang HiCache backend."""
 
     endpoint: str = "unix:///run/orbitkv/orbitkv.sock"
     allocator: str = "shm"
@@ -20,12 +20,16 @@ class OrbitKVSGLangConfig:
         namespace = value.get("namespace")
         if allocator != "shm":
             raise ValueError(
-                "OrbitKV SGLang integration requires allocator='shm' to avoid a second host copy"
+                "OrbitKV SGLang integration requires allocator='shm' for the HiCache host pool"
             )
-        if not endpoint.startswith(("unix://", "http://", "https://")):
+        if not endpoint.startswith("unix://") or len(endpoint) <= len("unix://"):
             raise ValueError(f"unsupported OrbitKV endpoint: {endpoint!r}")
         return cls(
             endpoint=endpoint,
             allocator=allocator,
             namespace=str(namespace) if namespace is not None else None,
         )
+
+    @property
+    def bootstrap_socket(self) -> str:
+        return self.endpoint.removeprefix("unix://")
