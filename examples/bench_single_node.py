@@ -270,7 +270,6 @@ def main() -> None:
     base_url = f"http://127.0.0.1:{port}"
     pressure_tokens = args.gpu_tokens * 3 // 4
     manager_url = None
-    manager_metrics_url = None
     manager_health_path = "/health"
     manager_command = None
     backend_configuration = {}
@@ -278,7 +277,6 @@ def main() -> None:
         manager_port = free_port()
         manager_http = free_port()
         manager_url = f"http://127.0.0.1:{manager_http}"
-        manager_metrics_url = manager_url
         env.update(
             ORBITKV_PORT=str(manager_port),
             ORBITKV_SGLANG_ENDPOINT=f"unix:///tmp/orbitkv-{manager_port}.sock",
@@ -308,7 +306,6 @@ def main() -> None:
         env["LMCACHE_TRACK_USAGE"] = "false"
         cache_port, cache_http = free_port(), free_port()
         manager_url = f"http://127.0.0.1:{cache_http}"
-        manager_metrics_url = manager_url
         manager_health_path = "/healthcheck"
         manager_command = [
             sys.executable,
@@ -541,7 +538,7 @@ def main() -> None:
                                 )
                         time.sleep(args.settle_seconds)
                         before = metrics(base_url)
-                        manager_before = metrics(manager_metrics_url)
+                        manager_before = metrics(manager_url)
                         result = generate(
                             base_url,
                             args.engine,
@@ -551,7 +548,7 @@ def main() -> None:
                         )
                         time.sleep(args.settle_seconds)
                         after = metrics(base_url)
-                        manager_after = metrics(manager_metrics_url)
+                        manager_after = metrics(manager_url)
                         result.update(
                             length=length,
                             repeat=repeat,
