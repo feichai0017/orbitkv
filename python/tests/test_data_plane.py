@@ -25,12 +25,36 @@ def test_local_socket_defaults_to_the_sidecars_grpc_port():
     ) == ("/tmp/orbitkv-50055.sock",)
 
 
+def test_local_socket_auto_selects_only_when_the_socket_exists(monkeypatch):
+    monkeypatch.setattr(
+        "orbitkv.client.data_plane._is_unix_socket",
+        lambda path: path == "/tmp/orbitkv-50055.sock",
+    )
+
+    assert resolve_local_bootstrap_sockets(
+        enabled="auto", endpoints=("http://127.0.0.1:50055",)
+    ) == ("/tmp/orbitkv-50055.sock",)
+    assert (
+        resolve_local_bootstrap_sockets(enabled="auto", endpoints=("http://127.0.0.1:50056",))
+        is None
+    )
+
+
+def test_local_socket_auto_derives_every_tp_shard(monkeypatch):
+    monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
+
+    assert resolve_local_bootstrap_sockets(
+        enabled="auto",
+        endpoints=("http://127.0.0.1:50055", "http://127.0.0.1:50056"),
+    ) == ("/tmp/orbitkv-50055.sock", "/tmp/orbitkv-50056.sock")
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
         (
             {"enabled": "true", "endpoints": ("http://a:1",)},
-            "must be a boolean",
+            "must be true, false, or 'auto'",
         ),
         (
             {
@@ -38,14 +62,7 @@ def test_local_socket_defaults_to_the_sidecars_grpc_port():
                 "endpoints": ("http://a:1",),
                 "bootstrap_socket": "/tmp/a.sock",
             },
-            "require orbitkv.local_data=true",
-        ),
-        (
-            {
-                "enabled": True,
-                "endpoints": ("http://a:1", "http://b:2"),
-            },
-            "multiple TP shards requires",
+            "require orbitkv.local_data=true or 'auto'",
         ),
         (
             {

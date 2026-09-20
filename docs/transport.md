@@ -15,10 +15,11 @@ discovery so none of them becomes an accidental second source of KV truth.
 | replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
 | administration | HTTP or compatibility gRPC | no KV bytes | existing |
 
-The existing gRPC data path remains the default compatibility and correctness
-baseline. The vLLM adapter can opt into `orbitkv-local` for its hot data
-operations while keeping registration, health, session watching, and
-unregistration on gRPC. SGLang has not yet made this cutover.
+The existing gRPC data path remains the compatibility and correctness
+baseline. The vLLM adapter automatically uses `orbitkv-local` for hot data
+operations when every required Unix socket is available, while keeping
+registration, health, session watching, and unregistration on gRPC. SGLang has
+not yet made this cutover.
 
 ## Local IPC
 
@@ -69,7 +70,7 @@ the existing in-process GPU load, returns an operation ID, signals its session's
 eventfd at terminal completion, and is consumed through a follow-up poll. Python
 exposes both non-blocking `restore_submit`/`restore_poll` plus the notification
 fd and a synchronous `restore` convenience wrapper. The
-vLLM selects these operations with `orbitkv.local_data=true`; KV payload bytes
+vLLM selects these operations automatically on a same-host deployment; KV payload bytes
 do not travel through the descriptor arena. The adapter wraps both transports
 behind one data-plane interface: scheduler Query/Release and worker
 Publish/Restore use the selected transport, while lifecycle calls stay on
@@ -78,11 +79,11 @@ polling, replacing `PyLoadState` only on the opt-in path.
 
 For one sidecar, the adapter derives `/tmp/orbitkv-<grpc-port>.sock` unless
 `orbitkv.local_bootstrap_socket` is set. A scheduler querying multiple TP shards
-must receive one locally reachable socket per shard through
-`orbitkv.tp_shard_bootstrap_sockets`; using one socket for multiple sidecars is
-rejected. In today's centralized vLLM scheduler topology this makes the full
-local path a same-host feature. Cross-host TP shards keep the gRPC Query/Release
-path until query fan-out is delegated to node-local agents.
+uses the socket derived from each shard endpoint; custom paths can be supplied
+through `orbitkv.tp_shard_bootstrap_sockets`. In today's centralized vLLM
+scheduler topology this makes the full local path a same-host feature.
+Cross-host TP shards keep the gRPC Query/Release path until query fan-out is
+delegated to node-local agents.
 `orbitkv.wait_for_full_prefix` is also rejected in local mode because the
 current local dispatcher is serial and a blocking remote fetch would stall
 unrelated Publish/Restore calls. Supporting that combination requires an

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import select
+import socket
+import stat
 import threading
 import time
 from dataclasses import dataclass
@@ -318,12 +320,22 @@ def resolve_local_bootstrap_sockets(
     bootstrap_socket: object = None,
     shard_bootstrap_sockets: object = None,
 ) -> tuple[str, ...] | None:
-    """Validate local-data configuration and return one socket per shard."""
-    if not isinstance(enabled, bool):
-        raise ValueError("orbitkv.local_data must be a boolean")
-    if not enabled:
+    """Resolve the local data plane, using it automatically when available.
+
+    ``enabled="auto"`` selects local IPC only when every derived bootstrap
+    path is a live Unix socket. Explicit ``True`` remains fail-fast, while
+    explicit ``False`` forces the compatibility gRPC data plane.
+    """
+    if enabled == "auto":
+        automatic = True
+    elif isinstance(enabled, bool):
+        automatic = False
+    else:
+        raise ValueError("orbitkv.local_data must be true, false, or 'auto'")
+
+    if enabled is False:
         if bootstrap_socket is not None or shard_bootstrap_sockets is not None:
-            raise ValueError("local bootstrap sockets require orbitkv.local_data=true")
+            raise ValueError("local bootstrap sockets require orbitkv.local_data=true or 'auto'")
         return None
     if not endpoints:
         raise ValueError("local data requires at least one gRPC endpoint")
@@ -338,21 +350,15 @@ def resolve_local_bootstrap_sockets(
         if not isinstance(shard_bootstrap_sockets, (list, tuple)):
             raise ValueError("orbitkv.tp_shard_bootstrap_sockets must be a list of socket paths")
         sockets = tuple(shard_bootstrap_sockets)
-    elif len(endpoints) > 1:
-        raise ValueError(
-            "local data with multiple TP shards requires orbitkv.tp_shard_bootstrap_sockets"
-        )
     elif bootstrap_socket is not None:
+        if len(endpoints) > 1:
+            raise ValueError(
+                "orbitkv.local_bootstrap_socket only supports one TP shard; "
+                "use orbitkv.tp_shard_bootstrap_sockets"
+            )
         sockets = (bootstrap_socket,)
     else:
-        endpoint = endpoints[0]
-        port = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").port
-        if port is None:
-            raise ValueError(
-                "cannot derive the local bootstrap socket from the gRPC endpoint; "
-                "set orbitkv.local_bootstrap_socket"
-            )
-        sockets = (f"/tmp/orbitkv-{port}.sock",)
+        sockets = tuple(_default_bootstrap_socket(endpoint) for endpoint in endpoints)
 
     if len(sockets) != len(endpoints):
         raise ValueError(
@@ -360,9 +366,52 @@ def resolve_local_bootstrap_sockets(
         )
     if any(not isinstance(socket, str) or not socket for socket in sockets):
         raise ValueError("local bootstrap socket configuration must contain non-empty strings")
-    if len(set(sockets)) != len(sockets):
+    if automatic:
+        if len(set(sockets)) != len(sockets) or not all(
+            _endpoint_is_local(endpoint) and _is_unix_socket(socket_path)
+            for endpoint, socket_path in zip(endpoints, sockets, strict=True)
+        ):
+            return None
+    elif len(set(sockets)) != len(sockets):
         raise ValueError("orbitkv.tp_shard_bootstrap_sockets must not contain duplicates")
     return sockets
+
+
+def _default_bootstrap_socket(endpoint: str) -> str:
+    port = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").port
+    if port is None:
+        raise ValueError(
+            "cannot derive the local bootstrap socket from the gRPC endpoint; "
+            "set orbitkv.local_bootstrap_socket"
+        )
+    return f"/tmp/orbitkv-{port}.sock"
+
+
+def _is_unix_socket(path: str) -> bool:
+    try:
+        return stat.S_ISSOCK(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _endpoint_is_local(endpoint: str) -> bool:
+    host = urlsplit(endpoint if "://" in endpoint else f"//{endpoint}").hostname
+    if host is None:
+        return False
+    if host in {"localhost", "::1"} or host.startswith("127."):
+        return True
+    try:
+        addresses = socket.getaddrinfo(host, 0, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    for family, socket_type, protocol, _, address in addresses:
+        try:
+            with socket.socket(family, socket_type, protocol) as probe:
+                probe.bind(address)
+        except OSError:
+            continue
+        return True
+    return False
 
 
 __all__ = [

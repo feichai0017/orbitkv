@@ -92,10 +92,10 @@ vllm serve Qwen/Qwen3-0.6B \
   --kv-transfer-config '{"kv_connector":"OrbitKVConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.vllm"}'
 ```
 
-For a same-host sidecar, add
-`"kv_connector_extra_config": {"orbitkv.local_data": true}` to move
-Query/Publish/Restore/Release to UDS-bootstrap + iceoryx2. Lifecycle calls stay
-on gRPC, and gRPC remains the default compatibility data path.
+For a same-host sidecar, the connector automatically uses UDS-bootstrap +
+iceoryx2 for Query/Publish/Restore/Release when the derived local socket is
+available. Set `orbitkv.local_data=false` only to force the compatibility gRPC
+data path. Lifecycle calls currently stay on gRPC.
 
 OrbitKV's current workspace is Apache-2.0 licensed. Earlier experiments remain
 available in repository history but are not part of the current build.

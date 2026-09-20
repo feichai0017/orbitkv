@@ -66,9 +66,14 @@ llm = LLM(
 
 #### Local data plane
 
-The connector keeps gRPC as its default. On a same-host deployment, the
-experimental local path can be enabled explicitly for scheduler Query/Release
-and worker Publish/Restore:
+The connector defaults to `orbitkv.local_data="auto"`. It derives the
+sidecar's Unix socket from the configured endpoint and uses local IPC for
+scheduler Query/Release and worker Publish/Restore whenever every required
+socket is available. No extra configuration is needed for the normal
+single-node deployment.
+
+Use `true` to require local IPC, or `false` to force the compatibility gRPC
+data plane:
 
 ```json
 {
@@ -76,12 +81,12 @@ and worker Publish/Restore:
   "kv_role": "kv_both",
   "kv_connector_module_path": "orbitkv.vllm",
   "kv_connector_extra_config": {
-    "orbitkv.local_data": true
+    "orbitkv.local_data": false
   }
 }
 ```
 
-By default this connects to `/tmp/orbitkv-<orbitkv.port>.sock`, matching the
+The local path connects to `/tmp/orbitkv-<orbitkv.port>.sock`, matching the
 sidecar default. Use `orbitkv.local_bootstrap_socket` for a custom single-sidecar
 path. `orbitkv.local_timeout_ms` (default 5000) bounds each local request and
 `orbitkv.local_spin_iterations` defaults to 64. Registration, health, session
@@ -162,27 +167,21 @@ TP sharding currently requires equal contiguous shards and TP-only parallelism.
 Pipeline, decode-context, and prefill-context parallelism are rejected when
 more than one endpoint is configured.
 
-When every TP shard sidecar is on the scheduler host, the hot data path may use
-local IPC by adding an equally ordered socket list:
+When every TP shard sidecar is on the scheduler host, auto mode derives one
+socket from each endpoint and uses local IPC only when all sockets exist:
 
 ```json
 {
-  "orbitkv.local_data": true,
   "orbitkv.tp_shard_endpoints": [
     "http://127.0.0.1:50055",
     "http://127.0.0.1:50056"
-  ],
-  "orbitkv.tp_shard_bootstrap_sockets": [
-    "/tmp/orbitkv-50055.sock",
-    "/tmp/orbitkv-50056.sock"
   ]
 }
 ```
 
-The socket list is mandatory for multiple shards and must be one-to-one with
-the endpoint list. A Unix socket cannot cross a host boundary, so cross-host TP
-shards must leave `orbitkv.local_data` disabled until query fan-out moves to
-node-local agents.
+An explicit `orbitkv.tp_shard_bootstrap_sockets` list is only needed for custom
+paths. A Unix socket cannot cross a host boundary, so auto mode falls back to
+gRPC when one or more shard sockets are not local.
 
 #### P/D Partial Tail Blocks
 

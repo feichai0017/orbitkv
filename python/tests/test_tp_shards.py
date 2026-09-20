@@ -203,6 +203,79 @@ def test_scheduler_maps_each_tp_shard_to_its_local_data_socket(monkeypatch):
     ]
 
 
+def test_scheduler_auto_selects_derived_local_sockets(monkeypatch):
+    lifecycle_clients = [MagicMock(), MagicMock()]
+    local_clients = [MagicMock(transport="local"), MagicMock(transport="local")]
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock(side_effect=lifecycle_clients))
+    local_factory = MagicMock(side_effect=local_clients)
+    monkeypatch.setattr("orbitkv.vllm.LocalDataClient", local_factory)
+    monkeypatch.setattr("orbitkv.vllm.ServiceStateManager", MagicMock())
+    monkeypatch.setattr("orbitkv.client.data_plane._endpoint_is_local", lambda _endpoint: True)
+    monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
+
+    config = _vllm_config(
+        extra_overrides={
+            "orbitkv.tp_shard_endpoints": [
+                "http://127.0.0.1:50055",
+                "http://127.0.0.1:50056",
+            ]
+        }
+    )
+    connector = OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
+    try:
+        assert connector._ctx.data_client is local_clients[0]
+        assert connector._scheduler._tp_shard_client._clients == tuple(local_clients)
+    finally:
+        connector.shutdown()
+
+    assert local_factory.call_args_list == [
+        call("/tmp/orbitkv-50055.sock", timeout_ms=5_000, spin_iterations=64),
+        call("/tmp/orbitkv-50056.sock", timeout_ms=5_000, spin_iterations=64),
+    ]
+
+
+def test_scheduler_auto_falls_back_to_grpc_when_sockets_are_not_local(monkeypatch):
+    lifecycle_clients = [MagicMock(), MagicMock()]
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock(side_effect=lifecycle_clients))
+    local_factory = MagicMock()
+    monkeypatch.setattr("orbitkv.vllm.LocalDataClient", local_factory)
+    monkeypatch.setattr("orbitkv.vllm.ServiceStateManager", MagicMock())
+    monkeypatch.setattr("orbitkv.client.data_plane._endpoint_is_local", lambda _endpoint: False)
+
+    connector = OrbitKVConnector(_vllm_config(), KVConnectorRole.SCHEDULER)
+    try:
+        assert connector._ctx.data_client.transport == "grpc"
+    finally:
+        connector.shutdown()
+
+    local_factory.assert_not_called()
+
+
+def test_scheduler_auto_falls_back_to_grpc_when_local_bootstrap_fails(monkeypatch):
+    lifecycle_clients = [MagicMock(), MagicMock()]
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock(side_effect=lifecycle_clients))
+    monkeypatch.setattr(
+        "orbitkv.vllm.LocalDataClient", MagicMock(side_effect=RuntimeError("stale socket"))
+    )
+    monkeypatch.setattr("orbitkv.vllm.ServiceStateManager", MagicMock())
+    monkeypatch.setattr("orbitkv.client.data_plane._endpoint_is_local", lambda _endpoint: True)
+    monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
+    config = _vllm_config(
+        extra_overrides={
+            "orbitkv.tp_shard_endpoints": [
+                "http://127.0.0.1:50055",
+                "http://127.0.0.1:50056",
+            ]
+        }
+    )
+
+    connector = OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
+    try:
+        assert connector._ctx.data_client.transport == "grpc"
+    finally:
+        connector.shutdown()
+
+
 def test_worker_uses_only_the_socket_for_its_tp_shard(monkeypatch):
     lifecycle = MagicMock()
     local = MagicMock(transport="local")
@@ -233,11 +306,36 @@ def test_worker_uses_only_the_socket_for_its_tp_shard(monkeypatch):
     )
 
 
+def test_worker_auto_selects_its_local_shard_when_other_shards_are_remote(monkeypatch):
+    lifecycle = MagicMock()
+    local = MagicMock(transport="local")
+    monkeypatch.setattr("orbitkv.vllm.get_tensor_model_parallel_rank", lambda: 5)
+    monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock(return_value=lifecycle))
+    local_factory = MagicMock(return_value=local)
+    monkeypatch.setattr("orbitkv.vllm.LocalDataClient", local_factory)
+    monkeypatch.setattr("orbitkv.vllm.ServiceStateManager", MagicMock())
+    monkeypatch.setattr(
+        "orbitkv.client.data_plane._endpoint_is_local",
+        lambda endpoint: endpoint == "http://node-b:50055",
+    )
+    monkeypatch.setattr("orbitkv.client.data_plane._is_unix_socket", lambda _path: True)
+
+    connector = OrbitKVConnector(_vllm_config(), KVConnectorRole.WORKER)
+    try:
+        assert connector._ctx.data_client is local
+    finally:
+        connector.shutdown()
+
+    local_factory.assert_called_once_with(
+        "/tmp/orbitkv-50055.sock", timeout_ms=5_000, spin_iterations=64
+    )
+
+
 def test_local_data_rejects_multiple_shards_without_socket_mapping(monkeypatch):
     monkeypatch.setattr("orbitkv.vllm.EngineRpcClient", MagicMock())
     config = _vllm_config(extra_overrides={"orbitkv.local_data": True})
 
-    with pytest.raises(ValueError, match="tp_shard_bootstrap_sockets"):
+    with pytest.raises(ValueError, match="duplicates"):
         OrbitKVConnector(config, KVConnectorRole.SCHEDULER)
 
 

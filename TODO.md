@@ -56,14 +56,14 @@ and a passing gate; design text alone does not close an item.
   for `LocalQueryClient`.
 - [ ] Switch SGLang from its future compatibility transport to local restore
   operations.
-- [x] Switch vLLM Query/Publish/Restore/Release to an opt-in local data client;
+- [x] Switch vLLM Query/Publish/Restore/Release to an auto-selected local data client;
   keep registration, health, session watching, and unregister on gRPC.
 - [x] Remove per-load `PyLoadState` from the opt-in vLLM local data path.
 - [x] Keep local control messages descriptor-only; prohibit KV payload bytes in
   UDS or iceoryx2 messages. The gRPC compatibility path still carries block
   descriptors until it is retired.
-- [x] Move vLLM hot local control off gRPC behind `orbitkv.local_data`; retain
-  gRPC as the default compatibility path.
+- [x] Move vLLM hot local control off gRPC automatically when the local socket
+  is available; retain explicit gRPC fallback.
 - [ ] Qualify vLLM correctness E2E with `--orbitkv-local-data` on the GPU/vLLM
   environment (transport, activity, and failure gates pass; strict warm-prefix
   text equality retains the known vLLM execution-path divergence).

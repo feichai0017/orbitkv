@@ -40,8 +40,9 @@ The lifecycle and compatibility planes still use gRPC. The native local API now
 supports query, publish, asynchronous restore completion, and lease release:
 iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
 passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
-The vLLM adapter exposes this as an explicit `orbitkv.local_data` mode; its
-default remains gRPC and the SGLang adapter has not yet been switched. KV bytes
+The vLLM adapter automatically selects this path when the sidecar's derived
+Unix socket is available; `orbitkv.local_data=true|false` forces either path.
+The SGLang adapter has not yet been switched. KV bytes
 must not travel through either control protocol: vLLM uses
 registered CUDA IPC pages, SGLang will use a shared pinned host pool, and remote
 transfers use the Mooncake-backed `TransferEngine`. See [transport.md](transport.md) for the

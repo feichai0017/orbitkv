@@ -191,8 +191,10 @@ class VLLMServer:
             extra_config: dict[str, object] = {}
             if self.use_orbitkv and self.transfer_backend is not None:
                 extra_config["orbitkv.transfer_backend"] = self.transfer_backend
-            if self.use_orbitkv and self.local_data:
-                extra_config["orbitkv.local_data"] = True
+            if self.use_orbitkv:
+                # Keep E2E transport selection explicit now that production
+                # defaults to automatic same-host local IPC discovery.
+                extra_config["orbitkv.local_data"] = self.local_data
             if extra_config:
                 kv_config["kv_connector_extra_config"] = extra_config
             cmd.extend(["--kv-transfer-config", json.dumps(kv_config)])
