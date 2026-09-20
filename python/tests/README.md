@@ -10,6 +10,8 @@
 | Clean source-only Python changes, docs touching test layout, CI test dependency changes | Source-only default | `uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Default test accidentally depends on torch, vLLM, CUDA, or native extension |
 | Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --extra test pytest -m integration` | Server/native/GPU lifecycle regression |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
+| SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/test_sglang_direct_e2e.py --model /path/to/model` | Restores the same prompt after a RadixCache flush and after SGLang restarts against a live Cache Manager. |
+| SGLang HiCache L3 backend or hybrid auxiliary pools | SGLang HiCache E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/test_sglang_inference_e2e.py --model /path/to/model` | Exercises the host-page compatibility path and its recovery policy. |
 | Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --extra test pytest -m stress tests/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
@@ -58,6 +60,9 @@ Runs tests that start or require a local `orbitkv-cache-manager` but do not run 
   a real process boundary;
 - `test_cache_manager_client.py`
 - `test_session_watcher.py`
+- `test_sglang_direct_transfer.py` writes SGLang-shaped GPU pages through CUDA
+  IPC, clears their source slots, and verifies a byte-exact restore into new
+  slots. Run this when changing page registration or GPU transfer layout.
 
 Requirements:
 - built Python extension, for example `uv run maturin develop -r`
@@ -97,6 +102,13 @@ This gate is required before merging PRs that change Python test gates, the
 vLLM connector, cache semantics visible to the connector, save/load behavior,
 query planning, or release confidence. The code author runs it before requesting
 merge, and review reruns it independently on the GPU machine.
+
+SGLang direct-linker changes require the SGLang direct E2E in the release
+environment. It checks exact generated text, a nonzero external prefix hit
+after `/flush_cache`, and an actual Cache Manager GPU load after the SGLang
+process restarts while the Cache Manager remains alive. A separate namespace
+provides a true cold inference control for the restarted process. The legacy
+HiCache test remains the gate for its host-page backend.
 
 Requirements:
 - vLLM installed in the active environment

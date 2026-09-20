@@ -6,3 +6,7 @@
 	path = third-party/mooncake
 	url = https://github.com/kvcache-ai/Mooncake.git
 	shallow = true
+[submodule "third-party/vllm"]
+	path = third-party/vllm
+	url = https://github.com/vllm-project/vllm.git
+	shallow = true

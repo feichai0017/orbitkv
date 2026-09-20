@@ -48,6 +48,12 @@ and a passing gate; design text alone does not close an item.
   recomputed safely.
 - [ ] Add cold-miss, partial-prefix, warm-hit, cancellation, and restart tests.
 - [x] Run one real SGLang model E2E on H20, including restore after L1/L2 flush.
+- [x] Register a SGLang RadixCache plugin that transfers full-attention GPU KV
+  through CUDA IPC and iceoryx2, with a real Cache Manager load after SGLang
+  process restart and cold-inference output comparison.
+- [ ] Add direct GPU recovery contracts for hybrid SWA/Mamba, DSA, draft-model,
+  and auxiliary state; retain the HiCache backend where it has a complete
+  recovery contract until then.
 
 ## M2 — common bundle and local IPC
 
@@ -60,7 +66,9 @@ and a passing gate; design text alone does not close an item.
 - [ ] Pass framework-owned shared-page file descriptors over UDS.
 - [x] Add bounded local restore operations that replace per-load `PyLoadState`
   for `LocalQueryClient`.
-- [ ] Implement SGLang restore through the local Cache Manager endpoint.
+- [x] Implement direct SGLang full-attention GPU restore through the local
+  Cache Manager endpoint; the HiCache L3 compatibility path still uses UDS
+  host-page payloads.
 - [x] Switch vLLM Query/Publish/Restore/Release to the local data client.
 - [x] Move registration, health, session watching, and unregister to UDS;
   remove the inference gRPC endpoint.

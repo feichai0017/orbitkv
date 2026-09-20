@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Framework adapters and Python bindings for the OrbitKV state cache"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "OrbitKV Contributors" }
 ]
@@ -29,9 +30,37 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 
+[project.urls]
+Homepage = "https://github.com/feichai0017/orbitkv"
+Repository = "https://github.com/feichai0017/orbitkv"
+Issues = "https://github.com/feichai0017/orbitkv/issues"
+
+[project.optional-dependencies]
+vllm = ["vllm==0.29.0"]
+sglang = ["sglang==0.5.20"]
+test = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+    "numpy>=1.24",
+    "requests>=2.26.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+    "numpy>=1.24",
+    "requests>=2.26.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
 [tool.maturin]
 module-name = "orbitkv.orbitkv"
 python-source = "."
+python-packages = ["orbitkv"]
+exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**"]
+strip = true
 # Automatically include binaries defined in Cargo.toml [[bin]] sections
 include = [
     "orbitkv/orbitkv-cache-manager-py",
@@ -41,27 +70,15 @@ include = [
     "orbitkv/libasio.so",
 ]
 
-[project.optional-dependencies]
-test = [
-    "pytest>=8.0",
-    "pytest-cov>=4.0",
-    "pytest-xdist>=3.0",
-    "numpy>=1.24",
-    "httpx>=0.24.0",
-    "requests>=2.26.0",
-]
-dev = [
-    "orbitkv-llm[test]",
-    "ruff>=0.4",
-    "mypy>=1.10",
-]
-
 [project.scripts]
 orbitkv-cache-manager = "orbitkv._cache_manager:main"
 orbitkv-metaserver = "orbitkv._metaserver:main"
 
 [project.entry-points."vllm.general_plugins"]
 orbitkv = "orbitkv.vllm_plugin:register"
+
+[project.entry-points."sglang.srt.plugins"]
+orbitkv = "orbitkv.sglang.plugin:register"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -77,7 +94,7 @@ addopts = [
 ]
 markers = [
     "integration: starts or requires Cache Manager but does not run vLLM",
-    "e2e: runs baseline vLLM plus OrbitKV connector correctness checks",
+    "e2e: runs inference-engine correctness and recovery checks",
     "stress: long-running vLLM scenario for concurrency or pressure behavior",
     "gpu: requires CUDA-capable GPU",
     "slow: may take more than a few seconds",

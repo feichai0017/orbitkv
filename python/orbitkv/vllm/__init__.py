@@ -17,6 +17,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (
 from vllm.distributed.parallel_state import get_pp_group, get_tensor_model_parallel_rank
 
 from orbitkv.client.connection import connect_cache
+from orbitkv.client.gpu import resolve_device_id as _resolve_device_id
 from orbitkv.vllm.common import (
     CacheGroupLayout,
     ConnectorContext,
@@ -529,31 +530,6 @@ class NoopKVConnector(KVConnectorBase_V1, SupportsHMA):
         block_ids: tuple[list[int], ...],
     ) -> tuple[bool, dict[str, Any] | None]:
         return (False, None)
-
-
-def _resolve_device_id() -> int:
-    """
-    Return the global CUDA device id even when CUDA_VISIBLE_DEVICES masks GPUs.
-
-    torch.cuda.current_device() returns the local index within the visible set,
-    but we need the actual global device ID for operations like CUDA IPC.
-    This function maps the local index back to the global device ID.
-    """
-    local_id = torch.cuda.current_device()
-    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if not visible:
-        return local_id
-
-    slots = [slot.strip() for slot in visible.split(",") if slot.strip()]
-    try:
-        mapped = slots[local_id]
-    except IndexError:
-        return local_id
-
-    try:
-        return int(mapped)
-    except ValueError:
-        return local_id
 
 
 __all__ = ["OrbitKVConnector", "NoopKVConnector", "KVConnectorRole"]

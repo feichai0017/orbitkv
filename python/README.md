@@ -9,18 +9,26 @@ adapters for the releases below.
 - **LocalDataClient**: UDS/iceoryx2 client for the node-local Cache Manager
 - **CacheDataClient**: Framework-neutral cache operations for every storage tier
 - **OrbitKVConnector**: vLLM KV connector for distributed inference with KV cache transfer
-- **OrbitKVHiCacheStorage**: SGLang dynamic HiCache L3 backend with KV and
+- **OrbitKVLinker**: SGLang direct GPU-page cache through CUDA IPC and iceoryx2
+- **OrbitKVHiCacheStorage**: SGLang HiCache L3 backend for hybrid models and
   named auxiliary pool recovery
 
 ## Installation
 
-The framework release baseline verified on 2026-09-20 is vLLM `0.29.0` and
-SGLang `0.5.20`. Keep their GPU dependencies in separate environments. The
-SGLang source submodule is pinned to its `v0.5.20` release.
+The supported engine releases are vLLM `0.29.0` and SGLang `0.5.20`, verified
+on 2026-09-20. Their source submodules are pinned to the corresponding release
+tags in `third-party/`. Keep the engine GPU dependencies in separate environments
+so each installation can be tested independently.
 
 The Cache Manager currently imports PyTorch at startup for CUDA IPC handling.
 Run the wheel in an environment with a compatible PyTorch/CUDA runtime; the
 base `orbitkv-llm` dependency set does not install PyTorch for you.
+
+The distribution names are `orbitkv-llm` (CUDA 12) and
+`orbitkv-llm-cu13` (CUDA 13). The import name is always `orbitkv`. The
+`[vllm]` and `[sglang]` extras install the exact engine release we validate;
+install one extra per environment. Install a wheel matching the host CUDA
+runtime and Python ABI.
 
 ```bash
 cd python
@@ -33,21 +41,30 @@ uv pip install --python ../.venv/sglang-release/bin/python 'sglang==0.5.20' --to
 ### From Source
 
 ```bash
-# Install maturin if you haven't already
+# Run from the repository root
+git submodule update --init --recursive third-party/mooncake
 pip install maturin
 
 # Build and install in development mode
 cd python
 maturin develop
 
-# Or build a wheel
-maturin build --release
+# Or build an installable wheel with the Cache Manager and Mooncake runtime
+cd ..
+./scripts/build-wheel.sh --release --no-default-features --features cuda-13,mooncake
+# Install the resulting target/wheels/orbitkv_llm_cu13-*.whl in each engine environment
 ```
 
-### From PyPI (coming soon)
+For a CUDA 12 wheel, run `./scripts/build-wheel.sh --release` instead. A
+standalone `maturin build` only builds the extension; the script also stages
+the service binaries and shared libraries, then checks the completed wheel.
+
+### From PyPI (when published)
 
 ```bash
-pip install orbitkv
+pip install 'orbitkv-llm[vllm]==0.1.0'  # CUDA 12 + vLLM
+# Or, in a separate CUDA 13 environment:
+pip install 'orbitkv-llm-cu13[sglang]==0.1.0'
 ```
 
 ## Usage
@@ -82,7 +99,48 @@ llm = LLM(
 )
 ```
 
-### SGLang HiCache L3
+### SGLang direct GPU cache
+
+For ordinary full-attention MHA or MLA models on SGLang `0.5.20`, use the
+OrbitKV RadixCache backend. Install the OrbitKV wheel in the SGLang environment
+so its `sglang.srt.plugins` entry point is visible to the scheduler process.
+The Cache Manager and SGLang worker must run on the same host; the Unix socket
+path must match the Cache Manager's bootstrap socket.
+
+```bash
+orbitkv-cache-manager --addr 127.0.0.1:50055 --pool-size 2gb
+
+ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
+  sglang serve --model-path /path/to/model \
+  --page-size 64 \
+  --enable-unified-cache-external-linker \
+  --radix-cache-backend orbitkv
+```
+
+SGLang owns the HBM page lifecycle. OrbitKV registers the worker's GPU KV
+buffers once through CUDA IPC, then queries, saves, and restores page-aligned
+blocks through the same local client used by vLLM. iceoryx2 carries cache
+commands; GPU data is copied directly between the registered buffers and the
+Cache Manager's pinned memory. Its DRAM/SSD tiers can preserve pages across a
+SGLang restart while the Cache Manager remains running. No SGLang HiCache host
+pool or per-page UDS payload copy is needed for this path.
+
+The cache namespace includes the model identity, SGLang release, configured
+model revision, weight version, quantization, parallel ranks, page size, GPU
+layout, and dtype. Set `ORBITKV_SGLANG_NAMESPACE` to a unique weight identity
+if the files at a model path change without changing their path or configured
+revision. Each tensor-parallel rank registers its local buffers; SGLang
+intersects restorable prefixes across ranks. This direct path currently accepts
+full-attention MHA and MLA layouts with one KV pool. It rejects hybrid
+SWA/Mamba, DSA, draft-model, and auxiliary GPU state until their complete
+recovery contracts are implemented. Both `--radix-cache-backend orbitkv` and
+`--enable-unified-cache-external-linker`
+are required: the second flag makes SGLang schedule device loads and drain
+the linker's completion queues. Startup fails if it is omitted. The GPU E2E
+has qualified the single-rank path; multi-rank TP recovery remains to be
+validated on a matching GPU deployment.
+
+### SGLang HiCache L3 compatibility path
 
 Start a Cache Manager on the inference host, then launch SGLang with the
 dynamic storage backend. The endpoint must match the Cache Manager's UDS
@@ -104,7 +162,7 @@ sglang serve --model-path Qwen/Qwen3-0.6B \
 SGLang owns HBM and its L2 host pool. OrbitKV copies completed pages to its
 own pinned DRAM/SSD tier and restores them through the same SGLang HiCache
 interface. This stage has one L2-to-L3 host copy; direct shared-region
-registration is future work. A GPU end-to-end test with SGLang `0.5.20`
+registration is future work for this path. A GPU end-to-end test with SGLang `0.5.20`
 restored 256 prompt tokens after `/flush_cache` and reproduced the output.
 Model name, parallel rank, pool, dtype, layout, and page size are part of the
 storage namespace; use `namespace` in the extra config to distinguish model
