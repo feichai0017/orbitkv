@@ -1984,6 +1984,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbitkv-channel"
+version = "0.1.0"
+dependencies = [
+ "iceoryx2",
+ "memmap2",
+ "rustix",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "orbitkv-common"
 version = "0.1.0"
 dependencies = [
@@ -1991,14 +2002,6 @@ dependencies = [
  "libc",
  "log",
  "logforth",
-]
-
-[[package]]
-name = "orbitkv-contract"
-version = "0.1.0"
-dependencies = [
- "serde",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2021,8 +2024,8 @@ dependencies = [
  "offset-allocator",
  "opentelemetry",
  "orbitkv-common",
- "orbitkv-contract",
  "orbitkv-proto",
+ "orbitkv-state",
  "orbitkv-transfer",
  "parking_lot",
  "rand 0.10.3",
@@ -2033,17 +2036,6 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "uuid",
-]
-
-[[package]]
-name = "orbitkv-local"
-version = "0.1.0"
-dependencies = [
- "iceoryx2",
- "memmap2",
- "rustix",
- "tempfile",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2090,9 +2082,9 @@ dependencies = [
 name = "orbitkv-py"
 version = "0.1.0"
 dependencies = [
+ "orbitkv-channel",
  "orbitkv-common",
  "orbitkv-core",
- "orbitkv-local",
  "orbitkv-metaserver",
  "orbitkv-proto",
  "orbitkv-server",
@@ -2116,9 +2108,9 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
+ "orbitkv-channel",
  "orbitkv-common",
  "orbitkv-core",
- "orbitkv-local",
  "orbitkv-metaserver",
  "orbitkv-proto",
  "parking_lot",
@@ -2135,6 +2127,14 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "uuid",
+]
+
+[[package]]
+name = "orbitkv-state"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

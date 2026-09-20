@@ -1,4 +1,4 @@
-# orbitkv-local
+# orbitkv-channel
 
 Versioned local request/response transport between inference processes and an
 OrbitKV Cache Manager. The control message is fixed at 64 bytes; KV payloads remain
@@ -17,8 +17,8 @@ Cache Manager's local-control thread.
 Run the two-process latency harness in separate terminals:
 
 ```bash
-cargo run -r -p orbitkv-local --bin orbitkv-local-echo -- orbitkv/bench
-cargo run -r -p orbitkv-local --bin orbitkv-local-bench -- orbitkv/bench 100000
+cargo run -r -p orbitkv-channel --bin orbitkv-channel-echo -- orbitkv/bench
+cargo run -r -p orbitkv-channel --bin orbitkv-channel-bench -- orbitkv/bench 100000
 ```
 
 The benchmark client sends `Shutdown` after the run so the echo process exits.

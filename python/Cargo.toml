@@ -32,7 +32,7 @@ mooncake = ["dep:orbitkv-transfer", "orbitkv-core/mooncake", "orbitkv-server/moo
 pyo3 = { workspace = true, features = ["extension-module"] }
 orbitkv-common.workspace = true
 orbitkv-core = { workspace = true, default-features = false }
-orbitkv-local.workspace = true
+orbitkv-channel.workspace = true
 orbitkv-proto = { path = "../crates/orbitkv-proto" }
 orbitkv-server = { path = "../crates/orbitkv-server", default-features = false }
 orbitkv-metaserver = { path = "../crates/orbitkv-metaserver", default-features = false }

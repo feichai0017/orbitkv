@@ -10,10 +10,10 @@ Deliver:
 
 - move Rust packages under `crates/` and keep the repository root a virtual
   workspace;
-- introduce `orbitkv-contract`;
+- introduce `orbitkv-state`;
 - place the vLLM cache connector and Mooncake P/D adapter under `orbitkv.vllm`;
 - establish `orbitkv.sglang` and `orbitkv.client` package boundaries;
-- establish the `orbitkv-local` iceoryx2 control ABI;
+- establish the `orbitkv-channel` iceoryx2 control ABI;
 - connect lifecycle probes, epoch fencing, and shutdown to the real Cache Manager and
   Python client;
 - bootstrap a generation-checked descriptor arena over UDS and execute

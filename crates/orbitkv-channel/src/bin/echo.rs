@@ -1,11 +1,11 @@
 use std::io::Write;
 
-use orbitkv_local::{CommandCode, LocalServer, Response, StatusCode};
+use orbitkv_channel::{CommandCode, LocalServer, Response, StatusCode};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service_name = std::env::args()
         .nth(1)
-        .ok_or("usage: orbitkv-local-echo <service-name> [session-epoch]")?;
+        .ok_or("usage: orbitkv-channel-echo <service-name> [session-epoch]")?;
     let session_epoch = std::env::args()
         .nth(2)
         .map(|value| value.parse())

@@ -1,5 +1,5 @@
-use orbitkv_local::lifecycle::LifecycleCommand;
-use orbitkv_local::{
+use orbitkv_channel::lifecycle::LifecycleCommand;
+use orbitkv_channel::{
     CallOptions, Command as LocalCommand, CommandCode, LocalClient, LocalQueryClient, PublishLayer,
     PublishRequest, QueryBundleRequest, QueryOutcomeCode, RestoreLease, RestoreRequest, StatusCode,
 };
@@ -126,10 +126,10 @@ impl PyLocalQueryClient {
     ) -> PyResult<()> {
         py.detach(|| self.inner.lifecycle(command, &payload))
             .map_err(|error| match error {
-                orbitkv_local::LocalQueryError::Lifecycle { code: 1, message } => {
+                orbitkv_channel::LocalQueryError::Lifecycle { code: 1, message } => {
                     PyValueError::new_err(message)
                 }
-                orbitkv_local::LocalQueryError::Lifecycle { code: 3, message } => {
+                orbitkv_channel::LocalQueryError::Lifecycle { code: 3, message } => {
                     OrbitKVInternal::new_err(message)
                 }
                 other => OrbitKVError::new_err(other.to_string()),
@@ -404,7 +404,7 @@ impl PyLocalQueryClient {
             self.inner.restore_wait(
                 request_id
                     .checked_add(1)
-                    .ok_or(orbitkv_local::LocalQueryError::SessionRequiresReconnect)?,
+                    .ok_or(orbitkv_channel::LocalQueryError::SessionRequiresReconnect)?,
                 operation_id,
                 Duration::from_millis(timeout_ms),
             )
@@ -462,16 +462,16 @@ impl PyLocalQueryClient {
                 OrbitKVError::new_err(format!("local restore poll failed: {error}"))
             })?;
         let state = match response.state {
-            orbitkv_local::RestoreState::Pending => "pending",
-            orbitkv_local::RestoreState::Succeeded => "succeeded",
-            orbitkv_local::RestoreState::Failed => "failed",
+            orbitkv_channel::RestoreState::Pending => "pending",
+            orbitkv_channel::RestoreState::Succeeded => "succeeded",
+            orbitkv_channel::RestoreState::Failed => "failed",
         };
         Ok((state.to_string(), response.message))
     }
 }
 
 impl LocalControlClient {
-    fn call(&self, py: Python<'_>, command: LocalCommand) -> PyResult<orbitkv_local::Response> {
+    fn call(&self, py: Python<'_>, command: LocalCommand) -> PyResult<orbitkv_channel::Response> {
         let response = py
             .detach(|| self.client.call(command, self.options))
             .map_err(|error| OrbitKVError::new_err(format!("local control failed: {error}")))?;

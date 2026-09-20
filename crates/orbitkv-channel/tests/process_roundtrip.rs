@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::time::{Duration, SystemTime};
 
-use orbitkv_local::{CallOptions, Command, CommandCode, LocalClient, StatusCode};
+use orbitkv_channel::{CallOptions, Command, CommandCode, LocalClient, StatusCode};
 
 #[test]
 fn request_response_crosses_a_real_process_boundary() {
@@ -13,7 +13,7 @@ fn request_response_crosses_a_real_process_boundary() {
         .unwrap()
         .as_nanos();
     let service_name = format!("orbitkv/test/{}/{nonce}", std::process::id());
-    let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-local-echo"))
+    let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_orbitkv-channel-echo"))
         .arg(&service_name)
         .arg("11")
         .stdout(Stdio::piped())

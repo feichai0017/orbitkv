@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use orbitkv_local::{CallOptions, Command, CommandCode, LocalClient};
+use orbitkv_channel::{CallOptions, Command, CommandCode, LocalClient};
 
 fn percentile(sorted: &[u64], fraction: f64) -> f64 {
     let index = ((sorted.len() - 1) as f64 * fraction).round() as usize;
@@ -10,7 +10,7 @@ fn percentile(sorted: &[u64], fraction: f64) -> f64 {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service_name = std::env::args()
         .nth(1)
-        .ok_or("usage: orbitkv-local-bench <service-name> [iterations]")?;
+        .ok_or("usage: orbitkv-channel-bench <service-name> [iterations]")?;
     let iterations = std::env::args()
         .nth(2)
         .map(|value| value.parse())

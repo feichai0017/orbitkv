@@ -8,20 +8,20 @@ and a passing gate; design text alone does not close an item.
 - [x] Import and rename the PegaFlow 0.24.5 data plane.
 - [x] Move Rust packages under `crates/`.
 - [x] Remove the unused repository-root `src/main.rs`.
-- [x] Add `orbitkv-contract` with state identity, format, page generation, and
+- [x] Add `orbitkv-state` with state identity, format, page generation, and
   recovery-bundle types.
 - [x] Name the bundle's current component-presence check honestly; it is not
   yet a restorable-state proof.
 - [x] Move the canonical vLLM package to `orbitkv.vllm`.
 - [x] Group the vLLM cache connector and P/D adapter under `orbitkv.vllm`.
 - [x] Add `orbitkv.client` and `orbitkv.sglang` package boundaries.
-- [x] Add `orbitkv-local` with a versioned 64-byte iceoryx2 request/response ABI.
+- [x] Add `orbitkv-channel` with a versioned 64-byte iceoryx2 request/response ABI.
 - [x] Add a real two-process local-control test.
 - [x] Integrate the iceoryx2 lifecycle endpoint into `orbitkv-server`.
 - [x] Add Python `LocalControlClient` bindings with epoch fencing.
 - [x] Replace the copied native RDMA stacks with a pinned stable Mooncake
   Transfer Engine sys crate and one clean transfer API.
-- [ ] Add Python representations/serialization for `orbitkv-contract`.
+- [ ] Add Python representations/serialization for `orbitkv-state`.
 - [x] Run the full M0 validation matrix and record results in the commit.
 
 ## M1 — SGLang direct GPU-page linker
@@ -29,10 +29,10 @@ and a passing gate; design text alone does not close an item.
 - [x] Register SGLang full-attention MHA/MLA GPU buffers through CUDA IPC.
 - [x] Document SGLang direct-linker configuration and supported layouts.
 - [x] Add UDS bootstrap for the memfd-backed descriptor arena.
-- [x] Bind `orbitkv-local` QueryBundle to the shared core query path.
-- [x] Bind `orbitkv-local` Release to the shared core lease path.
-- [x] Bind `orbitkv-local` Publish to the shared core save path.
-- [x] Bind `orbitkv-local` Restore to core oneshot completion and eventfd wakeup.
+- [x] Bind `orbitkv-channel` QueryBundle to the shared core query path.
+- [x] Bind `orbitkv-channel` Release to the shared core lease path.
+- [x] Bind `orbitkv-channel` Publish to the shared core save path.
+- [x] Bind `orbitkv-channel` Restore to core oneshot completion and eventfd wakeup.
 - [x] Add Python bindings for the iceoryx2 local client.
 - [x] Reject SGLang hybrid, draft, DSA, and auxiliary GPU state at startup
   until their complete recovery contracts are implemented.

@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
+use orbitkv_channel::QueryBundleRequest;
 use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::{EngineError, OrbitKVEngine};
-use orbitkv_local::QueryBundleRequest;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 

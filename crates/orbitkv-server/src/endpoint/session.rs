@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use orbitkv_local::lifecycle::{
+use orbitkv_channel::lifecycle::{
     LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader, MAX_LIFECYCLE_PAYLOAD,
 };
 use prost::Message;

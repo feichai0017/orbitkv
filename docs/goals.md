@@ -9,7 +9,7 @@ catalog together with queueing and transfer costs.
 
 The long-term state planner must validate model, format, component coverage,
 and page generation before claiming that a prefix can resume execution. The
-current `orbitkv-contract` types describe this direction but do not yet
+current `orbitkv-state` types describe this direction but do not yet
 enforce it in the hot path.
 
 OrbitKV does not own model execution, GPU allocation, or inference scheduling.
