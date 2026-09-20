@@ -16,7 +16,11 @@ def _clean_identity_environment(monkeypatch):
     monkeypatch.delenv("ORBITKV_CACHE_SCOPE", raising=False)
 
 
-def test_artifact_contents_survive_relocation_but_detect_same_path_replacement(tmp_path):
+def test_artifact_contents_survive_relocation_but_detect_same_path_replacement(
+    tmp_path, monkeypatch
+):
+    # Coarse filesystem clocks can give equal-size writes identical stat data.
+    monkeypatch.setattr("orbitkv.identity._file_stamp", lambda _: (1, 2, 8, 3, 4))
     model = tmp_path / "model"
     model.mkdir()
     (model / "model.safetensors").write_bytes(b"original")

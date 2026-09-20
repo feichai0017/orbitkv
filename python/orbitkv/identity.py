@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 import re
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +41,6 @@ def _file_stamp(path: Path) -> tuple[int, ...]:
     return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
 
 
-@lru_cache(maxsize=512)
 def _file_digest(path: Path, stamp: tuple[int, ...]) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -56,9 +54,9 @@ def _file_digest(path: Path, stamp: tuple[int, ...]) -> str:
 def artifact_identity(model: str, revision: str | None = None) -> dict[str, str]:
     """Fingerprint local artifact contents, or require an immutable Hub revision.
 
-    File stamps only cache the expensive content hash inside this process. They
-    are never part of the identity, so identical copies in different directories
-    or on other hosts remain interchangeable.
+    Each resolution reads the contents: equal-sized writes can share a file
+    stamp on coarse clocks. Stamps only detect changes while hashing and never
+    define the identity, so identical copies remain interchangeable.
     """
     path = Path(model).expanduser()
     if path.exists():
