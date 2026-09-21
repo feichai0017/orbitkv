@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from benches.metrics import cache_source, metrics
+from benches.metrics import cache_source, metrics, summarize
 from benches.report import collect_run
 
 
@@ -49,6 +49,25 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
     json.dumps(observed, allow_nan=False)
 
 
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+def test_disk_prefetch_without_gpu_load_is_not_a_cache_hit(engine):
+    sample = {
+        "usage": {},
+        "metrics_delta": {},
+        "manager_delta": {"orbitkv_ssd_prefetch_bytes_total": 1024},
+        "length": 64,
+        "phase": "after_host_eviction",
+        "ttft_ms": 10,
+        "e2e_ms": 20,
+        "matches_cold_output": True,
+    }
+    sample["cache_source"] = cache_source(engine, sample)
+    result = summarize([sample], [64])[0]
+    assert result["cache_sources"] == {"miss": 1}
+    assert result["ssd_reads_without_gpu_restore"] == 1
+    assert result["orbitkv_ssd_read_bytes"] == 1024
+
+
 def test_report_keeps_output_mismatches_and_rejects_partial_runs(tmp_path):
     (tmp_path / "manifest.json").write_text(
         json.dumps(
@@ -78,3 +97,14 @@ def test_report_keeps_output_mismatches_and_rejects_partial_runs(tmp_path):
         sample_file.write_text("\n".join(map(json.dumps, invalid)))
         with pytest.raises(ValueError, match="Incomplete or duplicated"):
             collect_run(tmp_path)
+    sample_file.write_text("\n".join(map(json.dumps, samples)))
+    manifest_path = tmp_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["arguments"]["ssd_gib"] = 16
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="Incomplete or duplicated"):
+        collect_run(tmp_path)
+    samples.append({**samples[-1], "phase": "after_host_eviction"})
+    sample_file.write_text("\n".join(map(json.dumps, samples)))
+    (tmp_path / "storage.json").write_text('{"direct_io":true}')
+    assert len(collect_run(tmp_path)["summary"]) == 4

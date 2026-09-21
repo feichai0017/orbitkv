@@ -121,7 +121,7 @@ def pytest_addoption(parser):
 
 
 @pytest.fixture
-def channel_server():
+def channel_server(request, tmp_path):
     """Start an isolated Cache Manager with a known channel identity."""
     from tests.support.cache_manager import CacheManagerProcess, find_available_port
 
@@ -133,6 +133,9 @@ def channel_server():
         channel_service=service_name,
         channel_session_epoch=0x0B17_17C0,
         bootstrap_socket=bootstrap_socket,
+        ssd_cache_path=tmp_path / "cache.bin"
+        if getattr(request, "param", "dram") == "ssd"
+        else None,
     )
 
     if not server._binary_path:

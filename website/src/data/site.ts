@@ -75,7 +75,9 @@ export const providers = [
 
 export const docs = [
   { name: "Single-node vLLM and SGLang", path: "docs/single-node.md" },
+  { name: "SSD restore measurements", path: "docs/ssd-performance.md" },
   { name: "Model-aware state identity", path: "docs/state-identity.md" },
+  { name: "State demand and transfer planning", path: "docs/state-planning.md" },
   { name: "System architecture", path: "docs/architecture.md" },
   { name: "Local and remote transport", path: "docs/transport.md" },
   { name: "Roadmap and validation gates", path: "docs/roadmap.md" },

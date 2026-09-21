@@ -95,6 +95,20 @@ and a passing gate; design text alone does not close an item.
   vLLM CPU offload and SGLang HiCache, with equal payload budgets and verified
   cache sources; retain raw measurements and commands in
   `docs/single-node-performance.md`.
+- [x] Measure forced SSD restores with live `O_DIRECT` evidence on both engines;
+  retain SGLang's unsuccessful prefetches as misses in `docs/ssd-performance.md`.
+- [x] Verify both stored page layouts through SSD write, DRAM eviction, and
+  exact GPU-byte restoration with explicitly polled readiness.
+- [ ] Prove a supported SGLang request prepare/poll/cancel and admission hook;
+  if upstream interface work is needed, declare the release dependency (P0 in
+  `docs/state-planning.md`).
+- [ ] Give pending queries scoped operation identities, revision checks,
+  cancellation, and bounded result ownership across core and channel (P1).
+- [ ] Resolve SGLang pending-query readiness and terminal ownership; the current
+  lookup can recompute while an SSD prefetch remains unconsumed. Qualify actual
+  serving requests after forced DRAM eviction, including delayed reads (P2).
+- [ ] Add bounded request-driven DRAM warming and measured restore-versus-recompute
+  scheduling using `docs/state-planning.md` (P3/P4); speculative hints remain optional.
 - [ ] Profile the measured restore latency gap to both built-in CPU caches;
   measure transfer batching, completion observation, and inference overlap.
 - [ ] Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,
@@ -126,11 +140,14 @@ and a passing gate; design text alone does not close an item.
 - [ ] Normalize vLLM and SGLang KV events.
 - [ ] Build a worker/tier replica catalog with sequence recovery.
 - [ ] Delegate cross-host TP query fan-out to node-local Cache Managers.
-- [ ] Reproduce Dynamo's weighted-overlap selector.
+- [ ] Integrate pinned `dynamo-kv-router` worker selection and production service
+  lifecycle; verify hash/event mapping and request-load reservations (R1 in
+  `docs/state-planning.md`).
 - [ ] Add measured HBM/DRAM/SSD/RDMA restore cost.
 - [ ] Add recompute and queue-delay estimates.
 - [ ] Add eviction externality and replica-risk terms.
-- [ ] Return a worker plus a transfer/restore plan.
+- [ ] Select a worker through the router, then revalidate and lease its
+  transfer/restore plan at the Cache Manager.
 - [ ] Evaluate load-only, overlap-only, and joint planning on the same trace.
 
 - [x] Add the pinned Mooncake Transfer Engine native sys/build boundary.

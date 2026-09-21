@@ -63,6 +63,14 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             f"{args.host_gib}gb",
             "--enable-prometheus",
         ]
+        if args.ssd_gib:
+            manager_command += [
+                "--ssd-cache-path",
+                str(args.output / "cache.bin"),
+                "--ssd-cache-capacity",
+                f"{args.ssd_gib}gb",
+            ]
+            backend_configuration = {"ssd_gib": args.ssd_gib, "io": "O_DIRECT/io_uring"}
         plugin = args.output / "orbitkv_benchmark-0.0.dist-info"
         plugin.mkdir()
         (plugin / "METADATA").write_text("Name: orbitkv-benchmark\nVersion: 0.0\n")

@@ -54,6 +54,35 @@ misses, and generated-text differences. A startup/request failure writes
 `failure.json` and is not a latency result. The serial workload measures TTFT;
 it does not establish concurrent goodput or production tail latency.
 
+## SSD restoration
+
+Add `--ssd-gib 32` with `--backend orbitkv` for either engine. This creates a
+dedicated cache file inside the empty result directory, verifies `O_DIRECT` on
+the Manager's open descriptor, and records the filesystem and device inventory
+in `storage.json`. The owned payload file is removed after services stop; all
+measurement evidence remains. An overlay mount does not identify its physical
+backing device, and these results must not be presented as bare-device bandwidth.
+
+The workload adds `after_host_eviction` after the original three phases. It
+applies fresh GPU pressure, waits for observed SSD writes to become idle, and
+evicts Manager DRAM through its HTTP administration endpoint while preserving
+SSD copies. Eviction responses and counters are stored with each sample. These
+preparation operations are outside request latency. This is a controlled tier
+experiment, not a natural host-memory-pressure workload or a durability test.
+
+SSD read bytes alone do not prove an inference cache hit. Reports retain GPU
+load bytes, engine cache-hit evidence, and `ssd_reads_without_gpu_restore` so
+a late prefetch followed by recomputation stays visible. `ssd_prefetch_p50_ms`
+includes allocation, queueing, reads and reconstruction; `load_task_p50_ms`
+includes H2D task construction and synchronization. Histogram sums describe
+instrumented operations and are not an additive decomposition of client TTFT.
+
+```bash
+.venv/vllm-release/bin/python -m benches.single_node \
+  --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
+  --ssd-gib 32 --output benches/results/runs/qwen3-8b-ssd-vllm
+```
+
 ## Report existing runs
 
 ```bash

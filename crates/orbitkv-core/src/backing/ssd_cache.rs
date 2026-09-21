@@ -619,6 +619,9 @@ async fn execute_write(task: WriteTask, io: Arc<UringIoEngine>) -> WriteResult {
     .await;
 
     let duration_secs = start.elapsed().as_secs_f64();
+    core_metrics()
+        .ssd_write_duration_seconds
+        .record(duration_secs, &[]);
     (key, result.is_ok(), duration_secs, block_size)
 }
 
