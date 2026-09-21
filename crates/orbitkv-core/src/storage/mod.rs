@@ -212,7 +212,7 @@ impl StorageEngine {
 
         #[cfg(not(feature = "mooncake"))]
         if metaserver_client.is_some() {
-            warn!(
+            log::warn!(
                 "MetaServer was configured, but this binary was built without the `mooncake` feature; remote transfer is disabled"
             );
         }
