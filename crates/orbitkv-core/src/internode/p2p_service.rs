@@ -41,7 +41,7 @@ impl P2pTransferService {
 
     /// Serve on `addr` until `shutdown` resolves. Must run inside a tokio
     /// runtime. The address must be the engine's routable advertise address —
-    /// peers discover it through the MetaServer and dial it for handshakes.
+    /// peers discover it through the Catalog and dial it for handshakes.
     pub async fn serve(
         engine: Arc<OrbitKVEngine>,
         addr: std::net::SocketAddr,

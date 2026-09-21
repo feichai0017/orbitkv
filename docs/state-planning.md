@@ -145,7 +145,7 @@ The transfer scheduler belongs in `orbitkv-core`: bound outstanding bytes,
 prioritize demand reads by slack, cap speculative reads, and account for shared
 SSD/PCIe/NUMA/NIC resources. The adapters supply demand and lifecycle events;
 `orbitkv-channel` carries them. A future router can consume summaries after
-the local planner is useful. No new central MetaServer is required for this work.
+the local planner is useful. No new central Catalog is required for this work.
 
 ## Reuse Dynamo for request routing
 

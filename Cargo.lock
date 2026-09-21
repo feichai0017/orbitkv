@@ -2050,6 +2050,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbitkv-catalog"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "dashmap",
+ "opentelemetry",
+ "orbitkv-proto",
+ "orbitkv-state",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tonic",
+ "uuid",
+]
+
+[[package]]
 name = "orbitkv-channel"
 version = "0.1.0"
 dependencies = [
@@ -2089,8 +2107,8 @@ dependencies = [
  "mea",
  "offset-allocator",
  "opentelemetry",
+ "orbitkv-catalog",
  "orbitkv-common",
- "orbitkv-metaserver",
  "orbitkv-proto",
  "orbitkv-state",
  "orbitkv-transfer",
@@ -2102,30 +2120,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic",
- "uuid",
-]
-
-[[package]]
-name = "orbitkv-metaserver"
-version = "0.1.0"
-dependencies = [
- "axum",
- "clap",
- "criterion",
- "dashmap",
- "log",
- "opentelemetry",
- "opentelemetry-prometheus",
- "opentelemetry_sdk",
- "orbitkv-common",
- "orbitkv-proto",
- "orbitkv-state",
- "parking_lot",
- "prometheus",
- "serde",
- "tokio",
- "tonic",
- "tower",
  "uuid",
 ]
 
@@ -2155,7 +2149,6 @@ dependencies = [
  "orbitkv-channel",
  "orbitkv-common",
  "orbitkv-core",
- "orbitkv-metaserver",
  "orbitkv-proto",
  "orbitkv-server",
  "orbitkv-transfer",
@@ -2179,10 +2172,10 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
+ "orbitkv-catalog",
  "orbitkv-channel",
  "orbitkv-common",
  "orbitkv-core",
- "orbitkv-metaserver",
  "orbitkv-proto",
  "orbitkv-state",
  "parking_lot",

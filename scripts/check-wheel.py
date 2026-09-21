@@ -32,7 +32,6 @@ def check_wheel(path: Path, variant: str) -> None:
         "orbitkv/sglang/config.py",
         "orbitkv/sglang/layout.py",
         "orbitkv/orbitkv-cache-manager-py",
-        "orbitkv/orbitkv-metaserver-py",
         "orbitkv/libtransfer_engine.so",
         "orbitkv/libmooncake_common.so",
         "orbitkv/libasio.so",
@@ -43,6 +42,9 @@ def check_wheel(path: Path, variant: str) -> None:
         if missing:
             raise ValueError(f"missing wheel files: {', '.join(sorted(missing))}")
         removed_files = {
+            "orbitkv/orbitkv-metaserver-py",
+            "orbitkv/orbitkv-catalog-py",
+            "orbitkv/_metaserver.py",
             "orbitkv/vllm_plugin.py",
             "orbitkv/sglang/storage.py",
             "orbitkv/sglang/hicache.py",
@@ -102,7 +104,6 @@ def check_wheel(path: Path, variant: str) -> None:
         entries.read_string(wheel.read(entry_points).decode())
         expected_entries = {
             ("console_scripts", "orbitkv-cache-manager"): "orbitkv._cache_manager:main",
-            ("console_scripts", "orbitkv-metaserver"): "orbitkv._metaserver:main",
             ("vllm.general_plugins", "orbitkv"): "orbitkv.vllm.plugin:register",
             ("sglang.srt.plugins", "orbitkv"): "orbitkv.sglang.plugin:register",
         }
@@ -113,7 +114,7 @@ def check_wheel(path: Path, variant: str) -> None:
         if not any(name.endswith(".dist-info/licenses/LICENSE") for name in files):
             raise ValueError("wheel is missing the Apache-2.0 license file")
 
-        for binary in ("orbitkv-cache-manager-py", "orbitkv-metaserver-py"):
+        for binary in ("orbitkv-cache-manager-py",):
             mode = wheel.getinfo(f"orbitkv/{binary}").external_attr >> 16
             if not mode & stat.S_IXUSR:
                 raise ValueError(f"{binary} is not executable")

@@ -3,8 +3,8 @@
 | Mode | Processes | Status |
 | --- | --- | --- |
 | Single-node vLLM or SGLang cache | Engine + one local Cache Manager | Single-rank DRAM and forced-SSD recovery validated on both; concurrent and multi-rank workloads need separate qualification |
-| Shared cache across nodes | One Cache Manager per host + current MetaServer; optional etcd membership | Experimental; leased member admission is implemented, directory is not HA |
-| vLLM P/D through OrbitKV `PdConnector` | Prefill, decode, P/D proxy; Mooncake transfers KV | Experimental; does not need Cache Manager or MetaServer for the handoff |
+| Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; fixed directory shards have one metadata copy |
+| vLLM P/D through OrbitKV `PdConnector` | Prefill, decode, P/D proxy; Mooncake transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
 
 For exact wheel installation, vLLM and SGLang commands, socket/container
@@ -15,7 +15,7 @@ independently. See the [SSD measurements](ssd-performance.md) for
 tier-specific evidence and measurement limits. SSD cache files are truncated on
 manager startup, so they are not durable across a Cache Manager restart. For cross-node cache
 sharing, run the
-[current MetaServer and a local Cache Manager on each host](p2p.md); inference
+[embedded catalog and a local Cache Manager on each host](p2p.md); inference
 processes still connect only to their *own* host's UDS endpoint. Multi-host TP
 query fan-out is not supported yet.
 
@@ -41,9 +41,9 @@ NIXL connector handles the P-to-D handoff; OrbitKV uses `read_write` on P and
 loads. `MultiConnector` chooses the first connector advertising a load and
 saves to all configured connectors in order.
 
-Run one Cache Manager beside each vLLM instance, backed by the same MetaServer,
+Run one Cache Manager beside each vLLM instance, with the same etcd cluster and catalog host set,
 and use a P/D-aware request router. Configure each manager's routable `--addr`,
-`--nics`, and `--metaserver-addr` as described in the [P2P guide](./p2p.md).
+`--nics`, `--etcd-endpoints`, `--node-id`, and `--catalog-nodes` as described in the [P2P guide](./p2p.md).
 P and D must use compatible model, tokenizer, block size, KV dtype, KV layout,
 and `PYTHONHASHSEED`.
 

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -16,14 +16,14 @@ use uuid::Uuid;
 
 pub const DEFAULT_NODE_STALE_SECS: u64 = 30;
 pub const DEFAULT_TTL_MINUTES: u64 = 120;
-pub const DEFAULT_INVENTORY_BYTES_PER_NODE: usize = 256 * 1024 * 1024;
+pub const DEFAULT_METADATA_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub struct StoreConfig {
     pub node_stale_after: Duration,
     pub ttl: Duration,
-    /// Accounted key/index bytes per owner, excluding one bounded retry batch.
-    pub inventory_bytes_per_node: usize,
+    /// Accounted index and retained retry bytes across all owners in this shard.
+    pub metadata_bytes: usize,
 }
 
 impl Default for StoreConfig {
@@ -31,7 +31,7 @@ impl Default for StoreConfig {
         Self {
             node_stale_after: Duration::from_secs(DEFAULT_NODE_STALE_SECS),
             ttl: Duration::from_secs(DEFAULT_TTL_MINUTES * 60),
-            inventory_bytes_per_node: DEFAULT_INVENTORY_BYTES_PER_NODE,
+            metadata_bytes: DEFAULT_METADATA_BYTES,
         }
     }
 }
@@ -108,6 +108,7 @@ pub struct BlockHashStore {
     epoch: Uuid,
     config: StoreConfig,
     redundancy: RedundancyCounters,
+    metadata_bytes: AtomicUsize,
 }
 
 impl BlockHashStore {
@@ -122,6 +123,7 @@ impl BlockHashStore {
             epoch: Uuid::new_v4(),
             config,
             redundancy: RedundancyCounters::default(),
+            metadata_bytes: AtomicUsize::new(0),
         }
     }
 
@@ -141,12 +143,18 @@ impl BlockHashStore {
             return Err(StoreError::InvalidInventory);
         }
         loop {
-            let inventory = Arc::clone(
-                self.nodes
-                    .entry(Arc::from(node))
-                    .or_insert_with(|| Arc::new(Mutex::new(NodeInventory::new(node_id))))
-                    .value(),
-            );
+            let inventory = match self.nodes.entry(Arc::from(node)) {
+                Entry::Occupied(entry) => Arc::clone(entry.get()),
+                Entry::Vacant(entry) => {
+                    self.metadata_bytes
+                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                            used.checked_add(node_bytes(node))
+                                .filter(|next| *next <= self.config.metadata_bytes)
+                        })
+                        .map_err(|_| StoreError::Capacity)?;
+                    Arc::clone(&entry.insert(Arc::new(Mutex::new(NodeInventory::new(node_id)))))
+                }
+            };
             let mut state = inventory.lock();
             if state.retired {
                 continue;
@@ -155,6 +163,10 @@ impl BlockHashStore {
                 if state.last_seen.elapsed() <= self.config.node_stale_after {
                     return Err(StoreError::StaleSession);
                 }
+                self.metadata_bytes.fetch_sub(
+                    state.bytes + operation_bytes(state.last_operation.as_ref()),
+                    Ordering::AcqRel,
+                );
                 self.clear_owner(node, &mut state);
                 *state = NodeInventory::new(node_id);
             }
@@ -168,6 +180,10 @@ impl BlockHashStore {
         let mut state = inventory.lock();
         Self::check_session(&state, node_id)?;
         state.retired = true;
+        self.metadata_bytes.fetch_sub(
+            node_bytes(node) + state.bytes + operation_bytes(state.last_operation.as_ref()),
+            Ordering::AcqRel,
+        );
         let stats = self.clear_owner(node, &mut state);
         self.nodes
             .remove_if(node, |_, current| Arc::ptr_eq(current, &inventory));
@@ -191,6 +207,7 @@ impl BlockHashStore {
         if generation == 0 {
             return Err(StoreError::InvalidInventory);
         }
+        let mut reservation = None;
         let retry = generation == state.progress.generation
             && state.last_operation.as_ref() == Some(&operation);
         if !retry {
@@ -199,6 +216,7 @@ impl BlockHashStore {
                     if generation <= state.progress.generation {
                         return Err(StoreError::OutOfOrder);
                     }
+                    reservation = Some(self.reserve_operation(&state, &operation)?);
                     self.clear_owner(node, &mut state);
                     state.progress = InventoryStatus {
                         generation,
@@ -226,7 +244,7 @@ impl BlockHashStore {
                     {
                         return Err(StoreError::OutOfOrder);
                     }
-                    self.check_capacity(&state, records)?;
+                    reservation = Some(self.reserve_operation(&state, &operation)?);
                     for record in records {
                         self.apply(node, &mut state, record);
                         state.snapshot_max_sequence =
@@ -246,7 +264,7 @@ impl BlockHashStore {
                     {
                         return Err(StoreError::OutOfOrder);
                     }
-                    self.check_capacity(&state, records)?;
+                    reservation = Some(self.reserve_operation(&state, &operation)?);
                     for record in records {
                         self.apply(node, &mut state, record);
                     }
@@ -262,6 +280,7 @@ impl BlockHashStore {
                     {
                         return Err(StoreError::OutOfOrder);
                     }
+                    reservation = Some(self.reserve_operation(&state, &operation)?);
                     state.progress.ready = true;
                 }
             }
@@ -278,6 +297,11 @@ impl BlockHashStore {
             _ => Vec::new(),
         };
         state.last_operation = Some(operation);
+        if let Some(reservation) = &mut reservation {
+            reservation.release = reservation.previous + reservation.release
+                - state.bytes
+                - operation_bytes(state.last_operation.as_ref());
+        }
         drop(state);
         // Advisory replacement hints never lock two owners at once.
         let reclaimable = candidates
@@ -311,12 +335,45 @@ impl BlockHashStore {
         }
     }
 
+    fn reserve_operation(
+        &self,
+        state: &NodeInventory,
+        operation: &InventoryOperation,
+    ) -> Result<Reservation<'_>, StoreError> {
+        let peak = match operation {
+            InventoryOperation::Begin { .. } => 0,
+            InventoryOperation::Commit { .. } => state.bytes,
+            InventoryOperation::Snapshot { records, .. }
+            | InventoryOperation::Delta { records, .. } => {
+                validate_records(records)?;
+                self.check_capacity(state, records)?
+            }
+        };
+        let previous = state.bytes + operation_bytes(state.last_operation.as_ref());
+        let required = peak
+            .checked_add(operation_bytes(Some(operation)))
+            .ok_or(StoreError::Capacity)?;
+        let extra = required.saturating_sub(previous);
+        self.metadata_bytes
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                used.checked_add(extra)
+                    .filter(|next| *next <= self.config.metadata_bytes)
+            })
+            .map_err(|_| StoreError::Capacity)?;
+        Ok(Reservation {
+            used: &self.metadata_bytes,
+            previous,
+            release: extra,
+        })
+    }
+
     fn check_capacity(
         &self,
         state: &NodeInventory,
         records: &[InventoryRecord],
-    ) -> Result<(), StoreError> {
+    ) -> Result<usize, StoreError> {
         let mut bytes = state.bytes;
+        let mut peak = bytes;
         let mut projected = HashMap::new();
         for record in records {
             let current = projected
@@ -334,11 +391,9 @@ impl BlockHashStore {
                 _ => {}
             }
             *current = record.present.then_some(record.sequence);
-            if bytes > self.config.inventory_bytes_per_node {
-                return Err(StoreError::Capacity);
-            }
+            peak = peak.max(bytes);
         }
-        Ok(())
+        Ok(peak)
     }
 
     fn apply(&self, node: &str, state: &mut NodeInventory, record: &InventoryRecord) {
@@ -463,6 +518,10 @@ impl BlockHashStore {
                 continue;
             }
             state.retired = true;
+            self.metadata_bytes.fetch_sub(
+                node_bytes(&node) + state.bytes + operation_bytes(state.last_operation.as_ref()),
+                Ordering::AcqRel,
+            );
             let removed = self.clear_owner(&node, &mut state);
             stats.removed_owners += removed.removed_owners;
             stats.removed_keys += removed.removed_keys;
@@ -471,6 +530,10 @@ impl BlockHashStore {
                 .remove_if(node.as_ref(), |_, current| Arc::ptr_eq(current, &inventory));
         }
         stats
+    }
+
+    pub fn metadata_bytes(&self) -> usize {
+        self.metadata_bytes.load(Ordering::Acquire)
     }
 
     pub fn redundancy_snapshot(&self) -> RedundancySnapshot {
@@ -499,6 +562,38 @@ impl BlockHashStore {
         }
         (active, stale)
     }
+}
+
+struct Reservation<'a> {
+    used: &'a AtomicUsize,
+    previous: usize,
+    release: usize,
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        self.used.fetch_sub(self.release, Ordering::AcqRel);
+    }
+}
+
+fn operation_bytes(operation: Option<&InventoryOperation>) -> usize {
+    match operation {
+        Some(
+            InventoryOperation::Snapshot { records, .. }
+            | InventoryOperation::Delta { records, .. },
+        ) => {
+            64 + records
+                .iter()
+                .map(InventoryRecord::estimated_size)
+                .sum::<usize>()
+        }
+        Some(_) => 64,
+        None => 0,
+    }
+}
+
+fn node_bytes(node: &str) -> usize {
+    256 + node.len()
 }
 
 fn key_bytes(key: &StateKey) -> usize {

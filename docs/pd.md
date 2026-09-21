@@ -17,13 +17,13 @@ The NIXL integration described here is
 
 | Path | Trigger | KV destination | Discovery/control | OrbitKV status |
 | --- | --- | --- | --- | --- |
-| OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; experimental remote MetaServer + peer lease | GPU-validated locally; multi-node experimental |
+| OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; experimental remote Catalog + peer lease | GPU-validated locally; multi-node experimental |
 | OrbitKV `PdConnector` | P-to-D request handoff | Decode worker's GPU KV pages | P/D request handshake and proxy; Mooncake Transfer Engine moves bytes | Experimental vLLM adapter |
 | vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
 
 The OrbitKV P/D connector lives in `orbitkv.vllm.pd` and uses Mooncake to push
 KV directly from prefill to decode. It does not require an OrbitKV Cache
-Manager, MetaServer, or the remote-cache replica directory for that transfer.
+Manager, Catalog, or the remote-cache replica directory for that transfer.
 See [the Mooncake P/D protocol](pd-mooncake-push.md) and the local
 [`run_pd_local.sh`](../scripts/run_pd_local.sh) example. Its local proxy is
 for P/D handoff and testing; it is not the planned KV-aware cache router.
@@ -42,7 +42,7 @@ SGLang P/D adapter or NIXL connector. P/D support for SGLang would require a
 separate integration against SGLang's handoff protocol and a tested recovery
 contract.
 
-Neither OrbitKV's P/D path nor the current MetaServer provides production KV-aware
+Neither OrbitKV's P/D path nor the current Catalog provides production KV-aware
 request routing. Production qualification still needs real multi-GPU and
 cross-machine correctness, cancellation/restart tests, and throughput/latency
 comparison against the vLLM NIXL baseline. Historical benchmark figures from

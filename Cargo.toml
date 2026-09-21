@@ -6,7 +6,7 @@ members = [
   "crates/orbitkv-core",
   "crates/orbitkv-proto",
   "crates/orbitkv-server",
-  "crates/orbitkv-metaserver",
+  "crates/orbitkv-catalog",
   "crates/orbitkv-mooncake-sys",
   "crates/orbitkv-transfer",
   "python",
@@ -26,6 +26,7 @@ codegen-units = 1
 
 [workspace.dependencies]
 # Workspace members
+orbitkv-catalog = { path = "crates/orbitkv-catalog" }
 orbitkv-state = { path = "crates/orbitkv-state" }
 orbitkv-channel = { path = "crates/orbitkv-channel" }
 orbitkv-common = { path = "crates/orbitkv-common" }

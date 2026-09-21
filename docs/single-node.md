@@ -5,7 +5,7 @@ engine owns HBM allocation and decides when to look up, save, and restore KV.
 The manager owns external pinned DRAM and optional SSD replicas. Both adapters
 register engine-owned GPU buffers through CUDA IPC, send cache commands through
 iceoryx2, and use an authenticated Unix socket for bootstrap and lifecycle.
-No MetaServer or peer gRPC listener is needed for this deployment.
+No Catalog or peer gRPC listener is needed for this deployment.
 
 | Adapter | Validated release | Single-node path | Current limit |
 | --- | --- | --- | --- |
@@ -198,9 +198,9 @@ adapter today.
 | --- | --- | --- |
 | One engine and one manager on a host | Validated DRAM recovery and measured SSD restoration on the pinned release | Validated single-rank full-attention DRAM and SSD recovery through plugin admission |
 | Multiple engine instances sharing one host manager | Instances can use the same local socket; use immutable model identities and qualify concurrency for the workload | Instances can use the same local socket; rank/layout-scoped namespaces isolate incompatible pages, and concurrent multi-rank recovery still needs a GPU gate |
-| Replicas on separate hosts | One manager per host plus the current MetaServer and Mooncake fetch; experimental | The same node-local adapter connection with one manager per host; remote fetch and multi-rank behavior still need qualification |
+| Replicas on separate hosts | One manager per host with embedded catalog, etcd membership and Mooncake fetch; experimental | The same node-local adapter connection with one manager per host; remote fetch and multi-rank behavior still need qualification |
 | One TP replica split across hosts | Unsupported by the current scheduler-to-manager query fan-out | Not qualified by the current single-rank GPU gate |
 | P/D handoff | Experimental OrbitKV Mooncake `PdConnector`, or upstream vLLM NIXL; separate from external cache | No OrbitKV P/D adapter |
 
-The current MetaServer is a separate in-memory, non-HA directory. Do not infer
+The current embedded directory has one metadata copy per shard. Do not infer
 production multi-node resilience from the validated single-node paths.

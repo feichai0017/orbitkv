@@ -165,15 +165,17 @@ pub struct Cli {
     #[arg(long, value_delimiter = ',', value_parser = parse_nic_name, num_args = 1..)]
     pub nics: Option<Vec<String>>,
 
-    /// MetaServer address for cross-node block hash registration (e.g. http://127.0.0.1:50056).
-    /// When set, sealed block hashes are automatically registered with the MetaServer.
-    #[arg(long)]
-    pub metaserver_addr: Option<String>,
-
-    /// etcd endpoints for leased Manager membership (comma-separated).
-    /// The current discovery stage also requires --metaserver-addr.
-    #[arg(long, value_delimiter = ',', requires_all = ["node_id", "metaserver_addr"])]
+    /// etcd endpoints for distributed cache membership and immutable catalog placement.
+    #[arg(long, value_delimiter = ',', requires_all = ["node_id", "catalog_nodes"])]
     pub etcd_endpoints: Vec<String>,
+
+    /// Stable Manager node IDs that host catalog shards; must match across the cluster.
+    #[arg(long, value_delimiter = ',', requires = "etcd_endpoints", value_parser = cluster::parse_label)]
+    pub catalog_nodes: Vec<String>,
+
+    /// Accounted catalog metadata bytes across all shards hosted by this Manager.
+    #[arg(long, default_value = "256mb", value_parser = parse_memory_size)]
+    pub catalog_budget: usize,
 
     /// Stable, unique identity of this Manager across process restarts.
     #[arg(long, requires = "etcd_endpoints", value_parser = cluster::parse_label)]
@@ -562,34 +564,31 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         })
     };
 
-    let has_metaserver = cli.metaserver_addr.is_some();
-    let has_nics = cli.nics.as_ref().is_some_and(|n| !n.is_empty());
-
-    if has_nics && !has_metaserver {
-        log::warn!("--nics has no effect without --metaserver-addr; remote transfer is disabled",);
+    let peer_control_enabled = !cli.etcd_endpoints.is_empty();
+    if cli.nics.as_ref().is_some_and(|nics| !nics.is_empty()) && !peer_control_enabled {
+        log::warn!("--nics has no effect without distributed cache configuration");
     }
-
-    let advertise_addr = if has_metaserver {
-        if cli.addr.ip().is_unspecified() || cli.addr.ip().is_loopback() {
-            log::warn!(
-                "P2P: --addr is {}, other nodes may not be able to reach this server",
-                cli.addr.ip()
+    let membership_view = if peer_control_enabled {
+        if cli.addr.ip().is_unspecified() || cli.addr.port() == 0 {
+            return Err("distributed --addr must be a concrete, routable peer endpoint".into());
+        }
+        if cli.catalog_budget
+            < orbitkv_state::CATALOG_SHARDS * orbitkv_state::INVENTORY_BATCH_BYTES * 2
+        {
+            return Err(
+                "--catalog-budget must allow two inventory batches per shard (16 MiB)".into(),
             );
         }
-        Some(cli.addr.to_string())
-    } else {
-        None
-    };
-
-    let peer_control_enabled = cli.metaserver_addr.is_some();
-    let membership_view = (!cli.etcd_endpoints.is_empty()).then(|| {
-        Arc::new(orbitkv_core::MembershipView::new(
+        Some(Arc::new(orbitkv_catalog::MembershipView::new(
             orbitkv_state::CacheOwner {
                 endpoint: cli.addr.to_string(),
                 incarnation: uuid::Uuid::new_v4(),
             },
-        ))
-    });
+            orbitkv_catalog::Placement::new(cli.catalog_nodes.clone())?,
+        )))
+    } else {
+        None
+    };
     let storage_config = orbitkv_core::StorageConfig {
         query_budget_bytes: cli.query_budget,
         query_instance_budget_bytes: cli.query_instance_budget,
@@ -600,8 +599,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         enable_numa_affinity: !cli.disable_numa_affinity,
         blockwise_alloc: cli.blockwise_alloc,
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),
-        metaserver_addr: cli.metaserver_addr.clone(),
-        advertise_addr,
         membership: membership_view.clone(),
         inventory_journal_bytes: cli.inventory_journal_bytes,
         pool_shards: cli.pool_shards,
@@ -669,7 +666,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     };
     let runtime_handle = runtime.handle().clone();
     runtime.block_on(async move {
-        let membership = match membership_view {
+        let membership = match membership_view.clone() {
             Some(view) => Some(
                 cluster::Membership::join(
                     &cli.etcd_endpoints,
@@ -772,12 +769,38 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             }
         };
 
-        if peer_control_enabled {
+        if let Some(view) = membership_view {
             let service = P2pTransferService::new(Arc::clone(&engine));
             info!("Cache Manager peer control listening on {}", cli.addr);
 
             const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
 
+            let assigned_shards = (0..orbitkv_state::CATALOG_SHARDS)
+                .filter(|&shard| view.placement().host(shard) == cli.node_id.as_deref()).count();
+            let stores = std::array::from_fn(|_| Arc::new(orbitkv_catalog::BlockHashStore::with_config(
+                orbitkv_catalog::store::StoreConfig {
+                    metadata_bytes: cli.catalog_budget / assigned_shards.max(1),
+                    ..Default::default()
+                }
+            )));
+            let _catalog_metrics = orbitkv_catalog::metric::register_store_gauges(&stores);
+            let catalog = orbitkv_catalog::CatalogService::new(stores.clone(), view);
+            // Derived directory evidence expires independently of payload lifetimes.
+            let catalog_shutdown = shutdown.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    tokio::select! {
+                        _ = catalog_shutdown.notified() => break,
+                        _ = interval.tick() => {
+                            let sweep = stores.clone();
+                            let _ = tokio::task::spawn_blocking(move || {
+                                for store in sweep { orbitkv_catalog::metric::record_sweep(store.sweep_expired()); }
+                            }).await;
+                        }
+                    }
+                }
+            });
             let grpc_service = EngineServer::new(service)
                 .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
                 .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
@@ -785,7 +808,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             if let Err(err) = Server::builder()
                 .http2_keepalive_interval(Some(GRPC_SERVER_HTTP2_KEEPALIVE_INTERVAL))
                 .http2_keepalive_timeout(Some(GRPC_SERVER_HTTP2_KEEPALIVE_TIMEOUT))
+                .concurrency_limit_per_connection(16)
                 .add_service(grpc_service)
+                .add_service(proto::engine::catalog_server::CatalogServer::new(catalog)
+                    .max_decoding_message_size(4 * 1024 * 1024)
+                    .max_encoding_message_size(4 * 1024 * 1024))
                 .serve_with_shutdown(cli.addr, shutdown_signal)
                 .await
             {
@@ -799,16 +826,18 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
         info!("Cache Manager stopped");
         channel_endpoint.stop();
-        if let Some(membership) = membership {
-            membership.shutdown().await;
-        }
 
         // Stop HTTP server
         shutdown.notify_waiters();
         lifecycle.shutdown().await?;
         let _ = http_server_handle.await;
 
-        engine.shutdown_metaserver_client().await;
+        // Catalogs authenticate owner cleanup against membership. Withdraw the
+        // inventory while our registration is still valid, then revoke it.
+        engine.shutdown_catalog_client().await;
+        if let Some(membership) = membership {
+            membership.shutdown().await;
+        }
 
         // Flush metrics before exit
         if let Some(provider) = metrics_state.meter_provider

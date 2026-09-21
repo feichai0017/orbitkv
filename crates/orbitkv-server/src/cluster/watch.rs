@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use etcd_client::{Client, EventType, GetOptions, KeyValue, WatchOptions};
-use orbitkv_core::MembershipView;
+use orbitkv_catalog::MembershipView;
 
 use super::{MAX_MEMBERS, MEMBER_BYTES, Member, cluster_id, parse_label, rpc};
 
@@ -19,11 +19,28 @@ pub(super) async fn run(
         }
         let result = async {
             let (members, revision) = snapshot(&mut client, &prefix, expected_cluster).await?;
+            let placement_key = format!("{}placement", prefix.trim_end_matches("members/"));
+            let response = rpc(client.get(
+                placement_key,
+                Some(GetOptions::new().with_revision(revision)),
+            ))
+            .await?;
+            if cluster_id(response.header())? != expected_cluster
+                || response.kvs().len() != 1
+                || !valid_placement(&response.kvs()[0], view)
+            {
+                view.fence();
+                return Err("committed catalog placement changed".into());
+            }
             if members.get(&registration.node_id) != Some(&registration) {
                 view.fence();
                 return Err("own membership registration changed".into());
             }
-            view.replace_members(members.values().map(|member| member.owner.clone()));
+            view.replace_members(
+                members
+                    .values()
+                    .map(|member| (member.node_id.clone(), member.owner.clone())),
+            );
             follow(
                 &mut client,
                 &prefix,
@@ -104,7 +121,7 @@ pub(super) async fn follow(
     revision: i64,
 ) -> Result<(), String> {
     let mut stream = rpc(client.watch(
-        prefix,
+        prefix.trim_end_matches("members/"),
         Some(
             WatchOptions::new()
                 .with_prefix()
@@ -143,6 +160,16 @@ pub(super) async fn follow(
                 continue;
             }
             through = through.max(kv.mod_revision());
+            if kv.key() == format!("{}placement", prefix.trim_end_matches("members/")).as_bytes() {
+                if event.event_type() == EventType::Delete || !valid_placement(kv, view) {
+                    view.fence();
+                    return Err("committed catalog placement changed".into());
+                }
+                continue;
+            }
+            if !kv.key().starts_with(prefix.as_bytes()) {
+                continue;
+            }
             match event.event_type() {
                 EventType::Put => {
                     let member = decode(prefix, kv)?;
@@ -169,9 +196,22 @@ pub(super) async fn follow(
         }
         if through > applied {
             applied = through;
-            view.replace_members(members.values().map(|member| member.owner.clone()));
+            view.replace_members(
+                members
+                    .values()
+                    .map(|member| (member.node_id.clone(), member.owner.clone())),
+            );
         }
     }
+}
+
+fn valid_placement(kv: &KeyValue, view: &MembershipView) -> bool {
+    kv.lease() == 0
+        && kv.value().len() <= 4096
+        && serde_json::from_slice::<orbitkv_catalog::Placement>(kv.value())
+            .ok()
+            .as_ref()
+            == Some(view.placement())
 }
 
 fn decode(prefix: &str, kv: &KeyValue) -> Result<Member, String> {

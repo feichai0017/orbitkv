@@ -147,7 +147,7 @@ single-node comparison.
 ## Catalog cleanup
 
 ```bash
-cargo bench -p orbitkv-metaserver --bench unregister_node
+cargo bench -p orbitkv-catalog --bench unregister_node
 ```
 
 This benchmark registers one million keys, then removes an owner of 10,000.

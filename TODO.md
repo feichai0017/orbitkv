@@ -152,11 +152,11 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   lookup, Manager-side planning and source runtime/residency checks.
 - [x] D1 cancellation: hold destination buffers and source-release guard in the
   blocking transfer until it finishes; caller cancellation cannot drop them.
-- [ ] D1: embed the catalog and connect it to etcd membership/configuration.
+- [x] D1: embed fixed catalog shards with per-shard replay and etcd membership/configuration.
 - [ ] D1: qualify source incarnation checks, transfer completion/revocation,
   cancellation and sender/receiver budgets on two real hosts for both engines.
-- [ ] D1: replace the MetaServer crate/deployment with the behavior-owning
-  catalog component and remove obsolete APIs at cutover.
+- [x] D1: replace the standalone directory with `orbitkv-catalog` and remove
+  obsolete executables, Python launcher and fixed-directory APIs.
 - [ ] D2: implement versioned shard placement, replicated evidence, handoff and
   bounded subscriptions; qualify partitions and coordinator/catalog failure.
 - [ ] D3: support source-local SSD staging and measured source selection without

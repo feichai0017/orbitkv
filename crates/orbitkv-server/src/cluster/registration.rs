@@ -3,6 +3,39 @@ use orbitkv_state::CacheOwner;
 
 use super::{Member, cluster_id, rpc};
 
+pub(super) async fn placement(
+    client: &mut Client,
+    prefix: &str,
+    placement: &orbitkv_catalog::Placement,
+    expected_cluster: u64,
+) -> Result<(), String> {
+    let key = format!("{prefix}placement");
+    let bytes = serde_json::to_vec(placement).map_err(|error| error.to_string())?;
+    let response = rpc(client.txn(
+        Txn::new()
+            .when([Compare::version(key.clone(), CompareOp::Equal, 0)])
+            .and_then([TxnOp::put(key.clone(), bytes, None)]),
+    ))
+    .await?;
+    if cluster_id(response.header())? != expected_cluster {
+        return Err("coordinator cluster changed during placement registration".into());
+    }
+    // Check the committed value even after winning the create transaction.
+    let response = rpc(client.get(key, None)).await?;
+    if cluster_id(response.header())? != expected_cluster
+        || response.kvs().len() != 1
+        || response.kvs()[0].lease() != 0
+        || response.kvs()[0].value().len() > 4096
+        || serde_json::from_slice::<orbitkv_catalog::Placement>(response.kvs()[0].value())
+            .ok()
+            .as_ref()
+            != Some(placement)
+    {
+        return Err("catalog placement differs from the committed cluster configuration".into());
+    }
+    Ok(())
+}
+
 pub(super) async fn register(
     client: &mut Client,
     prefix: &str,

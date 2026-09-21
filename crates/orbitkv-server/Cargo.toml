@@ -25,6 +25,7 @@ name = "orbitkv-cache-manager"
 path = "src/main.rs"
 
 [dependencies]
+orbitkv-catalog.workspace = true
 orbitkv-common.workspace = true
 orbitkv-core = { workspace = true, default-features = false }
 orbitkv-channel.workspace = true
@@ -56,7 +57,6 @@ fastrace = { workspace = true, features = ["enable"], optional = true }
 thiserror = "2"
 
 [dev-dependencies]
-orbitkv-metaserver = { path = "../orbitkv-metaserver", default-features = false }
 tempfile = "3"
 
 [build-dependencies]

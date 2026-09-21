@@ -13,7 +13,7 @@ prefetch, or can be fetched from a peer with Mooncake.
 | inference process to local Cache Manager | iceoryx2 request/response and UDS lifecycle | registered CUDA IPC pages | integrated |
 | local bootstrap and lifecycle | Unix socket with credential and file-descriptor passing | memfd/eventfd handles and registration metadata | implemented; explicit region protocol planned |
 | Cache Manager to Cache Manager | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | stable Mooncake runtime integrated |
-| replica directory | soft-state network API | no KV bytes | current MetaServer, redesign planned |
+| replica directory | soft-state network API | no KV bytes | embedded fixed shards; replication planned |
 | administration | HTTP | no KV bytes | existing |
 
 Both framework adapters require `orbitkv-channel` for hot data operations. Every
@@ -142,7 +142,7 @@ The bootstrap protocol is version 2. After FD exchange, its UDS also carries
 versioned, epoch-checked lifecycle frames with a 16 MiB metadata limit. These
 frames reuse the registration protobuf schema without a gRPC channel or HTTP/2.
 Malformed frames close the connection; application errors preserve framing.
-Standalone mode starts no gRPC listener. `--metaserver-addr` enables the
+Standalone mode starts no gRPC listener. Distributed etcd/placement configuration enables the
 peer-only transfer control listener automatically.
 Client and Cache Manager need to be upgraded together.
 
@@ -237,9 +237,9 @@ The common recovery plan additionally includes:
 - semantic and execution frontiers;
 - publication only after every required component is complete.
 
-The current MetaServer advertises candidate owners, not durable KV data or
+The current Catalog advertises candidate owners, not durable KV data or
 permanent raw addresses/rkeys. A selected source authorizes and pins current
-bytes before transfer. A sharded, recoverable catalog is future work.
+bytes before transfer. Fixed shards and owner replay are implemented; directory replication is future work.
 
 ## Remote operation choice
 

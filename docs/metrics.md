@@ -307,13 +307,13 @@ Manager synchronization counters are:
 | `orbitkv_inventory_snapshots_completed` | Acknowledged commits of complete inventory cuts |
 | `orbitkv_inventory_history_gaps` | Retained history no longer covers directory progress |
 | `orbitkv_inventory_sync_failures` | Failed inventory RPCs |
-| `orbitkv_metaserver_heartbeat_failures` | Failed liveness/progress requests |
-| `orbitkv_metaserver_unregister_failures` | Failed graceful owner cleanup |
+| `orbitkv_catalog_heartbeat_failures` | Failed liveness/progress requests |
+| `orbitkv_catalog_unregister_failures` | Failed graceful owner cleanup |
 
 These are background synchronization metrics, separate from request discovery
 and Mooncake data transfer. Lost replies can undercount applied records; a
 snapshot may retransmit already known entries. Repeated snapshot starts without
-commits indicate failure to converge. See [directory recovery](../crates/orbitkv-metaserver/README.md).
+commits indicate failure to converge. See [directory recovery](../crates/orbitkv-catalog/README.md).
 
 ### Environment Variables
 
@@ -388,7 +388,7 @@ curl http://localhost:9091/metrics
 | Service | Port or path | Protocol | Purpose |
 | --- | --- | --- | --- |
 | Cache Manager | `/tmp/orbitkv-<addr-port>.sock` | UDS and iceoryx2 | Inference process connection |
-| Cache Manager | 50055 | gRPC | Peer authorization and lease control only when `--metaserver-addr` is set |
+| Cache Manager | 50055 | gRPC | Catalog, peer authorization and lease control in distributed mode |
 | Cache Manager | 9091 | HTTP | Health and Prometheus metrics |
 | OTel Collector | configured endpoint | gRPC | Optional OTLP receiver |
 | Prometheus | 9090 | HTTP | Query API and Web UI |

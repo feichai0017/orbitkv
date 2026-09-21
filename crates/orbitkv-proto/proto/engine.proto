@@ -140,7 +140,14 @@ message InventoryDelta {
 }
 message InventoryCommit { uint64 sequence = 1; }
 
+message CatalogRoute {
+  uint32 shard = 1;
+  string placement_id = 2;
+  string incarnation = 3;
+}
+
 message SyncInventoryRequest {
+  CatalogRoute route = 9;
   string node = 1;
   string node_id = 2;
   string catalog_epoch = 3;
@@ -166,6 +173,7 @@ message SyncInventoryResponse {
 }
 
 message LocateBlocksRequest {
+  CatalogRoute route = 4;
   string namespace = 1;
   repeated bytes block_hashes = 2;  // ordered by prefix position
   string exclude_node = 3;          // requester address; never return it as an owner
@@ -189,6 +197,7 @@ message LocateBlocksResponse {
 }
 
 message HeartbeatNodeRequest {
+  CatalogRoute route = 3;
   string node = 1;
   string node_id = 2;
 }
@@ -200,6 +209,7 @@ message HeartbeatNodeResponse {
 }
 
 message UnregisterNodeRequest {
+  CatalogRoute route = 3;
   string node = 1;
   string node_id = 2;
 }
@@ -208,7 +218,7 @@ message UnregisterNodeResponse {
   uint64 removed_owners = 1;
 }
 
-service MetaServer {
+service Catalog {
   rpc HeartbeatNode(HeartbeatNodeRequest) returns (HeartbeatNodeResponse);
   rpc UnregisterNode(UnregisterNodeRequest) returns (UnregisterNodeResponse);
   rpc SyncInventory(SyncInventoryRequest) returns (SyncInventoryResponse);

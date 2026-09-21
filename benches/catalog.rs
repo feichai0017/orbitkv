@@ -1,7 +1,7 @@
 //! Measure owner cleanup with a million keys across the directory.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use orbitkv_metaserver::store::{BlockHashStore, StoreConfig};
+use orbitkv_catalog::store::{BlockHashStore, StoreConfig};
 use orbitkv_state::{InventoryOperation, InventoryRecord, StateKey};
 use std::time::Duration;
 use uuid::Uuid;

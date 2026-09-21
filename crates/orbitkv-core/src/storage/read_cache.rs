@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use hashlink::LruCache;
-use orbitkv_state::InventoryRecord;
+use orbitkv_state::{CATALOG_SHARDS, InventoryRecord, catalog_shard};
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
@@ -19,7 +19,7 @@ pub(crate) struct ReadCache {
 }
 
 struct ReadCacheInner {
-    inventory: Option<Inventory>,
+    inventory: Option<[Inventory; CATALOG_SHARDS]>,
     cache: TinyLfuCache<StateKey, Arc<SealedBlock>>,
     reclaimable: LruCache<StateKey, ResidentMetadata>,
     retained: LruCache<StateKey, ResidentMetadata>,
@@ -54,7 +54,8 @@ impl ReadCache {
             TinyLfuCache::new_unbounded(capacity_bytes, enable_lfu_admission, value_size_hint);
         Self {
             inner: Mutex::new(ReadCacheInner {
-                inventory: inventory_journal_bytes.map(Inventory::new),
+                inventory: inventory_journal_bytes
+                    .map(|bytes| std::array::from_fn(|_| Inventory::new(bytes / CATALOG_SHARDS))),
                 cache,
                 reclaimable: LruCache::new_unbounded(),
                 retained: LruCache::new_unbounded(),
@@ -62,38 +63,40 @@ impl ReadCache {
         }
     }
 
-    pub(crate) fn inventory_sequence(&self) -> u64 {
+    pub(crate) fn inventory_sequence(&self, shard: usize) -> u64 {
         self.inner
             .lock()
             .inventory
             .as_ref()
-            .expect("inventory enabled")
+            .expect("inventory enabled")[shard]
             .sequence()
     }
 
-    pub(crate) fn inventory_changed(&self) -> Arc<Notify> {
+    pub(crate) fn inventory_changed(&self, shard: usize) -> Arc<Notify> {
         self.inner
             .lock()
             .inventory
             .as_ref()
-            .expect("inventory enabled")
+            .expect("inventory enabled")[shard]
             .changed()
     }
 
     pub(crate) fn inventory_page(
         &self,
+        shard: usize,
         after: Option<&StateKey>,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
         self.inner
             .lock()
             .inventory
             .as_ref()
-            .expect("inventory enabled")
+            .expect("inventory enabled")[shard]
             .snapshot_page(after)
     }
 
     pub(crate) fn inventory_changes(
         &self,
+        shard: usize,
         after: u64,
         through: u64,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
@@ -101,16 +104,16 @@ impl ReadCache {
             .lock()
             .inventory
             .as_ref()
-            .expect("inventory enabled")
+            .expect("inventory enabled")[shard]
             .changes(after, through)
     }
 
-    pub(crate) fn inventory_covers(&self, after: u64) -> bool {
+    pub(crate) fn inventory_covers(&self, shard: usize, after: u64) -> bool {
         self.inner
             .lock()
             .inventory
             .as_ref()
-            .expect("inventory enabled")
+            .expect("inventory enabled")[shard]
             .covers(after)
     }
 
@@ -172,7 +175,11 @@ impl ReadCache {
     ) -> Option<Vec<(StateKey, Arc<SealedBlock>)>> {
         let mut inner = self.inner.lock();
         let inventory = inner.inventory.as_ref()?;
-        if records.is_empty() || !records.iter().all(|r| inventory.contains_record(r)) {
+        if records.is_empty()
+            || !records
+                .iter()
+                .all(|r| inventory[catalog_shard(&r.key)].contains_record(r))
+        {
             return None;
         }
         let mut found = Vec::with_capacity(records.len());
@@ -252,7 +259,7 @@ impl ReadCache {
                 .collect::<Vec<_>>();
             if let Some(inventory) = &mut inner.inventory {
                 for entry in &removed {
-                    inventory.change(&entry.key, false);
+                    inventory[catalog_shard(&entry.key)].change(&entry.key, false);
                 }
             }
             debug_assert_eq!(
@@ -280,11 +287,9 @@ impl ReadCache {
         let mut inner = self.inner.lock();
         let mut moved = 0;
         for record in records {
-            if inner
-                .inventory
-                .as_ref()
-                .is_some_and(|inventory| inventory.contains_record(record))
-                && mark_reclaimable(&mut inner, &record.key)
+            if inner.inventory.as_ref().is_some_and(|inventory| {
+                inventory[catalog_shard(&record.key)].contains_record(record)
+            }) && mark_reclaimable(&mut inner, &record.key)
             {
                 moved += 1;
             }
@@ -321,7 +326,7 @@ fn insert_block(
     match outcome {
         CacheInsertOutcome::InsertedNew => {
             if let Some(inventory) = &mut inner.inventory {
-                inventory.change(&key, true);
+                inventory[catalog_shard(&key)].change(&key, true);
             }
             class_lru(inner, class).insert(
                 key,
@@ -387,7 +392,7 @@ fn remove_lru(inner: &mut ReadCacheInner, class: ResidentClass) -> Option<Remove
             continue;
         };
         if let Some(inventory) = &mut inner.inventory {
-            inventory.change(&key, false);
+            inventory[catalog_shard(&key)].change(&key, false);
         }
         let metrics = core_metrics();
         metrics.cache_resident_blocks.add(-1, class.attributes());

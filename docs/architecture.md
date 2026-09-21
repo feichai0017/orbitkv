@@ -29,23 +29,23 @@ OrbitKV KV-aware request router today.
    Cache Manager A ---- Mooncake RDMA/TCP ---- Cache Manager B
    pinned DRAM / SSD                         pinned DRAM / SSD
             \                                   /
-             \---- MetaServer (in-memory) -----/
-                    candidate locations only
+             \---- etcd members/placement ----/
+      catalog shards embedded in Managers; one copy per shard
 ```
 
 Single-node deployment consists of one engine and one Cache Manager on the same
-host and needs neither MetaServer nor peer gRPC. Current SSD backing is a cache
+host and needs neither Catalog nor peer gRPC. Current SSD backing is a cache
 file truncated on Cache Manager startup, not durable KV storage across manager
-restarts. In the current multi-node path,
-each manager asynchronously advertises sealed block hashes to the separate
-MetaServer, checks cached candidates after a local miss, and looks up missing
-evidence in bounded batches. It then validates/pins a source through peer gRPC
-before Mooncake reads bytes. That directory can lose
-remote-hit information on restart; it is not a high-availability deployment.
+restarts. Distributed Managers advertise sealed replicas to assigned catalog
+shards using cached membership, then query missing evidence in bounded batches.
+They authorize/pin source data before Mooncake reads bytes. Catalog restart is
+repaired from surviving owner inventories. Each shard has one metadata copy;
+replication and online placement handoff remain future work.
 
 Standalone deployment has no gRPC listener. Registration, health, sessions, and
-cleanup use the authenticated bootstrap UDS. `--metaserver-addr` enables a
-peer-only gRPC listener for transfer authorization and lock release. Process
+cleanup use the authenticated bootstrap UDS. `--etcd-endpoints` with Node ID and catalog placement enables a
+peer gRPC listener for catalog synchronization, discovery, source authorization
+and lock release. Process
 IPC supports query, publish, asynchronous restore completion, and lease
 release:
 iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
@@ -86,7 +86,7 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
 | Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
 | Peer control | `orbitkv-proto`, `orbitkv-core/src/internode/p2p_service.rs` | Network authorization and transfer locks |
-| Replica catalog | `orbitkv-metaserver`, `orbitkv-core/src/internode` | Candidate ownership and node liveness; currently a single in-memory service |
+| Replica catalog | `orbitkv-catalog`, `orbitkv-core/src/internode` | Candidate ownership and node liveness; embedded fixed shards with cached member admission |
 | Byte movement | `orbitkv-transfer`, `orbitkv-mooncake-sys` | Mooncake Segment/BatchTransfer over RDMA or TCP |
 
 Transport-specific names belong at physical boundaries. Cache operations and
@@ -114,7 +114,7 @@ block hashes / CUDA IPC     radix hashes / CUDA IPC
                            |
                     peer DRAM / SSD
 
-     peer control: tonic / gRPC, only with --metaserver-addr
+     peer control: tonic / gRPC, only with distributed etcd/placement configuration
 
     orbitkv-state: shared state identity and recovery semantics
 ```
@@ -244,49 +244,39 @@ before a stale ID can be rejected at the Cache Manager boundary.
 
 ## Multi-node cache path and deployment
 
-Today, `orbitkv-metaserver` is a separate in-memory gRPC service. A Cache Manager
-synchronizes its sealed DRAM inventory asynchronously and heartbeats its node
-session. Actual insertions and removals share a monotonic residency sequence;
-bounded snapshot pages and ordered deltas reconstruct the directory after
-restart or lost history. Incomplete replacement views stay hidden until commit.
-After a local miss, it checks a bounded positive candidate index, batching
-uncached keys through `LocateBlocks`. The requester plans contiguous spans. A
-selected source checks its runtime UUID and each insertion sequence before
-pinning the batch through gRPC, then Mooncake reads
-the bytes into the destination's pinned memory. The destination can cache that
-replica and restore it to framework HBM through its normal cache API. Network
-gRPC carries control metadata and leases; Mooncake carries KV bytes. Mooncake's
-P2P handshake supplies transport endpoint metadata, not KV ownership.
+`orbitkv-catalog` is an embedded library served on each distributed Manager's
+peer endpoint. All Managers agree on an immutable catalog host set in etcd.
+Sixteen fixed logical shards are assigned by equal-weight rendezvous hashing;
+member loss does not change placement. Cached member snapshots resolve each
+assigned Node ID to a current endpoint and runtime UUID. Ordinary block operations
+perform no etcd I/O.
 
-The present catalog is soft state and has no replicated persistence. Recovery
-from directory restart is implemented and tested over real gRPC, including idle
-owners, concurrent eviction and journal overflow. It remains a single service:
-cold remote discovery can be unavailable during failure or reconstruction;
-unexpired cached candidates still reach their source without a directory RPC.
-DRAM evidence and bounded candidate caching are implemented. Remote SSD,
-embedded catalogs, multi-host failover and transfer-capability fencing require
-later qualification. Caller cancellation now retains transfer buffers and the
-source-release guard through blocking completion; source timeout reclamation
-is not yet qualified as transport revocation. See the
-[protocol and limits](../crates/orbitkv-metaserver/README.md).
+Managers asynchronously synchronize independently ordered DRAM inventory streams
+per shard. Bounded snapshots and deltas reconstruct lost evidence; incomplete
+replacement views stay hidden until commit. After a local miss, the requester
+checks its bounded positive candidate index and queries only missing shards.
+It plans source spans and obtains exact runtime/residency authorization before
+Mooncake reads bytes into pinned DRAM, then restores them through the same engine
+API. The destination also advertises its newly resident replicas.
 
-The agreed target keeps one Cache Manager per host, embeds a sharded replica
-catalog in those managers, and uses etcd for membership and versioned placement
-configuration. Mooncake TE remains the data plane. Owner inventories publish
-ordered changes; snapshots and bounded delta replay repair lost evidence.
-Rendezvous hashing assigns logical catalog shards to a small replicated host
-set. Each Manager keeps a bounded candidate index so a warm query can avoid
-directory RPCs. A miss queries the appropriate shards in batches. The requesting
-Manager constructs the fetch plan; the source validates and pins the exact data.
+Catalog and source control use gRPC; Mooncake carries KV bytes. Mooncake's P2P
+handshake provides transport metadata rather than KV ownership. Each catalog
+shard currently has one metadata copy, so losing a host makes those cold lookups
+unavailable until it returns and inventories replay. Other shards and valid
+cached candidates remain usable. etcd membership gates new remote admission;
+local DRAM/SSD operations continue through coordinator loss.
 
-The [distributed cache design](distributed-cache.md) specifies identities,
-snapshot cuts, subscriptions, placement transitions, transfer lifetimes and
-failure behavior. Metadata replication is asynchronous evidence replication;
-it does not imply payload replication or general object-store CAS semantics.
-etcd is outside per-block operations. The embedded design is **not implemented
-yet**; qualify it against the current standalone directory baseline, then remove
-that obsolete deployment at cutover. A later router can consume replica
-summaries without entering the transfer path.
+Source transfer timeout reclamation still lacks transport revocation qualification.
+Caller cancellation retains buffers and source holds through blocking completion,
+but this does not prove safe source failure or partitions. See the
+[implemented protocol and limits](../crates/orbitkv-catalog/README.md).
+
+The next stages add replicated placement generations, controlled handoff,
+subscriptions and remote SSD. These are target features in the diagram below.
+The [distributed cache design](distributed-cache.md) defines the acceptance gates.
+A later KV-aware router can consume replica summaries and engine load events
+without entering the transfer path. Metadata replicas do not imply KV payload
+replicas or general object-store CAS semantics.
 
 ```text
 host A                                           host B

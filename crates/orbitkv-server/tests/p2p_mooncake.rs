@@ -1,7 +1,7 @@
 //! P2P Mooncake remote fetch integration test.
 //!
 //! Verifies the end-to-end flow:
-//! Engine A saves blocks → MetaServer discovers them → Engine B fetches via Mooncake READ
+//! Engine A saves blocks → Catalog discovers them → Engine B fetches via Mooncake READ
 //! → data integrity verified.
 //!
 //! Run with: `cargo test -p orbitkv-server --test p2p_mooncake -- --ignored`
@@ -13,15 +13,16 @@ use std::time::{Duration, Instant};
 
 use cudarc::driver::CudaContext;
 use cudarc::driver::sys;
+use orbitkv_catalog::{BlockHashStore, CatalogService, MembershipView, Placement};
 use orbitkv_core::sync_state::{LOAD_STATE_ERROR, LOAD_STATE_SUCCESS};
 use orbitkv_core::*;
-use orbitkv_metaserver::{BlockHashStore, GrpcMetaService};
 use orbitkv_proto::proto::engine::{
-    QueryBlocksForTransferRequest, ReleaseTransferLockRequest, engine_client::EngineClient,
-    meta_server_server::MetaServerServer,
+    QueryBlocksForTransferRequest, ReleaseTransferLockRequest, catalog_server::CatalogServer,
+    engine_client::EngineClient,
 };
 use orbitkv_server::proto::engine::engine_server::EngineServer;
 use orbitkv_state::group_hash;
+use orbitkv_state::{BlockCandidates, CATALOG_SHARDS, StateKey, catalog_shard};
 use tonic::transport::Server;
 
 // ── GPU buffer (from crates/orbitkv-core/tests/common/gpu_buffer.rs) ──────────────
@@ -138,32 +139,42 @@ async fn wait_for_grpc_ready(port: u16) {
     }
 }
 
-async fn spawn_metaserver(port: u16) -> Arc<BlockHashStore> {
-    let store = Arc::new(BlockHashStore::new());
-    let service = GrpcMetaService::new(Arc::clone(&store));
-    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
-    tokio::spawn(async move {
-        Server::builder()
-            .add_service(MetaServerServer::new(service))
-            .serve(addr)
-            .await
-            .expect("MetaServer gRPC serve");
-    });
-    wait_for_grpc_ready(port).await;
-    store
-}
-
-async fn spawn_engine_server(engine: Arc<OrbitKVEngine>, port: u16) {
+async fn spawn_engine_server(
+    engine: Arc<OrbitKVEngine>,
+    port: u16,
+    view: Arc<MembershipView>,
+) -> [Arc<BlockHashStore>; CATALOG_SHARDS] {
+    let stores = std::array::from_fn(|_| Arc::new(BlockHashStore::new()));
+    let catalog = CatalogService::new(stores.clone(), view);
     let service = P2pTransferService::new(engine);
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     tokio::spawn(async move {
         Server::builder()
             .add_service(EngineServer::new(service))
+            .add_service(CatalogServer::new(catalog))
             .serve(addr)
             .await
-            .expect("Engine gRPC serve");
+            .expect("peer services");
     });
     wait_for_grpc_ready(port).await;
+    stores
+}
+
+fn locate(
+    stores: &[Arc<BlockHashStore>; CATALOG_SHARDS],
+    namespace: &str,
+    hashes: &[Vec<u8>],
+    exclude: &str,
+) -> Vec<BlockCandidates> {
+    hashes
+        .iter()
+        .map(|hash| {
+            let shard = catalog_shard(&StateKey::new(namespace.into(), hash.clone()));
+            stores[shard]
+                .locate_blocks(namespace, std::slice::from_ref(hash), exclude)
+                .remove(0)
+        })
+        .collect()
 }
 
 async fn wait_for_cache(
@@ -199,8 +210,8 @@ async fn wait_for_cache(
     }
 }
 
-async fn wait_for_metaserver_registration(
-    store: &BlockHashStore,
+async fn wait_for_catalog_registration(
+    store: &[Arc<BlockHashStore>; CATALOG_SHARDS],
     namespace: &str,
     hashes: &[Vec<u8>],
     expected: usize,
@@ -208,7 +219,7 @@ async fn wait_for_metaserver_registration(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        let found = store.locate_blocks(namespace, hashes, "");
+        let found = locate(store, namespace, hashes, "");
         let count = found
             .iter()
             .take_while(|row| !row.replicas.is_empty())
@@ -218,7 +229,7 @@ async fn wait_for_metaserver_registration(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for MetaServer registration ({} / {})",
+            "timed out waiting for Catalog registration ({} / {})",
             count,
             expected
         );
@@ -226,8 +237,8 @@ async fn wait_for_metaserver_registration(
     }
 }
 
-async fn wait_for_metaserver_ownership(
-    store: &BlockHashStore,
+async fn wait_for_catalog_ownership(
+    store: &[Arc<BlockHashStore>; CATALOG_SHARDS],
     namespace: &str,
     hashes: &[Vec<u8>],
     node: &str,
@@ -236,7 +247,7 @@ async fn wait_for_metaserver_ownership(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        let found = store.locate_blocks(namespace, hashes, "");
+        let found = locate(store, namespace, hashes, "");
         let owned = found
             .iter()
             .filter(|entry| entry.replicas.iter().any(|r| r.owner.endpoint == node))
@@ -246,7 +257,7 @@ async fn wait_for_metaserver_ownership(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for MetaServer ownership by {node} ({owned} / {expected})"
+            "timed out waiting for Catalog ownership by {node} ({owned} / {expected})"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -282,21 +293,19 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
 
     // Allocate ephemeral ports
-    let meta_port = get_free_port();
     let port_a = get_free_port();
 
-    // ── 1. Start MetaServer ──
-    let meta_store = spawn_metaserver(meta_port).await;
-
     // ── 2. Create Engine A (source of blocks) ──
-    let membership_a = Arc::new(MembershipView::new(orbitkv_state::CacheOwner {
-        endpoint: format!("127.0.0.1:{port_a}"),
-        incarnation: uuid::Uuid::new_v4(),
-    }));
-    membership_a.replace_members([membership_a.owner().clone()]);
+    let membership_a = Arc::new(MembershipView::new(
+        orbitkv_state::CacheOwner {
+            endpoint: format!("127.0.0.1:{port_a}"),
+            incarnation: uuid::Uuid::new_v4(),
+        },
+        Placement::new(vec!["a".into()]).unwrap(),
+    ));
+    membership_a.replace_members([("a".into(), membership_a.owner().clone())]);
+    assert!(membership_a.renew(Instant::now(), Duration::from_secs(300)));
     let config_a = StorageConfig {
-        metaserver_addr: Some(format!("http://127.0.0.1:{meta_port}")),
-        advertise_addr: Some(format!("127.0.0.1:{port_a}")),
         membership: Some(membership_a.clone()),
         mooncake_nic_names: mooncake_nics(),
         ..StorageConfig::default()
@@ -306,7 +315,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     );
 
     // ── 3. Start Engine A gRPC server ──
-    spawn_engine_server(Arc::clone(&engine_a), port_a).await;
+    let stores = spawn_engine_server(Arc::clone(&engine_a), port_a, membership_a.clone()).await;
 
     // ── 4. Save blocks on Engine A ──
     let gpu_a = GpuBuffer::alloc(TOTAL_SIZE);
@@ -375,8 +384,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .flush_saves_and_inventory()
         .await
         .expect("publish inventory");
-    wait_for_metaserver_registration(
-        &meta_store,
+    wait_for_catalog_registration(
+        &stores,
         &cache_namespace,
         &stored_hashes,
         NUM_BLOCKS,
@@ -385,7 +394,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     .await;
 
     // Source authorization fences both restarts and individual residency episodes.
-    let evidence = meta_store.locate_blocks(&cache_namespace, &stored_hashes, "requester");
+    let evidence = locate(&stores, &cache_namespace, &stored_hashes, "requester");
     let mut peer = EngineClient::connect(format!("http://127.0.0.1:{port_a}"))
         .await
         .unwrap();
@@ -396,14 +405,6 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         owner_incarnation: evidence[0].replicas[0].owner.incarnation.to_string(),
         residency_sequences: evidence.iter().map(|r| r.replicas[0].sequence).collect(),
     };
-    assert_eq!(
-        peer.query_blocks_for_transfer(authorization.clone())
-            .await
-            .unwrap_err()
-            .code(),
-        tonic::Code::FailedPrecondition,
-        "registration must be valid before source authorization"
-    );
     assert!(membership_a.renew(Instant::now(), Duration::from_secs(300)));
     let mut stale_runtime = authorization.clone();
     stale_runtime.owner_incarnation = uuid::Uuid::new_v4().to_string();
@@ -432,15 +433,21 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // ── 7. Create Engine B (fetcher) ──
     let port_b = get_free_port();
-    let membership_b = Arc::new(MembershipView::new(orbitkv_state::CacheOwner {
-        endpoint: format!("127.0.0.1:{port_b}"),
-        incarnation: uuid::Uuid::new_v4(),
-    }));
-    membership_b.replace_members([membership_a.owner().clone(), membership_b.owner().clone()]);
+    let membership_b = Arc::new(MembershipView::new(
+        orbitkv_state::CacheOwner {
+            endpoint: format!("127.0.0.1:{port_b}"),
+            incarnation: uuid::Uuid::new_v4(),
+        },
+        Placement::new(vec!["a".into()]).unwrap(),
+    ));
+    let members = [
+        ("a".into(), membership_a.owner().clone()),
+        ("b".into(), membership_b.owner().clone()),
+    ];
+    membership_a.replace_members(members.clone());
+    membership_b.replace_members(members);
     assert!(membership_b.renew(Instant::now(), Duration::from_secs(300)));
     let config_b = StorageConfig {
-        metaserver_addr: Some(format!("http://127.0.0.1:{meta_port}")),
-        advertise_addr: Some(format!("127.0.0.1:{port_b}")),
         membership: Some(membership_b.clone()),
         mooncake_nic_names: mooncake_nics(),
         ..StorageConfig::default()
@@ -505,8 +512,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .await
         .expect("save delayed blocks on engine A");
 
-    wait_for_metaserver_registration(
-        &meta_store,
+    wait_for_catalog_registration(
+        &stores,
         &cache_namespace,
         &stored_delayed,
         NUM_BLOCKS,
@@ -524,15 +531,15 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .create_query_lease("inst-b", result.blocks)
         .expect("lease");
 
-    // ── 9b. Verify Engine B re-registered fetched blocks to MetaServer ──
+    // ── 9b. Verify Engine B re-registered fetched blocks to Catalog ──
     // Mooncake-fetched blocks are now resident on B, so B must advertise them so
     // other nodes can discover and fetch from B (not just from A).
     engine_b
         .flush_saves_and_inventory()
         .await
         .expect("restored inventory");
-    wait_for_metaserver_ownership(
-        &meta_store,
+    wait_for_catalog_ownership(
+        &stores,
         &cache_namespace,
         &stored_delayed,
         &format!("127.0.0.1:{port_b}"),
@@ -547,7 +554,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .flush_saves_and_inventory()
         .await
         .expect("evicted inventory");
-    let remaining = meta_store.locate_blocks(&cache_namespace, &stored_delayed, "");
+    let remaining = locate(&stores, &cache_namespace, &stored_delayed, "");
     assert_eq!(remaining.len(), NUM_BLOCKS);
     for entry in remaining {
         assert_eq!(
@@ -560,8 +567,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         );
     }
     assert!(
-        meta_store
-            .locate_blocks(NAMESPACE, &delayed_hashes, "")
+        locate(&stores, NAMESPACE, &delayed_hashes, "")
             .iter()
             .all(|row| row.replicas.is_empty())
     );
@@ -597,7 +603,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     );
 
     // ── 10. Load from Engine B cache → GPU ──
-    let fresh = meta_store.locate_blocks(&cache_namespace, &stored_hashes, "requester");
+    let fresh = locate(&stores, &cache_namespace, &stored_hashes, "requester");
     let fresh_authorization = QueryBlocksForTransferRequest {
         namespace: cache_namespace.clone(),
         block_hashes: stored_hashes.clone(),

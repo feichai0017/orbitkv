@@ -17,11 +17,6 @@ crate-type = ["cdylib"]
 name = "orbitkv-cache-manager-py"
 path = "src/bin/cache_manager.rs"
 
-# Binary for orbitkv-metaserver (will be included in wheel by maturin)
-[[bin]]
-name = "orbitkv-metaserver-py"
-path = "src/bin/metaserver.rs"
-
 [features]
 default = ["cuda-12", "mooncake"]
 cuda-12 = ["orbitkv-core/cuda-12", "orbitkv-server/cuda-12", "orbitkv-transfer?/cuda-12"]
@@ -35,7 +30,6 @@ orbitkv-core = { workspace = true, default-features = false }
 orbitkv-channel.workspace = true
 orbitkv-proto = { path = "../crates/orbitkv-proto" }
 orbitkv-server = { path = "../crates/orbitkv-server", default-features = false }
-orbitkv-metaserver = { path = "../crates/orbitkv-metaserver", default-features = false }
 orbitkv-transfer = { workspace = true, optional = true }
 tokio.workspace = true
 prost.workspace = true
