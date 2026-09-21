@@ -128,9 +128,11 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "model_revision": (args.model / ".revision").read_text().strip()
         if (args.model / ".revision").exists()
         else None,
-        "concurrency": args.concurrencies if args.workload == "concurrent" else 1,
+        "concurrency": args.concurrencies if args.workload != "serial" else 1,
         "notes": (
-            "Closed-loop bursts; tier counters belong to entire batches, not individual requests. Memory peaks are sampled every 25 ms."
+            "Sustained closed-loop traffic with at most C client requests in flight. Throughput includes admitted requests' drain time; cache counters cover the whole window and post-request drain. Prepared-prefix output comparisons are diagnostic, not batch-invariant correctness proofs. Memory peaks are sampled lower bounds."
+            if args.workload == "sustained"
+            else "Closed-loop bursts; tier counters belong to entire batches, not individual requests. Memory peaks are sampled every 25 ms."
             if args.workload == "concurrent"
             else "Serial latency experiment; pressure traffic and startup are excluded from request timings."
         ),

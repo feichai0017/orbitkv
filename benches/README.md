@@ -14,6 +14,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `runtime.py` | Owned process groups, readiness, teardown, and launch manifest |
 | `workload.py` | Token-exact requests, streaming timings, and pressure traffic |
 | `concurrent.py` | Closed-loop bursts, shared/mixed prefixes, batch counters and sampled memory peaks |
+| `sustained.py` | Bounded continuous traffic mixing reusable prefixes with cold requests |
 | `metrics.py` | Cache-source evidence and statistical summaries |
 | `report.py` | Offline CSV/JSON reports from complete raw runs |
 | `serving.sh` | vLLM serving measurements against an already running endpoint |
@@ -85,7 +86,53 @@ instrumented operations and are not an additive decomposition of client TTFT.
   --ssd-gib 32 --output benches/results/runs/qwen3-8b-ssd-vllm
 ```
 
-## Report existing runs
+## Sustained mixed traffic
+
+For sustained mixed traffic, use `--workload sustained`. Each concurrency level
+prepares an independent working set, then continuously replaces finished client
+requests until the admission duration or request cap is reached. The reusable
+prefix fraction is probabilistic; other requests have new token sequences and
+exercise saves alongside restores. No explicit cache cleanup or pressure request
+runs inside the measured window. A working set larger than HBM creates natural
+GPU pressure; a smaller host pool with SSD enabled can exercise disk reads.
+Verify the counters: a working-set configuration alone does not prove a tier hit.
+
+```bash
+.venv/vllm-release/bin/python -m benches.single_node \
+  --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
+  --workload sustained --concurrencies 1 4 8 --duration-seconds 60 \
+  --working-set 12 --reuse-ratio 0.75 --max-requests 10000 \
+  --host-gib 4 --ssd-gib 16 --query-budget-gib 2 \
+  --output benches/results/runs/sustained-vllm-ssd
+```
+
+Use the SGLang environment and `--engine sglang` for its gate. For DRAM coverage,
+omit `--ssd-gib` and choose a host budget that fits the working set. Run a separate
+`--backend native` control with the same workload and GPU budget. Each backend
+executes the same deterministic request-generation recipe, but duration-based
+closed-loop runs may complete different numbers of requests.
+
+`prefixes.jsonl` retains prepared token inputs and serial reference outputs.
+`samples.jsonl` retains every measured response, client admission/start/finish
+times, cached tokens and reference comparison. Cold requests can be regenerated
+from the recorded seed, concurrency and request index. `windows.jsonl` stores
+each complete window's counters, sampled memory peaks, stop reason and post-run
+resource state. The cap bounds retained samples; capped windows are explicitly
+marked and must not be presented as completing the configured duration.
+
+Throughput divides completions by wall time including the final admitted
+requests' completion, excluding preparation and the subsequent cache-drain check.
+The drain check waits up to 30 seconds after the settling interval for query,
+copy and SSD work to become idle; it fails a run that retains query ownership.
+Cache counters include this drain, so they are window-level evidence, not
+per-request tier attribution. Memory peaks are sampled every 25 ms and are
+lower bounds. `decode_ms_per_token_p50` is a response-level estimate from text
+TTFT and completion counts, not a measured inter-token arrival distribution.
+Output differences from serial preparation are retained as diagnostics: greedy
+sampling does not establish batch-invariant correctness. Use the engine E2E
+gates and native/deterministic controls to investigate differences.
+
+## Concurrent bursts
 
 For concurrent qualification, use `--workload concurrent --concurrencies 1 4 8`.
 Each burst uses shared prefixes or independent mixed-length prompts; cold,
@@ -113,6 +160,8 @@ steady-state load, natural memory-pressure experiment, or tail-latency SLO.
 The [recorded concurrent baseline](../docs/concurrent-performance.md) includes
 the discovered SGLang admission regression and native/deterministic controls
 for output differences; ordinary greedy output is not assumed batch invariant.
+
+## Report existing runs
 
 ```bash
 python -m benches.report \

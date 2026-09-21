@@ -68,6 +68,11 @@ manager command. The current SSD cache file is truncated on manager startup;
 it is not durable across a manager restart. Both engines have single-rank recovery gates after forced DRAM eviction.
 SGLang holds a pending request in its scheduler queue until a leased result is
 available, with a five-second preparation budget before recomputation.
+vLLM gives an admitted restore priority until its request reaches the first
+compute step. Other queries may prefetch and retain bounded results, but their
+admission waits: a capacity-blocked lookup must not strand a completed restore
+behind it in vLLM's deferred queue. Transfer completion alone does not open
+this gate. Cancellation does, without releasing any outstanding GPU copy holds.
 See the [SSD measurements](ssd-performance.md) for latency and scope.
 See [manager options](server.md) for the other capacity and queue controls.
 

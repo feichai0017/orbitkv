@@ -35,8 +35,34 @@ def main() -> None:
     )
     parser.add_argument("--lengths", type=int, nargs="+", default=[1024, 4096, 8192])
     parser.add_argument("--repeats", type=int, default=5)
-    parser.add_argument("--workload", choices=["serial", "concurrent"], default="serial")
+    parser.add_argument(
+        "--workload", choices=["serial", "concurrent", "sustained"], default="serial"
+    )
     parser.add_argument("--concurrencies", type=int, nargs="+", default=[1, 4, 8])
+    parser.add_argument(
+        "--duration-seconds",
+        type=float,
+        default=60,
+        help="Sustained admission window per concurrency; admitted requests drain afterward",
+    )
+    parser.add_argument(
+        "--max-requests",
+        type=int,
+        default=10000,
+        help="Maximum sustained requests per window, bounding retained samples",
+    )
+    parser.add_argument(
+        "--working-set",
+        type=int,
+        default=12,
+        help="Number of independently prepared prefixes in a sustained window",
+    )
+    parser.add_argument(
+        "--reuse-ratio",
+        type=float,
+        default=0.75,
+        help="Probability of requesting a prepared prefix; other requests are cold",
+    )
     parser.add_argument(
         "--query-budget-gib", type=float, help="OrbitKV global query ownership budget"
     )
@@ -91,6 +117,13 @@ def main() -> None:
         )
     if not math.isfinite(args.settle_seconds) or args.settle_seconds < 0:
         parser.error("--settle-seconds must be finite and nonnegative")
+    if args.workload == "sustained":
+        if not math.isfinite(args.duration_seconds) or args.duration_seconds < 1:
+            parser.error("--duration-seconds must be finite and at least 1")
+        if not 1 <= args.max_requests <= 100000 or not 1 <= args.working_set <= 1024:
+            parser.error("use 1–100000 max requests and 1–1024 working-set prefixes")
+        if not math.isfinite(args.reuse_ratio) or not 0 <= args.reuse_ratio <= 1:
+            parser.error("--reuse-ratio must be finite and between 0 and 1")
     args.output.mkdir(parents=True, exist_ok=True)
 
     config = json.loads((args.model / "config.json").read_text())
@@ -126,14 +159,13 @@ def main() -> None:
             stack.enter_context(
                 server(launch.command, launch.env, launch.base_url, args.output / "engine.log")
             )
-            if args.workload == "concurrent":
-                from . import concurrent
+            if args.workload in ("concurrent", "sustained"):
+                from . import concurrent, sustained
 
-                samples, batches = concurrent.run_workload(
-                    args, launch.base_url, launch.manager_url
-                )
-                concurrent.validate(vars(args), samples, batches)
-                summary = concurrent.summarize(samples, batches)
+                workload = sustained if args.workload == "sustained" else concurrent
+                samples, batches = workload.run_workload(args, launch.base_url, launch.manager_url)
+                workload.validate(vars(args), samples, batches)
+                summary = workload.summarize(samples, batches)
             else:
                 samples = run_workload(args, launch.base_url, launch.manager_url)
                 summary = summarize(samples, args.lengths)
