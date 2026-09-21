@@ -15,6 +15,13 @@
 Performance workloads and their results live in [`benches/`](../../benches/README.md),
 with their own CPU-only harness tests. They are not correctness-test fixtures.
 
+Queued-warming changes require both engine GPU gates with
+`ORBITKV_QUEUE_WARMUP=1` (automatic warming is otherwise disabled). The default client and
+vLLM scheduler tests cover bounded hint tickets and revalidated admission;
+`integration/test_sglang_admission.py` exercises the pinned upstream queue/key
+contract. `integration/test_sglang_direct_transfer.py` also proves unpolled SSD
+warmups release reservations and supply DRAM pages for a later leased GPU restore.
+
 ## What To Run
 
 | Change area | Gate | Command | Failure boundary |

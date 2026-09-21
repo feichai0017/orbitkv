@@ -39,6 +39,7 @@ def generate(url: str, engine: str, model: str, tokens: list[int], output_len: i
     first = None
     text = ""
     usage = {}
+    request_id = None
     with requests.post(url + endpoint, json=payload, stream=True, timeout=(10, 300)) as response:
         response.raise_for_status()
         for line in response.iter_lines(chunk_size=1, decode_unicode=True):
@@ -51,6 +52,7 @@ def generate(url: str, engine: str, model: str, tokens: list[int], output_len: i
             if "error" in event:
                 raise RuntimeError(event["error"])
             if engine == "vllm":
+                request_id = event.get("id", request_id)
                 chunk = "".join(choice.get("text", "") for choice in event.get("choices", []))
                 text += chunk
                 usage = event.get("usage") or usage
@@ -58,6 +60,7 @@ def generate(url: str, engine: str, model: str, tokens: list[int], output_len: i
                 chunk = event.get("text", "")
                 text = chunk
                 usage = event.get("meta_info", usage)
+                request_id = usage.get("id", request_id)
             if first is None and chunk:
                 first = time.perf_counter()
     ended = time.perf_counter()
@@ -68,6 +71,7 @@ def generate(url: str, engine: str, model: str, tokens: list[int], output_len: i
     if usage.get("completion_tokens") != output_len:
         raise RuntimeError(f"Output length changed: expected {output_len}, got {usage}")
     return {
+        "request_id": request_id,
         "ttft_ms": (first - started) * 1000,
         "e2e_ms": (ended - started) * 1000,
         "text": text,

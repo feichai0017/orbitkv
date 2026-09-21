@@ -17,6 +17,7 @@ export const docGroups = [
       { slug: "transport", title: "Process & network transport" },
       { slug: "state-identity", title: "State identity & recovery" },
       { slug: "state-planning", title: "Demand & transfer planning" },
+      { slug: "queued-warming", title: "Queued-request warming" },
       { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
     ],
   },

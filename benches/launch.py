@@ -49,6 +49,8 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             ORBITKV_SGLANG_ENDPOINT=f"unix:///tmp/orbitkv-{manager_port}.sock",
             PYO3_PYTHON=sys.executable,
             PYTHONHOME=sys.base_prefix,
+            ORBITKV_QUEUE_WARMUP="1" if args.queue_warmup == "on" else "0",
+            ORBITKV_TRACE_TRANSFERS="1" if args.trace_transfers else "0",
         )
         env["LD_LIBRARY_PATH"] = os.pathsep.join(
             [sysconfig.get_config_var("LIBDIR"), env.get("LD_LIBRARY_PATH", "")]
@@ -74,6 +76,8 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
         if args.query_budget_gib is not None:
             manager_command += ["--query-budget", str(int(args.query_budget_gib * 1024**3))]
             backend_configuration["query_budget_bytes"] = int(args.query_budget_gib * 1024**3)
+        backend_configuration["queue_warmup"] = args.queue_warmup
+        backend_configuration["trace_transfers"] = args.trace_transfers
         plugin = args.output / "orbitkv_benchmark-0.0.dist-info"
         plugin.mkdir()
         (plugin / "METADATA").write_text("Name: orbitkv-benchmark\nVersion: 0.0\n")

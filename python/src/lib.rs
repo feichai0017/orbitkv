@@ -306,7 +306,7 @@ impl PyChannelClient {
         self.inner.notification_fd()
     }
 
-    #[pyo3(signature = (instance_id, block_hashes, req_id, operation_id, revision, wait_for_full_prefix=false, group_id=0, request_id=1))]
+    #[pyo3(signature = (instance_id, block_hashes, req_id, operation_id, revision, wait_for_full_prefix=false, group_id=0, warmup=false, request_id=1))]
     #[allow(
         clippy::too_many_arguments,
         reason = "Python API mirrors the versioned query contract"
@@ -321,6 +321,7 @@ impl PyChannelClient {
         revision: u64,
         wait_for_full_prefix: bool,
         group_id: u32,
+        warmup: bool,
         request_id: u64,
     ) -> PyResult<Py<PyAny>> {
         let command = QueryCommand::Submit(QueryBundleRequest {
@@ -333,6 +334,7 @@ impl PyChannelClient {
             block_hashes,
             group_id,
             wait_for_full_prefix,
+            warmup,
         });
         let response = py
             .detach(|| self.inner.query_bundle(request_id, &command))

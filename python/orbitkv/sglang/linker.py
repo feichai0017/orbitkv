@@ -20,6 +20,7 @@ from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCache
 
 from orbitkv.client import CacheManagerClient
 from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
+from orbitkv.logging_utils import trace_transfer
 
 from .config import derive_namespace
 from .layout import GpuLayout
@@ -49,6 +50,7 @@ class _LayerDoneCounter:
         self.producer_index = -1
         self.consumer_index = -1
         self._futures: dict[int, list[Future[None]]] = {}
+        self.request_ids: dict[int, list[str]] = {}
 
     def update_producer(self) -> int:
         self.producer_index += 1
@@ -65,9 +67,13 @@ class _LayerDoneCounter:
             return
         try:
             futures[threshold].result()
+            if threshold == 0:
+                for rid in self.request_ids.pop(index, ()):
+                    trace_transfer("first_use", rid, engine="sglang")
         finally:
             if threshold == self.num_layers - 1:
                 self._futures.pop(index, None)
+                self.request_ids.pop(index, None)
 
     def complete(self, index: int, error: Exception | None = None) -> None:
         for future in self._futures[index]:
@@ -80,6 +86,7 @@ class _LayerDoneCounter:
         self.producer_index = -1
         self.consumer_index = -1
         self._futures.clear()
+        self.request_ids.clear()
 
 
 class OrbitKVLinker(UnifiedCacheLinker):
@@ -171,8 +178,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
             self.client.release(lookup.lease)
 
     def cancel_query(self, rid: str) -> None:
-        if self._pending_queries.pop(rid, None) is not None:
-            self.client.cancel_query(self.instance_id, rid)
+        self._pending_queries.pop(rid, None)
+        self.client.cancel_query(self.instance_id, rid)
         self._release_lookup(rid)
 
     def expire_query(self, rid: str) -> None:
@@ -258,6 +265,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         pending = list(self._queued_loads.values())
         self._queued_loads.clear()
         index = self.layer_done_counter.update_producer()
+        self.layer_done_counter.request_ids[index] = [load.rid for load in pending]
         ready = torch.cuda.Event()
         ready.record()
         self._load_queue.put((index, pending, ready))
@@ -280,6 +288,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                             # A lost submission acknowledgement still leaves GPU ownership
                             # unresolved. Only leases never attempted can be released.
                             submitted += 1
+                            trace_transfer("restore_submit", load.rid, engine="sglang")
                             restores.append(
                                 self.client.start_restore(
                                     self.instance_id,
@@ -289,10 +298,13 @@ class OrbitKVLinker(UnifiedCacheLinker):
                                     [(load.lease, [list(load.targets)])],
                                 )
                             )
-                        for restore in restores:
+                        for load, restore in zip(
+                            pending[offset : offset + self._RESTORE_WINDOW], restores, strict=True
+                        ):
                             status = self.client.wait_restore(restore, timeout=120)
                             if not status.success:
                                 raise RuntimeError(status.message)
+                            trace_transfer("gpu_ready", load.rid, engine="sglang", success=True)
                     self.layer_done_counter.complete(index)
                     self._completed_loads.put([load.rid for load in pending])
                 except Exception as error:

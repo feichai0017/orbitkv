@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-pub const ABI_VERSION: u16 = 4;
+pub const ABI_VERSION: u16 = 5;
 pub const WIRE_MESSAGE_BYTES: usize = 64;
 /// Response `value1` bit set after a descriptor-backed request has been
 /// accepted and its generation consumed, including business-error responses.

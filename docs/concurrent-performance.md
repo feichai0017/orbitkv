@@ -164,6 +164,7 @@ python -m benches.report \
 Use empty output directories and run one engine at a time. Raw responses,
 metrics, logs and control scripts remain under `benches/results/runs/` on the
 measurement host. These measurements support byte-bounded restoration on this
-workload. Early queued-demand warming, first-use deadlines, fair scheduling,
-and calibrated restore-versus-recompute policy still require implementation
-and independent measurements.
+workload. The subsequent [queued-warming implementation](queued-warming.md)
+is outside these measurements. First-use deadlines, fair scheduling, and
+calibrated restore-versus-recompute policy still require implementation and
+independent measurements.

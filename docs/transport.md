@@ -89,7 +89,10 @@ scheduler topology this requires all configured TP shards to be on the scheduler
 host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
-returns `Loading`. Channel ABI 4 separates query submission from ticket polling.
+returns `Loading`. Channel ABI 5 separates query submission from ticket polling.
+The query schema carries an explicit warmup flag: it prepares pages without a
+restore lease, skips on warmup-budget pressure and is retired without polling.
+See [queued warming](queued-warming.md); the previous ABI is not retained.
 An operation has a monotonically increasing ID within its authenticated session,
 and a nonzero revision. A newer revision can replace hashes or wait policy while
 keeping its instance, request, and group; old polls and cancels cannot consume or

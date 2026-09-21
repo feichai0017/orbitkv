@@ -36,7 +36,9 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
         while not stop.is_set():
             try:
                 for key, value in metrics(manager_url).items():
-                    if key in ("orbitkv_pool_used_bytes", "orbitkv_query_reserved_bytes"):
+                    if key == "orbitkv_pool_used_bytes" or key.startswith(
+                        "orbitkv_query_reserved_bytes"
+                    ):
                         peaks[key] = max(value, peaks.get(key, 0))
             except Exception as error:
                 errors.append(str(error))
@@ -99,13 +101,16 @@ def metrics(url: str | None) -> dict[str, float]:
     for line in response.text.splitlines():
         if not line or line.startswith("#"):
             continue
-        name, value = line.rsplit(" ", 1)
-        name = name.split("{", 1)[0]
+        series, value = line.rsplit(" ", 1)
+        name = series.split("{", 1)[0]
         if name.endswith("_created") or "bucket" in name:
             continue
         number = float(value)
         if math.isfinite(number):
             values[name] = values.get(name, 0) + number
+            if name == "orbitkv_query_reserved_bytes" and 'phase="warming"' in series:
+                key = "orbitkv_query_reserved_bytes_warming"
+                values[key] = values.get(key, 0) + number
     return values
 
 

@@ -6,6 +6,7 @@ write an explanatory report instead of rewriting recorded evidence.
 
 | Files | Experiment |
 | --- | --- |
+| `qwen3-8b-queued-warming-summary.csv`, `qwen3-8b-queued-warming-summary.json`, `qwen3-8b-queued-warming-output-control.json` | 486 requests in matched warming on/off pressure windows; bounded reservations, higher SSD traffic without a throughput gain, and a native SGLang HBM output control |
 | `catalog-cleanup-d0.json` | D0 owner cleanup: 10,000 owned keys in a million-key directory, 10 CPU samples; setup and directory destruction excluded |
 | `qwen3-8b-h20.csv`, `qwen3-8b-h20.json` | 270 requests: native HBM, built-in CPU cache, and OrbitKV on both engines |
 | `qwen3-8b-comparisons.csv`, `qwen3-8b-comparisons.json` | 360 follow-up requests, matched LMCache controls, completion notification and copy-backend experiments, plus failed FlexKV attempts |

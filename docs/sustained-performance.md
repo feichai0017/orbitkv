@@ -149,8 +149,9 @@ on the measurement host.
 
 ## Next gates
 
-Profile duplicate vLLM H2D restores and query/save interference, then add
-request-driven warming and restore-versus-recompute decisions. Extend sustained
+Profile duplicate vLLM H2D restores and query/save interference, and evaluate
+the subsequent [queued-warming implementation](queued-warming.md) before adding
+restore-versus-recompute decisions. The measurements above predate that change. Extend sustained
 loads with varied arrival rates, longer output, cancellation, delayed I/O and
 engine/manager restarts. Keep these separate from a two-host independent-replica
 cache-sharing gate, followed by P/D plus reusable cache. Catalog replication,

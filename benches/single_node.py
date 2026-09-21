@@ -76,6 +76,8 @@ def main() -> None:
         help="OrbitKV SSD capacity; adds a measured phase after evicting manager DRAM",
     )
     parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
+    parser.add_argument("--queue-warmup", choices=["on", "off"], default="off")
+    parser.add_argument("--trace-transfers", action="store_true")
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
     args = parser.parse_args()
@@ -169,6 +171,10 @@ def main() -> None:
             else:
                 samples = run_workload(args, launch.base_url, launch.manager_url)
                 summary = summarize(samples, args.lengths)
+            if args.trace_transfers and args.backend == "orbitkv":
+                from .timeline import collect
+
+                collect(args.output, samples)
     except Exception as error:
         (args.output / "failure.json").write_text(
             json.dumps({"type": type(error).__name__, "message": str(error)}, indent=2) + "\n"

@@ -76,6 +76,13 @@ admission waits: a capacity-blocked lookup must not strand a completed restore
 behind it in vLLM's deferred queue. Transfer completion alone does not open
 this gate. Cancellation does, without releasing any outstanding GPU copy holds.
 See the [SSD measurements](ssd-performance.md) for latency and scope.
+
+Both adapters also announce exact queued prefixes for bounded early DRAM warming.
+This is experimental and disabled by default; set `ORBITKV_QUEUE_WARMUP=1` in
+the engine environment to enable it. Warmup owns at most a quarter of global/per-instance query
+budgets and retains no restore lease. It cannot promise a hit at later admission.
+See [queued warming](queued-warming.md) for cancellation, timeline tracing and
+the remaining performance qualification.
 See [manager options](server.md) for the other capacity and queue controls.
 
 The manager, each engine process, and their GPU buffers must be on the same

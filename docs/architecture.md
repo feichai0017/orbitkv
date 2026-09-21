@@ -209,8 +209,9 @@ Both DRAM and SSD recovery are GPU-validated at TP=1. SGLang's general plugin
 admission hook retains pending requests in the queue and consumes the ready
 result on a subsequent match. vLLM reports unresolved lookups through its own
 connector scheduler contract. The original SSD readiness failure and successful
-follow-up remain in [SSD results](ssd-performance.md); earlier warming and cost
-selection are in [state demand and transfer planning](state-planning.md).
+follow-up remain in [SSD results](ssd-performance.md). The first
+[bounded queued-warming path](queued-warming.md) is implemented; cost selection
+remains in [state demand and transfer planning](state-planning.md).
 
 ### Future: Radix lifecycle bridge for routing
 

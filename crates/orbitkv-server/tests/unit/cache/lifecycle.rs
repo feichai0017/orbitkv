@@ -71,6 +71,7 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
                         request_id: "query".into(),
                         block_hashes: vec![],
                         wait_for_full_prefix: true,
+                        warmup: false,
                         group_id: 0,
                     })
                 )
