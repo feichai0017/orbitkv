@@ -45,6 +45,10 @@ An experimental distributed path extends the same cache API to peer managers.
   replicas, Mooncake Transfer Engine moves bytes, and etcd tracks membership
   and placement. Multi-node serving is still experimental.
 
+The [delivery plan](docs/roadmap.md#current-delivery-priorities) prioritizes
+single-node failure recovery, bounded preparation experiments, then real
+two-host DP and P/D qualification. Catalog HA gates production distributed use.
+
 ## Get started
 
 The validated release targets are **vLLM 0.29.0** and **SGLang 0.5.20**. Use a

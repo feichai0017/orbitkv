@@ -260,6 +260,13 @@ each needs its own implementation and acceptance evidence. Start with dense
 full-attention, TP=1, and the currently pinned vLLM/SGLang releases. Broader
 model and topology support needs separate qualification.
 
+These stage identifiers group local planning work. Follow the
+[current delivery priorities](roadmap.md#current-delivery-priorities) for the
+next changes and the DP/P/D gates. Qualify ordinary-demand lifetimes first;
+optional warming gains and the later cost model do not gate two-host DP work.
+Fix identity or page-lifetime failures in every supported path as they are
+found, without waiting for completion of the broader P5 recovery contract.
+
 | Stage | Reviewable deliverable | Main code owners | Prerequisite |
 | --- | --- | --- | --- |
 | P0 | Prove a supported SGLang readiness/admission hook | `python/orbitkv/sglang/`, pinned engine interface | Current source audit and SSD reproduction |

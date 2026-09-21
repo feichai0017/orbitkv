@@ -3,6 +3,13 @@
 This is the repository-wide execution checklist. Completed items must have code
 and a passing gate; design text alone does not close an item.
 
+Follow the [current delivery priorities](docs/roadmap.md#current-delivery-priorities):
+close the ordinary-demand fault gate, qualify bounded consumer preparation and
+stopping, and start real two-host DP once demand lifetimes are qualified.
+Warming gains are not a DP prerequisite. P/D with cache reuse follows; replicated
+catalogs are required before production distributed deployment. Milestone
+numbers below group work areas rather than imposing a strict serial schedule.
+
 ## M0 — framework-neutral foundation
 
 - [x] Import and rename the PegaFlow 0.24.5 data plane.

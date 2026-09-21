@@ -8,6 +8,91 @@ TP/PP and KV-aware routing have later gates. See the
 Milestones describe intended gates, not deployed capabilities. The
 detailed work queue lives in [TODO.md](../TODO.md).
 
+## Current delivery priorities
+
+The starting point is a tested single-node DRAM/SSD path for both pinned engine
+releases, with TP=1 dense full-attention as the shared qualification baseline.
+Owned asynchronous queries, byte admission, shared backing reads and GPU
+completion lifetimes already exist. Embedded catalog discovery and membership
+also exist; real two-host serving, catalog replication and online placement
+changes remain unqualified or unimplemented. Automatic queued warming stays
+opt-in because the recorded controls do not establish a throughput benefit.
+
+The milestone identifiers below name work areas, not a requirement to finish
+every optimization before starting the next area. In particular, page-lifetime
+and identity fixes apply to every path as it is qualified; they cannot wait for
+the later general semantic compiler.
+
+| Priority | Deliverable | Acceptance boundary |
+| --- | --- | --- |
+| First: reliable ordinary demand | Complete single-node concurrent cancellation, lost-result, engine/Manager restart and stuck-Publish qualification for both engines. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
+| Next: bounded preparation experiment | Prepare a small set of requests close to admission, retain their ready pages within the existing budget, then add explicit stop policies and bounded read submission. | Separate demand-only, current warming, consumer-owned preparation and stopping controls; bounded residency and cleanup under reordering/cancellation; measured exposed wait, TTFT and read amplification. Promote a policy only with repeatable benefit. |
+| First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TE path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
+| Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; separately integrate and qualify SGLang's native handoff lifecycle. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
+| Before production distributed deployment: catalog HA | Add replicated catalog evidence, versioned placement, handoff/repair and operational failure handling. | Three catalog failure domains, partitions, lease expiry, etcd outage and placement changes; bounded replay, source holds and staging. Replicating etcd alone does not replicate the catalog. |
+| Later expansion | Remote SSD staging, measured source/cost selection, broader model recovery, copy/compute overlap and optional Dynamo routing. | Each has its own recovery, resource and performance gate; cross-host TP/PP, resharding and cross-engine format conversion are separate capabilities. |
+
+Start the two-host DP harness once the ordinary-demand lifetime gate passes;
+local preparation and retention tuning can continue alongside it. A warming
+speedup is **not** a prerequisite for DP. Available host capacity determines
+when its runtime gate can run: multiple Managers on one machine cannot close
+the two-host item. Qualify same-host TP per replica after the initial TP=1 DP
+gate, without claiming cross-host tensor parallelism.
+
+### Next reviewable changes
+
+1. **Close the ordinary-demand fault gate.** Extend the existing integration
+   and serving tests with delayed SSD completion, lost delivery, disconnect,
+   engine/Manager restart and allocation reuse under concurrent traffic.
+   Verify independent owners of shared reads and handoff to GPU consumers.
+   Fix demonstrated ownership failures in the existing query/endpoint/transfer
+   owners. A stuck-Publish watchdog must report or fence a failed path without
+   treating elapsed time as proof of DMA completion. Preserve model/format
+   mismatch rejection and record the unsupported recovery cases.
+2. **Prepare only selected consumers.** Use engine scheduling evidence to
+   select a bounded lookahead, and reuse the existing operation/revision and
+   lease lifecycle. Charge in-flight and ready-but-unconsumed residency until
+   handoff, cancellation or expiry; leave headroom for ordinary demand. Retire
+   changed requests and HBM hits, and expire abandoned ownership without
+   further polling. Keep this opt-in until the serving measurements pass.
+3. **Bound submission and stop waiting explicitly.** Add best-effort and
+   relative-timeout policies, with wait-complete as a control subject to
+   lifecycle expiry. Stop new read batches while submitted I/O retains its
+   buffers and drains. Expose only a completed contiguous prefix at a valid
+   engine recovery boundary; cancelling one shared-read owner cannot revoke
+   another. Run the policy comparisons before adding timing prediction or
+   changing retention/write admission.
+
+Keep these changes separately reviewable. The existing
+[reference-based policy sequence](queued-warming.md#reference-implementations-and-policy-order)
+defines the retained-page and stopping contracts. If a preparation policy
+increases read amplification without repeatable latency/goodput benefit, leave
+it experimental and continue with DP qualification. Retention and SSD write
+admission get separate experiments after this comparison.
+
+### Evidence and code ownership
+
+Use Qwen3-8B and the pinned engine releases for continuity. Compare native
+engine behavior and ordinary OrbitKV demand before adding compatible LMCache
+or FlexKV configurations; record incompatible versions or layouts instead of
+silently changing the workload. Keep model revision, HBM/DRAM capacity, storage,
+request sequence, concurrency and tracing fixed. Run at least three paired
+repetitions with order reversal and report variation, p50/p95/p99 TTFT, TPOT,
+throughput, SSD bytes per request, useful/unused prepared bytes and retained
+byte-seconds. Do not equate prepared-page reuse with causal latency savings.
+The current overlay-filesystem SSD controls do not qualify physical NVMe
+performance; publish a separate real-device result before making that claim.
+
+Engines own HBM allocation and scheduling decisions; adapters supply queue and
+page-lifetime evidence. The existing Manager endpoint and core query/prefetch/storage code own
+operation delivery, external residency, leases, budgets and transfer
+dependencies. Catalog/cluster code owns distributed evidence and membership;
+Mooncake TE owns remote byte movement. Extend those owners without adding a
+second scheduler facade or forwarding-only client. Tests stay under their
+package's `tests/`; workloads and results stay under `benches/`. Every delivery
+updates its deployment instructions and measured capability claims in the
+README and canonical `docs/`, which the website renders directly.
+
 ## M0: framework-neutral foundation
 
 Deliver:
