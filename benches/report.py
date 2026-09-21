@@ -16,6 +16,8 @@ def collect_run(directory: Path) -> dict:
         raise ValueError(f"Failed run has no complete latency result: {directory}")
     manifest = json.loads((directory / "manifest.json").read_text())
     args = manifest["arguments"]
+    timeline = directory / "timeline-summary.json"
+    timeline_summary = json.loads(timeline.read_text()) if timeline.exists() else None
     samples = [json.loads(line) for line in (directory / "samples.jsonl").read_text().splitlines()]
     if args.get("workload") in ("concurrent", "sustained"):
         from . import concurrent, sustained
@@ -27,6 +29,7 @@ def collect_run(directory: Path) -> dict:
         return {
             "directory": str(directory.resolve()),
             "manifest": manifest,
+            "timeline": timeline_summary,
             "storage": json.loads((directory / "storage.json").read_text())
             if args.get("ssd_gib", 0)
             else None,
@@ -49,6 +52,7 @@ def collect_run(directory: Path) -> dict:
     return {
         "directory": str(directory.resolve()),
         "manifest": manifest,
+        "timeline": timeline_summary,
         "storage": json.loads((directory / "storage.json").read_text())
         if args.get("ssd_gib", 0)
         else None,
@@ -72,6 +76,7 @@ def main() -> None:
                     "run": run["directory"],
                     "engine": config["engine"],
                     "backend": config["backend"],
+                    "queue_warmup": config.get("queue_warmup"),
                     **summary,
                     "cache_sources": json.dumps(summary["cache_sources"], sort_keys=True),
                 }

@@ -32,6 +32,23 @@ Cache Manager → OpenTelemetry Collector → Prometheus → Grafana
 
 OrbitKV exposes the following metrics for monitoring KV cache operations:
 
+### Query ownership and preparation
+
+- **orbitkv_query_reserved_bytes** tracks conservative per-owner bytes by
+  `phase`: `warming`, `preparing`, `ready`, or `restoring`. A warmup retains no
+  ready lease; its bytes return to zero after preparation even without polling.
+  Shared physical pages may be counted for several owners. Use the pool metric
+  for actual allocator occupancy.
+- **orbitkv_query_budget_waits_total** and **orbitkv_query_budget_bypasses_total**
+  include warmup admission attempts. A skipped warmup does not imply the later
+  demand query will bypass restoration.
+- **orbitkv_query_coalesced_reads_total** counts owners joining an identical
+  backing-read plan. It is not a byte-savings counter.
+
+Optional [request timelines](queued-warming.md#observing-the-path) correlate
+enqueue, preparation, restore and engine consumption. Cache-tier probe counts
+include warmups and demand; they are not end-user request hit rates.
+
 ### Pool Metrics (Pinned Memory)
 - **orbitkv_pool_used_bytes** (Gauge)
   - Current pinned memory pool usage in bytes

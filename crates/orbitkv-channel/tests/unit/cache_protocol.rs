@@ -29,6 +29,7 @@ fn request_round_trip_preserves_variable_hashes() {
         block_hashes: vec![vec![1; 32], vec![2; 17]],
         group_id: 3,
         wait_for_full_prefix: true,
+        warmup: false,
     };
     assert_eq!(
         QueryBundleRequest::decode(&request.encode().unwrap()).unwrap(),

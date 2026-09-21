@@ -40,12 +40,20 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
     monkeypatch.setattr(
         "benches.metrics.requests.get",
         lambda *a, **kw: SimpleNamespace(
-            text='unused NaN\ncounter{worker="a"} 10\ncounter{worker="b"} 5\nidle +Inf\n',
+            text=(
+                'unused NaN\ncounter{worker="a"} 10\ncounter{worker="b"} 5\nidle +Inf\n'
+                'orbitkv_query_reserved_bytes{phase="warming"} 100\n'
+                'orbitkv_query_reserved_bytes{phase="ready"} 200\n'
+            ),
             raise_for_status=lambda: None,
         ),
     )
     observed = metrics("http://localhost")
-    assert observed == {"counter": 15}
+    assert observed == {
+        "counter": 15,
+        "orbitkv_query_reserved_bytes": 300,
+        "orbitkv_query_reserved_bytes_warming": 100,
+    }
     json.dumps(observed, allow_nan=False)
 
 

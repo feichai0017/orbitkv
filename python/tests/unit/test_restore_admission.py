@@ -23,6 +23,45 @@ def request(req_id, tokens=32):
     )
 
 
+def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeypatch):
+    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
+    client = MagicMock()
+    scheduler = SchedulerConnector(
+        ConnectorContext(
+            instance_id="warm",
+            namespace="warm",
+            block_size=16,
+            tp_size=1,
+            world_size=1,
+            tp_rank=0,
+            device_id=0,
+            client=client,
+            state_manager=MagicMock(),
+        )
+    )
+    pool = MagicMock()
+    pool.get_cached_block.side_effect = [[object()], None]
+    scheduler.bind_gpu_block_pool(pool)
+    req = request("queued", 64)
+    scheduler.on_new_request(req)
+    client.warm_prefix.assert_called_once_with(
+        "warm", [b"queued-1", b"queued-2", b"queued-3"], "queued"
+    )
+    client.query_prefetch.assert_not_called()
+    assert not scheduler._pending_load_intents
+    assert not scheduler._pending_query_probes
+    assert not scheduler._restores_awaiting_compute
+    assert scheduler.request_finished(req, ()) == (False, None)
+    client.cancel_query.assert_called_once_with("warm", "queued")
+    assert not scheduler._queued_at
+    pool.reset_mock()
+    client.reset_mock()
+    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "0")
+    scheduler.on_new_request(req)
+    pool.get_cached_block.assert_not_called()
+    client.warm_prefix.assert_not_called()
+
+
 def step(tokens=0):
     return SimpleNamespace(
         scheduled_new_reqs=[

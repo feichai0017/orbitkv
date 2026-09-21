@@ -349,6 +349,10 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
     # ==============================
     # Scheduler-side methods
     # ==============================
+    def on_new_request(self, request) -> None:
+        if self._scheduler:
+            self._scheduler.on_new_request(request)
+
     def update_connector_output(self, connector_output) -> None:
         if self._scheduler:
             self._scheduler.update_connector_output(connector_output)

@@ -40,6 +40,49 @@ def transfer(keys):
     return [SimpleNamespace(name=PoolName.KV, keys=keys)]
 
 
+def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(linker):
+    import torch
+    from sglang.srt.mem_cache.radix_cache import RadixKey
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
+    from sglang.srt.mem_cache.utils import get_storage_hash_str
+
+    from orbitkv.sglang.admission import abort_request, enqueue_request
+
+    req = request("queued", 257)
+    req.extra_key, req.cache_salt = "tenant", "salt"
+    req.return_logprob, req.logprob_start_len = True, 192
+    key = RadixKey(req.origin_input_ids, extra_key="tenant", cache_salt="salt", limit=192)
+    hashes = get_storage_hash_str(key, page_size=64)
+    cache = SimpleNamespace(page_size=64, get_last_hash_value=lambda _: hashes[0])
+    wrapper = object.__new__(UnifiedCacheLinkerWrapper)
+    wrapper.cache, wrapper.cache_linker = cache, linker
+    cache.linker = wrapper
+    cache.match_prefix = MagicMock(
+        return_value=SimpleNamespace(
+            device_indices=torch.arange(64),
+            last_device_node=object(),
+        )
+    )
+    scheduler = SimpleNamespace(tree_cache=cache, waiting_queue=[])
+
+    def accepted(scheduler, req):
+        scheduler.waiting_queue.append(req)
+
+    enqueue_request(accepted, scheduler, req)
+    linker.client.warm_prefix.assert_called_once_with(
+        "admission", linker._hashes(hashes[1:]), req.rid
+    )
+    assert cache.match_prefix.call_args.args[0].req is None
+    assert not linker._lookups and not linker._queued_loads
+    abort_request(MagicMock(), scheduler, req)
+    linker.client.cancel_query.assert_called_once_with("admission", req.rid)
+
+    linker.client.reset_mock()
+    scheduler.waiting_queue.clear()
+    enqueue_request(MagicMock(), scheduler, req)
+    linker.client.warm_prefix.assert_not_called()
+
+
 def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker):
     from sglang.srt.managers.schedule_policy import AddReqResult
 

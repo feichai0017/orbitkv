@@ -125,8 +125,14 @@ and a passing gate; design text alone does not close an item.
   demand hints; current gates cover revisions, cancellation, and session cleanup.
 - [ ] Qualify delayed-read cancellation under concurrent serving and multi-rank
   SGLang TP; controlled admission tests do not replace those workload gates.
-- [ ] Add bounded request-driven DRAM warming and measured restore-versus-recompute
-  scheduling using `docs/state-planning.md` (P3/P4); speculative hints remain optional.
+- [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;
+  keep foreground headroom, revalidate demand, and retire warmups without a lease
+  or polling. Expose optional request-correlated transfer timeline logs.
+- [ ] Qualify queued warming under delayed reads, cancellation and sustained
+  pressure; account useful bytes and unused retained byte-seconds, add
+  priority/deadline and per-device/staging budgets (remaining P3).
+- [ ] Calibrate restore-versus-recompute and write admission using
+  `docs/state-planning.md` (P4); speculative workflow hints remain optional.
 - [ ] Profile the measured restore latency gap to both built-in CPU caches;
   measure transfer batching, completion observation, and inference overlap.
 - [ ] Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,

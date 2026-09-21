@@ -210,7 +210,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             query_reserved_bytes: meter
                 .i64_up_down_counter("orbitkv_query_reserved_bytes")
                 .with_unit("bytes")
-                .with_description("Query-owned bytes by preparing, ready, or restoring phase; shared pages count per owner")
+                .with_description("Query-owned bytes by warming, preparing, ready, or restoring phase; shared pages count per owner")
                 .build(),
             query_budget_waits: meter.u64_counter("orbitkv_query_budget_waits").build(),
             query_budget_bypasses: meter.u64_counter("orbitkv_query_budget_bypasses").build(),

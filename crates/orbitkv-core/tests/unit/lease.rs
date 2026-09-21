@@ -51,7 +51,7 @@ fn consume_allows_configured_number_of_consumers() {
 fn disconnect_releases_ready_interest_but_not_a_gpu_consumers_reservation() {
     let manager = QueryLeaseManager::default();
     let budget = crate::query::QueryBudget::new(100, 100).unwrap();
-    let crate::QueryAdmission::Admitted(reservation) = budget.reserve("a", "ns", 100) else {
+    let crate::QueryAdmission::Admitted(reservation) = budget.reserve("a", "ns", 100, false) else {
         panic!("budget available");
     };
     reservation.ready(100).unwrap();
@@ -70,13 +70,13 @@ fn disconnect_releases_ready_interest_but_not_a_gpu_consumers_reservation() {
     gpu.as_ref().unwrap().restoring();
     manager.release_owner(|candidate| candidate.session == 7);
     assert!(matches!(
-        budget.reserve("a", "ns", 1),
+        budget.reserve("a", "ns", 1, false),
         crate::QueryAdmission::Busy
     ));
     assert!(manager.consume("a", &id).is_err());
     drop(gpu);
     assert!(matches!(
-        budget.reserve("a", "ns", 100),
+        budget.reserve("a", "ns", 100, false),
         crate::QueryAdmission::Admitted(_)
     ));
 }

@@ -7,6 +7,24 @@ use orbitkv_core::{
 };
 use thiserror::Error;
 
+fn trace_query(stage: &str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
+    static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        std::env::var("ORBITKV_TRACE_TRANSFERS").is_ok_and(|value| value == "1")
+    });
+    if *ENABLED {
+        log::info!(
+            "cache_timeline {}",
+            serde_json::json!({
+                "stage": stage, "request_id": input.request_id, "instance_id": input.instance_id,
+                "warmup": input.warmup, "elapsed_us": elapsed_us, "hit_blocks": hit_blocks,
+                "pid": std::process::id(),
+                "at_unix_ns": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default().as_nanos() as u64,
+            })
+        );
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct QueryInput {
     pub instance_id: String,
@@ -14,6 +32,7 @@ pub(crate) struct QueryInput {
     pub request_id: String,
     pub wait_for_full_prefix: bool,
     pub group_id: u32,
+    pub warmup: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +184,8 @@ pub(crate) async fn execute_query(
     reservation: QueryReservation,
     owner: QueryOwner,
 ) -> Result<QueryOutcome, EngineError> {
+    let started = std::time::Instant::now();
+    trace_query("read_start", &input, 0, 0);
     if input.request_id.is_empty() {
         return Err(EngineError::InvalidArgument(
             "request_id must not be empty".to_string(),
@@ -237,6 +258,21 @@ pub(crate) async fn execute_query(
             input.wait_for_full_prefix,
         )
         .await?;
+    trace_query(
+        "host_ready",
+        &input,
+        started.elapsed().as_micros() as u64,
+        status.blocks.len(),
+    );
+    if input.warmup {
+        // The read cache owns the prepared pages. Queued requests must not hold
+        // a lease or query reservation while waiting for GPU admission.
+        return Ok(QueryOutcome::Ready {
+            num_hit_blocks: 0,
+            lease: Vec::new(),
+            hit_positions: Vec::new(),
+        });
+    }
     {
         let QueryResult { blocks, missing } = status;
         let hit = blocks.len();

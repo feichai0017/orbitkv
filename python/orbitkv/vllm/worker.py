@@ -13,7 +13,7 @@ import torch
 
 from orbitkv.client.gpu import serialize_gpu_buffer
 from orbitkv.client.manager import RestoreHandle
-from orbitkv.logging_utils import get_connector_logger
+from orbitkv.logging_utils import get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext, parse_env_int
 from orbitkv.vllm.layout import CacheGroupLayout
 from orbitkv.vllm.metadata import (
@@ -520,6 +520,8 @@ class WorkerConnector:
                         elif meta is not None:
                             self._failed_load_block_ids.update(meta[2])
                     else:
+                        for req_id in req_ids:
+                            trace_transfer("gpu_ready", req_id, engine="vllm", success=True)
                         logger.debug(
                             "[OrbitKVConnector] async_load_completed: reqs=%s",
                             req_ids,
@@ -661,6 +663,8 @@ class WorkerConnector:
             return
 
         try:
+            for req_id in request_ids:
+                trace_transfer("restore_submit", req_id, engine="vllm")
             restore = self._client.start_restore(
                 self._ctx.instance_id,
                 self._ctx.effective_tp_rank,

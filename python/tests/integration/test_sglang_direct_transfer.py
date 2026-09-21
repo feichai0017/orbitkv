@@ -241,6 +241,34 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             finally:
                 abandoned.close()
                 survivor.close()
+
+            # An unpolled enqueue warmup leaves evictable DRAM pages, with no
+            # ready lease/budget. The later demand must revalidate and lease them.
+            before = fetch_orbitkv_metrics(channel_server.http_port)
+            warm_hashes = hashes[:4]
+            assert client.warm_prefix(instance, warm_hashes, "queued-warmup")
+            deadline = time.monotonic() + 5
+            while True:
+                observed = fetch_orbitkv_metrics(channel_server.http_port)
+                if (
+                    observed.get("orbitkv_ssd_prefetch_bytes_total", 0)
+                    > before.get("orbitkv_ssd_prefetch_bytes_total", 0)
+                    and observed.get("orbitkv_ssd_prefetch_inflight", 0) == 0
+                    and observed.get("orbitkv_query_reserved_bytes", 0) == 0
+                ):
+                    break
+                assert time.monotonic() < deadline, observed
+                time.sleep(0.01)
+            demanded = client.query_prefetch(instance, warm_hashes, "queued-warmup")
+            assert isinstance(demanded, QueryReady)
+            assert demanded.num_hit_blocks == len(warm_hashes)
+            assert demanded.lease
+            client.release(demanded.lease)
+            after = fetch_orbitkv_metrics(channel_server.http_port)
+            assert (
+                after["orbitkv_ssd_prefetch_bytes_total"]
+                == observed["orbitkv_ssd_prefetch_bytes_total"]
+            )
         for tensor in tensors:
             tensor.zero_()
         torch.cuda.synchronize()

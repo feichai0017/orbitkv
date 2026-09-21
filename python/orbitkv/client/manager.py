@@ -47,6 +47,8 @@ class CacheManagerClient:
     """Cache operations through the same-host Cache Manager process channel."""
 
     _FALLBACK_POLL_SECONDS = 0.05
+    _MAX_WARMUPS = 16
+    _WARMUP_SECONDS = 5.0
 
     def __init__(
         self,
@@ -70,6 +72,7 @@ class CacheManagerClient:
         self._query_lock = threading.Lock()
         self._next_operation_id = 1
         self._queries: dict[tuple[str, str, int], _Query] = {}
+        self._warmups: dict[tuple[str, str, int], tuple[int, float]] = {}
         self._last_completion_poll = time.monotonic()
 
     @property
@@ -88,6 +91,7 @@ class CacheManagerClient:
                 self._publish_client.close()
         with self._query_lock:
             self._queries.clear()
+            self._warmups.clear()
 
     def health(self) -> tuple[bool, str]:
         return self._client.health()
@@ -114,6 +118,9 @@ class CacheManagerClient:
         key = (instance_id, req_id, group_id)
         hashes = tuple(block_hashes)
         with self._query_lock:
+            warmup = self._warmups.pop(key, None)
+            if warmup is not None:
+                self._client.cancel_query(warmup[0], 1, request_id=self._request_id())
             query = self._queries.get(key)
             changed = query is not None and (
                 query.hashes != hashes or query.wait_for_full_prefix != wait_for_full_prefix
@@ -150,12 +157,58 @@ class CacheManagerClient:
                 self._queries.pop(key)
             return result
 
+    def warm_prefix(self, instance_id: str, block_hashes: list[bytes], req_id: str) -> bool:
+        """Try preparing queued demand. Completion retains no lease or reservation.
+
+        Admission revalidates the prefix with a new query. Cancellation withdraws
+        interest while submitted reads drain under their original byte budget.
+        """
+        if not block_hashes or os.environ.get("ORBITKV_QUEUE_WARMUP", "1") == "0":
+            return False
+        key = (instance_id, req_id, 0)
+        with self._query_lock:
+            now = time.monotonic()
+            for expired, (operation, submitted) in list(self._warmups.items()):
+                if now - submitted >= self._WARMUP_SECONDS:
+                    self._client.cancel_query(operation, 1, request_id=self._request_id())
+                    del self._warmups[expired]
+            if (
+                key in self._warmups
+                or key in self._queries
+                or len(self._warmups) >= self._MAX_WARMUPS
+            ):
+                return False
+            if self._next_operation_id >= 1 << 64:
+                raise OverflowError("Cache Manager query ids exhausted")
+            operation = self._next_operation_id
+            self._next_operation_id += 1
+            result = self._client.query_submit(
+                instance_id,
+                block_hashes,
+                req_id,
+                operation,
+                1,
+                warmup=True,
+                request_id=self._request_id(),
+            )
+            if isinstance(result, QueryLoading):
+                if result.admitted:
+                    self._warmups[key] = (operation, now)
+                return result.admitted
+            if not isinstance(result, QueryReady) or result.num_hit_blocks or result.lease:
+                raise RuntimeError("warmup must not return a restore lease or hit promise")
+            return True
+
     def release(self, lease: bytes) -> None:
         self._client.release(lease, request_id=self._request_id())
 
     def cancel_query(self, instance_id: str, req_id: str, group_id: int = 0) -> None:
         with self._query_lock:
-            query = self._queries.pop((instance_id, req_id, group_id), None)
+            key = (instance_id, req_id, group_id)
+            warmup = self._warmups.pop(key, None)
+            if warmup is not None:
+                self._client.cancel_query(warmup[0], 1, request_id=self._request_id())
+            query = self._queries.pop(key, None)
             if query is not None:
                 self._client.cancel_query(
                     query.operation_id, query.revision, request_id=self._request_id()

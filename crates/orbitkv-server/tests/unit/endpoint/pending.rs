@@ -12,6 +12,7 @@ fn request(operation_id: u64, revision: u64) -> QueryBundleRequest {
         block_hashes: vec![vec![revision as u8]],
         group_id: 0,
         wait_for_full_prefix: false,
+        warmup: false,
     }
 }
 
@@ -185,4 +186,51 @@ fn expiration_and_capacity_pressure_never_turn_a_poll_into_submission() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn warmups_skip_full_capacity_and_reap_unpolled_completions() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let engine = engine();
+    let hll = tracker();
+    let mut queries = PendingQueries::default();
+    let held = Arc::clone(&queries.warming)
+        .try_acquire_many_owned(MAX_ACTIVE_WARMUPS as u32)
+        .unwrap();
+    let mut warmup = request(1, 1);
+    warmup.warmup = true;
+    let reply = queries
+        .execute(
+            1,
+            QueryCommand::Submit(warmup.clone()),
+            &engine,
+            runtime.handle(),
+            &hll,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(matches!(reply.outcome, Ok(QueryOutcome::Busy)));
+    drop(reply);
+    assert!(queries.pending.is_empty());
+    assert_eq!(queries.capacity.available_permits(), MAX_ACTIVE_QUERIES);
+    drop(held);
+
+    let permit = Arc::clone(&queries.warming).try_acquire_owned().unwrap();
+    warmup.ticket.operation_id = 2;
+    queries.insert(1, warmup);
+    let (sender, receiver) = oneshot::channel();
+    queries.pending.get_mut(&(1, 2)).unwrap().receiver = Some(receiver);
+    let _sent = sender.send(QueryReply {
+        outcome: Ok(QueryOutcome::Ready {
+            num_hit_blocks: 0,
+            lease: vec![],
+            hit_positions: vec![],
+        }),
+        engine: Arc::clone(&engine),
+        delivered: false,
+        _permits: vec![permit],
+    });
+    queries.retain_sessions(&engine, |_| true);
+    assert!(queries.pending.is_empty());
+    assert_eq!(queries.warming.available_permits(), MAX_ACTIVE_WARMUPS);
 }

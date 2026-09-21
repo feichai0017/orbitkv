@@ -9,7 +9,7 @@ const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
-const QUERY_VERSION: u16 = 1;
+const QUERY_VERSION: u16 = 2;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
@@ -501,6 +501,8 @@ pub struct QueryBundleRequest {
     pub block_hashes: Vec<Vec<u8>>,
     pub group_id: u32,
     pub wait_for_full_prefix: bool,
+    /// Best-effort preparation without a restore lease. Never waits for publication.
+    pub warmup: bool,
 }
 
 impl QueryBundleRequest {
@@ -522,7 +524,10 @@ impl QueryBundleRequest {
         );
         push_u32(&mut bytes, QUERY_REQUEST_MAGIC);
         push_u16(&mut bytes, QUERY_VERSION);
-        push_u16(&mut bytes, u16::from(self.wait_for_full_prefix));
+        push_u16(
+            &mut bytes,
+            u16::from(self.wait_for_full_prefix) | (u16::from(self.warmup) << 1),
+        );
         self.ticket.encode_into(&mut bytes)?;
         push_u32(&mut bytes, self.group_id);
         push_u32(&mut bytes, checked_u32(instance.len(), "instance_id")?);
@@ -545,7 +550,7 @@ impl QueryBundleRequest {
         decoder.expect_magic(QUERY_REQUEST_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
-        if flags & !1 != 0 {
+        if flags & !3 != 0 {
             return Err(QueryCodecError::InvalidFlags(flags));
         }
         let ticket = QueryTicket::decode_from(&mut decoder)?;
@@ -574,6 +579,7 @@ impl QueryBundleRequest {
             block_hashes,
             group_id,
             wait_for_full_prefix: flags & 1 != 0,
+            warmup: flags & 2 != 0,
         })
     }
 }

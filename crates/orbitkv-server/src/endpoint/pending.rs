@@ -15,7 +15,10 @@ use crate::cache::operations::{QueryInput, QueryOutcome, execute_query, execute_
 
 const MAX_PENDING_PER_SESSION: usize = 128;
 const MAX_ACTIVE_QUERIES: usize = 1024;
+const MAX_WARMUPS_PER_SESSION: usize = 16;
+const MAX_ACTIVE_WARMUPS: usize = 128;
 const QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+const WARMUP_TIMEOUT: Duration = Duration::from_secs(5);
 type QueryKey = (u64, u64);
 
 pub(crate) struct QueryReply {
@@ -48,12 +51,14 @@ struct PendingQuery {
 struct Session {
     last_operation: u64,
     capacity: Arc<Semaphore>,
+    warming: Arc<Semaphore>,
 }
 impl Default for Session {
     fn default() -> Self {
         Self {
             last_operation: 0,
             capacity: Arc::new(Semaphore::new(MAX_PENDING_PER_SESSION)),
+            warming: Arc::new(Semaphore::new(MAX_WARMUPS_PER_SESSION)),
         }
     }
 }
@@ -61,6 +66,7 @@ pub(crate) struct PendingQueries {
     pending: HashMap<QueryKey, PendingQuery>,
     sessions: HashMap<u64, Session>,
     capacity: Arc<Semaphore>,
+    warming: Arc<Semaphore>,
 }
 impl Default for PendingQueries {
     fn default() -> Self {
@@ -68,6 +74,7 @@ impl Default for PendingQueries {
             pending: HashMap::new(),
             sessions: HashMap::new(),
             capacity: Arc::new(Semaphore::new(MAX_ACTIVE_QUERIES)),
+            warming: Arc::new(Semaphore::new(MAX_ACTIVE_WARMUPS)),
         }
     }
 }
@@ -85,6 +92,15 @@ impl PendingQueries {
     pub(crate) fn retain_sessions(&mut self, engine: &OrbitKVEngine, live: impl Fn(u64) -> bool) {
         let now = Instant::now();
         self.pending.retain(|(token, _), task| {
+            if task.request.warmup
+                && (task.expires <= now
+                    || task
+                        .receiver
+                        .as_ref()
+                        .is_some_and(|receiver| !receiver.is_empty()))
+            {
+                return false;
+            }
             if task.expires <= now {
                 task.receiver = None;
             }
@@ -123,6 +139,9 @@ impl PendingQueries {
         let ticket = match command {
             QueryCommand::Poll(ticket) => ticket,
             QueryCommand::Submit(request) => {
+                if request.warmup && (request.group_id != 0 || request.wait_for_full_prefix) {
+                    return Err(invalid("warmup requires a non-waiting attention prefix"));
+                }
                 let ticket = request.ticket;
                 let key = (token, ticket.operation_id);
                 if let Some(pending) = self.pending.get(&key) {
@@ -201,9 +220,22 @@ impl PendingQueries {
             .sessions
             .get(&token)
             .ok_or_else(|| invalid("unknown query session"))?;
-        let mut permits = Vec::with_capacity(2);
-        for capacity in [Arc::clone(&session.capacity), Arc::clone(&self.capacity)] {
+        let mut permits = Vec::with_capacity(4);
+        let mut capacities = vec![Arc::clone(&session.capacity), Arc::clone(&self.capacity)];
+        if request.warmup {
+            capacities.extend([Arc::clone(&session.warming), Arc::clone(&self.warming)]);
+        }
+        for capacity in capacities {
             let Ok(permit) = capacity.try_acquire_owned() else {
+                if request.warmup {
+                    self.pending.remove(&key);
+                    return Ok(Some(QueryReply {
+                        outcome: Ok(QueryOutcome::Busy),
+                        engine: Arc::clone(engine),
+                        delivered: false,
+                        _permits: permits,
+                    }));
+                }
                 return Ok(None);
             };
             permits.push(permit);
@@ -212,15 +244,19 @@ impl PendingQueries {
             &request.instance_id,
             request.group_id,
             request.block_hashes.len(),
+            request.warmup,
         );
         let reservation = match admission {
-            Ok(QueryAdmission::Busy) => return Ok(None),
+            Ok(QueryAdmission::Busy) if !request.warmup => return Ok(None),
             Ok(QueryAdmission::Admitted(reservation)) => reservation,
             result => {
                 self.pending.remove(&key);
                 return Ok(Some(QueryReply {
                     outcome: match result {
                         Err(error) => Err(error),
+                        Ok(QueryAdmission::Busy | QueryAdmission::TooLarge) if request.warmup => {
+                            Ok(QueryOutcome::Busy)
+                        }
                         Ok(QueryAdmission::TooLarge) => Ok(QueryOutcome::Ready {
                             num_hit_blocks: 0,
                             lease: Vec::new(),
@@ -240,6 +276,7 @@ impl PendingQueries {
             request_id: request.request_id,
             wait_for_full_prefix: request.wait_for_full_prefix,
             group_id: request.group_id,
+            warmup: request.warmup,
         };
         let engine = Arc::clone(engine);
         let hll = Arc::clone(hll);
@@ -257,12 +294,17 @@ impl PendingQueries {
     }
 
     fn insert(&mut self, token: u64, request: QueryBundleRequest) {
+        let timeout = if request.warmup {
+            WARMUP_TIMEOUT
+        } else {
+            QUERY_TIMEOUT
+        };
         self.pending.insert(
             (token, request.ticket.operation_id),
             PendingQuery {
                 request,
                 receiver: None,
-                expires: Instant::now() + QUERY_TIMEOUT,
+                expires: Instant::now() + timeout,
             },
         );
     }

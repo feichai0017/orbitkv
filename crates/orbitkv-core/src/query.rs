@@ -17,6 +17,7 @@ pub struct QueryOwner {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
+    Warming,
     Preparing,
     Ready,
     Restoring,
@@ -25,6 +26,7 @@ enum Phase {
 impl Phase {
     fn label(self) -> &'static str {
         match self {
+            Self::Warming => "warming",
             Self::Preparing => "preparing",
             Self::Ready => "ready",
             Self::Restoring => "restoring",
@@ -36,6 +38,8 @@ impl Phase {
 struct Usage {
     total: u64,
     instances: HashMap<String, u64>,
+    warming: u64,
+    warming_instances: HashMap<String, u64>,
 }
 
 pub(crate) struct QueryBudget {
@@ -60,6 +64,7 @@ struct Reservation {
     pub(crate) instance: String,
     pub(crate) namespace: String,
     state: Mutex<(u64, Phase)>,
+    warming: bool,
 }
 
 impl QueryBudget {
@@ -79,25 +84,45 @@ impl QueryBudget {
         instance: &str,
         namespace: &str,
         bytes: u64,
+        warming: bool,
     ) -> QueryAdmission {
-        if bytes > self.per_instance {
+        let limit = if warming {
+            self.per_instance / 4
+        } else {
+            self.per_instance
+        };
+        if bytes > limit {
             core_metrics().query_budget_bypasses.add(1, &[]);
             return QueryAdmission::TooLarge;
         }
         let mut usage = self.usage.lock();
         let instance_used = usage.instances.get(instance).copied().unwrap_or(0);
-        if bytes > self.global - usage.total || bytes > self.per_instance - instance_used {
+        let warm_used = usage.warming_instances.get(instance).copied().unwrap_or(0);
+        if bytes > self.global - usage.total
+            || bytes > self.per_instance - instance_used
+            || (warming
+                && (bytes > self.global / 4 - usage.warming
+                    || bytes > self.per_instance / 4 - warm_used))
+        {
             core_metrics().query_budget_waits.add(1, &[]);
             return QueryAdmission::Busy;
         }
         usage.total += bytes;
         *usage.instances.entry(instance.into()).or_default() += bytes;
-        account(bytes as i64, Phase::Preparing);
+        let phase = if warming {
+            usage.warming += bytes;
+            *usage.warming_instances.entry(instance.into()).or_default() += bytes;
+            Phase::Warming
+        } else {
+            Phase::Preparing
+        };
+        account(bytes as i64, phase);
         QueryAdmission::Admitted(QueryReservation(Arc::new(Reservation {
             budget: Arc::clone(self),
             instance: instance.into(),
             namespace: namespace.into(),
-            state: Mutex::new((bytes, Phase::Preparing)),
+            state: Mutex::new((bytes, phase)),
+            warming,
         })))
     }
 }
@@ -144,6 +169,15 @@ impl Reservation {
     fn release_bytes(&self, bytes: u64) {
         let mut usage = self.budget.usage.lock();
         usage.total -= bytes;
+        if self.warming {
+            usage.warming -= bytes;
+            if let Some(instance) = usage.warming_instances.get_mut(&self.instance) {
+                *instance -= bytes;
+                if *instance == 0 {
+                    usage.warming_instances.remove(&self.instance);
+                }
+            }
+        }
         if let Some(instance) = usage.instances.get_mut(&self.instance) {
             *instance -= bytes;
             if *instance == 0 {

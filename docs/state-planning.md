@@ -318,7 +318,7 @@ Identical prefix reads can be shared with independent owners and leases; SSD
 queue pressure waits for space. A too-large individual query bypasses restore.
 Expired replies drop resources while retaining a bounded tombstone until poll,
 cancel, or session teardown. Both adapters cancel superseded queries. Channel
-ABI 4 requires rebuilding the manager and client together.
+ABI 5 requires rebuilding the manager and client together.
 
 Remaining work includes deadline/priority hints and exhaustive delivery-loss/
 restart fault qualification. The current budget charges each owner's padded
@@ -372,7 +372,11 @@ DRAM controls and investigate regressions before introducing predictive policy.
 ### P3: prepare declared demand within a byte budget
 
 Operation revisions, conservative byte ownership, and shared backing reads are
-implemented in P1. Next expose queued demand with a required boundary, priority,
+implemented in P1. The first [queued-warming implementation](queued-warming.md)
+announces exact prefixes from both engine queues, caps warmup bytes at a quarter
+of global/per-instance budgets, skips hints under pressure, and releases their
+ownership without a lease or another poll. Optional logs expose the transfer
+lifecycle. P3 is not complete: next enrich queued demand with a required boundary, priority,
 and optional first-use/wait budget in the shared contract. Begin with exact queued prompts;
 derive timing only from information available at enqueue. Relative budgets are
 interpreted at the receiver; do not compare monotonic clocks across hosts.

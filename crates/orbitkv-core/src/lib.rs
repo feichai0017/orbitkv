@@ -687,6 +687,7 @@ impl OrbitKVEngine {
         instance_id: &str,
         group_id: u32,
         blocks: usize,
+        warming: bool,
     ) -> Result<QueryAdmission, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
@@ -696,7 +697,7 @@ impl OrbitKVEngine {
             .ok_or_else(|| EngineError::InvalidArgument("query bytes overflow".into()))?;
         Ok(self
             .query_budget
-            .reserve(instance_id, &topology.cache_namespace, bytes))
+            .reserve(instance_id, &topology.cache_namespace, bytes, warming))
     }
 
     /// Move preparation ownership into the result lease and then GPU consumers.

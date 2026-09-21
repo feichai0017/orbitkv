@@ -122,6 +122,7 @@ class ChannelClient:
         revision: int,
         wait_for_full_prefix: bool = False,
         group_id: int = 0,
+        warmup: bool = False,
         request_id: int = 1,
     ) -> QueryLoading | QueryReady: ...
     def release(self, lease: bytes, request_id: int = 1) -> None: ...

@@ -260,3 +260,49 @@ def test_unadmitted_query_retries_with_a_fresh_ticket(monkeypatch):
     assert [call.args[3:] for call in native.query_submit.call_args_list] == [(1, 1), (2, 1)]
     native.query_poll.assert_not_called()
     client.close()
+
+
+def test_warmup_is_bounded_and_demand_revalidates_with_a_fresh_ticket(monkeypatch):
+    from orbitkv import QueryLoading, QueryReady
+
+    native = MagicMock()
+    native.query_submit.return_value = QueryLoading()
+    monkeypatch.setattr("orbitkv.client.manager.ChannelClient", lambda *a, **k: native)
+    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
+    client = CacheManagerClient("/tmp/warmup.sock")
+    client._MAX_WARMUPS = 2
+    assert client.warm_prefix("model", [b"first"], "a")
+    assert not client.warm_prefix("model", [b"first"], "a")
+    assert client.warm_prefix("model", [b"first"], "b")
+    assert not client.warm_prefix("model", [b"other"], "c")
+    native.query_poll.assert_not_called()
+    native.query_submit.return_value = QueryReady(1, b"new-lease")
+    assert client.query_prefetch("model", [b"changed"], "a").lease == b"new-lease"
+    native.cancel_query.assert_called_once_with(1, 1, request_id=3)
+    assert native.query_submit.call_args.args == ("model", [b"changed"], "a", 3, 1)
+    assert "warmup" not in native.query_submit.call_args.kwargs
+    client.cancel_query("model", "b")
+    assert not client._warmups
+    assert not client._queries
+    client.close()
+
+
+def test_expired_or_rejected_warmup_never_blocks_demand(monkeypatch):
+    from orbitkv import QueryLoading
+
+    native = MagicMock()
+    native.query_submit.side_effect = [QueryLoading(), QueryLoading(admitted=False), QueryLoading()]
+    monkeypatch.setattr("orbitkv.client.manager.ChannelClient", lambda *a, **k: native)
+    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
+    client = CacheManagerClient("/tmp/warmup.sock")
+    assert client.warm_prefix("model", [b"same"], "a")
+    client._WARMUP_SECONDS = 0
+    assert not client.warm_prefix("model", [b"same"], "b")
+    native.cancel_query.assert_called_once_with(1, 1, request_id=2)
+    assert not client._warmups
+    assert client.query_prefetch("model", [b"same"], "a").admitted
+    assert native.query_submit.call_args.args[3:] == (3, 1)
+    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "0")
+    assert not client.warm_prefix("model", [b"same"], "c")
+    assert native.query_submit.call_count == 3
+    client.close()

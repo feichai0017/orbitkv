@@ -12,12 +12,22 @@ def register() -> None:
     from sglang.srt.mem_cache.registry import register_radix_cache_backend
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
-    from .admission import admit_request
+    from .admission import abort_request, admit_request, enqueue_request
 
     register_radix_cache_backend("orbitkv", create_cache)
     HookRegistry.register(
         "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",
         admit_request,
+        HookType.AROUND,
+    )
+    HookRegistry.register(
+        "sglang.srt.managers.scheduler.Scheduler._add_request_to_queue",
+        enqueue_request,
+        HookType.AROUND,
+    )
+    HookRegistry.register(
+        "sglang.srt.managers.scheduler.Scheduler._release_aborted_request",
+        abort_request,
         HookType.AROUND,
     )
 

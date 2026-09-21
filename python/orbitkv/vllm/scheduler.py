@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from orbitkv.client.manager import CacheManagerClient
-from orbitkv.logging_utils import get_connector_logger
+from orbitkv.logging_utils import get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext
 from orbitkv.vllm.layout import CacheGroupLayout, reconcile_hybrid_hit
 from orbitkv.vllm.metadata import (
@@ -139,6 +139,8 @@ class SchedulerConnector:
                 f"scheduler has {len(clients)} OrbitKV data clients for {expected_shards} TP shards"
             )
         self._tp_shard_client = TpShardQueryClient(clients)
+        self._clients = clients
+        self._queued_at: dict[str, float] = {}
         self._cache_groups = CacheGroupLayout.from_config(kv_cache_config)
         if self._cache_groups.has_recurrent_state and (pd_tail_save or pd_tail_load):
             raise ValueError("P/D tail-block caching is not supported with HMA")
@@ -273,6 +275,31 @@ class SchedulerConnector:
                 block_hashes = block_hashes[:hashed]
         return block_hashes_per_block(block_hashes, self._ctx.hash_scale)
 
+    def on_new_request(self, request: "Request") -> None:
+        self._queued_at[request.request_id] = time.monotonic()
+        trace_transfer("queued", request.request_id, engine="vllm")
+        if (
+            not self._ctx.read_enabled
+            or self._cache_groups.group_count > 1
+            or os.environ.get("ORBITKV_QUEUE_WARMUP", "1") == "0"
+        ):
+            return
+        # Warm the same whole pages admission will query, including a page
+        # whose last token will be recomputed. This keeps shared reads identical.
+        # Enqueue neither allocates GPU blocks nor pins the resident prefix.
+        hashes = self._request_block_hashes(request)
+        resident = 0
+        if self._gpu_block_pool is not None:
+            for block_hash in hashes:
+                if self._gpu_block_pool.get_cached_block(block_hash, [0]) is None:
+                    break
+                resident += 1
+        if resident < len(hashes):
+            for client in self._clients:
+                client.warm_prefix(
+                    self._ctx.instance_id, list(hashes[resident:]), request.request_id
+                )
+
     def get_num_new_matched_tokens(
         self,
         request: "Request",
@@ -293,6 +320,8 @@ class SchedulerConnector:
 
         # Nothing remains to query remotely.
         if not query_hashes:
+            for client in self._clients:
+                client.cancel_query(self._ctx.instance_id, req_id)
             self._release_pending_query_probe(req_id)
             self._external_matched_blocks[req_id] = computed_blocks
             return (None if self._restores_awaiting_compute else 0, False)
@@ -590,6 +619,14 @@ class SchedulerConnector:
 
     def build_connector_meta(self, scheduler_output: "SchedulerOutput") -> OrbitKVConnectorMetadata:
         potential_saves: dict[str, SaveIntent] = {}
+        for req_id, tokens in scheduler_output.num_scheduled_tokens.items():
+            if tokens > 0 and (queued := self._queued_at.pop(req_id, None)) is not None:
+                trace_transfer(
+                    "first_use",
+                    req_id,
+                    engine="vllm",
+                    elapsed_us=int((time.monotonic() - queued) * 1e6),
+                )
         self._restores_awaiting_compute.difference_update(
             req_id for req_id, tokens in scheduler_output.num_scheduled_tokens.items() if tokens > 0
         )
@@ -1111,6 +1148,9 @@ class SchedulerConnector:
     def _cleanup_request(self, req_id: str) -> None:
         """Clean up all state for a completed request."""
         self._release_pending_query_probe(req_id)
+        self._queued_at.pop(req_id, None)
+        for client in self._clients:
+            client.cancel_query(self._ctx.instance_id, req_id)
         self._requests.pop(req_id, None)
         self._block_hashes.pop(req_id, None)
         self._external_matched_blocks.pop(req_id, None)
@@ -1318,6 +1358,10 @@ class SchedulerConnector:
     def shutdown(self) -> None:
         for req_id in list(self._pending_query_probes):
             self._release_pending_query_probe(req_id)
+        for req_id in self._queued_at:
+            for client in self._clients:
+                client.cancel_query(self._ctx.instance_id, req_id)
+        self._queued_at.clear()
 
     def _release_pending_query_probe(self, req_id: str) -> bool:
         probe = self._pending_query_probes.pop(req_id, None)
