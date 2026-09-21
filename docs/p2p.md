@@ -5,10 +5,11 @@ B needs blocks that node A already has, OrbitKV authorizes the block ranges and
 Mooncake reads them over RDMA (or TCP fallback).
 
 This path is not yet a high-availability deployment. The current MetaServer is
-an independent in-memory directory: it lacks complete resident-inventory
-replay after restart and is a remote-hit-rate and availability risk. The
-Cache Manager verifies and pins source bytes before transfer. The target
-recoverable catalog is described in [architecture](architecture.md).
+an independent in-memory directory with automatic inventory recovery after
+restart. Remote discovery can miss while an owner replays its snapshot; local
+cache hits continue. The Cache Manager verifies and pins source bytes before
+transfer. See the [current protocol](../crates/orbitkv-metaserver/README.md) and
+[target embedded catalog](distributed-cache.md).
 
 **When to use**: experimental multiple-node reuse for matching model,
 tokenizer, format, rank topology, and namespace.
@@ -163,8 +164,8 @@ P2P-related Prometheus metrics (on `:9091/metrics` by default):
 
 **Blocks not discovered on remote nodes**
 
-- Both nodes must point to the same MetaServer and serve the same model. Namespace is derived from model name and TP config — mismatched models or TP sizes will result in different namespaces.
-- Check MetaServer logs for `InsertBlockHashes` — if absent, the source node isn't registering.
+- Both nodes must use the same directory and compatible state identities. Namespaces bind model-artifact contents, computation configuration and registered storage geometry.
+- Compare `orbitkv_inventory_snapshots_started` with `orbitkv_inventory_snapshots_completed` and inspect `orbitkv_inventory_sync_failures`. An incomplete snapshot stays hidden; recurrent history gaps require enough journal capacity for the measured replay delay.
 
 **High Mooncake fetch latency**
 

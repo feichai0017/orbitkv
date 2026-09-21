@@ -81,35 +81,54 @@ Gate:
 The [SSD measurements](ssd-performance.md) exposed a missing SGLang readiness
 boundary. The pinned-release plugin now supplies a nonblocking admission hook,
 and core queries complete and release abandoned results without further polling.
-Single-rank DRAM/SSD serving recovery has dedicated GPU gates. Next add explicit
-demand/revision tickets, bounded request-driven DRAM warming, and measured
-restore-versus-recompute decisions. Generation-safe layer readiness precedes
-copy/compute overlap. The [implementation stages](state-planning.md#implementation-sequence)
-retain the larger ownership/fault-qualification requirements and the later
-Dynamo routing integration. Multi-rank serving and concurrent goodput remain
-separate qualification work.
+Single-rank DRAM/SSD serving recovery has dedicated GPU gates. Explicit query
+operation/revision tickets, retained byte budgets and shared backing reads are
+implemented, with [bounded concurrent bursts](concurrent-performance.md).
+Next add bounded request-driven DRAM warming and measured restore-versus-recompute
+decisions. Generation-safe layer readiness precedes copy/compute overlap. The
+[implementation stages](state-planning.md#implementation-sequence) retain the
+larger ownership/fault-qualification requirements and later Dynamo integration.
+Multi-rank serving and sustained concurrent goodput remain separate qualification
+work. Recoverable distributed-cache work can begin while local optimization
+continues.
 
 ## M2.5: recoverable multi-node cache
 
-Deliver:
+The [distributed cache design](distributed-cache.md) selects etcd for membership
+and configuration, an embedded replica catalog, and Mooncake TE for payloads.
+D0 inventory recovery is implemented against the current standalone directory.
+The embedded deployment and etcd integration remain planned. The first serving
+gate uses matching dense-attention namespaces and TP=1, testing each engine
+separately.
 
-- replay resident inventory with catalog epochs after directory restart;
-- bound and batch directory registration, lookup, and invalidation;
-- maintain a Cache Manager-local candidate index while the selected source
-  manager revalidates leases and residency;
-- reconcile node failure, stale candidates, and transfer interruption;
-- prototype replicated catalog shards inside Cache Managers, compare with a
-  dedicated directory fallback, and keep per-block operations off a consensus
-  hot path;
-- qualify Mooncake RDMA/TCP fetch and transfer-plan retry under real failures.
+Deliver in order:
+
+- D0 (implemented): versioned DRAM inventories, bounded journals and
+  snapshot/delta recovery. Tests cover real directory restart, concurrent
+  residency changes, lost replies and history overflow;
+- D1: etcd membership, Manager-side candidate indexing and fetch planning,
+  embedded catalog serving, and qualified peer transfer lifetimes; retire the
+  standalone MetaServer deployment after cutover;
+- D2: versioned rendezvous shard placement, replicated evidence, handoff,
+  bounded subscriptions and failure recovery;
+- D3: remote SSD staging and calibrated source selection under sender and
+  receiver budgets.
+
+The requesting Manager plans transfers. Source Managers validate and pin data;
+directory hints cannot authorize reads. Per-block operations do not use etcd.
+Compare against measurements of the current standalone directory before removal.
 
 Gate:
 
 - a directory restart or owner loss cannot cause an incorrect KV hit;
 - remote hits recover after inventory replay, without restarting managers;
 - cache misses remain bounded when discovery or transfer fails;
-- multi-node measurements include hit rate, latency, bandwidth, and metadata
-  request rate under load.
+- transfer cancellation, requester loss and lease expiry cannot permit memory
+  reuse before terminal transport completion or proven revocation;
+- multi-node measurements separate discovery RPCs, coordinator activity,
+  synchronization traffic, source authorization and payload transfer;
+- catalog index memory, replay history, source pins and destination staging
+  remain bounded, including during repair and placement changes.
 
 ## M3: KV-aware routing and physical planning
 

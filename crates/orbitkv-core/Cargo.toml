@@ -43,6 +43,7 @@ orbitkv-transfer = { path = "../orbitkv-transfer", default-features = false, opt
 mea.workspace = true
 
 [dev-dependencies]
+orbitkv-metaserver = { path = "../orbitkv-metaserver" }
 criterion.workspace = true
 cudarc.workspace = true
 tokio.workspace = true

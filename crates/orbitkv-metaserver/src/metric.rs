@@ -55,7 +55,7 @@ pub fn register_store_gauges(store: &Arc<BlockHashStore>) {
         let redundancy = meter
             .u64_observable_gauge("orbitkv_metaserver_block_redundancy")
             .with_description(
-                "Block keys by stored owner count; stale and old sessions count until cleanup",
+                "Block keys by stored owner count; includes stale owners and incomplete inventories",
             )
             .with_callback(move |observer| {
                 let snap = redundancy_store.redundancy_snapshot();
@@ -69,7 +69,7 @@ pub fn register_store_gauges(store: &Arc<BlockHashStore>) {
         let redundancy_avg = meter
             .f64_observable_gauge("orbitkv_metaserver_block_redundancy_avg")
             .with_description(
-                "Average stored owners per block key; stale and old sessions count until cleanup",
+                "Average stored owners per block key; includes stale owners and incomplete inventories",
             )
             .with_callback(move |observer| {
                 let snap = redundancy_avg_store.redundancy_snapshot();

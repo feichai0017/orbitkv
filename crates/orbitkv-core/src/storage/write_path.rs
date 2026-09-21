@@ -7,7 +7,6 @@ use tokio::sync::oneshot;
 
 use crate::backing::SsdBackingStore;
 use crate::block::{InflightBlock, SealedBlock, SlotInsertResult, StateKey};
-use crate::internode::MetaServerClient;
 use crate::metrics::core_metrics;
 use crate::offload::InsertEntries;
 use orbitkv_common::NumaNode;
@@ -68,7 +67,6 @@ impl WritePipeline {
 pub(super) struct InsertDeps {
     pub(super) read_cache: Arc<ReadCache>,
     pub(super) ssd_store: Option<Arc<SsdBackingStore>>,
-    pub(super) metaserver_client: Option<Arc<MetaServerClient>>,
 }
 
 pub(super) fn insert_worker_loop(rx: Receiver<InsertWorkerCommand>, deps: Weak<InsertDeps>) {
@@ -199,8 +197,15 @@ fn process_insert_batch(
     if !sealed_blocks.is_empty()
         && let Some(deps) = &deps
     {
-        let resident_keys = deps.read_cache.batch_insert_refs(&sealed_blocks);
-        send_backing_batches(deps, namespace, &sealed_blocks, resident_keys);
+        deps.read_cache.batch_insert_refs(&sealed_blocks);
+        if let Some(ssd) = &deps.ssd_store {
+            ssd.ingest_batch(
+                sealed_blocks
+                    .iter()
+                    .map(|(key, block)| (key.clone(), Arc::downgrade(block)))
+                    .collect(),
+            );
+        }
     }
 
     ordered_fast_path_seals
@@ -265,40 +270,6 @@ fn insert_partial_slots(
     }
 }
 
-fn send_backing_batches(
-    deps: &InsertDeps,
-    namespace: &str,
-    blocks: &[(StateKey, Arc<SealedBlock>)],
-    resident_keys: Vec<StateKey>,
-) {
-    if blocks.is_empty() {
-        return;
-    }
-    if deps.ssd_store.is_none() && deps.metaserver_client.is_none() {
-        return;
-    }
-    if let Some(ssd) = &deps.ssd_store {
-        let weak_blocks: Vec<(StateKey, Weak<SealedBlock>)> = blocks
-            .iter()
-            .map(|(k, b)| (k.clone(), Arc::downgrade(b)))
-            .collect();
-
-        ssd.ingest_batch(weak_blocks);
-    }
-
-    if let Some(client) = &deps.metaserver_client {
-        register_block_hashes(client, namespace, resident_keys);
-    }
-}
-
-fn register_block_hashes(client: &MetaServerClient, namespace: &str, resident_keys: Vec<StateKey>) {
-    if resident_keys.is_empty() {
-        return;
-    }
-    let hashes = resident_keys.into_iter().map(|key| key.hash).collect();
-    client.try_register_namespace(namespace.to_string(), hashes);
-}
-
 fn gc_inflight(
     inflight: &mut HashMap<StateKey, InflightBlock>,
     max_age: std::time::Duration,
@@ -352,7 +323,6 @@ mod tests {
         Arc::new(InsertDeps {
             read_cache: engine.read_cache.clone(),
             ssd_store: engine.ssd_store.clone(),
-            metaserver_client: None,
         })
     }
 
@@ -604,7 +574,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_backing_batches_no_stores_is_noop() {
+    async fn sealed_blocks_are_resident_without_backing_stores() {
         let engine =
             StorageEngine::new_with_config(1 << 20, false, StorageConfig::default(), &[]).unwrap();
         let deps = make_deps(&engine);

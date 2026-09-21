@@ -75,7 +75,7 @@ pub struct StateDescriptor {
 /// `namespace` binds immutable model artifacts, computation and representation.
 /// `hash` is the versioned encoding of the engine-native chained prefix hash and
 /// cache group. A key match alone does not prove a multi-component boundary.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StateKey {
     pub namespace: String,
     pub hash: Vec<u8>,

@@ -18,6 +18,7 @@ use orbitkv_core::*;
 use orbitkv_metaserver::{BlockHashStore, GrpcMetaService};
 use orbitkv_proto::proto::engine::meta_server_server::MetaServerServer;
 use orbitkv_server::proto::engine::engine_server::EngineServer;
+use orbitkv_state::group_hash;
 use tonic::transport::Server;
 
 // ── GPU buffer (from crates/orbitkv-core/tests/common/gpu_buffer.rs) ──────────────
@@ -268,7 +269,7 @@ const LAYER: &str = "layer_0";
 const DEVICE_ID: i32 = 0;
 
 #[tokio::test]
-#[ignore] // Requires RDMA hardware (ORBITKV_IB_DEVICE env var, default: mlx5_1), CUDA GPU, and Python+torch
+#[ignore = "requires CUDA and Mooncake; set MC_FORCE_TCP=1 for the same-host TCP gate"]
 async fn p2p_mooncake_remote_fetch_roundtrip() {
     orbitkv_common::logging::init_stdout_colored("debug");
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
@@ -321,8 +322,15 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         )
         .expect("register layer on engine A");
 
+    let cache_namespace = engine_a
+        .instance_namespace("inst-a")
+        .expect("sealed namespace");
     let block_ids = make_block_ids(NUM_BLOCKS);
     let block_hashes = make_block_hashes(NUM_BLOCKS, 42);
+    let stored_hashes: Vec<_> = block_hashes
+        .iter()
+        .map(|hash| group_hash(hash, 0))
+        .collect();
 
     engine_a
         .batch_save_kv_blocks_from_ipc(
@@ -349,11 +357,15 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     )
     .await;
 
-    // ── 6. Wait for MetaServer registration (fire-and-forget async) ──
+    // ── 6. Wait for acknowledged owner inventory ──
+    engine_a
+        .flush_saves_and_inventory()
+        .await
+        .expect("publish inventory");
     wait_for_metaserver_registration(
         &meta_store,
-        NAMESPACE,
-        &block_hashes,
+        &cache_namespace,
+        &stored_hashes,
         NUM_BLOCKS,
         Duration::from_secs(10),
     )
@@ -396,6 +408,10 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // ── 8. Start the remote query before the producer registers the blocks ──
     let delayed_hashes = make_block_hashes(NUM_BLOCKS, 43);
+    let stored_delayed: Vec<_> = delayed_hashes
+        .iter()
+        .map(|hash| group_hash(hash, 0))
+        .collect();
     let mut waiting = Box::pin(engine_b.count_prefix_hit_blocks_with_prefetch(
         "inst-b",
         "req-wait-for-producer",
@@ -425,8 +441,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     wait_for_metaserver_registration(
         &meta_store,
-        NAMESPACE,
-        &delayed_hashes,
+        &cache_namespace,
+        &stored_delayed,
         NUM_BLOCKS,
         Duration::from_secs(10),
     )
@@ -445,15 +461,39 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     // ── 9b. Verify Engine B re-registered fetched blocks to MetaServer ──
     // Mooncake-fetched blocks are now resident on B, so B must advertise them so
     // other nodes can discover and fetch from B (not just from A).
+    engine_b
+        .flush_saves_and_inventory()
+        .await
+        .expect("restored inventory");
     wait_for_metaserver_ownership(
         &meta_store,
-        NAMESPACE,
-        &delayed_hashes,
+        &cache_namespace,
+        &stored_delayed,
         &format!("127.0.0.1:{port_b}"),
         NUM_BLOCKS,
         Duration::from_secs(10),
     )
     .await;
+
+    // Eviction removes A's evidence while the copied replica on B remains usable.
+    assert!(engine_a.cleanup_memory_cache().evicted_blocks > 0);
+    engine_a
+        .flush_saves_and_inventory()
+        .await
+        .expect("evicted inventory");
+    let remaining = meta_store.query_prefix(&cache_namespace, &stored_delayed);
+    assert_eq!(remaining.len(), NUM_BLOCKS);
+    for entry in remaining {
+        assert_eq!(
+            entry.nodes,
+            vec![Arc::<str>::from(format!("127.0.0.1:{port_b}"))]
+        );
+    }
+    assert!(
+        meta_store
+            .query_prefix(NAMESPACE, &delayed_hashes)
+            .is_empty()
+    );
 
     // ── 10. Load from Engine B cache → GPU ──
     let load_state = LoadState::new().expect("create LoadState");

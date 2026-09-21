@@ -169,9 +169,9 @@ pub struct Cli {
     #[arg(long)]
     pub metaserver_addr: Option<String>,
 
-    /// MetaServer command queue depth (pending insert/remove commands, shared channel).
-    #[arg(long, default_value_t = orbitkv_core::DEFAULT_METASERVER_QUEUE_DEPTH)]
-    pub metaserver_queue_depth: usize,
+    /// Retained residency journal bytes; overflow triggers an inventory snapshot.
+    #[arg(long, default_value_t = orbitkv_core::DEFAULT_INVENTORY_JOURNAL_BYTES)]
+    pub inventory_journal_bytes: usize,
 
     /// HLL sliding-window list for hit-rate estimation. Comma-separated humantime
     /// durations; each becomes a canonical `window` label in metrics (e.g. `15m,1h,1d`).
@@ -576,7 +576,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),
         metaserver_addr: cli.metaserver_addr.clone(),
         advertise_addr,
-        metaserver_queue_depth: cli.metaserver_queue_depth,
+        inventory_journal_bytes: cli.inventory_journal_bytes,
         pool_shards: cli.pool_shards,
     };
 

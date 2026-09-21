@@ -1,34 +1,33 @@
-use std::collections::HashMap;
-use std::sync::Weak;
+use std::sync::{
+    Arc, Weak,
+    atomic::{AtomicU64, Ordering},
+};
 
-use log::{debug, error, info, warn};
+use log::warn;
 use orbitkv_common::grpc::{GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL, GRPC_CONNECT_TIMEOUT};
-use orbitkv_proto::proto::engine::meta_server_client::MetaServerClient as MetaServerGrpcClient;
+use orbitkv_proto::proto::engine::meta_server_client::MetaServerClient as GrpcClient;
 #[cfg(feature = "mooncake")]
 use orbitkv_proto::proto::engine::{FetchSegment, QueryPrefixBlocksRequest};
 use orbitkv_proto::proto::engine::{
-    HeartbeatNodeRequest, InsertBlockHashesRequest, RemoveBlockHashesRequest, UnregisterNodeRequest,
+    HeartbeatNodeRequest, SyncInventoryRequest, UnregisterNodeRequest,
 };
-use tokio::sync::{mpsc, oneshot};
+use orbitkv_state::{InventoryOperation, InventoryStatus, StateKey};
+use tokio::sync::{Notify, watch};
 use tokio::time::{Duration, Instant};
-use tonic::Code;
-use tonic::transport::{Channel, Endpoint};
+use tonic::{
+    Request, Status,
+    transport::{Channel, Endpoint},
+};
 use uuid::Uuid;
 
 use crate::metrics::core_metrics;
-use crate::storage::ReadCache;
+use crate::storage::{ReadCache, inventory::InventoryReadError};
 
-// Shared insert/remove command channel depth. Eviction bursts outrun the single
-// consumer's per-RPC drain, so a shallow queue silently drops removals.
-pub const DEFAULT_METASERVER_QUEUE_DEPTH: usize = 4096;
+const RPC_TIMEOUT: Duration = Duration::from_secs(3);
+const FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
+const MIN_RETRY: Duration = Duration::from_millis(100);
+const MAX_RETRY: Duration = Duration::from_secs(5);
 
-// Cap hashes per insert/remove RPC. The consumer coalesces a whole queue drain
-// per namespace, so without a cap one RPC could reach queue_depth * batch_size
-// hashes and blow past the MetaServer's gRPC decode limit. 32-byte sha256 hashes
-// keep a full chunk near 0.5 MiB, well under tonic's 4 MiB default.
-const MAX_HASHES_PER_RPC: usize = 16_384;
-
-/// Error type for MetaServer client operations.
 #[cfg(feature = "mooncake")]
 #[derive(Debug)]
 pub(crate) enum ClientError {
@@ -39,30 +38,7 @@ pub(crate) enum ClientError {
 impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ClientError::RpcFailed(msg) => write!(f, "RPC failed: {msg}"),
-        }
-    }
-}
-
-const INITIAL_BACKOFF_MS: u64 = 100;
-const MAX_BACKOFF_MS: u64 = 30_000;
-const MIN_HEARTBEAT_INTERVAL_SECS: u64 = 1;
-const UNREGISTER_TIMEOUT_SECS: u64 = 3;
-
-struct HeartbeatState {
-    node_registered: bool,
-    backoff_ms: u64,
-    period: Duration,
-    next_at: Instant,
-}
-
-impl HeartbeatState {
-    fn new() -> Self {
-        Self {
-            node_registered: false,
-            backoff_ms: INITIAL_BACKOFF_MS,
-            period: Duration::from_secs(MIN_HEARTBEAT_INTERVAL_SECS),
-            next_at: Instant::now(),
+            Self::RpcFailed(msg) => write!(f, "RPC failed: {msg}"),
         }
     }
 }
@@ -70,7 +46,6 @@ impl HeartbeatState {
 pub struct MetaServerClientConfig {
     pub metaserver_addr: String,
     pub advertise_addr: String,
-    pub queue_depth: usize,
 }
 
 impl MetaServerClientConfig {
@@ -78,224 +53,125 @@ impl MetaServerClientConfig {
         Self {
             metaserver_addr,
             advertise_addr,
-            queue_depth: DEFAULT_METASERVER_QUEUE_DEPTH,
         }
     }
-
-    pub fn with_queue_depth(mut self, depth: usize) -> Self {
-        self.queue_depth = depth;
-        self
-    }
 }
 
-/// A batch of block hashes grouped by namespace for MetaServer operations.
-struct BlockHashBatch {
-    groups: Vec<(String, Vec<Vec<u8>>)>,
+#[derive(Default)]
+struct Control {
+    flush_requests: AtomicU64,
+    wake: Notify,
 }
 
-impl BlockHashBatch {
-    fn from_entries(entries: Vec<(String, Vec<u8>)>) -> Self {
-        let mut groups: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
-        for (namespace, hash) in entries {
-            groups.entry(namespace).or_default().push(hash);
-        }
-        Self {
-            groups: groups.into_iter().collect(),
-        }
-    }
-
-    fn single_namespace(namespace: String, hashes: Vec<Vec<u8>>) -> Self {
-        Self {
-            groups: vec![(namespace, hashes)],
-        }
-    }
-
-    fn count(&self) -> usize {
-        self.groups.iter().map(|(_, hashes)| hashes.len()).sum()
-    }
+#[derive(Clone, Copy, Default)]
+struct Acknowledgement {
+    inventory: InventoryStatus,
+    verified_flush: u64,
+    stopped: bool,
 }
 
-/// Command sent to the background MetaServer loop.
-enum MetaServerCommand {
-    Insert(BlockHashBatch),
-    Remove(BlockHashBatch),
-    /// Barrier: acked once every insert/remove enqueued before it has been
-    /// delivered to the MetaServer (or dropped after a failed attempt).
-    Flush(oneshot::Sender<()>),
-    Shutdown(oneshot::Sender<()>),
-}
-
-fn metaserver_endpoint(metaserver_addr: String) -> Endpoint {
-    // keep_alive_timeout is 20s by default on both client and server side (tonic).
-    Endpoint::from_shared(metaserver_addr)
-        .expect("valid metaserver_addr URI")
-        .connect_timeout(GRPC_CONNECT_TIMEOUT)
-        .http2_keep_alive_interval(GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL)
-        .keep_alive_while_idle(true)
-}
-
-async fn connect_metaserver_client(
-    endpoint: &Endpoint,
-) -> Result<MetaServerGrpcClient<Channel>, tonic::transport::Error> {
-    endpoint.connect().await.map(MetaServerGrpcClient::new)
-}
-
-/// Unified MetaServer client handling both insert (fire-and-forget) and query (direct RPC).
 pub struct MetaServerClient {
-    /// Fire-and-forget command channel for insert/remove operations.
-    command_tx: mpsc::Sender<MetaServerCommand>,
-    /// Lazy-connect query client
+    read_cache: Weak<ReadCache>,
+    control: Arc<Control>,
+    shutdown: watch::Sender<bool>,
+    progress: watch::Receiver<Acknowledgement>,
     #[cfg(feature = "mooncake")]
-    query_client: MetaServerGrpcClient<Channel>,
+    query_client: GrpcClient<Channel>,
 }
 
 impl MetaServerClient {
-    /// Create a new client and spawn the background registration loop.
-    ///
-    /// Must be called from within a tokio runtime context.
-    pub(crate) fn new(config: MetaServerClientConfig, read_cache: Weak<ReadCache>) -> Self {
-        let endpoint = metaserver_endpoint(config.metaserver_addr.clone());
-        let (command_tx, rx) = mpsc::channel(config.queue_depth);
-
-        tokio::spawn(registration_loop(
-            rx,
-            config.metaserver_addr.clone(),
-            endpoint.clone(),
-            config.advertise_addr,
-            read_cache,
-        ));
-
-        // Lazy-connect query client: connects on first RPC, not here
-        #[cfg(feature = "mooncake")]
-        let query_client = {
-            let channel = endpoint.connect_lazy();
-            MetaServerGrpcClient::new(channel)
+    pub(crate) fn new(
+        config: MetaServerClientConfig,
+        read_cache: Weak<ReadCache>,
+    ) -> Result<Self, String> {
+        let endpoint = Endpoint::from_shared(config.metaserver_addr)
+            .map_err(|e| e.to_string())?
+            .connect_timeout(GRPC_CONNECT_TIMEOUT)
+            .timeout(RPC_TIMEOUT)
+            .http2_keep_alive_interval(GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL)
+            .keep_alive_while_idle(true);
+        let client = GrpcClient::new(endpoint.connect_lazy());
+        let changed = read_cache
+            .upgrade()
+            .ok_or("cache has stopped")?
+            .inventory_changed();
+        let control = Arc::new(Control::default());
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let (progress_tx, progress) = watch::channel(Acknowledgement::default());
+        let worker = InventorySync {
+            client: client.clone(),
+            node: config.advertise_addr,
+            node_id: Uuid::new_v4().to_string(),
+            epoch: String::new(),
+            progress: InventoryStatus::default(),
+            generation: 0,
+            phase: Phase::Restart,
+            verified_flush: 0,
+            heartbeat_at: Instant::now(),
+            retry_at: Instant::now(),
+            retry_delay: MIN_RETRY,
         };
-
-        info!(
-            "MetaServer client started (queue_depth={}, addr={})",
-            config.queue_depth, config.metaserver_addr
-        );
-
-        Self {
-            command_tx,
+        tokio::spawn(worker.run(
+            read_cache.clone(),
+            changed,
+            Arc::clone(&control),
+            shutdown_rx,
+            progress_tx,
+        ));
+        Ok(Self {
+            read_cache,
+            control,
+            shutdown,
+            progress,
             #[cfg(feature = "mooncake")]
-            query_client,
-        }
+            query_client: client,
+        })
     }
 
-    /// Fire-and-forget registration of block hashes.
-    ///
-    /// Accepts one namespace and its block hashes so callers can preserve their
-    /// hot-path grouping and enqueue a single MetaServer command.
-    pub(crate) fn try_register_namespace(&self, namespace: String, hashes: Vec<Vec<u8>>) {
-        if hashes.is_empty() {
-            return;
-        }
-        let batch = BlockHashBatch::single_namespace(namespace, hashes);
-        let count = batch.count();
-        match self.command_tx.try_send(MetaServerCommand::Insert(batch)) {
-            Ok(()) => {
-                core_metrics()
-                    .metaserver_registration_blocks
-                    .add(count as u64, &[]);
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!(
-                    "MetaServer registration queue full, dropping {} hashes",
-                    count
-                );
-                core_metrics()
-                    .metaserver_registration_queue_full
-                    .add(count as u64, &[]);
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                error!(
-                    "MetaServer registration loop has exited, dropping {} hashes",
-                    count
-                );
-                core_metrics()
-                    .metaserver_registration_queue_full
-                    .add(count as u64, &[]);
-            }
-        }
+    /// Wait for a fresh heartbeat and acknowledgement through the current local
+    /// inventory sequence. Concurrent eviction can legitimately remove a block.
+    pub async fn flush(&self) -> Result<(), String> {
+        self.flush_with_timeout(FLUSH_TIMEOUT).await
     }
 
-    /// Fire-and-forget removal of block hashes.
-    ///
-    /// Called after LRU eviction to notify MetaServer that this node no longer
-    /// holds these blocks. Losing an occasional remove message is acceptable;
-    /// the node lifecycle sweep is the fallback for node failures.
-    pub(crate) fn try_unregister(&self, entries: Vec<(String, Vec<u8>)>) {
-        if entries.is_empty() {
-            return;
-        }
-        self.try_send_unregister_batch(BlockHashBatch::from_entries(entries));
-    }
-
-    fn try_send_unregister_batch(&self, batch: BlockHashBatch) {
-        let count = batch.count();
-        match self.command_tx.try_send(MetaServerCommand::Remove(batch)) {
-            Ok(()) => {
-                core_metrics()
-                    .metaserver_removal_blocks
-                    .add(count as u64, &[]);
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("MetaServer removal queue full, dropping {} hashes", count);
-                core_metrics()
-                    .metaserver_removal_queue_full
-                    .add(count as u64, &[]);
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                error!(
-                    "MetaServer removal loop has exited, dropping {} hashes",
-                    count
-                );
-                core_metrics()
-                    .metaserver_removal_queue_full
-                    .add(count as u64, &[]);
-            }
-        }
-    }
-
-    /// Best-effort graceful unregister of this server's MetaServer node session.
-    pub async fn shutdown(&self) {
-        let (done_tx, done_rx) = oneshot::channel();
-        let shutdown_timeout = tokio::time::Duration::from_secs(UNREGISTER_TIMEOUT_SECS + 1);
-        match tokio::time::timeout(
-            shutdown_timeout,
-            self.command_tx.send(MetaServerCommand::Shutdown(done_tx)),
+    async fn flush_with_timeout(&self, timeout: Duration) -> Result<(), String> {
+        let target = self
+            .read_cache
+            .upgrade()
+            .ok_or("cache has stopped")?
+            .inventory_sequence();
+        let ticket = self.control.flush_requests.fetch_add(1, Ordering::AcqRel) + 1;
+        self.control.wake.notify_one();
+        let mut progress = self.progress.clone();
+        let ack = tokio::time::timeout(
+            timeout,
+            progress.wait_for(|ack| {
+                ack.stopped
+                    || (ack.verified_flush >= ticket
+                        && ack.inventory.ready
+                        && ack.inventory.sequence >= target)
+            }),
         )
         .await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) | Err(_) => return,
+        .map_err(|_| "inventory acknowledgement timed out".to_string())?
+        .map_err(|_| "inventory synchronization stopped".to_string())?;
+        if ack.stopped {
+            Err("inventory synchronization stopped".into())
+        } else {
+            Ok(())
         }
-        let _ = tokio::time::timeout(shutdown_timeout, done_rx).await;
     }
 
-    /// Barrier: resolves once every registration enqueued before this call has
-    /// been delivered to the MetaServer — or dropped after a failed attempt.
-    /// "Attempted" is the strongest contract the fire-and-forget queue can
-    /// offer; on ack, a subsequent MetaServer query observes every hash whose
-    /// insert RPC succeeded.
-    ///
-    /// Returns immediately if the registration loop has already exited.
-    pub async fn flush(&self) {
-        let (done_tx, done_rx) = oneshot::channel();
-        if self
-            .command_tx
-            .send(MetaServerCommand::Flush(done_tx))
-            .await
-            .is_err()
-        {
-            return;
-        }
-        let _ = done_rx.await;
+    pub async fn shutdown(&self) {
+        let _ = self.shutdown.send(true);
+        let mut progress = self.progress.clone();
+        let _ = tokio::time::timeout(
+            RPC_TIMEOUT * 2 + Duration::from_secs(1),
+            progress.wait_for(|ack| ack.stopped),
+        )
+        .await;
     }
 
-    /// Query MetaServer for an ordered remote fetch plan.
     #[cfg(feature = "mooncake")]
     pub(crate) async fn query_plan(
         &self,
@@ -303,1005 +179,341 @@ impl MetaServerClient {
         hashes: &[Vec<u8>],
         exclude_node: &str,
     ) -> Result<Vec<FetchSegment>, ClientError> {
-        let request = QueryPrefixBlocksRequest {
-            namespace: namespace.to_string(),
-            block_hashes: hashes.to_vec(),
-            exclude_node: exclude_node.to_string(),
-        };
-
-        let response = self
-            .query_client
-            .clone()
-            .query_prefix_blocks(request)
+        let mut client = self.query_client.clone();
+        let response = client
+            .query_prefix_blocks(timed(QueryPrefixBlocksRequest {
+                namespace: namespace.to_owned(),
+                block_hashes: hashes.to_vec(),
+                exclude_node: exclude_node.to_owned(),
+            }))
             .await
-            .map_err(|e| ClientError::RpcFailed(format!("MetaServer query failed: {e}")))?;
-
-        let resp = response.into_inner();
-
-        debug!(
-            "MetaServer query_plan: namespace={} segments={}",
-            namespace,
-            resp.segments.len()
-        );
-
-        Ok(resp.segments)
+            .map_err(|e| ClientError::RpcFailed(e.to_string()))?;
+        Ok(response.into_inner().segments)
     }
 }
 
-async fn registration_loop(
-    mut rx: mpsc::Receiver<MetaServerCommand>,
-    metaserver_addr: String,
-    endpoint: Endpoint,
-    advertise_addr: String,
-    read_cache: Weak<ReadCache>,
-) {
-    let mut client: Option<MetaServerGrpcClient<Channel>> = None;
-    let node_id = Uuid::new_v4().to_string();
-    let mut heartbeat = HeartbeatState::new();
+#[derive(Clone)]
+enum Phase {
+    Restart,
+    Snapshot { cursor: Option<StateKey>, page: u64 },
+    Replay { through: u64 },
+    Live,
+}
 
-    loop {
-        let heartbeat_sleep = tokio::time::sleep_until(heartbeat.next_at);
-        tokio::pin!(heartbeat_sleep);
-        let cmd = tokio::select! {
-            cmd = rx.recv() => match cmd {
-                Some(cmd) => cmd,
-                None => break,
-            },
-            _ = &mut heartbeat_sleep => {
-                match send_heartbeat(
-                    &mut client,
-                    &mut heartbeat,
-                    &metaserver_addr,
-                    &endpoint,
-                    &advertise_addr,
-                    &node_id,
-                ).await {
-                    Ok(next_period) => {
-                        heartbeat.period = next_period;
-                        heartbeat.next_at = Instant::now() + heartbeat.period;
-                    }
-                    Err(retry_after) => {
-                        heartbeat.next_at = Instant::now() + retry_after;
-                    }
-                }
-                continue;
+struct InventorySync {
+    client: GrpcClient<Channel>,
+    node: String,
+    node_id: String,
+    epoch: String,
+    progress: InventoryStatus,
+    generation: u64,
+    phase: Phase,
+    verified_flush: u64,
+    heartbeat_at: Instant,
+    retry_at: Instant,
+    retry_delay: Duration,
+}
+
+impl InventorySync {
+    async fn run(
+        mut self,
+        cache: Weak<ReadCache>,
+        changed: Arc<Notify>,
+        control: Arc<Control>,
+        mut shutdown: watch::Receiver<bool>,
+        acknowledgements: watch::Sender<Acknowledgement>,
+    ) {
+        loop {
+            if *shutdown.borrow() || cache.strong_count() == 0 {
+                break;
             }
-        };
-
-        if let MetaServerCommand::Shutdown(done) = cmd {
-            unregister_current_session(
-                &mut client,
-                &metaserver_addr,
-                &endpoint,
-                &advertise_addr,
-                &node_id,
-            )
-            .await;
-            let _ = done.send(());
-            break;
-        }
-
-        let mut inserts: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
-        let mut removes: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
-        let mut mixed_ops: Option<HashMap<(String, Vec<u8>), bool>> = None; // true=insert
-        let mut saw_insert = false;
-        let mut saw_remove = false;
-        // Flush barriers drained in this batch; acked after the sends below, so
-        // an ack means "everything enqueued before the flush has been attempted".
-        let mut flush_acks: Vec<oneshot::Sender<()>> = Vec::new();
-
-        // Drain all pending commands. Pure insert/remove batches stay grouped by
-        // namespace; mixed streams switch to last-write-wins netting.
-        for cmd in std::iter::once(cmd).chain(std::iter::from_fn(|| rx.try_recv().ok())) {
-            match cmd {
-                MetaServerCommand::Insert(batch) => {
-                    saw_insert = true;
-                    if saw_remove {
-                        let net = mixed_ops.get_or_insert_with(|| {
-                            build_net(std::mem::take(&mut inserts), std::mem::take(&mut removes))
-                        });
-                        insert_groups_into_net(net, batch.groups, true);
-                    } else {
-                        append_groups(&mut inserts, batch.groups);
+            if Instant::now() < self.retry_at {
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    _ = tokio::time::sleep_until(self.retry_at) => {},
+                }
+            }
+            let ticket = control.flush_requests.load(Ordering::Acquire);
+            if Instant::now() >= self.heartbeat_at || ticket > self.verified_flush {
+                match self.heartbeat(ticket).await {
+                    Ok(()) => self.publish(&acknowledgements),
+                    Err(err) => {
+                        core_metrics().metaserver_heartbeat_failures.add(1, &[]);
+                        self.failed(&err);
+                        continue;
                     }
                 }
-                MetaServerCommand::Remove(batch) => {
-                    saw_remove = true;
-                    if saw_insert {
-                        let net = mixed_ops.get_or_insert_with(|| {
-                            build_net(std::mem::take(&mut inserts), std::mem::take(&mut removes))
-                        });
-                        insert_groups_into_net(net, batch.groups, false);
-                    } else {
-                        append_groups(&mut removes, batch.groups);
+            }
+            let Some(source) = cache.upgrade() else {
+                break;
+            };
+            let step = self.next_operation(&source);
+            drop(source);
+            match step {
+                Ok(Some((operation, next))) => {
+                    if let Err(err) = self.send(operation, next, &cache).await {
+                        core_metrics().inventory_sync_failures.add(1, &[]);
+                        // A lost reply during a scan makes its cursor ambiguous.
+                        // Live deltas can resume from the next heartbeat's ACK.
+                        if !matches!(self.phase, Phase::Live) {
+                            self.phase = Phase::Restart;
+                        }
+                        self.failed(&err);
+                    }
+                    self.publish(&acknowledgements);
+                    tokio::task::yield_now().await;
+                }
+                Ok(None) => {
+                    tokio::select! {
+                        _ = shutdown.changed() => break,
+                        _ = changed.notified() => {},
+                        _ = control.wake.notified() => {},
+                        _ = tokio::time::sleep_until(self.heartbeat_at) => {},
                     }
                 }
-                MetaServerCommand::Flush(done) => {
-                    flush_acks.push(done);
-                }
-                MetaServerCommand::Shutdown(done) => {
-                    unregister_current_session(
-                        &mut client,
-                        &metaserver_addr,
-                        &endpoint,
-                        &advertise_addr,
-                        &node_id,
-                    )
-                    .await;
-                    let _ = done.send(());
-                    info!("MetaServer registration loop shutting down");
-                    return;
+                Err(err) => {
+                    if err.code() == tonic::Code::OutOfRange {
+                        core_metrics().inventory_history_gaps.add(1, &[]);
+                    }
+                    self.phase = Phase::Restart;
+                    self.failed(&err);
                 }
             }
         }
-
-        if let Some(net) = mixed_ops {
-            for ((namespace, hash), is_insert) in net {
-                if is_insert {
-                    inserts.entry(namespace).or_default().push(hash);
-                } else {
-                    removes.entry(namespace).or_default().push(hash);
-                }
-            }
-        }
-
-        let insert_total: usize = inserts.values().map(|v| v.len()).sum();
-        let remove_total: usize = removes.values().map(|v| v.len()).sum();
-        if ensure_heartbeat_registered(
-            &mut client,
-            &metaserver_addr,
-            &endpoint,
-            &advertise_addr,
-            &node_id,
-            &mut heartbeat,
-        )
-        .await
-        .is_err()
+        if let Err(err) = self
+            .client
+            .unregister_node(timed(UnregisterNodeRequest {
+                node: self.node.clone(),
+                node_id: self.node_id.clone(),
+            }))
+            .await
         {
-            core_metrics()
-                .metaserver_registration_failures
-                .add(insert_total as u64, &[]);
-            core_metrics()
-                .metaserver_removal_failures
-                .add(remove_total as u64, &[]);
-            // The batched hashes are dropped, not retried: the barrier's
-            // "delivered or dropped" contract is met, so ack the flushes.
-            ack_flushes(flush_acks);
-            continue;
+            warn!("Inventory unregister failed: {err}");
+            core_metrics().metaserver_unregister_failures.add(1, &[]);
         }
+        acknowledgements.send_replace(Acknowledgement {
+            stopped: true,
+            ..Acknowledgement::default()
+        });
+    }
 
-        let c = client.as_mut().expect("client is Some after lazy-connect");
+    fn publish(&self, tx: &watch::Sender<Acknowledgement>) {
+        tx.send_replace(Acknowledgement {
+            inventory: self.progress,
+            verified_flush: self.verified_flush,
+            stopped: false,
+        });
+    }
 
-        // Process inserts
-        let insert_namespaces: Vec<(String, Vec<Vec<u8>>)> = inserts.into_iter().collect();
-        let mut insert_failed_at: Option<(usize, usize)> = None;
+    fn failed(&mut self, error: &Status) {
+        warn!("Inventory synchronization will retry: {error}");
+        let jitter = Duration::from_millis(rand::random_range(
+            0..=self.retry_delay.as_millis() as u64 / 4,
+        ));
+        self.retry_at = Instant::now() + self.retry_delay + jitter;
+        self.heartbeat_at = self.retry_at;
+        self.retry_delay = (self.retry_delay * 2).min(MAX_RETRY);
+    }
 
-        'insert: for (i, (namespace, hashes)) in insert_namespaces.iter().enumerate() {
-            for (chunk_idx, chunk) in hashes.chunks(MAX_HASHES_PER_RPC).enumerate() {
-                let count = chunk.len();
-                let request = InsertBlockHashesRequest {
-                    namespace: namespace.clone(),
-                    block_hashes: chunk.to_vec(),
-                    node: advertise_addr.clone(),
-                    node_id: node_id.clone(),
-                };
+    async fn heartbeat(&mut self, ticket: u64) -> Result<(), Status> {
+        let response = self
+            .client
+            .heartbeat_node(timed(HeartbeatNodeRequest {
+                node: self.node.clone(),
+                node_id: self.node_id.clone(),
+            }))
+            .await?
+            .into_inner();
+        let remote: InventoryStatus = response
+            .progress
+            .ok_or_else(|| Status::data_loss("missing inventory progress"))?
+            .into();
+        let same_epoch = self.epoch == response.catalog_epoch;
+        let same_generation = remote.generation == self.progress.generation;
+        let resumable = matches!(self.phase, Phase::Live) && remote.ready && same_generation;
+        if !same_epoch || (!resumable && remote != self.progress) || remote.generation == 0 {
+            self.phase = Phase::Restart;
+        }
+        self.generation = self.generation.max(remote.generation);
+        self.epoch = response.catalog_epoch;
+        self.progress = remote;
+        self.verified_flush = ticket;
+        self.heartbeat_at = Instant::now()
+            + Duration::from_millis((response.stale_after_secs.saturating_mul(1000) / 3).max(100));
+        Ok(())
+    }
 
-                match c.insert_block_hashes(request).await {
-                    Ok(resp) => {
-                        let inner = resp.into_inner();
-                        if !inner.reclaimable_hashes.is_empty()
-                            && let Some(cache) = read_cache.upgrade()
-                        {
-                            cache.mark_reclaimable_hashes(namespace, &inner.reclaimable_hashes);
-                        }
-                        debug!(
-                            "Registered {} block hashes with MetaServer (namespace={}, inserted={}, reclaimable={})",
-                            count,
-                            namespace,
-                            inner.inserted_count,
-                            inner.reclaimable_hashes.len()
-                        );
+    fn next_operation(
+        &mut self,
+        cache: &ReadCache,
+    ) -> Result<Option<(InventoryOperation, Phase)>, Status> {
+        loop {
+            match &self.phase {
+                Phase::Restart => {
+                    self.generation = self
+                        .generation
+                        .checked_add(1)
+                        .ok_or_else(|| Status::out_of_range("inventory generation exhausted"))?;
+                    core_metrics().inventory_snapshots_started.add(1, &[]);
+                    return Ok(Some((
+                        InventoryOperation::Begin {
+                            sequence: cache.inventory_sequence(),
+                        },
+                        Phase::Snapshot {
+                            cursor: None,
+                            page: 0,
+                        },
+                    )));
+                }
+                Phase::Snapshot { cursor, page } => {
+                    if !cache.inventory_covers(self.progress.sequence) {
+                        return Err(Status::out_of_range(
+                            "inventory journal expired during snapshot",
+                        ));
                     }
-                    Err(e) => {
-                        error!(
-                            "MetaServer insert_block_hashes failed (namespace={}, count={}): {e}",
-                            namespace, count
-                        );
-                        if e.code() == Code::FailedPrecondition {
-                            warn!(
-                                "MetaServer insert rejected current session; resetting node registration: node={} node_id={}",
-                                advertise_addr, node_id
-                            );
-                            core_metrics().metaserver_session_resets.add(1, &[]);
-                            heartbeat.node_registered = false;
-                        }
-                        insert_failed_at = Some((i, chunk_idx * MAX_HASHES_PER_RPC));
-                        break 'insert;
+                    let records = cache
+                        .inventory_page(cursor.as_ref())
+                        .map_err(inventory_error)?;
+                    if let Some(last) = records.last() {
+                        let next = Phase::Snapshot {
+                            cursor: Some(last.key.clone()),
+                            page: page + 1,
+                        };
+                        return Ok(Some((
+                            InventoryOperation::Snapshot {
+                                page: *page,
+                                records,
+                            },
+                            next,
+                        )));
                     }
+                    self.phase = Phase::Replay {
+                        through: cache.inventory_sequence(),
+                    };
+                }
+                Phase::Replay { through } => {
+                    let records = cache
+                        .inventory_changes(self.progress.sequence, *through)
+                        .map_err(inventory_error)?;
+                    if records.is_empty() {
+                        return Ok(Some((
+                            InventoryOperation::Commit { sequence: *through },
+                            Phase::Live,
+                        )));
+                    }
+                    return Ok(Some((
+                        InventoryOperation::Delta {
+                            after: self.progress.sequence,
+                            records,
+                        },
+                        self.phase.clone(),
+                    )));
+                }
+                Phase::Live => {
+                    let records = cache
+                        .inventory_changes(self.progress.sequence, cache.inventory_sequence())
+                        .map_err(inventory_error)?;
+                    return Ok((!records.is_empty()).then_some((
+                        InventoryOperation::Delta {
+                            after: self.progress.sequence,
+                            records,
+                        },
+                        Phase::Live,
+                    )));
                 }
             }
         }
+    }
 
-        if let Some((idx, offset)) = insert_failed_at {
-            let dropped = unsent_after_failure(&insert_namespaces, idx, offset);
-            core_metrics()
-                .metaserver_registration_failures
-                .add(dropped as u64, &[]);
-            let remove_total: usize = removes.values().map(|v| v.len()).sum();
-            if remove_total > 0 {
-                core_metrics()
-                    .metaserver_removal_failures
-                    .add(remove_total as u64, &[]);
-            }
-            client = None;
-            ack_flushes(flush_acks);
-            continue;
-        }
-
-        // Process removes
-        let remove_namespaces: Vec<(String, Vec<Vec<u8>>)> = removes.into_iter().collect();
-        let mut remove_failed_at: Option<(usize, usize)> = None;
-
-        'remove: for (i, (namespace, hashes)) in remove_namespaces.iter().enumerate() {
-            for (chunk_idx, chunk) in hashes.chunks(MAX_HASHES_PER_RPC).enumerate() {
-                let count = chunk.len();
-                let request = RemoveBlockHashesRequest {
-                    namespace: namespace.clone(),
-                    block_hashes: chunk.to_vec(),
-                    node: advertise_addr.clone(),
-                    node_id: node_id.clone(),
-                };
-
-                match c.remove_block_hashes(request).await {
-                    Ok(resp) => {
-                        let inner = resp.into_inner();
-                        debug!(
-                            "Removed {} block hashes from MetaServer (namespace={}, removed={})",
-                            count, namespace, inner.removed_count
-                        );
-                    }
-                    Err(e) => {
-                        error!(
-                            "MetaServer remove_block_hashes failed (namespace={}, count={}): {e}",
-                            namespace, count
-                        );
-                        if e.code() == Code::FailedPrecondition {
-                            warn!(
-                                "MetaServer remove rejected current session; resetting node registration: node={} node_id={}",
-                                advertise_addr, node_id
-                            );
-                            core_metrics().metaserver_session_resets.add(1, &[]);
-                            heartbeat.node_registered = false;
-                        }
-                        remove_failed_at = Some((i, chunk_idx * MAX_HASHES_PER_RPC));
-                        break 'remove;
-                    }
+    async fn send(
+        &mut self,
+        operation: InventoryOperation,
+        next: Phase,
+        cache: &Weak<ReadCache>,
+    ) -> Result<(), Status> {
+        let mut expected = self.progress;
+        match &operation {
+            InventoryOperation::Begin { sequence } => {
+                expected = InventoryStatus {
+                    generation: self.generation,
+                    sequence: *sequence,
+                    next_page: 0,
+                    ready: false,
                 }
             }
-        }
-
-        if let Some((idx, offset)) = remove_failed_at {
-            let dropped = unsent_after_failure(&remove_namespaces, idx, offset);
-            core_metrics()
-                .metaserver_removal_failures
-                .add(dropped as u64, &[]);
-            client = None;
-        }
-        ack_flushes(flush_acks);
-    }
-
-    info!("MetaServer registration loop shutting down");
-}
-
-fn ack_flushes(acks: Vec<oneshot::Sender<()>>) {
-    for done in acks {
-        let _ = done.send(());
-    }
-}
-
-/// Hashes that did not reach the MetaServer after a chunked send failed at
-/// `failed_offset` within namespace `failed_idx`: the unsent tail of that
-/// namespace (earlier chunks already landed) plus every later namespace.
-fn unsent_after_failure(
-    namespaces: &[(String, Vec<Vec<u8>>)],
-    failed_idx: usize,
-    failed_offset: usize,
-) -> usize {
-    let unsent_in_ns = namespaces[failed_idx].1.len().saturating_sub(failed_offset);
-    let later: usize = namespaces[failed_idx + 1..]
-        .iter()
-        .map(|(_, h)| h.len())
-        .sum();
-    unsent_in_ns + later
-}
-
-fn append_groups(target: &mut HashMap<String, Vec<Vec<u8>>>, groups: Vec<(String, Vec<Vec<u8>>)>) {
-    for (namespace, mut hashes) in groups {
-        target.entry(namespace).or_default().append(&mut hashes);
-    }
-}
-
-fn build_net(
-    inserts: HashMap<String, Vec<Vec<u8>>>,
-    removes: HashMap<String, Vec<Vec<u8>>>,
-) -> HashMap<(String, Vec<u8>), bool> {
-    let mut net = HashMap::new();
-    insert_map_into_net(&mut net, inserts, true);
-    insert_map_into_net(&mut net, removes, false);
-    net
-}
-
-fn insert_map_into_net(
-    net: &mut HashMap<(String, Vec<u8>), bool>,
-    grouped: HashMap<String, Vec<Vec<u8>>>,
-    is_insert: bool,
-) {
-    for (namespace, hashes) in grouped {
-        insert_groups_into_net(net, vec![(namespace, hashes)], is_insert);
-    }
-}
-
-fn insert_groups_into_net(
-    net: &mut HashMap<(String, Vec<u8>), bool>,
-    groups: Vec<(String, Vec<Vec<u8>>)>,
-    is_insert: bool,
-) {
-    for (namespace, hashes) in groups {
-        for hash in hashes {
-            net.insert((namespace.clone(), hash), is_insert);
-        }
-    }
-}
-
-async fn ensure_heartbeat_registered(
-    client: &mut Option<MetaServerGrpcClient<Channel>>,
-    metaserver_addr: &str,
-    endpoint: &Endpoint,
-    advertise_addr: &str,
-    node_id: &str,
-    heartbeat: &mut HeartbeatState,
-) -> Result<(), ()> {
-    if heartbeat.node_registered && client.is_some() {
-        return Ok(());
-    }
-
-    if Instant::now() < heartbeat.next_at {
-        return Err(());
-    }
-
-    match send_heartbeat(
-        client,
-        heartbeat,
-        metaserver_addr,
-        endpoint,
-        advertise_addr,
-        node_id,
-    )
-    .await
-    {
-        Ok(next_period) => {
-            heartbeat.period = next_period;
-            heartbeat.next_at = Instant::now() + next_period;
-            Ok(())
-        }
-        Err(retry_after) => {
-            heartbeat.next_at = Instant::now() + retry_after;
-            Err(())
-        }
-    }
-}
-
-async fn send_heartbeat(
-    client: &mut Option<MetaServerGrpcClient<Channel>>,
-    heartbeat: &mut HeartbeatState,
-    metaserver_addr: &str,
-    endpoint: &Endpoint,
-    advertise_addr: &str,
-    node_id: &str,
-) -> Result<Duration, Duration> {
-    if client.is_none() {
-        match connect_metaserver_client(endpoint).await {
-            Ok(c) => {
-                info!("Connected to MetaServer at {}", metaserver_addr);
-                *client = Some(c);
-                heartbeat.backoff_ms = INITIAL_BACKOFF_MS;
+            InventoryOperation::Snapshot { page, .. } => expected.next_page = page + 1,
+            InventoryOperation::Delta { records, .. } => {
+                expected.sequence = records
+                    .last()
+                    .ok_or_else(|| Status::internal("empty delta"))?
+                    .sequence;
             }
-            Err(e) => {
-                error!("Failed to connect to MetaServer: {e}");
-                core_metrics().metaserver_heartbeat_failures.add(1, &[]);
-                return Err(heartbeat.advance_backoff());
-            }
+            InventoryOperation::Commit { .. } => expected.ready = true,
         }
-    }
-
-    let c = client.as_mut().expect("client is connected");
-    match c
-        .heartbeat_node(HeartbeatNodeRequest {
-            node: advertise_addr.to_string(),
-            node_id: node_id.to_string(),
-        })
-        .await
-    {
-        Ok(resp) => {
-            let heartbeat_period =
-                heartbeat_period_from_stale_after(resp.into_inner().stale_after_secs);
-            if !heartbeat.node_registered {
-                info!(
-                    "MetaServer heartbeat established: node={advertise_addr} node_id={node_id} next_in={:?}",
-                    heartbeat_period
-                );
-            } else {
-                debug!(
-                    "Heartbeat accepted by MetaServer: node={advertise_addr} node_id={node_id} next_in={:?}",
-                    heartbeat_period
-                );
-            }
-            heartbeat.node_registered = true;
-            heartbeat.backoff_ms = INITIAL_BACKOFF_MS;
-            Ok(heartbeat_period)
+        let count = match &operation {
+            InventoryOperation::Snapshot { records, .. }
+            | InventoryOperation::Delta { records, .. } => records.len(),
+            _ => 0,
+        };
+        let commit = matches!(operation, InventoryOperation::Commit { .. });
+        let response = self
+            .client
+            .sync_inventory(timed(SyncInventoryRequest {
+                node: self.node.clone(),
+                node_id: self.node_id.clone(),
+                catalog_epoch: self.epoch.clone(),
+                generation: self.generation,
+                operation: Some(operation.into()),
+            }))
+            .await?
+            .into_inner();
+        let actual: InventoryStatus = response
+            .progress
+            .ok_or_else(|| Status::data_loss("missing inventory acknowledgement"))?
+            .into();
+        if actual != expected {
+            return Err(Status::data_loss("unexpected inventory acknowledgement"));
         }
-        Err(e) => {
-            warn!("MetaServer heartbeat failed: {e}");
-            core_metrics().metaserver_heartbeat_failures.add(1, &[]);
-            if e.code() == Code::FailedPrecondition {
-                warn!(
-                    "MetaServer heartbeat rejected current session; resetting node registration: node={advertise_addr} node_id={node_id}"
-                );
-                core_metrics().metaserver_session_resets.add(1, &[]);
-                heartbeat.node_registered = false;
-            }
-            *client = None;
-            Err(heartbeat.advance_backoff())
+        self.progress = actual;
+        self.phase = next;
+        core_metrics().inventory_records_sent.add(count as u64, &[]);
+        if commit {
+            core_metrics().inventory_snapshots_completed.add(1, &[]);
         }
-    }
-}
-
-fn heartbeat_period_from_stale_after(stale_after_secs: u64) -> Duration {
-    Duration::from_secs((stale_after_secs / 2).max(MIN_HEARTBEAT_INTERVAL_SECS))
-}
-
-impl HeartbeatState {
-    fn advance_backoff(&mut self) -> Duration {
-        let delay = Duration::from_millis(self.backoff_ms);
-        self.backoff_ms = (self.backoff_ms * 2).min(MAX_BACKOFF_MS);
-        delay
-    }
-}
-
-async fn unregister_current_session(
-    client: &mut Option<MetaServerGrpcClient<Channel>>,
-    metaserver_addr: &str,
-    endpoint: &Endpoint,
-    advertise_addr: &str,
-    node_id: &str,
-) {
-    if client.is_none() {
-        match connect_metaserver_client(endpoint).await {
-            Ok(c) => *client = Some(c),
-            Err(e) => {
-                warn!("Failed to connect to MetaServer for unregister at {metaserver_addr}: {e}");
-                core_metrics().metaserver_unregister_failures.add(1, &[]);
-                return;
-            }
+        if self.progress.ready {
+            self.retry_delay = MIN_RETRY;
         }
-    }
-
-    let Some(c) = client.as_mut() else {
-        return;
-    };
-    let request = UnregisterNodeRequest {
-        node: advertise_addr.to_string(),
-        node_id: node_id.to_string(),
-    };
-    match tokio::time::timeout(
-        tokio::time::Duration::from_secs(UNREGISTER_TIMEOUT_SECS),
-        c.unregister_node(request),
-    )
-    .await
-    {
-        Ok(Ok(resp)) => {
-            debug!(
-                "Unregistered MetaServer node session: node={} removed_owners={}",
-                advertise_addr,
-                resp.into_inner().removed_owners
+        if !response.reclaimable.is_empty()
+            && let Some(cache) = cache.upgrade()
+        {
+            cache.mark_reclaimable_records(
+                &response
+                    .reclaimable
+                    .into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<_>>(),
             );
         }
-        Ok(Err(e)) => {
-            warn!("MetaServer unregister_node failed: {e}");
-            core_metrics().metaserver_unregister_failures.add(1, &[]);
+        Ok(())
+    }
+}
+
+fn inventory_error(error: InventoryReadError) -> Status {
+    match error {
+        InventoryReadError::HistoryGap => {
+            Status::out_of_range("inventory journal no longer covers directory progress")
         }
-        Err(_) => {
-            warn!("MetaServer unregister_node timed out");
-            core_metrics().metaserver_unregister_failures.add(1, &[]);
+        InventoryReadError::RecordTooLarge => {
+            Status::resource_exhausted("inventory record exceeds batch byte limit")
         }
     }
+}
+
+fn timed<T>(message: T) -> Request<T> {
+    let mut request = Request::new(message);
+    request.set_timeout(RPC_TIMEOUT);
+    request
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::block::{SealedBlock, StateKey};
-    use orbitkv_proto::proto::engine::meta_server_server::{MetaServer, MetaServerServer};
-    use orbitkv_proto::proto::engine::{
-        HeartbeatNodeResponse, InsertBlockHashesResponse, QueryPrefixBlocksRequest,
-        QueryPrefixBlocksResponse, RemoveBlockHashesResponse, ResponseStatus,
-        UnregisterNodeResponse,
-    };
-    use std::collections::BTreeMap;
-    use std::net::SocketAddr;
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    };
-    use tokio::net::TcpListener;
-    use tokio::sync::{Notify, oneshot};
-    use tokio_stream::wrappers::TcpListenerStream;
-    use tonic::{Request, Response, Status, async_trait};
-
-    type RequestLog = Mutex<Vec<(String, Vec<Vec<u8>>)>>;
-    type RequestSet = BTreeMap<String, Vec<Vec<u8>>>;
-
-    #[derive(Default)]
-    struct FakeMetaServerState {
-        heartbeat_count: AtomicUsize,
-        insert_count: AtomicUsize,
-        remove_count: AtomicUsize,
-        unregister_count: AtomicUsize,
-        fail_insert_with_stale_session: AtomicUsize,
-        reclaimable_hashes: Mutex<Vec<Vec<u8>>>,
-        insert_requests: RequestLog,
-        remove_requests: RequestLog,
-        query_requests: Mutex<Vec<QueryPrefixBlocksRequest>>,
-        heartbeat_notify: Notify,
-        insert_notify: Notify,
-        remove_notify: Notify,
-        unregister_notify: Notify,
-    }
-
-    #[derive(Clone)]
-    struct FakeMetaServer {
-        state: Arc<FakeMetaServerState>,
-    }
-
-    #[async_trait]
-    impl MetaServer for FakeMetaServer {
-        async fn heartbeat_node(
-            &self,
-            _request: Request<HeartbeatNodeRequest>,
-        ) -> Result<Response<HeartbeatNodeResponse>, Status> {
-            self.state.heartbeat_count.fetch_add(1, Ordering::SeqCst);
-            self.state.heartbeat_notify.notify_waiters();
-            Ok(Response::new(HeartbeatNodeResponse {
-                stale_after_secs: 2,
-            }))
-        }
-
-        async fn unregister_node(
-            &self,
-            _request: Request<UnregisterNodeRequest>,
-        ) -> Result<Response<UnregisterNodeResponse>, Status> {
-            self.state.unregister_count.fetch_add(1, Ordering::SeqCst);
-            self.state.unregister_notify.notify_waiters();
-            Ok(Response::new(UnregisterNodeResponse { removed_owners: 0 }))
-        }
-
-        async fn insert_block_hashes(
-            &self,
-            request: Request<InsertBlockHashesRequest>,
-        ) -> Result<Response<InsertBlockHashesResponse>, Status> {
-            let request = request.into_inner();
-            self.state.insert_count.fetch_add(1, Ordering::SeqCst);
-            if self
-                .state
-                .fail_insert_with_stale_session
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                    (remaining > 0).then(|| remaining - 1)
-                })
-                .is_ok()
-            {
-                return Err(Status::failed_precondition("stale node session"));
-            }
-            let inserted_count = request.block_hashes.len() as u64;
-            let reclaimable_hashes = self
-                .state
-                .reclaimable_hashes
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|hash| request.block_hashes.contains(hash))
-                .cloned()
-                .collect();
-            self.state
-                .insert_requests
-                .lock()
-                .unwrap()
-                .push((request.namespace, request.block_hashes));
-            self.state.insert_notify.notify_waiters();
-            Ok(Response::new(InsertBlockHashesResponse {
-                status: Some(ResponseStatus {
-                    ok: true,
-                    message: String::new(),
-                }),
-                inserted_count,
-                reclaimable_hashes,
-            }))
-        }
-
-        async fn remove_block_hashes(
-            &self,
-            request: Request<RemoveBlockHashesRequest>,
-        ) -> Result<Response<RemoveBlockHashesResponse>, Status> {
-            let request = request.into_inner();
-            self.state.remove_count.fetch_add(1, Ordering::SeqCst);
-            let removed_count = request.block_hashes.len() as u64;
-            self.state
-                .remove_requests
-                .lock()
-                .unwrap()
-                .push((request.namespace, request.block_hashes));
-            self.state.remove_notify.notify_waiters();
-            Ok(Response::new(RemoveBlockHashesResponse {
-                status: Some(ResponseStatus {
-                    ok: true,
-                    message: String::new(),
-                }),
-                removed_count,
-            }))
-        }
-
-        async fn query_prefix_blocks(
-            &self,
-            request: Request<QueryPrefixBlocksRequest>,
-        ) -> Result<Response<QueryPrefixBlocksResponse>, Status> {
-            self.state
-                .query_requests
-                .lock()
-                .unwrap()
-                .push(request.into_inner());
-            Ok(Response::new(QueryPrefixBlocksResponse {
-                segments: vec![],
-            }))
-        }
-    }
-
-    async fn start_fake_metaserver() -> (String, Arc<FakeMetaServerState>, oneshot::Sender<()>) {
-        let state = Arc::new(FakeMetaServerState::default());
-        let service = FakeMetaServer {
-            state: Arc::clone(&state),
-        };
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr: SocketAddr = listener.local_addr().unwrap();
-        let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let incoming = TcpListenerStream::new(listener);
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(MetaServerServer::new(service))
-                .serve_with_incoming_shutdown(incoming, async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .unwrap();
-        });
-        (format!("http://{addr}"), state, shutdown_tx)
-    }
-
-    fn collect_requests(requests: &RequestLog) -> RequestSet {
-        let mut grouped = BTreeMap::new();
-        for (namespace, hashes) in requests.lock().unwrap().iter() {
-            let namespace_hashes: &mut Vec<Vec<u8>> = grouped.entry(namespace.clone()).or_default();
-            namespace_hashes.extend(hashes.iter().cloned());
-        }
-        for hashes in grouped.values_mut() {
-            hashes.sort();
-        }
-        grouped
-    }
-
-    fn expected_requests(entries: &[(&str, Vec<u8>)]) -> RequestSet {
-        let mut grouped: RequestSet = BTreeMap::new();
-        for (namespace, hash) in entries {
-            grouped
-                .entry((*namespace).to_string())
-                .or_default()
-                .push(hash.clone());
-        }
-        for hashes in grouped.values_mut() {
-            hashes.sort();
-        }
-        grouped
-    }
-
-    async fn wait_for_count(notify: &Notify, count: &AtomicUsize, expected: usize) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            if count.load(Ordering::SeqCst) >= expected {
-                return;
-            }
-            tokio::select! {
-                _ = notify.notified() => {}
-                _ = tokio::time::sleep_until(deadline) => {
-                    panic!("timed out waiting for count {expected}");
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn heartbeat_loop_sends_initial_heartbeat_and_unregisters_on_shutdown() {
-        let (addr, service, shutdown_tx) = start_fake_metaserver().await;
-        let client = MetaServerClient::new(
-            MetaServerClientConfig::new(addr, "node-a:50055".to_string()),
-            Weak::new(),
-        );
-
-        wait_for_count(&service.heartbeat_notify, &service.heartbeat_count, 1).await;
-        client.shutdown().await;
-        wait_for_count(&service.unregister_notify, &service.unregister_count, 1).await;
-
-        let _ = shutdown_tx.send(());
-    }
-
-    #[tokio::test]
-    async fn stale_session_write_error_triggers_new_heartbeat() {
-        let (addr, service, shutdown_tx) = start_fake_metaserver().await;
-        service
-            .fail_insert_with_stale_session
-            .store(1, Ordering::SeqCst);
-        let client = MetaServerClient::new(
-            MetaServerClientConfig::new(addr, "node-a:50055".to_string()),
-            Weak::new(),
-        );
-
-        wait_for_count(&service.heartbeat_notify, &service.heartbeat_count, 1).await;
-        client.try_register_namespace("ns".to_string(), vec![vec![1]]);
-        wait_for_count(&service.heartbeat_notify, &service.heartbeat_count, 2).await;
-
-        client.shutdown().await;
-        let _ = shutdown_tx.send(());
-    }
-
-    #[tokio::test]
-    async fn flush_barrier_waits_for_prior_registrations() {
-        let (addr, service, shutdown_tx) = start_fake_metaserver().await;
-        let client = MetaServerClient::new(
-            MetaServerClientConfig::new(addr, "node-a:50055".to_string()),
-            Weak::new(),
-        );
-
-        client.try_register_namespace("ns".to_string(), vec![vec![1], vec![2]]);
-        // On return, the insert enqueued above must have been delivered — no
-        // wait_for_count polling; the barrier itself is the synchronization.
-        client.flush().await;
-        assert_eq!(
-            collect_requests(&service.insert_requests),
-            expected_requests(&[("ns", vec![1]), ("ns", vec![2])])
-        );
-
-        // Flush with an empty queue resolves promptly (no deadlock).
-        client.flush().await;
-
-        client.shutdown().await;
-        // Flush after shutdown: loop has exited, must return, not hang.
-        client.flush().await;
-        let _ = shutdown_tx.send(());
-    }
-
-    #[tokio::test]
-    async fn registration_applies_reclaimable_hashes() {
-        let (addr, service, shutdown_tx) = start_fake_metaserver().await;
-        let read_cache = Arc::new(ReadCache::new(1 << 20, false, None));
-        let hashes: Vec<Vec<u8>> = (0..=MAX_HASHES_PER_RPC as u32)
-            .map(|value| value.to_le_bytes().to_vec())
-            .collect();
-        let hinted_hash = hashes[0].clone();
-        let hinted_key = StateKey::new("ns".to_string(), hinted_hash.clone());
-        read_cache.insert_retained_for_test(
-            hinted_key.clone(),
-            Arc::new(SealedBlock::from_slots(Vec::new())),
-        );
-        *service.reclaimable_hashes.lock().unwrap() = vec![hinted_hash];
-        let client = MetaServerClient::new(
-            MetaServerClientConfig::new(addr, "node-a:50055".to_string()),
-            Arc::downgrade(&read_cache),
-        );
-
-        client.try_register_namespace("ns".to_string(), hashes);
-        client.flush().await;
-
-        assert!(read_cache.is_reclaimable_for_test(&hinted_key));
-        assert_eq!(service.insert_count.load(Ordering::SeqCst), 2);
-        client.shutdown().await;
-        let _ = shutdown_tx.send(());
-        drop(service);
-    }
-
-    #[tokio::test]
-    async fn flush_barrier_acks_even_when_insert_fails() {
-        let (addr, service, shutdown_tx) = start_fake_metaserver().await;
-        // Fail both the insert attempt and the session-reset retry heartbeat
-        // path's next insert, so the batch is dropped rather than delivered.
-        service
-            .fail_insert_with_stale_session
-            .store(usize::MAX, Ordering::SeqCst);
-        let client = MetaServerClient::new(
-            MetaServerClientConfig::new(addr, "node-a:50055".to_string()),
-            Weak::new(),
-        );
-
-        client.try_register_namespace("ns".to_string(), vec![vec![1]]);
-        // The contract is "delivered or dropped": a failed insert drops the
-        // batch and the flush must still resolve instead of hanging.
-        client.flush().await;
-
-        client.shutdown().await;
-        let _ = shutdown_tx.send(());
-    }
-
-    #[cfg(feature = "mooncake")]
-    #[tokio::test]
-    async fn query_plan_sends_requester_as_excluded_node() {
-        let (addr, service, shutdown_tx) = start_fake_metaserver().await;
-        let client = MetaServerClient::new(
-            MetaServerClientConfig::new(addr, "node-a:50055".to_string()),
-            Weak::new(),
-        );
-        let hashes = vec![vec![1], vec![2]];
-
-        let segments = client
-            .query_plan("ns", &hashes, "node-a:50055")
-            .await
-            .expect("query should succeed");
-
-        assert!(segments.is_empty());
-        assert_eq!(
-            *service.query_requests.lock().unwrap(),
-            vec![QueryPrefixBlocksRequest {
-                namespace: "ns".to_string(),
-                block_hashes: hashes,
-                exclude_node: "node-a:50055".to_string(),
-            }]
-        );
-        client.shutdown().await;
-        let _ = shutdown_tx.send(());
-    }
-
-    #[test]
-    fn unsent_after_failure_counts_only_unsent_tail() {
-        let ns = |name: &str, n: usize| (name.to_string(), vec![vec![0u8]; n]);
-        let namespaces = vec![ns("a", 100), ns("b", 50), ns("c", 30)];
-
-        // First chunk of "b" failed (nothing of b sent yet): all of b + c.
-        assert_eq!(unsent_after_failure(&namespaces, 1, 0), 50 + 30);
-        // 40 hashes of "b" already landed before the failing chunk: b's tail + c.
-        assert_eq!(unsent_after_failure(&namespaces, 1, 40), 10 + 30);
-        // Failure in the last namespace: only its unsent tail, no later namespaces.
-        assert_eq!(unsent_after_failure(&namespaces, 2, 20), 10);
-        // Offset past the namespace length saturates to zero unsent.
-        assert_eq!(unsent_after_failure(&namespaces, 2, 999), 0);
-    }
-
-    #[tokio::test]
-    async fn large_namespace_removal_splits_into_bounded_rpcs() {
-        let (addr, service, shutdown_tx) = start_fake_metaserver().await;
-        let client = MetaServerClient::new(
-            MetaServerClientConfig::new(addr, "node-a:50055".to_string()),
-            Weak::new(),
-        );
-        wait_for_count(&service.heartbeat_notify, &service.heartbeat_count, 1).await;
-
-        // One namespace coalesced past the per-RPC cap. Use sha256-sized (32B)
-        // hashes so the full payload (~5 MiB) exceeds tonic's 4 MiB default
-        // decode limit: without chunking this single RPC would be rejected.
-        // Chunking holds each request to MAX_HASHES_PER_RPC * 32B = 512 KiB.
-        let sha256_hash = |i: u32| {
-            let mut h = vec![0u8; 32];
-            h[..4].copy_from_slice(&i.to_le_bytes());
-            h
-        };
-        let total = MAX_HASHES_PER_RPC * 10 + 1;
-        let expected_chunks = total.div_ceil(MAX_HASHES_PER_RPC);
-        let entries: Vec<(String, Vec<u8>)> = (0..total as u32)
-            .map(|i| ("ns".to_string(), sha256_hash(i)))
-            .collect();
-        client.try_unregister(entries);
-
-        wait_for_count(
-            &service.remove_notify,
-            &service.remove_count,
-            expected_chunks,
-        )
-        .await;
-
-        let logged = service.remove_requests.lock().unwrap().clone();
-        assert_eq!(
-            logged.len(),
-            expected_chunks,
-            "removal split into wrong RPC count"
-        );
-        let mut sent: Vec<Vec<u8>> = Vec::with_capacity(total);
-        for (namespace, hashes) in &logged {
-            assert_eq!(namespace, "ns");
-            assert!(
-                hashes.len() <= MAX_HASHES_PER_RPC,
-                "chunk of {} hashes exceeds cap {MAX_HASHES_PER_RPC}",
-                hashes.len()
-            );
-            sent.extend(hashes.iter().cloned());
-        }
-        sent.sort();
-        let mut expected: Vec<Vec<u8>> = (0..total as u32).map(sha256_hash).collect();
-        expected.sort();
-        assert_eq!(sent, expected, "chunking lost or duplicated hashes");
-
-        client.shutdown().await;
-        let _ = shutdown_tx.send(());
-    }
-
-    #[tokio::test]
-    async fn mixed_insert_remove_drain_preserves_last_write_per_namespace() {
-        let (addr, service, shutdown_tx) = start_fake_metaserver().await;
-        let (tx, rx) = mpsc::channel(16);
-
-        let insert_then_remove = vec![0xa0];
-        let remove_then_insert = vec![0xb0];
-        let remove_only = vec![0xc0];
-        let insert_only = vec![0xd0];
-
-        tx.try_send(MetaServerCommand::Insert(BlockHashBatch::single_namespace(
-            "ns-first".to_string(),
-            vec![insert_then_remove.clone()],
-        )))
-        .unwrap();
-        tx.try_send(MetaServerCommand::Remove(BlockHashBatch::from_entries(
-            vec![("ns-first".to_string(), insert_then_remove.clone())],
-        )))
-        .unwrap();
-        tx.try_send(MetaServerCommand::Remove(BlockHashBatch::from_entries(
-            vec![
-                ("ns-second".to_string(), remove_then_insert.clone()),
-                ("ns-remove".to_string(), remove_only.clone()),
-            ],
-        )))
-        .unwrap();
-        tx.try_send(MetaServerCommand::Insert(BlockHashBatch::single_namespace(
-            "ns-second".to_string(),
-            vec![remove_then_insert.clone()],
-        )))
-        .unwrap();
-        tx.try_send(MetaServerCommand::Insert(BlockHashBatch::single_namespace(
-            "ns-insert".to_string(),
-            vec![insert_only.clone()],
-        )))
-        .unwrap();
-
-        let endpoint = metaserver_endpoint(addr.clone());
-        let loop_task = tokio::spawn(registration_loop(
-            rx,
-            addr,
-            endpoint,
-            "node-a:50055".to_string(),
-            Weak::new(),
-        ));
-
-        wait_for_count(&service.insert_notify, &service.insert_count, 2).await;
-        wait_for_count(&service.remove_notify, &service.remove_count, 2).await;
-
-        assert_eq!(
-            collect_requests(&service.insert_requests),
-            expected_requests(&[
-                ("ns-second", remove_then_insert),
-                ("ns-insert", insert_only),
-            ])
-        );
-        assert_eq!(
-            collect_requests(&service.remove_requests),
-            expected_requests(&[("ns-first", insert_then_remove), ("ns-remove", remove_only)])
-        );
-
-        let (done_tx, done_rx) = oneshot::channel();
-        tx.send(MetaServerCommand::Shutdown(done_tx)).await.unwrap();
-        done_rx.await.unwrap();
-        loop_task.await.unwrap();
-        let _ = shutdown_tx.send(());
-    }
-}
+mod tests;

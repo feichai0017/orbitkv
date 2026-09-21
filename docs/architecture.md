@@ -244,7 +244,10 @@ before a stale ID can be rejected at the Cache Manager boundary.
 ## Multi-node cache path and deployment
 
 Today, `orbitkv-metaserver` is a separate in-memory gRPC service. A Cache Manager
-registers sealed block hashes asynchronously and heartbeats its node session.
+synchronizes its sealed DRAM inventory asynchronously and heartbeats its node
+session. Actual insertions and removals share a monotonic residency sequence;
+bounded snapshot pages and ordered deltas reconstruct the directory after
+restart or lost history. Incomplete replacement views stay hidden until commit.
 After a local miss, it queries the service for candidate owners. A selected
 source Cache Manager authorizes and pins its blocks through gRPC, then Mooncake reads
 the bytes into the destination's pinned memory. The destination can cache that
@@ -252,27 +255,31 @@ replica and restore it to framework HBM through its normal cache API. Network
 gRPC carries control metadata and leases; Mooncake carries KV bytes. Mooncake's
 P2P handshake supplies transport endpoint metadata, not KV ownership.
 
-The present catalog is soft state, has no replicated persistence, and does not
-backfill all resident keys after a metadata-service restart. It is therefore a
-single-node failure and remote-hit-rate risk, even though local cache hits can
-continue without it. Before declaring distributed cache production-ready, add
-resident-inventory replay with a catalog epoch, bounded batched lookup and a
-Cache Manager-side candidate cache; verify behavior across service restart, node
-failure, and stale transfer capabilities.
+The present catalog is soft state and has no replicated persistence. Recovery
+from directory restart is implemented and tested over real gRPC, including idle
+owners, concurrent eviction and journal overflow. It remains a single service:
+remote discovery can be unavailable during failure or reconstruction. D0 covers
+DRAM evidence; remote SSD, an embedded candidate index, multi-host failover and
+transfer-capability fencing require later qualification. See the
+[protocol and limits](../crates/orbitkv-metaserver/README.md).
 
-The proposed target keeps one Cache Manager per host and embeds a sharded,
-replicated soft-state directory in those managers. Rendezvous hashing can
-assign each block's metadata to a small owner set; every manager keeps a local
-candidate cache so a warm lookup does not visit a central service. A miss can
-query the appropriate shard, but the actual source manager remains authoritative
-for current residency and must revalidate and pin bytes before transfer.
-Catalog epochs, bounded batched updates, inventory replay, liveness, and
-anti-entropy reconstruct soft state after restarts. A small consensus service
-such as etcd may be used for membership and epoch coordination, never for each
-block read or write. This design removes the standalone MetaServer from the
-steady-state data path; it is **not implemented yet** and must be qualified
-against a dedicated-directory fallback. A router can later consume the same
-replica evidence without entering the cache transfer path.
+The agreed target keeps one Cache Manager per host, embeds a sharded replica
+catalog in those managers, and uses etcd for membership and versioned placement
+configuration. Mooncake TE remains the data plane. Owner inventories publish
+ordered changes; snapshots and bounded delta replay repair lost evidence.
+Rendezvous hashing assigns logical catalog shards to a small replicated host
+set. Each Manager keeps a bounded candidate index so a warm query can avoid
+directory RPCs. A miss queries the appropriate shards in batches. The requesting
+Manager constructs the fetch plan; the source validates and pins the exact data.
+
+The [distributed cache design](distributed-cache.md) specifies identities,
+snapshot cuts, subscriptions, placement transitions, transfer lifetimes and
+failure behavior. Metadata replication is asynchronous evidence replication;
+it does not imply payload replication or general object-store CAS semantics.
+etcd is outside per-block operations. The embedded design is **not implemented
+yet**; qualify it against the current standalone directory baseline, then remove
+that obsolete deployment at cutover. A later router can consume replica
+summaries without entering the transfer path.
 
 ```text
 host A                                           host B
@@ -281,10 +288,9 @@ engine HBM                                      engine HBM
 Cache Manager A  <---- Mooncake KV bytes ---->  Cache Manager B
   DRAM / SSD · local candidate index              DRAM / SSD · local candidate index
   catalog shards  <---- replicated metadata ---> catalog shards
-         \________ optional membership/epochs ________/
-                           |
-                   future KV-aware router
-                   (reads summaries only)
+         \________ etcd membership/placement _________/
+
+catalog summaries ----> future KV-aware router <---- engine load/events
 ```
 
 ## Planning direction

@@ -8,6 +8,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 
 | Path | Responsibility |
 | --- | --- |
+| `catalog.rs` | Rust directory cleanup microbenchmark, run through Cargo |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
 | `launch.py` | Engine/backend commands and matched memory budgets |
 | `runtime.py` | Owned process groups, readiness, teardown, and launch manifest |
@@ -142,3 +143,15 @@ The ShareGPT workload requires the dependencies listed by the pinned vLLM
 `benchmarks/multi_turn/requirements.txt`. These endpoint workloads have their
 own workload definitions; do not combine their numbers with the fixed-capacity
 single-node comparison.
+
+## Catalog cleanup
+
+```bash
+cargo bench -p orbitkv-metaserver --bench unregister_node
+```
+
+This benchmark registers one million keys, then removes an owner of 10,000.
+Inventory population and destruction of the remaining directory are outside
+the timed section. It measures owner-index cleanup, not remote discovery or
+end-to-end serving latency. Criterion writes local raw output to
+`target/criterion/`; copy reviewed reports into `benches/results/`.

@@ -53,6 +53,10 @@ pub struct Cli {
     #[arg(long, default_value_t = store::DEFAULT_TTL_MINUTES)]
     pub ttl_minutes: u64,
 
+    /// Accounted metadata bytes allowed per owner inventory.
+    #[arg(long, default_value_t = store::DEFAULT_INVENTORY_BYTES_PER_NODE)]
+    pub inventory_bytes_per_node: usize,
+
     /// Seconds between lifecycle sweeps.
     #[arg(long, default_value_t = DEFAULT_SWEEP_INTERVAL_SECS)]
     pub sweep_interval_secs: u64,
@@ -110,7 +114,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     info!("Starting OrbitKV MetaServer");
     info!("Binding to address: {}", cli.addr);
     info!(
-        "Node lifecycle: stale_after={}s manual_cleanup_age=1h sweep_interval={}s node_ttl_minutes={}",
+        "Node lifecycle: stale_after={}s sweep_interval={}s node_ttl_minutes={}",
         cli.node_stale_secs, cli.sweep_interval_secs, cli.ttl_minutes
     );
     let ttl_secs = cli
@@ -119,6 +123,9 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
         .ok_or("ttl-minutes is too large")?;
     if cli.ttl_minutes == 0 {
         return Err("ttl-minutes must be greater than 0".into());
+    }
+    if cli.node_stale_secs == 0 || cli.inventory_bytes_per_node == 0 {
+        return Err("node-stale-secs and inventory-bytes-per-node must be greater than 0".into());
     }
     if cli.sweep_interval_secs == 0 {
         return Err("sweep-interval-secs must be greater than 0".into());
@@ -137,6 +144,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     let store = Arc::new(BlockHashStore::with_config(store::StoreConfig {
         node_stale_after: Duration::from_secs(cli.node_stale_secs),
         ttl: Duration::from_secs(ttl_secs),
+        inventory_bytes_per_node: cli.inventory_bytes_per_node,
     }));
 
     // Register store observable gauges

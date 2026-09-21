@@ -1,0 +1,89 @@
+{
+  "date": "2026-09-21",
+  "source_base": "488e58b2ce987596b5b3cd441609d850a19cb7fd",
+  "source_sha256": {
+    "benches/catalog.rs": "2cf2331607ddef478742cbbe236e48d402dfce2427e0ac25c9159df86bffddcd",
+    "crates/orbitkv-metaserver/src/store.rs": "27448d4a6cd0d993e62d6b201c93f0456147cb9abc656a07ec9f5ba7cd98d001",
+    "crates/orbitkv-state/src/inventory.rs": "5f0d0e44588df65a856770d5192863821051f78a6bcedce7ba7fd5d51d3a8edc"
+  },
+  "command": "cargo bench -p orbitkv-metaserver --bench unregister_node -- --warm-up-time 1 --measurement-time 3 --sample-size 10",
+  "cpu": "Intel Xeon Platinum 8457C",
+  "logical_cpus": 180,
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "total_keys": 1000000,
+  "target_owner_keys": 10000,
+  "owners": 2,
+  "timed_operation": "unregister_node; setup and remaining-store destruction excluded",
+  "time_unit": "nanoseconds",
+  "estimates": {
+    "mean": {
+      "confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 7922883.4,
+        "upper_bound": 8043754.1
+      },
+      "point_estimate": 7978954.6,
+      "standard_error": 31040.338173542626
+    },
+    "median": {
+      "confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 7898487.0,
+        "upper_bound": 8102884.0
+      },
+      "point_estimate": 7925869.5,
+      "standard_error": 48796.547360890654
+    },
+    "median_abs_dev": {
+      "confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 6586.450383067131,
+        "upper_bound": 163259.46130156517
+      },
+      "point_estimate": 47183.74416232109,
+      "standard_error": 39315.970903885194
+    },
+    "slope": null,
+    "std_dev": {
+      "confidence_interval": {
+        "confidence_level": 0.95,
+        "lower_bound": 27930.566147344263,
+        "upper_bound": 123985.31958421529
+      },
+      "point_estimate": 103705.78097804706,
+      "standard_error": 20458.66965569001
+    }
+  },
+  "samples": {
+    "sampling_mode": "Flat",
+    "iters": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "times": [
+      7897263.0,
+      7890826.0,
+      7918161.0,
+      7964377.0,
+      7914324.0,
+      7933578.0,
+      8164705.0,
+      8102884.0,
+      7898487.0,
+      8104941.0
+    ]
+  },
+  "limitations": [
+    "Developer-host microbenchmark, not an isolated performance qualification.",
+    "Does not measure request discovery, transfer, serving latency or multi-host scaling.",
+    "Not comparable to older timings that included directory destruction."
+  ]
+}

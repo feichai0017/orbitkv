@@ -77,15 +77,16 @@ The old block-count prefetch limit has been removed.
 - `--nics`: Optional Mooncake RDMA rail allow-list (e.g., `--nics mlx5_0,mlx5_1` or `--nics mlx5_0 mlx5_1`). Omit it to let Mooncake select the available transport, including TCP fallback.
 - `--metaserver-addr`: MetaServer gRPC address for cross-node block hash registry (e.g., `http://10.0.0.100:50056`). Setting it enables Mooncake remote transfer and block discovery. Requires `--addr` to be a routable IP (not `0.0.0.0` or `127.0.0.1`).
 - `--transfer-lock-timeout-secs`: Transfer lock timeout in seconds (default: `120`). Blocks held for a Mooncake transfer are locked for at most this duration before being force-released.
-- `--metaserver-queue-depth`: MetaServer registration queue depth, max pending registration batches
+- `--inventory-journal-bytes`: Retained residency-change bytes (default: `16777216`, 16 MiB). Lag beyond this history triggers a paginated inventory resnapshot.
 
 ## MetaServer
 
 For the current experimental multi-node path, start a MetaServer to coordinate
 block hashes across nodes. Each Cache Manager registers sealed blocks and
-queries candidate owners after local misses. The directory is in-memory and
-does not replay every resident key after restart; it is not HA. The planned
-recoverable catalog is described in [architecture](architecture.md).
+queries candidate owners after local misses. The in-memory directory recovers
+from surviving Manager inventories after restart, including when no new cache
+writes arrive. It is not HA. See the [implemented recovery protocol and limits](../crates/orbitkv-metaserver/README.md)
+and [planned embedded catalog](distributed-cache.md).
 
 ```bash
 orbitkv-metaserver

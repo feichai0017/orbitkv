@@ -2072,6 +2072,7 @@ dependencies = [
  "offset-allocator",
  "opentelemetry",
  "orbitkv-common",
+ "orbitkv-metaserver",
  "orbitkv-proto",
  "orbitkv-state",
  "orbitkv-transfer",
@@ -2101,6 +2102,7 @@ dependencies = [
  "orbitkv-common",
  "orbitkv-proto",
  "orbitkv-state",
+ "parking_lot",
  "prometheus",
  "serde",
  "tokio",
@@ -2121,6 +2123,7 @@ dependencies = [
 name = "orbitkv-proto"
 version = "0.1.0"
 dependencies = [
+ "orbitkv-state",
  "prost",
  "tonic",
  "tonic-prost",
@@ -2162,6 +2165,7 @@ dependencies = [
  "orbitkv-core",
  "orbitkv-metaserver",
  "orbitkv-proto",
+ "orbitkv-state",
  "parking_lot",
  "prometheus",
  "prost",

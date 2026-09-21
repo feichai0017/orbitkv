@@ -37,9 +37,7 @@ pub use backing::{
 pub use block::{BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, SealedBlock, StateKey};
 use instance::GpuRegistration;
 pub use instance::{GpuContext, InstanceContext};
-pub use internode::{
-    DEFAULT_METASERVER_QUEUE_DEPTH, MetaServerClient, MetaServerClientConfig, P2pTransferService,
-};
+pub use internode::{MetaServerClient, MetaServerClientConfig, P2pTransferService};
 use layout::KVCacheLayout;
 pub use lease::QueryLeaseId;
 pub use orbitkv_common::NumaNode;
@@ -52,6 +50,7 @@ pub use orbitkv_state::{
 pub use pinned_pool::PinnedAllocation;
 pub use query::{QueryAdmission, QueryOwner, QueryReservation};
 pub use seal_offload::SlotMeta;
+pub use storage::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES;
 pub use storage::{MemoryCacheCleanupStats, StorageConfig};
 pub use sync_state::{LoadState, LoadStateError};
 pub use trace::{set_trace_sample_rate, should_sample};
@@ -1024,23 +1023,14 @@ impl OrbitKVEngine {
         self.storage.flush_write_pipeline().await;
     }
 
-    /// [`Self::flush_saves`] plus a MetaServer registration barrier: on return,
-    /// every block saved before this call is cache-resident *and* its hash
-    /// registration has been delivered to the MetaServer — or dropped after a
-    /// failed attempt. Registration stays best-effort: this bounds *when*
-    /// delivery is attempted, never *whether* it succeeds (a full queue drops
-    /// hashes at enqueue time, a MetaServer outage drops the whole batch).
-    ///
-    /// The P/D handoff barrier: a prefill node calls this before signalling
-    /// "KV ready", so a decode node's MetaServer query observes every
-    /// registration that made it through; blocks whose registration was
-    /// dropped are simply recomputed on the decode side. Ordering matters —
-    /// the write pipeline enqueues the registrations as it seals blocks, so
-    /// the pipeline must drain first. Without a MetaServer client this
-    /// degrades to [`Self::flush_saves`].
-    pub async fn flush_saves_and_registrations(&self) {
+    /// Flush saves and wait for directory acknowledgement of current residency.
+    /// Returns an error if synchronization cannot complete within its deadline.
+    pub async fn flush_saves_and_inventory(&self) -> Result<(), EngineError> {
         self.storage.flush_write_pipeline().await;
-        self.storage.flush_metaserver_registrations().await;
+        self.storage
+            .flush_inventory()
+            .await
+            .map_err(EngineError::Storage)
     }
 
     /// Flush write pipeline and SSD writer.
