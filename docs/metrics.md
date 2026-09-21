@@ -290,6 +290,25 @@ For an existing OpenTelemetry deployment, add
 `--metrics-otel-endpoint http://127.0.0.1:4321` with the collector's configured
 endpoint. Direct Prometheus remains available.
 
+### Distributed inventory recovery
+
+Manager synchronization counters are:
+
+| Metric | Meaning |
+| --- | --- |
+| `orbitkv_inventory_records_sent` | Snapshot/delta records whose RPC acknowledgement was received |
+| `orbitkv_inventory_snapshots_started` | Replacement inventory attempts |
+| `orbitkv_inventory_snapshots_completed` | Acknowledged commits of complete inventory cuts |
+| `orbitkv_inventory_history_gaps` | Retained history no longer covers directory progress |
+| `orbitkv_inventory_sync_failures` | Failed inventory RPCs |
+| `orbitkv_metaserver_heartbeat_failures` | Failed liveness/progress requests |
+| `orbitkv_metaserver_unregister_failures` | Failed graceful owner cleanup |
+
+These are background synchronization metrics, separate from request discovery
+and Mooncake data transfer. Lost replies can undercount applied records; a
+snapshot may retransmit already known entries. Repeated snapshot starts without
+commits indicate failure to converge. See [directory recovery](../crates/orbitkv-metaserver/README.md).
+
 ### Environment Variables
 
 - `RUST_LOG`: Control logging verbosity (e.g., `info,orbitkv_core=debug`)

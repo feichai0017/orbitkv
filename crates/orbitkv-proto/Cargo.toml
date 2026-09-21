@@ -12,6 +12,7 @@ workspace = true
 ignored = ["prost", "tonic-prost"]
 
 [dependencies]
+orbitkv-state.workspace = true
 prost.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true

@@ -120,37 +120,47 @@ service Engine {
   rpc Health(HealthRequest) returns (HealthResponse);
 }
 
-// MetaServer service for managing block hash keys across multi-node instances
-message InsertBlockHashesRequest {
+message InventoryRecord {
   string namespace = 1;
-  repeated bytes block_hashes = 2;
-  // The Cache Manager peer-control address that owns these blocks, as ip:port (e.g., "10.0.0.1:50055")
-  string node = 3;
-  // Server-generated session id announced by HeartbeatNode.
-  string node_id = 4;
+  bytes block_hash = 2;
+  uint64 sequence = 3;
+  bool present = 4;
 }
 
-message InsertBlockHashesResponse {
-  ResponseStatus status = 1;
-  uint64 inserted_count = 2;
-  // Hashes for which this node became the third or later owner. The caller
-  // should classify matching local residents as reclaimable.
-  repeated bytes reclaimable_hashes = 3;
+message InventoryBegin { uint64 sequence = 1; }
+message InventoryPage {
+  uint64 page = 1;
+  repeated InventoryRecord records = 2;
+}
+message InventoryDelta {
+  uint64 after_sequence = 1;
+  repeated InventoryRecord records = 2;
+}
+message InventoryCommit { uint64 sequence = 1; }
+
+message SyncInventoryRequest {
+  string node = 1;
+  string node_id = 2;
+  string catalog_epoch = 3;
+  uint64 generation = 4;
+  oneof operation {
+    InventoryBegin begin = 5;
+    InventoryPage page = 6;
+    InventoryDelta delta = 7;
+    InventoryCommit commit = 8;
+  }
 }
 
-message RemoveBlockHashesRequest {
-  string namespace = 1;
-  repeated bytes block_hashes = 2;
-  // Only remove entries whose current owner matches this node address.
-  // Prevents races where node A evicts but node B has since re-registered.
-  string node = 3;
-  // Server-generated session id announced by HeartbeatNode.
-  string node_id = 4;
+message InventoryProgress {
+  uint64 generation = 1;
+  uint64 sequence = 2;
+  uint64 next_page = 3;
+  bool ready = 4;
 }
 
-message RemoveBlockHashesResponse {
-  ResponseStatus status = 1;
-  uint64 removed_count = 2;
+message SyncInventoryResponse {
+  InventoryProgress progress = 1;
+  repeated InventoryRecord reclaimable = 2;
 }
 
 message QueryPrefixBlocksRequest {
@@ -177,6 +187,8 @@ message HeartbeatNodeRequest {
 
 message HeartbeatNodeResponse {
   uint64 stale_after_secs = 1;
+  string catalog_epoch = 2;
+  InventoryProgress progress = 3;
 }
 
 message UnregisterNodeRequest {
@@ -191,7 +203,6 @@ message UnregisterNodeResponse {
 service MetaServer {
   rpc HeartbeatNode(HeartbeatNodeRequest) returns (HeartbeatNodeResponse);
   rpc UnregisterNode(UnregisterNodeRequest) returns (UnregisterNodeResponse);
-  rpc InsertBlockHashes(InsertBlockHashesRequest) returns (InsertBlockHashesResponse);
-  rpc RemoveBlockHashes(RemoveBlockHashesRequest) returns (RemoveBlockHashesResponse);
+  rpc SyncInventory(SyncInventoryRequest) returns (SyncInventoryResponse);
   rpc QueryPrefixBlocks(QueryPrefixBlocksRequest) returns (QueryPrefixBlocksResponse);
 }

@@ -140,12 +140,26 @@ and a passing gate; design text alone does not close an item.
 
 ## M2.5 — distributed cache reliability
 
-- [ ] Replay resident inventories with a catalog epoch after MetaServer restart.
-- [ ] Batch and bound registration/lookups and cache candidates at each manager.
-- [ ] Revalidate source residency and leases after owner churn and stale hints.
-- [ ] Qualify Mooncake remote fetch, retry, and node-loss behavior on multiple hosts.
-- [ ] Prototype embedded replicated catalog shards, compare against a dedicated
-  fallback, and measure metadata request rate without per-block consensus.
+Implementation order and failure contracts: `docs/distributed-cache.md`.
+
+- [x] D0: sequence all owner residency transitions and keep bounded replay
+  history; detect lost notifications and require resynchronization.
+- [x] D0: implement paginated inventory snapshots with a complete delta cut,
+  including concurrent eviction, duplicates and replay overflow.
+- [ ] D1: use etcd for member incarnations and configuration; recover Watches
+  after disconnection or compaction without per-block etcd operations.
+- [ ] D1: embed the catalog, add bounded candidate indexing, and move fetch
+  planning from the directory to the requesting Manager.
+- [ ] D1: qualify source incarnation checks, transfer completion/revocation,
+  cancellation and sender/receiver budgets on two real hosts for both engines.
+- [ ] D1: replace the MetaServer crate/deployment with the behavior-owning
+  catalog component and remove obsolete APIs at cutover.
+- [ ] D2: implement versioned shard placement, replicated evidence, handoff and
+  bounded subscriptions; qualify partitions and coordinator/catalog failure.
+- [ ] D3: support source-local SSD staging and measured source selection without
+  recursive peer fetches or unbounded staging.
+- [ ] Measure discovery RPCs separately from background synchronization, source
+  authorization and etcd activity; record index bytes and recovery lag.
 
 ## M3 — routing and replica planning
 

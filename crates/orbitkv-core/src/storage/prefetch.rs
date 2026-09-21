@@ -12,7 +12,6 @@ use parking_lot::Mutex;
 use crate::backing::MooncakeFetchStore;
 use crate::backing::{PrefetchResult, SsdBackingStore};
 use crate::block::{QueryResult, SealedBlock, StateKey};
-use crate::internode::MetaServerClient;
 use crate::metrics::core_metrics;
 
 use super::read_cache::ReadCache;
@@ -128,20 +127,17 @@ pub(super) struct PrefetchScheduler {
     reads: Mutex<HashMap<FetchKey, Weak<SharedRead>>>,
     ssd_store: Option<Arc<SsdBackingStore>>,
     remote_fetch: Option<RemoteFetch>,
-    metaserver_client: Option<Arc<MetaServerClient>>,
 }
 
 impl PrefetchScheduler {
     pub(super) fn new(
         ssd_store: Option<Arc<SsdBackingStore>>,
         remote_fetch: Option<RemoteFetch>,
-        metaserver_client: Option<Arc<MetaServerClient>>,
     ) -> Self {
         Self {
             reads: Mutex::new(HashMap::new()),
             ssd_store,
             remote_fetch,
-            metaserver_client,
         }
     }
 
@@ -201,17 +197,10 @@ impl PrefetchScheduler {
                 )
                 .await;
                 let inserts = std::mem::take(&mut result.cache_inserts);
-                let registration = if result.source == Some(PrefetchSource::Remote) {
-                    let resident_keys = read_cache.batch_insert_resident_keys(inserts);
-                    remote_registration_from_resident_keys(result.source, &resident_keys)
+                if result.source == Some(PrefetchSource::Remote) {
+                    read_cache.batch_insert_reclaimable(inserts);
                 } else {
                     read_cache.batch_insert(inserts);
-                    None
-                };
-                if let Some(client) = &self.metaserver_client
-                    && let Some((namespace, hashes)) = registration
-                {
-                    client.try_register_namespace(namespace, hashes);
                 }
                 result
             })
@@ -268,19 +257,6 @@ fn build_ready_result(
         ready_blocks,
         missing,
     }
-}
-
-fn remote_registration_from_resident_keys(
-    source: Option<PrefetchSource>,
-    resident_keys: &[StateKey],
-) -> Option<(String, Vec<Vec<u8>>)> {
-    if source != Some(PrefetchSource::Remote) || resident_keys.is_empty() {
-        return None;
-    }
-
-    let namespace = resident_keys[0].namespace.clone();
-    let hashes = resident_keys.iter().map(|key| key.hash.clone()).collect();
-    Some((namespace, hashes))
 }
 
 async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> PrefetchTaskResult {
@@ -414,29 +390,5 @@ mod tests {
         assert!(Arc::ptr_eq(&result.ready_blocks[0], &b1));
         assert_eq!(result.missing, 2);
         assert_eq!(result.cache_inserts.len(), 2);
-    }
-
-    #[test]
-    fn remote_registration_uses_only_resident_keys() {
-        let k1 = key(1);
-        let k3 = key(3);
-
-        let (namespace, hashes) =
-            remote_registration_from_resident_keys(Some(PrefetchSource::Remote), &[k1, k3])
-                .expect("remote resident keys should register");
-
-        assert_eq!(namespace, "ns");
-        assert_eq!(hashes, vec![vec![1], vec![3]]);
-    }
-
-    #[test]
-    fn remote_registration_skips_ssd_and_empty_resident_keys() {
-        let k1 = key(1);
-
-        assert!(remote_registration_from_resident_keys(Some(PrefetchSource::Ssd), &[k1]).is_none());
-        assert!(
-            remote_registration_from_resident_keys(Some(PrefetchSource::Remote), &[]).is_none()
-        );
-        assert!(remote_registration_from_resident_keys(None, &[]).is_none());
     }
 }

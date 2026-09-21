@@ -1,3 +1,5 @@
+mod inventory;
+
 pub mod proto {
     #[allow(
         clippy::allow_attributes_without_reason,

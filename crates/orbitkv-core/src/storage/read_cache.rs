@@ -1,7 +1,11 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use hashlink::LruCache;
+use orbitkv_state::InventoryRecord;
 use parking_lot::Mutex;
+use tokio::sync::Notify;
+
+use super::inventory::{Inventory, InventoryReadError};
 
 use crate::block::{SealedBlock, StateKey};
 use crate::cache::{CacheInsertOutcome, TinyLfuCache};
@@ -15,6 +19,7 @@ pub(crate) struct ReadCache {
 }
 
 struct ReadCacheInner {
+    inventory: Option<Inventory>,
     cache: TinyLfuCache<StateKey, Arc<SealedBlock>>,
     reclaimable: LruCache<StateKey, ResidentMetadata>,
     retained: LruCache<StateKey, ResidentMetadata>,
@@ -43,16 +48,70 @@ impl ReadCache {
         capacity_bytes: usize,
         enable_lfu_admission: bool,
         value_size_hint: Option<usize>,
+        inventory_journal_bytes: Option<usize>,
     ) -> Self {
         let cache =
             TinyLfuCache::new_unbounded(capacity_bytes, enable_lfu_admission, value_size_hint);
         Self {
             inner: Mutex::new(ReadCacheInner {
+                inventory: inventory_journal_bytes.map(Inventory::new),
                 cache,
                 reclaimable: LruCache::new_unbounded(),
                 retained: LruCache::new_unbounded(),
             }),
         }
+    }
+
+    pub(crate) fn inventory_sequence(&self) -> u64 {
+        self.inner
+            .lock()
+            .inventory
+            .as_ref()
+            .expect("inventory enabled")
+            .sequence()
+    }
+
+    pub(crate) fn inventory_changed(&self) -> Arc<Notify> {
+        self.inner
+            .lock()
+            .inventory
+            .as_ref()
+            .expect("inventory enabled")
+            .changed()
+    }
+
+    pub(crate) fn inventory_page(
+        &self,
+        after: Option<&StateKey>,
+    ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
+        self.inner
+            .lock()
+            .inventory
+            .as_ref()
+            .expect("inventory enabled")
+            .snapshot_page(after)
+    }
+
+    pub(crate) fn inventory_changes(
+        &self,
+        after: u64,
+        through: u64,
+    ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
+        self.inner
+            .lock()
+            .inventory
+            .as_ref()
+            .expect("inventory enabled")
+            .changes(after, through)
+    }
+
+    pub(crate) fn inventory_covers(&self, after: u64) -> bool {
+        self.inner
+            .lock()
+            .inventory
+            .as_ref()
+            .expect("inventory enabled")
+            .covers(after)
     }
 
     pub(super) fn contains_keys(&self, keys: &[StateKey]) -> Vec<bool> {
@@ -86,44 +145,23 @@ impl ReadCache {
         }
     }
 
-    pub(super) fn batch_insert_resident_keys(
-        &self,
-        blocks: Vec<(StateKey, Arc<SealedBlock>)>,
-    ) -> Vec<StateKey> {
+    pub(super) fn batch_insert_reclaimable(&self, blocks: Vec<(StateKey, Arc<SealedBlock>)>) {
         let mut inner = self.inner.lock();
-        let mut resident_keys = Vec::new();
         for (key, block) in blocks {
-            match insert_block(&mut inner, key.clone(), block, ResidentClass::Reclaimable) {
-                CacheInsertOutcome::InsertedNew | CacheInsertOutcome::AlreadyExists => {
-                    resident_keys.push(key);
-                }
-                CacheInsertOutcome::Rejected => {}
-            }
+            insert_block(&mut inner, key, block, ResidentClass::Reclaimable);
         }
-        resident_keys
     }
 
-    pub(super) fn batch_insert_refs(
-        &self,
-        blocks: &[(StateKey, Arc<SealedBlock>)],
-    ) -> Vec<StateKey> {
+    pub(super) fn batch_insert_refs(&self, blocks: &[(StateKey, Arc<SealedBlock>)]) {
         let mut inner = self.inner.lock();
-        let mut resident_keys = Vec::new();
         for (key, block) in blocks {
-            let outcome = insert_block(
+            insert_block(
                 &mut inner,
                 key.clone(),
                 Arc::clone(block),
                 ResidentClass::Retained,
             );
-            if matches!(
-                outcome,
-                CacheInsertOutcome::InsertedNew | CacheInsertOutcome::AlreadyExists
-            ) {
-                resident_keys.push(key.clone());
-            }
         }
-        resident_keys
     }
 
     /// Look up specific blocks by key without prefix-scan semantics (does not
@@ -206,6 +244,11 @@ impl ReadCache {
                     }
                 })
                 .collect::<Vec<_>>();
+            if let Some(inventory) = &mut inner.inventory {
+                for entry in &removed {
+                    inventory.change(&entry.key, false);
+                }
+            }
             debug_assert_eq!(
                 removed.len() as i64,
                 reclaimable_blocks + retained_blocks,
@@ -227,7 +270,32 @@ impl ReadCache {
         record_residence_durations(removed, &*CACHE_RESIDENCE_REASON_CLEANUP)
     }
 
-    pub(crate) fn mark_reclaimable_hashes(&self, namespace: &str, hashes: &[Vec<u8>]) {
+    pub(crate) fn mark_reclaimable_records(&self, records: &[InventoryRecord]) {
+        let mut inner = self.inner.lock();
+        let mut moved = 0;
+        for record in records {
+            if inner
+                .inventory
+                .as_ref()
+                .is_some_and(|inventory| inventory.contains_record(record))
+                && mark_reclaimable(&mut inner, &record.key)
+            {
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            let metrics = core_metrics();
+            metrics
+                .cache_resident_blocks
+                .add(-moved, &*CACHE_CLASS_RETAINED);
+            metrics
+                .cache_resident_blocks
+                .add(moved, &*CACHE_CLASS_RECLAIMABLE);
+        }
+    }
+
+    #[cfg(test)]
+    fn mark_reclaimable_hashes(&self, namespace: &str, hashes: &[Vec<u8>]) {
         if hashes.is_empty() {
             return;
         }
@@ -258,8 +326,8 @@ impl ReadCache {
     }
 
     #[cfg(test)]
-    pub(crate) fn is_reclaimable_for_test(&self, key: &StateKey) -> bool {
-        self.inner.lock().reclaimable.contains_key(key)
+    pub(crate) fn clear_for_test(&self) {
+        self.remove_all();
     }
 }
 
@@ -282,6 +350,9 @@ fn insert_block(
     let outcome = inner.cache.insert(key.clone(), block);
     match outcome {
         CacheInsertOutcome::InsertedNew => {
+            if let Some(inventory) = &mut inner.inventory {
+                inventory.change(&key, true);
+            }
             class_lru(inner, class).insert(
                 key,
                 ResidentMetadata {
@@ -345,6 +416,9 @@ fn remove_lru(inner: &mut ReadCacheInner, class: ResidentClass) -> Option<Remove
         let Some(block) = block else {
             continue;
         };
+        if let Some(inventory) = &mut inner.inventory {
+            inventory.change(&key, false);
+        }
         let metrics = core_metrics();
         metrics.cache_resident_blocks.add(-1, class.attributes());
         metrics
@@ -419,7 +493,7 @@ mod tests {
     use super::*;
 
     fn make_cache() -> ReadCache {
-        ReadCache::new(1 << 20, false, None)
+        ReadCache::new(1 << 20, false, None, None)
     }
 
     fn make_block() -> Arc<SealedBlock> {
@@ -473,7 +547,7 @@ mod tests {
 
         cache.batch_insert_refs(&[(local.clone(), local_block)]);
         cache.batch_insert(vec![(ssd.clone(), make_block())]);
-        cache.batch_insert_resident_keys(vec![(remote.clone(), make_block())]);
+        cache.batch_insert_reclaimable(vec![(remote.clone(), make_block())]);
 
         assert_class(&cache, &local, ResidentClass::Retained);
         assert_class(&cache, &ssd, ResidentClass::Retained);
@@ -487,7 +561,7 @@ mod tests {
         let reclaimable = StateKey::new("ns".into(), vec![2]);
 
         cache.batch_insert(vec![(retained.clone(), make_block())]);
-        cache.batch_insert_resident_keys(vec![(reclaimable.clone(), make_block())]);
+        cache.batch_insert_reclaimable(vec![(reclaimable.clone(), make_block())]);
 
         let evicted = cache.remove_lru_batch(2);
         assert_eq!(
@@ -531,7 +605,7 @@ mod tests {
         let hit = StateKey::new("ns".into(), vec![1]);
         let oldest = StateKey::new("ns".into(), vec![2]);
 
-        cache.batch_insert_resident_keys(vec![
+        cache.batch_insert_reclaimable(vec![
             (hit.clone(), make_block()),
             (oldest.clone(), make_block()),
         ]);
@@ -576,12 +650,12 @@ mod tests {
         let local_first = StateKey::new("ns".into(), vec![3]);
         let local_other = StateKey::new("ns".into(), vec![4]);
 
-        cache.batch_insert_resident_keys(vec![(remote_first.clone(), make_block())]);
-        cache.batch_insert_resident_keys(vec![(remote_other.clone(), make_block())]);
+        cache.batch_insert_reclaimable(vec![(remote_first.clone(), make_block())]);
+        cache.batch_insert_reclaimable(vec![(remote_other.clone(), make_block())]);
         cache.batch_insert(vec![(remote_first.clone(), make_block())]);
         cache.batch_insert(vec![(local_first.clone(), make_block())]);
         cache.batch_insert(vec![(local_other.clone(), make_block())]);
-        cache.batch_insert_resident_keys(vec![(local_first.clone(), make_block())]);
+        cache.batch_insert_reclaimable(vec![(local_first.clone(), make_block())]);
 
         assert_class(&cache, &remote_first, ResidentClass::Reclaimable);
         assert_class(&cache, &local_first, ResidentClass::Retained);
@@ -598,7 +672,7 @@ mod tests {
         cache.batch_insert(vec![(key.clone(), make_block())]);
         let inserted_at = backdate_resident(&cache, &key, Duration::from_secs(60));
 
-        cache.batch_insert_resident_keys(vec![(key.clone(), make_block())]);
+        cache.batch_insert_reclaimable(vec![(key.clone(), make_block())]);
 
         assert_eq!(
             resident_metadata(&cache, &key).unwrap().inserted_at,
@@ -648,18 +722,31 @@ mod tests {
     }
 
     #[test]
-    fn local_save_reports_resident_keys() {
-        let cache = make_cache();
+    fn inventory_tracks_actual_residency_and_fences_old_reclaim_hints() {
+        let cache = ReadCache::new(1 << 20, false, None, Some(16 * 1024));
         let key = StateKey::new("ns".into(), vec![1]);
-
-        assert_eq!(
-            cache.batch_insert_refs(&[(key.clone(), make_block())]),
-            vec![key.clone()]
-        );
-        assert_eq!(
-            cache.batch_insert_refs(&[(key.clone(), make_block())]),
-            vec![key]
-        );
+        cache.batch_insert_refs(&[(key.clone(), make_block())]);
+        let first = cache.inventory_page(None).unwrap();
+        assert_eq!(first.len(), 1);
+        cache.batch_insert_refs(&[(key.clone(), make_block())]);
+        assert_eq!(cache.inventory_sequence(), 1);
+        let pinned = cache.get_blocks(std::slice::from_ref(&key));
+        assert!(cache.remove_lru_batch(1).is_empty());
+        assert_eq!(cache.inventory_sequence(), 1);
+        drop(pinned);
+        assert_eq!(cache.remove_lru_batch(1).len(), 1);
+        assert_eq!(cache.inventory_sequence(), 2);
+        assert!(!cache.inventory_changes(1, 2).unwrap()[0].present);
+        // SSD restore uses the retained insertion path, and publishes a new episode.
+        cache.batch_insert(vec![(key.clone(), make_block())]);
+        cache.mark_reclaimable_records(&first);
+        assert_class(&cache, &key, ResidentClass::Retained);
+        cache.mark_reclaimable_records(&cache.inventory_page(None).unwrap());
+        assert_class(&cache, &key, ResidentClass::Reclaimable);
+        cache.remove_all();
+        assert_eq!(cache.inventory_sequence(), 4);
+        assert!(cache.inventory_page(None).unwrap().is_empty());
+        assert!(!cache.inventory_changes(3, 4).unwrap()[0].present);
     }
 
     #[test]
@@ -673,7 +760,7 @@ mod tests {
             (retained.clone(), make_block()),
             (other_namespace.clone(), make_block()),
         ]);
-        cache.batch_insert_resident_keys(vec![(reclaimable.clone(), make_block())]);
+        cache.batch_insert_reclaimable(vec![(reclaimable.clone(), make_block())]);
         cache.mark_reclaimable_hashes("ns", &[vec![1], vec![2], vec![3]]);
 
         assert_class(&cache, &retained, ResidentClass::Reclaimable);
@@ -787,39 +874,19 @@ mod tests {
     }
 
     #[test]
-    fn batch_insert_resident_keys_excludes_lfu_rejected_blocks() {
-        let cache = ReadCache::new(1, true, Some(1));
-        let hot_key = StateKey::new("ns".into(), vec![1]);
-        let cold_key = StateKey::new("ns".into(), vec![2]);
-
-        assert_eq!(
-            cache.batch_insert_resident_keys(vec![(hot_key.clone(), make_block())]),
-            vec![hot_key.clone()]
-        );
-
+    fn inventory_excludes_lfu_rejections_and_duplicate_restores() {
+        let cache = ReadCache::new(1, true, Some(1), Some(16 * 1024));
+        let hot = StateKey::new("ns".into(), vec![1]);
+        let cold = StateKey::new("ns".into(), vec![2]);
+        cache.batch_insert_reclaimable(vec![(hot.clone(), make_block())]);
         for _ in 0..2 {
-            assert_eq!(cache.get_blocks(std::slice::from_ref(&hot_key)).len(), 1);
+            assert_eq!(cache.get_blocks(std::slice::from_ref(&hot)).len(), 1);
         }
-
-        assert!(
-            cache
-                .batch_insert_resident_keys(vec![(cold_key.clone(), make_block())])
-                .is_empty()
-        );
-        assert!(!cache.inner.lock().reclaimable.contains_key(&cold_key));
-        assert_eq!(cache.get_blocks(&[hot_key]).len(), 1);
-        assert_eq!(cache.get_blocks(&[cold_key]).len(), 0);
-    }
-
-    #[test]
-    fn batch_insert_resident_keys_includes_already_existing_blocks() {
-        let cache = make_cache();
-        let key = StateKey::new("ns".into(), vec![1]);
-        cache.batch_insert(vec![(key.clone(), make_block())]);
-
-        assert_eq!(
-            cache.batch_insert_resident_keys(vec![(key.clone(), make_block())]),
-            vec![key]
-        );
+        cache.batch_insert_reclaimable(vec![(cold.clone(), make_block())]);
+        cache.batch_insert_reclaimable(vec![(hot.clone(), make_block())]);
+        assert!(!cache.inner.lock().reclaimable.contains_key(&cold));
+        assert_eq!(cache.inventory_sequence(), 1);
+        assert_eq!(cache.inventory_page(None).unwrap()[0].key, hot);
+        assert_eq!(cache.inventory_changes(0, 1).unwrap().len(), 1);
     }
 }

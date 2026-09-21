@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 
-use crate::store::{BlockHashStore, MANUAL_CLEANUP_AGE_SECS};
+use crate::store::BlockHashStore;
 
 #[derive(Clone)]
 struct AppState {
@@ -41,15 +41,11 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-async fn cleanup_expired_blocks_handler(
+async fn sweep_expired_nodes_handler(
     State(state): State<AppState>,
 ) -> Result<Json<CleanupResponse>, StatusCode> {
     let store = Arc::clone(&state.store);
-    let stats = match tokio::task::spawn_blocking(move || {
-        store.remove_owners_older_than(std::time::Duration::from_secs(MANUAL_CLEANUP_AGE_SECS))
-    })
-    .await
-    {
+    let stats = match tokio::task::spawn_blocking(move || store.sweep_expired()).await {
         Ok(stats) => stats,
         Err(err) => {
             warn!("manual cleanup worker failed: {err}");
@@ -67,8 +63,8 @@ fn public_app(state: AppState) -> Router {
         .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))
         .route(
-            "/admin/cleanup-expired-blocks",
-            post(cleanup_expired_blocks_handler),
+            "/admin/sweep-expired-nodes",
+            post(sweep_expired_nodes_handler),
         )
         .with_state(state)
 }
@@ -87,7 +83,7 @@ pub async fn start_http_server(
     };
 
     info!(
-        "Starting HTTP server on {} (/health, /metrics, /admin/cleanup-expired-blocks)",
+        "Starting HTTP server on {} (/health, /metrics, /admin/sweep-expired-nodes)",
         addr
     );
 
@@ -113,52 +109,6 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn cleanup_route_removes_old_owners_and_preserves_fresh_replicas() {
-        let store = Arc::new(crate::store::tests::manual_cleanup_fixture());
-        let app = public_app(AppState {
-            prometheus_registry: Registry::new(),
-            store: Arc::clone(&store),
-        });
-        for expected in [
-            br#"{"removed_owners":2,"removed_keys":1}"#.as_slice(),
-            br#"{"removed_owners":0,"removed_keys":0}"#.as_slice(),
-        ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/admin/cleanup-expired-blocks")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(
-                axum::body::to_bytes(response.into_body(), usize::MAX)
-                    .await
-                    .unwrap()
-                    .as_ref(),
-                expected,
-            );
-        }
-        assert!(store.query_prefix("ns", &[vec![1]]).is_empty());
-        assert_eq!(
-            store.query_prefix("ns", &[vec![2]])[0].nodes[0].as_ref(),
-            "b"
-        );
-        assert_eq!(
-            store.query_prefix("ns", &[vec![3]])[0].nodes[0].as_ref(),
-            "a"
-        );
-        assert_eq!(store.owner_count(), 2);
-        assert_eq!(store.entry_count(), 2);
-        assert_eq!(store.node_counts(), (2, 0));
-        assert_eq!(store.redundancy_snapshot().keys_1, 2);
-    }
-
-    #[tokio::test]
     async fn cleanup_route_is_available_on_public_listener() {
         let response = public_app(AppState {
             prometheus_registry: Registry::new(),
@@ -167,7 +117,7 @@ mod tests {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/admin/cleanup-expired-blocks")
+                .uri("/admin/sweep-expired-nodes")
                 .body(Body::empty())
                 .unwrap(),
         )

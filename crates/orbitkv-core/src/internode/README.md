@@ -1,72 +1,54 @@
-# internode/ — Cross-Node Communication
+# Cross-node coordination
 
-This module handles MetaServer coordination for OrbitKV's multi-node KV cache sharing.
+`metaserver_client.rs` owns the current directory synchronization state machine,
+heartbeat and remote prefix-plan queries. `p2p_service.rs` authorizes and pins
+source blocks for Mooncake and releases completed transfer holds.
 
-## Module Overview
+The engine channel remains UDS/iceoryx2. These network services run only when
+`--metaserver-addr` enables distributed discovery and transfer.
 
-```
-internode/
-├── mod.rs                Module root + re-exports
-└── metaserver_client.rs  MetaServer registration, removal, query, and node heartbeat
-```
+## Inventory flow
 
-## Data Flow
-
-```
-  write path                       read path
-      |                                |
-      v                                v
-  try_register_namespace          query_prefix
-  try_unregister
-      |                                |
-      v                                v
-  background MetaServer loop       lazy MetaServer gRPC client
-      |                                |
-      +--------------+-----------------+
-                     |
-                     v
-            orbitkv-metaserver
+```text
+Publish / SSD restore / peer restore / eviction / cleanup
+                         |
+              ReadCache mutation lock
+                         |
+        resident index + bounded sequence journal
+                         |
+            coalesced wakeup, no event queue
+                         |
+              inventory sync state machine
+                         |
+       HeartbeatNode + SyncInventory over gRPC
+                         |
+               current standalone directory
 ```
 
-## MetaServer Client Responsibilities
+The journal stores metadata, without retaining payload Arcs. The write and
+prefetch paths have no directory client dependency. Rejected admission and
+repeated insertion do not advertise a new residency episode.
 
-| Responsibility | Path | Behavior |
-|----------------|------|----------|
-| Block registration | Write path | Fire-and-forget `try_send` after block seal |
-| Block removal | Eviction path | Best-effort remove messages after local cache eviction |
-| Prefix query | Read path | Request-response query for per-node prefix lengths |
-| Node session | Background task | Heartbeat, stale-session recovery, and graceful unregister |
+The background worker sends bounded snapshot pages and contiguous deltas.
+Directory epoch changes, missing history and ambiguous snapshot replies trigger
+reconstruction. Heartbeats verify progress even when no cache writes occur.
+Requests have deadlines, and retries use backoff with jitter. An inventory
+flush waits for an actual acknowledgement or returns an error; there is no
+success path that silently drops pending changes.
 
-## How Registration Integrates
-
-The MetaServer client plugs into the **write path** via `InsertDeps`:
-
-```
-insert_worker_loop (sync thread)
-  └─► process_insert_batch
-        └─► send_backing_batches
-              ├─► SsdBackingStore::ingest_batch()     (SSD write, fire-and-forget)
-              └─► MetaServerClient::try_register_namespace() (MetaServer registration, fire-and-forget)
-```
-
-Both use the same pattern: `tokio::sync::mpsc::try_send()` from the sync insert thread,
-with an async tokio task draining the channel on the other end. The background
-task generates a local `node_id`, announces it with `HeartbeatNode`, and attaches
-`{node, node_id}` to insert/remove RPCs. If the MetaServer restarts or rejects a
-missing session, the task sends heartbeat again and continues with future queued
-updates. It does not backfill resident cache keys that were registered before
-the MetaServer lost state.
+The requesting Manager still calls `query_plan` on a local miss. Moving plan
+construction and a bounded candidate index into the Manager belongs to D1.
+Mooncake is responsible for payload bytes, while the source service owns block
+validation and holds. The directory never grants direct memory access.
 
 ## Configuration
 
-MetaServer registration is enabled via CLI flags on `orbitkv-cache-manager`:
-
 ```bash
-orbitkv-cache-manager \
-  --addr 10.0.0.1:50055 \
-  --pool-size 30gb \
-  --metaserver-addr http://127.0.0.1:50056
+orbitkv-cache-manager --addr 10.0.0.1:50055 --pool-size 30gb \
+  --metaserver-addr http://10.0.0.100:50056 \
+  --inventory-journal-bytes 16777216
 ```
 
-When `--metaserver-addr` is not set, registration is disabled (`None`) and the write path
-skips the registration step with zero overhead.
+Without distributed discovery, no resident inventory index or journal is
+allocated. See [directory protocol and limits](../../../orbitkv-metaserver/README.md)
+and the [distributed cache plan](../../../../docs/distributed-cache.md).

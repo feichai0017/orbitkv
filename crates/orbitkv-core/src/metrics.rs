@@ -81,17 +81,13 @@ pub(crate) struct CoreMetrics {
     pub ssd_prefetch_inflight: UpDownCounter<i64>,
     pub ssd_prefetch_queue_closed: Counter<u64>,
 
-    // MetaServer registration
-    pub metaserver_registration_blocks: Counter<u64>,
-    pub metaserver_registration_failures: Counter<u64>,
-    pub metaserver_registration_queue_full: Counter<u64>,
-
-    // MetaServer removal
-    pub metaserver_removal_blocks: Counter<u64>,
-    pub metaserver_removal_failures: Counter<u64>,
-    pub metaserver_removal_queue_full: Counter<u64>,
+    // Owner inventory synchronization
+    pub inventory_records_sent: Counter<u64>,
+    pub inventory_sync_failures: Counter<u64>,
+    pub inventory_snapshots_started: Counter<u64>,
+    pub inventory_snapshots_completed: Counter<u64>,
+    pub inventory_history_gaps: Counter<u64>,
     pub metaserver_heartbeat_failures: Counter<u64>,
-    pub metaserver_session_resets: Counter<u64>,
     pub metaserver_unregister_failures: Counter<u64>,
 
     // Cross-node transfer lock (serving side)
@@ -403,40 +399,29 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_description("Prefetch requests dropped due to full queue")
                 .build(),
 
-            // MetaServer registration
-            metaserver_registration_blocks: meter
-                .u64_counter("orbitkv_metaserver_registration_blocks")
-                .with_description("Block hashes sent to MetaServer for registration")
+            inventory_records_sent: meter
+                .u64_counter("orbitkv_inventory_records_sent")
+                .with_description("Inventory records acknowledged by the catalog")
                 .build(),
-            metaserver_registration_failures: meter
-                .u64_counter("orbitkv_metaserver_registration_failures")
-                .with_description("MetaServer registration RPC failures")
+            inventory_sync_failures: meter
+                .u64_counter("orbitkv_inventory_sync_failures")
+                .with_description("Failed inventory synchronization RPCs")
                 .build(),
-            metaserver_registration_queue_full: meter
-                .u64_counter("orbitkv_metaserver_registration_queue_full")
-                .with_description("Block hashes dropped due to full registration queue")
+            inventory_snapshots_started: meter
+                .u64_counter("orbitkv_inventory_snapshots_started")
+                .with_description("Owner inventory snapshots started")
                 .build(),
-
-            // MetaServer removal
-            metaserver_removal_blocks: meter
-                .u64_counter("orbitkv_metaserver_removal_blocks")
-                .with_description("Block hashes sent to MetaServer for removal")
+            inventory_snapshots_completed: meter
+                .u64_counter("orbitkv_inventory_snapshots_completed")
+                .with_description("Owner inventory snapshots committed")
                 .build(),
-            metaserver_removal_failures: meter
-                .u64_counter("orbitkv_metaserver_removal_failures")
-                .with_description("MetaServer removal RPC failures")
-                .build(),
-            metaserver_removal_queue_full: meter
-                .u64_counter("orbitkv_metaserver_removal_queue_full")
-                .with_description("Block hashes dropped due to full removal queue")
+            inventory_history_gaps: meter
+                .u64_counter("orbitkv_inventory_history_gaps")
+                .with_description("Inventory journal gaps requiring a fresh snapshot")
                 .build(),
             metaserver_heartbeat_failures: meter
                 .u64_counter("orbitkv_metaserver_heartbeat_failures")
                 .with_description("MetaServer HeartbeatNode RPC failures")
-                .build(),
-            metaserver_session_resets: meter
-                .u64_counter("orbitkv_metaserver_session_resets")
-                .with_description("MetaServer node session resets after stale-session errors")
                 .build(),
             metaserver_unregister_failures: meter
                 .u64_counter("orbitkv_metaserver_unregister_failures")

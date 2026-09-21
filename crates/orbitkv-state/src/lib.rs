@@ -10,12 +10,17 @@
 mod bundle;
 mod component;
 mod format;
+mod inventory;
 mod key;
 mod page;
 
 pub use bundle::{BundleComponent, RecoveryContract, StateBundle};
 pub use component::StateComponent;
 pub use format::{StateDType, StateFormat, StateLayout};
+pub use inventory::{
+    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryOperation, InventoryRecord,
+    InventoryStatus,
+};
 pub use key::{
     ContractError, Digest, StateDescriptor, StateKey, StorageSlot, TokenRange, group_hash,
     storage_namespace,

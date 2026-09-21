@@ -1,3 +1,4 @@
+pub(crate) mod inventory;
 mod prefetch;
 mod read_cache;
 mod tier_attribution;
@@ -27,8 +28,6 @@ use prefetch::RemoteFetch;
 pub(crate) use read_cache::ReadCache;
 use write_path::{InsertDeps, WritePipeline};
 
-// Each reclaim iteration emits one MetaServer removal command; a small batch
-// turns an eviction burst into a command flood that overflows the removal queue.
 const RECLAIM_BATCH_SIZE: usize = 512;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -67,8 +66,8 @@ pub struct StorageConfig {
     /// This node's routable address (from --addr) used for MetaServer registration and as
     /// requester_id in transfer locks. Must be set when metaserver_addr is set.
     pub advertise_addr: Option<String>,
-    /// MetaServer registration queue depth.
-    pub metaserver_queue_depth: usize,
+    /// Byte limit for retained residency changes used by directory synchronization.
+    pub inventory_journal_bytes: usize,
     /// Number of shards for the pinned memory pool (reduces allocator lock contention).
     pub pool_shards: usize,
 }
@@ -87,7 +86,7 @@ impl Default for StorageConfig {
             transfer_lock_timeout: Duration::from_secs(120),
             metaserver_addr: None,
             advertise_addr: None,
-            metaserver_queue_depth: crate::internode::DEFAULT_METASERVER_QUEUE_DEPTH,
+            inventory_journal_bytes: inventory::DEFAULT_INVENTORY_JOURNAL_BYTES,
             pool_shards: 1,
         }
     }
@@ -165,24 +164,28 @@ impl StorageEngine {
             capacity_bytes,
             config.enable_lfu_admission,
             value_size_hint,
+            config
+                .metaserver_addr
+                .as_ref()
+                .map(|_| config.inventory_journal_bytes),
         ));
 
-        let metaserver_client = config.metaserver_addr.as_ref().map(|addr| {
-            let advertise = config
-                .advertise_addr
-                .clone()
-                .unwrap_or_else(|| "127.0.0.1:50055".to_string());
-            info!(
-                "MetaServer client enabled: metaserver={}, advertise={}, queue_depth={}",
-                addr, advertise, config.metaserver_queue_depth
-            );
-            let ms_config = MetaServerClientConfig::new(addr.clone(), advertise)
-                .with_queue_depth(config.metaserver_queue_depth);
-            Arc::new(MetaServerClient::new(
-                ms_config,
-                Arc::downgrade(&read_cache),
-            ))
-        });
+        let metaserver_client = config
+            .metaserver_addr
+            .as_ref()
+            .map(|addr| {
+                let advertise = config
+                    .advertise_addr
+                    .clone()
+                    .unwrap_or_else(|| "127.0.0.1:50055".to_string());
+                info!(
+                    "MetaServer client enabled: metaserver={}, advertise={}, journal_bytes={}",
+                    addr, advertise, config.inventory_journal_bytes
+                );
+                let ms_config = MetaServerClientConfig::new(addr.clone(), advertise);
+                MetaServerClient::new(ms_config, Arc::downgrade(&read_cache)).map(Arc::new)
+            })
+            .transpose()?;
 
         let (write_pipeline, insert_rx) = WritePipeline::new();
         let write_pipeline = Arc::new(write_pipeline);
@@ -239,8 +242,7 @@ impl StorageEngine {
             #[cfg(not(feature = "mooncake"))]
             let remote_fetch = None;
 
-            let prefetch =
-                PrefetchScheduler::new(ssd_store.clone(), remote_fetch, metaserver_client.clone());
+            let prefetch = PrefetchScheduler::new(ssd_store.clone(), remote_fetch);
 
             let transfer_lock = Arc::new(transfer_lock::TransferLockManager::new(
                 transfer_lock_timeout,
@@ -265,7 +267,6 @@ impl StorageEngine {
             let deps = Arc::new(InsertDeps {
                 read_cache: engine.read_cache.clone(),
                 ssd_store: engine.ssd_store.clone(),
-                metaserver_client: engine.metaserver_client.clone(),
             });
             let weak_deps = Arc::downgrade(&deps);
             // Keep deps alive by leaking it into the thread. The worker holds
@@ -356,13 +357,11 @@ impl StorageEngine {
         }
     }
 
-    /// Flush the MetaServer registration queue: waits until every hash
-    /// registration enqueued before this call has been delivered (or dropped
-    /// after a failed attempt). No-op without a MetaServer client.
-    pub(crate) async fn flush_metaserver_registrations(&self) {
+    pub(crate) async fn flush_inventory(&self) -> Result<(), String> {
         if let Some(client) = &self.metaserver_client {
-            client.flush().await;
+            client.flush().await?;
         }
+        Ok(())
     }
 
     pub(crate) fn filter_hashes_not_in_cache_inplace(
@@ -409,14 +408,6 @@ impl StorageEngine {
         let evicted = self.read_cache.remove_all();
         if evicted.is_empty() {
             return MemoryCacheCleanupStats::default();
-        }
-
-        if let Some(client) = &self.metaserver_client {
-            let entries: Vec<(String, Vec<u8>)> = evicted
-                .iter()
-                .map(|(key, _)| (key.namespace.clone(), key.hash.clone()))
-                .collect();
-            client.try_unregister(entries);
         }
 
         let mut evicted_bytes = 0u64;
@@ -509,15 +500,6 @@ impl StorageEngine {
 
             if evicted.is_empty() {
                 break;
-            }
-
-            // Notify MetaServer that evicted blocks are no longer available for remote fetch.
-            if let Some(client) = &self.metaserver_client {
-                let entries: Vec<(String, Vec<u8>)> = evicted
-                    .iter()
-                    .map(|(key, _)| (key.namespace.clone(), key.hash.clone()))
-                    .collect();
-                client.try_unregister(entries);
             }
 
             let mut batch_bytes = 0u64;

@@ -54,6 +54,7 @@ fastrace = { workspace = true, features = ["enable"], optional = true }
 thiserror = "2"
 
 [dev-dependencies]
+orbitkv-state.workspace = true
 orbitkv-metaserver = { path = "../orbitkv-metaserver", default-features = false }
 
 [build-dependencies]
