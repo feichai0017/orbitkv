@@ -87,7 +87,10 @@ boundary. The pinned-release plugin now supplies a nonblocking admission hook,
 and core queries complete and release abandoned results without further polling.
 Single-rank DRAM/SSD serving recovery has dedicated GPU gates. Explicit query
 operation/revision tickets, retained byte budgets and shared backing reads are
-implemented, with [bounded concurrent bursts](concurrent-performance.md).
+implemented, with [bounded concurrent bursts](concurrent-performance.md) and
+[sustained native/DRAM/SSD controls](sustained-performance.md) for both engines.
+The vLLM adapter gates new admissions until an admitted restore reaches compute;
+this resolves a deferred-queue capacity stall found by the sustained workload.
 Next add bounded request-driven DRAM warming and measured restore-versus-recompute
 decisions. Generation-safe layer readiness precedes copy/compute overlap. The
 [implementation stages](state-planning.md#implementation-sequence) retain the

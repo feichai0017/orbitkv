@@ -14,13 +14,16 @@
     "fsevents@2.3.3": true
   },
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check"
   },
   "dependencies": {
-    "astro": "^7.2.8"
+    "@astrojs/markdown-remark": "7.3.1",
+    "astro": "^7.2.8",
+    "mermaid": "11.17.2"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",

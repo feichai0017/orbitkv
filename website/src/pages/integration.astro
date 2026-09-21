@@ -1,42 +1,108 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
-import { sourceUrl } from "../data/site";
+import { localUrl } from "../data/site";
 ---
 
-<SiteLayout title="Integration — OrbitKV" description="vLLM and SGLang external-cache integration, P/D boundaries, and current validation." active="Integration">
+<SiteLayout
+  title="Integration — OrbitKV"
+  description="vLLM and SGLang external-cache integration, P/D boundaries, and current validation."
+  active="Integration"
+>
   <div class="container interior">
     <header class="page-hero">
       <p class="eyebrow">Framework integration</p>
-      <h1>Two engines.<br /><span class="highlight">One local cache.</span></h1>
-      <p>vLLM and SGLang keep control of HBM. Their adapters register GPU KV pages with a node-local Cache Manager for reuse in pinned DRAM and optional SSD.</p>
+      <h1>
+        Two engines.
+        <br />
+        <span class="highlight">One cache manager.</span>
+      </h1>
+      <p>
+        vLLM and SGLang keep control of HBM. Their adapters register GPU KV
+        pages with a node-local Cache Manager for reuse in pinned DRAM and
+        optional SSD.
+      </p>
     </header>
     <section class="detail-section">
       <h2>vLLM</h2>
-      <p class="reading-copy"><code>OrbitKVConnector</code> uses vLLM's KV connector callbacks for prefix lookup, save, and restore. The local control path is UDS + iceoryx2; registered GPU buffers move data through CUDA IPC. Single-node recovery has been checked on vLLM 0.29.0. Multi-host TP query fan-out is not yet supported.</p>
-      <a class="text-link" href={sourceUrl("docs/single-node.md#vllm")}>vLLM install and deployment <span aria-hidden="true">↗</span></a>
+      <p class="reading-copy">
+        <code>OrbitKVConnector</code> uses vLLM's KV connector callbacks for
+        prefix lookup, save, and restore. The local control path is UDS +
+        iceoryx2; registered GPU buffers move data through CUDA IPC. Single-node
+        recovery has been checked on vLLM 0.29.0. Multi-host TP query fan-out is
+        not yet supported.
+      </p>
+      <a class="text-link" href={localUrl("/docs/single-node/#vllm")}>
+        vLLM install and deployment <span aria-hidden="true">↗</span>
+      </a>
     </section>
     <section class="detail-section">
       <h2>SGLang</h2>
-      <p class="reading-copy"><code>OrbitKVLinker</code> connects SGLang's radix cache to the same Cache Manager API through CUDA IPC. Full-attention MHA and MLA layouts have a direct GPU-page path; hybrid, draft, and auxiliary state are rejected until complete recovery contracts exist. Single-rank DRAM and SSD recovery have been GPU-tested on SGLang 0.5.20. A plugin admission hook keeps pending requests queued until a leased result is ready, with a bounded wait before recomputation. Multi-rank serving remains unqualified.</p>
-      <a class="text-link" href={sourceUrl("docs/single-node.md#sglang")}>SGLang install and deployment <span aria-hidden="true">↗</span></a>
-      <a class="text-link" href={sourceUrl("docs/ssd-performance.md")}>SSD measurements and qualification <span aria-hidden="true">↗</span></a>
-      <a class="text-link" href={sourceUrl("docs/concurrent-performance.md")}>Concurrent budgets and output controls <span aria-hidden="true">↗</span></a>
+      <p class="reading-copy">
+        <code>OrbitKVLinker</code> connects SGLang's radix cache to the same
+        Cache Manager API through CUDA IPC. Full-attention MHA and MLA layouts
+        have a direct GPU-page path; hybrid, draft, and auxiliary state are
+        rejected until complete recovery contracts exist. Single-rank DRAM and
+        SSD recovery have been GPU-tested on SGLang 0.5.20. A plugin admission
+        hook keeps pending requests queued until a leased result is ready, with
+        a bounded wait before recomputation. Multi-rank serving remains
+        unqualified.
+      </p>
+      <a class="text-link" href={localUrl("/docs/single-node/#sglang")}>
+        SGLang install and deployment <span aria-hidden="true">↗</span>
+      </a>
+      <a class="text-link" href={localUrl("/docs/ssd-performance/")}>
+        SSD measurements and qualification <span aria-hidden="true">↗</span>
+      </a>
+      <a class="text-link" href={localUrl("/docs/concurrent-performance/")}>
+        Concurrent budgets and output controls <span aria-hidden="true">↗</span>
+      </a>
     </section>
     <section class="detail-section">
       <h2>P/D and NIXL</h2>
-      <p class="reading-copy">OrbitKV's experimental <code>PdConnector</code> pushes live P/D KV between vLLM workers through Mooncake. vLLM also ships its own NIXL connector for P/D; OrbitKV does not ship one. These request-handoff paths are separate from OrbitKV's external-cache lookup. SGLang currently has an OrbitKV cache linker, not an OrbitKV P/D adapter.</p>
-      <a class="text-link" href={sourceUrl("docs/pd.md")}>P/D versus cache sharing <span aria-hidden="true">↗</span></a>
+      <p class="reading-copy">
+        OrbitKV's experimental <code>PdConnector</code> pushes live P/D KV
+        between vLLM workers through Mooncake. vLLM also ships its own NIXL
+        connector for P/D; OrbitKV does not ship one. These request-handoff
+        paths are separate from OrbitKV's external-cache lookup. SGLang
+        currently has an OrbitKV cache linker, not an OrbitKV P/D adapter.
+      </p>
+      <a class="text-link" href={localUrl("/docs/pd/")}>
+        P/D versus cache sharing <span aria-hidden="true">↗</span>
+      </a>
     </section>
     <section class="detail-section">
       <h2>Model-aware reuse</h2>
-      <p class="reading-copy">Current cache keys bind model-artifact content, engine configuration, storage geometry, and native prefix hashes. Complete token coverage, recovery components, and GPU page generations are not yet validated at each transfer. These remain local correctness milestones; current single-node recovery should not be read as full model-aware qualification or a maximum-performance claim.</p>
-      <a class="text-link" href={sourceUrl("docs/state-identity.md")}>State identity plan and gates <span aria-hidden="true">↗</span></a>
+      <p class="reading-copy">
+        Current cache keys bind model-artifact content, engine configuration,
+        storage geometry, and native prefix hashes. Complete token coverage,
+        recovery components, and GPU page generations are not yet validated at
+        each transfer. These remain local correctness milestones; current
+        single-node recovery should not be read as full model-aware
+        qualification or a maximum-performance claim.
+      </p>
+      <a class="text-link" href={localUrl("/docs/state-identity/")}>
+        State identity plan and gates <span aria-hidden="true">↗</span>
+      </a>
     </section>
     <section class="detail-section">
       <h2>Next gates</h2>
-      <p class="reading-copy">Develop bounded early prefetch, measured restore decisions, and common recovery validation. Page generations and completion fences must protect overlap with execution. Managers embed fixed catalog shards and rebuild their evidence from owner inventories. etcd membership gates remote admission through cached member views and lease deadlines. Metadata replication, transfer lifetime qualification and multi-host serving tests come before KV-aware routing.</p>
-      <a class="text-link" href={sourceUrl("docs/roadmap.md")}>Read the implementation gates <span aria-hidden="true">↗</span></a>
-      <a class="text-link" href={sourceUrl("docs/state-planning.md")}>Proposed demand and transfer planning <span aria-hidden="true">↗</span></a>
+      <p class="reading-copy">
+        Qualify sustained single-node serving first, then independent replicas
+        (DP), then P/D combined with cache reuse. Develop bounded early
+        prefetch, measured restore decisions, and common recovery validation.
+        Page generations and completion fences must protect overlap with
+        execution. Managers embed fixed catalog shards and rebuild their
+        evidence from owner inventories. etcd membership gates remote admission
+        through cached member views and lease deadlines. Metadata replication,
+        transfer lifetime qualification and multi-host serving tests come before
+        KV-aware routing.
+      </p>
+      <a class="text-link" href={localUrl("/docs/roadmap/")}>
+        Read the implementation gates <span aria-hidden="true">↗</span>
+      </a>
+      <a class="text-link" href={localUrl("/docs/state-planning/")}>
+        Proposed demand and transfer planning <span aria-hidden="true">↗</span>
+      </a>
     </section>
   </div>
 </SiteLayout>

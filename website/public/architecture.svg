@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="660" viewBox="0 0 1120 660" role="img" aria-labelledby="title desc">
+  <title id="title">OrbitKV cache architecture</title>
+  <desc id="desc">One Cache Manager per inference host manages pinned DRAM and SSD. Engines retain HBM ownership. Managers embed catalog shards, use gRPC for peer control and Mooncake for payloads. etcd stores membership and placement. The distributed path is experimental.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10" fill="#203b30"/></marker></defs>
+  <rect width="1120" height="660" fill="#f6f5f0"/>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#202d26">
+    <text x="32" y="38" font-size="14" letter-spacing="2" fill="#ab4d29">ORBITKV / ONE MANAGER PER HOST</text>
+    <text x="32" y="69" font-size="24" font-weight="700">Keep execution in the engine. Extend the cache across tiers.</text>
+    <g fill="#fcfbf8" stroke="#d7dcd2"><rect x="32" y="94" width="444" height="398"/><rect x="644" y="94" width="444" height="398"/></g>
+    <g font-size="13" letter-spacing="1" fill="#60695f"><text x="52" y="121">HOST A / INFERENCE REPLICA</text><text x="664" y="121">HOST B / MATCHING REPLICA</text></g>
+    <g fill="#203b30"><rect x="52" y="140" width="404" height="74"/><rect x="664" y="140" width="404" height="74"/></g>
+    <g fill="#f6f5f0" text-anchor="middle"><text x="254" y="170" font-size="21" font-weight="700">vLLM or SGLang</text><text x="254" y="196" font-size="15">Engine-owned HBM · model execution</text><text x="866" y="170" font-size="21" font-weight="700">vLLM or SGLang</text><text x="866" y="196" font-size="15">Engine-owned HBM · model execution</text></g>
+    <g stroke="#203b30" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"><path d="M254 223V284"/><path d="M866 223V284"/></g>
+    <g font-size="13" fill="#60695f"><text x="66" y="246">UDS + iceoryx2</text><text x="66" y="266">Cache commands</text><text x="280" y="246">CUDA IPC</text><text x="280" y="266">GPU registration</text><text x="678" y="246">UDS + iceoryx2</text><text x="678" y="266">Cache commands</text><text x="892" y="246">CUDA IPC</text><text x="892" y="266">GPU registration</text></g>
+    <g fill="#f6f5f0" stroke="#203b30" stroke-width="2"><rect x="52" y="296" width="404" height="174"/><rect x="664" y="296" width="404" height="174"/></g>
+    <g text-anchor="middle"><text x="254" y="327" font-size="22" font-weight="700">Cache Manager A</text><text x="866" y="327" font-size="22" font-weight="700">Cache Manager B</text><text x="254" y="351" font-size="14">Queries · leases · budgets · transfers</text><text x="866" y="351" font-size="14">Queries · leases · budgets · transfers</text></g>
+    <g fill="#fcfbf8" stroke="#d7dcd2"><rect x="70" y="367" width="174" height="38"/><rect x="264" y="367" width="174" height="38"/><rect x="682" y="367" width="174" height="38"/><rect x="876" y="367" width="174" height="38"/></g>
+    <g text-anchor="middle" font-size="15"><text x="157" y="392">Pinned DRAM</text><text x="351" y="392">Optional SSD</text><text x="769" y="392">Pinned DRAM</text><text x="963" y="392">Optional SSD</text><text x="254" y="437">Embedded catalog shards</text><text x="866" y="437">Embedded catalog shards</text></g>
+    <g stroke="#203b30" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"><path d="M466 334H654"/><path d="M466 423H654" stroke-dasharray="5 5"/></g>
+    <g text-anchor="middle"><text x="560" y="304" font-size="16" font-weight="700">Mooncake TE</text><text x="560" y="323" font-size="12">KV bytes / RDMA or TCP</text><text x="560" y="387" font-size="16" font-weight="700">Peer gRPC</text><text x="560" y="407" font-size="12">Discovery + authorization</text></g>
+    <g fill="none" stroke="#60695f" stroke-width="1.5" stroke-dasharray="5 5"><path d="M254 472V536H380"/><path d="M866 472V536H740"/></g>
+    <rect x="380" y="510" width="360" height="62" fill="#203b30"/>
+    <g text-anchor="middle" fill="#f6f5f0"><text x="560" y="535" font-size="18" font-weight="700">etcd</text><text x="560" y="556" font-size="14">Leased membership + fixed placement</text></g>
+    <text x="32" y="611" font-size="15" fill="#ab4d29">Single node: validated recovery. Multi-node: experimental; one catalog copy per shard.</text>
+    <text x="32" y="636" font-size="14" fill="#60695f">Per-block lookups stay off etcd. P/D handoff and future KV-aware routing have separate lifecycles.</text>
+  </g>
+</svg>

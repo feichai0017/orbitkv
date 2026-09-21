@@ -276,6 +276,7 @@
   }
   .footer-links {
     display: flex;
+    flex-wrap: wrap;
     gap: 1.75rem;
   }
   .interior {
@@ -790,7 +791,7 @@
       margin-left: 1rem;
     }
     .footer-links {
-      gap: 1.5rem;
+      gap: 0.25rem 1.5rem;
     }
     .page-hero h1 {
       font-size: clamp(2.6rem, 8.6vw, 4.5rem);
@@ -838,109 +839,20 @@
 }
 
 @layer components {
-  .model-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
-    gap: 1.5rem 2.5rem;
+  .architecture-figure {
+    margin: 2rem 0;
   }
-  .model-card {
-    padding-block: 1.25rem;
-    border-top: 1px solid var(--line);
-  }
-  .model-card h3 {
-    margin-block: 0.7rem;
-    font-size: 1.35rem;
-  }
-  .model-card p {
-    max-width: 36rem;
-  }
-  .model-status {
-    color: var(--accent);
-    font-size: 0.8rem;
-    letter-spacing: 0.04em;
-  }
-  .model-spec {
-    font-size: 0.9rem;
-  }
-  .performance-report {
-    margin-block: 2.5rem;
-  }
-  .report-heading h3 {
-    font-size: 1.5rem;
-    margin-bottom: 0.5rem;
-  }
-  .report-heading h3 span {
-    font-size: 0.9rem;
-    font-weight: 400;
-    margin-left: 0.75rem;
-  }
-  .report-heading p,
-  .table-note {
-    font-size: 0.85rem;
-  }
-  .table-scroll {
-    overflow-x: auto;
-    margin-block: 1.25rem;
-  }
-  .performance-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-    white-space: nowrap;
-  }
-  .performance-table caption {
-    text-align: left;
-    font-size: 0.85rem;
-    padding-bottom: 1rem;
-    white-space: normal;
-  }
-  .performance-table th,
-  .performance-table td {
-    padding: 1rem 0.85rem;
-    border-bottom: 1px solid var(--line);
-  }
-  .performance-table thead th {
-    font-size: 0.8rem;
-    font-weight: 500;
-  }
-  .performance-table th:first-child {
-    text-align: left;
-    padding-left: 0;
-  }
-  .performance-table tbody th {
-    font-weight: 400;
-  }
-  .performance-table .engine-cell {
-    text-align: left;
-  }
-  .performance-value {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .metric-range {
+  .architecture-figure img {
     display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--line);
+  }
+  .architecture-figure figcaption {
+    max-width: 60rem;
+    margin-top: 1rem;
     color: var(--muted);
-    font-size: 0.75rem;
-    font-weight: 400;
-  }
-  .table-note {
-    max-width: 55rem;
+    font-size: 0.85rem;
     line-height: 1.6;
-  }
-  .table-note + .table-note {
-    margin-top: 0.75rem;
-  }
-}
-@layer responsive {
-  @media (max-width: 42rem) {
-    .model-grid {
-      grid-template-columns: 1fr;
-      gap: 0;
-    }
-    .performance-table th,
-    .performance-table td {
-      padding: 0.85rem 0.65rem;
-    }
   }
 }

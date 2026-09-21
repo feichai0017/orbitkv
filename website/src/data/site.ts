@@ -7,7 +7,8 @@ export const localUrl = (path: string) =>
 
 export const navigation = [
   { label: "Overview", href: "/" },
-  { label: "Architecture", href: "/docs/" },
+  { label: "Docs", href: "/docs/" },
+  { label: "Architecture", href: "/architecture/" },
   { label: "Integration", href: "/integration/" },
 ];
 
@@ -22,7 +23,8 @@ export const layers = [
   {
     name: "orbitkv-channel",
     role: "Control the Cache Manager.",
-    detail: "Versioned iceoryx2 requests plus UDS bootstrap and lifecycle for both adapters.",
+    detail:
+      "Versioned iceoryx2 requests plus UDS bootstrap and lifecycle for both adapters.",
     path: "crates/orbitkv-channel/src/lib.rs",
   },
   {
@@ -33,15 +35,24 @@ export const layers = [
     path: "crates/orbitkv-core/src/lib.rs",
   },
   {
+    name: "orbitkv-catalog",
+    role: "Locate replicas.",
+    detail:
+      "Embedded directory shards, residency journals, candidate indexes and etcd membership; one copy per shard today.",
+    path: "crates/orbitkv-catalog/src/lib.rs",
+  },
+  {
     name: "orbitkv-transfer",
     role: "Move the bytes.",
-    detail: "Pinned Mooncake Transfer Engine for experimental remote cache fetch and vLLM P/D.",
+    detail:
+      "Pinned Mooncake Transfer Engine for experimental remote cache fetch and vLLM P/D.",
     path: "crates/orbitkv-transfer/README.md",
   },
   {
     name: "Cache Manager",
     role: "Share the cache.",
-    detail: "Node-local cache operations, pinned DRAM/SSD, health, and peer transfer control.",
+    detail:
+      "Node-local cache operations, pinned DRAM/SSD, health, and peer transfer control.",
     path: "crates/orbitkv-server/README.md",
   },
   {
@@ -54,38 +65,8 @@ export const layers = [
   {
     name: "orbitkv.vllm",
     role: "Connect vLLM.",
-    detail: "External KV cache connector plus a separate experimental Mooncake P/D adapter.",
+    detail:
+      "External KV cache connector plus a separate experimental Mooncake P/D adapter.",
     path: "python/orbitkv/vllm/connector.py",
   },
-];
-
-export const plannerStages = [
-  { name: "Describe", detail: "Attention visibility and state contracts." },
-  { name: "Prove", detail: "Derive semantic death and safe reuse conditions." },
-  { name: "Place", detail: "Choose HBM, DRAM, SSD, or a remote replica." },
-  { name: "Adapt", detail: "Re-plan from measured cost and next-touch evidence." },
-];
-
-export const providers = [
-  { name: "HBM", role: "Active pages allocated and scheduled by the inference engine." },
-  { name: "Pinned DRAM", role: "NUMA-aware warm storage and staging." },
-  { name: "SSD", role: "Optional backing for colder prefixes." },
-  { name: "Remote", role: "Experimental Mooncake fetch over RDMA or TCP." },
-];
-
-export const docs = [
-  { name: "Single-node vLLM and SGLang", path: "docs/single-node.md" },
-  { name: "SSD restore measurements", path: "docs/ssd-performance.md" },
-  { name: "Concurrent query budgets", path: "docs/concurrent-performance.md" },
-  { name: "Model-aware state identity", path: "docs/state-identity.md" },
-  { name: "State demand and transfer planning", path: "docs/state-planning.md" },
-  { name: "System architecture", path: "docs/architecture.md" },
-  { name: "Local and remote transport", path: "docs/transport.md" },
-  { name: "Roadmap and validation gates", path: "docs/roadmap.md" },
-  { name: "Server configuration", path: "docs/server.md" },
-  { name: "Cross-node sharing", path: "docs/p2p.md" },
-  { name: "P/D disaggregation", path: "docs/pd.md" },
-  { name: "Deployment examples", path: "docs/deployment.md" },
-  { name: "Metrics", path: "docs/metrics.md" },
-  { name: "Implementation TODO", path: "TODO.md" },
 ];

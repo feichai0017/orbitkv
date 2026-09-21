@@ -10,10 +10,15 @@ interface Props {
 
 const {
   title = "OrbitKV — KV cache for vLLM and SGLang",
-  description = "Node-local KV cache for vLLM and SGLang, with experimental Mooncake remote fetch.",
+  description = "KV cache for vLLM and SGLang across pinned DRAM, SSD and experimental Mooncake remote transfers. One Cache Manager per host.",
   active = "",
 } = Astro.props;
-const canonical = new URL(Astro.url.pathname, Astro.site);
+const canonical = new URL(
+  Astro.url.pathname.endsWith("/404/")
+    ? localUrl("/404.html")
+    : Astro.url.pathname,
+  Astro.site,
+);
 ---
 
 <!doctype html>
@@ -71,8 +76,9 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
         ORBITKV <span>Rust. CUDA. vLLM. SGLang.</span>
       </p>
       <div class="footer-links">
-        <a href={sourceUrl("docs/roadmap.md")}>
-          Roadmap <span aria-hidden="true">↗</span>
+        <a href={localUrl("/docs/")}>Documentation</a>
+        <a href={localUrl("/docs/roadmap/")}>
+          Roadmap <span aria-hidden="true">→</span>
         </a>
         <a href={repositoryUrl}>
           Source <span aria-hidden="true">↗</span>
