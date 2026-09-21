@@ -191,7 +191,7 @@ async fn wait_for_cache(
                 instance_id,
                 "wait-for-cache",
                 block_hashes,
-                false,
+                orbitkv_core::QueryMode::Demand,
             )
             .await
             .expect("count_prefix_hit_blocks_with_prefetch");
@@ -489,7 +489,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         "inst-b",
         "req-wait-for-producer",
         &delayed_hashes,
-        true,
+        orbitkv_core::QueryMode::WaitForFullPrefix,
     ));
     assert!(
         tokio::time::timeout(Duration::from_millis(20), &mut waiting)
@@ -640,7 +640,12 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     .await
     .unwrap();
     let resident = engine_b
-        .count_prefix_hit_blocks_with_prefetch("inst-b", "fenced-local-hit", &delayed_hashes, false)
+        .count_prefix_hit_blocks_with_prefetch(
+            "inst-b",
+            "fenced-local-hit",
+            &delayed_hashes,
+            orbitkv_core::QueryMode::Demand,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -649,7 +654,12 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         "local hits survive membership loss"
     );
     let remote = engine_b
-        .count_prefix_hit_blocks_with_prefetch("inst-b", "fenced-remote-miss", &block_hashes, false)
+        .count_prefix_hit_blocks_with_prefetch(
+            "inst-b",
+            "fenced-remote-miss",
+            &block_hashes,
+            orbitkv_core::QueryMode::Demand,
+        )
         .await
         .unwrap();
     assert!(

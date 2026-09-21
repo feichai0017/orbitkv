@@ -81,6 +81,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
     args = parser.parse_args()
+    if args.backend != "orbitkv" and (args.queue_warmup == "on" or args.trace_transfers):
+        parser.error("--queue-warmup on and --trace-transfers require --backend orbitkv")
     args.model = args.model.resolve()
     args.output = (
         args.output

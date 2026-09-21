@@ -120,7 +120,7 @@ fn local_hit_refreshes_recency_without_changing_class() {
         (oldest.clone(), make_block()),
     ]);
     let inserted_at = backdate_resident(&cache, &hit, Duration::from_secs(60));
-    let (count, _) = cache.get_prefix_blocks(std::slice::from_ref(&hit));
+    let (count, _) = cache.get_prefix_blocks(std::slice::from_ref(&hit), false);
 
     assert_eq!(count, 1);
     assert_eq!(
@@ -129,6 +129,43 @@ fn local_hit_refreshes_recency_without_changing_class() {
     );
     assert_eq!(cache.remove_lru_batch(1)[0].0, oldest);
     assert_class(&cache, &hit, ResidentClass::Reclaimable);
+}
+
+#[test]
+fn warmup_hits_do_not_refresh_recency_and_unused_pages_are_reclaimable() {
+    let cache = make_cache();
+    let oldest = StateKey::new("ns".into(), vec![1]);
+    let newest = StateKey::new("ns".into(), vec![2]);
+    let warmed = StateKey::new("ns".into(), vec![3]);
+    cache.batch_insert(vec![
+        (oldest.clone(), make_block()),
+        (newest.clone(), make_block()),
+    ]);
+    drop(cache.get_prefix_blocks(std::slice::from_ref(&oldest), true));
+    let block = make_block();
+    block.mark_warmed();
+    cache.batch_insert_reclaimable(vec![(warmed.clone(), block)]);
+    assert_eq!(cache.remove_lru_batch(1)[0].0, warmed);
+    assert_eq!(cache.remove_lru_batch(1)[0].0, oldest);
+    assert_class(&cache, &newest, ResidentClass::Retained);
+}
+
+#[test]
+fn demand_promotes_only_the_matching_warmup_generation() {
+    let cache = make_cache();
+    let key = StateKey::new("ns".into(), vec![1]);
+    let stale = make_block();
+    stale.mark_warmed();
+    let block = make_block();
+    block.mark_warmed();
+    cache.batch_insert_reclaimable(vec![(key.clone(), Arc::clone(&block))]);
+    cache.retain_warmed(std::slice::from_ref(&key), &[stale]);
+    assert_class(&cache, &key, ResidentClass::Reclaimable);
+    cache.retain_warmed(std::slice::from_ref(&key), std::slice::from_ref(&block));
+    assert_class(&cache, &key, ResidentClass::Retained);
+    assert!(cache.remove_lru_batch(1).is_empty());
+    drop(block);
+    assert_eq!(cache.remove_lru_batch(1)[0].0, key);
 }
 
 #[test]

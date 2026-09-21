@@ -48,7 +48,7 @@ pub use orbitkv_state::{
     StateFormat, TokenRange,
 };
 pub use pinned_pool::PinnedAllocation;
-pub use query::{QueryAdmission, QueryOwner, QueryReservation};
+pub use query::{QueryAdmission, QueryMode, QueryOwner, QueryReservation};
 pub use seal_offload::SlotMeta;
 pub use storage::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES;
 pub use storage::{MemoryCacheCleanupStats, StorageConfig};
@@ -558,7 +558,7 @@ impl OrbitKVEngine {
         instance_id: &str,
         req_id: &str,
         block_hashes: &[Vec<u8>],
-        wait_for_full_prefix: bool,
+        mode: QueryMode,
     ) -> Result<QueryResult, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
@@ -570,7 +570,7 @@ impl OrbitKVEngine {
 
         let status = self
             .storage
-            .check_prefix_and_prefetch(req_id, namespace, &encoded, wait_for_full_prefix)
+            .check_prefix_and_prefetch(req_id, namespace, &encoded, mode)
             .await;
 
         {
@@ -619,7 +619,7 @@ impl OrbitKVEngine {
 
         let status = self
             .storage
-            .check_prefix_and_prefetch(req_id, namespace, &encoded, true)
+            .check_prefix_and_prefetch(req_id, namespace, &encoded, QueryMode::WaitForFullPrefix)
             .await;
 
         {

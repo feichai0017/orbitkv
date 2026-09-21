@@ -92,8 +92,10 @@ implemented, with [bounded concurrent bursts](concurrent-performance.md) and
 The vLLM adapter gates new admissions until an admitted restore reaches compute;
 this resolves a deferred-queue capacity stall found by the sustained workload.
 Bounded [queued-request DRAM warming](queued-warming.md) now uses the existing
-query path without retaining warmup leases. Next qualify its exposed-wait and
-read-amplification tradeoffs, then add measured restore-versus-recompute
+query path without retaining warmup leases. Page-lifetime accounting now records
+successful H2D, unused releases and completed byte-seconds; hints yield to
+foreground ownership and enter the reclaimable class. Next qualify exposed-wait
+and read-amplification tradeoffs, then add measured restore-versus-recompute
 decisions. Generation-safe layer readiness precedes copy/compute overlap. The
 [implementation stages](state-planning.md#implementation-sequence) retain the
 larger ownership/fault-qualification requirements and later Dynamo integration.

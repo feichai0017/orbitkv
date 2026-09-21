@@ -265,10 +265,38 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             assert demanded.lease
             client.release(demanded.lease)
             after = fetch_orbitkv_metrics(channel_server.http_port)
+            warm_bytes = saved_bytes * len(warm_hashes) // page_count
+            assert after["orbitkv_warmup_prepared_bytes_total"] == warm_bytes
+            assert after["orbitkv_warmup_pending_bytes"] == warm_bytes
+            assert after.get("orbitkv_warmup_restored_bytes_total", 0) == 0
             assert (
                 after["orbitkv_ssd_prefetch_bytes_total"]
                 == observed["orbitkv_ssd_prefetch_bytes_total"]
             )
+            # Releasing a lookup lease is not use. Only the last page owner
+            # records unused bytes, and rereading the same key is a new cohort.
+            response = requests.post(
+                f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup",
+                timeout=10,
+            )
+            response.raise_for_status()
+            assert response.json()["still_referenced_blocks"] == 0
+            discarded = fetch_orbitkv_metrics(channel_server.http_port)
+            assert discarded["orbitkv_warmup_unused_bytes_total"] == warm_bytes
+            assert discarded["orbitkv_warmup_pending_bytes"] == 0
+            assert discarded["orbitkv_warmup_wait_byte_seconds_total"] > 0
+            assert client.warm_prefix(instance, warm_hashes, "next-warmup")
+            deadline = time.monotonic() + 5
+            while True:
+                observed = fetch_orbitkv_metrics(channel_server.http_port)
+                if (
+                    observed["orbitkv_warmup_prepared_bytes_total"] == 2 * warm_bytes
+                    and observed.get("orbitkv_query_reserved_bytes", 0) == 0
+                ):
+                    break
+                assert time.monotonic() < deadline, observed
+                time.sleep(0.01)
+            client.cancel_query(instance, "next-warmup")
         for tensor in tensors:
             tensor.zero_()
         torch.cuda.synchronize()
@@ -314,8 +342,12 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         if channel_server.ssd_cache_path is not None:
             observed = fetch_orbitkv_metrics(channel_server.http_port)
             # One drained read after cancellation, then the consumed restore.
-            assert observed["orbitkv_ssd_prefetch_bytes_total"] == 2 * saved_bytes
+            assert observed["orbitkv_ssd_prefetch_bytes_total"] == 2 * saved_bytes + warm_bytes
             assert observed["orbitkv_load_bytes_total"] == saved_bytes
+            assert observed["orbitkv_warmup_restored_bytes_total"] == warm_bytes
+            assert observed["orbitkv_warmup_unused_bytes_total"] == warm_bytes
+            assert observed["orbitkv_warmup_pending_bytes"] == 0
+            assert observed["orbitkv_warmup_prepared_bytes_total"] == 2 * warm_bytes
     finally:
         client.unregister_context(instance)
         client.close()

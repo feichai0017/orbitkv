@@ -131,8 +131,12 @@ and a passing gate; design text alone does not close an item.
 - [x] Record matched Qwen3-8B warming on/off pressure controls and native output
   diagnostics. Keep automatic warming opt-in: initial controls increased SSD
   bytes per request without improving throughput (`docs/queued-warming.md`).
+- [x] Attribute warmup page footprints to first successful H2D, last-owner
+  unused release and live pending bytes; record completed byte-seconds. Keep
+  enqueue peeks cold, reclaim unused warming before retained pages, and skip
+  new hints while foreground query ownership is active.
 - [ ] Qualify queued warming under delayed reads, cancellation and sustained
-  pressure; account useful bytes and unused retained byte-seconds, add
+  pressure; calibrate admission from page outcomes and engine consumption, add
   priority/deadline and per-device/staging budgets (remaining P3).
 - [ ] Calibrate restore-versus-recompute and write admission using
   `docs/state-planning.md` (P4); speculative workflow hints remain optional.

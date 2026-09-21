@@ -34,6 +34,12 @@ pub(crate) struct CoreMetrics {
     pub query_budget_waits: Counter<u64>,
     pub query_budget_bypasses: Counter<u64>,
     pub query_coalesced_reads: Counter<u64>,
+    pub warmup_prepared_bytes: Counter<u64>,
+    pub warmup_restored_bytes: Counter<u64>,
+    pub warmup_unused_bytes: Counter<u64>,
+    pub warmup_pending_bytes: UpDownCounter<i64>,
+    pub warmup_wait_byte_seconds: Counter<f64>,
+    pub warmup_foreground_skips: Counter<u64>,
 
     // Inflight (write path safety/health)
     pub inflight_bytes: UpDownCounter<i64>,
@@ -215,6 +221,24 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             query_budget_waits: meter.u64_counter("orbitkv_query_budget_waits").build(),
             query_budget_bypasses: meter.u64_counter("orbitkv_query_budget_bypasses").build(),
             query_coalesced_reads: meter.u64_counter("orbitkv_query_coalesced_reads").build(),
+            warmup_prepared_bytes: meter.u64_counter("orbitkv_warmup_prepared_bytes")
+                .with_description("Unique page footprints read by a warmup initializer; DRAM hits and joined demand reads excluded")
+                .build(),
+            warmup_restored_bytes: meter.u64_counter("orbitkv_warmup_restored_bytes")
+                .with_description("Warmup page footprints contributing to at least one successful local H2D, counted once per physical read")
+                .build(),
+            warmup_unused_bytes: meter.u64_counter("orbitkv_warmup_unused_bytes")
+                .with_description("Warmup page footprints released by their last owner without a successful local H2D")
+                .build(),
+            warmup_pending_bytes: meter.i64_up_down_counter("orbitkv_warmup_pending_bytes")
+                .with_description("Live warmup page footprints not yet restored locally; includes read cache and external owners")
+                .build(),
+            warmup_wait_byte_seconds: meter.f64_counter("orbitkv_warmup_wait_byte_seconds")
+                .with_description("Page bytes times time from warmup readiness to first local H2D or final unused release, by outcome; live intervals excluded")
+                .build(),
+            warmup_foreground_skips: meter.u64_counter("orbitkv_warmup_foreground_skips")
+                .with_description("Warmup hints skipped while foreground query ownership is active")
+                .build(),
             // Pool
             pool_capacity_bytes: meter
                 .i64_up_down_counter("orbitkv_pool_capacity_bytes")

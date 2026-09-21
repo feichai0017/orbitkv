@@ -16,6 +16,13 @@ pub struct QueryOwner {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryMode {
+    Demand,
+    WaitForFullPrefix,
+    Warmup,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Warming,
     Preparing,
@@ -96,6 +103,10 @@ impl QueryBudget {
             return QueryAdmission::TooLarge;
         }
         let mut usage = self.usage.lock();
+        if warming && usage.total > usage.warming {
+            core_metrics().warmup_foreground_skips.add(1, &[]);
+            return QueryAdmission::Busy;
+        }
         let instance_used = usage.instances.get(instance).copied().unwrap_or(0);
         let warm_used = usage.warming_instances.get(instance).copied().unwrap_or(0);
         if bytes > self.global - usage.total

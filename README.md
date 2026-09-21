@@ -31,7 +31,8 @@ An experimental distributed path extends the same cache API to peer managers.
 - **Bound preparation.** Byte budgets cover pending reads, ready leases and GPU
   consumers; identical backing reads can share preparation.
 - **Prepare queued demand (experimental).** Both engine adapters can warm missing prefixes
-  within a separate budget share, then revalidate them at admission. See
+  within a separate budget share, then revalidate them at admission. Warming
+  yields to foreground ownership and tracks restored, unused and pending pages. See
   [queued warming](docs/queued-warming.md) for limits and qualification.
 - **Identify compatible state.** Versioned keys bind immutable model artifacts,
   computation settings and registered storage geometry. Complete hybrid-state

@@ -82,6 +82,12 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(lin
     scheduler.waiting_queue.clear()
     enqueue_request(MagicMock(), scheduler, req)
     linker.client.warm_prefix.assert_not_called()
+
+    linker.client.warm_prefix.side_effect = RuntimeError("manager unavailable")
+    enqueue_request(accepted, scheduler, req)
+    assert scheduler.waiting_queue[-1] is req
+    linker.client.warm_prefix.assert_called_once()
+    linker.client.reset_mock()
     cache.match_prefix.reset_mock()
     monkeypatch.delenv("ORBITKV_QUEUE_WARMUP")
     enqueue_request(accepted, scheduler, req)

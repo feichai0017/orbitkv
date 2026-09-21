@@ -261,6 +261,15 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                 "sampled_peak_warmup_bytes": window["sampled_peak_bytes"].get(
                     "orbitkv_query_reserved_bytes_warming", 0
                 ),
+                "sampled_peak_warmup_pending_bytes": window["sampled_peak_bytes"].get(
+                    "orbitkv_warmup_pending_bytes", 0
+                ),
+                "warmup_pending_bytes_before": window.get("manager_before", {}).get(
+                    "orbitkv_warmup_pending_bytes", 0
+                ),
+                "warmup_pending_bytes_after": window["manager_after"].get(
+                    "orbitkv_warmup_pending_bytes", 0
+                ),
                 **{
                     key: counters.get(key, 0)
                     for key in (
@@ -271,6 +280,12 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                         "orbitkv_query_budget_waits_total",
                         "orbitkv_query_budget_bypasses_total",
                         "orbitkv_query_coalesced_reads_total",
+                        "orbitkv_warmup_prepared_bytes_total",
+                        "orbitkv_warmup_restored_bytes_total",
+                        "orbitkv_warmup_unused_bytes_total",
+                        "orbitkv_warmup_foreground_skips_total",
+                        "orbitkv_warmup_wait_byte_seconds_total_restored",
+                        "orbitkv_warmup_wait_byte_seconds_total_unused",
                         "orbitkv_load_duration_seconds_sum",
                         "orbitkv_load_duration_seconds_count",
                         "orbitkv_save_duration_seconds_sum",

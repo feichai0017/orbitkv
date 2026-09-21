@@ -533,6 +533,14 @@ fn process_load_task(
     let submitted = backend.h2d(&copies, stream);
     finish_gpu_transfer(stream, submitted)?;
 
+    for layer in layers {
+        for block in &layer.blocks {
+            if let HostBlock::Cached { sealed, .. } = &block.block {
+                sealed.mark_warmup_restored();
+            }
+        }
+    }
+
     let elapsed = start.elapsed();
     let bandwidth_gbps = if elapsed.as_secs_f64() > 0.0 {
         (total_bytes as f64 / 1e9) / elapsed.as_secs_f64()

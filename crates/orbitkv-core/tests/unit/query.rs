@@ -76,3 +76,31 @@ fn warmups_leave_foreground_headroom_and_hold_bytes_until_io_drains() {
     assert!(usage.instances.is_empty());
     assert!(usage.warming_instances.is_empty());
 }
+
+#[test]
+fn foreground_ownership_suppresses_new_warmups_until_the_last_gpu_owner_releases() {
+    let budget = QueryBudget::new(100, 100).unwrap();
+    let foreground = reserve(&budget, "a", 10);
+    for phase in [Phase::Preparing, Phase::Ready, Phase::Restoring] {
+        match phase {
+            Phase::Ready => foreground.ready(10).unwrap(),
+            Phase::Restoring => foreground.restoring(),
+            _ => {}
+        }
+        assert!(matches!(
+            budget.reserve("b", "ns", 1, true),
+            QueryAdmission::Busy
+        ));
+    }
+    let gpu = foreground.clone();
+    drop(foreground);
+    assert!(matches!(
+        budget.reserve("b", "ns", 1, true),
+        QueryAdmission::Busy
+    ));
+    drop(gpu);
+    assert!(matches!(
+        budget.reserve("b", "ns", 1, true),
+        QueryAdmission::Admitted(_)
+    ));
+}

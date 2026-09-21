@@ -111,6 +111,12 @@ of clocks on different hosts. Missing stages are not counted as zero latency.
 The [initial Qwen3-8B pressure controls](../docs/queued-warming.md#initial-pressure-controls)
 increased SSD bytes per request without a throughput gain. These results also
 retain a native HBM control for SGLang's prepared-reference output differences.
+Reports also retain warmup prepared/restored/unused byte deltas, completed
+byte-seconds by outcome, and pending bytes before/after the window and at the
+sampled peak. These count physical page footprints, not exact layer-copy bytes.
+Carry-in and live pending pages prevent treating a window ratio as a completed
+cohort hit rate. Enabling warming or transfer tracing for another backend is
+rejected rather than recorded as an ineffective control.
 
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \

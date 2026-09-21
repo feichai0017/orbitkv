@@ -8,6 +8,7 @@ use tokio::sync::OnceCell;
 use log::warn;
 use parking_lot::Mutex;
 
+use crate::QueryMode;
 #[cfg(feature = "mooncake")]
 use crate::backing::MooncakeFetchStore;
 use crate::backing::{PrefetchResult, SsdBackingStore};
@@ -147,13 +148,15 @@ impl PrefetchScheduler {
         req_id: &str,
         namespace: &str,
         hashes: &[Vec<u8>],
-        wait_for_full_prefix: bool,
+        mode: QueryMode,
     ) -> QueryResult {
+        let warming = mode == QueryMode::Warmup;
+        let wait_for_full_prefix = mode == QueryMode::WaitForFullPrefix;
         let keys: Vec<StateKey> = hashes
             .iter()
             .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
             .collect();
-        let (hit, prefix_blocks) = read_cache.get_prefix_blocks(&keys);
+        let (hit, prefix_blocks) = read_cache.get_prefix_blocks(&keys, warming);
         if hit == keys.len() || (self.remote_fetch.is_none() && self.ssd_store.is_none()) {
             record_tier_attribution(keys.len(), hit, 0, None);
             return QueryResult {
@@ -197,7 +200,12 @@ impl PrefetchScheduler {
                 )
                 .await;
                 let inserts = std::mem::take(&mut result.cache_inserts);
-                if result.source == Some(PrefetchSource::Remote) {
+                if warming {
+                    for (_, block) in &inserts {
+                        block.mark_warmed();
+                    }
+                }
+                if warming || result.source == Some(PrefetchSource::Remote) {
                     read_cache.batch_insert_reclaimable(inserts);
                 } else {
                     read_cache.batch_insert(inserts);
@@ -205,6 +213,9 @@ impl PrefetchScheduler {
                 result
             })
             .await;
+        if !warming {
+            read_cache.retain_warmed(&keys, &result.ready_blocks);
+        }
         record_tier_attribution(
             keys.len(),
             hit,

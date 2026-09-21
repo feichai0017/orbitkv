@@ -4,7 +4,8 @@
 
 use std::fmt;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use crate::pinned_pool::{MappedPinnedPtr, PinnedAllocation};
@@ -249,9 +250,68 @@ pub struct SealedBlock {
     /// Per-slot NUMA affinity; always covers every slot (`len == slots.len()`).
     /// Used by the SSD write path and advertised on cross-node transfer.
     slot_numas: Vec<NumaNode>,
+    warmup: OnceLock<Warmup>,
+}
+
+/// Tracks one physical read's pages through the last owner, including leases.
+struct Warmup {
+    bytes: u64,
+    ready_at: Instant,
+    restored: AtomicBool,
+}
+
+impl Warmup {
+    fn finish(&self, outcome: &'static str) {
+        let metrics = crate::metrics::core_metrics();
+        metrics.warmup_pending_bytes.add(-(self.bytes as i64), &[]);
+        metrics.warmup_wait_byte_seconds.add(
+            self.bytes as f64 * self.ready_at.elapsed().as_secs_f64(),
+            &[opentelemetry::KeyValue::new("outcome", outcome)],
+        );
+    }
+}
+
+impl Drop for Warmup {
+    fn drop(&mut self) {
+        if !*self.restored.get_mut() {
+            crate::metrics::core_metrics()
+                .warmup_unused_bytes
+                .add(self.bytes, &[]);
+            self.finish("unused");
+        }
+    }
 }
 
 impl SealedBlock {
+    pub(crate) fn mark_warmed(&self) {
+        self.warmup.get_or_init(|| {
+            let metrics = crate::metrics::core_metrics();
+            metrics.warmup_prepared_bytes.add(self.footprint, &[]);
+            metrics.warmup_pending_bytes.add(self.footprint as i64, &[]);
+            Warmup {
+                bytes: self.footprint,
+                ready_at: Instant::now(),
+                restored: AtomicBool::new(false),
+            }
+        });
+    }
+
+    pub(crate) fn was_warmed(&self) -> bool {
+        self.warmup.get().is_some()
+    }
+
+    /// Credit a page once after a successful GPU transfer, never at lookup.
+    pub(crate) fn mark_warmup_restored(&self) {
+        if let Some(warmup) = self.warmup.get()
+            && !warmup.restored.swap(true, Ordering::Relaxed)
+        {
+            crate::metrics::core_metrics()
+                .warmup_restored_bytes
+                .add(self.footprint, &[]);
+            warmup.finish("restored");
+        }
+    }
+
     pub(crate) fn get_slot(&self, slot_id: usize) -> Option<&RawBlock> {
         self.slots.get(slot_id)
     }
@@ -286,6 +346,7 @@ impl SealedBlock {
             slots: blocks.into_boxed_slice(),
             footprint,
             slot_numas,
+            warmup: OnceLock::new(),
         }
     }
 
@@ -299,6 +360,7 @@ impl SealedBlock {
             slots,
             footprint,
             slot_numas,
+            warmup: OnceLock::new(),
         }
     }
 

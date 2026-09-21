@@ -45,12 +45,19 @@ global and per-instance query budgets. Each warmup class is capped at **one
 quarter** of both budgets. They also have limits of 16 active operations per
 session and 128 globally, within the existing 128/1024 total limits. Byte or
 operation pressure skips the hint immediately; an oversized hint is skipped
-as a whole. These caps reserve accounting headroom, not a bandwidth or latency
+as a whole. A new hint also skips while any foreground query owns preparing,
+ready or restoring bytes. Already-submitted reads still drain; this guard is
+conservative admission, not preemption or a calibrated deadline scheduler.
+These caps reserve accounting headroom, not a bandwidth or latency
 guarantee for foreground reads.
 
 A warmup never returns a hit promise or restore lease. Its reservation ends
 when preparation completes, even if the engine never polls again. Prepared
-pages enter the existing bounded, evictable read cache. They can disappear
+pages enter the existing reclaimable cache class, which pressure evicts before
+retained pages. Warmup hits use a non-mutating peek: they do not refresh existing
+pages' recency or frequency. Foreground demand promotes the matching warmed
+page generation to the retained class; a query/lease alone does not count as
+successful use in the metrics below. They can disappear
 before use. Ordinary admission always revalidates the current hashes, obtains
 an independent lease and retains the normal GPU ownership rules.
 
@@ -69,6 +76,8 @@ pressure controls did not improve throughput and increased SSD reads.
 Normal query/prefetch and restore remain available with warming disabled.
 The explicit `CacheManagerClient.warm_prefix()` API always attempts the supplied
 hint; the environment switch controls automatic engine enqueue hooks only.
+Transport failures in this optional enqueue hint are logged by the adapters
+without raising out of the already-accepted request's queue callback.
 Manager and Python extension must both use channel ABI 5; ABI 4 is not supported.
 
 ## Observing the path
@@ -97,6 +106,43 @@ from preparing/ready/restoring demand. A sampled peak is a lower bound. Existing
 cache-tier query counters include warmup probes; use actual SSD/TE/H2D byte
 counters to establish transfers rather than interpreting probe counts as
 request hits.
+
+## Measuring whether preparation was useful
+
+The following counters follow the actual `SealedBlock` allocation, not a hash
+or request ID. The owner that starts a shared read determines its origin:
+joining a demand-started read or hitting existing DRAM does not create warmup
+bytes. Joining a warmup-started read does not count them again. Rereading an
+evicted key creates a new cohort.
+
+| Metric | Meaning |
+| --- | --- |
+| `orbitkv_warmup_prepared_bytes_total` | Page footprints returned by warmup-started backing reads |
+| `orbitkv_warmup_restored_bytes_total` | Those footprints contributing to at least one successfully completed local H2D, once per physical page |
+| `orbitkv_warmup_unused_bytes_total` | Those footprints released by the last owner before any successful local H2D |
+| `orbitkv_warmup_pending_bytes` | Live footprints still awaiting a successful local H2D; includes cache, query and transfer owners |
+| `orbitkv_warmup_wait_byte_seconds_total{outcome="restored\|unused"}` | Footprint times time from host readiness to first successful H2D or final unused release |
+| `orbitkv_warmup_foreground_skips_total` | Hints rejected while foreground query ownership is active |
+
+At quiescence, prepared bytes equal restored + unused + pending bytes. Query
+success, lease creation and cancellation do not resolve a pending page. The
+last-reference rule prevents an eviction from classifying a still-running
+transfer as unused. Multiple layer/rank copies credit a page only once, after
+GPU synchronization succeeds.
+
+These are **page-footprint** counters. A partial-layer/rank transfer credits
+the contributing page footprint; use `orbitkv_load_bytes_total` for actual H2D
+bytes. A successful transfer does not prove the engine later consumed it, or
+that warming saved latency. Remote serving alone is not local H2D use. Physical
+pool usage can also include allocation padding and shared slab retention.
+
+Byte-seconds settle only when an outcome occurs; live intervals are excluded.
+Benchmark windows retain starting/ending pending bytes and a sampled peak, so
+live pages and carry-in are visible instead of being called waste. A window's
+restored/prepared ratio is not a cohort success rate when it includes carry-in.
+The operation's quarter-budget limit ends at read completion; it does **not**
+cap all prepared resident pages. Their replacement priority and the pinned
+pool's physical limit govern subsequent retention.
 
 ## Initial pressure controls
 
@@ -174,7 +220,7 @@ HBM and host cache. Compare `--queue-warmup on` and `off` at equal capacities;
 benefit, and an overloaded backend may perform extra reads.
 
 P3 remains open for calibrated priority/deadline hints, per-device/staging
-reservations, useful-prefetch-byte and unused-retained-byte-second accounting,
+reservations, engine-consumption-level usefulness and admission calibration,
 and delayed-read/reordering/cancellation qualification under sustained serving.
 The fixed warmup share is an initial admission policy, not a cost-aware scheduler.
 Restore-versus-recompute decisions remain P4. See the

@@ -123,14 +123,26 @@ impl ReadCache {
     }
 
     /// Scan cache for a prefix of `keys`, stopping at the first miss.
-    pub(super) fn get_prefix_blocks(&self, keys: &[StateKey]) -> (usize, Vec<Arc<SealedBlock>>) {
+    pub(super) fn get_prefix_blocks(
+        &self,
+        keys: &[StateKey],
+        warming: bool,
+    ) -> (usize, Vec<Arc<SealedBlock>>) {
         let mut hit = 0usize;
         let mut blocks = Vec::with_capacity(keys.len());
         {
             let mut inner = self.inner.lock();
             for key in keys {
-                if let Some(block) = inner.cache.get(key) {
-                    refresh_recency(&mut inner, key);
+                let block = if warming {
+                    inner.cache.peek(key)
+                } else {
+                    inner.cache.get(key)
+                };
+                if let Some(block) = block {
+                    if !warming {
+                        retain_warmed(&mut inner, key, &block);
+                        refresh_recency(&mut inner, key);
+                    }
                     hit += 1;
                     blocks.push(block);
                 } else {
@@ -139,6 +151,19 @@ impl ReadCache {
             }
         }
         (hit, blocks)
+    }
+
+    pub(super) fn retain_warmed(&self, keys: &[StateKey], blocks: &[Arc<SealedBlock>]) {
+        let mut inner = self.inner.lock();
+        for (key, block) in keys.iter().zip(blocks) {
+            if inner
+                .cache
+                .peek(key)
+                .is_some_and(|resident| Arc::ptr_eq(&resident, block))
+            {
+                retain_warmed(&mut inner, key, block);
+            }
+        }
     }
 
     pub(super) fn batch_insert(&self, blocks: Vec<(StateKey, Arc<SealedBlock>)>) {
@@ -321,6 +346,9 @@ fn insert_block(
     block: Arc<SealedBlock>,
     class: ResidentClass,
 ) -> CacheInsertOutcome {
+    if block.was_warmed() && inner.cache.contains_key(&key) {
+        return CacheInsertOutcome::AlreadyExists;
+    }
     let footprint_bytes = block.memory_footprint();
     let outcome = inner.cache.insert(key.clone(), block);
     match outcome {
@@ -354,6 +382,19 @@ fn class_lru(
     match class {
         ResidentClass::Reclaimable => &mut inner.reclaimable,
         ResidentClass::Retained => &mut inner.retained,
+    }
+}
+
+fn retain_warmed(inner: &mut ReadCacheInner, key: &StateKey, block: &SealedBlock) {
+    if block.was_warmed()
+        && let Some(metadata) = inner.reclaimable.remove(key)
+    {
+        inner.retained.insert(key.clone(), metadata);
+        let metrics = core_metrics();
+        metrics
+            .cache_resident_blocks
+            .add(-1, &*CACHE_CLASS_RECLAIMABLE);
+        metrics.cache_resident_blocks.add(1, &*CACHE_CLASS_RETAINED);
     }
 }
 
