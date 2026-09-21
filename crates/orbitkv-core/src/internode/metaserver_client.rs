@@ -66,6 +66,7 @@ impl MetaServerClient {
         metaserver_addr: String,
         advertise_addr: String,
         read_cache: Weak<ReadCache>,
+        node_id: Uuid,
     ) -> Result<Self, String> {
         let endpoint = Endpoint::from_shared(metaserver_addr)
             .map_err(|e| e.to_string())?
@@ -81,7 +82,6 @@ impl MetaServerClient {
         let control = Arc::new(Control::default());
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (progress_tx, progress) = watch::channel(Acknowledgement::default());
-        let node_id = Uuid::new_v4();
         let worker = InventorySync {
             client: client.clone(),
             node: advertise_addr.clone(),

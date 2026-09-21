@@ -65,6 +65,8 @@ pub struct StorageConfig {
     /// This node's routable address (from --addr) used for MetaServer registration and as
     /// requester_id in transfer locks. Must be set when metaserver_addr is set.
     pub advertise_addr: Option<String>,
+    /// Optional leased membership. Its incarnation also identifies this inventory.
+    pub membership: Option<Arc<crate::MembershipView>>,
     /// Byte limit for retained residency changes used by directory synchronization.
     pub inventory_journal_bytes: usize,
     /// Number of shards for the pinned memory pool (reduces allocator lock contention).
@@ -85,6 +87,7 @@ impl Default for StorageConfig {
             transfer_lock_timeout: Duration::from_secs(120),
             metaserver_addr: None,
             advertise_addr: None,
+            membership: None,
             inventory_journal_bytes: inventory::DEFAULT_INVENTORY_JOURNAL_BYTES,
             pool_shards: 1,
         }
@@ -106,23 +109,26 @@ pub(crate) struct StorageEngine {
     mooncake_transport: Option<Arc<MooncakeTransport>>,
     blockwise_alloc: bool,
     metaserver_client: Option<Arc<MetaServerClient>>,
+    membership: Option<Arc<crate::MembershipView>>,
     transfer_lock: Arc<transfer_lock::TransferLockManager>,
 }
 
 impl StorageEngine {
-    #[cfg_attr(
-        not(feature = "mooncake"),
-        allow(
-            clippy::unnecessary_wraps,
-            reason = "the public construction contract is fallible when Mooncake is enabled"
-        )
-    )]
     pub(crate) fn new_with_config(
         capacity_bytes: usize,
         use_hugepages: bool,
         config: StorageConfig,
         numa_nodes: &[NumaNode],
     ) -> Result<Arc<Self>, String> {
+        if let Some(view) = &config.membership
+            && (config.metaserver_addr.is_none()
+                || config.advertise_addr.as_deref() != Some(view.owner().endpoint.as_str()))
+        {
+            return Err(
+                "membership requires directory configuration and a matching advertised endpoint"
+                    .into(),
+            );
+        }
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
@@ -186,8 +192,16 @@ impl StorageEngine {
                     "MetaServer client enabled: metaserver={}, advertise={}, journal_bytes={}",
                     addr, advertise, config.inventory_journal_bytes
                 );
-                MetaServerClient::new(addr.clone(), advertise, Arc::downgrade(&read_cache))
-                    .map(Arc::new)
+                MetaServerClient::new(
+                    addr.clone(),
+                    advertise,
+                    Arc::downgrade(&read_cache),
+                    config
+                        .membership
+                        .as_ref()
+                        .map_or_else(uuid::Uuid::new_v4, |view| view.owner().incarnation),
+                )
+                .map(Arc::new)
             })
             .transpose()?;
 
@@ -241,6 +255,7 @@ impl StorageEngine {
                     Arc::clone(transfer),
                     allocate_fn.clone(),
                     advertise,
+                    config.membership.clone(),
                 ))))
             });
             #[cfg(not(feature = "mooncake"))]
@@ -262,6 +277,7 @@ impl StorageEngine {
                 mooncake_transport,
                 blockwise_alloc,
                 metaserver_client,
+                membership: config.membership.clone(),
                 transfer_lock,
             }
         });
@@ -557,7 +573,12 @@ impl StorageEngine {
         requester: &str,
         records: &[orbitkv_state::InventoryRecord],
     ) -> Option<TransferAuthorization> {
-        if self.metaserver_client.as_ref()?.node_id != owner {
+        if self.metaserver_client.as_ref()?.node_id != owner
+            || self
+                .membership
+                .as_ref()
+                .is_some_and(|view| !view.permits(view.owner()))
+        {
             return None;
         }
         let found = self.read_cache.pin_residencies(records)?;

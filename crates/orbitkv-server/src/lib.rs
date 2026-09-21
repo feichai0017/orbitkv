@@ -1,5 +1,6 @@
 mod cache;
 mod check_cuda_version;
+mod cluster;
 mod endpoint;
 pub mod http_server;
 pub mod metric;
@@ -168,6 +169,23 @@ pub struct Cli {
     /// When set, sealed block hashes are automatically registered with the MetaServer.
     #[arg(long)]
     pub metaserver_addr: Option<String>,
+
+    /// etcd endpoints for leased Manager membership (comma-separated).
+    /// The current discovery stage also requires --metaserver-addr.
+    #[arg(long, value_delimiter = ',', requires_all = ["node_id", "metaserver_addr"])]
+    pub etcd_endpoints: Vec<String>,
+
+    /// Stable, unique identity of this Manager across process restarts.
+    #[arg(long, requires = "etcd_endpoints", value_parser = cluster::parse_label)]
+    pub node_id: Option<String>,
+
+    /// Isolates member registrations and persistent node epochs in etcd.
+    #[arg(long, default_value = "orbitkv", value_parser = cluster::parse_label)]
+    pub cluster_name: String,
+
+    /// Lease TTL; new remote operations stop after half the acknowledged TTL.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(i64).range(12..=3600))]
+    pub membership_ttl_secs: i64,
 
     /// Retained residency journal bytes; overflow triggers an inventory snapshot.
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_INVENTORY_JOURNAL_BYTES)]
@@ -564,6 +582,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     };
 
     let peer_control_enabled = cli.metaserver_addr.is_some();
+    let membership_view = (!cli.etcd_endpoints.is_empty()).then(|| {
+        Arc::new(orbitkv_core::MembershipView::new(
+            orbitkv_state::CacheOwner {
+                endpoint: cli.addr.to_string(),
+                incarnation: uuid::Uuid::new_v4(),
+            },
+        ))
+    });
     let storage_config = orbitkv_core::StorageConfig {
         query_budget_bytes: cli.query_budget,
         query_instance_budget_bytes: cli.query_instance_budget,
@@ -576,6 +602,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),
         metaserver_addr: cli.metaserver_addr.clone(),
         advertise_addr,
+        membership: membership_view.clone(),
         inventory_journal_bytes: cli.inventory_journal_bytes,
         pool_shards: cli.pool_shards,
     };
@@ -642,6 +669,21 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     };
     let runtime_handle = runtime.handle().clone();
     runtime.block_on(async move {
+        let membership = match membership_view {
+            Some(view) => Some(
+                cluster::Membership::join(
+                    &cli.etcd_endpoints,
+                    &cli.cluster_name,
+                    cli.node_id
+                        .as_deref()
+                        .ok_or("--node-id is required with etcd")?,
+                    cli.membership_ttl_secs,
+                    view,
+                )
+                .await?,
+            ),
+            None => None,
+        };
         // Create OrbitKVEngine inside tokio runtime context (needed for SSD cache tokio::spawn)
         let engine = Arc::new(OrbitKVEngine::new_with_config(
             cli.pool_size,
@@ -757,6 +799,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
         info!("Cache Manager stopped");
         channel_endpoint.stop();
+        if let Some(membership) = membership {
+            membership.shutdown().await;
+        }
 
         // Stop HTTP server
         shutdown.notify_waiters();

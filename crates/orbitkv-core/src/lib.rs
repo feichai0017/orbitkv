@@ -37,7 +37,7 @@ pub use backing::{
 pub use block::{BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, SealedBlock, StateKey};
 use instance::GpuRegistration;
 pub use instance::{GpuContext, InstanceContext};
-pub use internode::P2pTransferService;
+pub use internode::{MembershipView, P2pTransferService};
 use layout::KVCacheLayout;
 pub use lease::QueryLeaseId;
 pub use orbitkv_common::NumaNode;

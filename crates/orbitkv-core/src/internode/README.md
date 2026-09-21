@@ -5,6 +5,11 @@ heartbeat and bounded `LocateBlocks` queries through the positive candidate
 index in `discovery.rs`. `p2p_service.rs` authorizes and pins
 source blocks for Mooncake and releases completed transfer holds.
 
+`membership.rs` owns the cached member set and conservative local registration
+deadline. The server's `cluster/` adapter performs etcd transactions, keepalives
+and Watch repair. Core uses the view for source admission and candidate filtering
+without importing an etcd client or making coordinator RPCs on the request path.
+
 The engine channel remains UDS/iceoryx2. These network services run only when
 `--metaserver-addr` enables distributed discovery and transfer.
 

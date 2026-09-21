@@ -3,7 +3,7 @@
 | Mode | Processes | Status |
 | --- | --- | --- |
 | Single-node vLLM or SGLang cache | Engine + one local Cache Manager | Single-rank DRAM and forced-SSD recovery validated on both; concurrent and multi-rank workloads need separate qualification |
-| Shared cache across nodes | One Cache Manager per host + current MetaServer | Experimental; directory is not HA |
+| Shared cache across nodes | One Cache Manager per host + current MetaServer; optional etcd membership | Experimental; leased member admission is implemented, directory is not HA |
 | vLLM P/D through OrbitKV `PdConnector` | Prefill, decode, P/D proxy; Mooncake transfers KV | Experimental; does not need Cache Manager or MetaServer for the handoff |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
 

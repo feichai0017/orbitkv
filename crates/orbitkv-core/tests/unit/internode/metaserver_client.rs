@@ -163,6 +163,7 @@ fn client(server: &TestServer, cache: &Arc<ReadCache>) -> MetaServerClient {
         format!("http://{}", server.addr),
         "owner:50055".into(),
         Arc::downgrade(cache),
+        Uuid::new_v4(),
     )
     .unwrap()
 }
@@ -308,6 +309,7 @@ async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_e
             format!("http://{}", server.addr),
             "requester:50055".into(),
             Arc::downgrade(&destination),
+            Uuid::new_v4(),
         )
         .unwrap(),
     );
