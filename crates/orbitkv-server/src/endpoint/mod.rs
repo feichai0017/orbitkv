@@ -267,7 +267,7 @@ fn dispatch(
         CommandCode::Shutdown => {
             *request_shutdown = true;
         }
-        CommandCode::QueryBundle => {
+        CommandCode::QueryBundle | CommandCode::CancelQuery => {
             response = dispatch_query(
                 command,
                 bootstrap,
@@ -611,6 +611,25 @@ fn dispatch_query(
         Ok(payload) => payload,
         Err(response) => return response,
     };
+    if command.code == CommandCode::CancelQuery {
+        let request = match orbitkv_channel::CancelQueryRequest::decode(&payload) {
+            Ok(request) => request,
+            Err(error) => return error_response(response, StatusCode::Invalid, &error),
+        };
+        queries.cancel(
+            command.arg0,
+            &request.instance_id,
+            &request.request_id,
+            request.group_id,
+        );
+        return match bootstrap.arena().write_response(command.descriptor, &[]) {
+            Ok(descriptor) => {
+                response.descriptor = descriptor;
+                response
+            }
+            Err(error) => error_response(response, arena_error_status(&error), &error),
+        };
+    }
     let request = match QueryBundleRequest::decode(&payload) {
         Ok(request) => request,
         Err(error) => return error_response(response, StatusCode::Invalid, &error),

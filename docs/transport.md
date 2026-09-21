@@ -90,9 +90,13 @@ host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
 returns `Loading`. Polling the same instance/request/group retrieves its result;
-changing arguments while pending is rejected. Outstanding queries are bounded
-to 128 per session and expire after 60 seconds. Dropping an undelivered result
-releases its lease. Publish's reply is sent only after D2H completes, when the
+changing arguments while pending is rejected. Channel ABI 3 adds `CancelQuery`
+for a session/instance/request/group. Outstanding queries are bounded to 128 per
+session and 1024 globally and expire after 60 seconds. Cancellation, disconnect,
+and expiration revoke result ownership; submitted backing reads drain while
+retaining their operation permits. Their completion admits or discards cache
+blocks and drops an undelivered lease without another poll. An expired
+operation leaves a bounded tombstone so a late poll reports timeout. Publish's reply is sent only after D2H completes, when the
 framework may reuse its source pages. This removes the shared dispatcher wait
 without making the caller's save completion asynchronous. New measurements of
 this revision are still required; the latency table below predates it.

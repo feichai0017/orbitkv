@@ -1,6 +1,7 @@
 # State demand and transfer planning
 
-Status: design proposal, not an implemented planner. The existing cache API,
+Status: readiness and query ownership foundations implemented; predictive
+planning remains a design proposal. The existing cache API,
 engine-owned HBM, and one Cache Manager per host remain the foundation.
 The [SSD experiment](ssd-performance.md) supplies initial
 measurements; predictive policies require separate evaluation.
@@ -35,15 +36,16 @@ supplies valid destination pages. Publication and preemption callbacks supply
 source lifetime evidence. This supports asynchronous lookup without blocking
 the scheduler, but does not expose the entire future batch schedule.
 
-SGLang 0.5.20's `UnifiedCacheLinker.lookup` returns a list of restorable prefix
-boundaries. OrbitKV currently maps `QueryLoading` to an empty list. The caller
-can proceed with recomputation; an SSD read started by that lookup is not proof
-that the request used it. A common cache transport has not removed this
-scheduler-contract difference. The SSD experiment observed this on all 15
-SGLang requests after DRAM eviction. A production solution needs
-early request observation and a pending/readiness callback, or a source lease
-that guarantees the future restore can succeed. Do not block the scheduling
-thread in an unbounded lookup loop or label pending bytes as resident.
+SGLang 0.5.20's `UnifiedCacheLinker.lookup` reports restorable boundaries;
+it has no pending result. OrbitKV now uses SGLang's general plugin
+`HookRegistry` around `PrefillAdder.add_one_req`: an unresolved query leaves
+that request in the waiting queue while other requests can be admitted. The
+next prefix match polls the same query and retains its ready lease until load
+or cancellation. Attention ranks reduce the wait/expiration decision together.
+A five-second waiting budget cancels preparation and permits recomputation;
+it does not cancel a submitted GPU restore. This budget is a fixed guard,
+not a measured cost policy. No installed engine files are changed and HiCache
+storage is not enabled. Multi-rank serving still needs separate qualification.
 
 Both adapters currently acknowledge whole restores. SGLang's eight-request
 submission window does not establish layer readiness; vLLM's layer callback is
@@ -278,28 +280,42 @@ prefetch and admission-time `check_prefetch_progress` are guarded by
 linker and rejects the separate hierarchical-cache mode. Merely overriding a
 cache method does not make those guarded scheduler calls run.
 
-Before claiming an adapter-only fix, demonstrate a nonblocking admission path
-on the supported release: observe the request, start lookup, keep only that
-request waiting, process completions, retry its prefix match, and then allocate
-destinations. Other requests must continue executing. Prefer an explicit
-external-cache prepare/poll/cancel lifecycle exposed by the engine.
+The implemented admission hook is the release's general plugin
+`HookRegistry` around `sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req`.
+It returns `CONTINUE` without adding the pending request to the batch. The
+scheduler retains that request and can admit the next one. This is a pinned
+engine integration: hook signatures and serving behavior must be checked on
+an engine upgrade. Controlled-completion integration tests exercise local
+waiting, other-request progress, changed keys, cancellation, and rank decisions.
 
-If the release has no usable extension point, the deliverable is a minimal
-upstream generic callback change and a declared release dependency. Do not
-silently patch installed engine files, impersonate HiCache storage, or return
-unreserved disk candidates as hits. Another possible approach is a reserved
-backing-source lease usable by the existing load callback; it requires SSD
-extent lifetime and staging-capacity guarantees and is a separate design
-decision, not a shortcut in this plan. SGLang SSD support stays unqualified
-until one supported path passes P2. Core ownership work in P1 can proceed.
+The single-rank serving gate passes DRAM and forced-SSD recovery across engine
+restart, with cached tokens, positive GPU-load bytes, and equal deterministic
+outputs. Real-buffer integration tests also cancel or disconnect during SSD
+reads and verify unconsumed results leave no pinned blocks. Other-request
+progress and delayed completion are covered by controlled admission tests;
+concurrent serving and multi-rank admission still need separate qualification.
 
 ### P1: make pending work an owned operation
 
-Today, `orbitkv-server/src/endpoint/pending.rs` scopes pending replies by
-session, instance, request, and group. The underlying
-`orbitkv-core/src/storage/prefetch.rs` tracks prefetches by request string and
-collects their result when polled. Both levels must agree on operation identity
-and terminal ownership.
+Implemented foundation: `orbitkv-server/src/endpoint/pending.rs` is now the
+only query polling registry, scoped by authenticated session, instance,
+request, and group with immutable query arguments. The core returns a terminal
+`QueryResult` from its future; its request-string prefetch table and stale
+prefetch GC are removed. Completion inserts/discards fetched data without
+requiring another client poll.
+
+`CancelQuery` drops waiting interest. In-flight work drains on Tokio and drops
+an undelivered lease on completion. A cancelled read continues occupying its
+operation permit until completion; limits are 128 per session and 1024 globally.
+Capacity exhaustion reports retryable `Loading` without retaining additional
+work, so queue pressure does not terminate the engine.
+Expired replies drop resources while retaining a bounded tombstone until poll,
+cancel, or session teardown. Both adapters cancel superseded queries. Channel
+ABI 3 requires rebuilding the manager and client together.
+
+The larger demand contract below remains planned: explicit operation/revision
+tickets, byte-based scheduling limits beyond the existing pool and SSD slot
+budgets, and exhaustive delivery-loss/restart fault qualification.
 
 Introduce one semantic operation identity bound to the Manager session epoch,
 registered instance, request revision, model/storage identity, and group.
@@ -330,6 +346,13 @@ counts and retained bytes return to baseline without relying on the periodic
 stale-entry sweep. Fault tests must retain pages when DMA completion is unknown.
 
 ### P2: qualify actual SGLang SSD recovery
+
+The single-rank serving gate and the
+[Qwen3-8B SSD follow-up](ssd-performance.md#query-readiness-follow-up) now pass:
+both engines consume all 15 forced-SSD restores with matching SSD-read and
+GPU-load bytes. Cold and DRAM controls are retained, including the observed
+vLLM 1K storage-stage latency increase. Concurrent and multi-rank serving remain
+unqualified; controlled admission tests only cover the scheduling decisions.
 
 Connect the P0 admission lifecycle to P1. A ready, leased result must be consumed
 by the request's subsequent prefix match and restore. A verified miss, bounded

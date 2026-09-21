@@ -78,17 +78,16 @@ Gate:
 - adapter code contains no tier-selection or bundle-completeness policy;
 - load/save throughput is not regressed against the M0 baseline.
 
-The [SSD measurements](ssd-performance.md) exposed an immediate prerequisite:
-SGLang must observe pending-query readiness before it can use asynchronously
-fetched state. Then add bounded request-driven DRAM warming, generation-safe
-per-layer readiness, and measured copy/compute overlap. The
-[state demand and transfer proposal](state-planning.md) defines the signals,
-resource limits, and [implementation stages](state-planning.md#implementation-sequence).
-The first gate proves a supported SGLang admission hook; its current external
-linker does not expose a pending lookup result. Use the
-[single-node measurements and gates](single-node-performance.md) to compare
-against each engine's native CPU cache, LMCache, and FlexKV before expanding
-distributed scheduling.
+The [SSD measurements](ssd-performance.md) exposed a missing SGLang readiness
+boundary. The pinned-release plugin now supplies a nonblocking admission hook,
+and core queries complete and release abandoned results without further polling.
+Single-rank DRAM/SSD serving recovery has dedicated GPU gates. Next add explicit
+demand/revision tickets, bounded request-driven DRAM warming, and measured
+restore-versus-recompute decisions. Generation-safe layer readiness precedes
+copy/compute overlap. The [implementation stages](state-planning.md#implementation-sequence)
+retain the larger ownership/fault-qualification requirements and the later
+Dynamo routing integration. Multi-rank serving and concurrent goodput remain
+separate qualification work.
 
 ## M2.5: recoverable multi-node cache
 

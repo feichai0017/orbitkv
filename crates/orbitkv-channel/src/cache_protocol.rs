@@ -2,6 +2,7 @@ use thiserror::Error;
 
 const QUERY_REQUEST_MAGIC: u32 = 0x4f52_5151; // ORQQ
 const QUERY_RESPONSE_MAGIC: u32 = 0x4f52_5152; // ORQR
+const CANCEL_QUERY_MAGIC: u32 = 0x4f52_5143; // ORQC
 const RELEASE_REQUEST_MAGIC: u32 = 0x4f52_4c51; // ORLQ
 const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
@@ -14,6 +15,47 @@ const RELEASE_HEADER_BYTES: usize = 12;
 const PUBLISH_HEADER_BYTES: usize = 28;
 const RESTORE_HEADER_BYTES: usize = 28;
 const RESTORE_RESPONSE_BYTES: usize = 24;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CancelQueryRequest {
+    pub instance_id: String,
+    pub request_id: String,
+    pub group_id: u32,
+}
+
+impl CancelQueryRequest {
+    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+        let mut bytes = Vec::new();
+        push_u32(&mut bytes, CANCEL_QUERY_MAGIC);
+        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, 0);
+        push_u32(&mut bytes, self.group_id);
+        push_bytes(&mut bytes, self.instance_id.as_bytes(), "instance_id")?;
+        push_bytes(&mut bytes, self.request_id.as_bytes(), "request_id")?;
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+        let mut decoder = Decoder::new(bytes);
+        decoder.expect_magic(CANCEL_QUERY_MAGIC)?;
+        decoder.expect_version()?;
+        let flags = decoder.u16()?;
+        if flags != 0 {
+            return Err(QueryCodecError::InvalidFlags(flags));
+        }
+        let group_id = decoder.u32()?;
+        let length = decoder.usize_u32()?;
+        let instance_id = decoder.string(length, "instance_id")?;
+        let length = decoder.usize_u32()?;
+        let request_id = decoder.string(length, "request_id")?;
+        decoder.finish()?;
+        Ok(Self {
+            instance_id,
+            request_id,
+            group_id,
+        })
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RestoreLease {
@@ -720,6 +762,22 @@ fn push_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancel_query_preserves_scope_and_rejects_malformed_frames() {
+        let request = CancelQueryRequest {
+            instance_id: "model/1".into(),
+            request_id: "req/1".into(),
+            group_id: 7,
+        };
+        let mut bytes = request.encode().unwrap();
+        assert_eq!(CancelQueryRequest::decode(&bytes).unwrap(), request);
+        for end in 0..bytes.len() {
+            assert!(CancelQueryRequest::decode(&bytes[..end]).is_err());
+        }
+        bytes.push(0);
+        assert!(CancelQueryRequest::decode(&bytes).is_err());
+    }
 
     #[test]
     fn request_round_trip_preserves_variable_hashes() {

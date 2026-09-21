@@ -158,7 +158,6 @@ P2P-related Prometheus metrics (on `:9091/metrics` by default):
 | `orbitkv_remote_fetch_plan_completed_segments` | Histogram | Completed segment count before a plan stops |
 | `orbitkv_transfer_lock_active` | UpDownCounter | Currently held transfer locks |
 | `orbitkv_transfer_lock_timeouts_total` | Counter | Transfer lock timeout events |
-| `orbitkv_prefetch_stale_gc_total` | Counter | Stale prefetch active entries removed by background GC |
 
 ## Troubleshooting
 

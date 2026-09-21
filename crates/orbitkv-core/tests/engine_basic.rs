@@ -296,9 +296,7 @@ async fn shared_manager_reuses_only_matching_model_and_storage_identity() {
             .count_prefix_hit_blocks_with_prefetch(id, id, &hashes, false)
             .await
             .unwrap();
-        let orbitkv_core::PrefetchStatus::Ready { blocks, .. } = result else {
-            panic!("resident query unexpectedly loading for {id}");
-        };
+        let orbitkv_core::QueryResult { blocks, .. } = result;
         assert_eq!(blocks.len(), expected, "cache identity case {id}");
     }
 }

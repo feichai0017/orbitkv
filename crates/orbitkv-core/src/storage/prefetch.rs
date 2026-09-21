@@ -1,18 +1,16 @@
-// Per-request prefetch state machine. A single Mutex is sufficient because
-// prefetch operations are per-query (low frequency, never a bottleneck).
+//! Fetch backing blocks in the caller-owned query future.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use log::{info, warn};
+use log::warn;
 use parking_lot::Mutex;
-use tokio::task::JoinHandle;
 
 #[cfg(feature = "mooncake")]
 use crate::backing::MooncakeFetchStore;
 use crate::backing::{PrefetchResult, SsdBackingStore};
-use crate::block::{PrefetchStatus, SealedBlock, StateKey};
+use crate::block::{QueryResult, SealedBlock, StateKey};
 use crate::internode::MetaServerClient;
 use crate::metrics::core_metrics;
 
@@ -54,10 +52,8 @@ impl RemoteFetch {
             .fetch_plan(&plan, req_id, namespace, remaining_hashes)
             .await;
         if require_full_prefix && blocks.len() != found {
-            // One planned segment served fewer blocks than the MetaServer
-            // promised (stale advertisement or failed fetch). Keep the partial
-            // result so poll_existing blacklists remote fetch for this request
-            // of the wait loop retrying the same fetch until timeout.
+            // Complete this query with the partial result; do not retry a
+            // stale advertisement throughout the producer-wait deadline.
             warn!(
                 "Mooncake fetch returned fewer blocks than planned: req_id={} returned={} planned={}",
                 req_id,
@@ -97,36 +93,11 @@ impl PrefetchSource {
     }
 }
 
-struct PrefetchEntry {
-    handle: JoinHandle<PrefetchTaskResult>,
-    started_at: Instant,
-}
-
 struct PrefetchTaskResult {
     source: Option<PrefetchSource>,
-    found: usize,
     cache_inserts: PrefetchResult,
     ready_blocks: Vec<Arc<SealedBlock>>,
     missing: usize,
-}
-
-struct PrefixScan<'a> {
-    req_id: &'a str,
-    namespace: &'a str,
-    hashes: &'a [Vec<u8>],
-    emit_tier_metrics: bool,
-    wait_for_full_prefix: bool,
-}
-
-struct PrefetchStart<'a> {
-    req_id: &'a str,
-    namespace: &'a str,
-    remaining: &'a [StateKey],
-    prefix_blocks: Vec<Arc<SealedBlock>>,
-    total: usize,
-    hit: usize,
-    emit_tier_metrics: bool,
-    wait_for_full_prefix: bool,
 }
 
 struct PrefetchTaskDeps {
@@ -143,24 +114,13 @@ struct PrefetchTaskInput {
     prefix_blocks: Vec<Arc<SealedBlock>>,
     total: usize,
     hit: usize,
-    emit_tier_metrics: bool,
+
     wait_for_full_prefix: bool,
 }
 
+#[derive(Default)]
 struct PrefetchState {
-    active: HashMap<String, PrefetchEntry>,
-    /// Reserved SSD prefetch budget for active background tasks.
     reserved_ssd_prefetch_blocks: usize,
-    /// req_ids where the advertised remote owner served fewer blocks than the
-    /// MetaServer promised (stale advertisement or failed fetch). Prevents
-    /// re-triggering Mooncake on every subsequent poll for the same request.
-    failed_remote: HashMap<String, Instant>,
-}
-
-impl PrefetchState {
-    fn remove_entry(&mut self, req_id: &str) -> Option<PrefetchEntry> {
-        self.active.remove(req_id)
-    }
 }
 
 struct SsdPrefetchReservation {
@@ -193,11 +153,7 @@ impl PrefetchScheduler {
         max_prefetch_blocks: usize,
     ) -> Self {
         Self {
-            state: Arc::new(Mutex::new(PrefetchState {
-                active: HashMap::new(),
-                reserved_ssd_prefetch_blocks: 0,
-                failed_remote: HashMap::new(),
-            })),
+            state: Arc::new(Mutex::new(PrefetchState::default())),
             ssd_store,
             remote_fetch,
             metaserver_client,
@@ -212,80 +168,41 @@ impl PrefetchScheduler {
         namespace: &str,
         hashes: &[Vec<u8>],
         wait_for_full_prefix: bool,
-    ) -> PrefetchStatus {
-        // Default: this call may be the first decision and should attribute.
-        match self.poll_existing(read_cache, req_id).await {
-            PollResult::NoActivePrefetch => {}
-            PollResult::StillLoading => {
-                return PrefetchStatus::Loading;
-            }
-            PollResult::Ready(status) => return status,
+    ) -> QueryResult {
+        let keys: Vec<StateKey> = hashes
+            .iter()
+            .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
+            .collect();
+        let (hit, prefix_blocks) = read_cache.get_prefix_blocks(&keys);
+        if hit == keys.len() || (self.remote_fetch.is_none() && self.ssd_store.is_none()) {
+            record_tier_attribution(keys.len(), hit, 0, None);
+            return QueryResult {
+                blocks: prefix_blocks,
+                missing: keys.len() - hit,
+            };
         }
 
-        self.full_prefix_scan(
-            read_cache,
-            PrefixScan {
-                req_id,
-                namespace,
-                hashes,
-                emit_tier_metrics: true,
+        // The endpoint owns polling, identity and cancellation. No request-ID
+        // registry is needed here; each future owns its source blocks.
+        let result = run_prefetch_task(
+            PrefetchTaskDeps {
+                remote_fetch: self.remote_fetch.clone(),
+                ssd_store: self.ssd_store.clone(),
+                prefetch_state: Arc::clone(&self.state),
+                max_prefetch_blocks: self.max_prefetch_blocks,
+            },
+            PrefetchTaskInput {
+                req_id: req_id.to_string(),
+                namespace: namespace.to_string(),
+                remaining_keys: keys[hit..].to_vec(),
+                prefix_blocks,
+                total: keys.len(),
+                hit,
+
                 wait_for_full_prefix,
             },
         )
-        .await
-    }
-
-    async fn poll_existing(&self, read_cache: &ReadCache, req_id: &str) -> PollResult {
-        let entry = {
-            let mut state = self.state.lock();
-            let Some(entry) = state.active.get(req_id) else {
-                return PollResult::NoActivePrefetch;
-            };
-            if !entry.handle.is_finished() {
-                return PollResult::StillLoading;
-            }
-            state
-                .remove_entry(req_id)
-                .expect("active entry must exist after readiness check")
-        };
-
-        let result = match entry.handle.await {
-            Ok(result) => result,
-            Err(err) => {
-                warn!("Prefetch task failed for req_id={}: {}", req_id, err);
-                PrefetchTaskResult {
-                    source: None,
-                    found: 0,
-                    cache_inserts: Vec::new(),
-                    ready_blocks: Vec::new(),
-                    missing: 0,
-                }
-            }
-        };
-
-        // A remote node can return fewer blocks than MetaServer promised
-        // (likely evicted). Don't re-trigger Mooncake on subsequent scans.
-        if result.source == Some(PrefetchSource::Remote)
-            && result.cache_inserts.len() < result.found
-            && result.found > 0
-        {
-            self.state
-                .lock()
-                .failed_remote
-                .insert(req_id.to_string(), Instant::now());
-            info!(
-                "Mooncake prefetch returned fewer blocks than expected: req_id={} returned={} expected={}",
-                req_id,
-                result.cache_inserts.len(),
-                result.found
-            );
-        }
-
-        // Remotely fetched blocks that survive cache admission are now resident on
-        // this node. Re-advertise only those resident blocks to the MetaServer
-        // so peers can discover and fetch from here too. SSD prefetch is
-        // skipped: those blocks were already registered by this node's own save
-        // path, and eviction explicitly unregisters them.
+        .await;
         let remote_registration = if result.source == Some(PrefetchSource::Remote) {
             let resident_keys = read_cache.batch_insert_resident_keys(result.cache_inserts);
             remote_registration_from_resident_keys(result.source, &resident_keys)
@@ -293,178 +210,26 @@ impl PrefetchScheduler {
             read_cache.batch_insert(result.cache_inserts);
             None
         };
-
         if let Some(client) = &self.metaserver_client
             && let Some((namespace, hashes)) = remote_registration
         {
             client.try_register_namespace(namespace, hashes);
         }
-
-        PollResult::Ready(PrefetchStatus::Ready {
+        QueryResult {
             blocks: result.ready_blocks,
             missing: result.missing,
-        })
-    }
-
-    async fn full_prefix_scan(
-        &self,
-        read_cache: &ReadCache,
-        scan: PrefixScan<'_>,
-    ) -> PrefetchStatus {
-        let total_start = Instant::now();
-
-        let key_build_start = Instant::now();
-        let keys: Vec<StateKey> = scan
-            .hashes
-            .iter()
-            .map(|hash| StateKey::new(scan.namespace.to_string(), hash.clone()))
-            .collect();
-        let key_build = key_build_start.elapsed();
-
-        let cache_scan_start = Instant::now();
-        let (hit, prefix_blocks) = read_cache.get_prefix_blocks(&keys);
-        let cache_scan = cache_scan_start.elapsed();
-        let remaining = &keys[hit..];
-
-        let task_start = Instant::now();
-        let task_started = !remaining.is_empty()
-            && self.start_prefetch_task(PrefetchStart {
-                req_id: scan.req_id,
-                namespace: scan.namespace,
-                remaining,
-                prefix_blocks: prefix_blocks.clone(),
-                total: keys.len(),
-                hit,
-                emit_tier_metrics: scan.emit_tier_metrics,
-                wait_for_full_prefix: scan.wait_for_full_prefix,
-            });
-        let task_schedule = task_start.elapsed();
-
-        if task_started {
-            info!(
-                "Prefetch scheduling timing: req_id={} total_keys={} hit={} remaining={} key_build={:?} cache_scan={:?} task_schedule={:?} total={:?}",
-                scan.req_id,
-                keys.len(),
-                hit,
-                remaining.len(),
-                key_build,
-                cache_scan,
-                task_schedule,
-                total_start.elapsed()
-            );
-            PrefetchStatus::Loading
-        } else {
-            let missing = keys.len() - hit;
-            record_tier_attribution(
-                keys.len(),
-                hit,
-                /* loading = */ 0,
-                /* loading_source = */ None,
-                scan.emit_tier_metrics,
-            );
-
-            info!(
-                "Prefetch local-hit timing: req_id={} total_keys={} hit={} missing={} key_build={:?} cache_scan={:?} task_schedule={:?} total={:?}",
-                scan.req_id,
-                keys.len(),
-                hit,
-                missing,
-                key_build,
-                cache_scan,
-                task_schedule,
-                total_start.elapsed()
-            );
-            PrefetchStatus::Ready {
-                blocks: prefix_blocks,
-                missing,
-            }
         }
-    }
-
-    fn start_prefetch_task(&self, start: PrefetchStart<'_>) -> bool {
-        if start.remaining.is_empty() {
-            return false;
-        }
-
-        let mut state = self.state.lock();
-        if state.active.contains_key(start.req_id) {
-            return true;
-        }
-
-        let remote_fetch = self
-            .remote_fetch
-            .as_ref()
-            .filter(|_| !state.failed_remote.contains_key(start.req_id))
-            .cloned();
-
-        if remote_fetch.is_none() && self.ssd_store.is_none() {
-            return false;
-        }
-
-        let deps = PrefetchTaskDeps {
-            remote_fetch,
-            ssd_store: self.ssd_store.clone(),
-            prefetch_state: Arc::clone(&self.state),
-            max_prefetch_blocks: self.max_prefetch_blocks,
-        };
-        let input = PrefetchTaskInput {
-            req_id: start.req_id.to_string(),
-            namespace: start.namespace.to_string(),
-            remaining_keys: start.remaining.to_vec(),
-            prefix_blocks: start.prefix_blocks,
-            total: start.total,
-            hit: start.hit,
-            emit_tier_metrics: start.emit_tier_metrics,
-            wait_for_full_prefix: start.wait_for_full_prefix,
-        };
-
-        let handle = tokio::spawn(async move { run_prefetch_task(deps, input).await });
-
-        state.active.insert(
-            start.req_id.to_string(),
-            PrefetchEntry {
-                handle,
-                started_at: Instant::now(),
-            },
-        );
-        true
-    }
-
-    /// Drop stale active entries and sweep old `failed_remote` entries.
-    ///
-    /// Dropping a `JoinHandle` detaches the task; it keeps running so remote
-    /// transfer locks can still be released by the normal completion path.
-    pub(super) fn gc_stale_entries(
-        &self,
-        active_max_age: std::time::Duration,
-        failed_remote_max_age: std::time::Duration,
-    ) -> (usize, usize) {
-        let mut state = self.state.lock();
-        let active_before = state.active.len();
-        state
-            .active
-            .retain(|_, entry| entry.started_at.elapsed() < active_max_age);
-        let active_removed = active_before - state.active.len();
-
-        let failed_before = state.failed_remote.len();
-        state
-            .failed_remote
-            .retain(|_, ts| ts.elapsed() < failed_remote_max_age);
-        (active_removed, failed_before - state.failed_remote.len())
     }
 }
 
-/// Attribute this `query_prefetch` decision. Skips attribution when:
-/// * `emit_tier_metrics == false` (e.g. post-completion fall-through);
-/// * `total` is zero (no decision to attribute).
+/// Attribute each query once, including any backing fetch.
 fn record_tier_attribution(
     total: usize,
     hit: usize,
     loading: usize,
     loading_source: Option<AttributionSource>,
-    emit_tier_metrics: bool,
 ) {
-    if !emit_tier_metrics || total == 0 {
+    if total == 0 {
         return;
     }
     let attribution = TierAttribution::classify(total, hit, loading, loading_source);
@@ -515,7 +280,7 @@ fn build_ready_result(
     prefix_blocks: Vec<Arc<SealedBlock>>,
     total: usize,
     source: Option<PrefetchSource>,
-    found: usize,
+
     requested_keys: &[StateKey],
     cache_inserts: PrefetchResult,
 ) -> PrefetchTaskResult {
@@ -532,7 +297,6 @@ fn build_ready_result(
     let missing = total.saturating_sub(ready_blocks.len());
     PrefetchTaskResult {
         source,
-        found,
         cache_inserts,
         ready_blocks,
         missing,
@@ -560,7 +324,7 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
         prefix_blocks,
         total,
         hit,
-        emit_tier_metrics,
+
         wait_for_full_prefix,
     } = input;
     let remaining_hashes: Vec<Vec<u8>> = remaining_keys.iter().map(|k| k.hash.clone()).collect();
@@ -575,13 +339,11 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
             hit,
             found,
             Some(PrefetchSource::Remote.as_attribution()),
-            emit_tier_metrics,
         );
         return build_ready_result(
             prefix_blocks,
             total,
             Some(PrefetchSource::Remote),
-            found,
             &remaining_keys[..found],
             blocks,
         );
@@ -608,13 +370,11 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
                     hit,
                     found,
                     Some(PrefetchSource::Ssd.as_attribution()),
-                    emit_tier_metrics,
                 );
                 return build_ready_result(
                     prefix_blocks,
                     total,
                     Some(PrefetchSource::Ssd),
-                    found,
                     &remaining_keys[..found],
                     blocks,
                 );
@@ -635,13 +395,11 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
                     hit,
                     found,
                     Some(PrefetchSource::Remote.as_attribution()),
-                    emit_tier_metrics,
                 );
                 return build_ready_result(
                     prefix_blocks,
                     total,
                     Some(PrefetchSource::Remote),
-                    found,
                     &remaining_keys[..found],
                     blocks,
                 );
@@ -654,14 +412,8 @@ async fn run_prefetch_task(deps: PrefetchTaskDeps, input: PrefetchTaskInput) -> 
         );
     }
 
-    record_tier_attribution(total, hit, 0, None, emit_tier_metrics);
-    build_ready_result(prefix_blocks, total, None, 0, &[], Vec::new())
-}
-
-enum PollResult {
-    NoActivePrefetch,
-    StillLoading,
-    Ready(PrefetchStatus),
+    record_tier_attribution(total, hit, 0, None);
+    build_ready_result(prefix_blocks, total, None, &[], Vec::new())
 }
 
 #[cfg(test)]
@@ -690,7 +442,6 @@ mod tests {
             vec![Arc::clone(&local)],
             4,
             Some(PrefetchSource::Ssd),
-            3,
             &[k1.clone(), k2.clone(), k3.clone()],
             vec![
                 (k2, Arc::clone(&b2)),
@@ -720,7 +471,6 @@ mod tests {
             Vec::new(),
             3,
             Some(PrefetchSource::Ssd),
-            3,
             &[k1.clone(), k2, k3.clone()],
             vec![(k3, b3), (k1, Arc::clone(&b1))],
         );
@@ -755,78 +505,9 @@ mod tests {
         assert!(remote_registration_from_resident_keys(None, &[]).is_none());
     }
 
-    /// Feed a finished prefetch task with the given outcome through
-    /// `poll_existing` and report whether the request got blacklisted.
-    async fn poll_outcome_blacklists_req(
-        source: Option<PrefetchSource>,
-        found: usize,
-        inserts: usize,
-    ) -> bool {
-        let scheduler = PrefetchScheduler::new(None, None, None, 16);
-        let read_cache = ReadCache::new(1 << 20, false, None);
-        let result = PrefetchTaskResult {
-            source,
-            found,
-            cache_inserts: (0..inserts).map(|i| (key(i as u8), block())).collect(),
-            ready_blocks: Vec::new(),
-            missing: 0,
-        };
-        let handle = tokio::spawn(async move { result });
-        while !handle.is_finished() {
-            tokio::task::yield_now().await;
-        }
-        scheduler.state.lock().active.insert(
-            "req".to_string(),
-            PrefetchEntry {
-                handle,
-                started_at: Instant::now(),
-            },
-        );
-
-        let _ = scheduler.poll_existing(&read_cache, "req").await;
-
-        scheduler.state.lock().failed_remote.contains_key("req")
-    }
-
-    #[tokio::test]
-    async fn short_remote_result_blacklists_request() {
-        // Partial prefix and total failure both mean the advertised owner
-        // could not serve what the MetaServer promised.
-        assert!(poll_outcome_blacklists_req(Some(PrefetchSource::Remote), 3, 2).await);
-        assert!(poll_outcome_blacklists_req(Some(PrefetchSource::Remote), 3, 0).await);
-    }
-
-    #[tokio::test]
-    async fn full_or_non_remote_result_does_not_blacklist() {
-        assert!(!poll_outcome_blacklists_req(Some(PrefetchSource::Remote), 3, 3).await);
-        assert!(!poll_outcome_blacklists_req(Some(PrefetchSource::Ssd), 3, 2).await);
-        assert!(!poll_outcome_blacklists_req(None, 0, 0).await);
-    }
-
-    #[test]
-    fn gc_sweeps_only_expired_failed_remote_entries() {
-        let scheduler = PrefetchScheduler::new(None, None, None, 16);
-        scheduler
-            .state
-            .lock()
-            .failed_remote
-            .insert("req".to_string(), Instant::now());
-
-        let (_, swept) = scheduler.gc_stale_entries(Duration::ZERO, Duration::from_secs(60));
-        assert_eq!(swept, 0);
-
-        let (_, swept) = scheduler.gc_stale_entries(Duration::ZERO, Duration::ZERO);
-        assert_eq!(swept, 1);
-        assert!(scheduler.state.lock().failed_remote.is_empty());
-    }
-
     #[test]
     fn strict_ssd_reservation_is_all_or_nothing() {
-        let state = Arc::new(Mutex::new(PrefetchState {
-            active: HashMap::new(),
-            reserved_ssd_prefetch_blocks: 0,
-            failed_remote: HashMap::new(),
-        }));
+        let state = Arc::new(Mutex::new(PrefetchState::default()));
         let (_n, hold) = reserve_ssd_prefetch_slots(Arc::clone(&state), 10, 6, false)
             .expect("reservation within capacity should succeed");
         // 4 of 10 slots remain.

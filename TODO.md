@@ -99,14 +99,15 @@ and a passing gate; design text alone does not close an item.
   retain SGLang's unsuccessful prefetches as misses in `docs/ssd-performance.md`.
 - [x] Verify both stored page layouts through SSD write, DRAM eviction, and
   exact GPU-byte restoration with explicitly polled readiness.
-- [ ] Prove a supported SGLang request prepare/poll/cancel and admission hook;
-  if upstream interface work is needed, declare the release dependency (P0 in
-  `docs/state-planning.md`).
-- [ ] Give pending queries scoped operation identities, revision checks,
-  cancellation, and bounded result ownership across core and channel (P1).
-- [ ] Resolve SGLang pending-query readiness and terminal ownership; the current
-  lookup can recompute while an SSD prefetch remains unconsumed. Qualify actual
-  serving requests after forced DRAM eviction, including delayed reads (P2).
+- [x] Use SGLang 0.5.20's general plugin admission hook to defer pending requests,
+  and qualify single-rank DRAM/SSD serving recovery (P0/P2).
+- [x] Unify query ownership in the endpoint; remove core request-string tasks,
+  bind immutable arguments, cancel superseded work, bound active operations,
+  and drain late results after cancel/disconnect without another poll (P1 foundation).
+- [ ] Add explicit demand operation/revision tickets, byte-based scheduling
+  admission, and exhaustive delivery-loss/restart fault coverage (remaining P1).
+- [ ] Qualify delayed-read cancellation under concurrent serving and multi-rank
+  SGLang TP; controlled admission tests do not replace those workload gates.
 - [ ] Add bounded request-driven DRAM warming and measured restore-versus-recompute
   scheduling using `docs/state-planning.md` (P3/P4); speculative hints remain optional.
 - [ ] Profile the measured restore latency gap to both built-in CPU caches;

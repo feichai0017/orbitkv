@@ -116,11 +116,13 @@ SGLang owns the HBM page lifecycle. OrbitKV registers the worker's GPU KV
 buffers once through CUDA IPC, then queries, saves, and restores page-aligned
 blocks through the same local client used by vLLM. iceoryx2 carries cache
 commands; GPU data is copied directly between the registered buffers and the
-Cache Manager's pinned memory. DRAM recovery across a SGLang restart is
-validated while the Cache Manager remains running. SSD lookup currently
-triggers asynchronous reads without waiting for readiness; requests can
-recompute instead of using those reads. See the
-[SSD measurements and limitation](../docs/ssd-performance.md).
+Cache Manager's pinned memory. Single-rank DRAM and SSD recovery across a
+SGLang restart are validated while the Cache Manager remains running. The
+plugin's admission hook keeps a pending request queued; a subsequent match
+reuses its ready lease. A five-second preparation budget cancels waiting
+interest and permits recomputation. This is a fixed waiting guard, not a cost
+predictor; a submitted GPU restore still requires completion. See the
+[SSD measurements](../docs/ssd-performance.md).
 
 Both engines fingerprint local model artifacts and bind their configuration and
 registered storage layout to a versioned cache identity. Hub models must use
@@ -160,8 +162,11 @@ bootstrap protocol versions (currently version 2).
 `orbitkv.wait_for_full_prefix` is supported on the local path: pending queries
 return `QueryLoading`, and repeated queries with the same instance/request/group
 identity retrieve the result. Query arguments must remain unchanged while
-pending. Each session permits 128 pending queries with a 60-second lifetime.
-Undelivered results release their leases when discarded. Connector shutdown
+pending. Superseded queries are explicitly cancelled. Each session permits
+128 outstanding queries, with 1024 globally and a 60-second reply lifetime.
+Cancellation revokes waiting interest while submitted reads drain safely;
+undelivered results release their leases without another readiness poll.
+Use the same ABI-3 wheel for the Cache Manager and clients. Connector shutdown
 explicitly closes the UDS session; imported CUDA mappings are released after
 queued GPU transfers finish.
 

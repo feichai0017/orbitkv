@@ -10,8 +10,16 @@ if TYPE_CHECKING:
 
 def register() -> None:
     from sglang.srt.mem_cache.registry import register_radix_cache_backend
+    from sglang.srt.plugins.hook_registry import HookRegistry, HookType
+
+    from .admission import admit_request
 
     register_radix_cache_backend("orbitkv", create_cache)
+    HookRegistry.register(
+        "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",
+        admit_request,
+        HookType.AROUND,
+    )
 
 
 def create_cache(ctx: Any) -> UnifiedRadixCache:

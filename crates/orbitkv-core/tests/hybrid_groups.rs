@@ -100,23 +100,19 @@ async fn recurrent_group_seals_final_block_save() {
     );
 
     // The classic prefix query (group 0) is untouched by the recurrent save.
-    match env.query(&prefix_hashes).await {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), 3);
-            assert_eq!(missing, 0);
-        }
-        other => panic!("expected Ready, got {other:?}"),
+    {
+        let QueryResult { blocks, missing } = env.query(&prefix_hashes).await;
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(missing, 0);
     }
 
     // Reconcile (connector-side): rightmost recurrent checkpoint within the
     // attention prefix → hit = 2 + 1 = 3 blocks.
-    let attn_lease = match env.query(&prefix_hashes).await {
-        PrefetchStatus::Ready { blocks, .. } => env
-            .engine
-            .create_query_lease(&env.instance_id, blocks)
-            .expect("attention lease"),
-        other => panic!("expected Ready, got {other:?}"),
-    };
+    let QueryResult { blocks, .. } = env.query(&prefix_hashes).await;
+    let attn_lease = env
+        .engine
+        .create_query_lease(&env.instance_id, blocks)
+        .expect("attention lease");
     let recur_block = recur_hits[2]
         .as_ref()
         .expect("rightmost recurrent checkpoint")
@@ -269,55 +265,46 @@ async fn recurrent_membership_fetch_is_all_or_nothing() {
 
     // The exact want-set resolves Ready and complete, in requested order.
     let want = vec![hashes[1].clone(), hashes[2].clone()];
-    match env
-        .engine
-        .query_group_membership_with_fetch(&env.instance_id, "pd-req-full", 1, &want)
-        .await
-        .expect("want-set query")
     {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), 2, "full want-set must resolve completely");
-            assert_eq!(missing, 0);
-            let _lease = env
-                .engine
-                .create_query_lease(&env.instance_id, blocks)
-                .expect("lease over the fetched set");
-        }
-        other => panic!("expected Ready, got {other:?}"),
+        let QueryResult { blocks, missing } = env
+            .engine
+            .query_group_membership_with_fetch(&env.instance_id, "pd-req-full", 1, &want)
+            .await
+            .expect("want-set query");
+        assert_eq!(blocks.len(), 2, "full want-set must resolve completely");
+        assert_eq!(missing, 0);
+        let _lease = env
+            .engine
+            .create_query_lease(&env.instance_id, blocks)
+            .expect("lease over the fetched set");
     }
 
     // A want-set with an absent member comes back short (no remote tier is
     // configured in this harness): the caller must treat that as a miss.
     let short = vec![hashes[1].clone(), hashes[5].clone(), hashes[2].clone()];
-    match env
-        .engine
-        .query_group_membership_with_fetch(&env.instance_id, "pd-req-short", 1, &short)
-        .await
-        .expect("short want-set query")
     {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert!(
-                blocks.len() < short.len(),
-                "an incomplete want-set must not report as complete"
-            );
-            assert!(missing > 0);
-        }
-        other => panic!("expected Ready, got {other:?}"),
+        let QueryResult { blocks, missing } = env
+            .engine
+            .query_group_membership_with_fetch(&env.instance_id, "pd-req-short", 1, &short)
+            .await
+            .expect("short want-set query");
+        assert!(
+            blocks.len() < short.len(),
+            "an incomplete want-set must not report as complete"
+        );
+        assert!(missing > 0);
     }
 
     // Group isolation: hashes[0] exists in the attention group only, so the
     // recurrent want-set containing it cannot complete.
     let cross = vec![hashes[0].clone()];
-    match env
-        .engine
-        .query_group_membership_with_fetch(&env.instance_id, "pd-req-cross", 1, &cross)
-        .await
-        .expect("cross-group query")
     {
-        PrefetchStatus::Ready { blocks, missing } => {
-            assert_eq!(blocks.len(), 0);
-            assert_eq!(missing, 1);
-        }
-        other => panic!("expected Ready, got {other:?}"),
+        let QueryResult { blocks, missing } = env
+            .engine
+            .query_group_membership_with_fetch(&env.instance_id, "pd-req-cross", 1, &cross)
+            .await
+            .expect("cross-group query");
+        assert_eq!(blocks.len(), 0);
+        assert_eq!(missing, 1);
     }
 }

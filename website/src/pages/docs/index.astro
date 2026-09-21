@@ -12,7 +12,7 @@ import { docs, layers, plannerStages, providers, sourceUrl } from "../../data/si
     </header>
     <section class="detail-section" aria-labelledby="current-title">
       <h2 id="current-title">What works today</h2>
-      <p class="reading-copy">Each inference process connects to a Cache Manager on its own host. UDS and iceoryx2 carry lifecycle and cache commands; CUDA IPC exposes engine-owned GPU pages. The manager stores reusable KV in pinned DRAM and optional SSD. Both adapters passed single-node DRAM recovery tests. SSD restoration is measured on vLLM; SGLang's pending-query readiness is unfinished.</p>
+      <p class="reading-copy">Each inference process connects to a Cache Manager on its own host. UDS and iceoryx2 carry lifecycle and cache commands; CUDA IPC exposes engine-owned GPU pages. The manager stores reusable KV in pinned DRAM and optional SSD. Both adapters passed single-rank DRAM and forced-SSD recovery gates. SGLang defers pending requests through its plugin admission hook; multi-rank serving and concurrent goodput need separate qualification.</p>
       <p class="reading-copy">The multi-node prototype uses a separate, in-memory MetaServer to find candidate replicas. Peer gRPC authorizes transfers; Mooncake moves bytes. Directory restart recovery and high availability are unfinished, so this path remains experimental.</p>
     </section>
     <section class="detail-section" aria-labelledby="crates-title">

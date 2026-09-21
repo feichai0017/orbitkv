@@ -17,9 +17,9 @@ import { sourceUrl } from "../data/site";
     </section>
     <section class="detail-section">
       <h2>SGLang</h2>
-      <p class="reading-copy"><code>OrbitKVLinker</code> connects SGLang's radix cache to the same Cache Manager API through CUDA IPC. Full-attention MHA and MLA layouts have a direct GPU-page path; hybrid, draft, and auxiliary state are rejected until complete recovery contracts exist. Single-rank DRAM recovery has been GPU-tested on SGLang 0.5.20. SSD reads currently run without the request waiting for readiness, so the measured requests recomputed their prefixes.</p>
+      <p class="reading-copy"><code>OrbitKVLinker</code> connects SGLang's radix cache to the same Cache Manager API through CUDA IPC. Full-attention MHA and MLA layouts have a direct GPU-page path; hybrid, draft, and auxiliary state are rejected until complete recovery contracts exist. Single-rank DRAM and SSD recovery have been GPU-tested on SGLang 0.5.20. A plugin admission hook keeps pending requests queued until a leased result is ready, with a bounded wait before recomputation. Multi-rank serving remains unqualified.</p>
       <a class="text-link" href={sourceUrl("docs/single-node.md#sglang")}>SGLang install and deployment <span aria-hidden="true">↗</span></a>
-      <a class="text-link" href={sourceUrl("docs/ssd-performance.md")}>SSD measurements and current limitation <span aria-hidden="true">↗</span></a>
+      <a class="text-link" href={sourceUrl("docs/ssd-performance.md")}>SSD measurements and qualification <span aria-hidden="true">↗</span></a>
     </section>
     <section class="detail-section">
       <h2>P/D and NIXL</h2>
@@ -33,7 +33,7 @@ import { sourceUrl } from "../data/site";
     </section>
     <section class="detail-section">
       <h2>Next gates</h2>
-      <p class="reading-copy">Resolve SGLang's pending-query readiness, then develop bounded early prefetch and common recovery validation. Page generations and completion fences must protect overlap with execution. Remote-cache inventory recovery comes before KV-aware routing; the current MetaServer is an in-memory discovery service.</p>
+      <p class="reading-copy">Develop bounded early prefetch, measured restore decisions, and common recovery validation. Page generations and completion fences must protect overlap with execution. Remote-cache inventory recovery comes before KV-aware routing; the current MetaServer is an in-memory discovery service.</p>
       <a class="text-link" href={sourceUrl("docs/roadmap.md")}>Read the implementation gates <span aria-hidden="true">↗</span></a>
       <a class="text-link" href={sourceUrl("docs/state-planning.md")}>Proposed demand and transfer planning <span aria-hidden="true">↗</span></a>
     </section>

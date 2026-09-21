@@ -154,6 +154,13 @@ class TpShardQueryClient:
             released = self._release_one(client, lease, req_id) and released
         return released
 
+    def cancel(self, instance_id: str, req_id: str) -> None:
+        for client in self._clients:
+            try:
+                client.cancel_query(instance_id, req_id)
+            except Exception:
+                logger.exception("Could not cancel cache query: req=%s", req_id)
+
     @staticmethod
     def _validate_ready(result: QueryReady, queried_blocks: int, shard_index: int) -> None:
         if result.num_hit_blocks > queried_blocks:

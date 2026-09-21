@@ -23,7 +23,7 @@ with their own CPU-only harness tests. They are not correctness-test fixtures.
 | Clean source-only Python changes, docs touching test layout, CI test dependency changes | Source-only default | `uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest` | Default test accidentally depends on torch, vLLM, CUDA, or native extension |
 | Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --group test pytest -m integration` | Server/native/GPU lifecycle regression |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
-| SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores the same prompt after a RadixCache flush and after SGLang restarts against a live Cache Manager. |
+| SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores the same prompt after a RadixCache flush and engine restart, with DRAM and forced-SSD cases, GPU-load counters, and a cold identity control. |
 | Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
@@ -145,3 +145,11 @@ Minimum checks:
 - `orbitkv-cache-manager --help`
 - minimal installed `orbitkv-cache-manager` startup and `/health` 200
 - vLLM + `OrbitKVConnector` with `/v1/models`, one completion, one repeated long prompt, and non-zero save/load/hit/HLL metrics
+
+The SGLang release environment runs `tests/integration/test_sglang_admission.py`
+with real release `Req` objects and controlled backing completion. It checks
+nonblocking admission, other-request progress, changed keys, deadline fallback,
+and shared rank decisions. `test_sglang_direct_transfer.py -k ssd` checks real
+SSD cancellation/disconnect cleanup and exact GPU restoration. These are
+separate from the serving E2E: neither a fake completion nor test-side polling
+alone qualifies SGLang serving recovery.

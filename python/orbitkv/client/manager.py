@@ -110,6 +110,11 @@ class CacheManagerClient:
     def release(self, lease: bytes) -> None:
         self._client.release(lease, request_id=self._request_id())
 
+    def cancel_query(self, instance_id: str, req_id: str, group_id: int = 0) -> None:
+        self._client.cancel_query(
+            instance_id, req_id, group_id=group_id, request_id=self._request_id()
+        )
+
     def save(
         self,
         instance_id: str,

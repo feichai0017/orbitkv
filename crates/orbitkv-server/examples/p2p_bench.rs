@@ -441,13 +441,12 @@ async fn wait_until<F: FnMut() -> Option<usize>>(
 }
 
 async fn cached_blocks(engine: &OrbitKVEngine, req_id: &str, hashes: &[Vec<u8>]) -> usize {
-    match engine
-        .count_prefix_hit_blocks_with_prefetch(INSTANCE, req_id, hashes, false)
-        .await
-        .expect("count_prefix_hit_blocks_with_prefetch")
     {
-        PrefetchStatus::Ready { blocks, .. } => blocks.len(),
-        PrefetchStatus::Loading => 0,
+        let QueryResult { blocks, .. } = engine
+            .count_prefix_hit_blocks_with_prefetch(INSTANCE, req_id, hashes, false)
+            .await
+            .expect("count_prefix_hit_blocks_with_prefetch");
+        blocks.len()
     }
 }
 
@@ -663,14 +662,10 @@ async fn verify_set(
     hashes: &[Vec<u8>],
     ranks: &[RankBuffers],
 ) {
-    let blocks = match engine
+    let QueryResult { blocks, .. } = engine
         .count_prefix_hit_blocks_with_prefetch(INSTANCE, &format!("verify-{set}"), hashes, false)
         .await
-        .expect("verify query")
-    {
-        PrefetchStatus::Ready { blocks, .. } => blocks,
-        PrefetchStatus::Loading => panic!("verify: set {set} still loading"),
-    };
+        .expect("verify query");
     assert_eq!(blocks.len(), shape.blocks, "verify: incomplete set {set}");
     let block_ids: Vec<usize> = (0..shape.blocks).collect();
     let layer_names = shape.layer_names();

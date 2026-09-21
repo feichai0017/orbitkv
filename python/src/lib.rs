@@ -327,6 +327,28 @@ impl PyChannelClient {
             .map_err(|error| OrbitKVError::new_err(format!("local release failed: {error}")))
     }
 
+    #[pyo3(signature = (instance_id, req_id, group_id=0, request_id=1))]
+    fn cancel_query(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        req_id: String,
+        group_id: u32,
+        request_id: u64,
+    ) -> PyResult<()> {
+        py.detach(|| {
+            self.inner.cancel_query(
+                request_id,
+                &orbitkv_channel::CancelQueryRequest {
+                    instance_id,
+                    request_id: req_id,
+                    group_id,
+                },
+            )
+        })
+        .map_err(|error| OrbitKVError::new_err(format!("cancel query failed: {error}")))
+    }
+
     #[pyo3(signature = (instance_id, tp_rank, pp_rank, device_id, saves, request_id=1))]
     #[allow(
         clippy::too_many_arguments,

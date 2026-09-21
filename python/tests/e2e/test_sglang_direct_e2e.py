@@ -20,6 +20,7 @@ from tests.support.paths import PYTHON_ROOT
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 
+@pytest.mark.parametrize("channel_server", ["dram", "ssd"], indirect=True)
 def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     pytest.importorskip("sglang")
     model = request.config.getoption("--model")
@@ -133,9 +134,28 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         stop_server(process)
 
     # Keep the Cache Manager alive while SGLang's HBM prefix tree disappears.
-    before_restart_load = fetch_orbitkv_metrics(channel_server.http_port).get(
-        "orbitkv_load_bytes_total", 0
-    )
+    if channel_server.ssd_cache_path is not None:
+        deadline = time.monotonic() + 30
+        while True:
+            observed = fetch_orbitkv_metrics(channel_server.http_port)
+            if observed.get("orbitkv_ssd_write_bytes_total", 0) > 0 and not any(
+                observed.get(name, 0)
+                for name in (
+                    "orbitkv_ssd_write_inflight",
+                    "orbitkv_ssd_write_queue_pending",
+                    "orbitkv_inflight_bytes",
+                )
+            ):
+                break
+            assert time.monotonic() < deadline, observed
+            time.sleep(0.1)
+        cleaned = requests.post(
+            f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup", timeout=30
+        )
+        cleaned.raise_for_status()
+        assert cleaned.json()["evicted_blocks"] > 0
+        assert cleaned.json()["still_referenced_blocks"] == 0
+    before_restart = fetch_orbitkv_metrics(channel_server.http_port)
     process, base_url = start_server()
     try:
         third = requests.post(f"{base_url}/generate", json=payload, timeout=90)
@@ -144,7 +164,13 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         after_restart_load = fetch_orbitkv_metrics(channel_server.http_port).get(
             "orbitkv_load_bytes_total", 0
         )
-        assert after_restart_load > before_restart_load, "Cache Manager did not restore GPU KV"
+        assert after_restart_load > before_restart.get("orbitkv_load_bytes_total", 0), (
+            "Cache Manager did not restore GPU KV"
+        )
+        if channel_server.ssd_cache_path is not None:
+            assert fetch_orbitkv_metrics(channel_server.http_port).get(
+                "orbitkv_ssd_prefetch_bytes_total", 0
+            ) > before_restart.get("orbitkv_ssd_prefetch_bytes_total", 0)
     finally:
         stop_server(process)
 

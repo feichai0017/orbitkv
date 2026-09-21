@@ -5,11 +5,13 @@
 | `qwen3-8b-h20.csv`, `qwen3-8b-h20.json` | 270 requests: native HBM, built-in CPU cache, and OrbitKV on both engines |
 | `qwen3-8b-comparisons.csv`, `qwen3-8b-comparisons.json` | 360 follow-up requests, matched LMCache controls, completion notification and copy-backend experiments, plus failed FlexKV attempts |
 | `qwen3-8b-ssd.csv`, `qwen3-8b-ssd-summary.csv`, `qwen3-8b-ssd-summary.json` | 120 requests with SSD enabled: vLLM restores and SGLang's unused SSD prefetches, with DRAM and cold controls |
+| `qwen3-8b-query-readiness.csv`, `qwen3-8b-query-readiness-summary.csv`, `qwen3-8b-query-readiness-summary.json` | 120 requests after query ownership and SGLang admission changes: 15/15 SSD restores per engine, with DRAM and cold controls |
 
 See the [analysis and reproduction instructions](../../docs/single-node-performance.md).
-The [SSD report](../../docs/ssd-performance.md) explains the forced-tier workload
-and the SGLang readiness limitation. Its raw runs live in
-`runs/qwen3-8b-ssd-20260921/` on the measurement host.
+The [SSD report](../../docs/ssd-performance.md) explains the forced-tier workload,
+the original SGLang readiness limitation, and the qualified recovery follow-up.
+Its baseline raw runs live in `runs/qwen3-8b-ssd-20260921/`; follow-up runs live
+in `runs/query-readiness-{vllm,sglang}/` on the measurement host.
 These are historical measurements, not claims about the latest working tree.
 Their recorded launch commands, paths, versions, and source commits remain
 unchanged when files are reorganized.

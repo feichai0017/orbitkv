@@ -1,5 +1,9 @@
 # Qwen3-8B SSD restoration measurements
 
+The original experiment below records the pre-admission implementation. The
+[query-readiness follow-up](#query-readiness-follow-up) describes the current
+serving path; keep the baseline results when comparing revisions.
+
 Measured September 21, 2026 at source commit `45caecfb`, with the same H20,
 Qwen3-8B revision `b968826d9c46dd6066d109eabc6255188de91218`, vLLM 0.29.0,
 SGLang 0.5.20, BF16, TP=1, and 64-token pages as the
@@ -61,7 +65,7 @@ bytes into GPU memory and reported zero cached tokens. Its `lookup` returns an
 empty match on `QueryLoading`, so the scheduler continues with prefill. The
 last 64-token page is not part of SGLang's restore boundary for these prompts.
 The vLLM connector can return an unresolved match to its scheduler and retry;
-the SGLang linker does not currently have equivalent pending-query handling.
+the baseline SGLang linker had no equivalent pending-query handling.
 
 This is an integration readiness gap, not evidence that SSD copies are too
 slow to help SGLang. Never advertise the SGLang recomputation row as an SSD
@@ -107,8 +111,10 @@ inference; these output observations are not a proof of byte integrity.
 
 The separate GPU integration test exercises SSD write completion, DRAM
 eviction, explicit polling to `QueryReady`, and restoration into poisoned GPU
-destinations for both stored page layouts. Its explicit readiness polling is
-not the current SGLang serving adapter and does not fix the gap above.
+destinations for both stored page layouts. Its explicit readiness polling was
+separate from the baseline serving adapter. The subsequent serving gate now
+checks forced-SSD recovery through the plugin admission hook; see the follow-up
+results below.
 
 Five observations do not establish a tail-latency SLO. This experiment does
 not measure concurrent goodput, sustained read/write contention, natural
@@ -141,3 +147,80 @@ cd python
 ../.venv/sglang-release/bin/python -m pytest -m integration \
   tests/integration/test_sglang_direct_transfer.py -k ssd
 ```
+
+## Query-readiness follow-up
+
+The SGLang 0.5.20 plugin now uses `HookRegistry` admission to keep a pending
+request queued and consume its ready lease on a later prefix match. Its
+five-second preparation budget allows recomputation before GPU submission;
+GPU restores still require a confirmed completion.
+
+Both DRAM and forced-SSD serving recovery pass with Qwen3-8B at TP=1 across
+engine restart. The SSD gate checks positive disk-read and H2D byte counters,
+cached tokens, and equal deterministic output against a cold identity. Real
+GPU-buffer tests separately verify cancellation and disconnect during SSD
+reads leave no unconsumed lease, and validate exact restored bytes for both
+stored page layouts. Controlled admission tests cover delayed completion and
+other-request progress; they do not qualify concurrent goodput or multi-rank
+serving. The old 0/15 SGLang measurement remains a baseline, not a description
+of the new serving path.
+
+The repeat experiment on September 21, 2026 used source commit `e3c819a8`,
+with a clean source tree recorded at launch and the same model, engine releases,
+budgets, seed, and four-phase workload described above. Both engines completed
+all 60 requests. Median client TTFT in milliseconds, five requests per cell:
+
+| Engine | Measured path | 1K | 4K | 8K |
+| --- | --- | ---: | ---: | ---: |
+| vLLM | Cold prefill | 118.70 | 476.35 | 1,006.73 |
+| vLLM | DRAM restore, SSD enabled | 23.79 | 36.69 | 56.79 |
+| vLLM | SSD restore after DRAM eviction | 55.24 | 132.05 | 244.47 |
+| SGLang | Cold prefill | 117.90 | 473.41 | 1,000.45 |
+| SGLang | DRAM restore, SSD enabled | 33.07 | 43.16 | 57.97 |
+| SGLang | SSD restore after DRAM eviction | 58.94 | 150.37 | 268.04 |
+
+**Both engines restored from SSD in 15/15 forced-SSD requests.** Each request
+read exactly as many bytes from SSD as it loaded into the GPU. vLLM restored
+144/576/1,152 MiB; SGLang restored 135/567/1,143 MiB and reported
+960/4,032/8,128 cached tokens, respecting its final-page boundary. Neither
+engine reported an HBM hit during this phase. SGLang's SSD TTFT is now about
+2.0x/3.1x/3.7x faster than its cold prefill in this run.
+
+Instrumented median stage times in milliseconds:
+
+| Engine | Stage | 1K | 4K | 8K |
+| --- | --- | ---: | ---: | ---: |
+| vLLM | SSD prefix prefetch | 31.16 | 90.78 | 181.62 |
+| vLLM | GPU load task after SSD read | 4.65 | 18.47 | 36.74 |
+| SGLang | SSD prefix prefetch | 22.79 | 93.78 | 184.33 |
+| SGLang | GPU load task after SSD read | 6.19 | 25.73 | 51.56 |
+
+The vLLM 1K SSD median increased from 47.27 to 55.24 ms; its SSD-prefetch
+median increased from 23.54 to 31.16 ms while its GPU-load and DRAM-control
+medians stayed essentially unchanged. This locates the observed difference
+in the storage stage, but five samples on the shared overlay cannot establish
+whether code changes or storage conditions caused it. The 4K SSD median
+decreased and the 8K median remained close to the baseline. These results do
+not establish a latency improvement for every workload.
+
+SGLang's GPU-load task after SSD reads took longer than its DRAM-control load
+(2.90/12.55/26.46 ms). Allocation, layout reconstruction, and copy behavior need
+separate profiling before attributing this gap or attempting layer overlap.
+Both engines recorded zero SSD read/write failure deltas in measured requests.
+
+All 15 SSD outputs per engine match their respective DRAM outputs. All SGLang
+outputs match cold controls. As in the baseline, one vLLM 4K prefix has a
+different cold output while its HBM, DRAM, and SSD outputs agree. The performance
+run does not enable deterministic inference; exact GPU-buffer tests and the
+separate deterministic serving gates provide the integrity checks.
+
+The [120 request measurements](../benches/results/qwen3-8b-query-readiness.csv),
+[summary CSV](../benches/results/qwen3-8b-query-readiness-summary.csv), and
+[source manifests, storage evidence, and summaries](../benches/results/qwen3-8b-query-readiness-summary.json)
+are checked in separately from the baseline. Full responses and service logs
+remain in `benches/results/runs/query-readiness-{vllm,sglang}/` on the measurement
+host; gate logs are in `benches/results/runs/query-readiness-validation/`.
+Use the reproduction commands above with fresh output directories to repeat
+the experiment. This qualifies single-rank full-attention recovery; concurrency,
+multi-rank coordination, natural memory pressure, and tail latency remain
+separate experiments.
