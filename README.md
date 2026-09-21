@@ -4,181 +4,147 @@
 
 <p align="center">
   <a href="https://feichai0017.github.io/orbitkv/">Website</a> ·
-  <a href="docs/single-node.md">Single-node guide</a> ·
+  <a href="https://feichai0017.github.io/orbitkv/docs/">Documentation</a> ·
+  <a href="docs/single-node.md">Quickstart</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
-  <a href="docs/roadmap.md">Roadmap</a> ·
-  <a href="TODO.md">TODO</a>
+  <a href="docs/roadmap.md">Roadmap</a>
 </p>
 
-**A node-local KV cache for vLLM and SGLang, with an experimental multi-node path.**
+<p align="center">
+  <a href="https://github.com/feichai0017/orbitkv/actions/workflows/ci.yml"><img src="https://github.com/feichai0017/orbitkv/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-203b30" alt="Apache 2.0 license" /></a>
+</p>
 
-OrbitKV runs one Cache Manager beside each inference node. vLLM uses a KV
-connector and SGLang uses a direct GPU-page linker. Both register engine-owned
-GPU KV buffers through CUDA IPC and use the same UDS + iceoryx2 cache API.
-Single-node DRAM recovery has been validated against the pinned releases on a GPU.
-The framework release targets as of 2026-09-20 are
-[vLLM `0.29.0`](https://github.com/vllm-project/vllm/releases/tag/v0.29.0)
-and [SGLang `0.5.20`](https://github.com/sgl-project/sglang/releases/tag/v0.5.20);
-the SGLang source submodule is pinned to that release. See
-[`python/README.md`](python/README.md) for separate GPU environments.
+**Reuse KV across requests with vLLM and SGLang.** OrbitKV keeps reusable
+prefixes in pinned DRAM and optional SSD, and restores them into engine-owned
+GPU memory. Run one Cache Manager per host; enable an engine adapter to use it.
+An experimental distributed path extends the same cache API to peer managers.
 
-## What exists now
+## Why OrbitKV?
 
-- content-addressed KV blocks in pinned host memory, with optional SSD backing;
-- NUMA-aware allocation and batched GPU/host transfer;
-- experimental cross-node discovery through an in-memory Catalog and remote
-  fetch through Mooncake Transfer Engine over RDMA or TCP;
-- prefix lookup, leases, eviction, and metrics;
-- a Rust Cache Manager, Python bindings, the vLLM connector, and an SGLang
-  GPU-page linker that restores prompts after SGLang flushes its radix cache;
-- an experimental **vLLM-only** Mooncake P/D connector, separate from the
-  Cache Manager's remote-cache fetch path. vLLM also provides its own NIXL P/D
-  connector; OrbitKV does not ship a NIXL connector.
+- **Extend cache capacity.** Keep prefixes beyond the engine's HBM cache using
+  NUMA-aware host memory and SSD backing.
+- **Use either engine.** vLLM and SGLang register their GPU buffers through
+  CUDA IPC and share the same UDS + iceoryx2 manager API.
+- **Keep ownership explicit.** The engine controls HBM allocation and execution.
+  OrbitKV retains external replicas and transfer leases through completion.
+- **Bound preparation.** Byte budgets cover pending reads, ready leases and GPU
+  consumers; identical backing reads can share preparation.
+- **Identify compatible state.** Versioned keys bind immutable model artifacts,
+  computation settings and registered storage geometry. Complete hybrid-state
+  recovery contracts remain [in progress](docs/state-identity.md).
+- **Build toward shared caching.** Embedded catalog shards discover peer
+  replicas, Mooncake Transfer Engine moves bytes, and etcd tracks membership
+  and placement. Multi-node serving is still experimental.
 
-Both engines now pass single-rank GPU recovery gates after DRAM eviction.
-SGLang uses a plugin admission hook to wait for a leased result before
-allocating restore destinations. The [SSD measurements](docs/ssd-performance.md)
-retain the original failed-readiness baseline and the follow-up results.
+## Get started
 
-The initial storage and control data plane was imported from PegaFlow `0.24.5`
-and renamed throughout. The copied remote transfer stacks have since been
-replaced by a pinned upstream Mooncake Transfer Engine. PegaFlow's published
-measurements are not presented as OrbitKV results.
+The validated release targets are **vLLM 0.29.0** and **SGLang 0.5.20**. Use a
+separate environment for each engine. Follow the [installation guide](docs/single-node.md)
+to build and install an OrbitKV wheel matching your Python ABI and CUDA runtime;
+the Cache Manager currently also needs compatible PyTorch packages.
 
-## Target architecture
+Start a manager in one terminal:
 
-The engine continues to own HBM allocation and execution. OrbitKV owns
-external pinned DRAM/SSD replicas and their transfer leases. The intended
-multi-node deployment retains one Cache Manager per node, embeds replicated
-catalog shards and local candidate indexes in those managers, and makes remote
-hits follow the same cache API as local hits. KV-aware routing comes **after**
-local correctness and
-distributed-cache recovery are established. The eventual planner will compile
-a declarative state-liveness contract into physical plans:
-
-- semantic death and execution completion are separate reclamation frontiers;
-- HBM usage, DRAM, SSD, and remote replicas can be compared under one cost model,
-  while engine-owned HBM remains under the engine's allocator;
-- ring buffers, prefix pages, checkpoints, and eviction classes are derived
-  physical plans rather than hard-coded product features;
-- both frameworks retain their serving schedulers while OrbitKV develops a
-  shared, validated state identity and safe-reuse contract.
-
-The cache hot path now uses a versioned `StateKey` bound to model-artifact
-content, engine configuration and registered storage geometry. Complete
-recovery semantics remain open: Publish carries raw block IDs, absolute token
-span evidence is not carried by both adapters, and bundle completeness is a
-component-presence check. Distributed Managers now embed catalog shards and use
-etcd for leased members and an immutable placement configuration. Versioned
-snapshots, per-shard journals, candidate caching and source residency checks are
-implemented. Each shard has one directory copy; replication, online handoff and
-cross-host failure qualification remain in the [distributed cache plan](docs/distributed-cache.md).
-See [architecture](docs/architecture.md)
-and the [model-aware state plan](docs/state-identity.md) for the implementation
-boundary. [State demand and transfer planning](docs/state-planning.md) describes
-the implemented versioned query lifecycle and byte admission, plus the proposed
-earlier warming and cost-based scheduling policies. Query budgets cover
-preparation, ready leases, and GPU consumers; identical reads can be shared.
-The [concurrent baseline](docs/concurrent-performance.md) records 1/4/8-request
-bursts with a 2 GiB query budget, including output controls and an admission
-regression found during measurement.
-Single-node correctness is validated for the pinned adapter layouts;
-the revised local path has not yet passed a full throughput and tail-latency
-qualification against native-engine and no-cache baselines.
-
-SGLang has a direct GPU-page linker for full-attention MHA and MLA models.
-Hybrid models and auxiliary state require complete recovery contracts before
-OrbitKV can claim a reusable prefix for them.
-
-## Workspace
-
-| Path | Responsibility |
-| --- | --- |
-| [`orbitkv-state`](crates/orbitkv-state) | Framework-neutral state identity, format, page and recovery contracts |
-| [`orbitkv-channel`](crates/orbitkv-channel) | Versioned iceoryx2 and UDS process IPC implementation |
-| [`orbitkv-core`](crates/orbitkv-core) | Content-addressed blocks, leases, eviction, SSD and remote tiers |
-| [`orbitkv-transfer`](crates/orbitkv-transfer) | Pinned upstream Mooncake Transfer Engine wrapper |
-| [`orbitkv-server`](crates/orbitkv-server) | Cache Manager crate: shared cache operations, process endpoint, peer control, health and metrics |
-| [`orbitkv-catalog`](crates/orbitkv-catalog) | Cross-node replica discovery |
-| [`python/orbitkv/vllm`](python/orbitkv/vllm) | vLLM cache connector, Mooncake P/D adapter, plugin entry point |
-| [`python/orbitkv/sglang`](python/orbitkv/sglang) | SGLang GPU-page linker and plugin entry point |
-| [`python/orbitkv/client`](python/orbitkv/client) | Framework-neutral cache API and Cache Manager connection |
-| [`third-party/sglang`](third-party/sglang) | Pinned SGLang source used to develop and validate integration |
-| [`third-party/vllm`](third-party/vllm) | Pinned vLLM release source used to develop and validate integration |
-| [`website`](website) | OrbitKV project website and brand assets |
-
-The process IPC, network control, Mooncake integration boundary, and measured
-IPC baselines are documented in
-[`docs/transport.md`](docs/transport.md).
-For complete vLLM and SGLang installation, commands, capacity controls, and
-verification, see the [single-node guide](docs/single-node.md). For deployment
-modes and the distinction between cache sharing, P/D, and NIXL, see
-[`docs/deployment.md`](docs/deployment.md).
-
-## Build
-
-The default build targets CUDA 12.8. Host-only inspection can disable default
-features; GPU and RDMA qualification requires matching local hardware and drivers. The
-workspace MSRV is Rust 1.89, required by iceoryx2 0.10.
-
-```sh
-cargo check --workspace
-
-cd python
-maturin develop --release
+```bash
+orbitkv-cache-manager \
+  --addr 127.0.0.1:50055 \
+  --http-addr 127.0.0.1:9091 \
+  --pool-size 8gb
 ```
 
-Initialize Mooncake before the first native build:
+Then start your chosen engine in another terminal on the same host.
 
-```sh
-git submodule update --init --recursive third-party/mooncake
-```
+**vLLM**
 
-For a quick same-host vLLM run after installing the matching OrbitKV wheel and
-vLLM `0.29.0` in the engine environment, start the Cache Manager in one
-terminal and vLLM in another:
-
-```sh
-orbitkv-cache-manager
-```
-
-```sh
+```bash
 vllm serve /path/to/immutable-model \
   --enable-prefix-caching \
   --kv-transfer-config '{"kv_connector":"OrbitKVConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.vllm"}'
 ```
 
-Local model artifacts are fingerprinted at startup. Hub models require an
-immutable `--revision` or a verified `ORBITKV_MODEL_FINGERPRINT`; see
-[state identity](docs/state-identity.md).
+**SGLang**
 
-For SGLang `0.5.20`, use the same manager and a SGLang environment containing
-the OrbitKV wheel:
-
-```sh
+```bash
 ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
-  sglang serve --model-path /path/to/model --page-size 64 \
+  sglang serve --model-path /path/to/immutable-model --page-size 64 \
   --enable-unified-cache-external-linker --radix-cache-backend orbitkv
 ```
 
-For a same-host Cache Manager, the connector uses UDS bootstrap +
-iceoryx2 for Query/Publish/Restore/Release. If the derived same-host socket is
-missing, startup fails with a clear error instead of switching to gRPC.
-Registration, health, sessions, and cleanup use the same authenticated
-Unix socket. Standalone mode does not start a gRPC listener. Distributed mode
-(`--etcd-endpoints`, `--node-id`, `--catalog-nodes`) enables a peer gRPC catalog and transfer control endpoint; remote KV
-bytes still use Mooncake. Every inference process connects to a Cache Manager
-on its own host.
+To add SSD capacity, pass
+`--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb` to the
+manager. SSD contents are recreated on manager startup. Standalone deployment
+requires neither etcd nor a gRPC listener.
 
-The SGLang linker currently accepts full-attention MHA/MLA layouts with one KV
-pool. For exact setup steps, supported layouts, and warm-hit verification for
-both engines, use [the single-node guide](docs/single-node.md).
+Local model artifacts are fingerprinted at startup. Hub models require an
+immutable revision or a verified `ORBITKV_MODEL_FINGERPRINT`. Keep the manager
+alive, restart the engine, and repeat a multi-block prompt to distinguish an
+external restore from a native HBM hit. See the
+[full setup and verification steps](docs/single-node.md).
 
-For Qwen3-8B latency measurements against native HBM caching, CPU offload,
-SGLang HiCache, and LMCache, plus FlexKV compatibility results, see the
-[single-node benchmark](docs/single-node-performance.md).
+## Architecture
 
-Benchmark workloads, harness tests, and recorded results: [`benches/`](benches/README.md).
+![OrbitKV architecture: engine-owned HBM, per-host Cache Managers, DRAM and SSD, embedded catalogs, Mooncake transfers and etcd membership](website/public/architecture.svg)
 
-OrbitKV's current workspace is Apache-2.0 licensed. Earlier experiments remain
-available in repository history but are not part of the current build.
+1. The engine adapter identifies a reusable prefix and registers GPU buffers.
+2. The manager prepares matching DRAM, SSD or remote blocks within byte budgets.
+3. Leases retain sources and destinations until transfers finish.
+4. The engine resumes computation and publishes completed KV for later reuse.
+
+The engine always connects to its host's manager. Remote discovery and transfer
+stay inside OrbitKV. Candidate indexes reduce repeated catalog lookups; the
+source manager checks live residency before authorizing a transfer. etcd is
+outside per-block lookup and transfer paths. Catalog shards currently have one
+copy each; replication and online handoff are planned.
+
+Read the [architecture and crate boundaries](docs/architecture.md),
+[transport contracts](docs/transport.md), and
+[distributed design](docs/distributed-cache.md).
+
+## Deployment support
+
+| Scenario | Current scope |
+| --- | --- |
+| Single-node DRAM and SSD cache | GPU recovery gates and Qwen3-8B measurements for both pinned engines |
+| SGLang model layouts | Full-attention MHA/MLA with one KV pool; hybrid and auxiliary state rejected |
+| Independent replicas / DP cache sharing | Embedded catalogs, etcd membership and Mooncake fetch implemented; cross-host serving qualification is next |
+| Prefill/decode separation | Experimental vLLM Mooncake `PdConnector`; current-request handoff is separate from reusable cache |
+| Cross-host TP/PP, layout conversion | Not qualified; the current vLLM scheduler cannot query remote TP shards through its local endpoint |
+| Catalog HA and KV-aware routing | Planned after distributed-cache recovery gates |
+
+The [deployment guide](docs/deployment.md) covers each topology and explains
+the role of upstream NIXL. The [LMCache/Mooncake comparison](docs/distributed-comparison.md)
+separates shared caching, engine parallelism and P/D handoff. A common cache API
+does not make vLLM and SGLang KV bytes interchangeable.
+
+## Measurements
+
+Results include environment, workload, transfer evidence and limitations:
+
+| Report | What it measures |
+| --- | --- |
+| [Single-node comparisons](docs/single-node-performance.md) | Native HBM, built-in CPU caches, OrbitKV and LMCache; FlexKV compatibility attempts |
+| [SSD recovery](docs/ssd-performance.md) | Forced DRAM eviction, SSD restoration and engine readiness |
+| [Concurrent bursts](docs/concurrent-performance.md) | Shared and mixed prefixes at concurrency 1/4/8 with byte budgets |
+| [Sustained serving](docs/sustained-performance.md) | Bounded mixed reuse/cold traffic, throughput, tail latency and post-run drain |
+
+Workloads, harness tests and recorded results live in [`benches/`](benches/README.md).
+These are scoped measurements, not a claim that every workload is faster.
+
+## Documentation and development
+
+- [Single-node setup](docs/single-node.md) · [Manager options](docs/server.md) · [Metrics](docs/metrics.md)
+- [Multi-node setup](docs/p2p.md) · [P/D integration](docs/pd.md)
+- [Model and state identity](docs/state-identity.md) · [Transfer planning](docs/state-planning.md)
+- [Python packages and tests](python/README.md) · [Rust checks](docs/rust-quality.md)
+- [Roadmap](docs/roadmap.md) · [Work queue](TODO.md) · [Development guide](AGENTS.md)
+
+The implementation order is single-node stability and performance, independent
+replica sharing, then P/D with cache reuse. Replicated catalogs, broader
+parallelism and routing have separate gates. Before 1.0, interfaces may change.
+Technical documentation lives in `docs/` and is rendered directly on the website;
+behavior and deployment changes must update the affected documentation.
+
+OrbitKV began from PegaFlow 0.24.5. The remote transfer implementation now uses
+pinned upstream Mooncake Transfer Engine. Upstream measurements are not
+presented as OrbitKV results. The workspace is licensed under [Apache-2.0](LICENSE).

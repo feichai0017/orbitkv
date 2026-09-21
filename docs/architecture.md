@@ -14,6 +14,8 @@ direct GPU linker have passed single-node GPU recovery tests.
 
 ## Process topology
 
+![Engine ownership, cache tiers, and distributed control](../website/public/architecture.svg)
+
 Run one OrbitKV Cache Manager per inference host. Framework adapters run in the
 inference processes and use the same cache API for local DRAM, SSD, and remote
 fetches. The cache manager decides where to source a hit; the inference engine
@@ -59,6 +61,9 @@ reads and returns a terminal result. Cancelling or disconnecting drops reply
 ownership while submitted reads drain, including cache admission and lease
 release, without another poll. SGLang's plugin admission hook keeps pending
 requests queued until a leased result or bounded fallback is available.
+vLLM defers further lookup admission until an admitted restore reaches its first
+compute step. This prevents a deferred lookup that cannot allocate GPU pages
+from stranding a completed restore behind it in the waiting queue.
 Query reservations use the registered group's padded bytes and remain charged
 through preparation, result ownership, and GPU completion. Global and instance
 limits bound retained payloads; identical backing reads can be shared while

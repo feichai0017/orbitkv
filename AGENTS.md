@@ -133,7 +133,7 @@ Notes:
 | Integration | Server/native/client/session lifecycle changes | `cd python && uv run --group test pytest -m integration` | Requires built native extension, server binary, and GPU where the test uses CUDA IPC. |
 | vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && ../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` | Use the vLLM `0.29.0` release environment described in `python/README.md`; reviewer reruns the gate on the GPU machine. |
 | SGLang direct GPU E2E | SGLang linker, CUDA IPC layout, or plugin changes | `cd python && ../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Checks actual GPU load bytes after SGLang process restart against a cold-control namespace. |
-| Stress | Warm-hit pressure, pending unpin, scheduler/cache concurrency | `cd python && uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Targeted single-GPU evidence, not default PR feedback. |
+| Stress | Warm-hit pressure, lease cleanup, scheduler/cache concurrency | `cd python && uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Targeted single-GPU evidence, not default PR feedback. |
 | Release smoke | Published wheel/image, loader path, installed console script, CUDA runtime | See `python/tests/README.md` | Validates final installed artifact, not the source checkout. |
 
 Do not default to running all of `python/tests`. Current project taste is `uv` + pytest markers for Python and Cargo/CI for Rust; do not add an `xtask` wrapper until the gate contract is stable and repeated execution is the real bottleneck.
@@ -166,6 +166,7 @@ there is no standalone directory binary. See `docs/p2p.md`.
 - Use English in comments
 - Use `.venv` for the Python virtual environment
 - Keep changes scoped and aligned with the existing module structure
+- Update affected documentation, README capability claims, and website content with each behavior or deployment change. The website renders `docs/` directly; keep one source for technical documentation.
 - Before 1.0, remove obsolete APIs and compatibility code instead of adding aliases or fallback paths. Keep boundaries that own behavior; remove classes and functions that only forward calls without a separate responsibility.
 - Organize modules by the behavior and resources they own. A new type or trait must have a concrete responsibility; avoid temporary context wrappers, configuration-only wrappers for a few constructor arguments, and speculative abstraction layers. Call the behavior owner directly when another function would only forward the call.
 - Code should be self-documenting. If a comment seems necessary, first try refactoring so the code explains itself.

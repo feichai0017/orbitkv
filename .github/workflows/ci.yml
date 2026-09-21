@@ -17,6 +17,30 @@ env:
   RUSTC_WRAPPER: sccache
 
 jobs:
+  website-check:
+    name: website and documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install and audit
+        working-directory: website
+        run: |
+          npm ci
+          npm audit --audit-level=high
+      - name: Check and publish locally
+        working-directory: website
+        run: |
+          npm run check
+          npm run build
+          npm test
+
   commit-check:
     name: commit message check
     runs-on: ubuntu-latest

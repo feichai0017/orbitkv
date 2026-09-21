@@ -1,7 +1,8 @@
 # OrbitKV website
 
-Static Astro pages with shared content, an editable SVG identity, and no
-client-side JavaScript or remote fonts.
+Static Astro pages and documentation. The site keeps OrbitKV's paper, green and
+rust palette, typography and SVG identity. Content is organized around engine
+setup, capabilities, deployment, architecture and reproducible measurements.
 
 ## Develop
 
@@ -17,32 +18,48 @@ Open the printed URL under `/orbitkv/`. Before publishing:
 ```sh
 npm run check
 npm run build
+npm test
 npm run preview
 ```
 
-Inspect all routes on desktop and mobile, including keyboard navigation,
-contrast, overflow, and links. Browser tooling stays outside production dependencies.
+Inspect desktop and mobile layouts, keyboard navigation, search, rendered
+diagrams and internal links. Browser tooling stays outside production
+dependencies. Search loads a static index on first use; Mermaid loads only on
+pages containing diagrams. The document text and navigation work without JavaScript.
 
-## Layout
+## Content and layout
 
 ```text
-src/data/site.ts             navigation and crate descriptions
-src/data/models.ts           model support and imported results/*/performance.json
-src/layouts/SiteLayout.astro metadata, header, and footer
-src/components/             local cache path illustration
-src/pages/                  overview, architecture, framework integration, and 404
-src/styles/global.css       shared tokens, layout, and responsive styles
-public/                     SVG mark and README wordmark
+../docs/*.md                 canonical technical documentation
+src/content.config.ts       Astro collection loading repository docs
+src/data/docs.ts             documentation groups and page titles
+src/data/site.ts             navigation, URLs and crate descriptions
+src/markdown.mjs             repository links and Mermaid code fences
+src/layouts/                shared site and documentation layouts
+src/components/             cache illustration and document search
+src/pages/                  overview, architecture, integration and docs
+src/styles/                 existing visual tokens and document styles
+tests/                      publication and link checks
+public/                     identity assets and shared architecture SVG
 ```
 
-Keep public copy brief; link to repository documents for detailed contracts.
-Separate GPU-validated single-node behavior, experimental remote/P-D paths,
-and the target catalog/router/planner. Capability claims must match evidence.
+Edit technical content in `../docs/`, without copying it into the website.
+Register a new document in `src/data/docs.ts`; the build rejects missing or
+unlisted pages. Markdown links between documents become site routes, shared
+public assets stay local, and other repository links bind to the build's
+source revision. Page headings supply the table of contents and search reads
+the same collection. README and the site share `public/architecture.svg`.
+
+Keep capability claims tied to evidence. Distinguish validated single-node
+behavior, experimental shared-cache/P-D paths, and planned catalog HA and
+routing. Update affected docs, README and site copy with behavioral changes.
 
 ## Publish
 
-The Pages workflow checks, builds, and deploys website changes pushed to `main`
-at [feichai0017.github.io/orbitkv](https://feichai0017.github.io/orbitkv/).
+CI validates the site on pull requests. The Pages workflow checks, builds and
+deploys `website/` or `docs/` changes merged into `main` at
+[feichai0017.github.io/orbitkv](https://feichai0017.github.io/orbitkv/).
 
-Documentation links bind to the build's `GITHUB_SHA`. Local previews use `main`
-unless `PUBLIC_SOURCE_REF` is set. Navigation respects Astro's `/orbitkv/` base.
+Repository links bind to the build's `GITHUB_SHA`. Local previews use `main`
+unless `PUBLIC_SOURCE_REF` is set. Navigation and search respect Astro's
+`/orbitkv/` base path. No external font or search service is required.

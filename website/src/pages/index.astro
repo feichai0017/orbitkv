@@ -1,12 +1,59 @@
 ---
 import StateDiagram from "../components/StateDiagram.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
-import { layers, localUrl, sourceUrl } from "../data/site";
+import { localUrl } from "../data/site";
 
 const quickstart = [
-  "# From a checkout of OrbitKV",
-  "cargo check --workspace",
+  "# After installing OrbitKV and your inference engine",
+  "orbitkv-cache-manager \\",
+  "  --addr 127.0.0.1:50055 \\",
+  "  --pool-size 8gb",
 ].join("\n");
+
+const capabilities = [
+  {
+    title: "Reuse prefixes.",
+    label: "Reuse",
+    detail:
+      "Keep useful KV beyond one request and restore it when a compatible prefix returns.",
+    href: "/docs/single-node/",
+  },
+  {
+    title: "Extend capacity.",
+    label: "Store",
+    detail:
+      "Use NUMA-aware pinned DRAM and optional SSD while the engine retains control of its GPU memory.",
+    href: "/docs/server/",
+  },
+  {
+    title: "Keep lifetimes safe.",
+    label: "Own",
+    detail:
+      "Bound preparation with byte budgets and retain source pages and destinations through transfer completion.",
+    href: "/docs/architecture/",
+  },
+  {
+    title: "Connect both engines.",
+    label: "Integrate",
+    detail:
+      "vLLM and SGLang register GPU pages with the same Cache Manager through engine-specific adapters.",
+    href: "/integration/",
+  },
+  {
+    title: "Share across replicas.",
+    label: "Experimental",
+    detail:
+      "Embedded catalogs discover compatible peer replicas. Mooncake moves bytes; etcd tracks membership and placement.",
+    href: "/docs/p2p/",
+  },
+  {
+    title: "Measure the path.",
+    label: "Observe",
+    detail:
+      "Inspect cache hits, retained bytes and transfers. Reproduce Qwen3-8B measurements and their qualification limits.",
+    href: "/docs/sustained-performance/",
+  },
+];
 ---
 
 <SiteLayout active="Overview">
@@ -14,44 +61,147 @@ const quickstart = [
     <div class="hero-copy">
       <p class="eyebrow">KV cache for vLLM and SGLang</p>
       <h1 id="hero-title">
-        Reuse KV.<br />Across<br /><span class="highlight">cache tiers.</span>
+        Reuse KV.
+        <br />
+        Across
+        <br />
+        <span class="highlight">cache tiers.</span>
       </h1>
       <p class="hero-description">
-        GPU-validated single-node caching with one Cache Manager per host.<br />
-        Distributed recovery and KV-aware routing are the next steps.
+        Reuse computed prefixes from DRAM, SSD, and an experimental shared
+        cache.
+        <br />
+        One Cache Manager per host. Your engine keeps control of execution.
       </p>
       <div class="hero-actions">
         <a class="button primary" href={localUrl("/docs/")}>
-          Read the architecture <span aria-hidden="true">↗</span>
+          Read the docs <span aria-hidden="true">→</span>
         </a>
-        <a class="text-link" href="#get-started">Get started <span aria-hidden="true">↓</span></a>
+        <a class="text-link" href="#get-started">
+          Get started <span aria-hidden="true">↓</span>
+        </a>
       </div>
     </div>
     <StateDiagram />
   </section>
   <section class="stack-section container" aria-labelledby="stack-title">
     <header class="section-heading">
-      <div><p class="eyebrow">01 / The system</p><h2 id="stack-title">One cache API.<br />Several tiers.</h2></div>
-      <a class="text-link" href={sourceUrl("docs/roadmap.md")}>Read the roadmap <span aria-hidden="true">↗</span></a>
+      <div>
+        <p class="eyebrow">01 / Capabilities</p>
+        <h2 id="stack-title">
+          Compute once.
+          <br />
+          Keep it useful.
+        </h2>
+      </div>
+      <a class="text-link" href={localUrl("/architecture/")}>
+        Explore the architecture <span aria-hidden="true">→</span>
+      </a>
     </header>
     <div class="layer-grid">
-      {layers.map((layer) => (
+      {capabilities.map((item) => (
         <article class="layer">
-          <a class="package-name" href={sourceUrl(layer.path)}>{layer.name} <span aria-hidden="true">↗</span></a>
-          <h3>{layer.role}</h3><p>{layer.detail}</p>
+          <a class="package-name" href={localUrl(item.href)}>
+            {item.label} <span aria-hidden="true">→</span>
+          </a>
+          <h3>{item.title}</h3>
+          <p>{item.detail}</p>
         </article>
       ))}
     </div>
-    <p class="provider-line"><span>Now</span> Engine-owned HBM · pinned DRAM · optional SSD <span>Experimental</span> Mooncake remote fetch</p>
+    <p class="provider-line">
+      <span>Now</span> Engine-owned HBM · pinned DRAM · optional SSD{" "}
+      <span>Experimental</span> Mooncake remote fetch
+    </p>
   </section>
   <section class="proof-band" aria-labelledby="evidence-title">
     <div class="container proof-inner">
-      <div><p class="eyebrow">02 / Integration</p><h2 id="evidence-title">Two adapters.<br />One cache API.</h2><p>vLLM connector · SGLang GPU linker · node-local Cache Manager</p></div>
-      <div class="proof-note"><p>Both adapters register GPU pages through CUDA IPC. A complete cross-framework recovery contract is still planned.</p><a class="text-link" href={localUrl("/integration/")}>Integration status <span aria-hidden="true">↗</span></a></div>
+      <div>
+        <p class="eyebrow">02 / Deployment</p>
+        <h2 id="evidence-title">
+          Start on one host.
+          <br />
+          Build toward a pool.
+        </h2>
+        <p>Single-node caching → independent replicas → prefill/decode reuse</p>
+      </div>
+      <div class="proof-note">
+        <p>
+          Single-rank recovery is GPU-tested on vLLM 0.29.0 and SGLang 0.5.20.
+          Shared-cache serving and combined P/D are separate qualification
+          steps.
+        </p>
+        <a class="text-link" href={localUrl("/docs/deployment/")}>
+          Choose a deployment <span aria-hidden="true">→</span>
+        </a>
+      </div>
     </div>
   </section>
-  <section class="get-started container" id="get-started" aria-labelledby="start-title">
-    <div><p class="eyebrow">03 / Get started</p><h2 id="start-title">Start at<br />the source.</h2><p>Host checks do not require a GPU.</p><a class="text-link" href={sourceUrl("README.md#build")}>Setup instructions <span aria-hidden="true">↗</span></a></div>
-    <div class="code-panel"><div class="code-bar">Terminal / host checks</div><pre tabindex="0" aria-label="Commands to run host checks"><code>{quickstart}</code></pre></div>
+  <section
+    class="get-started container"
+    id="get-started"
+    aria-labelledby="start-title"
+  >
+    <div>
+      <p class="eyebrow">03 / Get started</p>
+      <h2 id="start-title">
+        Connect.
+        <br />
+        Run. Reuse.
+      </h2>
+      <p>
+        Install a matching CUDA wheel, start a manager, then enable your
+        engine's adapter.
+      </p>
+      <a class="text-link" href={localUrl("/docs/single-node/#vllm")}>
+        vLLM quickstart →
+      </a>
+      <br />
+      <a class="text-link" href={localUrl("/docs/single-node/#sglang")}>
+        SGLang quickstart →
+      </a>
+    </div>
+    <div class="code-panel">
+      <div class="code-bar">Terminal / Cache Manager</div>
+      <pre
+        tabindex="0"
+        aria-label="Start the Cache Manager"
+      ><code>{quickstart}</code></pre>
+    </div>
+  </section>
+  <section class="stack-section container" aria-labelledby="learn-title">
+    <header class="section-heading">
+      <div>
+        <p class="eyebrow">04 / Documentation</p>
+        <h2 id="learn-title">
+          From first hit
+          <br />
+          to system design.
+        </h2>
+      </div>
+      <a class="text-link" href={localUrl("/docs/")}>
+        Browse all documentation →
+      </a>
+    </header>
+    <div class="doc-links">
+      <a href={localUrl("/docs/single-node/")}>
+        Installation and engine setup <span>→</span>
+      </a>
+      <a href={localUrl("/architecture/")}>
+        Architecture and ownership <span>→</span>
+      </a>
+      <a href={localUrl("/docs/metrics/")}>
+        Metrics and operation <span>→</span>
+      </a>
+      <a href={localUrl("/docs/sustained-performance/")}>
+        Benchmarks and measured limits <span>→</span>
+      </a>
+      <a href={localUrl("/docs/distributed-cache/")}>
+        Distributed cache design <span>→</span>
+      </a>
+      <a href={localUrl("/docs/roadmap/")}>
+        Roadmap and validation gates <span>→</span>
+      </a>
+    </div>
   </section>
 </SiteLayout>

@@ -1,4 +1,6 @@
 import { defineConfig } from "astro/config";
+import { unified } from "@astrojs/markdown-remark";
+import { repositoryMarkdown } from "./src/markdown.mjs";
 const sourceRevision =
   process.env.PUBLIC_SOURCE_REF || process.env.GITHUB_SHA || "main";
 
@@ -9,6 +11,12 @@ export default defineConfig({
   base,
   output: "static",
   trailingSlash: "always",
+  markdown: {
+    processor: unified({
+      remarkPlugins: [[repositoryMarkdown, { base, sourceRevision }]],
+    }),
+    shikiConfig: { theme: "github-light", langAlias: { promql: "text" } },
+  },
   redirects: { "/evidence/": `${base}/integration/` },
   vite: {
     define: {

@@ -132,6 +132,9 @@ Output differences from serial preparation are retained as diagnostics: greedy
 sampling does not establish batch-invariant correctness. Use the engine E2E
 gates and native/deterministic controls to investigate differences.
 
+The [sustained report](../docs/sustained-performance.md) records fresh-service
+native/DRAM/SSD controls for both engines and the vLLM admission-stall regression.
+
 ## Concurrent bursts
 
 For concurrent qualification, use `--workload concurrent --concurrencies 1 4 8`.

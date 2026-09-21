@@ -49,7 +49,7 @@ sequenceDiagram
     participant A as Manager A
     participant C as Assigned Manager catalog
     participant B as Manager B
-    A->>A: Seal DRAM replica; update shard inventory
+    A->>A: Seal DRAM replica and update shard inventory
     A-->>C: Ordered snapshot/deltas
     B->>B: Check DRAM/SSD and candidate index
     opt Missing or expired candidates

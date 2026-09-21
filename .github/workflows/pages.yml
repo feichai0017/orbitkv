@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "website/**"
+      - "docs/**"
+      - "README.md"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -39,6 +41,9 @@ jobs:
       - name: Build
         working-directory: website
         run: npm run build
+      - name: Validate published links
+        working-directory: website
+        run: npm test
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

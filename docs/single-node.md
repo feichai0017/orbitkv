@@ -22,7 +22,9 @@ until an operational watchdog is implemented.
 The [single-node benchmark](single-node-performance.md) separates cold prefill,
 HBM hits, and external restores after GPU cache pressure. The
 [concurrent baseline](concurrent-performance.md) adds shared/mixed 1/4/8-request
-bursts, byte-budget evidence, and output-consistency controls. Restore timeouts and
+bursts, byte-budget evidence, and output-consistency controls. The
+[sustained report](sustained-performance.md) adds 60-second native/DRAM/SSD controls
+under GPU cache pressure, including a vLLM admission-stall fix. Restore timeouts and
 lost completion acknowledgements stop the affected engine instead of recycling
 GPU destinations that may still be receiving DMA.
 

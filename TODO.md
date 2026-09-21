@@ -115,7 +115,7 @@ and a passing gate; design text alone does not close an item.
   timing, post-run drain checks and incomplete-report rejection in `benches/`.
 - [x] Prioritize admitted vLLM restores through their first compute step so
   deferred lookups cannot strand them behind a GPU allocation failure.
-- [ ] Record sustained single-node native/DRAM/SSD controls for both engines;
+- [x] Record sustained single-node native/DRAM/SSD controls for both engines;
   separate throughput, transfer evidence and output diagnostics.
 - [x] Retire SGLang queries when HBM covers the legal recovery boundary;
   enforce admission expiry without another lookup and test simultaneous recovery.
