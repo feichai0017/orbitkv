@@ -25,11 +25,11 @@ def linker():
     return result
 
 
-def request(rid):
+def request(rid, token_count=256):
     from sglang.srt.managers.schedule_batch import Req
     from sglang.srt.sampling.sampling_params import SamplingParams
 
-    req = Req(rid, "", array("q", [1] * 256), SamplingParams())
+    req = Req(rid, "", array("q", [1] * token_count), SamplingParams())
     req._refresh_fill_ids()
     return req
 
@@ -87,6 +87,65 @@ def test_changed_keys_cancel_old_query_and_deadline_stops_restarting_io(linker):
     assert linker.client.cancel_query.call_count == 2
     linker.cancel_queued_load("req")
     assert linker.query_state("req") == 0
+
+
+@pytest.mark.parametrize(
+    "tokens,prefix,logprob_start,pending,wait",
+    [
+        (256, 128, -1, True, True),
+        (256, 192, -1, True, False),
+        (257, 192, -1, True, True),
+        (256, 128, 128, True, False),
+        (256, 192, -1, False, False),
+    ],
+)
+def test_resident_prefix_retires_unused_external_query(
+    linker, tokens, prefix, logprob_start, pending, wait
+):
+    from orbitkv import QueryLoading, QueryReady
+    from orbitkv.sglang.admission import admit_request
+
+    req = request("shared", tokens)
+    req.prefix_indices = list(range(prefix))
+    req.return_logprob = logprob_start >= 0
+    req.logprob_start_len = logprob_start
+    linker.client.query_prefetch.return_value = (
+        QueryLoading() if pending else QueryReady(3, b"lease")
+    )
+    linker.lookup(req.rid, transfer(["a", "b", "c"]))
+    cache = SimpleNamespace(
+        linker=SimpleNamespace(cache_linker=linker), _all_reduce_attn_groups=MagicMock()
+    )
+    original = MagicMock()
+    admit_request(original, SimpleNamespace(tree_cache=cache), req)
+    assert original.call_count == int(not wait)
+    assert linker.query_state(req.rid) == int(wait)
+    if not wait:
+        assert req.rid not in linker._lookups
+        if pending:
+            linker.client.cancel_query.assert_called_once_with("admission", req.rid)
+        else:
+            linker.client.release.assert_called_once_with(b"lease")
+
+
+def test_admission_expires_pending_work_without_another_lookup(linker):
+    from orbitkv import QueryLoading
+    from orbitkv.sglang.admission import admit_request
+
+    req = request("unpolled")
+    linker.client.query_prefetch.return_value = QueryLoading()
+    linker.lookup(req.rid, transfer(["a", "b", "c"]))
+    linker._QUERY_WAIT_SECONDS = 0
+    cache = SimpleNamespace(
+        linker=SimpleNamespace(cache_linker=linker), _all_reduce_attn_groups=MagicMock()
+    )
+    original = MagicMock()
+    admit_request(original, SimpleNamespace(tree_cache=cache), req)
+    original.assert_called_once()
+    linker.client.cancel_query.assert_called_once_with("admission", req.rid)
+    assert linker.query_state(req.rid) == 2
+    assert linker.lookup(req.rid, transfer(["a", "b", "c"])) == []
+    linker.client.query_prefetch.assert_called_once()
 
 
 @pytest.mark.parametrize("peer_state", [1, 2])

@@ -30,10 +30,14 @@ pub(crate) struct CoreMetrics {
     pub pool_used_bytes: UpDownCounter<i64>,
     pub pool_alloc_failures: Counter<u64>,
 
+    pub query_reserved_bytes: UpDownCounter<i64>,
+    pub query_budget_waits: Counter<u64>,
+    pub query_budget_bypasses: Counter<u64>,
+    pub query_coalesced_reads: Counter<u64>,
+
     // Inflight (write path safety/health)
     pub inflight_bytes: UpDownCounter<i64>,
     pub inflight_gc_cleaned: Counter<u64>,
-    /// Prefetch tasks older than the background GC age threshold (default 5m).
     // Cache (sealed blocks in memory)
     pub cache_resident_bytes: UpDownCounter<i64>,
     pub cache_block_hits: Counter<u64>,
@@ -75,8 +79,7 @@ pub(crate) struct CoreMetrics {
     pub ssd_prefetch_failures: Counter<u64>,
     pub ssd_prefetch_throughput_bytes_per_second: Histogram<f64>,
     pub ssd_prefetch_inflight: UpDownCounter<i64>,
-    pub ssd_prefetch_queue_full: Counter<u64>,
-    pub ssd_prefetch_backpressure_blocks: Counter<u64>,
+    pub ssd_prefetch_queue_closed: Counter<u64>,
 
     // MetaServer registration
     pub metaserver_registration_blocks: Counter<u64>,
@@ -204,6 +207,14 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
         let meter = init_meter();
 
         CoreMetrics {
+            query_reserved_bytes: meter
+                .i64_up_down_counter("orbitkv_query_reserved_bytes")
+                .with_unit("bytes")
+                .with_description("Query-owned bytes by preparing, ready, or restoring phase; shared pages count per owner")
+                .build(),
+            query_budget_waits: meter.u64_counter("orbitkv_query_budget_waits").build(),
+            query_budget_bypasses: meter.u64_counter("orbitkv_query_budget_bypasses").build(),
+            query_coalesced_reads: meter.u64_counter("orbitkv_query_coalesced_reads").build(),
             // Pool
             pool_capacity_bytes: meter
                 .i64_up_down_counter("orbitkv_pool_capacity_bytes")
@@ -387,13 +398,9 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .i64_up_down_counter("orbitkv_ssd_prefetch_inflight")
                 .with_description("Current in-flight SSD prefetch operations")
                 .build(),
-            ssd_prefetch_queue_full: meter
-                .u64_counter("orbitkv_ssd_prefetch_queue_full")
+            ssd_prefetch_queue_closed: meter
+                .u64_counter("orbitkv_ssd_prefetch_queue_closed")
                 .with_description("Prefetch requests dropped due to full queue")
-                .build(),
-            ssd_prefetch_backpressure_blocks: meter
-                .u64_counter("orbitkv_ssd_prefetch_backpressure_blocks")
-                .with_description("Blocks treated as missing due to max prefetch backpressure")
                 .build(),
 
             // MetaServer registration

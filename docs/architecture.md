@@ -52,11 +52,16 @@ passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
 The vLLM adapter requires this path and fails fast if the Cache Manager socket
 is missing. Each inference process must reach a Cache Manager on its own host.
 Pending queries return `Loading` and continue on Tokio. The endpoint owns one
-session/instance/request/group registry; the core query future owns its backing
+session-scoped operation/revision registry bound to instance, request, and group;
+the core query future owns its backing
 reads and returns a terminal result. Cancelling or disconnecting drops reply
 ownership while submitted reads drain, including cache admission and lease
 release, without another poll. SGLang's plugin admission hook keeps pending
 requests queued until a leased result or bounded fallback is available.
+Query reservations use the registered group's padded bytes and remain charged
+through preparation, result ownership, and GPU completion. Global and instance
+limits bound retained payloads; identical backing reads can be shared while
+each request keeps its own ticket and lease. See [query budgets](server.md#query-ownership-budgets).
 Publish holds its
 iceoryx2 reply until D2H finishes, so the caller does not release source HBM
 pages early while the dispatcher remains free. The Python cache client opens a
@@ -194,12 +199,12 @@ pool; hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state need a more
 complete recovery contract. SGLang retains authority over HBM allocation and
 prefix-tree nodes.
 
-DRAM recovery is GPU-validated. SSD measurements exposed a readiness gap:
-`lookup` returns no match while `query_prefetch` is still loading, and the
-current SGLang request proceeds with recomputation. vLLM can instead report
-an unresolved lookup and let its scheduler retry. Shared transport does not
-remove this engine-contract difference. See [SSD results](ssd-performance.md)
-and the proposed [demand/readiness contract](state-planning.md).
+Both DRAM and SSD recovery are GPU-validated at TP=1. SGLang's general plugin
+admission hook retains pending requests in the queue and consumes the ready
+result on a subsequent match. vLLM reports unresolved lookups through its own
+connector scheduler contract. The original SSD readiness failure and successful
+follow-up remain in [SSD results](ssd-performance.md); earlier warming and cost
+selection are in [state demand and transfer planning](state-planning.md).
 
 ### Future: Radix lifecycle bridge for routing
 

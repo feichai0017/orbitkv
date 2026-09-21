@@ -170,17 +170,20 @@ class OrbitKVLinker(UnifiedCacheLinker):
         if lookup is not None and lookup.lease:
             self.client.release(lookup.lease)
 
-    def cancel_pending_query(self, rid: str) -> None:
+    def cancel_query(self, rid: str) -> None:
         if self._pending_queries.pop(rid, None) is not None:
             self.client.cancel_query(self.instance_id, rid)
+        self._release_lookup(rid)
 
     def expire_query(self, rid: str) -> None:
-        self.cancel_pending_query(rid)
-        self._release_lookup(rid)
+        self.cancel_query(rid)
         self._expired_queries.add(rid)
 
     def query_state(self, rid: str) -> int:
-        if rid in self._expired_queries:
+        pending = self._pending_queries.get(rid)
+        if rid in self._expired_queries or (
+            pending is not None and time.monotonic() - pending[1] >= self._QUERY_WAIT_SECONDS
+        ):
             return 2
         return int(rid in self._pending_queries)
 
@@ -197,7 +200,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             self._release_lookup(rid)
         pending = self._pending_queries.get(rid)
         if pending is not None and pending[0] != keys:
-            self.cancel_pending_query(rid)
+            self.cancel_query(rid)
             pending = None
         started = pending[1] if pending is not None else time.monotonic()
         if time.monotonic() - started >= self._QUERY_WAIT_SECONDS:
@@ -308,9 +311,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 self._load_queue.task_done()
 
     def cancel_queued_load(self, rid: str) -> bool:
-        self.cancel_pending_query(rid)
+        self.cancel_query(rid)
         self._expired_queries.discard(rid)
-        self._release_lookup(rid)
         load = self._queued_loads.pop(rid, None)
         if load is None:
             return False
@@ -377,7 +379,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._load_queue.join()
         self._offload_queue.join()
         for rid in list(self._pending_queries):
-            self.cancel_pending_query(rid)
+            self.cancel_query(rid)
         self._expired_queries.clear()
         for rid in list(self._lookups):
             self._release_lookup(rid)

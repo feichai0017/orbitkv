@@ -11,7 +11,7 @@ use std::num::NonZeroU64;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use crate::backing::{AllocateFn, DEFAULT_MAX_PREFETCH_BLOCKS, SsdBackingStore, SsdCacheConfig};
+use crate::backing::{AllocateFn, SsdBackingStore, SsdCacheConfig};
 #[cfg(feature = "mooncake")]
 use crate::backing::{MooncakeFetchStore, MooncakeTransport};
 use crate::block::{QueryResult, SealedBlock, StateKey};
@@ -41,11 +41,15 @@ pub struct MemoryCacheCleanupStats {
 
 #[derive(Clone)]
 pub struct StorageConfig {
+    /// Query-owned bytes across preparation, ready leases, and GPU loads.
+    /// Defaults to three quarters of the pinned pool; the allocator remains
+    /// the physical-memory limit, including publish and cache residency.
+    pub query_budget_bytes: Option<usize>,
+    /// Per-instance query limit, defaulting to the global query limit.
+    pub query_instance_budget_bytes: Option<usize>,
     pub enable_lfu_admission: bool,
     /// Optional hint for expected value size in bytes (tunes cache + allocator granularity).
     pub hint_value_size_bytes: Option<usize>,
-    /// Max blocks allowed in prefetching state (backpressure for SSD prefetch).
-    pub max_prefetch_blocks: usize,
     /// Optional SSD cache for sealed blocks (single-node, FIFO).
     pub ssd_cache_config: Option<SsdCacheConfig>,
     /// Optional Mooncake RDMA rail filter. Empty means that Mooncake selects
@@ -72,9 +76,10 @@ pub struct StorageConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
+            query_budget_bytes: None,
+            query_instance_budget_bytes: None,
             enable_lfu_admission: false,
             hint_value_size_bytes: None,
-            max_prefetch_blocks: DEFAULT_MAX_PREFETCH_BLOCKS,
             ssd_cache_config: None,
             mooncake_nic_names: Vec::new(),
             enable_numa_affinity: true,
@@ -117,7 +122,6 @@ impl StorageEngine {
     ) -> Result<Arc<Self>, String> {
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
-        let max_prefetch_blocks = config.max_prefetch_blocks;
         let ssd_cache_config = config.ssd_cache_config;
         #[cfg(feature = "mooncake")]
         let mooncake_nic_names = config.mooncake_nic_names;
@@ -235,12 +239,8 @@ impl StorageEngine {
             #[cfg(not(feature = "mooncake"))]
             let remote_fetch = None;
 
-            let prefetch = PrefetchScheduler::new(
-                ssd_store.clone(),
-                remote_fetch,
-                metaserver_client.clone(),
-                max_prefetch_blocks,
-            );
+            let prefetch =
+                PrefetchScheduler::new(ssd_store.clone(), remote_fetch, metaserver_client.clone());
 
             let transfer_lock = Arc::new(transfer_lock::TransferLockManager::new(
                 transfer_lock_timeout,

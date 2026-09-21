@@ -202,25 +202,35 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             # Lose interest while SSD work owns real source buffers. A late
             # result must release its lease without a readiness poll or GC.
             abandoned = CacheManagerClient(channel_server.bootstrap_socket)
+            survivor = CacheManagerClient(channel_server.bootstrap_socket)
             try:
                 outcome = abandoned.query_prefetch(instance, hashes, "abandoned")
                 assert isinstance(outcome, QueryLoading)
+                surviving_result = survivor.query_prefetch(instance, hashes, "abandoned")
                 if page_first:
                     abandoned.close()
                 else:
                     abandoned.cancel_query(instance, "abandoned")
                     abandoned.cancel_query(instance, "abandoned")
                 deadline = time.monotonic() + 5
+                while isinstance(surviving_result, QueryLoading):
+                    assert time.monotonic() < deadline
+                    surviving_result = survivor.query_prefetch(instance, hashes, "abandoned")
+                    time.sleep(0.001)
+                assert surviving_result.num_hit_blocks == page_count
+                survivor.release(surviving_result.lease)
                 quiet = 0
                 while quiet < 3:
                     observed = fetch_orbitkv_metrics(channel_server.http_port)
                     complete = (
                         observed.get("orbitkv_ssd_prefetch_bytes_total", 0) >= saved_bytes
                         and observed.get("orbitkv_ssd_prefetch_inflight", 0) == 0
+                        and observed.get("orbitkv_query_reserved_bytes", 0) == 0
                     )
                     quiet = quiet + 1 if complete else 0
                     assert time.monotonic() < deadline, observed
                     time.sleep(0.02)
+                assert observed["orbitkv_ssd_prefetch_bytes_total"] == saved_bytes
                 response = requests.post(
                     f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup",
                     timeout=10,
@@ -230,6 +240,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
                 assert response.json()["still_referenced_blocks"] == 0
             finally:
                 abandoned.close()
+                survivor.close()
         for tensor in tensors:
             tensor.zero_()
         torch.cuda.synchronize()

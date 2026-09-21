@@ -3,6 +3,8 @@
 The original experiment below records the pre-admission implementation. The
 [query-readiness follow-up](#query-readiness-follow-up) describes the current
 serving path; keep the baseline results when comparing revisions.
+The later [concurrent baseline](concurrent-performance.md) measures versioned
+queries and byte admission with shared and mixed 1/4/8-request bursts.
 
 Measured September 21, 2026 at source commit `45caecfb`, with the same H20,
 Qwen3-8B revision `b968826d9c46dd6066d109eabc6255188de91218`, vLLM 0.29.0,

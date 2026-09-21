@@ -35,6 +35,14 @@ class RestoreHandle:
         return f"manager:{self.session_epoch}:{self.operation_id}"
 
 
+@dataclass(slots=True)
+class _Query:
+    operation_id: int
+    revision: int
+    hashes: tuple[bytes, ...]
+    wait_for_full_prefix: bool
+
+
 class CacheManagerClient:
     """Cache operations through the same-host Cache Manager process channel."""
 
@@ -59,6 +67,9 @@ class CacheManagerClient:
         self._closed = False
         self._request_lock = threading.Lock()
         self._next_request_id = 1
+        self._query_lock = threading.Lock()
+        self._next_operation_id = 1
+        self._queries: dict[tuple[str, str, int], _Query] = {}
         self._last_completion_poll = time.monotonic()
 
     @property
@@ -75,6 +86,8 @@ class CacheManagerClient:
             self._client.close()
             if self._publish_client is not None:
                 self._publish_client.close()
+        with self._query_lock:
+            self._queries.clear()
 
     def health(self) -> tuple[bool, str]:
         return self._client.health()
@@ -98,22 +111,55 @@ class CacheManagerClient:
         wait_for_full_prefix: bool = False,
         group_id: int = 0,
     ) -> QueryLoading | QueryReady:
-        return self._client.query_bundle(
-            instance_id,
-            block_hashes,
-            req_id,
-            wait_for_full_prefix=wait_for_full_prefix,
-            group_id=group_id,
-            request_id=self._request_id(),
-        )
+        key = (instance_id, req_id, group_id)
+        hashes = tuple(block_hashes)
+        with self._query_lock:
+            query = self._queries.get(key)
+            changed = query is not None and (
+                query.hashes != hashes or query.wait_for_full_prefix != wait_for_full_prefix
+            )
+            submit = query is None or changed
+            if query is None:
+                if self._next_operation_id >= 1 << 64:
+                    raise OverflowError("Cache Manager query ids exhausted")
+                query = _Query(self._next_operation_id, 1, hashes, wait_for_full_prefix)
+                self._next_operation_id += 1
+                self._queries[key] = query
+            elif changed:
+                if query.revision == (1 << 64) - 1:
+                    raise OverflowError("Cache Manager query revisions exhausted")
+                query.revision += 1
+                query.hashes = hashes
+                query.wait_for_full_prefix = wait_for_full_prefix
+            if submit:
+                result = self._client.query_submit(
+                    instance_id,
+                    block_hashes,
+                    req_id,
+                    query.operation_id,
+                    query.revision,
+                    wait_for_full_prefix=wait_for_full_prefix,
+                    group_id=group_id,
+                    request_id=self._request_id(),
+                )
+            else:
+                result = self._client.query_poll(
+                    query.operation_id, query.revision, request_id=self._request_id()
+                )
+            if not isinstance(result, QueryLoading) or not result.admitted:
+                self._queries.pop(key)
+            return result
 
     def release(self, lease: bytes) -> None:
         self._client.release(lease, request_id=self._request_id())
 
     def cancel_query(self, instance_id: str, req_id: str, group_id: int = 0) -> None:
-        self._client.cancel_query(
-            instance_id, req_id, group_id=group_id, request_id=self._request_id()
-        )
+        with self._query_lock:
+            query = self._queries.pop((instance_id, req_id, group_id), None)
+            if query is not None:
+                self._client.cancel_query(
+                    query.operation_id, query.revision, request_id=self._request_id()
+                )
 
     def save(
         self,

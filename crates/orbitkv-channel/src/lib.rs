@@ -29,8 +29,8 @@ pub use bootstrap::{
 };
 pub use cache_protocol::{
     CancelQueryRequest, PublishLayer, PublishRequest, QueryBundleRequest, QueryBundleResponse,
-    QueryCodecError, QueryOutcomeCode, ReleaseRequest, RestoreCommand, RestoreLease,
-    RestoreRequest, RestoreResponse, RestoreState,
+    QueryCodecError, QueryCommand, QueryOutcomeCode, QueryTicket, ReleaseRequest, RestoreCommand,
+    RestoreLease, RestoreRequest, RestoreResponse, RestoreState,
 };
 #[cfg(target_os = "linux")]
 pub use client::{ChannelClient, ChannelError};

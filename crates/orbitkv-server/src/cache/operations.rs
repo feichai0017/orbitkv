@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::QueryLeaseId;
-use orbitkv_core::{EngineError, LayerSave, OrbitKVEngine, QueryResult};
+use orbitkv_core::{
+    EngineError, LayerSave, OrbitKVEngine, QueryOwner, QueryReservation, QueryResult,
+};
 use thiserror::Error;
 
 #[derive(Clone, Debug)]
@@ -16,6 +18,7 @@ pub(crate) struct QueryInput {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum QueryOutcome {
+    Busy,
     Loading,
     Ready {
         num_hit_blocks: u64,
@@ -159,6 +162,8 @@ pub(crate) async fn execute_query(
     engine: &OrbitKVEngine,
     hll_tracker: &Arc<Mutex<MultiWindowHllTracker>>,
     input: QueryInput,
+    reservation: QueryReservation,
+    owner: QueryOwner,
 ) -> Result<QueryOutcome, EngineError> {
     if input.request_id.is_empty() {
         return Err(EngineError::InvalidArgument(
@@ -181,7 +186,7 @@ pub(crate) async fn execute_query(
             let hit_positions: Vec<u32> = (0..blocks.len() as u32).collect();
             let lease = if complete && !blocks.is_empty() {
                 engine
-                    .create_query_lease(&input.instance_id, blocks)?
+                    .finish_query(reservation, owner, blocks)?
                     .to_bytes()
                     .to_vec()
             } else {
@@ -213,7 +218,7 @@ pub(crate) async fn execute_query(
             Vec::new()
         } else {
             engine
-                .create_query_lease(&input.instance_id, blocks)?
+                .finish_query(reservation, owner, blocks)?
                 .to_bytes()
                 .to_vec()
         };
@@ -251,7 +256,7 @@ pub(crate) async fn execute_query(
             Vec::new()
         } else {
             engine
-                .create_query_lease(&input.instance_id, blocks)?
+                .finish_query(reservation, owner, blocks)?
                 .to_bytes()
                 .to_vec()
         };

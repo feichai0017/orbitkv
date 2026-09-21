@@ -1,0 +1,469 @@
+engine,concurrency,pattern,repeat,phase,index,length,ttft_ms,e2e_ms,cached_tokens,matches_cold_output,text,output_tokens,decode_ms_per_token
+vllm,1,shared,0,cold,0,1024,125.0680573284626,215.96193313598633,0,True, and and and and and and and and and and and and and and and and,16,6.059591720501582
+vllm,1,shared,0,after_pressure,0,1024,26.835709810256958,117.38017573952675,1023,True, and and and and and and and and and and and and and and and and,16,6.036297728617986
+vllm,1,shared,0,after_host_eviction,0,1024,70.39965316653252,160.81880405545235,1023,True, and and and and and and and and and and and and and and and and,16,6.027943392594655
+vllm,1,shared,1,cold,0,4096,474.62746873497963,567.2326497733593,0,True,.  and.  and.  and.  and.  and.,16,6.173678735891978
+vllm,1,shared,1,after_pressure,0,4096,42.479269206523895,135.099146515131,4095,True,.  and.  and.  and.  and.  and.,16,6.174658487240474
+vllm,1,shared,1,after_host_eviction,0,4096,129.779614508152,222.36033529043198,4095,True,.  and.  and.  and.  and.  and.,16,6.172048052151998
+vllm,1,shared,2,cold,0,8192,1001.53748691082,1098.2542112469673,0,True,.  and.  and.  and.  and.  and.,16,6.447781622409821
+vllm,1,shared,2,after_pressure,0,8192,52.165817469358444,148.96249026060104,8191,True,.  and.  and.  and.  and.  and.,16,6.453111519416173
+vllm,1,shared,2,after_host_eviction,0,8192,237.40656673908234,333.8695429265499,8191,True,.  and.  and.  and.  and.  and.,16,6.430865079164505
+vllm,1,mixed,0,cold,0,1024,119.58088353276253,210.19690856337547,0,True,.  and.  and.  and.  and.  and.,16,6.041068335374196
+vllm,1,mixed,0,after_pressure,0,1024,25.50388127565384,116.18475615978241,1023,True,.  and.  and.  and.  and.  and.,16,6.045391658941905
+vllm,1,mixed,0,after_host_eviction,0,1024,49.38986524939537,139.74879682064056,1023,True,.  and.  and.  and.  and.  and.,16,6.0239287714163465
+vllm,1,mixed,1,cold,0,4096,474.43221881985664,567.0151151716709,0,True, and.  and.  and.  and.  and.  and,16,6.172193090120952
+vllm,1,mixed,1,after_pressure,0,4096,38.375016301870346,130.92752173542976,4095,True, and.  and.  and.  and.  and.  and,16,6.170167028903961
+vllm,1,mixed,1,after_host_eviction,0,4096,156.80577978491783,249.35023486614227,4095,True, and.  and.  and.  and.  and.  and,16,6.169630338748296
+vllm,1,mixed,2,cold,0,8192,1002.0144768059254,1099.3241369724274,0,True,  and.  and.  and.  and.  and. ,16,6.4873106777668
+vllm,1,mixed,2,after_pressure,0,8192,59.00747328996658,155.9201329946518,8191,True,  and.  and.  and.  and.  and. ,16,6.460843980312347
+vllm,1,mixed,2,after_host_eviction,0,8192,244.14967373013496,340.81004932522774,8191,True,  and.  and.  and.  and.  and. ,16,6.444025039672852
+vllm,4,shared,0,cold,0,1024,153.80413457751274,249.19763952493668,0,True,.  and.  and.  and.  and.  and.,16,6.359566996494929
+vllm,4,shared,0,cold,1,1024,153.5123698413372,250.2940259873867,960,True,.  and.  and.  and.  and.  and.,16,6.452110409736633
+vllm,4,shared,0,cold,2,1024,153.13424915075302,249.6798262000084,960,True,.  and.  and.  and.  and.  and.,16,6.436371803283691
+vllm,4,shared,0,cold,3,1024,155.18147498369217,251.23662874102592,960,True,.  and.  and.  and.  and.  and.,16,6.403676917155583
+vllm,4,shared,0,after_pressure,0,1024,48.03182929754257,144.87624913454056,1023,True,.  and.  and.  and.  and.  and.,16,6.456294655799866
+vllm,4,shared,0,after_pressure,1,1024,29.492676258087158,125.59724971652031,1023,True,.  and.  and.  and.  and.  and.,16,6.406971563895543
+vllm,4,shared,0,after_pressure,2,1024,48.36506396532059,145.02689242362976,1023,True,.  and.  and.  and.  and.  and.,16,6.444121897220612
+vllm,4,shared,0,after_pressure,3,1024,49.391988664865494,145.18539234995842,1023,True,.  and.  and.  and.  and.  and.,16,6.386226912339528
+vllm,4,shared,0,after_host_eviction,0,1024,70.92440500855446,166.3302257657051,1023,True,.  and.  and.  and.  and.  and.,16,6.36038805047671
+vllm,4,shared,0,after_host_eviction,1,1024,71.67820259928703,167.27511584758759,1023,True,.  and.  and.  and.  and.  and.,16,6.3731275498867035
+vllm,4,shared,0,after_host_eviction,2,1024,71.96572422981262,167.26602986454964,1023,True,.  and.  and.  and.  and.  and.,16,6.353353708982468
+vllm,4,shared,0,after_host_eviction,3,1024,71.48019596934319,167.4170084297657,1023,True,.  and.  and.  and.  and.  and.,16,6.395787497361501
+vllm,4,shared,1,cold,0,4096,522.2111940383911,640.1567161083221,4032,True,.  and.  and.  and.  and.  and.,16,7.863034804662068
+vllm,4,shared,1,cold,1,4096,521.6824859380722,639.960590749979,4032,True,.  and.  and.  and.  and.  and.,16,7.885206987460454
+vllm,4,shared,1,cold,2,4096,522.4399119615555,640.0632970035076,4032,True,.  and.  and.  and.  and.  and.,16,7.841559002796809
+vllm,4,shared,1,cold,3,4096,503.0185244977474,632.6388455927372,0,True,.  and.  and.  and.  and.  and.,16,8.641354739665985
+vllm,4,shared,1,after_pressure,0,4096,92.50074625015259,204.58849146962166,4095,True,.  and.  and.  and.  and.  and.,16,7.472516347964604
+vllm,4,shared,1,after_pressure,1,4096,92.80536323785782,204.09950241446495,4095,True,.  and.  and.  and.  and.  and.,16,7.4196092784404755
+vllm,4,shared,1,after_pressure,2,4096,42.07536578178406,153.45264971256256,4095,True,.  and.  and.  and.  and.  and.,16,7.4251522620519
+vllm,4,shared,1,after_pressure,3,4096,93.41927617788315,205.00076934695244,4095,True,.  and.  and.  and.  and.  and.,16,7.438766211271286
+vllm,4,shared,1,after_host_eviction,0,4096,182.19787254929543,298.7179420888424,4095,True,.  and.  and.  and.  and.  and.,16,7.768004635969798
+vllm,4,shared,1,after_host_eviction,1,4096,200.31115040183067,315.41769951581955,4095,True,.  and.  and.  and.  and.  and.,16,7.6737699409325915
+vllm,4,shared,1,after_host_eviction,2,4096,182.81708285212517,299.6281608939171,4095,True,.  and.  and.  and.  and.  and.,16,7.787405202786128
+vllm,4,shared,1,after_host_eviction,3,4096,182.75735154747963,299.8200096189976,4095,True,.  and.  and.  and.  and.  and.,16,7.804177204767863
+vllm,4,shared,2,cold,0,8192,1053.0021972954273,1194.7517916560173,8128,True,.  and.  and.  and.  and.  and.,16,9.449972957372665
+vllm,4,shared,2,cold,1,8192,1054.1203506290913,1193.5773082077503,8128,True,.  and.  and.  and.  and.  and.,16,9.297130505243937
+vllm,4,shared,2,cold,2,8192,1009.9752731621265,1186.2729042768478,0,True,.  and.  and.  and.  and.  and.,16,11.753175407648087
+vllm,4,shared,2,cold,3,8192,1054.6940937638283,1195.0840093195438,8128,True,.  and.  and.  and.  and.  and.,16,9.35932770371437
+vllm,4,shared,2,after_pressure,0,8192,65.33210724592209,208.41141045093536,8191,True,.  and.  and.  and.  and.  and.,16,9.538620213667551
+vllm,4,shared,2,after_pressure,1,8192,93.82084012031555,233.34705084562302,8191,True,.  and.  and.  and.  and.  and.,16,9.301747381687164
+vllm,4,shared,2,after_pressure,2,8192,93.4978500008583,233.3468236029148,8191,True,.  and.  and.  and.  and.  and.,16,9.323264906803766
+vllm,4,shared,2,after_pressure,3,8192,94.86805647611618,233.6660772562027,8191,True,.  and.  and.  and.  and.  and.,16,9.253201385339102
+vllm,4,shared,2,after_host_eviction,0,8192,268.7842473387718,409.6298925578594,8191,True,.  and.  and.  and.  and.  and.,16,9.389709681272507
+vllm,4,shared,2,after_host_eviction,1,8192,298.3696758747101,435.25419384241104,8191,True,.  and.  and.  and.  and.  and.,16,9.125634531180063
+vllm,4,shared,2,after_host_eviction,2,8192,296.99719324707985,435.03643944859505,8191,True,.  and.  and.  and.  and.  and.,16,9.202616413434347
+vllm,4,shared,2,after_host_eviction,3,8192,297.75360971689224,435.5979971587658,8191,True,.  and.  and.  and.  and.  and.,16,9.189625829458237
+vllm,4,mixed,0,cold,0,1024,1673.1759943068027,1789.944626390934,0,True,.  A.  A.  A.  A.  A.,16,7.784575472275416
+vllm,4,mixed,0,cold,1,4096,1672.6109720766544,1789.7407338023186,0,True,.  and.  and.  and.  and.  and.,16,7.808650781710942
+vllm,4,mixed,0,cold,2,8192,1020.4728916287422,1782.3402546346188,0,True,.  and.  and.  and.  and.  and.,16,50.791157533725105
+vllm,4,mixed,0,cold,3,1024,1673.7584583461285,1790.2319505810738,0,True,.  and.  and.  and.  and.  and.,16,7.764899482329686
+vllm,4,mixed,0,after_pressure,0,1024,106.84895142912865,213.25264126062393,1023,True,.  A.  A.  A.  A.  A.,16,7.093579322099686
+vllm,4,mixed,0,after_pressure,1,4096,44.690992683172226,150.09014680981636,4095,True,.  and.  and.  and.  and.  and.,16,7.026610275109609
+vllm,4,mixed,0,after_pressure,2,8192,105.52394017577171,212.98496052622795,8191,True,.  and.  and.  and.  and.  and.,16,7.1640680233637495
+vllm,4,mixed,0,after_pressure,3,1024,106.17109760642052,213.28921243548393,1023,True,.  and.  and.  and.  and.  and.,16,7.141207655270894
+vllm,4,mixed,0,after_host_eviction,0,1024,300.27911439538,402.6354253292084,1023,True,.  A.  A.  A.  A.  A.,16,6.823754062255223
+vllm,4,mixed,0,after_host_eviction,1,4096,396.95874974131584,490.25338143110275,4095,True,.  and.  and.  and.  and.  and.,16,6.219642112652461
+vllm,4,mixed,0,after_host_eviction,2,8192,290.2228273451328,391.4450816810131,8191,True,.  and.  and.  and.  and.  and.,16,6.748150289058685
+vllm,4,mixed,0,after_host_eviction,3,1024,61.354149132966995,151.87544003129005,1023,True,.  and.  and.  and.  and.  and.,16,6.034752726554871
+vllm,4,mixed,1,cold,0,4096,2167.569763958454,2260.374266654253,0,True,.  and.  and.  and.  and.  and.,16,6.186966846386592
+vllm,4,mixed,1,cold,1,8192,1595.287974923849,1699.4508616626263,0,True,.  and.  and.  and.  and.  and.,16,6.944192449251811
+vllm,4,mixed,1,cold,2,1024,1595.7022458314896,1700.1972422003746,0,True,. and. and. and. and. and. and. and. and,16,6.966333091259003
+vllm,4,mixed,1,cold,3,4096,480.34122586250305,1686.9451850652695,0,True,.  and.  and.  and.  and.  and.,16,80.44026394685109
+vllm,4,mixed,1,after_pressure,0,4096,197.16278091073036,291.8334789574146,4095,True,.  and.  and.  and.  and.  and.,16,6.311379869778951
+vllm,4,mixed,1,after_pressure,1,8192,99.50302541255951,205.08015155792236,8191,True,.  and.  and.  and.  and.  and.,16,7.038475076357524
+vllm,4,mixed,1,after_pressure,2,1024,99.44857284426689,205.72764426469803,1023,True,. and. and. and. and. and. and. and. and,16,7.085271428028743
+vllm,4,mixed,1,after_pressure,3,4096,45.93219980597496,148.2742466032505,4095,True,.  and.  and.  and.  and.  and.,16,6.82280311981837
+vllm,4,mixed,1,after_host_eviction,0,4096,170.0938157737255,264.01669532060623,4095,True,.  and.  and.  and.  and.  and.,16,6.2615253031253815
+vllm,4,mixed,1,after_host_eviction,1,8192,471.0121192038059,568.3148987591267,8191,True,.  and.  and.  and.  and.  and.,16,6.486851970354716
+vllm,4,mixed,1,after_host_eviction,2,1024,55.96912279725075,147.4829725921154,1023,True,. and. and. and. and. and. and. and. and,16,6.100923319657643
+vllm,4,mixed,1,after_host_eviction,3,4096,279.58421036601067,372.77423962950706,4095,True,.  and.  and.  and.  and.  and.,16,6.212668617566426
+vllm,4,mixed,2,cold,0,8192,2235.8930967748165,2770.3684270381927,0,True,.  and.  and.  and.  and.  and.,16,35.63168868422508
+vllm,4,mixed,2,cold,1,1024,124.4552955031395,1205.846093595028,0,True,. and. and. and. and. and. and. and. and,16,72.09271987279256
+vllm,4,mixed,2,cold,2,4096,2673.3810864388943,2774.807631969452,0,True,  and.  and.  and.  and.  and. ,16,6.761769702037175
+vllm,4,mixed,2,cold,3,8192,1122.4760226905346,1220.9314405918121,0,True,.  and.  and.  and.  and.  and.,16,6.563694526751836
+vllm,4,mixed,2,after_pressure,0,8192,222.921434789896,320.924561470747,8191,True,.  and.  and.  and.  and.  and.,16,6.533541778723399
+vllm,4,mixed,2,after_pressure,1,1024,97.31461852788925,201.30936801433563,1023,True,. and. and. and. and. and. and. and. and,16,6.932983299096425
+vllm,4,mixed,2,after_pressure,2,4096,96.77256643772125,201.09819248318672,4095,True,  and.  and.  and.  and.  and. ,16,6.955041736364365
+vllm,4,mixed,2,after_pressure,3,8192,64.21460583806038,168.53055357933044,8191,True,.  and.  and.  and.  and.  and.,16,6.954396516084671
+vllm,4,mixed,2,after_host_eviction,0,8192,546.9151847064495,643.8499018549919,8191,True,.  and.  and.  and.  and.  and.,16,6.462314476569493
+vllm,4,mixed,2,after_host_eviction,1,1024,358.9196689426899,452.77251303195953,1023,True,. and. and. and. and. and. and. and. and,16,6.256856272617976
+vllm,4,mixed,2,after_host_eviction,2,4096,353.5342440009117,446.5274587273598,4095,True,  and.  and.  and.  and.  and. ,16,6.199547648429871
+vllm,4,mixed,2,after_host_eviction,3,8192,258.2310698926449,359.21015217900276,8191,True,.  and.  and.  and.  and.  and.,16,6.731938819090526
+vllm,8,shared,0,cold,0,1024,149.71625059843063,284.2005155980587,0,True,.  and.  and.  and.  and.  and.,16,8.96561766664187
+vllm,8,shared,0,cold,1,1024,189.55211341381073,288.62015902996063,960,True,.  and.  and.  and.  and.  and.,16,6.604536374409993
+vllm,8,shared,0,cold,2,1024,187.61181086301804,289.77950662374496,960,True,.  and.  and.  and.  and.  and.,16,6.811179717381795
+vllm,8,shared,0,cold,3,1024,189.92821872234344,292.5697900354862,960,True,.  and.  and.  and.  and.  and.,16,6.842771420876185
+vllm,8,shared,0,cold,4,1024,189.01697918772697,292.0612804591656,960,True,.  and.  and.  and.  and.  and.,16,6.869620084762573
+vllm,8,shared,0,cold,5,1024,190.44823944568634,292.2142334282398,960,True,.  and.  and.  and.  and.  and.,16,6.784399598836899
+vllm,8,shared,0,cold,6,1024,190.6157247722149,292.3102527856827,960,True,.  and.  and.  and.  and.  and.,16,6.779635200897853
+vllm,8,shared,0,cold,7,1024,190.63927978277206,294.2129261791706,960,True,.  and.  and.  and.  and.  and.,16,6.904909759759903
+vllm,8,shared,0,after_pressure,0,1024,31.699683517217636,131.93059340119362,1023,True,.  and.  and.  and.  and.  and.,16,6.682060658931732
+vllm,8,shared,0,after_pressure,1,1024,78.55724915862083,181.2211349606514,1023,False,.  A.  A.  A.  A.  A.,16,6.844259053468704
+vllm,8,shared,0,after_pressure,2,1024,79.50550317764282,183.74531343579292,1023,False,.  A.  A.  A.  A.  A.,16,6.949320683876674
+vllm,8,shared,0,after_pressure,3,1024,77.1615207195282,181.06375262141228,1023,False,.  A.  A.  A.  A.  A.,16,6.926815460125606
+vllm,8,shared,0,after_pressure,4,1024,80.17311990261078,183.52197110652924,1023,False,.  A.  A.  A.  A.  A.,16,6.8899234135945635
+vllm,8,shared,0,after_pressure,5,1024,76.12904161214828,180.41318655014038,1023,False,.  A.  A.  A.  A.  A.,16,6.952276329199473
+vllm,8,shared,0,after_pressure,6,1024,81.38162270188332,184.21979621052742,1023,False,.  A.  A.  A.  A.  A.,16,6.855878233909607
+vllm,8,shared,0,after_pressure,7,1024,81.15150779485703,185.59593334794044,1023,False,.  A.  A.  A.  A.  A.,16,6.962961703538895
+vllm,8,shared,0,after_host_eviction,0,1024,108.88582840561867,211.8673175573349,1023,False,.  A.  A.  A.  A.  A.,16,6.865432610114415
+vllm,8,shared,0,after_host_eviction,1,1024,107.88438841700554,210.76564490795135,1023,False,.  A.  A.  A.  A.  A.,16,6.858750432729721
+vllm,8,shared,0,after_host_eviction,2,1024,104.95784506201744,209.2919461429119,1023,False,.  A.  A.  A.  A.  A.,16,6.955606738726298
+vllm,8,shared,0,after_host_eviction,3,1024,58.67400020360947,160.0361242890358,1023,True,.  and.  and.  and.  and.  and.,16,6.757474939028422
+vllm,8,shared,0,after_host_eviction,4,1024,106.58329352736473,206.92992210388184,1023,False,.  A.  A.  A.  A.  A.,16,6.689775238434474
+vllm,8,shared,0,after_host_eviction,5,1024,59.795718640089035,161.7969647049904,1023,True,.  and.  and.  and.  and.  and.,16,6.8000830709934235
+vllm,8,shared,0,after_host_eviction,6,1024,105.1265187561512,207.50634372234344,1023,False,.  A.  A.  A.  A.  A.,16,6.825321664412816
+vllm,8,shared,0,after_host_eviction,7,1024,108.21869596838951,212.07083016633987,1023,False,.  A.  A.  A.  A.  A.,16,6.923475613196691
+vllm,8,shared,1,cold,0,4096,559.025164693594,692.016951739788,4032,True,.  and.  and.  and.  and.  and.,16,8.866119136412939
+vllm,8,shared,1,cold,1,4096,556.5724559128284,690.3359927237034,4032,True,.  and.  and.  and.  and.  and.,16,8.917569120724997
+vllm,8,shared,1,cold,2,4096,559.3001134693623,688.6989288032055,4032,True,.  and.  and.  and.  and.  and.,16,8.626587688922882
+vllm,8,shared,1,cold,3,4096,555.9151023626328,687.6860857009888,4032,True,.  and.  and.  and.  and.  and.,16,8.784732222557068
+vllm,8,shared,1,cold,4,4096,555.2700869739056,689.2777346074581,4032,True,.  and.  and.  and.  and.  and.,16,8.93384317557017
+vllm,8,shared,1,cold,5,4096,562.8795102238655,691.2674568593502,4032,True,.  and.  and.  and.  and.  and.,16,8.559196442365646
+vllm,8,shared,1,cold,6,4096,553.8859702646732,687.9370287060738,4032,True,.  and.  and.  and.  and.  and.,16,8.936737229426702
+vllm,8,shared,1,cold,7,4096,488.92538994550705,679.2052276432514,0,True,.  and.  and.  and.  and.  and.,16,12.685322513182959
+vllm,8,shared,1,after_pressure,0,4096,55.943481624126434,178.76334488391876,4095,True,.  and.  and.  and.  and.  and.,16,8.187990883986155
+vllm,8,shared,1,after_pressure,1,4096,114.32882025837898,242.75710433721542,4095,True,.  and.  and.  and.  and.  and.,16,8.561885605255762
+vllm,8,shared,1,after_pressure,2,4096,109.02396216988564,239.38940837979317,4095,True,.  and.  and.  and.  and.  and.,16,8.69102974732717
+vllm,8,shared,1,after_pressure,3,4096,107.62467235326767,240.18222466111183,4095,True,.  and.  and.  and.  and.  and.,16,8.837170153856277
+vllm,8,shared,1,after_pressure,4,4096,111.04584857821465,242.65741184353828,4095,True,.  and.  and.  and.  and.  and.,16,8.774104217688242
+vllm,8,shared,1,after_pressure,5,4096,109.66671630740166,242.04984679818153,4095,True,.  and.  and.  and.  and.  and.,16,8.825542032718658
+vllm,8,shared,1,after_pressure,6,4096,110.91794073581696,242.10365861654282,4095,True,.  and.  and.  and.  and.  and.,16,8.745714525381723
+vllm,8,shared,1,after_pressure,7,4096,111.3334409892559,243.22917312383652,4095,True,.  and.  and.  and.  and.  and.,16,8.79304880897204
+vllm,8,shared,1,after_host_eviction,0,4096,222.0887877047062,355.44417425990105,4095,True,.  and.  and.  and.  and.  and.,16,8.890359103679657
+vllm,8,shared,1,after_host_eviction,1,4096,220.20848840475082,355.0387844443321,4095,True,.  and.  and.  and.  and.  and.,16,8.988686402638754
+vllm,8,shared,1,after_host_eviction,2,4096,194.890096783638,327.5013826787472,4095,True,.  and.  and.  and.  and.  and.,16,8.840752393007278
+vllm,8,shared,1,after_host_eviction,3,4096,195.66645473241806,327.3158259689808,4095,True,.  and.  and.  and.  and.  and.,16,8.776624749104181
+vllm,8,shared,1,after_host_eviction,4,4096,217.16902777552605,350.4026159644127,4095,True,.  and.  and.  and.  and.  and.,16,8.882239212592443
+vllm,8,shared,1,after_host_eviction,5,4096,215.84082767367363,349.8277775943279,4095,True,.  and.  and.  and.  and.  and.,16,8.93246332804362
+vllm,8,shared,1,after_host_eviction,6,4096,190.85077941417694,324.0046724677086,4095,True,.  and.  and.  and.  and.  and.,16,8.876926203568777
+vllm,8,shared,1,after_host_eviction,7,4096,221.076387912035,355.35984858870506,4095,True,.  and.  and.  and.  and.  and.,16,8.952230711778006
+vllm,8,shared,2,cold,0,8192,1111.518483608961,1279.7693833708763,8128,True,.  and.  and.  and.  and.  and.,16,11.216726650794348
+vllm,8,shared,2,cold,1,8192,1112.1994964778423,1280.916765332222,8128,True,.  and.  and.  and.  and.  and.,16,11.24781792362531
+vllm,8,shared,2,cold,2,8192,1114.0594109892845,1277.5193452835083,8128,True,.  and.  and.  and.  and.  and.,16,10.897328952948252
+vllm,8,shared,2,cold,3,8192,1108.0101877450943,1275.3087654709816,8128,True,.  and.  and.  and.  and.  and.,16,11.153238515059153
+vllm,8,shared,2,cold,4,8192,1105.8908216655254,1270.6897668540478,8128,True,.  and.  and.  and.  and.  and.,16,10.98659634590149
+vllm,8,shared,2,cold,5,8192,1104.4383123517036,1272.0021679997444,8128,True,.  and.  and.  and.  and.  and.,16,11.170923709869385
+vllm,8,shared,2,cold,6,8192,1020.1031640172005,1262.8315314650536,0,True,.  and.  and.  and.  and.  and.,16,16.181891163190205
+vllm,8,shared,2,cold,7,8192,1117.4851953983307,1279.9886129796505,8128,True,.  and.  and.  and.  and.  and.,16,10.833561172087988
+vllm,8,shared,2,after_pressure,0,8192,130.1434263586998,297.48610034585,8191,True,.  and.  and.  and.  and.  and.,16,11.156178265810013
+vllm,8,shared,2,after_pressure,1,8192,125.02272054553032,291.6128523647785,8191,True,.  and.  and.  and.  and.  and.,16,11.10600878794988
+vllm,8,shared,2,after_pressure,2,8192,125.69279968738556,295.15091702342033,8191,True,.  and.  and.  and.  and.  and.,16,11.297207822402319
+vllm,8,shared,2,after_pressure,3,8192,122.74189665913582,292.8628996014595,8191,True,.  and.  and.  and.  and.  and.,16,11.341400196154913
+vllm,8,shared,2,after_pressure,4,8192,124.53459575772285,291.1258600652218,8191,True,.  and.  and.  and.  and.  and.,16,11.106084287166595
+vllm,8,shared,2,after_pressure,5,8192,83.91058444976807,256.27610832452774,8191,True,.  and.  and.  and.  and.  and.,16,11.491034924983978
+vllm,8,shared,2,after_pressure,6,8192,122.51588329672813,293.8287705183029,8191,True,.  and.  and.  and.  and.  and.,16,11.420859148104986
+vllm,8,shared,2,after_pressure,7,8192,129.50068339705467,297.9169636964798,8191,True,.  and.  and.  and.  and.  and.,16,11.227752019961676
+vllm,8,shared,2,after_host_eviction,0,8192,326.91899314522743,498.8180883228779,8191,True,.  and.  and.  and.  and.  and.,16,11.45993967851003
+vllm,8,shared,2,after_host_eviction,1,8192,324.9262422323227,496.56542018055916,8191,True,.  and.  and.  and.  and.  and.,16,11.442611863215765
+vllm,8,shared,2,after_host_eviction,2,8192,325.0471353530884,494.5264644920826,8191,True,.  and.  and.  and.  and.  and.,16,11.298621942599615
+vllm,8,shared,2,after_host_eviction,3,8192,322.713416069746,492.8652308881283,8191,True,.  and.  and.  and.  and.  and.,16,11.343454321225485
+vllm,8,shared,2,after_host_eviction,4,8192,285.4021340608597,457.8160420060158,8191,True,.  and.  and.  and.  and.  and.,16,11.494260529677073
+vllm,8,shared,2,after_host_eviction,5,8192,324.6318884193897,495.68017944693565,8191,True,.  and.  and.  and.  and.  and.,16,11.403219401836395
+vllm,8,shared,2,after_host_eviction,6,8192,322.03124836087227,490.5426874756813,8191,True,.  and.  and.  and.  and.  and.,16,11.234095940987268
+vllm,8,shared,2,after_host_eviction,7,8192,331.3031755387783,499.3952661752701,8191,True,.  and.  and.  and.  and.  and.,16,11.206139375766119
+vllm,8,mixed,0,cold,0,1024,1050.0393435359001,1149.3160873651505,0,True,. and. and. and. and. and. and. and. and,16,6.618449588616689
+vllm,8,mixed,0,cold,1,4096,505.46928867697716,1143.9159289002419,0,True,.  and.  and.  and.  and.  and.,16,42.563109348217644
+vllm,8,mixed,0,cold,2,8192,3458.1630416214466,4009.877812117338,0,True,.  and.  and.  and.  and.  and.,16,36.780984699726105
+vllm,8,mixed,0,cold,3,1024,2364.812918007374,2467.0939929783344,0,True,. and. and. and. and. and. and. and. and,16,6.818738331397374
+vllm,8,mixed,0,cold,4,4096,3912.7575866878033,4014.2548345029354,0,True,.  and.  and.  and.  and.  and.,16,6.766483187675476
+vllm,8,mixed,0,cold,5,8192,2142.58973300457,2462.08243817091,0,True, and.  and.  and.  and.  and.  and,16,21.299513677755993
+vllm,8,mixed,0,cold,6,1024,2364.836435765028,2467.885471880436,0,True,.  and and and and and and and and and and and and and and,16,6.869935741027196
+vllm,8,mixed,0,cold,7,4096,1050.59502273798,1150.500237941742,0,True,.  and.  and.  and.  and.  and.,16,6.660347680250804
+vllm,8,mixed,0,after_pressure,0,1024,245.49398571252823,348.13641011714935,1023,True,. and. and. and. and. and. and. and. and,16,6.842828293641408
+vllm,8,mixed,0,after_pressure,1,4096,123.75037744641304,228.29747945070267,4095,True,.  and.  and.  and.  and.  and.,16,6.969806800285975
+vllm,8,mixed,0,after_pressure,2,8192,313.74678760766983,413.35440799593925,8191,True,.  and.  and.  and.  and.  and.,16,6.640508025884628
+vllm,8,mixed,0,after_pressure,3,1024,45.127931982278824,145.04104852676392,1023,True,. and. and. and. and. and. and. and. and,16,6.660874436299006
+vllm,8,mixed,0,after_pressure,4,4096,242.29134991765022,344.5810042321682,4095,True,.  and.  and.  and.  and.  and.,16,6.819310287634532
+vllm,8,mixed,0,after_pressure,5,8192,463.9033265411854,561.4370554685593,8191,True, and.  and.  and.  and.  and.  and,16,6.502248595158259
+vllm,8,mixed,0,after_pressure,6,1024,33.176012337207794,132.7909305691719,1023,True,.  and and and and and and and and and and and and and and,16,6.640994548797607
+vllm,8,mixed,0,after_pressure,7,4096,128.78551334142685,232.9835630953312,4095,True,.  and.  and.  and.  and.  and.,16,6.946536650260289
+vllm,8,mixed,0,after_host_eviction,0,1024,373.65489080548286,472.4232144653797,1023,True,. and. and. and. and. and. and. and. and,16,6.58455491065979
+vllm,8,mixed,0,after_host_eviction,1,4096,371.00960314273834,464.9663604795933,4095,True,.  and.  and.  and.  and.  and.,16,6.263783822456996
+vllm,8,mixed,0,after_host_eviction,2,8192,581.2639407813549,678.5789541900158,8191,True,.  and.  and.  and.  and.  and.,16,6.487667560577393
+vllm,8,mixed,0,after_host_eviction,3,1024,174.80669915676117,271.52955904603004,1023,True,. and. and. and. and. and. and. and. and,16,6.448190659284592
+vllm,8,mixed,0,after_host_eviction,4,4096,268.35381984710693,372.7168142795563,4095,True,.  and.  and.  and.  and.  and.,16,6.957532962163289
+vllm,8,mixed,0,after_host_eviction,5,8192,800.003532320261,897.2877226769924,8191,True, and.  and.  and.  and.  and.  and,16,6.485612690448761
+vllm,8,mixed,0,after_host_eviction,6,1024,403.3753089606762,501.25304609537125,1023,True,.  and and and and and and and and and and and and and and,16,6.525182475646337
+vllm,8,mixed,0,after_host_eviction,7,4096,147.95011281967163,243.31491440534592,4095,True,.  and.  and.  and.  and.  and.,16,6.357653439044952
+vllm,8,mixed,1,cold,0,4096,3124.387465417385,3229.7578416764736,0,True,.  and.  and.  and.  and.  and.,16,7.024691750605901
+vllm,8,mixed,1,cold,1,8192,4226.848274469376,4886.703386902809,0,True,  and.  and.  and.  and.  and. ,16,43.99034082889557
+vllm,8,mixed,1,cold,2,1024,4786.811847239733,4891.731031239033,0,True,. and. and. and. and. and. and. and. and,16,6.99461226662
+vllm,8,mixed,1,cold,3,4096,1469.085093587637,1571.447428315878,0,True,.  and.  and.  and.  and.  and.,16,6.8241556485493975
+vllm,8,mixed,1,cold,4,8192,2560.8859062194824,3220.9155820310116,0,True,.  and.  and.  and.  and.  and.,16,44.00197838743528
+vllm,8,mixed,1,cold,5,1024,3124.63341280818,3230.354703962803,0,True,.  and.  and.  and.  and.  and.,16,7.048086076974869
+vllm,8,mixed,1,cold,6,4096,4780.890837311745,4886.5926042199135,0,True,  and.  and.  and.  and.  and. ,16,7.046784460544586
+vllm,8,mixed,1,cold,7,8192,1014.7433280944824,1566.713273525238,0,True,.  and.  and.  and.  and.  and.,16,36.79799636205038
+vllm,8,mixed,1,after_pressure,0,4096,314.79349732398987,417.87056997418404,4095,True,.  and.  and.  and.  and.  and.,16,6.871804843346278
+vllm,8,mixed,1,after_pressure,1,8192,316.222682595253,418.1666001677513,8191,True,  and.  and.  and.  and.  and. ,16,6.796261171499888
+vllm,8,mixed,1,after_pressure,2,1024,227.39627957344055,328.83600145578384,1023,True,. and. and. and. and. and. and. and. and,16,6.7626481254895525
+vllm,8,mixed,1,after_pressure,3,4096,50.69504678249359,150.40186047554016,4095,True,.  and.  and.  and.  and.  and.,16,6.647120912869771
+vllm,8,mixed,1,after_pressure,4,8192,486.99959740042686,587.4411202967167,8191,True,.  and.  and.  and.  and.  and.,16,6.696101526419322
+vllm,8,mixed,1,after_pressure,5,1024,220.9276370704174,322.6325549185276,1023,True,.  and.  and.  and.  and.  and.,16,6.78032785654068
+vllm,8,mixed,1,after_pressure,6,4096,487.432848662138,588.2001854479313,4095,True,  and.  and.  and.  and.  and. ,16,6.71782245238622
+vllm,8,mixed,1,after_pressure,7,8192,114.54049497842789,214.449193328619,8191,True,.  and.  and.  and.  and.  and.,16,6.660579890012741
+vllm,8,mixed,1,after_host_eviction,0,4096,397.25828543305397,490.4380813241005,4095,True,.  and.  and.  and.  and.  and.,16,6.211986392736435
+vllm,8,mixed,1,after_host_eviction,1,8192,819.359302520752,916.6394136846066,8191,True,  and.  and.  and.  and.  and. ,16,6.485340744256973
+vllm,8,mixed,1,after_host_eviction,2,1024,167.42796450853348,263.8772688806057,1023,True,. and. and. and. and. and. and. and. and,16,6.429953624804814
+vllm,8,mixed,1,after_host_eviction,3,4096,284.1051295399666,375.5081780254841,4095,True,.  and.  and.  and.  and.  and.,16,6.093536565701167
+vllm,8,mixed,1,after_host_eviction,4,8192,1033.6792171001434,1130.7268105447292,8191,True,.  and.  and.  and.  and.  and.,16,6.469839562972386
+vllm,8,mixed,1,after_host_eviction,5,1024,286.4161692559719,382.18095898628235,1023,True,.  and.  and.  and.  and.  and.,16,6.38431931535403
+vllm,8,mixed,1,after_host_eviction,6,4096,159.59851443767548,254.84094768762589,4095,True,  and.  and.  and.  and.  and. ,16,6.349495549996694
+vllm,8,mixed,1,after_host_eviction,7,8192,594.9904844164848,692.3895590007305,8191,True,.  and.  and.  and.  and.  and.,16,6.493271638949712
+vllm,8,mixed,2,cold,0,8192,1596.4453294873238,1700.7852643728256,0,True,.  and.  and.  and.  and.  and.,16,6.955995659033458
+vllm,8,mixed,2,cold,1,1024,1440.5997581779957,1692.4610994756222,0,True,. and. and. and. and. and. and. and. and,16,16.790756086508434
+vllm,8,mixed,2,cold,2,4096,484.0898849070072,1684.9139258265495,0,True,.  and.  and.  and.  and.  and.,16,80.05493606130283
+vllm,8,mixed,2,cold,3,8192,4497.512232512236,4595.078054815531,0,True,.  and.  and.  and.  and.  and.,16,6.504388153553009
+vllm,8,mixed,2,cold,4,1024,2279.9360528588295,3487.239882349968,0,True,.  and.  and.  and.  and.  and.,16,80.4869219660759
+vllm,8,mixed,2,cold,5,4096,2278.762277215719,3485.7497178018093,0,True,.  and.  and.  and.  and.  and.,16,80.465829372406
+vllm,8,mixed,2,cold,6,8192,3393.513932824135,3503.193113952875,0,True,.  and.  and.  and.  and.  and.,16,7.311945408582687
+vllm,8,mixed,2,cold,7,1024,3397.2807712852955,3507.7135264873505,0,True,1. 2. 3. 4. 5. 6,16,7.362183680136998
+vllm,8,mixed,2,after_pressure,0,8192,303.1863458454609,406.92173317074776,8191,True,.  and.  and.  and.  and.  and.,16,6.915692488352458
+vllm,8,mixed,2,after_pressure,1,1024,230.61713203787804,341.6416868567467,1023,True,. and. and. and. and. and. and. and. and,16,7.401636987924576
+vllm,8,mixed,2,after_pressure,2,4096,114.23544585704803,219.04750168323517,4095,True,.  and.  and.  and.  and.  and.,16,6.987470388412476
+vllm,8,mixed,2,after_pressure,3,8192,458.86606350541115,556.0780204832554,8191,True,.  and.  and.  and.  and.  and.,16,6.480797131856282
+vllm,8,mixed,2,after_pressure,4,1024,226.01742669939995,337.25431188941,1023,True,.  and.  and.  and.  and.  and.,16,7.415792346000671
+vllm,8,mixed,2,after_pressure,5,4096,230.70473596453667,341.401819139719,4095,True,.  and.  and.  and.  and.  and.,16,7.3798055450121565
+vllm,8,mixed,2,after_pressure,6,8192,69.98179852962494,174.19857159256935,8191,True,.  and.  and.  and.  and.  and.,16,6.947784870862961
+vllm,8,mixed,2,after_pressure,7,1024,113.89517411589622,219.37136352062225,1023,True,1. 2. 3. 4. 5. 6,16,7.031745960315068
+vllm,8,mixed,2,after_host_eviction,0,8192,889.6721862256527,987.0337657630444,8191,True,.  and.  and.  and.  and.  and.,16,6.490771969159444
+vllm,8,mixed,2,after_host_eviction,1,1024,612.12407797575,716.615367680788,1023,True,. and. and. and. and. and. and. and. and,16,6.966085980335872
+vllm,8,mixed,2,after_host_eviction,2,4096,361.9777373969555,459.58010107278824,4095,True,.  and.  and.  and.  and.  and.,16,6.506824245055516
+vllm,8,mixed,2,after_host_eviction,3,8192,602.7354523539543,702.5928273797035,8191,True,.  and.  and.  and.  and.  and.,16,6.657158335049947
+vllm,8,mixed,2,after_host_eviction,4,1024,392.55594834685326,491.4091117680073,1023,True,.  and.  and.  and.  and.  and.,16,6.590210894743602
+vllm,8,mixed,2,after_host_eviction,5,4096,716.1817252635956,810.1757317781448,4095,True,.  and.  and.  and.  and.  and.,16,6.266267100969951
+vllm,8,mixed,2,after_host_eviction,6,8192,264.16073366999626,365.2424365282059,8191,True,.  and.  and.  and.  and.  and.,16,6.738780190547307
+vllm,8,mixed,2,after_host_eviction,7,1024,368.64203214645386,469.01044994592667,1023,True,1. 2. 3. 4. 5. 6,16,6.691227853298187
+sglang,1,shared,0,cold,0,1024,123.56816604733467,211.97471767663956,0,True, and and and and and and and and and and and and and and and and,16,5.893770108620326
+sglang,1,shared,0,after_pressure,0,1024,38.46769034862518,126.4188215136528,960,True, and and and and and and and and and and and and and and and and,16,5.863408744335175
+sglang,1,shared,0,after_host_eviction,0,1024,58.83157625794411,146.79661765694618,960,True, and and and and and and and and and and and and and and and and,16,5.864336093266805
+sglang,1,shared,1,cold,0,4096,473.9897549152374,565.5814968049526,0,True,.  and.  and.  and.  and.  and.,16,6.106116125981013
+sglang,1,shared,1,after_pressure,0,4096,43.416425585746765,134.44074243307114,4032,True,.  and.  and.  and.  and.  and.,16,6.068287789821625
+sglang,1,shared,1,after_host_eviction,0,4096,162.39169239997864,252.8051659464836,4032,True,.  and.  and.  and.  and.  and.,16,6.027564903100331
+sglang,1,shared,2,cold,0,8192,1002.3256801068783,1099.4530096650124,0,True,.  and.  and.  and.  and.  and.,16,6.475155303875606
+sglang,1,shared,2,after_pressure,0,8192,56.54492229223251,153.62660214304924,8128,True,.  and.  and.  and.  and.  and.,16,6.472111990054448
+sglang,1,shared,2,after_host_eviction,0,8192,283.73702242970467,380.47831133008003,8128,True,.  and.  and.  and.  and.  and.,16,6.449419260025024
+sglang,1,mixed,0,cold,0,1024,117.73606017231941,205.85786551237106,0,True,.  and.  and.  and.  and.  and.,16,5.87478702267011
+sglang,1,mixed,0,after_pressure,0,1024,33.39618071913719,121.08055502176285,960,True,.  and.  and.  and.  and.  and.,16,5.845624953508377
+sglang,1,mixed,0,after_host_eviction,0,1024,67.13777408003807,155.333761125803,960,True,.  and.  and.  and.  and.  and.,16,5.879732469717662
+sglang,1,mixed,1,cold,0,4096,473.3911454677582,564.8836456239223,0,True, and.  and.  and.  and.  and.  and,16,6.099500010410945
+sglang,1,mixed,1,after_pressure,0,4096,41.952162981033325,133.08966904878616,4032,True, and.  and.  and.  and.  and.  and,16,6.075833737850189
+sglang,1,mixed,1,after_host_eviction,0,4096,170.17681896686554,261.4714279770851,4032,True, and.  and.  and.  and.  and.  and,16,6.086307267347972
+sglang,1,mixed,2,cold,0,8192,1001.5686638653278,1098.873645067215,0,True,  and.  and.  and.  and.  and. ,16,6.486998746792476
+sglang,1,mixed,2,after_pressure,0,8192,55.51288276910782,152.5832824409008,8128,True,  and.  and.  and.  and.  and. ,16,6.471359978119533
+sglang,1,mixed,2,after_host_eviction,0,8192,283.17055106163025,380.264800041914,8128,True,  and.  and.  and.  and.  and. ,16,6.472949932018916
+sglang,4,shared,0,cold,0,1024,448.70512187480927,553.5842478275299,0,True,.  and.  and.  and.  and.  and.,16,6.991941730181376
+sglang,4,shared,0,cold,1,1024,454.98476177453995,552.6101216673851,0,True,.  and.  and.  and.  and.  and.,16,6.508357326189677
+sglang,4,shared,0,cold,2,1024,452.73105055093765,551.7098270356655,0,True,.  and.  and.  and.  and.  and.,16,6.598585098981857
+sglang,4,shared,0,cold,3,1024,455.1140107214451,553.2552488148212,0,True,.  and.  and.  and.  and.  and.,16,6.542749206225078
+sglang,4,shared,0,after_pressure,0,1024,68.46019625663757,167.51008480787277,960,True,.  and.  and.  and.  and.  and.,16,6.60332590341568
+sglang,4,shared,0,after_pressure,1,1024,67.66055151820183,165.95083847641945,960,True,.  and.  and.  and.  and.  and.,16,6.552685797214508
+sglang,4,shared,0,after_pressure,2,1024,68.95367801189423,167.39936545491219,960,True,.  and.  and.  and.  and.  and.,16,6.563045829534531
+sglang,4,shared,0,after_pressure,3,1024,64.76306542754173,167.828306555748,960,True,.  and.  and.  and.  and.  and.,16,6.87101607521375
+sglang,4,shared,0,after_host_eviction,0,1024,71.24098762869835,168.1205965578556,960,True,.  and.  and.  and.  and.  and.,16,6.45864059527715
+sglang,4,shared,0,after_host_eviction,1,1024,68.90199705958366,167.82687231898308,960,True,.  and.  and.  and.  and.  and.,16,6.594991683959961
+sglang,4,shared,0,after_host_eviction,2,1024,69.5924274623394,167.81796514987946,960,True,.  and.  and.  and.  and.  and.,16,6.548369179169337
+sglang,4,shared,0,after_host_eviction,3,1024,70.6229917705059,168.39684545993805,960,True,.  and.  and.  and.  and.  and.,16,6.51825691262881
+sglang,4,shared,1,cold,0,4096,1403.7339240312576,1511.345874518156,0,True,.  and.  and.  and.  and.  and.,16,7.174130032459895
+sglang,4,shared,1,cold,1,4096,1538.1118431687355,1629.275120794773,4032,True,.  and.  and.  and.  and.  and.,16,6.07755184173584
+sglang,4,shared,1,cold,2,4096,1400.6055295467377,1511.4079341292381,0,True,.  and.  and.  and.  and.  and.,16,7.3868269721666975
+sglang,4,shared,1,cold,3,4096,1401.7319902777672,1511.6722844541073,0,True,.  and.  and.  and.  and.  and.,16,7.32935294508934
+sglang,4,shared,1,after_pressure,0,4096,78.84428277611732,203.51151004433632,4032,True,.  and.  and.  and.  and.  and.,16,8.311148484547934
+sglang,4,shared,1,after_pressure,1,4096,73.93142580986023,202.70231366157532,4032,True,.  and.  and.  and.  and.  and.,16,8.584725856781006
+sglang,4,shared,1,after_pressure,2,4096,79.46808263659477,203.5430669784546,4032,True,.  and.  and.  and.  and.  and.,16,8.271665622790655
+sglang,4,shared,1,after_pressure,3,4096,78.25112715363503,203.53834331035614,4032,True,.  and.  and.  and.  and.  and.,16,8.35248107711474
+sglang,4,shared,1,after_host_eviction,0,4096,166.2580631673336,288.5461822152138,4032,True,.  and.  and.  and.  and.  and.,16,8.152541269858679
+sglang,4,shared,1,after_host_eviction,1,4096,163.14471885561943,287.446741014719,4032,True,.  and.  and.  and.  and.  and.,16,8.286801477273306
+sglang,4,shared,1,after_host_eviction,2,4096,163.81821781396866,287.4516472220421,4032,True,.  and.  and.  and.  and.  and.,16,8.242228627204895
+sglang,4,shared,1,after_host_eviction,3,4096,165.66139832139015,288.81126269698143,4032,True,.  and.  and.  and.  and.  and.,16,8.209990958372751
+sglang,4,shared,2,cold,0,8192,1008.9845806360245,1105.9584729373455,0,True,.  and.  and.  and.  and.  and.,16,6.464926153421402
+sglang,4,shared,2,cold,1,8192,1147.594217211008,1271.0168957710266,8128,True,.  and.  and.  and.  and.  and.,16,8.228178570667902
+sglang,4,shared,2,cold,2,8192,1148.0349227786064,1270.0388133525848,8128,True,.  and.  and.  and.  and.  and.,16,8.133592704931894
+sglang,4,shared,2,cold,3,8192,1149.8084180057049,1272.3764851689339,8128,True,.  and.  and.  and.  and.  and.,16,8.1712044775486
+sglang,4,shared,2,after_pressure,0,8192,96.34730219841003,255.4192766547203,8128,True,.  and.  and.  and.  and.  and.,16,10.604798297087351
+sglang,4,shared,2,after_pressure,1,8192,98.7856313586235,253.25684249401093,8128,True,.  and.  and.  and.  and.  and.,16,10.298080742359161
+sglang,4,shared,2,after_pressure,2,8192,96.2434820830822,252.00014933943748,8128,True,.  and.  and.  and.  and.  and.,16,10.383777817090353
+sglang,4,shared,2,after_pressure,3,8192,100.4529744386673,253.90563160181046,8128,True,.  and.  and.  and.  and.  and.,16,10.230177144209543
+sglang,4,shared,2,after_host_eviction,0,8192,307.1701265871525,460.2576233446598,8128,True,.  and.  and.  and.  and.  and.,16,10.205833117167154
+sglang,4,shared,2,after_host_eviction,1,8192,306.80157244205475,458.9218199253082,8128,True,.  and.  and.  and.  and.  and.,16,10.141349832216898
+sglang,4,shared,2,after_host_eviction,2,8192,303.3788204193115,456.35709539055824,8128,True,.  and.  and.  and.  and.  and.,16,10.19855166474978
+sglang,4,shared,2,after_host_eviction,3,8192,306.56304210424423,460.30858159065247,8128,True,.  and.  and.  and.  and.  and.,16,10.249702632427216
+sglang,4,mixed,0,cold,0,1024,1674.4909025728703,1791.10736399889,0,True,.  A.  A.  A.  A.  A.,16,7.774430761734645
+sglang,4,mixed,0,cold,1,4096,1672.2913272678852,1790.292464196682,0,True,.  and.  and.  and.  and.  and.,16,7.8667424619197845
+sglang,4,mixed,0,cold,2,8192,1666.556391865015,1790.0659516453743,0,True,.  and.  and.  and.  and.  and.,16,8.23397065202395
+sglang,4,mixed,0,cold,3,1024,1673.9034727215767,1791.346687823534,0,True,.  and.  and.  and.  and.  and.,16,7.829547673463821
+sglang,4,mixed,0,after_pressure,0,1024,112.6118004322052,230.558592826128,960,True,.  A.  A.  A.  A.  A.,16,7.863119492928187
+sglang,4,mixed,0,after_pressure,1,4096,111.74656078219414,230.24456575512886,4032,True,.  and.  and.  and.  and.  and.,16,7.899866998195648
+sglang,4,mixed,0,after_pressure,2,8192,107.78297111392021,230.2522100508213,8128,True,.  and.  and.  and.  and.  and.,16,8.16461592912674
+sglang,4,mixed,0,after_pressure,3,1024,113.51283267140388,230.79577460885048,960,True,.  and.  and.  and.  and.  and.,16,7.818862795829773
+sglang,4,mixed,0,after_host_eviction,0,1024,379.5583136379719,498.916357755661,960,True,.  A.  A.  A.  A.  A.,16,7.9572029411792755
+sglang,4,mixed,0,after_host_eviction,1,4096,303.8202375173569,497.3860867321491,2816,True,.  and.  and.  and.  and.  and.,16,12.904389947652817
+sglang,4,mixed,0,after_host_eviction,2,8192,381.80897384881973,496.40126526355743,8128,True,.  and.  and.  and.  and.  and.,16,7.6394860943158465
+sglang,4,mixed,0,after_host_eviction,3,1024,69.08474490046501,453.2342068850994,960,True,.  and.  and.  and.  and.  and.,16,25.60996413230896
+sglang,4,mixed,1,cold,0,4096,1044.5589944720268,1148.2970602810383,0,True,.  and.  and.  and.  and.  and.,16,6.915871053934097
+sglang,4,mixed,1,cold,1,8192,2137.660574167967,2235.1455315947533,0,True,.  and.  and.  and.  and.  and.,16,6.498997161785762
+sglang,4,mixed,1,cold,2,1024,1038.1750166416168,1147.3911330103874,0,True,. and. and. and. and. and. and. and. and,16,7.281074424584706
+sglang,4,mixed,1,cold,3,4096,1045.4563982784748,1148.6690901219845,0,True,.  and.  and.  and.  and.  and.,16,6.880846122900645
+sglang,4,mixed,1,after_pressure,0,4096,97.52006083726883,201.69205591082573,4032,True,.  and.  and.  and.  and.  and.,16,6.94479967157046
+sglang,4,mixed,1,after_pressure,1,8192,257.4447914958,355.08061200380325,8128,True,.  and.  and.  and.  and.  and.,16,6.509054700533549
+sglang,4,mixed,1,after_pressure,2,1024,98.01178053021431,201.69393345713615,960,True,. and. and. and. and. and. and. and. and,16,6.912143528461456
+sglang,4,mixed,1,after_pressure,3,4096,94.16479989886284,201.93839445710182,4032,True,.  and.  and.  and.  and.  and.,16,7.184906303882599
+sglang,4,mixed,1,after_host_eviction,0,4096,487.8758378326893,594.9729643762112,4032,True,.  and.  and.  and.  and.  and.,16,7.139808436234792
+sglang,4,mixed,1,after_host_eviction,1,8192,381.10223039984703,590.9505821764469,8128,True,.  and.  and.  and.  and.  and.,16,13.989890118439993
+sglang,4,mixed,1,after_host_eviction,2,1024,434.71667543053627,589.7126831114292,960,True,. and. and. and. and. and. and. and. and,16,10.333067178726196
+sglang,4,mixed,1,after_host_eviction,3,4096,157.03294426202774,247.99402803182602,4032,True,.  and.  and.  and.  and.  and.,16,6.064072251319885
+sglang,4,mixed,2,cold,0,8192,1577.2764161229134,1691.6771568357944,0,True,.  and.  and.  and.  and.  and.,16,7.626716047525406
+sglang,4,mixed,2,cold,1,1024,1111.4218197762966,1692.3126727342606,0,True,. and. and. and. and. and. and. and. and,16,38.726056863864265
+sglang,4,mixed,2,cold,2,4096,1579.2405046522617,1690.3801411390305,0,True,  and.  and.  and.  and.  and. ,16,7.409309099117915
+sglang,4,mixed,2,cold,3,8192,2683.931790292263,2781.047746539116,0,True,.  and.  and.  and.  and.  and.,16,6.474397083123525
+sglang,4,mixed,2,after_pressure,0,8192,272.34626933932304,373.51932376623154,8128,True,.  and.  and.  and.  and.  and.,16,6.744870295127233
+sglang,4,mixed,2,after_pressure,1,1024,271.7207185924053,373.52149933576584,960,True,. and. and. and. and. and. and. and. and,16,6.786718716224034
+sglang,4,mixed,2,after_pressure,2,4096,102.57863998413086,208.23946595191956,4032,True,  and.  and.  and.  and.  and. ,16,7.044055064519246
+sglang,4,mixed,2,after_pressure,3,8192,100.19807517528534,208.69051292538643,8128,True,.  and.  and.  and.  and.  and.,16,7.232829183340073
+sglang,4,mixed,2,after_host_eviction,0,8192,600.7606834173203,698.058221489191,8128,True,.  and.  and.  and.  and.  and.,16,6.4865025381247206
+sglang,4,mixed,2,after_host_eviction,1,1024,388.15052062273026,495.4386539757252,960,True,. and. and. and. and. and. and. and. and,16,7.152542223532994
+sglang,4,mixed,2,after_host_eviction,2,4096,384.5256567001343,495.24716660380363,4032,True,  and.  and.  and.  and.  and. ,16,7.381433993577957
+sglang,4,mixed,2,after_host_eviction,3,8192,297.32494056224823,475.7775403559208,8128,True,.  and.  and.  and.  and.  and.,16,11.896839986244837
+sglang,8,shared,0,cold,0,1024,1006.1558820307255,1115.1175424456596,0,True,.  A.  A.  A.  A.  A.,16,7.264110694328944
+sglang,8,shared,0,cold,1,1024,1008.2144662737846,1115.1768527925014,0,True,.  A.  A.  A.  A.  A.,16,7.130825767914454
+sglang,8,shared,0,cold,2,1024,1012.0229870080948,1114.8313656449318,0,True,.  A.  A.  A.  A.  A.,16,6.853891909122467
+sglang,8,shared,0,cold,3,1024,950.0821679830551,1113.4986840188503,0,True,.  A.  A.  A.  A.  A.,16,10.894434402386347
+sglang,8,shared,0,cold,4,1024,1005.3185261785984,1109.05309766531,0,True,.  A.  A.  A.  A.  A.,16,6.9156380991141
+sglang,8,shared,0,cold,5,1024,1004.725992679596,1112.4592423439026,0,True,.  A.  A.  A.  A.  A.,16,7.182216644287109
+sglang,8,shared,0,cold,6,1024,1005.8673471212387,1109.7081191837788,0,True,.  A.  A.  A.  A.  A.,16,6.92271813750267
+sglang,8,shared,0,cold,7,1024,1009.1409049928188,1115.091159939766,0,True,.  A.  A.  A.  A.  A.,16,7.0633503297964735
+sglang,8,shared,0,after_pressure,0,1024,104.45976257324219,209.2590257525444,960,True,.  A.  A.  A.  A.  A.,16,6.986617545286815
+sglang,8,shared,0,after_pressure,1,1024,101.59799829125404,208.75641703605652,960,True,.  A.  A.  A.  A.  A.,16,7.143894582986832
+sglang,8,shared,0,after_pressure,2,1024,100.66390410065651,201.8229253590107,960,True,.  A.  A.  A.  A.  A.,16,6.743934750556946
+sglang,8,shared,0,after_pressure,3,1024,105.52557185292244,206.26572147011757,960,True,.  A.  A.  A.  A.  A.,16,6.716009974479675
+sglang,8,shared,0,after_pressure,4,1024,102.29333490133286,208.34041386842728,960,True,.  A.  A.  A.  A.  A.,16,7.069805264472961
+sglang,8,shared,0,after_pressure,5,1024,99.30649399757385,202.64118537306786,960,True,.  A.  A.  A.  A.  A.,16,6.888979425032933
+sglang,8,shared,0,after_pressure,6,1024,96.61149978637695,211.40915155410767,960,True,.  A.  A.  A.  A.  A.,16,7.653176784515381
+sglang,8,shared,0,after_pressure,7,1024,103.87682914733887,210.91068908572197,960,True,.  A.  A.  A.  A.  A.,16,7.135590662558873
+sglang,8,shared,0,after_host_eviction,0,1024,110.4108914732933,217.41743758320808,960,True,.  A.  A.  A.  A.  A.,16,7.133769740660985
+sglang,8,shared,0,after_host_eviction,1,1024,104.31260615587234,214.6606259047985,960,False,.  and.  and.  and.  and.  and.,16,7.3565346499284106
+sglang,8,shared,0,after_host_eviction,2,1024,107.99845680594444,221.2662659585476,960,False,.  and.  and.  and.  and.  and.,16,7.55118727684021
+sglang,8,shared,0,after_host_eviction,3,1024,109.76869240403175,215.07307142019272,960,True,.  A.  A.  A.  A.  A.,16,7.020291934410731
+sglang,8,shared,0,after_host_eviction,4,1024,112.00869083404541,218.2181254029274,960,True,.  A.  A.  A.  A.  A.,16,7.0806289712587995
+sglang,8,shared,0,after_host_eviction,5,1024,108.80697518587112,217.46575459837914,960,True,.  A.  A.  A.  A.  A.,16,7.243918627500534
+sglang,8,shared,0,after_host_eviction,6,1024,104.42851483821869,218.53578463196754,960,False,.  and.  and.  and.  and.  and.,16,7.607151319583257
+sglang,8,shared,0,after_host_eviction,7,1024,111.3579235970974,217.42462739348412,960,True,.  A.  A.  A.  A.  A.,16,7.071113586425781
+sglang,8,shared,1,cold,0,4096,1452.0701803267002,1601.1204533278942,4032,True,.  and.  and.  and.  and.  and.,16,9.936684866746267
+sglang,8,shared,1,cold,1,4096,1452.3143358528614,1599.0563668310642,4032,True,.  and.  and.  and.  and.  and.,16,9.782802065213522
+sglang,8,shared,1,cold,2,4096,1451.239664107561,1596.9968922436237,4032,True,.  and.  and.  and.  and.  and.,16,9.717148542404175
+sglang,8,shared,1,cold,3,4096,1393.2146281003952,1594.7481580078602,0,True,.  and.  and.  and.  and.  and.,16,13.435568660497665
+sglang,8,shared,1,cold,4,4096,1450.6387673318386,1598.0401560664177,4032,True,.  and.  and.  and.  and.  and.,16,9.826759248971939
+sglang,8,shared,1,cold,5,4096,1424.3753142654896,1599.797386676073,0,True,.  and.  and.  and.  and.  and.,16,11.694804827372232
+sglang,8,shared,1,cold,6,4096,1423.2102297246456,1597.775910049677,0,True,.  and.  and.  and.  and.  and.,16,11.637712021668753
+sglang,8,shared,1,cold,7,4096,1452.9351219534874,1601.025328040123,4032,True,.  and.  and.  and.  and.  and.,16,9.872680405775705
+sglang,8,shared,1,after_pressure,0,4096,118.91943588852882,264.4546180963516,4032,True,.  and.  and.  and.  and.  and.,16,9.70234548052152
+sglang,8,shared,1,after_pressure,1,4096,122.12545052170753,266.0657986998558,4032,True,.  and.  and.  and.  and.  and.,16,9.59602321187655
+sglang,8,shared,1,after_pressure,2,4096,117.88880825042725,258.6388662457466,4032,True,.  and.  and.  and.  and.  and.,16,9.383337199687958
+sglang,8,shared,1,after_pressure,3,4096,119.24450844526291,260.8245052397251,4032,True,.  and.  and.  and.  and.  and.,16,9.438666452964148
+sglang,8,shared,1,after_pressure,4,4096,113.07442933320999,264.3129788339138,4032,True,.  and.  and.  and.  and.  and.,16,10.082569966713587
+sglang,8,shared,1,after_pressure,5,4096,115.08623138070107,260.11260598897934,4032,True,.  and.  and.  and.  and.  and.,16,9.668424973885218
+sglang,8,shared,1,after_pressure,6,4096,118.63650754094124,263.9539875090122,4032,True,.  and.  and.  and.  and.  and.,16,9.687831997871399
+sglang,8,shared,1,after_pressure,7,4096,120.55504322052002,263.1377950310707,4032,True,.  and.  and.  and.  and.  and.,16,9.505516787370047
+sglang,8,shared,1,after_host_eviction,0,4096,214.58851546049118,364.99523743987083,4032,True,.  and.  and.  and.  and.  and.,16,10.02711479862531
+sglang,8,shared,1,after_host_eviction,1,4096,213.94512429833412,365.52339419722557,4032,True,.  and.  and.  and.  and.  and.,16,10.10521799325943
+sglang,8,shared,1,after_host_eviction,2,4096,217.53652393817902,361.88269034028053,4032,True,.  and.  and.  and.  and.  and.,16,9.6230777601401
+sglang,8,shared,1,after_host_eviction,3,4096,206.8501114845276,359.0017780661583,4032,True,.  and.  and.  and.  and.  and.,16,10.143444438775381
+sglang,8,shared,1,after_host_eviction,4,4096,210.35024523735046,361.60244047641754,4032,True,.  and.  and.  and.  and.  and.,16,10.083479682604471
+sglang,8,shared,1,after_host_eviction,5,4096,210.9835147857666,361.04656755924225,4032,True,.  and.  and.  and.  and.  and.,16,10.00420351823171
+sglang,8,shared,1,after_host_eviction,6,4096,215.81876650452614,362.35037818551064,4032,True,.  and.  and.  and.  and.  and.,16,9.768774112065634
+sglang,8,shared,1,after_host_eviction,7,4096,216.48706123232841,365.36654457449913,4032,True,.  and.  and.  and.  and.  and.,16,9.925298889478048
+sglang,8,shared,2,cold,0,8192,1190.5718110501766,1379.7362744808197,8128,True,.  and.  and.  and.  and.  and.,16,12.61096422870954
+sglang,8,shared,2,cold,1,8192,1005.6108087301254,1102.660071104765,0,True,.  and.  and.  and.  and.  and.,16,6.469950824975967
+sglang,8,shared,2,cold,2,8192,1188.2318332791328,1377.7213841676712,8128,True,.  and.  and.  and.  and.  and.,16,12.632636725902557
+sglang,8,shared,2,cold,3,8192,1186.3840706646442,1375.3105029463768,8128,True,.  and.  and.  and.  and.  and.,16,12.595095485448837
+sglang,8,shared,2,cold,4,8192,1184.47120860219,1369.6623221039772,8128,True,.  and.  and.  and.  and.  and.,16,12.346074233452478
+sglang,8,shared,2,cold,5,8192,1188.460186123848,1378.3053122460842,8128,True,.  and.  and.  and.  and.  and.,16,12.656341741482416
+sglang,8,shared,2,cold,6,8192,1190.3547942638397,1376.48805975914,8128,True,.  and.  and.  and.  and.  and.,16,12.408884366353353
+sglang,8,shared,2,cold,7,8192,1191.4163082838058,1377.8638690710068,8128,True,.  and.  and.  and.  and.  and.,16,12.429837385813395
+sglang,8,shared,2,after_pressure,0,8192,148.86635169386864,335.8415998518467,8128,True,.  and.  and.  and.  and.  and.,16,12.465016543865204
+sglang,8,shared,2,after_pressure,1,8192,148.02243560552597,339.29159864783287,8128,True,.  and.  and.  and.  and.  and.,16,12.751277536153793
+sglang,8,shared,2,after_pressure,2,8192,145.7403488457203,339.2845392227173,8128,True,.  and.  and.  and.  and.  and.,16,12.902946025133133
+sglang,8,shared,2,after_pressure,3,8192,139.46035876870155,337.06989511847496,8128,True,.  and.  and.  and.  and.  and.,16,13.173969089984894
+sglang,8,shared,2,after_pressure,4,8192,143.86336877942085,328.1288482248783,8128,True,.  and.  and.  and.  and.  and.,16,12.28436529636383
+sglang,8,shared,2,after_pressure,5,8192,138.75623419880867,327.9362879693508,8128,True,.  and.  and.  and.  and.  and.,16,12.61200358470281
+sglang,8,shared,2,after_pressure,6,8192,139.12900909781456,326.76611840724945,8128,True,.  and.  and.  and.  and.  and.,16,12.509140620628992
+sglang,8,shared,2,after_pressure,7,8192,147.50145003199577,336.10615506768227,8128,True,.  and.  and.  and.  and.  and.,16,12.573647002379099
+sglang,8,shared,2,after_host_eviction,0,8192,350.1366376876831,538.0923561751842,8128,True,.  and.  and.  and.  and.  and.,16,12.530381232500076
+sglang,8,shared,2,after_host_eviction,1,8192,345.4540856182575,535.224799066782,8128,True,.  and.  and.  and.  and.  and.,16,12.651380896568298
+sglang,8,shared,2,after_host_eviction,2,8192,347.106259316206,537.8432273864746,8128,True,.  and.  and.  and.  and.  and.,16,12.715797871351242
+sglang,8,shared,2,after_host_eviction,3,8192,343.07509660720825,532.0311896502972,8128,True,.  and.  and.  and.  and.  and.,16,12.59707286953926
+sglang,8,shared,2,after_host_eviction,4,8192,344.6916602551937,533.3151258528233,8128,True,.  and.  and.  and.  and.  and.,16,12.574897706508636
+sglang,8,shared,2,after_host_eviction,5,8192,342.81811490654945,534.0083166956902,8128,True,.  and.  and.  and.  and.  and.,16,12.74601345260938
+sglang,8,shared,2,after_host_eviction,6,8192,347.411647439003,536.5990251302719,8128,True,.  and.  and.  and.  and.  and.,16,12.612491846084595
+sglang,8,shared,2,after_host_eviction,7,8192,351.7315872013569,538.2986776530743,8128,True,.  and.  and.  and.  and.  and.,16,12.437806030114492
+sglang,8,mixed,0,cold,0,1024,3351.469736546278,3469.1188111901283,0,True,. and. and. and. and. and. and. and. and,16,7.843271642923355
+sglang,8,mixed,0,cold,1,4096,3935.1990558207035,4026.5149511396885,0,True,.  and.  and.  and.  and.  and.,16,6.087726354598999
+sglang,8,mixed,0,cold,2,8192,3342.8576551377773,3466.8872952461243,0,True,.  and.  and.  and.  and.  and.,16,8.268642673889795
+sglang,8,mixed,0,cold,3,1024,3345.8692245185375,3459.9218778312206,0,True,. and. and. and. and. and. and. and. and,16,7.60351022084554
+sglang,8,mixed,0,cold,4,4096,1576.2341283261776,1686.0343962907791,0,True,.  and.  and.  and.  and.  and.,16,7.3200178643067675
+sglang,8,mixed,0,cold,5,8192,1574.247818440199,1689.0098713338375,0,True, and.  and.  and.  and.  and.  and,16,7.650803526242574
+sglang,8,mixed,0,cold,6,1024,1576.1440135538578,1686.4802688360214,0,True,.  and and and and and and and and and and and and and and,16,7.355750352144241
+sglang,8,mixed,0,cold,7,4096,3350.858699530363,3469.1687785089016,0,True,.  and.  and.  and.  and.  and.,16,7.887338598569234
+sglang,8,mixed,0,after_pressure,0,1024,114.91653323173523,224.78092089295387,960,True,. and. and. and. and. and. and. and. and,16,7.3242925107479095
+sglang,8,mixed,0,after_pressure,1,4096,109.49813947081566,222.6937673985958,4032,True,.  and.  and.  and.  and.  and.,16,7.546375195185344
+sglang,8,mixed,0,after_pressure,2,8192,327.3361846804619,443.43097507953644,8128,True,.  and.  and.  and.  and.  and.,16,7.739652693271637
+sglang,8,mixed,0,after_pressure,3,1024,323.85656982660294,440.1123709976673,960,True,. and. and. and. and. and. and. and. and,16,7.750386744737625
+sglang,8,mixed,0,after_pressure,4,4096,329.17972281575203,444.41409409046173,4032,True,.  and.  and.  and.  and.  and.,16,7.68229141831398
+sglang,8,mixed,0,after_pressure,5,8192,114.94627222418785,224.21079874038696,8128,True, and.  and.  and.  and.  and.  and,16,7.284301767746608
+sglang,8,mixed,0,after_pressure,6,1024,324.12098348140717,441.2168227136135,960,True,.  and and and and and and and and and and and and and and,16,7.80638928214709
+sglang,8,mixed,0,after_pressure,7,4096,487.9201464354992,579.6900652348995,4032,True,.  and.  and.  and.  and.  and.,16,6.117994586626689
+sglang,8,mixed,0,after_host_eviction,0,1024,422.0050014555454,578.4238986670971,960,True,. and. and. and. and. and. and. and. and,16,10.427926480770111
+sglang,8,mixed,0,after_host_eviction,1,4096,491.79572984576225,643.6294876039028,4032,True,.  and.  and.  and.  and.  and.,16,10.122250517209372
+sglang,8,mixed,0,after_host_eviction,2,8192,416.06393083930016,576.8299922347069,8128,True,.  and.  and.  and.  and.  and.,16,10.717737426360449
+sglang,8,mixed,0,after_host_eviction,3,1024,219.06107291579247,433.53431299328804,0,True,. and. and. and. and. and. and. and. and,16,14.298216005166372
+sglang,8,mixed,0,after_host_eviction,4,4096,633.7094977498055,800.8452616631985,4032,True,.  and.  and.  and.  and.  and.,16,11.142384260892868
+sglang,8,mixed,0,after_host_eviction,5,8192,786.1601673066616,884.9153146147728,8128,True, and.  and.  and.  and.  and.  and,16,6.583676487207413
+sglang,8,mixed,0,after_host_eviction,6,1024,173.85053634643555,441.4601996541023,960,True,.  and and and and and and and and and and and and and and,16,17.84064422051112
+sglang,8,mixed,0,after_host_eviction,7,4096,230.70450872182846,440.31137600541115,4032,True,.  and.  and.  and.  and.  and.,16,13.973791152238846
+sglang,8,mixed,1,cold,0,4096,4814.569681882858,4920.946095138788,0,True,.  and.  and.  and.  and.  and.,16,7.091760883728663
+sglang,8,mixed,1,cold,1,8192,1571.6309547424316,1685.009740293026,0,True,  and.  and.  and.  and.  and. ,16,7.558585703372955
+sglang,8,mixed,1,cold,2,1024,1576.8553614616394,1685.010239481926,0,True,. and. and. and. and. and. and. and. and,16,7.210325201352437
+sglang,8,mixed,1,cold,3,4096,3249.770749360323,3360.1003251969814,0,True,.  and.  and.  and.  and.  and.,16,7.355305055777232
+sglang,8,mixed,1,cold,4,8192,4805.31382933259,4914.538886398077,0,True,.  and.  and.  and.  and.  and.,16,7.28167047103246
+sglang,8,mixed,1,cold,5,1024,3245.9132224321365,3355.619467794895,0,True,.  and.  and.  and.  and.  and.,16,7.3137496908505755
+sglang,8,mixed,1,cold,6,4096,1573.2583478093147,1684.4141222536564,0,True,  and.  and.  and.  and.  and. ,16,7.410384962956111
+sglang,8,mixed,1,cold,7,8192,3245.871990919113,3360.4327253997326,0,True,.  and.  and.  and.  and.  and.,16,7.637382298707962
+sglang,8,mixed,1,after_pressure,0,4096,509.62046161293983,613.9743402600288,4032,True,.  and.  and.  and.  and.  and.,16,6.956925243139267
+sglang,8,mixed,1,after_pressure,1,8192,130.3158886730671,248.3825795352459,8128,True,  and.  and.  and.  and.  and. ,16,7.871112724145253
+sglang,8,mixed,1,after_pressure,2,1024,120.81955000758171,244.92790549993515,960,True,. and. and. and. and. and. and. and. and,16,8.273890366156897
+sglang,8,mixed,1,after_pressure,3,4096,321.3897719979286,426.4930710196495,4032,True,.  and.  and.  and.  and.  and.,16,7.006886601448059
+sglang,8,mixed,1,after_pressure,4,8192,324.3286684155464,430.2479401230812,8128,True,.  and.  and.  and.  and.  and.,16,7.061284780502319
+sglang,8,mixed,1,after_pressure,5,1024,128.500297665596,247.19484522938728,960,True,.  and.  and.  and.  and.  and.,16,7.912969837586085
+sglang,8,mixed,1,after_pressure,6,4096,125.36164745688438,243.24121326208115,4032,True,  and.  and.  and.  and.  and. ,16,7.858637720346451
+sglang,8,mixed,1,after_pressure,7,8192,508.9903213083744,613.997220993042,8128,True,.  and.  and.  and.  and.  and.,16,7.0004599789778394
+sglang,8,mixed,1,after_host_eviction,0,4096,572.0175318419933,685.3843703866005,4032,True,.  and.  and.  and.  and.  and.,16,7.557789236307144
+sglang,8,mixed,1,after_host_eviction,1,8192,272.28492870926857,466.4100334048271,8128,True,  and.  and.  and.  and.  and. ,16,12.94167364637057
+sglang,8,mixed,1,after_host_eviction,2,1024,379.17398288846016,592.5535745918751,960,True,. and. and. and. and. and. and. and. and,16,14.225306113560995
+sglang,8,mixed,1,after_host_eviction,3,4096,570.3594870865345,679.9718141555786,4032,True,.  and.  and.  and.  and.  and.,16,7.3074884712696075
+sglang,8,mixed,1,after_host_eviction,4,8192,778.8847461342812,876.0921806097031,8128,True,.  and.  and.  and.  and.  and.,16,6.480495631694794
+sglang,8,mixed,1,after_host_eviction,5,1024,380.5001601576805,593.0985286831856,960,True,.  and.  and.  and.  and.  and.,16,14.173224568367004
+sglang,8,mixed,1,after_host_eviction,6,4096,371.75485864281654,589.8778773844242,4032,True,  and.  and.  and.  and.  and. ,16,14.541534582773844
+sglang,8,mixed,1,after_host_eviction,7,8192,1027.1943733096123,1124.166790395975,8128,True,.  and.  and.  and.  and.  and.,16,6.464827805757523
+sglang,8,mixed,2,cold,0,8192,4437.92437389493,4552.998472005129,0,True,.  and.  and.  and.  and.  and.,16,7.671606540679932
+sglang,8,mixed,2,cold,1,1024,2762.773383408785,2878.1824186444283,0,True,. and. and. and. and. and. and. and. and,16,7.6939356823762255
+sglang,8,mixed,2,cold,2,4096,2756.623290479183,2873.595420271158,0,True,.  and.  and.  and.  and.  and.,16,7.798141986131668
+sglang,8,mixed,2,cold,3,8192,2753.4583881497383,2876.0243467986584,0,True,.  and.  and.  and.  and.  and.,16,8.171063909928003
+sglang,8,mixed,2,cold,4,1024,4438.317392021418,4548.678498715162,0,True,.  and.  and.  and.  and.  and.,16,7.35740711291631
+sglang,8,mixed,2,cold,5,4096,4442.259814590216,4552.028026431799,0,True,.  and.  and.  and.  and.  and.,16,7.317880789438884
+sglang,8,mixed,2,cold,6,8192,998.7638704478741,1096.260029822588,0,True,.  and.  and.  and.  and.  and.,16,6.4997439583142596
+sglang,8,mixed,2,cold,7,1024,2762.3445950448513,2880.061272531748,0,True,1. 2. 3. 4. 5. 6,16,7.847778499126434
+sglang,8,mixed,2,after_pressure,0,8192,513.243068009615,610.7884123921394,8128,True,.  and.  and.  and.  and.  and.,16,6.503022958834966
+sglang,8,mixed,2,after_pressure,1,1024,129.65774536132812,247.93322384357452,960,True,. and. and. and. and. and. and. and. and,16,7.885031898816426
+sglang,8,mixed,2,after_pressure,2,4096,125.5008913576603,248.61634522676468,4032,True,.  and.  and.  and.  and.  and.,16,8.207696924606958
+sglang,8,mixed,2,after_pressure,3,8192,340.3717018663883,448.7248547375202,8128,True,.  and.  and.  and.  and.  and.,16,7.2235435247421265
+sglang,8,mixed,2,after_pressure,4,1024,332.3783650994301,441.9766552746296,960,True,.  and.  and.  and.  and.  and.,16,7.306552678346634
+sglang,8,mixed,2,after_pressure,5,4096,334.0280205011368,443.00466030836105,4032,True,.  and.  and.  and.  and.  and.,16,7.265109320481618
+sglang,8,mixed,2,after_pressure,6,8192,127.54647061228752,245.7086741924286,8128,True,.  and.  and.  and.  and.  and.,16,7.877480238676071
+sglang,8,mixed,2,after_pressure,7,1024,131.4539648592472,248.28768521547318,960,True,1. 2. 3. 4. 5. 6,16,7.788914690415065
+sglang,8,mixed,2,after_host_eviction,0,8192,599.6384471654892,696.6536864638329,8128,True,.  and.  and.  and.  and.  and.,16,6.467682619889577
+sglang,8,mixed,2,after_host_eviction,1,1024,320.1241344213486,434.95164439082146,0,True,. and. and. and. and. and. and. and. and,16,7.655167331298192
+sglang,8,mixed,2,after_host_eviction,2,4096,324.9025568366051,433.8594190776348,4032,True,.  and.  and.  and.  and.  and.,16,7.263790816068649
+sglang,8,mixed,2,after_host_eviction,3,8192,1125.8987002074718,1222.8701077401638,8128,True,.  and.  and.  and.  and.  and.,16,6.464760502179463
+sglang,8,mixed,2,after_host_eviction,4,1024,230.44434189796448,435.91246008872986,0,True,.  and.  and.  and.  and.  and.,16,13.697874546051025
+sglang,8,mixed,2,after_host_eviction,5,4096,326.47978514432907,434.4240315258503,4032,True,.  and.  and.  and.  and.  and.,16,7.196283092101415
+sglang,8,mixed,2,after_host_eviction,6,8192,873.3136765658855,970.47233954072,8128,True,.  and.  and.  and.  and.  and.,16,6.477244198322296
+sglang,8,mixed,2,after_host_eviction,7,1024,329.88085597753525,437.28719279170036,960,True,1. 2. 3. 4. 5. 6,16,7.160422454277675

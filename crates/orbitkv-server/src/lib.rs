@@ -71,6 +71,15 @@ pub struct Cli {
     #[arg(long, value_parser = parse_memory_size)]
     pub hint_value_size: Option<usize>,
 
+    /// Bytes owned by queries through preparation, ready leases and GPU loads.
+    /// Defaults to 75% of --pool-size.
+    #[arg(long, value_parser = parse_memory_size)]
+    pub query_budget: Option<usize>,
+
+    /// Query bytes per registered instance; defaults to the global query budget.
+    #[arg(long, value_parser = parse_memory_size)]
+    pub query_instance_budget: Option<usize>,
+
     /// Use huge pages for pinned memory pool (faster allocation).
     /// Requires pre-configured huge pages via /proc/sys/vm/nr_hugepages
     #[arg(long, default_value_t = false)]
@@ -135,10 +144,6 @@ pub struct Cli {
     /// SSD prefetch inflight (max concurrent block reads). Default: 16
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_SSD_PREFETCH_INFLIGHT)]
     pub ssd_prefetch_inflight: usize,
-
-    /// Max blocks allowed in prefetching state (backpressure for SSD prefetch). Default: 1500
-    #[arg(long, default_value_t = 800)]
-    pub max_prefetch_blocks: usize,
 
     /// Trace sampling rate (0.0–1.0). E.g. 0.01 = 1%. Default: 1.0 (100%)
     #[arg(long, default_value_t = 1.0, value_parser = parse_sample_rate)]
@@ -560,9 +565,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     let peer_control_enabled = cli.metaserver_addr.is_some();
     let storage_config = orbitkv_core::StorageConfig {
+        query_budget_bytes: cli.query_budget,
+        query_instance_budget_bytes: cli.query_instance_budget,
         enable_lfu_admission: cli.enable_lfu_admission,
         hint_value_size_bytes: cli.hint_value_size,
-        max_prefetch_blocks: cli.max_prefetch_blocks,
         ssd_cache_config,
         mooncake_nic_names: cli.nics.clone().unwrap_or_default(),
         enable_numa_affinity: !cli.disable_numa_affinity,

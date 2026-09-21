@@ -191,7 +191,10 @@ impl SsdBackingStore {
     /// Submit prefix reads: scan `keys` in order, submit reads for consecutive hits, stop at first miss.
     ///
     /// Returns `(submitted, done_rx)` where `done_rx` delivers completed blocks.
-    fn submit_prefix(&self, keys: Vec<StateKey>) -> (usize, oneshot::Receiver<PrefetchResult>) {
+    async fn submit_prefix(
+        &self,
+        keys: Vec<StateKey>,
+    ) -> (usize, oneshot::Receiver<PrefetchResult>) {
         let (done_tx, done_rx) = oneshot::channel();
 
         // Prefix-scan the ring buffer: stop at first miss.
@@ -213,12 +216,12 @@ impl SsdBackingStore {
 
         let batch = PrefetchBatch { requests, done_tx };
 
-        if let Err(e) = self.prefetch_tx.try_send(batch) {
-            let batch = e.into_inner();
+        if let Err(e) = self.prefetch_tx.send(batch).await {
+            let batch = e.0;
             let count = batch.requests.len();
-            warn!("SSD prefetch queue full, dropping {} reads", count);
+            warn!("SSD prefetch queue closed, dropping {} reads", count);
             core_metrics()
-                .ssd_prefetch_queue_full
+                .ssd_prefetch_queue_closed
                 .add(count as u64, &[]);
             let _ = batch.done_tx.send(Vec::new());
         }
@@ -229,7 +232,7 @@ impl SsdBackingStore {
     /// Prefetch prefix reads and await completion.
     pub(crate) async fn prefetch_prefix(&self, keys: Vec<StateKey>) -> (usize, PrefetchResult) {
         let started = std::time::Instant::now();
-        let (found, done_rx) = self.submit_prefix(keys);
+        let (found, done_rx) = self.submit_prefix(keys).await;
         if found == 0 {
             return (0, Vec::new());
         }

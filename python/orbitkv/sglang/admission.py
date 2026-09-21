@@ -15,8 +15,10 @@ def admit_request(original: Callable, adder: Any, req: Any, *args: Any, **kwargs
         import torch
         from sglang.srt.managers.schedule_policy import AddReqResult
 
-        if len(req.full_untruncated_fill_ids) - len(req.prefix_indices) < linker.page_size:
-            linker.cancel_pending_query(req.rid)
+        match_limit = req._compute_max_prefix_len(len(req.full_untruncated_fill_ids))
+        restorable_tokens = match_limit // linker.page_size * linker.page_size
+        if len(req.prefix_indices) >= restorable_tokens:
+            linker.cancel_query(req.rid)
         # Every attention rank takes the same admission decision even when its
         # SSD read finishes in a different scheduler iteration.
         state = torch.tensor([linker.query_state(req.rid)], dtype=torch.int)

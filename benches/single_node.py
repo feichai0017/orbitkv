@@ -35,6 +35,11 @@ def main() -> None:
     )
     parser.add_argument("--lengths", type=int, nargs="+", default=[1024, 4096, 8192])
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--workload", choices=["serial", "concurrent"], default="serial")
+    parser.add_argument("--concurrencies", type=int, nargs="+", default=[1, 4, 8])
+    parser.add_argument(
+        "--query-budget-gib", type=float, help="OrbitKV global query ownership budget"
+    )
     parser.add_argument("--output-tokens", type=int, default=16)
     parser.add_argument("--gpu-tokens", type=int, default=16384)
     parser.add_argument("--host-gib", type=int, default=16)
@@ -59,6 +64,16 @@ def main() -> None:
         parser.error("--orbitkv-transfer-backend requires --engine vllm --backend orbitkv")
     if args.ssd_gib < 0 or (args.ssd_gib and args.backend != "orbitkv"):
         parser.error("--ssd-gib must be nonnegative and requires --backend orbitkv")
+    if args.query_budget_gib is not None and (
+        args.backend != "orbitkv" or not 0 < args.query_budget_gib <= args.host_gib
+    ):
+        parser.error("--query-budget-gib requires OrbitKV and 0 < budget <= host capacity")
+    if (
+        not args.concurrencies
+        or len(set(args.concurrencies)) != len(args.concurrencies)
+        or any(c not in (1, 4, 8) for c in args.concurrencies)
+    ):
+        parser.error("--concurrencies must be distinct values from 1, 4, 8")
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("--output must be empty so measurements cannot mix across runs")
     if (
@@ -111,7 +126,17 @@ def main() -> None:
             stack.enter_context(
                 server(launch.command, launch.env, launch.base_url, args.output / "engine.log")
             )
-            samples = run_workload(args, launch.base_url, launch.manager_url)
+            if args.workload == "concurrent":
+                from . import concurrent
+
+                samples, batches = concurrent.run_workload(
+                    args, launch.base_url, launch.manager_url
+                )
+                concurrent.validate(vars(args), samples, batches)
+                summary = concurrent.summarize(samples, batches)
+            else:
+                samples = run_workload(args, launch.base_url, launch.manager_url)
+                summary = summarize(samples, args.lengths)
     except Exception as error:
         (args.output / "failure.json").write_text(
             json.dumps({"type": type(error).__name__, "message": str(error)}, indent=2) + "\n"
@@ -120,7 +145,6 @@ def main() -> None:
     finally:
         if args.ssd_gib:
             (args.output / "cache.bin").unlink(missing_ok=True)
-    summary = summarize(samples, args.lengths)
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summary, indent=2, allow_nan=False))
 

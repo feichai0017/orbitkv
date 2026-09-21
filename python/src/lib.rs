@@ -1,8 +1,8 @@
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{
     CallOptions, ChannelClient, Command as ChannelCommand, CommandCode, PublishLayer,
-    PublishRequest, QueryBundleRequest, QueryOutcomeCode, RestoreLease, RestoreRequest, StatusCode,
-    TransportClient,
+    PublishRequest, QueryBundleRequest, QueryCommand, QueryOutcomeCode, QueryTicket, RestoreLease,
+    RestoreRequest, StatusCode, TransportClient,
 };
 use orbitkv_proto::proto::engine::{
     RegisterContextRequest, SessionRequest, TransferMode, UnregisterRequest,
@@ -30,17 +30,45 @@ fn u64_to_usize(value: u64, field: &str) -> PyResult<usize> {
 }
 
 #[pyclass(frozen)]
-struct QueryLoading {}
+struct QueryLoading {
+    #[pyo3(get)]
+    admitted: bool,
+}
 
 #[pymethods]
 impl QueryLoading {
     #[new]
-    fn new() -> Self {
-        Self {}
+    #[pyo3(signature = (admitted=true))]
+    fn new(admitted: bool) -> Self {
+        Self { admitted }
     }
 
     fn __repr__(&self) -> String {
         "QueryLoading()".to_string()
+    }
+}
+
+fn query_response(
+    py: Python<'_>,
+    response: orbitkv_channel::QueryBundleResponse,
+) -> PyResult<Py<PyAny>> {
+    match response.outcome {
+        QueryOutcomeCode::Loading | QueryOutcomeCode::Busy => Py::new(
+            py,
+            QueryLoading {
+                admitted: response.outcome == QueryOutcomeCode::Loading,
+            },
+        )
+        .map(|value| value.into_any()),
+        QueryOutcomeCode::Ready => Py::new(
+            py,
+            QueryReady {
+                num_hit_blocks: u64_to_usize(response.num_hit_blocks, "num_hit_blocks")?,
+                lease: PyQueryLease(response.lease),
+                hit_positions: response.hit_positions,
+            },
+        )
+        .map(|value| value.into_any()),
     }
 }
 
@@ -278,47 +306,56 @@ impl PyChannelClient {
         self.inner.notification_fd()
     }
 
-    #[pyo3(signature = (instance_id, block_hashes, req_id, wait_for_full_prefix=false, group_id=0, request_id=1))]
+    #[pyo3(signature = (instance_id, block_hashes, req_id, operation_id, revision, wait_for_full_prefix=false, group_id=0, request_id=1))]
     #[allow(
         clippy::too_many_arguments,
-        reason = "Python API mirrors the framework-neutral cache query contract"
+        reason = "Python API mirrors the versioned query contract"
     )]
-    fn query_bundle(
+    fn query_submit(
         &self,
         py: Python<'_>,
         instance_id: String,
         block_hashes: Vec<Vec<u8>>,
         req_id: String,
+        operation_id: u64,
+        revision: u64,
         wait_for_full_prefix: bool,
         group_id: u32,
         request_id: u64,
     ) -> PyResult<Py<PyAny>> {
+        let command = QueryCommand::Submit(QueryBundleRequest {
+            ticket: QueryTicket {
+                operation_id,
+                revision,
+            },
+            instance_id,
+            request_id: req_id,
+            block_hashes,
+            group_id,
+            wait_for_full_prefix,
+        });
         let response = py
-            .detach(|| {
-                self.inner.query_bundle(
-                    request_id,
-                    &QueryBundleRequest {
-                        instance_id,
-                        request_id: req_id,
-                        block_hashes,
-                        group_id,
-                        wait_for_full_prefix,
-                    },
-                )
-            })
+            .detach(|| self.inner.query_bundle(request_id, &command))
             .map_err(|error| OrbitKVError::new_err(format!("cache query failed: {error}")))?;
-        match response.outcome {
-            QueryOutcomeCode::Loading => Py::new(py, QueryLoading {}).map(|value| value.into_any()),
-            QueryOutcomeCode::Ready => Py::new(
-                py,
-                QueryReady {
-                    num_hit_blocks: u64_to_usize(response.num_hit_blocks, "num_hit_blocks")?,
-                    lease: PyQueryLease(response.lease),
-                    hit_positions: response.hit_positions,
-                },
-            )
-            .map(|value| value.into_any()),
-        }
+        query_response(py, response)
+    }
+
+    #[pyo3(signature = (operation_id, revision, request_id=1))]
+    fn query_poll(
+        &self,
+        py: Python<'_>,
+        operation_id: u64,
+        revision: u64,
+        request_id: u64,
+    ) -> PyResult<Py<PyAny>> {
+        let command = QueryCommand::Poll(QueryTicket {
+            operation_id,
+            revision,
+        });
+        let response = py
+            .detach(|| self.inner.query_bundle(request_id, &command))
+            .map_err(|error| OrbitKVError::new_err(format!("cache query poll failed: {error}")))?;
+        query_response(py, response)
     }
 
     #[pyo3(signature = (lease, request_id=1))]
@@ -327,22 +364,22 @@ impl PyChannelClient {
             .map_err(|error| OrbitKVError::new_err(format!("local release failed: {error}")))
     }
 
-    #[pyo3(signature = (instance_id, req_id, group_id=0, request_id=1))]
+    #[pyo3(signature = (operation_id, revision, request_id=1))]
     fn cancel_query(
         &self,
         py: Python<'_>,
-        instance_id: String,
-        req_id: String,
-        group_id: u32,
+        operation_id: u64,
+        revision: u64,
         request_id: u64,
     ) -> PyResult<()> {
         py.detach(|| {
             self.inner.cancel_query(
                 request_id,
                 &orbitkv_channel::CancelQueryRequest {
-                    instance_id,
-                    request_id: req_id,
-                    group_id,
+                    ticket: QueryTicket {
+                        operation_id,
+                        revision,
+                    },
                 },
             )
         })

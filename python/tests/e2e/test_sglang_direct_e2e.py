@@ -8,7 +8,9 @@ import signal
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 import requests
@@ -114,9 +116,13 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
 
-    prompt = "A CUDA IPC cache correctness test for a long context. " * 36
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
+    fragment = tokenizer.encode("A CUDA IPC cache correctness test for a long context. ")
+    tokens = (fragment * (512 // len(fragment) + 1))[:512]
     payload = {
-        "text": prompt,
+        "input_ids": tokens,
         "sampling_params": {"temperature": 0, "max_new_tokens": 8, "ignore_eos": True},
     }
     process, base_url = start_server()
@@ -158,9 +164,19 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     before_restart = fetch_orbitkv_metrics(channel_server.http_port)
     process, base_url = start_server()
     try:
-        third = requests.post(f"{base_url}/generate", json=payload, timeout=90)
-        third.raise_for_status()
-        assert third.json()["meta_info"]["cached_tokens"] >= 64
+        # One request can restore the shared prefix while the others still have
+        # pending queries. Their new HBM hits must retire that obsolete interest.
+        arrivals = Barrier(4)
+
+        def restore(_):
+            arrivals.wait(timeout=10)
+            response = requests.post(f"{base_url}/generate", json=payload, timeout=90)
+            response.raise_for_status()
+            return response
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            restored = list(executor.map(restore, range(4)))
+        assert all(response.json()["meta_info"]["cached_tokens"] >= 448 for response in restored)
         after_restart_load = fetch_orbitkv_metrics(channel_server.http_port).get(
             "orbitkv_load_bytes_total", 0
         )
@@ -181,7 +197,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         cold = requests.post(f"{base_url}/generate", json=payload, timeout=90)
         cold.raise_for_status()
         assert cold.json()["meta_info"]["cached_tokens"] == 0
-        outputs = [response.json()["text"] for response in (first, second, third, cold)]
+        outputs = [response.json()["text"] for response in (first, second, *restored, cold)]
         assert len(set(outputs)) == 1, outputs
         assert log_path.read_text().count("OrbitKV direct GPU linker registered") >= 3
     finally:

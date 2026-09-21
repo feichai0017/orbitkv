@@ -2,6 +2,7 @@ use thiserror::Error;
 
 const QUERY_REQUEST_MAGIC: u32 = 0x4f52_5151; // ORQQ
 const QUERY_RESPONSE_MAGIC: u32 = 0x4f52_5152; // ORQR
+const QUERY_POLL_MAGIC: u32 = 0x4f52_5150; // ORQP
 const CANCEL_QUERY_MAGIC: u32 = 0x4f52_5143; // ORQC
 const RELEASE_REQUEST_MAGIC: u32 = 0x4f52_4c51; // ORLQ
 const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
@@ -9,7 +10,7 @@ const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
 const QUERY_VERSION: u16 = 1;
-const REQUEST_HEADER_BYTES: usize = 24;
+const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
 const PUBLISH_HEADER_BYTES: usize = 28;
@@ -18,9 +19,76 @@ const RESTORE_RESPONSE_BYTES: usize = 24;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CancelQueryRequest {
-    pub instance_id: String,
-    pub request_id: String,
-    pub group_id: u32,
+    pub ticket: QueryTicket,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct QueryTicket {
+    pub operation_id: u64,
+    pub revision: u64,
+}
+
+impl QueryTicket {
+    fn encode_into(self, bytes: &mut Vec<u8>) -> Result<(), QueryCodecError> {
+        if self.operation_id == 0 || self.revision == 0 {
+            return Err(QueryCodecError::InvalidQueryTicket);
+        }
+        push_u64(bytes, self.operation_id);
+        push_u64(bytes, self.revision);
+        Ok(())
+    }
+
+    fn decode_from(decoder: &mut Decoder<'_>) -> Result<Self, QueryCodecError> {
+        let ticket = Self {
+            operation_id: decoder.u64()?,
+            revision: decoder.u64()?,
+        };
+        if ticket.operation_id == 0 || ticket.revision == 0 {
+            return Err(QueryCodecError::InvalidQueryTicket);
+        }
+        Ok(ticket)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QueryCommand {
+    Submit(QueryBundleRequest),
+    Poll(QueryTicket),
+}
+
+impl QueryCommand {
+    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+        match self {
+            Self::Submit(request) => request.encode(),
+            Self::Poll(ticket) => {
+                let mut bytes = Vec::with_capacity(24);
+                push_u32(&mut bytes, QUERY_POLL_MAGIC);
+                push_u16(&mut bytes, QUERY_VERSION);
+                push_u16(&mut bytes, 0);
+                ticket.encode_into(&mut bytes)?;
+                Ok(bytes)
+            }
+        }
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+        let mut decoder = Decoder::new(bytes);
+        let magic = decoder.u32()?;
+        if magic == QUERY_REQUEST_MAGIC {
+            return QueryBundleRequest::decode(bytes).map(Self::Submit);
+        }
+        if magic != QUERY_POLL_MAGIC {
+            return Err(QueryCodecError::InvalidMagic(magic));
+        }
+        decoder.expect_version()?;
+        let flags = decoder.u16()?;
+        if flags != 0 {
+            return Err(QueryCodecError::InvalidFlags(flags));
+        }
+        let ticket = QueryTicket::decode_from(&mut decoder)?;
+        decoder.finish()?;
+        Ok(Self::Poll(ticket))
+    }
 }
 
 impl CancelQueryRequest {
@@ -29,9 +97,7 @@ impl CancelQueryRequest {
         push_u32(&mut bytes, CANCEL_QUERY_MAGIC);
         push_u16(&mut bytes, QUERY_VERSION);
         push_u16(&mut bytes, 0);
-        push_u32(&mut bytes, self.group_id);
-        push_bytes(&mut bytes, self.instance_id.as_bytes(), "instance_id")?;
-        push_bytes(&mut bytes, self.request_id.as_bytes(), "request_id")?;
+        self.ticket.encode_into(&mut bytes)?;
         Ok(bytes)
     }
 
@@ -43,17 +109,9 @@ impl CancelQueryRequest {
         if flags != 0 {
             return Err(QueryCodecError::InvalidFlags(flags));
         }
-        let group_id = decoder.u32()?;
-        let length = decoder.usize_u32()?;
-        let instance_id = decoder.string(length, "instance_id")?;
-        let length = decoder.usize_u32()?;
-        let request_id = decoder.string(length, "request_id")?;
+        let ticket = QueryTicket::decode_from(&mut decoder)?;
         decoder.finish()?;
-        Ok(Self {
-            instance_id,
-            request_id,
-            group_id,
-        })
+        Ok(Self { ticket })
     }
 }
 
@@ -437,6 +495,7 @@ impl ReleaseRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryBundleRequest {
+    pub ticket: QueryTicket,
     pub instance_id: String,
     pub request_id: String,
     pub block_hashes: Vec<Vec<u8>>,
@@ -464,6 +523,7 @@ impl QueryBundleRequest {
         push_u32(&mut bytes, QUERY_REQUEST_MAGIC);
         push_u16(&mut bytes, QUERY_VERSION);
         push_u16(&mut bytes, u16::from(self.wait_for_full_prefix));
+        self.ticket.encode_into(&mut bytes)?;
         push_u32(&mut bytes, self.group_id);
         push_u32(&mut bytes, checked_u32(instance.len(), "instance_id")?);
         push_u32(&mut bytes, checked_u32(request.len(), "request_id")?);
@@ -488,6 +548,7 @@ impl QueryBundleRequest {
         if flags & !1 != 0 {
             return Err(QueryCodecError::InvalidFlags(flags));
         }
+        let ticket = QueryTicket::decode_from(&mut decoder)?;
         let group_id = decoder.u32()?;
         let instance_len = decoder.usize_u32()?;
         let request_len = decoder.usize_u32()?;
@@ -507,6 +568,7 @@ impl QueryBundleRequest {
         }
         decoder.finish()?;
         Ok(Self {
+            ticket,
             instance_id,
             request_id,
             block_hashes,
@@ -521,6 +583,7 @@ impl QueryBundleRequest {
 pub enum QueryOutcomeCode {
     Ready = 1,
     Loading = 2,
+    Busy = 3,
 }
 
 impl TryFrom<u16> for QueryOutcomeCode {
@@ -530,6 +593,7 @@ impl TryFrom<u16> for QueryOutcomeCode {
         match value {
             1 => Ok(Self::Ready),
             2 => Ok(Self::Loading),
+            3 => Ok(Self::Busy),
             _ => Err(QueryCodecError::UnknownOutcome(value)),
         }
     }
@@ -590,7 +654,7 @@ impl QueryBundleResponse {
             hit_positions.push(decoder.u32()?);
         }
         decoder.finish()?;
-        if outcome == QueryOutcomeCode::Loading
+        if matches!(outcome, QueryOutcomeCode::Loading | QueryOutcomeCode::Busy)
             && (num_hit_blocks != 0 || !lease.is_empty() || !hit_positions.is_empty())
         {
             return Err(QueryCodecError::InvalidLoadingPayload);
@@ -606,6 +670,8 @@ impl QueryBundleResponse {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum QueryCodecError {
+    #[error("query operation and revision must be nonzero")]
+    InvalidQueryTicket,
     #[error("query payload is truncated")]
     Truncated,
     #[error("query payload has {0} trailing bytes")]
@@ -766,9 +832,10 @@ mod tests {
     #[test]
     fn cancel_query_preserves_scope_and_rejects_malformed_frames() {
         let request = CancelQueryRequest {
-            instance_id: "model/1".into(),
-            request_id: "req/1".into(),
-            group_id: 7,
+            ticket: QueryTicket {
+                operation_id: 7,
+                revision: 2,
+            },
         };
         let mut bytes = request.encode().unwrap();
         assert_eq!(CancelQueryRequest::decode(&bytes).unwrap(), request);
@@ -782,6 +849,10 @@ mod tests {
     #[test]
     fn request_round_trip_preserves_variable_hashes() {
         let request = QueryBundleRequest {
+            ticket: QueryTicket {
+                operation_id: 7,
+                revision: 2,
+            },
             instance_id: "model-a".to_string(),
             request_id: "request-7".to_string(),
             block_hashes: vec![vec![1; 32], vec![2; 17]],
@@ -792,6 +863,31 @@ mod tests {
             QueryBundleRequest::decode(&request.encode().unwrap()).unwrap(),
             request
         );
+        for command in [
+            QueryCommand::Submit(request.clone()),
+            QueryCommand::Poll(request.ticket),
+        ] {
+            let bytes = command.encode().unwrap();
+            assert_eq!(QueryCommand::decode(&bytes).unwrap(), command);
+            for end in 0..bytes.len() {
+                assert!(QueryCommand::decode(&bytes[..end]).is_err());
+            }
+        }
+        for ticket in [
+            QueryTicket {
+                operation_id: 0,
+                revision: 1,
+            },
+            QueryTicket {
+                operation_id: 1,
+                revision: 0,
+            },
+        ] {
+            assert_eq!(
+                QueryCommand::Poll(ticket).encode(),
+                Err(QueryCodecError::InvalidQueryTicket)
+            );
+        }
     }
 
     #[test]

@@ -794,12 +794,12 @@
           "refId": "A"
         },
         {
-          "expr": "rate(orbitkv_ssd_prefetch_queue_full_total[1m])",
-          "legendFormat": "prefetch queue full",
+          "expr": "rate(orbitkv_ssd_prefetch_queue_closed_total[1m])",
+          "legendFormat": "prefetch queue closed",
           "refId": "B"
         }
       ],
-      "title": "Queue Full Events",
+      "title": "Queue Failures",
       "type": "timeseries"
     },
     {
