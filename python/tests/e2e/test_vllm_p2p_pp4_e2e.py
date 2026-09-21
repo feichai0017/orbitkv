@@ -199,30 +199,36 @@ class ManagedProcess:
         return self.log_file.read_text(errors="replace")[-limit:]
 
 
-class MetaServer(ManagedProcess):
+class Etcd(ManagedProcess):
     def __init__(self, log_dir: Path, host: str) -> None:
-        self.grpc_port = find_available_port()
-        self.http_port = find_available_port()
-
-        cmd = _server_cmd("orbitkv-metaserver")
-        cmd.extend(
-            [
-                "--addr",
-                f"{host}:{self.grpc_port}",
-                "--http-addr",
-                f"{host}:{self.http_port}",
-                "--log-level",
-                os.environ.get("ORBITKV_LOG_LEVEL", "debug"),
-            ]
-        )
-
+        binary = os.environ.get("ETCD_BIN")
+        if not binary:
+            pytest.skip("set ETCD_BIN for the distributed cache gate")
+        port = find_available_port()
+        peer_port = find_available_port()
+        self.endpoint = f"http://{host}:{port}"
+        peer = f"http://{host}:{peer_port}"
+        cmd = [
+            binary,
+            "--name",
+            "test",
+            "--data-dir",
+            str(log_dir / "etcd-data"),
+            "--listen-client-urls",
+            self.endpoint,
+            "--advertise-client-urls",
+            self.endpoint,
+            "--listen-peer-urls",
+            peer,
+            "--initial-advertise-peer-urls",
+            peer,
+            "--initial-cluster",
+            f"test={peer}",
+            "--log-level",
+            "warn",
+        ]
         super().__init__(
-            "metaserver",
-            cmd,
-            log_dir / "metaserver.log",
-            f"http://{host}:{self.http_port}/health",
-            _project_root(),
-            _env(),
+            "etcd", cmd, log_dir / "etcd.log", f"{self.endpoint}/health", _project_root(), _env()
         )
 
 
@@ -233,7 +239,7 @@ class CacheManager(ManagedProcess):
         devices: str,
         log_dir: Path,
         pool_size: str,
-        metaserver: MetaServer,
+        coordinator: Etcd,
         nics: str,
         advertise_host: str,
     ) -> None:
@@ -256,8 +262,12 @@ class CacheManager(ManagedProcess):
                 os.environ.get("ORBITKV_LOG_LEVEL", "debug"),
                 "--disable-numa-affinity",
                 "--enable-prometheus",
-                "--metaserver-addr",
-                f"http://{advertise_host}:{metaserver.grpc_port}",
+                "--etcd-endpoints",
+                coordinator.endpoint,
+                "--node-id",
+                label,
+                "--catalog-nodes",
+                "source,remote",
                 "--nics",
                 nics,
             ]
@@ -535,14 +545,14 @@ def test_pp4_p2p_matches_local_cache_load(
     remote_consumer_port = find_available_port()
 
     with ExitStack() as stack:
-        metaserver = stack.enter_context(MetaServer(log_dir, server_host))
+        coordinator = stack.enter_context(Etcd(log_dir, server_host))
         source_orbitkv = stack.enter_context(
             CacheManager(
                 "source",
                 source_devices,
                 log_dir,
                 pool_size,
-                metaserver,
+                coordinator,
                 nics,
                 server_host,
             )
@@ -602,7 +612,7 @@ def test_pp4_p2p_matches_local_cache_load(
                 consumer_devices,
                 log_dir,
                 pool_size,
-                metaserver,
+                coordinator,
                 nics,
                 server_host,
             )

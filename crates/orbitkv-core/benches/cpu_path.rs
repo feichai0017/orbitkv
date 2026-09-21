@@ -24,9 +24,7 @@ const NAMESPACE: &str = "cpu-path";
 const LAYER_NAME: &str = "layer_0";
 const DEVICE_ID: i32 = 0;
 const LOAD_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
-// Unreachable by design: the MetaServer group measures client-side enqueue and
-// save-path overhead, not a successful MetaServer RPC round trip.
-const FAKE_METASERVER_ADDR: &str = "http://127.0.0.1:9";
+// No active membership: measure journal insertion overhead without peer I/O.
 const ADVERTISE_ADDR: &str = "127.0.0.1:50055";
 
 const BLOCK_CASES: &[usize] = &[128, 1024, 8192, 32768];
@@ -61,7 +59,7 @@ impl BenchFixture {
         )
     }
 
-    fn with_metaserver(num_blocks: usize, bytes_per_block: usize, enable_metaserver: bool) -> Self {
+    fn with_inventory(num_blocks: usize, bytes_per_block: usize, enable_inventory: bool) -> Self {
         Self::with_config(
             num_blocks,
             bytes_per_block,
@@ -69,8 +67,15 @@ impl BenchFixture {
                 enable_lfu_admission: false,
                 hint_value_size_bytes: Some(bytes_per_block),
                 enable_numa_affinity: false,
-                metaserver_addr: enable_metaserver.then(|| FAKE_METASERVER_ADDR.to_string()),
-                advertise_addr: enable_metaserver.then(|| ADVERTISE_ADDR.to_string()),
+                membership: enable_inventory.then(|| {
+                    Arc::new(orbitkv_catalog::MembershipView::new(
+                        orbitkv_state::CacheOwner {
+                            endpoint: ADVERTISE_ADDR.into(),
+                            incarnation: uuid::Uuid::new_v4(),
+                        },
+                        orbitkv_catalog::Placement::new(vec!["bench".into()]).unwrap(),
+                    ))
+                }),
                 ..StorageConfig::default()
             },
             TransferMode::Direct,
@@ -416,9 +421,9 @@ fn save_flush_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-fn save_flush_metaserver_benchmarks(c: &mut Criterion) {
+fn save_flush_catalog_benchmarks(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
-    let mut group = c.benchmark_group("cpu_path/save_flush_unique_metaserver_enqueue");
+    let mut group = c.benchmark_group("cpu_path/save_flush_unique_catalog_enqueue");
     group.sample_size(10);
 
     for &num_blocks in BLOCK_CASES {
@@ -428,7 +433,7 @@ fn save_flush_metaserver_benchmarks(c: &mut Criterion) {
         )));
         group.bench_function(BenchmarkId::from_parameter(num_blocks), |b| {
             let _guard = rt.enter();
-            let fixture = BenchFixture::with_metaserver(num_blocks, BYTES_PER_BLOCK, true);
+            let fixture = BenchFixture::with_inventory(num_blocks, BYTES_PER_BLOCK, true);
             drop(_guard);
             b.iter_custom(|iters| {
                 rt.block_on(async {
@@ -870,7 +875,7 @@ fn check_cuda(result: sys::CUresult, op: &str) {
 criterion_group!(
     benches,
     save_flush_benchmarks,
-    save_flush_metaserver_benchmarks,
+    save_flush_catalog_benchmarks,
     save_flush_multilayer_cpu_benchmarks,
     save_submit_multilayer_cpu_benchmarks,
     save_insert_flush_multilayer_cpu_benchmarks,

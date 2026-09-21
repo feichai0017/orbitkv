@@ -23,8 +23,8 @@ pub use discovery::{
 };
 pub use format::{StateDType, StateFormat, StateLayout};
 pub use inventory::{
-    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryOperation, InventoryRecord,
-    InventoryStatus,
+    CATALOG_SHARDS, INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryOperation,
+    InventoryRecord, InventoryStatus, catalog_shard,
 };
 pub use key::{
     ContractError, Digest, StateDescriptor, StateKey, StorageSlot, TokenRange, group_hash,

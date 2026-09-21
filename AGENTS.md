@@ -25,7 +25,7 @@ orbitkv/
 │   ├── orbitkv-core/             # Cache engine, storage, and backing tiers
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
 │   ├── orbitkv-server/           # Cache Manager orchestration and protocol adapters
-│   ├── orbitkv-metaserver/       # Cross-node block metadata registry
+│   ├── orbitkv-catalog/       # Embedded sharded replica directory
 │   ├── orbitkv-mooncake-sys/     # Pinned native build and dynamic C ABI
 │   └── orbitkv-transfer/         # Mooncake transfer wrapper
 ├── python/                       # PyO3 package and framework adapters
@@ -47,9 +47,9 @@ orbitkv/
 | Core engine and storage path | `crates/orbitkv-core/` |
 | gRPC protocol changes | `crates/orbitkv-proto/` |
 | Cache Manager cache operations and process endpoint | `crates/orbitkv-server/src/cache/`, `endpoint/` |
-| Cross-node metadata service | `crates/orbitkv-metaserver/` |
+| Cross-node metadata service | `crates/orbitkv-catalog/` |
 | etcd member registration, renewal and Watch | `crates/orbitkv-server/src/cluster/` |
-| Cached membership and remote admission | `crates/orbitkv-core/src/internode/membership.rs` |
+| Cached membership and remote admission | `crates/orbitkv-catalog/src/membership.rs` |
 | Mooncake remote transfer path | `crates/orbitkv-transfer/` |
 | PyO3 bindings | `python/src/lib.rs` |
 | Python package and helpers | `python/orbitkv/` |
@@ -70,7 +70,7 @@ orbitkv/
 - `crates/orbitkv-server/src/endpoint/`: two-process iceoryx2 endpoint and authenticated UDS lifecycle channel
 - `crates/orbitkv-server/src/wire.rs`: protobuf-to-cache registration conversion
 - `crates/orbitkv-server/src/http_server.rs`: HTTP health and metrics
-- `crates/orbitkv-metaserver/src/`: metaserver implementation
+- `crates/orbitkv-catalog/src/`: embedded catalog implementation
 - `crates/orbitkv-transfer/src/`: transfer engine implementation
 - `python/src/lib.rs`: PyO3 bindings
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
@@ -153,11 +153,12 @@ uv run python examples/basic_vllm.py --model /path/to/immutable-model
 cargo run -r --bin orbitkv-cache-manager -- --addr 127.0.0.1:50055 --pool-size 30gb
 ```
 
-### MetaServer
+### Distributed cache
 
-```bash
-cargo run -r --bin orbitkv-metaserver
-```
+Run the same Manager with `--etcd-endpoints`, `--node-id`, and matching
+`--catalog-nodes` on every host. Catalog shards share its peer gRPC endpoint;
+there is no standalone directory binary. See `docs/p2p.md`.
+
 ## Code Style
 
 ### General

@@ -1,65 +1,38 @@
-# Cross-node coordination
+# Peer coordination
 
-`metaserver_client.rs` owns the current directory synchronization state machine,
-heartbeat and bounded `LocateBlocks` queries through the positive candidate
-index in `discovery.rs`. `p2p_service.rs` authorizes and pins
-source blocks for Mooncake and releases completed transfer holds.
-
-`membership.rs` owns the cached member set and conservative local registration
-deadline. The server's `cluster/` adapter performs etcd transactions, keepalives
-and Watch repair. Core uses the view for source admission and candidate filtering
-without importing an etcd client or making coordinator RPCs on the request path.
-
-The engine channel remains UDS/iceoryx2. These network services run only when
-`--metaserver-addr` enables distributed discovery and transfer.
-
-## Inventory flow
+`catalog_client.rs` owns the bounded candidate index lookup and 16 shard workers.
+`catalog_client/sync.rs` owns per-shard snapshot/delta recovery. The
+[`orbitkv-catalog`](../../../orbitkv-catalog/README.md) library owns cached
+membership, fixed placement and the receiving catalog. etcd registration and
+Watch live in the Manager's `cluster/` adapter; core performs no etcd I/O.
 
 ```text
-Publish / SSD restore / peer restore / eviction / cleanup
-                         |
-              ReadCache mutation lock
-                         |
-        resident index + bounded sequence journal
-                         |
-            coalesced wakeup, no event queue
-                         |
-              inventory sync state machine
-                         |
-       HeartbeatNode + SyncInventory over gRPC
-                         |
-               current standalone directory
+ReadCache insert/evict (one residency lock)
+  -> per-shard index + bounded journal + sequence
+  -> background snapshot/delta workers
+  -> assigned Manager catalog, via cached Node ID -> endpoint/incarnation
+
+Query -> DRAM/SSD -> candidate index -> missing shard lookups
+      -> contiguous source spans -> source authorization -> Mooncake READ
 ```
 
-The journal stores metadata, without retaining payload Arcs. The write and
-prefetch paths have no directory client dependency. Rejected admission and
-repeated insertion do not advertise a new residency episode.
+No inventory index or journal is allocated in standalone mode. Distributed
+`StorageConfig` takes one `MembershipView`; its owner provides both the advertised
+endpoint and runtime identity. There is no fixed directory-address option or
+unregistered remote mode.
 
-The background worker sends bounded snapshot pages and contiguous deltas.
-Directory epoch changes, missing history and ambiguous snapshot replies trigger
-reconstruction. Heartbeats verify progress even when no cache writes occur.
-Requests have deadlines, and retries use backoff with jitter. An inventory
-flush waits for an actual acknowledgement or returns an error; there is no
-success path that silently drops pending changes.
+Positive hints have a five-second TTL and a 16 MiB LRU budget. Queries group
+missing keys by shard and coalesce concurrent misses. Lookups have a three-second
+RPC budget; unavailable shards preserve known evidence without proving absence.
+The requester never broadcasts the whole query to every Manager.
 
-The requesting Manager plans transfers in `backing/fetch_plan.rs`. A 16 MiB
-logical-byte LRU retains positive evidence for five seconds without extending
-the TTL on hits. Cold lookups are coalesced and split at 128 keys / 64 KiB.
-There is no negative cache. The source validates its runtime UUID and exact
-insertion sequences atomically with payload pinning. Rejected versions are
-invalidated locally; up to two alternate-source retries use existing candidates.
-Mooncake transfers payload bytes. The blocking operation retains destination
-buffers and the source-release guard across caller cancellation. Source
-timeout/revocation and cross-host failure qualification remain open. The directory never grants direct memory access.
+Inventory streams have independent contiguous sequences and bounded journal
+partitions. A changed target incarnation or receiver epoch triggers snapshot
+recovery; ambiguous replies and overflow cannot silently mark a partial view
+complete. Source pinning checks exact insertion sequences under the residency
+lock, independently of catalog hints. Invalid membership disables remote work
+while local cache operations continue.
 
-## Configuration
-
-```bash
-orbitkv-cache-manager --addr 10.0.0.1:50055 --pool-size 30gb \
-  --metaserver-addr http://10.0.0.100:50056 \
-  --inventory-journal-bytes 16777216
-```
-
-Without distributed discovery, no resident inventory index or journal is
-allocated. See [directory protocol and limits](../../../orbitkv-metaserver/README.md)
-and the [distributed cache plan](../../../../docs/distributed-cache.md).
+The blocking Mooncake READ owns destination memory and its release guard through
+caller cancellation. Source timeout/revocation and cross-host failure qualification
+remain unresolved. See [deployment and failure boundaries](../../../../docs/p2p.md).

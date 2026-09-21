@@ -48,10 +48,10 @@ fi
 
 echo "==> Building binaries ($PROFILE mode)..."
 cd "$PROJECT_ROOT"
-cargo build "${RELEASE_ARGS[@]}" "${EXTRA_ARGS[@]}" -p orbitkv-py --bin orbitkv-cache-manager-py --bin orbitkv-metaserver-py
+cargo build "${RELEASE_ARGS[@]}" "${EXTRA_ARGS[@]}" -p orbitkv-py --bin orbitkv-cache-manager-py
 
 echo "==> Copying binaries to Python package..."
-for bin in orbitkv-cache-manager-py orbitkv-metaserver-py; do
+for bin in orbitkv-cache-manager-py; do
     install -m 755 "$PROJECT_ROOT/target/$PROFILE/$bin" "$PYTHON_DIR/orbitkv/$bin"
     if [[ "$PROFILE" == "release" ]]; then
         strip --strip-unneeded "$PYTHON_DIR/orbitkv/$bin"
@@ -71,7 +71,7 @@ fi
 for lib in libtransfer_engine.so libmooncake_common.so libasio.so; do
     cp "$MOONCAKE_LINK_DIR/$lib" "$PYTHON_DIR/orbitkv/$lib"
 done
-for bin in orbitkv-cache-manager-py orbitkv-metaserver-py; do
+for bin in orbitkv-cache-manager-py; do
     patchelf --set-rpath '$ORIGIN' "$PYTHON_DIR/orbitkv/$bin"
 done
 

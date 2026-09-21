@@ -16,7 +16,7 @@ use crate::backing::{AllocateFn, SsdBackingStore, SsdCacheConfig};
 #[cfg(feature = "mooncake")]
 use crate::backing::{MooncakeFetchStore, MooncakeTransport};
 use crate::block::{QueryResult, SealedBlock, StateKey};
-use crate::internode::MetaServerClient;
+use crate::internode::CatalogClient;
 use crate::metrics::core_metrics;
 use crate::pinned_pool::{PinnedAllocation, PinnedAllocator};
 use orbitkv_common::NumaNode;
@@ -60,13 +60,8 @@ pub struct StorageConfig {
     pub blockwise_alloc: bool,
     /// Transfer lock timeout for cross-node Mooncake transfers.
     pub transfer_lock_timeout: Duration,
-    /// MetaServer address for p2p block discovery + registration (None = disabled).
-    pub metaserver_addr: Option<String>,
-    /// This node's routable address (from --addr) used for MetaServer registration and as
-    /// requester_id in transfer locks. Must be set when metaserver_addr is set.
-    pub advertise_addr: Option<String>,
     /// Optional leased membership. Its incarnation also identifies this inventory.
-    pub membership: Option<Arc<crate::MembershipView>>,
+    pub membership: Option<Arc<orbitkv_catalog::MembershipView>>,
     /// Byte limit for retained residency changes used by directory synchronization.
     pub inventory_journal_bytes: usize,
     /// Number of shards for the pinned memory pool (reduces allocator lock contention).
@@ -85,8 +80,6 @@ impl Default for StorageConfig {
             enable_numa_affinity: true,
             blockwise_alloc: false,
             transfer_lock_timeout: Duration::from_secs(120),
-            metaserver_addr: None,
-            advertise_addr: None,
             membership: None,
             inventory_journal_bytes: inventory::DEFAULT_INVENTORY_JOURNAL_BYTES,
             pool_shards: 1,
@@ -108,8 +101,8 @@ pub(crate) struct StorageEngine {
     #[cfg(feature = "mooncake")]
     mooncake_transport: Option<Arc<MooncakeTransport>>,
     blockwise_alloc: bool,
-    metaserver_client: Option<Arc<MetaServerClient>>,
-    membership: Option<Arc<crate::MembershipView>>,
+    catalog_client: Option<Arc<CatalogClient>>,
+    membership: Option<Arc<orbitkv_catalog::MembershipView>>,
     transfer_lock: Arc<transfer_lock::TransferLockManager>,
 }
 
@@ -120,15 +113,6 @@ impl StorageEngine {
         config: StorageConfig,
         numa_nodes: &[NumaNode],
     ) -> Result<Arc<Self>, String> {
-        if let Some(view) = &config.membership
-            && (config.metaserver_addr.is_none()
-                || config.advertise_addr.as_deref() != Some(view.owner().endpoint.as_str()))
-        {
-            return Err(
-                "membership requires directory configuration and a matching advertised endpoint"
-                    .into(),
-            );
-        }
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
@@ -175,34 +159,15 @@ impl StorageEngine {
             config.enable_lfu_admission,
             value_size_hint,
             config
-                .metaserver_addr
+                .membership
                 .as_ref()
                 .map(|_| config.inventory_journal_bytes),
         ));
 
-        let metaserver_client = config
-            .metaserver_addr
+        let catalog_client = config
+            .membership
             .as_ref()
-            .map(|addr| {
-                let advertise = config
-                    .advertise_addr
-                    .clone()
-                    .unwrap_or_else(|| "127.0.0.1:50055".to_string());
-                info!(
-                    "MetaServer client enabled: metaserver={}, advertise={}, journal_bytes={}",
-                    addr, advertise, config.inventory_journal_bytes
-                );
-                MetaServerClient::new(
-                    addr.clone(),
-                    advertise,
-                    Arc::downgrade(&read_cache),
-                    config
-                        .membership
-                        .as_ref()
-                        .map_or_else(uuid::Uuid::new_v4, |view| view.owner().incarnation),
-                )
-                .map(Arc::new)
-            })
+            .map(|view| CatalogClient::new(view.clone(), Arc::downgrade(&read_cache)).map(Arc::new))
             .transpose()?;
 
         let (write_pipeline, insert_rx) = WritePipeline::new();
@@ -211,11 +176,13 @@ impl StorageEngine {
         // Mooncake must be created after the allocator so it can register the
         // pinned pool. An empty rail filter lets Mooncake choose TCP fallback.
         #[cfg(feature = "mooncake")]
-        let mooncake_transport = if metaserver_client.is_some() {
-            let advertise = config
-                .advertise_addr
-                .as_deref()
-                .ok_or_else(|| "Mooncake transfer requires advertise_addr".to_string())?;
+        let mooncake_transport = if catalog_client.is_some() {
+            let advertise = &config
+                .membership
+                .as_ref()
+                .expect("distributed configuration")
+                .owner()
+                .endpoint;
             let transfer =
                 crate::backing::new_mooncake(&mooncake_nic_names, &allocator, advertise)?;
             Some(transfer)
@@ -224,9 +191,9 @@ impl StorageEngine {
         };
 
         #[cfg(not(feature = "mooncake"))]
-        if metaserver_client.is_some() {
+        if catalog_client.is_some() {
             log::warn!(
-                "MetaServer was configured, but this binary was built without the `mooncake` feature; remote transfer is disabled"
+                "Catalog was configured, but this binary was built without the `mooncake` feature; remote transfer is disabled"
             );
         }
 
@@ -245,17 +212,15 @@ impl StorageEngine {
 
             #[cfg(feature = "mooncake")]
             let remote_fetch = mooncake_transport.as_ref().and_then(|transfer| {
-                let ms = metaserver_client.as_ref()?;
-                let advertise = config
-                    .advertise_addr
-                    .clone()
-                    .unwrap_or_else(|| "127.0.0.1:50055".to_string());
+                let ms = catalog_client.as_ref()?;
                 Some(RemoteFetch::new(Arc::new(MooncakeFetchStore::new(
                     Arc::clone(ms),
                     Arc::clone(transfer),
                     allocate_fn.clone(),
-                    advertise,
-                    config.membership.clone(),
+                    config
+                        .membership
+                        .clone()
+                        .expect("distributed configuration"),
                 ))))
             });
             #[cfg(not(feature = "mooncake"))]
@@ -276,7 +241,7 @@ impl StorageEngine {
                 #[cfg(feature = "mooncake")]
                 mooncake_transport,
                 blockwise_alloc,
-                metaserver_client,
+                catalog_client,
                 membership: config.membership.clone(),
                 transfer_lock,
             }
@@ -378,7 +343,7 @@ impl StorageEngine {
     }
 
     pub(crate) async fn flush_inventory(&self) -> Result<(), String> {
-        if let Some(client) = &self.metaserver_client {
+        if let Some(client) = &self.catalog_client {
             client.flush().await?;
         }
         Ok(())
@@ -573,7 +538,7 @@ impl StorageEngine {
         requester: &str,
         records: &[orbitkv_state::InventoryRecord],
     ) -> Option<TransferAuthorization> {
-        if self.metaserver_client.as_ref()?.node_id != owner
+        if self.catalog_client.as_ref()?.node_id != owner
             || self
                 .membership
                 .as_ref()
@@ -625,8 +590,8 @@ impl StorageEngine {
             .map(|transport| transport.transfer_endpoint())
     }
 
-    pub(crate) async fn shutdown_metaserver_client(&self) {
-        if let Some(client) = &self.metaserver_client {
+    pub(crate) async fn shutdown_catalog_client(&self) {
+        if let Some(client) = &self.catalog_client {
             client.shutdown().await;
         }
     }

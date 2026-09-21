@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn cli_membership_requires_stable_node_identity_and_current_directory() {
+fn cli_membership_requires_stable_node_identity_and_catalog_placement() {
     let flags = [
         "orbitkv-cache-manager",
         "--etcd-endpoints",
@@ -12,8 +12,8 @@ fn cli_membership_requires_stable_node_identity_and_current_directory() {
     let cli = Cli::try_parse_from(flags.into_iter().chain([
         "--node-id",
         "node-a",
-        "--metaserver-addr",
-        "http://127.0.0.1:50056",
+        "--catalog-nodes",
+        "node-a,node-b",
     ]))
     .unwrap();
     assert_eq!(cli.node_id.as_deref(), Some("node-a"));

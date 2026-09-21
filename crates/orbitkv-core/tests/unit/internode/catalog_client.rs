@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
-use orbitkv_metaserver::{BlockHashStore, GrpcMetaService};
+use orbitkv_catalog::{BlockHashStore, CatalogService};
 use orbitkv_proto::proto::engine::{
     self as wire,
-    meta_server_server::{MetaServer, MetaServerServer},
+    catalog_server::{Catalog as CatalogRpc, CatalogServer},
     sync_inventory_request::Operation,
 };
 use parking_lot::RwLock;
@@ -18,6 +18,8 @@ use crate::block::SealedBlock;
 #[derive(Clone)]
 struct Catalog {
     store: Arc<RwLock<Arc<BlockHashStore>>>,
+    membership: Arc<RwLock<Option<Arc<MembershipView>>>>,
+    other_shards: [Arc<BlockHashStore>; CATALOG_SHARDS],
     offline: Arc<AtomicBool>,
     lose_reply: Arc<AtomicUsize>,
     begins: Arc<AtomicUsize>,
@@ -30,8 +32,10 @@ struct Catalog {
 impl Catalog {
     fn new() -> Self {
         Self {
+            membership: Arc::new(RwLock::new(None)),
+            other_shards: std::array::from_fn(|_| Arc::new(BlockHashStore::new())),
             store: Arc::new(RwLock::new(Arc::new(BlockHashStore::with_config(
-                orbitkv_metaserver::store::StoreConfig {
+                orbitkv_catalog::store::StoreConfig {
                     node_stale_after: Duration::from_secs(1),
                     ..Default::default()
                 },
@@ -46,25 +50,27 @@ impl Catalog {
         }
     }
 
-    fn service(&self) -> Result<GrpcMetaService, Status> {
+    fn service(&self) -> Result<CatalogService, Status> {
         if self.offline.load(Ordering::Acquire) {
             return Err(Status::unavailable("injected outage"));
         }
-        Ok(GrpcMetaService::new(Arc::clone(&self.store.read())))
+        let mut stores = self.other_shards.clone();
+        stores[0] = self.store.read().clone();
+        Ok(CatalogService::new(
+            stores,
+            self.membership.read().as_ref().unwrap().clone(),
+        ))
     }
 
     fn visible(&self, key: u32) -> bool {
-        !self
-            .store
-            .read()
-            .locate_blocks("ns", &[key.to_be_bytes().to_vec()], "")[0]
+        !self.store.read().locate_blocks("ns", &[hash(key)], "")[0]
             .replicas
             .is_empty()
     }
 }
 
 #[async_trait]
-impl MetaServer for Catalog {
+impl CatalogRpc for Catalog {
     async fn heartbeat_node(
         &self,
         request: Request<wire::HeartbeatNodeRequest>,
@@ -125,10 +131,12 @@ impl TestServer {
     async fn start(catalog: Catalog, addr: SocketAddr) -> Self {
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let membership = test_view(addr, "catalog");
+        *catalog.membership.write() = Some(membership.clone());
         let (stop, stopped) = oneshot::channel();
         let task = tokio::spawn(async move {
             Server::builder()
-                .add_service(MetaServerServer::new(catalog))
+                .add_service(CatalogServer::new(catalog))
                 .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async {
                     let _ = stopped.await;
                 })
@@ -148,24 +156,72 @@ impl TestServer {
 }
 
 fn cache(journal: usize) -> Arc<ReadCache> {
-    Arc::new(ReadCache::new(64 * 1024 * 1024, false, None, Some(journal)))
+    Arc::new(ReadCache::new(
+        64 * 1024 * 1024,
+        false,
+        None,
+        Some(journal * CATALOG_SHARDS),
+    ))
 }
 
 fn insert(cache: &ReadCache, key: u32) {
     cache.insert_retained_for_test(
-        StateKey::new("ns".into(), key.to_be_bytes().to_vec()),
+        StateKey::new("ns".into(), hash(key)),
         Arc::new(SealedBlock::from_slots(Vec::new())),
     );
 }
 
-fn client(server: &TestServer, cache: &Arc<ReadCache>) -> MetaServerClient {
-    MetaServerClient::new(
-        format!("http://{}", server.addr),
-        "owner:50055".into(),
-        Arc::downgrade(cache),
-        Uuid::new_v4(),
-    )
-    .unwrap()
+fn hash(n: u32) -> Vec<u8> {
+    for salt in 0_u32.. {
+        let value = [n.to_be_bytes(), salt.to_be_bytes()].concat();
+        if catalog_shard(&StateKey::new("ns".into(), value.clone())) == 0 {
+            return value;
+        }
+    }
+    unreachable!()
+}
+
+fn test_view(addr: SocketAddr, role: &str) -> Arc<MembershipView> {
+    let owners = [
+        (
+            "catalog".to_string(),
+            CacheOwner {
+                endpoint: addr.to_string(),
+                incarnation: Uuid::from_u128(1),
+            },
+        ),
+        (
+            "owner".to_string(),
+            CacheOwner {
+                endpoint: "127.0.0.1:58001".into(),
+                incarnation: Uuid::from_u128(2),
+            },
+        ),
+        (
+            "requester".to_string(),
+            CacheOwner {
+                endpoint: "127.0.0.1:58002".into(),
+                incarnation: Uuid::from_u128(3),
+            },
+        ),
+    ];
+    let owner = owners
+        .iter()
+        .find(|(name, _)| name == role)
+        .unwrap()
+        .1
+        .clone();
+    let view = Arc::new(MembershipView::new(
+        owner,
+        orbitkv_catalog::Placement::new(vec!["catalog".into()]).unwrap(),
+    ));
+    assert!(view.renew(std::time::Instant::now(), Duration::from_secs(3600)));
+    view.replace_members(owners);
+    view
+}
+
+fn client(server: &TestServer, cache: &Arc<ReadCache>) -> CatalogClient {
+    CatalogClient::new(test_view(server.addr, "owner"), Arc::downgrade(cache)).unwrap()
 }
 
 async fn until(mut predicate: impl FnMut() -> bool) {
@@ -305,15 +361,13 @@ async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_e
         .unwrap();
     let destination = cache(4096);
     let requester = Arc::new(
-        MetaServerClient::new(
-            format!("http://{}", server.addr),
-            "requester:50055".into(),
+        CatalogClient::new(
+            test_view(server.addr, "requester"),
             Arc::downgrade(&destination),
-            Uuid::new_v4(),
         )
         .unwrap(),
     );
-    let hashes: Vec<_> = (0_u32..300).map(|k| k.to_be_bytes().to_vec()).collect();
+    let hashes: Vec<_> = (0_u32..300).map(hash).collect();
     let queries = (0..16).map(|_| requester.locate_blocks("ns", &hashes));
     let responses = futures::future::join_all(queries).await;
     for response in &responses {
@@ -332,7 +386,7 @@ async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_e
     );
     assert_eq!(catalog.locates.load(Ordering::Acquire), 3);
     let mut extended = hashes.clone();
-    extended.push(999_u32.to_be_bytes().to_vec());
+    extended.push(hash(999));
     let partial = requester.locate_blocks("ns", &extended).await.unwrap();
     assert!(partial[..300].iter().all(|row| !row.replicas.is_empty()));
     assert!(partial[300].replicas.is_empty());
@@ -354,7 +408,7 @@ async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_e
         current
     );
     assert_eq!(catalog.locates.load(Ordering::Acquire), 5);
-    let missing = vec![999_u32.to_be_bytes().to_vec()];
+    let missing = vec![hash(999)];
     assert!(
         requester.locate_blocks("ns", &missing).await.unwrap()[0]
             .replicas
@@ -389,4 +443,158 @@ async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_e
     requester.shutdown().await;
     owner.shutdown().await;
     server.stop().await;
+}
+
+#[tokio::test]
+async fn two_embedded_catalogs_partition_inventory_and_repair_restarted_member() {
+    let catalogs = [Catalog::new(), Catalog::new()];
+    let server_a = TestServer::start(catalogs[0].clone(), "127.0.0.1:0".parse().unwrap()).await;
+    let server_b = TestServer::start(catalogs[1].clone(), "127.0.0.1:0".parse().unwrap()).await;
+    let placement = orbitkv_catalog::Placement::new(vec!["a".into(), "b".into()]).unwrap();
+    let mut members = vec![
+        (
+            "a".into(),
+            CacheOwner {
+                endpoint: server_a.addr.to_string(),
+                incarnation: Uuid::new_v4(),
+            },
+        ),
+        (
+            "b".into(),
+            CacheOwner {
+                endpoint: server_b.addr.to_string(),
+                incarnation: Uuid::new_v4(),
+            },
+        ),
+        (
+            "source".into(),
+            CacheOwner {
+                endpoint: "127.0.0.1:59001".into(),
+                incarnation: Uuid::new_v4(),
+            },
+        ),
+    ];
+    let views: Vec<_> = members
+        .iter()
+        .map(|(_, owner)| {
+            let view = Arc::new(MembershipView::new(owner.clone(), placement.clone()));
+            assert!(view.renew(std::time::Instant::now(), Duration::from_secs(300)));
+            view.replace_members(members.clone());
+            view
+        })
+        .collect();
+    for (catalog, view) in catalogs.iter().zip(&views) {
+        *catalog.membership.write() = Some(view.clone());
+    }
+    let source = cache(4096);
+    let keys: Vec<_> = (0_u32..256)
+        .map(|n| StateKey::new("ns".into(), n.to_be_bytes().to_vec()))
+        .collect();
+    for key in &keys {
+        source.insert_retained_for_test(key.clone(), Arc::new(SealedBlock::from_slots(Vec::new())));
+    }
+    let client = CatalogClient::new(views[2].clone(), Arc::downgrade(&source)).unwrap();
+    client
+        .flush_with_timeout(Duration::from_secs(10))
+        .await
+        .unwrap();
+    #[cfg(feature = "mooncake")]
+    {
+        let empty = cache(4096);
+        let query = CatalogClient::new(views[0].clone(), Arc::downgrade(&empty)).unwrap();
+        let hashes: Vec<_> = keys.iter().map(|key| key.hash.clone()).collect();
+        let rows = query.locate_blocks("ns", &hashes).await.unwrap();
+        assert_eq!(rows.len(), keys.len());
+        assert!(
+            rows.iter()
+                .zip(&keys)
+                .all(|(row, key)| row.key == *key && row.replicas.len() == 1)
+        );
+        let calls: usize = catalogs
+            .iter()
+            .map(|catalog| catalog.locates.load(Ordering::Acquire))
+            .sum();
+        assert_eq!(calls, CATALOG_SHARDS);
+        assert_eq!(query.locate_blocks("ns", &hashes).await.unwrap(), rows);
+        assert_eq!(
+            catalogs
+                .iter()
+                .map(|catalog| catalog.locates.load(Ordering::Acquire))
+                .sum::<usize>(),
+            calls
+        );
+        query.shutdown().await;
+    }
+    let stores = |catalog: &Catalog| {
+        let mut stores = catalog.other_shards.clone();
+        stores[0] = catalog.store.read().clone();
+        stores
+    };
+    for key in &keys {
+        let shard = catalog_shard(key);
+        for (index, node) in ["a", "b"].iter().enumerate() {
+            let rows = stores(&catalogs[index])[shard].locate_blocks(
+                "ns",
+                std::slice::from_ref(&key.hash),
+                "",
+            );
+            assert_eq!(
+                rows[0].replicas.len(),
+                usize::from(placement.host(shard) == Some(node))
+            );
+        }
+    }
+    // A shard request to a valid but unassigned Manager must be rejected.
+    let shard_b = (0..CATALOG_SHARDS)
+        .find(|&shard| placement.host(shard) == Some("b"))
+        .unwrap();
+    let mut wrong = connect(views[0].owner()).unwrap();
+    let request = HeartbeatNodeRequest {
+        route: Some(route(&views[0], shard_b, views[0].owner())),
+        node: views[2].owner().endpoint.clone(),
+        node_id: views[2].owner().incarnation.to_string(),
+    };
+    assert_eq!(
+        wrong.heartbeat_node(request).await.unwrap_err().code(),
+        tonic::Code::FailedPrecondition
+    );
+
+    // Liveness loss does not move B's shards to A or report flush success.
+    views[2].replace_members([members[0].clone(), members[2].clone()]);
+    assert!(
+        client
+            .flush_with_timeout(Duration::from_millis(100))
+            .await
+            .is_err()
+    );
+    let restart = Catalog::new();
+    let addr = server_b.addr;
+    server_b.stop().await;
+    let server_b = TestServer::start(restart.clone(), addr).await;
+    members[1].1.incarnation = Uuid::new_v4();
+    let replacement = Arc::new(MembershipView::new(members[1].1.clone(), placement));
+    assert!(replacement.renew(std::time::Instant::now(), Duration::from_secs(300)));
+    replacement.replace_members(members.clone());
+    *restart.membership.write() = Some(replacement);
+    for view in &views {
+        view.replace_members(members.clone());
+    }
+    client
+        .flush_with_timeout(Duration::from_secs(10))
+        .await
+        .unwrap();
+    for key in &keys {
+        let shard = catalog_shard(key);
+        if views[2].placement().host(shard) == Some("b") {
+            assert_eq!(
+                stores(&restart)[shard].locate_blocks("ns", std::slice::from_ref(&key.hash), "")[0]
+                    .replicas
+                    .len(),
+                1
+            );
+        }
+    }
+    client.shutdown().await;
+    server_a.stop().await;
+    server_b.stop().await;
 }

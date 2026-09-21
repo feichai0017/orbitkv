@@ -25,7 +25,7 @@ use super::fetch_plan::{
 use super::transfer_lock_guard::TransferLockGuard;
 use super::{AllocateFn, MooncakeTransport, PrefetchResult};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::internode::MetaServerClient;
+use crate::internode::CatalogClient;
 use crate::metrics::core_metrics;
 
 /// Minimum usable transfer timeout. If the server's lock timeout minus the
@@ -43,15 +43,14 @@ const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Mooncake remote block fetch backing store.
 ///
-/// When all requested blocks are missing locally, queries MetaServer for their
+/// When all requested blocks are missing locally, queries Catalog for their
 /// location, picks the best remote node, and uses gRPC authorization plus a
 /// Mooncake READ to fetch them.
 pub(crate) struct MooncakeFetchStore {
-    metaserver_client: Arc<MetaServerClient>,
-    membership: Option<Arc<crate::MembershipView>>,
+    catalog_client: Arc<CatalogClient>,
+    membership: Arc<orbitkv_catalog::MembershipView>,
     transfer: Arc<MooncakeTransport>,
     allocate_fn: AllocateFn,
-    advertise_addr: String,
     /// Lazy gRPC channel cache keyed by remote address. Tonic channels multiplex
     /// requests over a single HTTP/2 connection; cloning is cheap.
     grpc_channels: Arc<Mutex<LinkedHashMap<String, EngineClient<Channel>>>>,
@@ -60,11 +59,7 @@ pub(crate) struct MooncakeFetchStore {
 #[tonic::async_trait]
 impl SegmentFetcher for MooncakeFetchStore {
     async fn fetch_segment(&self, segment: &FetchSegment, req_id: &str) -> SegmentOutcome {
-        if self
-            .membership
-            .as_ref()
-            .is_some_and(|view| !view.permits(&segment.owner))
-        {
+        if !self.membership.permits(&segment.owner) {
             return SegmentOutcome::Rejected;
         }
         let remote_addr = &segment.owner.endpoint;
@@ -74,32 +69,37 @@ impl SegmentFetcher for MooncakeFetchStore {
 
         // Query the OrbitKV authority before exposing any physical addresses.
         let query_start = Instant::now();
-        let (client, mut response) =
-            match query_remote_blocks(&self.grpc_channels, segment, &self.advertise_addr).await {
-                Ok(cr) => cr,
-                Err(QueryError::Rejected) => {
-                    core_metrics()
-                        .remote_fetch_total
-                        .add(1, &[KeyValue::new("status", "rejected")]);
-                    for record in &segment.records {
-                        self.metaserver_client.reject_candidate(
-                            &record.key,
-                            &orbitkv_state::ReplicaLocation {
-                                owner: segment.owner.clone(),
-                                sequence: record.sequence,
-                            },
-                        );
-                    }
-                    return SegmentOutcome::Rejected;
+        let (client, mut response) = match query_remote_blocks(
+            &self.grpc_channels,
+            segment,
+            &self.membership.owner().endpoint,
+        )
+        .await
+        {
+            Ok(cr) => cr,
+            Err(QueryError::Rejected) => {
+                core_metrics()
+                    .remote_fetch_total
+                    .add(1, &[KeyValue::new("status", "rejected")]);
+                for record in &segment.records {
+                    self.catalog_client.reject_candidate(
+                        &record.key,
+                        &orbitkv_state::ReplicaLocation {
+                            owner: segment.owner.clone(),
+                            sequence: record.sequence,
+                        },
+                    );
                 }
-                Err(QueryError::Failed(e)) => {
-                    warn!("Remote query to {remote_addr} failed: {e}");
-                    core_metrics()
-                        .remote_fetch_total
-                        .add(1, &[KeyValue::new("status", "error")]);
-                    return SegmentOutcome::Failed;
-                }
-            };
+                return SegmentOutcome::Rejected;
+            }
+            Err(QueryError::Failed(e)) => {
+                warn!("Remote query to {remote_addr} failed: {e}");
+                core_metrics()
+                    .remote_fetch_total
+                    .add(1, &[KeyValue::new("status", "error")]);
+                return SegmentOutcome::Failed;
+            }
+        };
         let query_elapsed = query_start.elapsed();
 
         // The guard moves into the blocking transfer with the destination buffers.
@@ -193,22 +193,20 @@ impl SegmentFetcher for MooncakeFetchStore {
 
 impl MooncakeFetchStore {
     pub(crate) fn new(
-        metaserver_client: Arc<MetaServerClient>,
+        catalog_client: Arc<CatalogClient>,
         transfer: Arc<MooncakeTransport>,
         allocate_fn: AllocateFn,
-        advertise_addr: String,
-        membership: Option<Arc<crate::MembershipView>>,
+        membership: Arc<orbitkv_catalog::MembershipView>,
     ) -> Self {
         info!(
             "Mooncake remote fetch enabled (advertise={})",
-            advertise_addr
+            membership.owner().endpoint
         );
         Self {
-            metaserver_client,
+            catalog_client,
             membership,
             transfer,
             allocate_fn,
-            advertise_addr,
             grpc_channels: Arc::new(Mutex::new(LinkedHashMap::new())),
         }
     }
@@ -219,28 +217,19 @@ impl MooncakeFetchStore {
         namespace: &str,
         hashes: &[Vec<u8>],
     ) -> Option<FetchPlan> {
-        if self
-            .membership
-            .as_ref()
-            .is_some_and(|view| !view.permits(view.owner()))
-        {
+        if !self.membership.permits(self.membership.owner()) {
             return None;
         }
-        let mut candidates = match self
-            .metaserver_client
-            .locate_blocks(namespace, hashes)
-            .await
-        {
+        let mut candidates = match self.catalog_client.locate_blocks(namespace, hashes).await {
             Ok(candidates) => candidates,
             Err(e) => {
                 warn!("Candidate discovery failed: {e}");
                 return None;
             }
         };
-        if let Some(view) = &self.membership {
-            for row in &mut candidates {
-                row.replicas.retain(|replica| view.permits(&replica.owner));
-            }
+        for row in &mut candidates {
+            row.replicas
+                .retain(|replica| self.membership.permits(&replica.owner));
         }
         FetchPlan::new(candidates)
     }

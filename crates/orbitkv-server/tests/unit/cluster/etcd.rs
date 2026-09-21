@@ -84,10 +84,13 @@ impl Drop for Etcd {
 }
 
 fn view(port: u16) -> Arc<MembershipView> {
-    Arc::new(MembershipView::new(CacheOwner {
-        endpoint: format!("127.0.0.1:{port}"),
-        incarnation: uuid::Uuid::new_v4(),
-    }))
+    Arc::new(MembershipView::new(
+        CacheOwner {
+            endpoint: format!("127.0.0.1:{port}"),
+            incarnation: uuid::Uuid::new_v4(),
+        },
+        orbitkv_catalog::Placement::new(vec!["a".into(), "b".into()]).unwrap(),
+    ))
 }
 
 async fn wait_for(condition: impl Fn() -> bool) {
@@ -96,6 +99,52 @@ async fn wait_for(condition: impl Fn() -> bool) {
         assert!(Instant::now() < deadline, "membership did not converge");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+#[tokio::test]
+#[ignore = "requires ETCD_BIN; starts a real isolated etcd process"]
+async fn placement_mismatch_rejects_join_and_configuration_changes_fence_members() {
+    let server = Etcd::start().await;
+    let endpoints = [server.endpoint.clone()];
+    let a = view(51101);
+    let member = Membership::join(&endpoints, "placement", "a", 30, a.clone())
+        .await
+        .unwrap();
+    wait_for(|| a.permits(a.owner())).await;
+    let wrong = Arc::new(MembershipView::new(
+        CacheOwner {
+            endpoint: "127.0.0.1:51102".into(),
+            incarnation: uuid::Uuid::new_v4(),
+        },
+        orbitkv_catalog::Placement::new(vec!["a".into()]).unwrap(),
+    ));
+    assert!(
+        Membership::join(&endpoints, "placement", "other", 30, wrong.clone())
+            .await
+            .err()
+            .unwrap()
+            .contains("placement differs")
+    );
+    let mut client = Client::connect(&endpoints, None).await.unwrap();
+    assert!(
+        client
+            .get("/orbitkv/v1/placement/members/other", None)
+            .await
+            .unwrap()
+            .kvs()
+            .is_empty()
+    );
+    client
+        .put(
+            "/orbitkv/v1/placement/placement",
+            serde_json::to_vec(wrong.placement()).unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+    wait_for(|| !a.registration_valid()).await;
+    assert!(!a.renew(Instant::now(), Duration::from_secs(30)));
+    member.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

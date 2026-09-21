@@ -5,7 +5,7 @@
 //! - Tensor parallelism (TP) across multiple GPUs
 //! - Split-storage layout for efficient K/V batch transfers
 //! - SSD caching tier
-//! - MetaServer-backed block discovery and Mooncake remote fetch
+//! - Catalog-backed block discovery and Mooncake remote fetch
 
 #[macro_use]
 mod trace;
@@ -37,7 +37,7 @@ pub use backing::{
 pub use block::{BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, SealedBlock, StateKey};
 use instance::GpuRegistration;
 pub use instance::{GpuContext, InstanceContext};
-pub use internode::{MembershipView, P2pTransferService};
+pub use internode::P2pTransferService;
 use layout::KVCacheLayout;
 pub use lease::QueryLeaseId;
 pub use orbitkv_common::NumaNode;
@@ -586,7 +586,7 @@ impl OrbitKVEngine {
     }
 
     /// All-or-nothing membership fetch over one hybrid-cache storage group,
-    /// eligible for the same SSD prefetch and MetaServer + Mooncake remote fetch
+    /// eligible for the same SSD prefetch and Catalog + Mooncake remote fetch
     /// as prefix queries.
     ///
     /// Where [`Self::query_group_membership`] answers from the resident read
@@ -749,9 +749,9 @@ impl OrbitKVEngine {
         self.storage.cleanup_memory_cache()
     }
 
-    /// Best-effort graceful unregister from MetaServer, if configured.
-    pub async fn shutdown_metaserver_client(&self) {
-        self.storage.shutdown_metaserver_client().await;
+    /// Best-effort graceful unregister from Catalog, if configured.
+    pub async fn shutdown_catalog_client(&self) {
+        self.storage.shutdown_catalog_client().await;
     }
 
     /// Batch load KV blocks for multiple layers asynchronously.

@@ -26,7 +26,7 @@ the SGLang source submodule is pinned to that release. See
 
 - content-addressed KV blocks in pinned host memory, with optional SSD backing;
 - NUMA-aware allocation and batched GPU/host transfer;
-- experimental cross-node discovery through an in-memory MetaServer and remote
+- experimental cross-node discovery through an in-memory Catalog and remote
   fetch through Mooncake Transfer Engine over RDMA or TCP;
 - prefix lookup, leases, eviction, and metrics;
 - a Rust Cache Manager, Python bindings, the vLLM connector, and an SGLang
@@ -68,13 +68,12 @@ The cache hot path now uses a versioned `StateKey` bound to model-artifact
 content, engine configuration and registered storage geometry. Complete
 recovery semantics remain open: Publish carries raw block IDs, absolute token
 span evidence is not carried by both adapters, and bundle completeness is a
-component-presence check. The MetaServer is a separate, non-HA, in-memory
-directory with automatic resident-inventory replay after restart. Versioned
-snapshots, bounded journals, Manager-side candidate caching and fetch planning
-are implemented. Sources check owner/runtime and residency versions before
-authorizing transfers. Optional etcd membership adds leased registration and
-cached member admission; embedded catalogs remain next in the
-[distributed cache plan](docs/distributed-cache.md). See [architecture](docs/architecture.md)
+component-presence check. Distributed Managers now embed catalog shards and use
+etcd for leased members and an immutable placement configuration. Versioned
+snapshots, per-shard journals, candidate caching and source residency checks are
+implemented. Each shard has one directory copy; replication, online handoff and
+cross-host failure qualification remain in the [distributed cache plan](docs/distributed-cache.md).
+See [architecture](docs/architecture.md)
 and the [model-aware state plan](docs/state-identity.md) for the implementation
 boundary. [State demand and transfer planning](docs/state-planning.md) describes
 the implemented versioned query lifecycle and byte admission, plus the proposed
@@ -100,7 +99,7 @@ OrbitKV can claim a reusable prefix for them.
 | [`orbitkv-core`](crates/orbitkv-core) | Content-addressed blocks, leases, eviction, SSD and remote tiers |
 | [`orbitkv-transfer`](crates/orbitkv-transfer) | Pinned upstream Mooncake Transfer Engine wrapper |
 | [`orbitkv-server`](crates/orbitkv-server) | Cache Manager crate: shared cache operations, process endpoint, peer control, health and metrics |
-| [`orbitkv-metaserver`](crates/orbitkv-metaserver) | Cross-node replica discovery |
+| [`orbitkv-catalog`](crates/orbitkv-catalog) | Cross-node replica discovery |
 | [`python/orbitkv/vllm`](python/orbitkv/vllm) | vLLM cache connector, Mooncake P/D adapter, plugin entry point |
 | [`python/orbitkv/sglang`](python/orbitkv/sglang) | SGLang GPU-page linker and plugin entry point |
 | [`python/orbitkv/client`](python/orbitkv/client) | Framework-neutral cache API and Cache Manager connection |
@@ -167,7 +166,7 @@ iceoryx2 for Query/Publish/Restore/Release. If the derived same-host socket is
 missing, startup fails with a clear error instead of switching to gRPC.
 Registration, health, sessions, and cleanup use the same authenticated
 Unix socket. Standalone mode does not start a gRPC listener. Distributed mode
-(`--metaserver-addr`) enables a peer-only gRPC control endpoint; remote KV
+(`--etcd-endpoints`, `--node-id`, `--catalog-nodes`) enables a peer gRPC catalog and transfer control endpoint; remote KV
 bytes still use Mooncake. Every inference process connects to a Cache Manager
 on its own host.
 

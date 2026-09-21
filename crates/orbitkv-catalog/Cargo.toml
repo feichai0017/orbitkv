@@ -1,43 +1,32 @@
 [package]
-name = "orbitkv-metaserver"
+name = "orbitkv-catalog"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-default-run = "orbitkv-metaserver"
 
 [lints]
 workspace = true
 
 [lib]
-name = "orbitkv_metaserver"
+name = "orbitkv_catalog"
 path = "src/lib.rs"
 
-[[bin]]
-name = "orbitkv-metaserver"
-path = "src/main.rs"
-
 [dependencies]
-orbitkv-common.workspace = true
 orbitkv-state.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
 tonic.workspace = true
 tokio.workspace = true
-clap.workspace = true
-log.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
 uuid.workspace = true
 opentelemetry.workspace = true
-opentelemetry_sdk.workspace = true
-opentelemetry-prometheus.workspace = true
-prometheus.workspace = true
-axum.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
 
 [dev-dependencies]
 criterion.workspace = true
-tower = "0.5"
 
 [[bench]]
 name = "unregister_node"

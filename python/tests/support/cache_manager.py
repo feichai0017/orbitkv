@@ -330,6 +330,7 @@ class CacheManagerProcess:
         ssd_cache_path: Path | None = None,
         query_budget: str | None = None,
         query_instance_budget: str | None = None,
+        extra_args: tuple[str, ...] = (),
     ):
         self.port = port
         self.pool_size = pool_size
@@ -341,6 +342,7 @@ class CacheManagerProcess:
         self.ssd_cache_path = ssd_cache_path
         self.query_budget = query_budget
         self.query_instance_budget = query_instance_budget
+        self.extra_args = extra_args
         self.process: subprocess.Popen | None = None
         self._binary_path = find_cache_manager_binary()
         self._log_path: Path | None = None
@@ -408,6 +410,7 @@ class CacheManagerProcess:
                 ]
             )
         cmd.extend(["--bootstrap-socket", self.bootstrap_socket])
+        cmd.extend(self.extra_args)
 
         # Route logs to a tempfile so the pipe buffer cannot fill up and
         # block the server mid-startup, and so tests can read the log

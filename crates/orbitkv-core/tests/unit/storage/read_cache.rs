@@ -243,27 +243,28 @@ fn inventory_tracks_actual_residency_and_fences_old_reclaim_hints() {
     let cache = ReadCache::new(1 << 20, false, None, Some(16 * 1024));
     let key = StateKey::new("ns".into(), vec![1]);
     cache.batch_insert_refs(&[(key.clone(), make_block())]);
-    let first = cache.inventory_page(None).unwrap();
+    let shard = catalog_shard(&key);
+    let first = cache.inventory_page(shard, None).unwrap();
     assert_eq!(first.len(), 1);
     cache.batch_insert_refs(&[(key.clone(), make_block())]);
-    assert_eq!(cache.inventory_sequence(), 1);
+    assert_eq!(cache.inventory_sequence(shard), 1);
     let pinned = cache.get_blocks_aligned(std::slice::from_ref(&key));
     assert!(cache.remove_lru_batch(1).is_empty());
-    assert_eq!(cache.inventory_sequence(), 1);
+    assert_eq!(cache.inventory_sequence(shard), 1);
     drop(pinned);
     assert_eq!(cache.remove_lru_batch(1).len(), 1);
-    assert_eq!(cache.inventory_sequence(), 2);
-    assert!(!cache.inventory_changes(1, 2).unwrap()[0].present);
+    assert_eq!(cache.inventory_sequence(shard), 2);
+    assert!(!cache.inventory_changes(shard, 1, 2).unwrap()[0].present);
     // SSD restore uses the retained insertion path, and publishes a new episode.
     cache.batch_insert(vec![(key.clone(), make_block())]);
     cache.mark_reclaimable_records(&first);
     assert_class(&cache, &key, ResidentClass::Retained);
-    cache.mark_reclaimable_records(&cache.inventory_page(None).unwrap());
+    cache.mark_reclaimable_records(&cache.inventory_page(shard, None).unwrap());
     assert_class(&cache, &key, ResidentClass::Reclaimable);
     cache.remove_all();
-    assert_eq!(cache.inventory_sequence(), 4);
-    assert!(cache.inventory_page(None).unwrap().is_empty());
-    assert!(!cache.inventory_changes(3, 4).unwrap()[0].present);
+    assert_eq!(cache.inventory_sequence(shard), 4);
+    assert!(cache.inventory_page(shard, None).unwrap().is_empty());
+    assert!(!cache.inventory_changes(shard, 3, 4).unwrap()[0].present);
 }
 
 #[test]
@@ -302,14 +303,15 @@ fn pin_residencies_fences_eviction_and_reinsertion() {
     let cache = ReadCache::new(1024 * 1024, false, None, Some(4096));
     let key = StateKey::new("ns".into(), vec![1]);
     cache.batch_insert(vec![(key.clone(), make_block())]);
-    let first = cache.inventory_page(None).unwrap();
+    let shard = catalog_shard(&key);
+    let first = cache.inventory_page(shard, None).unwrap();
     let pinned = cache.pin_residencies(&first).unwrap();
     assert!(cache.remove_lru_batch(1).is_empty());
     drop(pinned);
     assert_eq!(cache.remove_lru_batch(1).len(), 1);
     cache.batch_insert(vec![(key.clone(), make_block())]);
     assert!(cache.pin_residencies(&first).is_none());
-    let current = cache.inventory_page(None).unwrap();
+    let current = cache.inventory_page(shard, None).unwrap();
     let mut mixed = current.clone();
     mixed.extend(first);
     assert!(cache.pin_residencies(&mixed).is_none());
@@ -350,6 +352,7 @@ fn inventory_excludes_lfu_rejections_and_duplicate_restores() {
     let cache = ReadCache::new(1, true, Some(1), Some(16 * 1024));
     let hot = StateKey::new("ns".into(), vec![1]);
     let cold = StateKey::new("ns".into(), vec![2]);
+    let shard = catalog_shard(&hot);
     cache.batch_insert_reclaimable(vec![(hot.clone(), make_block())]);
     for _ in 0..2 {
         assert_eq!(
@@ -364,9 +367,9 @@ fn inventory_excludes_lfu_rejections_and_duplicate_restores() {
     cache.batch_insert_reclaimable(vec![(cold.clone(), make_block())]);
     cache.batch_insert_reclaimable(vec![(hot.clone(), make_block())]);
     assert!(!cache.inner.lock().reclaimable.contains_key(&cold));
-    assert_eq!(cache.inventory_sequence(), 1);
-    assert_eq!(cache.inventory_page(None).unwrap()[0].key, hot);
-    assert_eq!(cache.inventory_changes(0, 1).unwrap().len(), 1);
+    assert_eq!(cache.inventory_sequence(shard), 1);
+    assert_eq!(cache.inventory_page(shard, None).unwrap()[0].key, hot);
+    assert_eq!(cache.inventory_changes(shard, 0, 1).unwrap().len(), 1);
 }
 
 impl ReadCache {

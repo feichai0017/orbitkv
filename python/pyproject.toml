@@ -63,7 +63,6 @@ strip = true
 # Automatically include binaries defined in Cargo.toml [[bin]] sections
 include = [
     "orbitkv/orbitkv-cache-manager-py",
-    "orbitkv/orbitkv-metaserver-py",
     "orbitkv/libtransfer_engine.so",
     "orbitkv/libmooncake_common.so",
     "orbitkv/libasio.so",
@@ -71,7 +70,6 @@ include = [
 
 [project.scripts]
 orbitkv-cache-manager = "orbitkv._cache_manager:main"
-orbitkv-metaserver = "orbitkv._metaserver:main"
 
 [project.entry-points."vllm.general_plugins"]
 orbitkv = "orbitkv.vllm.plugin:register"

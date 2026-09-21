@@ -275,7 +275,7 @@ Prefill: `{"orbitkv.pd_tail_save": true}`
 Decode: `{"orbitkv.pd_tail_load": true, "orbitkv.wait_for_full_prefix": true}`
 
 `orbitkv.wait_for_full_prefix` makes decode wait (up to 30s) until the full
-prompt prefix is fetchable from a remote node via MetaServer + Mooncake. It only
+prompt prefix is fetchable from a remote node via Catalog + Mooncake. It only
 applies when prefill and decode run separate engines; it does not observe
 saves landing in a shared/local engine and has no effect when remote transfer is not
 configured.

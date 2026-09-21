@@ -1,21 +1,17 @@
 # Distributed cache design
 
-Status: D0 owner-inventory recovery is implemented against the standalone
-MetaServer. The first D1 slice implements Manager-side candidate caching,
-fetch planning and source residency checks. Optional etcd membership now gates
-remote admission using a cached member view and registration deadlines. Embedded
-catalogs, replication and remote SSD remain planned. Mooncake TE carries KV bytes; the
-standalone MetaServer has not been replaced.
+Status: D0 inventory recovery and the D1 candidate index, source validation,
+leased membership and embedded catalog are implemented. Managers host 16 fixed
+logical shards, each with one directory copy, and route through cached member
+information. The standalone MetaServer has been removed. Replication, online
+placement changes, remote SSD and cross-host serving qualification remain open.
+Mooncake TE carries KV bytes.
 
-D0 records actual DRAM insertions/removals, retains a bounded change journal,
-and recovers with paginated snapshots plus a complete delta interval. Heartbeat
-responses carry the catalog epoch and progress, so an idle owner also repairs a
-directory restart. The current stream spans all namespaces of one Manager
-process; per-shard streams, replica placement and subscriptions come later.
-See [implemented protocol and limits](../crates/orbitkv-metaserver/README.md).
-The discovery slice replaces `QueryPrefixBlocks` and directory-generated fetch
-segments with `LocateBlocks`. Upgrade all Managers and the directory together;
-there is no old-protocol fallback.
+Owners retain bounded journals and recover each shard independently using
+paginated snapshots and a complete delta interval. Catalog epochs and member
+incarnations trigger repair even for idle caches. See the
+[implemented protocol and limits](../crates/orbitkv-catalog/README.md).
+Upgrade all Managers together; there is no old-protocol fallback.
 
 Implemented discovery behavior:
 
@@ -29,7 +25,7 @@ Implemented discovery behavior:
   wait for the directory. Empty results cause waiting callers to look up again;
   this does not provide negative-result coalescing or a subscription stream.
 - Cold lookups use batches of at most 128 keys and 64 KiB of namespace/hash
-  bytes. Each RPC has a three-second deadline. The source-channel LRU retains
+  bytes. Each cold query has a three-second total RPC budget after coalescing. The source-channel LRU retains
   at most 64 clients. These are initial fixed limits, not calibrated SLOs.
 - The requester selects the longest contiguous span, using endpoint/incarnation
   ordering to break ties. Source authorization checks the runtime UUID and all
@@ -45,7 +41,7 @@ Implemented discovery behavior:
   qualification. It does **not** establish safe source failure or partition
   handling.
 
-Implemented membership behavior (enable on every Manager in the test cluster):
+Implemented membership behavior (required on every distributed Manager):
 
 - `--etcd-endpoints`, `--cluster-name`, `--node-id` and `--membership-ttl-secs`
   configure registration. A transaction requires an absent live Node ID,
@@ -70,10 +66,25 @@ Implemented membership behavior (enable on every Manager in the test cluster):
   revocation guarantee; bounded-clock assumptions and multi-host failure behavior
   still need qualification.
 
-This stage still requires `--metaserver-addr` for block discovery. It does not
-claim that the directory is decentralized or HA. The initial etcd connector
-uses HTTP cluster endpoints; credential and TLS options are not exposed yet.
-See [membership deployment and test commands](p2p.md#leased-manager-membership).
+Implemented placement behavior:
+
+- `--catalog-nodes` declares 1–16 stable Node IDs. etcd atomically installs the
+  canonical host set at `/orbitkv/v1/<cluster>/placement`; mismatched joins fail.
+- Domain-separated SHA-256 maps StateKeys to 16 shards; equal-weight rendezvous
+  hashing chooses one configured host per shard. Temporary liveness changes do
+  not alter assignments. Catalog endpoints and UUIDs come from cached membership.
+- RPCs carry the shard, placement fingerprint and destination incarnation.
+  Receivers reject wrong destinations, unregistered publishers and cross-shard keys.
+- Every owner has independently ordered shard streams. Journals total 16 MiB;
+  each catalog host defaults to 256 MiB of accounted index and retry storage
+  across its assigned shards. Missing catalogs do not block local Publish.
+- Configuration is immutable for this stage. Observed changes fence members;
+  online transitions and metadata replicas belong to D2. Missing hosts leave
+  their shards unavailable until they return and owners rebuild the index.
+
+The directory is distributed across Managers but each shard still has one copy;
+this is not HA. The initial etcd connector exposes HTTP endpoints, without
+credential/TLS options. See [deployment](p2p.md#leased-manager-membership).
 
 The remaining sections describe the target architecture.
 
@@ -265,7 +276,7 @@ Persistent SSD manifests and recovery need a separate storage milestone.
 ## Query path and bounded subscriptions
 
 The requesting Manager constructs the fetch plan; the directory returns
-candidates and coverage evidence. Move the current MetaServer prefix planner to
+candidates and coverage evidence. The implemented prefix planner belongs to
 that requesting Manager so it can see memory, I/O and deadline pressure.
 
 1. Inspect local residency and the candidate index for the ordered StateKeys.
@@ -356,20 +367,20 @@ No router service is required for this distributed cache milestone.
 
 ## Code ownership and implementation order
 
-Keep the current repository's behavior-owning boundaries. The proposed
-`orbitkv-catalog` replaces `orbitkv-metaserver`; it owns evidence, synchronization,
-membership and candidate indexing. Server adapters own peer RPC conversion and
-orchestration. Core owns inventory transitions, source holds, staging and query
-budgets, using Rust contracts instead of MetaServer protobuf types. The existing
-transfer crate owns TE integration. Avoid a chain of forwarding clients and
-parallel compatibility APIs. The name and package change lands with the actual
-embedded implementation, not as an isolated rename.
+`orbitkv-catalog` owns placement, cached membership, indexed evidence and the
+receiving peer catalog service. `orbitkv-server/cluster` owns etcd registration,
+renewal and Watch, while Manager orchestration serves catalog and source RPCs
+on one endpoint. Core owns residency transitions, per-shard inventory replay,
+candidate lookup, source holds, staging and query budgets. Outbound catalog RPCs
+still live alongside core's inventory synchronization; moving this boundary is
+separate from adding a forwarding client. The transfer crate owns TE integration.
+The standalone directory crate/executables and compatibility flags are removed.
 
 | Step | Deliverable | Gate |
 | --- | --- | --- |
 | D0: recoverable evidence (implemented) | Inventory transitions, identities, sequences, bounded journal and snapshot protocol | Concurrent insert/evict during replay, lost deltas, duplicates and overflow cannot produce a false complete view; test using the current directory deployment |
-| D1: embedded catalog (discovery and membership slices implemented) | Candidate index, requester planning, source version checks and optional etcd membership implemented; add the embedded peer catalog, then replace standalone MetaServer deployment | Two real hosts, each engine separately: positive remote TE/GPU bytes, identity rejection, cancellation, source restart and directory replay |
-| D2: replicated placement | Versioned rendezvous assignment, repair, handoff and bounded subscriptions | Three catalog failure domains; partitions, etcd outage, lease expiry and placement changes preserve the failure contract |
+| D1: embedded catalog (implementation landed; cross-host qualification pending) | Candidate index, source checks, etcd membership, fixed placement and per-shard embedded catalogs | Two real hosts, each engine separately: positive remote TE/GPU bytes, identity rejection, cancellation, source restart and directory replay |
+| D2: replicated placement | Replicated weighted placement generations, repair, handoff and bounded subscriptions | Three catalog failure domains; partitions, etcd outage, lease expiry and placement changes preserve the failure contract |
 | D3: tier and cost planning | Remote SSD staging, measured source selection and demand warming | Forced source DRAM eviction proves remote SSD reads; bounded sender/receiver memory and latency under mixed load |
 
 D0/D1 can proceed while single-node duplicate H2D and warming optimizations

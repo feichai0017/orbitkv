@@ -75,32 +75,25 @@ The old block-count prefetch limit has been removed.
 ### Cross-Node (Multi-Node Setup)
 
 - `--nics`: Optional Mooncake RDMA rail allow-list (e.g., `--nics mlx5_0,mlx5_1` or `--nics mlx5_0 mlx5_1`). Omit it to let Mooncake select the available transport, including TCP fallback.
-- `--metaserver-addr`: MetaServer gRPC address for cross-node block hash registry (e.g., `http://10.0.0.100:50056`). Setting it enables Mooncake remote transfer and block discovery. Requires `--addr` to be a routable IP (not `0.0.0.0` or `127.0.0.1`).
-- `--etcd-endpoints`: optional comma-separated HTTP etcd endpoints for leased membership. Requires `--node-id` and the current `--metaserver-addr`. Use the same `--cluster-name` (default `orbitkv`) across Managers and distinct stable Node IDs. `--membership-ttl-secs` defaults to 30 and accepts 12–3600; remote admission uses half the acknowledged TTL. See [membership deployment](p2p.md#leased-manager-membership).
+- `--etcd-endpoints`: comma-separated HTTP etcd endpoints; enables distributed cache. Requires `--node-id` and `--catalog-nodes`. Peers must reach the concrete `--addr` endpoint.
+- `--catalog-nodes`: identical set of 1–16 stable catalog host Node IDs on every Manager. Placement is immutable; incompatible joins fail. Missing members do not remap shards.
+- `--catalog-budget`: accounted index and retained retry bytes across this Manager's assigned shards; defaults to 256 MiB. This is not a process RSS cap.
+- `--cluster-name`: etcd namespace, default `orbitkv`. `--membership-ttl-secs` defaults to 30 and accepts 12–3600; remote admission uses half the acknowledged TTL. See [deployment](p2p.md#leased-manager-membership).
 - `--transfer-lock-timeout-secs`: Transfer lock timeout in seconds (default: `120`). Blocks held for a Mooncake transfer are locked for at most this duration before being force-released.
 - `--inventory-journal-bytes`: Retained residency-change bytes (default: `16777216`, 16 MiB). Lag beyond this history triggers a paginated inventory resnapshot.
 
-## MetaServer
+## Embedded catalog
 
-For the current experimental multi-node path, start a MetaServer to coordinate
-block hashes across nodes. Each Cache Manager registers sealed blocks and
-queries candidate owners after local misses. The in-memory directory recovers
-from surviving Manager inventories after restart, including when no new cache
-writes arrive. It is not HA. See the [implemented recovery protocol and limits](../crates/orbitkv-metaserver/README.md)
-and [planned embedded catalog](distributed-cache.md).
+The same Cache Manager binary hosts its assigned directory shards on the peer
+gRPC port. There is no directory executable or separate HTTP service. Start all
+Managers with the same etcd namespace and catalog host set:
 
 ```bash
-orbitkv-metaserver
+orbitkv-cache-manager --addr <routable-ip>:50055 \
+  --etcd-endpoints http://<etcd-host>:2379 \
+  --node-id cache-a --catalog-nodes cache-a,cache-b
 ```
 
-Then point each Cache Manager to the MetaServer:
-
-```bash
-orbitkv-cache-manager --addr <routable-ip>:50055 --metaserver-addr http://<metaserver-host>:50056
-```
-
-### Options
-
-- `--addr`: Bind address (default: `127.0.0.1:50056`)
-- `--log-level`: Log level: `trace`, `debug`, `info`, `warn`, `error` (default: `info`)
-- `--ttl-minutes`: Cache entry TTL in minutes (default: `120`)
+Use the other host's address and Node ID there. Catalog placement is immutable in
+this stage; each shard has one metadata copy. See [deployment and failure
+behavior](p2p.md) and the [recovery protocol](../crates/orbitkv-catalog/README.md).

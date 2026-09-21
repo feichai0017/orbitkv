@@ -76,6 +76,47 @@ fn assert_counts(store: &BlockHashStore) {
     assert_eq!(store.redundancy_snapshot(), expected);
     assert_eq!(store.owner_count(), expected.copies);
     assert_eq!(store.entry_count(), store.blocks.len() as u64);
+    let bytes: usize = store
+        .nodes
+        .iter()
+        .map(|entry| {
+            let state = entry.value().lock();
+            node_bytes(entry.key()) + state.bytes + operation_bytes(state.last_operation.as_ref())
+        })
+        .sum();
+    assert_eq!(store.metadata_bytes.load(Ordering::Acquire), bytes);
+    assert!(bytes <= store.config.metadata_bytes);
+}
+
+#[test]
+fn all_owner_streams_share_one_budget_and_cleanup_releases_it() {
+    let item = record(1, 1, true);
+    let store = BlockHashStore::with_config(StoreConfig {
+        metadata_bytes: node_bytes("a")
+            + node_bytes("b")
+            + key_bytes(&item.key)
+            + 128
+            + item.estimated_size(),
+        ..Default::default()
+    });
+    let a = seed(&store, "a", &[1]);
+    let b = seed(&store, "b", &[]);
+    let delta = InventoryOperation::Delta {
+        after: 0,
+        records: vec![item],
+    };
+    let before = store.metadata_bytes();
+    assert_eq!(
+        sync(&store, "b", b, 1, delta.clone()),
+        Err(StoreError::Capacity)
+    );
+    assert_eq!(store.metadata_bytes(), before);
+    assert_counts(&store);
+    store.unregister_node("a", a).unwrap();
+    sync(&store, "b", b, 1, delta).unwrap();
+    assert_counts(&store);
+    store.unregister_node("b", b).unwrap();
+    assert_eq!(store.metadata_bytes(), 0);
 }
 
 #[test]
@@ -189,9 +230,12 @@ fn snapshot_cut_preserves_newer_samples_and_replays_evictions() {
 }
 
 #[test]
-fn malformed_batches_are_atomic_and_owner_budget_is_enforced() {
+fn malformed_batches_are_atomic_and_shard_budget_is_enforced() {
     let store = BlockHashStore::with_config(StoreConfig {
-        inventory_bytes_per_node: key_bytes(&record(1, 1, true).key),
+        metadata_bytes: node_bytes("a")
+            + key_bytes(&record(1, 1, true).key)
+            + 64
+            + 2 * record(1, 1, true).estimated_size(),
         ..StoreConfig::default()
     });
     let id = seed(&store, "a", &[1]);

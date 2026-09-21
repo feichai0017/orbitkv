@@ -87,8 +87,8 @@ pub(crate) struct CoreMetrics {
     pub inventory_snapshots_started: Counter<u64>,
     pub inventory_snapshots_completed: Counter<u64>,
     pub inventory_history_gaps: Counter<u64>,
-    pub metaserver_heartbeat_failures: Counter<u64>,
-    pub metaserver_unregister_failures: Counter<u64>,
+    pub catalog_heartbeat_failures: Counter<u64>,
+    pub catalog_unregister_failures: Counter<u64>,
 
     // Cross-node transfer lock (serving side)
     pub transfer_lock_active: UpDownCounter<i64>,
@@ -423,13 +423,13 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .u64_counter("orbitkv_inventory_history_gaps")
                 .with_description("Inventory journal gaps requiring a fresh snapshot")
                 .build(),
-            metaserver_heartbeat_failures: meter
-                .u64_counter("orbitkv_metaserver_heartbeat_failures")
-                .with_description("MetaServer HeartbeatNode RPC failures")
+            catalog_heartbeat_failures: meter
+                .u64_counter("orbitkv_catalog_heartbeat_failures")
+                .with_description("Catalog HeartbeatNode RPC failures")
                 .build(),
-            metaserver_unregister_failures: meter
-                .u64_counter("orbitkv_metaserver_unregister_failures")
-                .with_description("MetaServer UnregisterNode RPC failures")
+            catalog_unregister_failures: meter
+                .u64_counter("orbitkv_catalog_unregister_failures")
+                .with_description("Catalog UnregisterNode RPC failures")
                 .build(),
 
             // Transfer lock

@@ -1,7 +1,7 @@
 ---
 name: server-ops
 description: >
-  Use when configuring, deploying, or troubleshooting orbitkv-server/orbitkv-metaserver.
+  Use when configuring, deploying, or troubleshooting orbitkv-server/orbitkv-catalog.
   Covers CLI flags, pool sizing, SSD cache, NUMA, metrics, and multi-node setup.
 ---
 
@@ -48,15 +48,15 @@ uv run python examples/bench_kv_cache.py --model /path/to/model --num-prompts 10
 | `--ssd-prefetch-inflight` | `16` | Max concurrent block reads |
 | `--max-prefetch-blocks` | `800` | Backpressure for SSD prefetch |
 | `--trace-sample-rate` | `1.0` | Sampling rate 0.0–1.0 (requires `--features tracing`) |
-| `--metaserver-addr` | — | MetaServer gRPC address for cross-node discovery (requires `--addr` to be routable) |
+| `--etcd-endpoints`, `--node-id`, `--catalog-nodes` | — | Distributed membership and immutable catalog placement; requires a concrete peer `--addr` |
 
 ## Key Files
 
-- `crates/orbitkv-server/src/service.rs`: gRPC service implementation
+- `crates/orbitkv-server/src/lib.rs`: Manager startup and embedded peer services
 - `crates/orbitkv-server/src/bin/orbitkv-router.rs`: P/D request router
-- `crates/orbitkv-metaserver/src/lib.rs`: MetaServer entry point and CLI
-- `crates/orbitkv-metaserver/src/service.rs`: MetaServer gRPC service
-- `crates/orbitkv-metaserver/src/store.rs`: Multi-owner block hash store with TTL sweep (backed by DashMap)
+- `crates/orbitkv-server/src/cluster/`: etcd registration and Watch
+- `crates/orbitkv-catalog/src/service.rs`: Catalog gRPC service
+- `crates/orbitkv-catalog/src/store.rs`: Multi-owner block hash store with TTL sweep (backed by DashMap)
 
 ## Environment Variables
 

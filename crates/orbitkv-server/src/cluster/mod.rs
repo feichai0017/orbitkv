@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use etcd_client::{Client, ConnectOptions, ResponseHeader};
 use log::{info, warn};
-use orbitkv_core::MembershipView;
+use orbitkv_catalog::MembershipView;
 use orbitkv_state::CacheOwner;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch as signal;
@@ -88,6 +88,9 @@ impl Membership {
                 return Err("initial membership lease acknowledgement expired".into());
             }
             let prefix = format!("/orbitkv/v1/{cluster}/");
+            registration::placement(
+                &mut membership.client, &prefix, membership.view.placement(), cluster_id,
+            ).await?;
             let member = registration::register(
                 &mut membership.client,
                 &prefix,
