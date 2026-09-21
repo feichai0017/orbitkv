@@ -73,7 +73,7 @@ def test_cache_manager_client_translates_hot_operations(monkeypatch):
     publisher = MagicMock()
     native.session_epoch = 41
     native.notification_fd = 7
-    native.query_bundle.return_value = object()
+    native.query_submit.return_value = object()
     native.restore_submit.return_value = 13
     native.restore_poll.side_effect = [("pending", ""), ("succeeded", "")]
     factory = MagicMock(side_effect=[native, publisher])
@@ -87,7 +87,7 @@ def test_cache_manager_client_translates_hot_operations(monkeypatch):
     assert client.save("instance", 1, 2, 3, [("layer", [4], [b"hash"])]) == (True, "")
     restore = client.start_restore("instance", 1, 3, [["layer"]], [(b"lease", [[4]])])
 
-    assert query_result is native.query_bundle.return_value
+    assert query_result is native.query_submit.return_value
     assert restore.key == "manager:41:13"
     assert not client.poll_restore(restore).done
     assert client.poll_restore(restore).success
@@ -97,10 +97,12 @@ def test_cache_manager_client_translates_hot_operations(monkeypatch):
     ]
     assert [item.kwargs["request_id"] for item in native.method_calls] == [1, 2, 4, 5, 6]
     assert native.method_calls[:3] == [
-        call.query_bundle(
+        call.query_submit(
             "instance",
             [b"hash"],
             "request",
+            1,
+            1,
             wait_for_full_prefix=True,
             group_id=2,
             request_id=1,
@@ -137,7 +139,7 @@ def test_blocked_publish_does_not_serialize_queries(monkeypatch):
                 save_started.set()
                 assert finish_save.wait(timeout=2)
 
-        def query_bundle(self, *_args, **_kwargs):
+        def query_submit(self, *_args, **_kwargs):
             with self.descriptor_lock:
                 query_finished.set()
 
@@ -215,3 +217,46 @@ def test_restore_wait_deadline_keeps_pending_pages_owned(monkeypatch):
     finally:
         client.close()
         os.close(fd)
+
+
+def test_queries_poll_one_ticket_and_supersede_changed_demand(monkeypatch):
+    from orbitkv import QueryLoading, QueryReady
+
+    native = MagicMock()
+    native.query_submit.return_value = QueryLoading()
+    native.query_poll.return_value = QueryLoading()
+    monkeypatch.setattr("orbitkv.client.manager.ChannelClient", lambda *args, **kwargs: native)
+    client = CacheManagerClient("/tmp/query.sock")
+    for _ in range(2):
+        assert isinstance(client.query_prefetch("model", [b"first"], "r"), QueryLoading)
+    assert native.query_submit.call_count == 1
+    native.query_poll.assert_called_once_with(1, 1, request_id=2)
+    client.query_prefetch("model", [b"changed"], "r")
+    assert native.query_submit.call_args.args == ("model", [b"changed"], "r", 1, 2)
+    client.cancel_query("model", "r")
+    client.cancel_query("model", "r")
+    native.cancel_query.assert_called_once_with(1, 2, request_id=4)
+
+    # Equal engine request IDs in separate groups/instances own separate tickets.
+    for instance, group in [("model", 0), ("other-model", 0), ("model", 1)]:
+        client.query_prefetch(instance, [b"first"], "r", group_id=group)
+    assert [call.args[3] for call in native.query_submit.call_args_list[-3:]] == [2, 3, 4]
+    native.query_poll.return_value = QueryReady(1, b"lease")
+    assert client.query_prefetch("model", [b"first"], "r").lease == b"lease"
+    client.query_prefetch("model", [b"first"], "r")
+    assert native.query_submit.call_args.args[3:] == (5, 1)
+    client.close()
+
+
+def test_unadmitted_query_retries_with_a_fresh_ticket(monkeypatch):
+    from orbitkv import QueryLoading
+
+    native = MagicMock()
+    native.query_submit.side_effect = [QueryLoading(admitted=False), QueryLoading()]
+    monkeypatch.setattr("orbitkv.client.manager.ChannelClient", lambda *args, **kwargs: native)
+    client = CacheManagerClient("/tmp/query.sock")
+    assert not client.query_prefetch("model", [b"hash"], "r").admitted
+    assert client.query_prefetch("model", [b"hash"], "r").admitted
+    assert [call.args[3:] for call in native.query_submit.call_args_list] == [(1, 1), (2, 1)]
+    native.query_poll.assert_not_called()
+    client.close()

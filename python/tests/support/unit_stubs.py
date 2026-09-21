@@ -197,7 +197,8 @@ def _install_native_extension_stub() -> None:
         sys.modules[module_name] = module
 
     class _QueryLoading:
-        pass
+        def __init__(self, admitted: bool = True) -> None:
+            self.admitted = admitted
 
     class _QueryReady:
         def __init__(self, num_hit_blocks: int = 0, lease: bytes = b"") -> None:

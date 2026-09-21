@@ -104,8 +104,12 @@ and a passing gate; design text alone does not close an item.
 - [x] Unify query ownership in the endpoint; remove core request-string tasks,
   bind immutable arguments, cancel superseded work, bound active operations,
   and drain late results after cancel/disconnect without another poll (P1 foundation).
-- [ ] Add explicit demand operation/revision tickets, byte-based scheduling
-  admission, and exhaustive delivery-loss/restart fault coverage (remaining P1).
+- [x] Add explicit query operation/revision tickets and global/per-instance
+  byte admission retained through result leases and GPU completion.
+- [x] Share identical backing reads with independent cancellation and leases;
+  make SSD read queue pressure wait for capacity.
+- [ ] Complete delivery-loss/restart fault qualification and deadline/priority
+  demand hints; current gates cover revisions, cancellation, and session cleanup.
 - [ ] Qualify delayed-read cancellation under concurrent serving and multi-rank
   SGLang TP; controlled admission tests do not replace those workload gates.
 - [ ] Add bounded request-driven DRAM warming and measured restore-versus-recompute

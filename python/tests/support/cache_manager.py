@@ -328,6 +328,8 @@ class CacheManagerProcess:
         channel_session_epoch: int | None = None,
         bootstrap_socket: str | None = None,
         ssd_cache_path: Path | None = None,
+        query_budget: str | None = None,
+        query_instance_budget: str | None = None,
     ):
         self.port = port
         self.pool_size = pool_size
@@ -337,6 +339,8 @@ class CacheManagerProcess:
         self.channel_session_epoch = channel_session_epoch
         self.bootstrap_socket = bootstrap_socket or f"/tmp/orbitkv-{port}.sock"
         self.ssd_cache_path = ssd_cache_path
+        self.query_budget = query_budget
+        self.query_instance_budget = query_instance_budget
         self.process: subprocess.Popen | None = None
         self._binary_path = find_cache_manager_binary()
         self._log_path: Path | None = None
@@ -380,6 +384,10 @@ class CacheManagerProcess:
         ]
         if self.http_port is not None:
             cmd.extend(["--http-addr", f"127.0.0.1:{self.http_port}"])
+        if self.query_budget is not None:
+            cmd.extend(["--query-budget", self.query_budget])
+        if self.query_instance_budget is not None:
+            cmd.extend(["--query-instance-budget", self.query_instance_budget])
         if self.ssd_cache_path is not None:
             cmd.extend(
                 [

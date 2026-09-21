@@ -57,15 +57,28 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
     query_client = orbitkv_native.ChannelClient(bootstrap_socket)
     assert query_client.notification_fd >= 0
 
+    operation_ids = iter(range(1, 1000))
+
+    def query(**kwargs):
+        operation_id = next(operation_ids)
+        result = query_client.query_submit(**kwargs, operation_id=operation_id, revision=1)
+        deadline = time.monotonic() + 5
+        while isinstance(result, orbitkv_native.QueryLoading):
+            assert result.admitted
+            assert time.monotonic() < deadline
+            result = query_client.query_poll(operation_id, 1, request_id=400 + operation_id)
+            time.sleep(0.001)
+        return result
+
     with pytest.raises(orbitkv_native.OrbitKVError, match="Invalid"):
-        query_client.query_bundle(
+        query(
             instance_id="missing-instance",
             block_hashes=[],
             req_id="missing-query",
             request_id=201,
         )
 
-    result = query_client.query_bundle(
+    result = query(
         instance_id=channel_client_context.instance_id,
         block_hashes=[],
         req_id="registered-cold-query",
@@ -90,7 +103,7 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
 
     deadline = time.monotonic() + 5
     while True:
-        result = query_client.query_bundle(
+        result = query(
             instance_id=channel_client_context.instance_id,
             block_hashes=block_hashes,
             req_id="registered-warm-query",
@@ -127,7 +140,7 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
             request_id=207,
         )
 
-    second = query_client.query_bundle(
+    second = query(
         instance_id=channel_client_context.instance_id,
         block_hashes=block_hashes,
         req_id="registered-sync-restore-query",
@@ -146,7 +159,7 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
     )
     assert channel_client_context.get_kv_cache()[:, 0:2].cpu().equal(expected)
 
-    third = query_client.query_bundle(
+    third = query(
         instance_id=channel_client_context.instance_id,
         block_hashes=block_hashes,
         req_id="registered-release-query",
@@ -213,3 +226,52 @@ def test_cache_client_runs_publish_query_restore_release(channel_server, channel
     )
     assert isinstance(release_result, orbitkv_native.QueryReady)
     client.release(release_result.lease)
+
+
+@pytest.mark.parametrize("channel_server", ["budget"], indirect=True)
+def test_query_bytes_remain_owned_after_delivery_and_release_on_disconnect(
+    channel_server, channel_client_context
+):
+    from orbitkv import QueryLoading, QueryReady
+    from orbitkv.client.manager import CacheManagerClient
+    from tests.support.metrics import fetch_orbitkv_metrics
+
+    instance = channel_client_context.instance_id
+    client = CacheManagerClient(channel_server.bootstrap_socket)
+    other = CacheManagerClient(channel_server.bootstrap_socket)
+    hashes = [b"budget-a" * 4, b"budget-b" * 4]
+    try:
+        client.save(instance, 0, 0, 0, [(channel_client_context._layer_names[0], [0, 1], hashes)])
+        deadline = time.monotonic() + 5
+        while True:
+            first = client.query_prefetch(instance, hashes[:1], "first")
+            if isinstance(first, QueryReady) and first.num_hit_blocks == 1:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert (
+            fetch_orbitkv_metrics(channel_server.http_port)["orbitkv_query_reserved_bytes"] == 65536
+        )
+        waiting = other.query_prefetch(instance, hashes[:1], "waiting")
+        assert isinstance(waiting, QueryLoading) and waiting.admitted
+        oversized = other.query_prefetch(instance, hashes, "too-large")
+        assert isinstance(oversized, QueryReady) and oversized.num_hit_blocks == 0
+        assert not oversized.lease
+        assert (
+            fetch_orbitkv_metrics(channel_server.http_port)["orbitkv_query_budget_bypasses_total"]
+            == 1
+        )
+        # A successful reply still owns host pages. Losing the session must
+        # release these bytes before another request can be admitted.
+        client.close()
+        deadline = time.monotonic() + 5
+        while isinstance(waiting, QueryLoading):
+            waiting = other.query_prefetch(instance, hashes[:1], "waiting")
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert waiting.num_hit_blocks == 1
+        other.release(waiting.lease)
+        assert fetch_orbitkv_metrics(channel_server.http_port)["orbitkv_query_reserved_bytes"] == 0
+    finally:
+        client.close()
+        other.close()

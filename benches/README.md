@@ -12,6 +12,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `launch.py` | Engine/backend commands and matched memory budgets |
 | `runtime.py` | Owned process groups, readiness, teardown, and launch manifest |
 | `workload.py` | Token-exact requests, streaming timings, and pressure traffic |
+| `concurrent.py` | Closed-loop bursts, shared/mixed prefixes, batch counters and sampled memory peaks |
 | `metrics.py` | Cache-source evidence and statistical summaries |
 | `report.py` | Offline CSV/JSON reports from complete raw runs |
 | `serving.sh` | vLLM serving measurements against an already running endpoint |
@@ -84,6 +85,30 @@ instrumented operations and are not an additive decomposition of client TTFT.
 ```
 
 ## Report existing runs
+
+For concurrent qualification, use `--workload concurrent --concurrencies 1 4 8`.
+Each burst uses shared prefixes or independent mixed-length prompts; cold,
+post-GPU-pressure, and optional post-host-eviction phases have fresh pressure
+preparation. `samples.jsonl` contains individual responses and
+`batches.jsonl` contains each burst's aggregate tier counters and wall time.
+Counters are never attributed to individual overlapping requests. Engine cached
+token reports alone do not distinguish HBM, DRAM, and SSD in these summaries.
+
+```bash
+.venv/sglang-release/bin/python -m benches.single_node \
+  --engine sglang --backend orbitkv --model /workspace/models/qwen3-8b \
+  --workload concurrent --concurrencies 1 4 8 --repeats 3 \
+  --ssd-gib 32 --query-budget-gib 2 \
+  --output benches/results/runs/query-budgets-sglang
+```
+
+Run vLLM with its release environment and `--engine vllm`. The query budget can
+be smaller than aggregate demand while every individual prefix still fits.
+Reports include TTFT p50/p95/p99, burst throughput, client decode milliseconds
+per output token, budget waits/bypasses, coalesced reads, and memory peaks sampled
+every 25 ms. These peaks are lower bounds on the true peak; lifecycle gates
+separately check hard accounting limits. The fixed number of bursts is not a
+steady-state load, natural memory-pressure experiment, or tail-latency SLO.
 
 ```bash
 python -m benches.report \

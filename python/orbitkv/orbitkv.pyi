@@ -42,7 +42,8 @@ class MooncakeTransferEngine:
     def invalidate_segment(self, remote_endpoint: str) -> None: ...
 
 class QueryLoading:
-    def __init__(self) -> None: ...
+    admitted: bool
+    def __init__(self, admitted: bool = True) -> None: ...
 
 class QueryReady:
     num_hit_blocks: int
@@ -112,19 +113,22 @@ class ChannelClient:
     def session_epoch(self) -> int: ...
     @property
     def notification_fd(self) -> int: ...
-    def query_bundle(
+    def query_submit(
         self,
         instance_id: str,
         block_hashes: list[bytes],
         req_id: str,
+        operation_id: int,
+        revision: int,
         wait_for_full_prefix: bool = False,
         group_id: int = 0,
         request_id: int = 1,
     ) -> QueryLoading | QueryReady: ...
     def release(self, lease: bytes, request_id: int = 1) -> None: ...
-    def cancel_query(
-        self, instance_id: str, req_id: str, group_id: int = 0, request_id: int = 1
-    ) -> None: ...
+    def query_poll(
+        self, operation_id: int, revision: int, request_id: int = 1
+    ) -> QueryLoading | QueryReady: ...
+    def cancel_query(self, operation_id: int, revision: int, request_id: int = 1) -> None: ...
     def publish(
         self,
         instance_id: str,

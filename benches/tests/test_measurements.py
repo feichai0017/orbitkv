@@ -108,3 +108,43 @@ def test_report_keeps_output_mismatches_and_rejects_partial_runs(tmp_path):
     sample_file.write_text("\n".join(map(json.dumps, samples)))
     (tmp_path / "storage.json").write_text('{"direct_io":true}')
     assert len(collect_run(tmp_path)["summary"]) == 4
+
+
+def test_concurrent_report_counts_each_batch_once_and_rejects_missing_requests():
+    from benches.concurrent import PATTERNS, summarize, validate
+
+    args = {"concurrencies": [4], "repeats": 1, "ssd_gib": 0}
+    samples, batches = [], []
+    for pattern in PATTERNS:
+        for phase in ("cold", "after_pressure"):
+            identity = {"concurrency": 4, "pattern": pattern, "repeat": 0, "phase": phase}
+            for index in range(4):
+                samples.append(
+                    {
+                        **identity,
+                        "index": index,
+                        "ttft_ms": 10,
+                        "e2e_ms": 20,
+                        "usage": {"completion_tokens": 16},
+                        "cached_tokens": 64,
+                        "matches_cold_output": index != 0,
+                    }
+                )
+            batches.append(
+                {
+                    **identity,
+                    "wall_seconds": 0.1,
+                    "sampled_peak_bytes": {},
+                    "manager_delta": {"orbitkv_ssd_prefetch_bytes_total": 1024},
+                }
+            )
+    validate(args, samples, batches)
+    summary = summarize(samples, batches)
+    assert all(row["orbitkv_ssd_prefetch_bytes_total"] == 1024 for row in summary)
+    assert all(row["n"] == 4 and row["output_mismatches"] == 1 for row in summary)
+    for broken in (samples[:-1], [*samples, samples[0]]):
+        with pytest.raises(ValueError, match="Incomplete or duplicated concurrent requests"):
+            validate(args, broken, batches)
+    batches[0]["wall_seconds"] = float("nan")
+    with pytest.raises(ValueError, match="Invalid concurrent wall time"):
+        validate(args, samples, batches)

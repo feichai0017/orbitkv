@@ -12,9 +12,9 @@ use thiserror::Error;
 use crate::lifecycle::{LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader};
 use crate::{
     BootstrapClient, BootstrapError, CallOptions, Command, CommandCode, PublishRequest,
-    QueryBundleRequest, QueryBundleResponse, QueryCodecError, RESPONSE_FLAG_REQUEST_CONSUMED,
-    ReleaseRequest, RestoreCommand, RestoreRequest, RestoreResponse, RestoreState, StatusCode,
-    TransportClient, TransportError,
+    QueryBundleResponse, QueryCodecError, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest,
+    RestoreCommand, RestoreRequest, RestoreResponse, RestoreState, StatusCode, TransportClient,
+    TransportError,
 };
 
 const RESTORE_NOTIFICATION_POLL_INTERVAL: std::time::Duration =
@@ -161,7 +161,7 @@ impl ChannelClient {
     pub fn query_bundle(
         &self,
         request_id: u64,
-        request: &QueryBundleRequest,
+        request: &crate::QueryCommand,
     ) -> Result<QueryBundleResponse, ChannelError> {
         let payload = request.encode()?;
         let payload = self.call_descriptor(CommandCode::QueryBundle, request_id, &payload)?;

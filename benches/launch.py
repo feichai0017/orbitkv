@@ -71,6 +71,9 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
                 f"{args.ssd_gib}gb",
             ]
             backend_configuration = {"ssd_gib": args.ssd_gib, "io": "O_DIRECT/io_uring"}
+        if args.query_budget_gib is not None:
+            manager_command += ["--query-budget", str(int(args.query_budget_gib * 1024**3))]
+            backend_configuration["query_budget_bytes"] = int(args.query_budget_gib * 1024**3)
         plugin = args.output / "orbitkv_benchmark-0.0.dist-info"
         plugin.mkdir()
         (plugin / "METADATA").write_text("Name: orbitkv-benchmark\nVersion: 0.0\n")

@@ -489,7 +489,6 @@ async fn run_holder(cli: &Cli, shape: &Shape, pool_bytes: usize) {
         metaserver_addr: Some(format!("http://127.0.0.1:{}", cli.meta_port)),
         advertise_addr: Some(format!("{}:{}", cli.advertise_ip, cli.port)),
         mooncake_nic_names: nic_config(cli).unwrap_or_default(),
-        max_prefetch_blocks: shape.blocks + 100,
         ..StorageConfig::default()
     };
     let engine = Arc::new(
@@ -588,7 +587,6 @@ async fn run_requester(cli: &Cli, shape: &Shape, pool_bytes: usize) {
         metaserver_addr: Some(format!("http://{holder_ip}:{}", cli.meta_port)),
         advertise_addr: Some(format!("{}:{}", cli.advertise_ip, cli.port)),
         mooncake_nic_names: nic_config(cli).unwrap_or_default(),
-        max_prefetch_blocks: shape.blocks + 100,
         ..StorageConfig::default()
     };
     let engine = Arc::new(

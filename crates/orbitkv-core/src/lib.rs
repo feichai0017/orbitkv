@@ -19,6 +19,7 @@ mod instance;
 mod internode;
 mod layout;
 mod lease;
+mod query;
 pub use orbitkv_common::logging;
 mod metrics;
 mod offload;
@@ -49,6 +50,7 @@ pub use orbitkv_state::{
     StateFormat, TokenRange,
 };
 pub use pinned_pool::PinnedAllocation;
+pub use query::{QueryAdmission, QueryOwner, QueryReservation};
 pub use seal_offload::SlotMeta;
 pub use storage::{MemoryCacheCleanupStats, StorageConfig};
 pub use sync_state::{LoadState, LoadStateError};
@@ -131,6 +133,7 @@ pub struct OrbitKVEngine {
     topology: Arc<NumaTopology>,
     /// Query-ready blocks owned by opaque scheduler leases.
     query_leases: QueryLeaseManager,
+    query_budget: Arc<query::QueryBudget>,
 }
 
 impl OrbitKVEngine {
@@ -147,6 +150,19 @@ impl OrbitKVEngine {
         topology.log_summary();
 
         let config = storage_config;
+        let query_limit = config
+            .query_budget_bytes
+            .unwrap_or_else(|| (pool_size / 4 * 3).max(1));
+        if query_limit > pool_size {
+            return Err(EngineError::InvalidArgument(
+                "query budget exceeds the pinned pool".into(),
+            ));
+        }
+        let query_budget = query::QueryBudget::new(
+            query_limit as u64,
+            config.query_instance_budget_bytes.unwrap_or(query_limit) as u64,
+        )
+        .map_err(EngineError::InvalidArgument)?;
         let numa_nodes: Vec<NumaNode> = if config.enable_numa_affinity && topology.is_multi_numa() {
             let gpu_numa_nodes = topology.gpu_numa_nodes();
             if gpu_numa_nodes.is_empty() {
@@ -175,6 +191,7 @@ impl OrbitKVEngine {
             storage,
             topology,
             query_leases: QueryLeaseManager::default(),
+            query_budget,
         })
     }
 
@@ -528,13 +545,11 @@ impl OrbitKVEngine {
     ///
     /// Argument contract:
     /// - `instance_id` must identify a registered instance.
-    /// - `req_id` must be non-empty; RPC callers validate this in service.rs.
+    /// - `req_id` must be non-empty; the Cache Manager validates it.
     /// - `block_hashes` may be empty.
     ///
     /// Returns:
-    /// - `Ready { blocks, missing: 0 }`: all blocks in memory cache
-    /// - `Loading`: some blocks being fetched from backing storage
-    /// - `Ready { blocks, missing }`: terminal prefix result with a miss suffix
+    /// A terminal `QueryResult` with the ready prefix and missing suffix.
     #[cfg_attr(
         feature = "tracing",
         fastrace::trace(name = "query_prefetch.count_prefix_hit")
@@ -664,7 +679,64 @@ impl OrbitKVEngine {
         }
         Ok(self
             .query_leases
-            .create(instance_id, blocks, instance.world_size()))
+            .create(instance_id, blocks, instance.world_size(), None))
+    }
+
+    /// Reserve registered group bytes before a process query retains any pages.
+    pub fn reserve_query(
+        &self,
+        instance_id: &str,
+        group_id: u32,
+        blocks: usize,
+    ) -> Result<QueryAdmission, EngineError> {
+        let instance = self.get_instance(instance_id)?;
+        let topology = instance.sealed_topology()?;
+        let bytes = topology
+            .group_block_bytes(group_id)?
+            .checked_mul(blocks as u64)
+            .ok_or_else(|| EngineError::InvalidArgument("query bytes overflow".into()))?;
+        Ok(self
+            .query_budget
+            .reserve(instance_id, &topology.cache_namespace, bytes))
+    }
+
+    /// Move preparation ownership into the result lease and then GPU consumers.
+    pub fn finish_query(
+        &self,
+        reservation: QueryReservation,
+        owner: QueryOwner,
+        blocks: Vec<Arc<SealedBlock>>,
+    ) -> Result<QueryLeaseId, EngineError> {
+        let instance_id = reservation.instance();
+        let instance = self.get_instance(instance_id)?;
+        if instance.sealed_topology()?.cache_namespace != reservation.namespace() {
+            return Err(EngineError::InvalidArgument(
+                "query instance registration changed".into(),
+            ));
+        }
+        let bytes = blocks
+            .iter()
+            .try_fold(0u64, |sum, block| sum.checked_add(block.memory_footprint()))
+            .ok_or_else(|| EngineError::InvalidArgument("query result bytes overflow".into()))?;
+        reservation
+            .ready(bytes)
+            .map_err(EngineError::InvalidArgument)?;
+        Ok(self.query_leases.create(
+            instance_id,
+            blocks,
+            instance.world_size(),
+            Some((owner, reservation.clone())),
+        ))
+    }
+
+    pub fn release_query_session(&self, session: u64) {
+        self.query_leases
+            .release_owner(|owner| owner.session == session);
+    }
+
+    pub fn cancel_query(&self, owner: QueryOwner) {
+        self.query_leases
+            .release_owner(|candidate| candidate == owner);
     }
 
     /// Release a query lease. Returns false when the lease is unknown or expired.
@@ -815,11 +887,16 @@ impl OrbitKVEngine {
         trace_scope!("load.cache_lookup", _s);
         let mut block_targets_by_group = vec![Vec::new(); layer_groups.len()];
         let mut block_cache = Vec::new();
+        let mut reservations = Vec::new();
         for (lease, lease_block_ids_by_group) in loads {
-            let blocks = self
+            let (blocks, reservation) = self
                 .query_leases
                 .consume(instance_id, lease)
                 .map_err(EngineError::Storage)?;
+            if let Some(reservation) = reservation {
+                reservation.restoring();
+                reservations.push(reservation);
+            }
             if lease_block_ids_by_group.len() != layer_groups.len() {
                 return Err(EngineError::InvalidArgument(format!(
                     "load group count {} does not match layer group count {}",
@@ -930,8 +1007,11 @@ impl OrbitKVEngine {
         }
 
         // Submit to worker pool (fire and forget)
-        gpu.worker_pool()
-            .submit_load(LoadTask { layers, completion })
+        gpu.worker_pool().submit_load(LoadTask {
+            layers,
+            completion,
+            reservations,
+        })
     }
 
     /// Wait until all previously submitted save batches have been processed

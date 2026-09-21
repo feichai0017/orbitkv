@@ -298,8 +298,9 @@ concurrent serving and multi-rank admission still need separate qualification.
 ### P1: make pending work an owned operation
 
 Implemented foundation: `orbitkv-server/src/endpoint/pending.rs` is now the
-only query polling registry, scoped by authenticated session, instance,
-request, and group with immutable query arguments. The core returns a terminal
+only query polling registry. Explicit operation/revision tickets are scoped by
+authenticated session and bind the instance, request, group, and query content.
+Submission and polling are separate; a poll cannot recreate retired work. The core returns a terminal
 `QueryResult` from its future; its request-string prefetch table and stale
 prefetch GC are removed. Completion inserts/discards fetched data without
 requiring another client poll.
@@ -307,15 +308,21 @@ requiring another client poll.
 `CancelQuery` drops waiting interest. In-flight work drains on Tokio and drops
 an undelivered lease on completion. A cancelled read continues occupying its
 operation permit until completion; limits are 128 per session and 1024 globally.
-Capacity exhaustion reports retryable `Loading` without retaining additional
-work, so queue pressure does not terminate the engine.
+Operation-capacity exhaustion reports unadmitted `Loading`. Byte pressure keeps
+an admitted ticket pending until its registered group footprint fits globally
+and per instance. Reservations survive result delivery and every GPU consumer.
+Identical prefix reads can be shared with independent owners and leases; SSD
+queue pressure waits for space. A too-large individual query bypasses restore.
 Expired replies drop resources while retaining a bounded tombstone until poll,
 cancel, or session teardown. Both adapters cancel superseded queries. Channel
-ABI 3 requires rebuilding the manager and client together.
+ABI 4 requires rebuilding the manager and client together.
 
-The larger demand contract below remains planned: explicit operation/revision
-tickets, byte-based scheduling limits beyond the existing pool and SSD slot
-budgets, and exhaustive delivery-loss/restart fault qualification.
+Remaining work includes deadline/priority hints and exhaustive delivery-loss/
+restart fault qualification. The current budget charges each owner's padded
+payload conservatively; physical allocator occupancy is a separate metric.
+It distinguishes preparation, ready leases, and restoration, with queueing and
+backing reconstruction included in preparation. Exact per-device staging and
+first-use scheduling are P3/P4 work.
 
 Introduce one semantic operation identity bound to the Manager session epoch,
 registered instance, request revision, model/storage identity, and group.

@@ -72,7 +72,9 @@ component-presence check. The MetaServer is a separate, non-HA, in-memory direct
 resident-inventory replay after restart. See [architecture](docs/architecture.md)
 and the [model-aware state plan](docs/state-identity.md) for the implementation
 boundary. [State demand and transfer planning](docs/state-planning.md) describes
-the proposed early-prefetch and admission policies; these are not implemented.
+the implemented versioned query lifecycle and byte admission, plus the proposed
+earlier warming and cost-based scheduling policies. Query budgets cover
+preparation, ready leases, and GPU consumers; identical reads can be shared.
 Single-node correctness is validated for the pinned adapter layouts;
 the revised local path has not yet passed a full throughput and tail-latency
 qualification against native-engine and no-cache baselines.

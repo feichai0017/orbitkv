@@ -18,6 +18,7 @@ use orbitkv_common::{NumaNode, pin_thread_to_numa_node};
 pub(crate) struct LoadTask {
     pub layers: Vec<LayerTransferData>,
     pub completion: LoadCompletion,
+    pub reservations: Vec<crate::QueryReservation>,
 }
 
 /// How a finished [`LoadTask`] hands its result back to the submitter.
@@ -364,13 +365,19 @@ fn load_worker_loop(
                 break;
             }
         };
-        let LoadTask { layers, completion } = task;
+        let LoadTask {
+            layers,
+            completion,
+            reservations,
+        } = task;
         let result = process_load_task(&layers, &runtime.stream, runtime.backend.as_ref());
 
         if let Err(ref e) = result {
             error!("Load task failed: device={device_id} error={e:?}");
             core_metrics().load_failures.add(1, &[]);
         }
+        drop(layers);
+        drop(reservations);
         completion.signal(result);
     }
 
@@ -672,6 +679,7 @@ mod drain_tests {
         pool.submit_load(LoadTask {
             layers: vec![],
             completion: LoadCompletion::Channel(reply),
+            reservations: vec![],
         })
         .unwrap();
         let draining = Arc::clone(&pool);
@@ -690,7 +698,8 @@ mod drain_tests {
         assert!(
             pool.submit_load(LoadTask {
                 layers: vec![],
-                completion: LoadCompletion::Channel(reply)
+                completion: LoadCompletion::Channel(reply),
+                reservations: vec![],
             })
             .is_err()
         );

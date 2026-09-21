@@ -7,6 +7,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::block::SealedBlock;
+use crate::{QueryOwner, QueryReservation};
 
 const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(600);
 const DEFAULT_LEASE_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
@@ -45,6 +46,7 @@ struct QueryLease {
     blocks: Vec<Arc<SealedBlock>>,
     remaining_consumers: usize,
     expires_at: Instant,
+    ownership: Option<(QueryOwner, QueryReservation)>,
 }
 
 pub(crate) struct QueryLeaseManager {
@@ -87,6 +89,7 @@ impl QueryLeaseManager {
         instance_id: &str,
         blocks: Vec<Arc<SealedBlock>>,
         consumers: usize,
+        ownership: Option<(QueryOwner, QueryReservation)>,
     ) -> QueryLeaseId {
         self.sweep_expired();
         debug_assert!(!blocks.is_empty(), "query leases require ready blocks");
@@ -97,6 +100,7 @@ impl QueryLeaseManager {
             blocks,
             remaining_consumers: consumers.max(1),
             expires_at: Instant::now() + DEFAULT_LEASE_TTL,
+            ownership,
         };
         self.inner.insert(token, lease);
         token
@@ -106,7 +110,7 @@ impl QueryLeaseManager {
         &self,
         instance_id: &str,
         token: &QueryLeaseId,
-    ) -> Result<Vec<Arc<SealedBlock>>, String> {
+    ) -> Result<(Vec<Arc<SealedBlock>>, Option<QueryReservation>), String> {
         self.sweep_expired();
         let mut leases = self
             .inner
@@ -124,13 +128,22 @@ impl QueryLeaseManager {
         }
         if lease.remaining_consumers > 1 {
             lease.remaining_consumers -= 1;
-            return Ok(lease.blocks.clone());
+            return Ok((
+                lease.blocks.clone(),
+                lease
+                    .ownership
+                    .as_ref()
+                    .map(|(_, reservation)| reservation.clone()),
+            ));
         }
 
-        Ok(leases
+        let lease = leases
             .remove(token)
-            .expect("query lease disappeared during consume")
-            .blocks)
+            .expect("query lease disappeared during consume");
+        Ok((
+            lease.blocks,
+            lease.ownership.map(|(_, reservation)| reservation),
+        ))
     }
 
     pub(crate) fn release(&self, token: &QueryLeaseId) -> bool {
@@ -145,6 +158,19 @@ impl QueryLeaseManager {
             .lock()
             .expect("query leases lock poisoned");
         leases.retain(|_, lease| lease.instance_id != instance_id);
+    }
+
+    pub(crate) fn release_owner(&self, matches: impl Fn(QueryOwner) -> bool) {
+        self.inner
+            .leases
+            .lock()
+            .expect("query leases lock poisoned")
+            .retain(|_, lease| {
+                !lease
+                    .ownership
+                    .as_ref()
+                    .is_some_and(|(owner, _)| matches(*owner))
+            });
     }
 
     pub(crate) fn sweep_expired(&self) {
@@ -205,6 +231,7 @@ mod tests {
                     blocks: Vec::new(),
                     remaining_consumers: 1,
                     expires_at: Instant::now() + DEFAULT_LEASE_TTL,
+                    ownership: None,
                 },
             );
 
@@ -223,15 +250,49 @@ mod tests {
     fn consume_allows_configured_number_of_consumers() {
         let manager = QueryLeaseManager::default();
         let blocks = vec![Arc::new(SealedBlock::from_slots(Vec::new()))];
-        let lease_id = manager.create("inst-a", blocks, 2);
+        let lease_id = manager.create("inst-a", blocks, 2, None);
 
-        assert_eq!(manager.consume("inst-a", &lease_id).unwrap().len(), 1);
-        assert_eq!(manager.consume("inst-a", &lease_id).unwrap().len(), 1);
+        assert_eq!(manager.consume("inst-a", &lease_id).unwrap().0.len(), 1);
+        assert_eq!(manager.consume("inst-a", &lease_id).unwrap().0.len(), 1);
 
         let err = manager
             .consume("inst-a", &lease_id)
             .err()
             .expect("lease should be exhausted");
         assert!(err.contains("query lease is unknown or expired"));
+    }
+
+    #[test]
+    fn disconnect_releases_ready_interest_but_not_a_gpu_consumers_reservation() {
+        let manager = QueryLeaseManager::default();
+        let budget = crate::query::QueryBudget::new(100, 100).unwrap();
+        let crate::QueryAdmission::Admitted(reservation) = budget.reserve("a", "ns", 100) else {
+            panic!("budget available");
+        };
+        reservation.ready(100).unwrap();
+        let owner = QueryOwner {
+            session: 7,
+            operation: 1,
+            revision: 2,
+        };
+        let id = manager.create(
+            "a",
+            vec![Arc::new(SealedBlock::from_slots(Vec::new()))],
+            2,
+            Some((owner, reservation)),
+        );
+        let (_, gpu) = manager.consume("a", &id).unwrap();
+        gpu.as_ref().unwrap().restoring();
+        manager.release_owner(|candidate| candidate.session == 7);
+        assert!(matches!(
+            budget.reserve("a", "ns", 1),
+            crate::QueryAdmission::Busy
+        ));
+        assert!(manager.consume("a", &id).is_err());
+        drop(gpu);
+        assert!(matches!(
+            budget.reserve("a", "ns", 100),
+            crate::QueryAdmission::Admitted(_)
+        ));
     }
 }

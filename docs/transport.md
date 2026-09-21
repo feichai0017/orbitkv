@@ -89,14 +89,27 @@ scheduler topology this requires all configured TP shards to be on the scheduler
 host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
-returns `Loading`. Polling the same instance/request/group retrieves its result;
-changing arguments while pending is rejected. Channel ABI 3 adds `CancelQuery`
-for a session/instance/request/group. Outstanding queries are bounded to 128 per
-session and 1024 globally and expire after 60 seconds. Cancellation, disconnect,
+returns `Loading`. Channel ABI 4 separates query submission from ticket polling.
+An operation has a monotonically increasing ID within its authenticated session,
+and a nonzero revision. A newer revision can replace hashes or wait policy while
+keeping its instance, request, and group; old polls and cancels cannot consume or
+cancel the replacement. Unknown or retired polls never submit new work. The
+transport's session epoch rejects messages from an earlier Manager lifetime.
+Both native clients and the Manager must be rebuilt together.
+
+The Python Cache Manager client owns tickets for both engine adapters. It submits
+once, polls without resending hashes, and retires the ticket after a terminal
+result. Operation-capacity pressure explicitly reports unadmitted `Loading`,
+which retries with a fresh ticket. A submitted operation can wait for its
+[byte budget](server.md#query-ownership-budgets) before touching cache pages.
+Outstanding operations are bounded to 128 per session and 1024 globally and
+expire after 60 seconds. Cancellation, disconnect,
 and expiration revoke result ownership; submitted backing reads drain while
 retaining their operation permits. Their completion admits or discards cache
 blocks and drops an undelivered lease without another poll. An expired
-operation leaves a bounded tombstone so a late poll reports timeout. Publish's reply is sent only after D2H completes, when the
+operation leaves a bounded tombstone so a late poll reports timeout. Delivered
+leases retain their byte reservations through GPU completion; session teardown
+also releases delivered leases which were never consumed. Publish's reply is sent only after D2H completes, when the
 framework may reuse its source pages. This removes the shared dispatcher wait
 without making the caller's save completion asynchronous. New measurements of
 this revision are still required; the latency table below predates it.

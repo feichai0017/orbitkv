@@ -41,7 +41,36 @@ orbitkv-cache-manager
 - `--ssd-prefetch-queue-depth`: SSD prefetch queue depth, max pending prefetch batches (default: `2`)
 - `--ssd-write-inflight`: SSD write inflight, max concurrent block writes (default: `2`)
 - `--ssd-prefetch-inflight`: SSD prefetch inflight, max concurrent block reads (default: `16`)
-- `--max-prefetch-blocks`: Max blocks allowed in prefetching state, backpressure for SSD prefetch (default: `800`)
+- Full read queues wait for capacity while retaining the query's byte reservation.
+  Concurrent queries for an identical prefix and storage identity can share a read.
+
+### Query ownership budgets
+
+- `--query-budget`: Maximum query-owned bytes across preparation, ready leases,
+  and submitted GPU loads. Defaults to 75% of `--pool-size`.
+- `--query-instance-budget`: Limit for one registered instance, shared across its
+  client sessions. Defaults to the global query budget.
+
+Both accept the same memory units as `--pool-size`, with
+`0 < instance budget <= global budget <= pool size`. Reservations use the
+registered storage group's padded block bytes, including its physical layout
+and shards. Partial results shrink their reservation. Each owner is charged
+independently even when pages or reads are shared; the pinned allocator tracks
+physical use separately. The resident cache can still use the full pool.
+
+Temporary budget pressure leaves a query pending. A single query larger than
+the configured limit returns an empty restore result and increments
+`orbitkv_query_budget_bypasses_total`; it does not wait indefinitely or record
+an authoritative backing-store miss. Cancellation drains submitted I/O before
+returning its bytes. A delivered lease remains charged until release, session
+disconnect, expiry, or completion of every GPU consumer.
+
+`orbitkv_query_reserved_bytes{phase="preparing|ready|restoring"}` tracks ownership
+through these phases. Preparation includes queued reads and reconstruction;
+it is a conservative payload reservation, not a measurement of a particular
+device's buffers. `orbitkv_query_budget_waits_total` counts admission attempts
+delayed by bytes, and `orbitkv_query_coalesced_reads_total` counts joined reads.
+The old block-count prefetch limit has been removed.
 
 ### Cross-Node (Multi-Node Setup)
 

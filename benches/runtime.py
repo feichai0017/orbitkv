@@ -128,7 +128,11 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "model_revision": (args.model / ".revision").read_text().strip()
         if (args.model / ".revision").exists()
         else None,
-        "concurrency": 1,
-        "notes": "Serial latency experiment; pressure traffic and startup are excluded from request timings.",
+        "concurrency": args.concurrencies if args.workload == "concurrent" else 1,
+        "notes": (
+            "Closed-loop bursts; tier counters belong to entire batches, not individual requests. Memory peaks are sampled every 25 ms."
+            if args.workload == "concurrent"
+            else "Serial latency experiment; pressure traffic and startup are excluded from request timings."
+        ),
     }
     return manifest

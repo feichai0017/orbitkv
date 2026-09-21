@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 use log::{error, info};
 use orbitkv_channel::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
-    DeferredResponse, PublishRequest as ChannelPublishRequest, QueryBundleRequest,
-    QueryBundleResponse, QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED,
-    ReleaseRequest as ChannelReleaseRequest, Response, RestoreCommand, RestoreResponse,
-    RestoreState, StatusCode, TransportError, TransportServer,
+    DeferredResponse, PublishRequest as ChannelPublishRequest, QueryBundleResponse,
+    QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest as ChannelReleaseRequest,
+    Response, RestoreCommand, RestoreResponse, RestoreState, StatusCode, TransportError,
+    TransportServer,
 };
 use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::{EngineError, OrbitKVEngine};
@@ -131,7 +131,7 @@ impl ProcessEndpoint {
                             alive
                         });
                         operations.retain(|(token, _), _| !dead_sessions.contains(token));
-                        queries.retain_sessions(|token| sessions.contains_key(&token));
+                        queries.retain_sessions(&engine, |token| sessions.contains_key(&token));
                         next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
                     }
                     advance_restore_operations(&sessions, &mut operations);
@@ -616,12 +616,7 @@ fn dispatch_query(
             Ok(request) => request,
             Err(error) => return error_response(response, StatusCode::Invalid, &error),
         };
-        queries.cancel(
-            command.arg0,
-            &request.instance_id,
-            &request.request_id,
-            request.group_id,
-        );
+        queries.cancel(command.arg0, request.ticket, engine);
         return match bootstrap.arena().write_response(command.descriptor, &[]) {
             Ok(descriptor) => {
                 response.descriptor = descriptor;
@@ -630,11 +625,11 @@ fn dispatch_query(
             Err(error) => error_response(response, arena_error_status(&error), &error),
         };
     }
-    let request = match QueryBundleRequest::decode(&payload) {
+    let request = match orbitkv_channel::QueryCommand::decode(&payload) {
         Ok(request) => request,
         Err(error) => return error_response(response, StatusCode::Invalid, &error),
     };
-    let mut reply = match queries.poll(command.arg0, request, engine, runtime, hll_tracker) {
+    let mut reply = match queries.execute(command.arg0, request, engine, runtime, hll_tracker) {
         Ok(reply) => reply,
         Err(error) => return error_response(response, engine_error_status(&error), &error),
     };
@@ -644,6 +639,10 @@ fn dispatch_query(
         None => QueryOutcome::Loading,
     };
     let payload = match outcome {
+        QueryOutcome::Busy => QueryBundleResponse {
+            outcome: QueryOutcomeCode::Busy,
+            ..QueryBundleResponse::loading()
+        },
         QueryOutcome::Loading => QueryBundleResponse::loading(),
         QueryOutcome::Ready {
             num_hit_blocks,

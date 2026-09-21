@@ -459,13 +459,17 @@ mod tests {
                 first
                     .query_bundle(
                         1,
-                        &QueryBundleRequest {
+                        &orbitkv_channel::QueryCommand::Submit(QueryBundleRequest {
+                            ticket: orbitkv_channel::QueryTicket {
+                                operation_id: 1,
+                                revision: 1
+                            },
                             instance_id: "missing".into(),
                             request_id: "query".into(),
                             block_hashes: vec![],
                             wait_for_full_prefix: true,
                             group_id: 0,
-                        }
+                        })
                     )
                     .is_err()
             );

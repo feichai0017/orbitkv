@@ -67,6 +67,7 @@ pub(crate) struct LayerTopology {
     layer_group: Vec<u32>,
     /// Layer count per storage group, indexed by group id.
     group_layer_count: Vec<usize>,
+    group_block_bytes: Vec<u64>,
     /// Dense rank of the layer within its storage group (0..group_layer_count),
     /// indexed by layer_id. Within-group slots are `rank * tp_size + tp_rank`.
     layer_group_rank: Vec<usize>,
@@ -164,6 +165,10 @@ fn build_page_layout(
 }
 
 impl LayerTopology {
+    pub(crate) fn group_block_bytes(&self, group_id: u32) -> Result<u64, EngineError> {
+        self.group_total_slots(group_id)?;
+        Ok(self.group_block_bytes[group_id as usize])
+    }
     /// Look up the numeric ID for a layer name.
     pub(crate) fn layer_id(&self, layer_name: &str) -> Result<usize, EngineError> {
         self.name_to_id.get(layer_name).copied().ok_or_else(|| {
@@ -671,6 +676,22 @@ impl InstanceContext {
             None
         };
 
+        let mut group_block_bytes = vec![0u64; num_groups];
+        for (layer, name) in names.iter().enumerate() {
+            let copies = if self.page_first {
+                1
+            } else {
+                self.tp_size as u64
+            };
+            let bytes = (geometry_by_name[name.as_str()].2 as u64)
+                .checked_mul(copies)
+                .ok_or_else(|| EngineError::InvalidArgument("query block bytes overflow".into()))?;
+            let group = &mut group_block_bytes[layer_group[layer] as usize];
+            *group = group
+                .checked_add(bytes)
+                .ok_or_else(|| EngineError::InvalidArgument("query group bytes overflow".into()))?;
+        }
+
         Ok(LayerTopology {
             cache_namespace: storage_namespace(
                 &self.namespace,
@@ -693,6 +714,7 @@ impl InstanceContext {
             tp_size: self.tp_size,
             layer_group,
             group_layer_count,
+            group_block_bytes,
             layer_group_rank,
             page_layout,
         })

@@ -17,6 +17,21 @@ def collect_run(directory: Path) -> dict:
     manifest = json.loads((directory / "manifest.json").read_text())
     args = manifest["arguments"]
     samples = [json.loads(line) for line in (directory / "samples.jsonl").read_text().splitlines()]
+    if args.get("workload") == "concurrent":
+        from . import concurrent
+
+        batches = [
+            json.loads(line) for line in (directory / "batches.jsonl").read_text().splitlines()
+        ]
+        concurrent.validate(args, samples, batches)
+        return {
+            "directory": str(directory.resolve()),
+            "manifest": manifest,
+            "storage": json.loads((directory / "storage.json").read_text())
+            if args.get("ssd_gib", 0)
+            else None,
+            "summary": concurrent.summarize(samples, batches),
+        }
     expected = {
         (length, repeat, phase)
         for length in args["lengths"]
@@ -63,7 +78,11 @@ def main() -> None:
             )
     (args.output / "summary.json").write_text(json.dumps(runs, indent=2, allow_nan=False) + "\n")
     with (args.output / "summary.csv").open("w", newline="") as output:
-        writer = csv.DictWriter(output, fieldnames=list(rows[0]), lineterminator="\n")
+        writer = csv.DictWriter(
+            output,
+            fieldnames=list(dict.fromkeys(key for row in rows for key in row)),
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(rows)
 
