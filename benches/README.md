@@ -113,6 +113,9 @@ of clocks on different hosts. Missing stages are not counted as zero latency.
 The [initial Qwen3-8B pressure controls](../docs/queued-warming.md#initial-pressure-controls)
 increased SSD bytes per request without a throughput gain. These results also
 retain a native HBM control for SGLang's prepared-reference output differences.
+The [page-use/reclamation controls](../docs/queued-warming.md#page-use-and-reclamation-controls)
+retain complete starting/ending counters and show why warming stays opt-in:
+vLLM admits few hints, while SGLang releases most prepared pages unused.
 Reports also retain warmup prepared/restored/unused byte deltas, completed
 byte-seconds by outcome, and pending bytes before/after the window and at the
 sampled peak. These count physical page footprints, not exact layer-copy bytes.

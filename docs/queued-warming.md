@@ -176,8 +176,8 @@ All four runs drained query reservations to zero. Sampled warmup peaks were
 576 MiB for vLLM and 567 MiB for SGLang, below the 768 MiB warmup limit.
 SSD bytes per request increased about 20% and 61%, respectively. The small
 vLLM latency changes are not evidence of a general gain from one trial. Automatic
-warming therefore remains experimental and disabled by default. Useful-byte
-and retention accounting, followed by better hint admission, is the next gate.
+warming therefore remains experimental and disabled by default. These results
+motivated page-use accounting and the conservative admission policy measured below.
 
 vLLM recorded no prepared-reference output differences. Both SGLang modes
 recorded nine differences, all for prefix 11. A separate native SGLang probe
@@ -211,6 +211,65 @@ Reproduce an experimental window from the repository root:
 
 Use a fresh output directory for each run; switch `on` to `off` for the control.
 Use `.venv/sglang-release/bin/python` and `--engine sglang` for SGLang.
+
+## Page-use and reclamation controls
+
+Measured September 22, 2026 at clean source `d40100a3`, with the same H20,
+model revision, capacities, request sequence and tracing settings as above.
+Both modes include byte-bounded reclamation and page-use accounting. Runs use
+fresh services, in order vLLM off/on and SGLang on/off; all 484 requests complete.
+This is one trial per mode on overlay-backed `O_DIRECT` storage. Differences
+from the earlier build do not isolate reclamation from the other changes.
+
+| Engine | Warmup | Requests | Requests/s | TTFT P50 / P95 (ms) | SSD read MiB/request |
+| --- | --- | ---: | ---: | ---: | ---: |
+| vLLM | Off | 126 | 3.939 | 2013 / 3114 | 224.1 |
+| vLLM | On | 126 | 3.916 | 2024 / 3116 | 224.1 |
+| SGLang | Off | 116 | 3.703 | 2073 / 3278 | 205.3 |
+| SGLang | On | 116 | 3.739 | 2071 / 3250 | 288.4 |
+
+| Engine, warming enabled | Prepared GiB | Restored GiB | Unused GiB | Foreground hint skips |
+| --- | ---: | ---: | ---: | ---: |
+| vLLM | 0.563 | 0.563 | 0 | 119 |
+| SGLang | 7.752 | 0.554 | 7.198 | 61 |
+
+Pending warmup bytes start and end at zero in every window; prepared equals
+restored plus unused. All query reservations and SSD operations drain to zero.
+Sampled warming and pending peaks are 576 MiB for vLLM and 567 MiB for SGLang,
+below the 768 MiB active-warmup limit. This experiment observes no pending
+carry-in/out; the general accounting caveats above still apply.
+
+vLLM admits very little warming under sustained foreground ownership. Its one
+prepared prefix reaches H2D, but SSD bytes per request are unchanged and there
+is no observed throughput gain. SGLang transfers only **7.1%** of its prepared
+page footprint before release; **92.9%** becomes unused. Warming adds **40.5%**
+SSD bytes per request while throughput differs by only about 1%. A single trial
+does not establish a throughput or latency improvement for either engine.
+
+The byte-weighted time from readiness to unused release is 0.44 seconds in
+SGLang. Engine queue-to-first-use medians are about 1.6–1.7 seconds, while
+observed H2D medians are about 20 ms for vLLM and 27 ms for SGLang. These are
+different observation populations, not paired per-page critical-path timings.
+They motivate using queue position, expected use time and retention pressure:
+foreground query ownership alone does not say when the engine will consume KV.
+An engine can be computing with no active query lease while later requests
+remain queued. Async demand preparation already overlaps some waiting, so
+moving reads earlier need not shorten exposed latency. Automatic warming
+therefore stays disabled; a calibrated admission/deadline policy remains P3 work.
+
+vLLM reports no reference-output differences. Each SGLang mode again reports
+nine differences, all for prefix 11. Identical input tokens and all nine cached
+outputs match the previously recorded native HBM control; the uncached output
+matches native cold computation. No new native control or batch-invariance
+claim is implied. The exact GPU-byte and both engine recovery gates pass on
+this implementation.
+
+Retained evidence: [summaries and complete before/after window counters](../benches/results/qwen3-8b-warmup-accounting-summary.json),
+[CSV](../benches/results/qwen3-8b-warmup-accounting-summary.csv), and
+[output comparison with the recorded native control](../benches/results/qwen3-8b-warmup-accounting-output-control.json).
+Raw samples, prefixes and logs remain under
+`benches/results/runs/warmup-accounting-*` on the measurement host. Use the
+reproduction command above with a fresh output directory and this source revision.
 
 ## Qualification and remaining P3 work
 
