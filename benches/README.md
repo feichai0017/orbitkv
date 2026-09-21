@@ -97,7 +97,7 @@ runs inside the measured window. A working set larger than HBM creates natural
 GPU pressure; a smaller host pool with SSD enabled can exercise disk reads.
 Verify the counters: a working-set configuration alone does not prove a tier hit.
 
-For queued-warming comparisons, run the same OrbitKV workload with
+Automatic queued warming is experimental and disabled by default. For comparisons, run the same OrbitKV workload with
 `--queue-warmup on` and `--queue-warmup off`. Add `--trace-transfers` to record
 request-correlated `cache_timeline` JSON in both service logs. Keep tracing equal
 between controls. Hints exceeding a quarter of the query budget are skipped;
@@ -108,6 +108,9 @@ request ID for correlating measured traffic with the logs.
 stage coverage and preparation/restore/queue intervals. Durations use one
 process's monotonic clock or Manager-local elapsed time, never a subtraction
 of clocks on different hosts. Missing stages are not counted as zero latency.
+The [initial Qwen3-8B pressure controls](../docs/queued-warming.md#initial-pressure-controls)
+increased SSD bytes per request without a throughput gain. These results also
+retain a native HBM control for SGLang's prepared-reference output differences.
 
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \

@@ -78,8 +78,8 @@ this gate. Cancellation does, without releasing any outstanding GPU copy holds.
 See the [SSD measurements](ssd-performance.md) for latency and scope.
 
 Both adapters also announce exact queued prefixes for bounded early DRAM warming.
-This is enabled by default; set `ORBITKV_QUEUE_WARMUP=0` in the engine environment
-for a control run. Warmup owns at most a quarter of global/per-instance query
+This is experimental and disabled by default; set `ORBITKV_QUEUE_WARMUP=1` in
+the engine environment to enable it. Warmup owns at most a quarter of global/per-instance query
 budgets and retains no restore lease. It cannot promise a hit at later admission.
 See [queued warming](queued-warming.md) for cancellation, timeline tracing and
 the remaining performance qualification.

@@ -162,8 +162,10 @@ class CacheManagerClient:
 
         Admission revalidates the prefix with a new query. Cancellation withdraws
         interest while submitted reads drain under their original byte budget.
+        True means accepted, not a cache-hit promise. This explicit API is
+        independent of the adapters' automatic enqueue-warming switch.
         """
-        if not block_hashes or os.environ.get("ORBITKV_QUEUE_WARMUP", "1") == "0":
+        if not block_hashes:
             return False
         key = (instance_id, req_id, 0)
         with self._query_lock:

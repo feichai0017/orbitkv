@@ -21,7 +21,7 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     if not isinstance(linker, OrbitKVLinker) or req.positional_embed_overrides is not None:
         return result
     trace_transfer("queued", req.rid, engine="sglang")
-    if os.environ.get("ORBITKV_QUEUE_WARMUP", "1") == "0":
+    if os.environ.get("ORBITKV_QUEUE_WARMUP") != "1":
         return result
     from sglang.srt.mem_cache.base_prefix_cache import MatchPrefixParams
     from sglang.srt.mem_cache.radix_cache import RadixKey

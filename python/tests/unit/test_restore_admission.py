@@ -56,7 +56,7 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
     assert not scheduler._queued_at
     pool.reset_mock()
     client.reset_mock()
-    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "0")
+    monkeypatch.delenv("ORBITKV_QUEUE_WARMUP")
     scheduler.on_new_request(req)
     pool.get_cached_block.assert_not_called()
     client.warm_prefix.assert_not_called()

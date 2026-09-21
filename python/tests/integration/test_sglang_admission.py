@@ -40,7 +40,8 @@ def transfer(keys):
     return [SimpleNamespace(name=PoolName.KV, keys=keys)]
 
 
-def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(linker):
+def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(linker, monkeypatch):
+    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
     import torch
     from sglang.srt.mem_cache.radix_cache import RadixKey
     from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
@@ -81,6 +82,28 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(lin
     scheduler.waiting_queue.clear()
     enqueue_request(MagicMock(), scheduler, req)
     linker.client.warm_prefix.assert_not_called()
+    cache.match_prefix.reset_mock()
+    monkeypatch.delenv("ORBITKV_QUEUE_WARMUP")
+    enqueue_request(accepted, scheduler, req)
+    cache.match_prefix.assert_not_called()
+    linker.client.warm_prefix.assert_not_called()
+
+
+def test_first_use_is_observed_once_even_when_the_first_layer_wait_repeats(monkeypatch):
+    from orbitkv.sglang.linker import _LayerDoneCounter
+
+    trace = MagicMock()
+    monkeypatch.setattr("orbitkv.sglang.linker.trace_transfer", trace)
+    counter = _LayerDoneCounter(2)
+    index = counter.update_producer()
+    counter.request_ids[index] = ["restored"]
+    counter.complete(index)
+    counter.set_consumer(index)
+    counter.wait_until(0)
+    counter.wait_until(0)
+    counter.wait_until(1)
+    trace.assert_called_once_with("first_use", "restored", engine="sglang")
+    assert not counter.request_ids and not counter._futures
 
 
 def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker):

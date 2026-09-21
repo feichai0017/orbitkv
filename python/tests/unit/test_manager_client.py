@@ -268,7 +268,6 @@ def test_warmup_is_bounded_and_demand_revalidates_with_a_fresh_ticket(monkeypatc
     native = MagicMock()
     native.query_submit.return_value = QueryLoading()
     monkeypatch.setattr("orbitkv.client.manager.ChannelClient", lambda *a, **k: native)
-    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
     client = CacheManagerClient("/tmp/warmup.sock")
     client._MAX_WARMUPS = 2
     assert client.warm_prefix("model", [b"first"], "a")
@@ -293,7 +292,6 @@ def test_expired_or_rejected_warmup_never_blocks_demand(monkeypatch):
     native = MagicMock()
     native.query_submit.side_effect = [QueryLoading(), QueryLoading(admitted=False), QueryLoading()]
     monkeypatch.setattr("orbitkv.client.manager.ChannelClient", lambda *a, **k: native)
-    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
     client = CacheManagerClient("/tmp/warmup.sock")
     assert client.warm_prefix("model", [b"same"], "a")
     client._WARMUP_SECONDS = 0
@@ -302,7 +300,6 @@ def test_expired_or_rejected_warmup_never_blocks_demand(monkeypatch):
     assert not client._warmups
     assert client.query_prefetch("model", [b"same"], "a").admitted
     assert native.query_submit.call_args.args[3:] == (3, 1)
-    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "0")
-    assert not client.warm_prefix("model", [b"same"], "c")
+    assert not client.warm_prefix("model", [], "c")
     assert native.query_submit.call_count == 3
     client.close()

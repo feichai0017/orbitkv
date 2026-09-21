@@ -76,7 +76,7 @@ def main() -> None:
         help="OrbitKV SSD capacity; adds a measured phase after evicting manager DRAM",
     )
     parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
-    parser.add_argument("--queue-warmup", choices=["on", "off"], default="on")
+    parser.add_argument("--queue-warmup", choices=["on", "off"], default="off")
     parser.add_argument("--trace-transfers", action="store_true")
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)

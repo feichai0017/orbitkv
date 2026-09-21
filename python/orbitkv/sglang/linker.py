@@ -68,7 +68,7 @@ class _LayerDoneCounter:
         try:
             futures[threshold].result()
             if threshold == 0:
-                for rid in self.request_ids.get(index, ()):
+                for rid in self.request_ids.pop(index, ()):
                     trace_transfer("first_use", rid, engine="sglang")
         finally:
             if threshold == self.num_layers - 1:

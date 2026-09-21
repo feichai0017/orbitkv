@@ -128,6 +128,9 @@ and a passing gate; design text alone does not close an item.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;
   keep foreground headroom, revalidate demand, and retire warmups without a lease
   or polling. Expose optional request-correlated transfer timeline logs.
+- [x] Record matched Qwen3-8B warming on/off pressure controls and native output
+  diagnostics. Keep automatic warming opt-in: initial controls increased SSD
+  bytes per request without improving throughput (`docs/queued-warming.md`).
 - [ ] Qualify queued warming under delayed reads, cancellation and sustained
   pressure; account useful bytes and unused retained byte-seconds, add
   priority/deadline and per-device/staging budgets (remaining P3).

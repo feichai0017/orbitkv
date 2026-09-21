@@ -59,11 +59,16 @@ seconds at the Manager; the client retires stale tickets when submitting
 further hints. Admission or cancellation retires the matching hint before a
 fresh demand operation. An already-submitted read drains under its original
 reservation and operation permit. It is not aborted when interest disappears.
+The ticket timeout does not expire resident pages; normal cache eviction does.
 The existing backing-read coalescer can serve independent warmup/demand owners;
 only identical read plans coalesce.
 
-Set `ORBITKV_QUEUE_WARMUP=0` in the **engine** environment for a control run.
-Normal query/prefetch and restore remain available. Warmup is enabled by default.
+Set `ORBITKV_QUEUE_WARMUP=1` in the **engine** environment to enable automatic
+enqueue warming. It is experimental and disabled by default: the initial
+pressure controls did not improve throughput and increased SSD reads.
+Normal query/prefetch and restore remain available with warming disabled.
+The explicit `CacheManagerClient.warm_prefix()` API always attempts the supplied
+hint; the environment switch controls automatic engine enqueue hooks only.
 Manager and Python extension must both use channel ABI 5; ABI 4 is not supported.
 
 ## Observing the path
@@ -93,6 +98,65 @@ cache-tier query counters include warmup probes; use actual SSD/TE/H2D byte
 counters to establish transfers rather than interpreting probe counts as
 request hits.
 
+## Initial pressure controls
+
+Measured September 21, 2026 at source `2c1b27e3`, using Qwen3-8B on one H20.
+Both modes use the same build and tracing settings. Each engine runs a 30-second
+admission window at concurrency 8, with 4,096 input tokens, 16 output tokens,
+8,192 GPU-cache tokens, 4 GiB of host cache, a 3 GiB query budget and 16 GiB SSD.
+Twelve reusable prefixes occupy 6.75 GiB of KV payload; the reuse probability
+is 0.75. Admitted requests drain after the window, and throughput includes that
+time. The SSD file uses `O_DIRECT`/`io_uring` on an overlay mount; this is not a
+physical-NVMe qualification.
+
+| Engine | Warmup | Requests | Requests/s | TTFT P50 / P95 (ms) | SSD read MiB/request |
+| --- | --- | ---: | ---: | ---: | ---: |
+| vLLM | Off | 126 | 3.933 | 2126 / 2750 | 254.8 |
+| vLLM | On | 128 | 3.907 | 2050 / 2685 | 304.7 |
+| SGLang | Off | 116 | 3.679 | 1997 / 3171 | 265.7 |
+| SGLang | On | 116 | 3.606 | 2054 / 3179 | 427.2 |
+
+The experiment demonstrates bounded preparation, not a throughput improvement.
+All four runs drained query reservations to zero. Sampled warmup peaks were
+576 MiB for vLLM and 567 MiB for SGLang, below the 768 MiB warmup limit.
+SSD bytes per request increased about 20% and 61%, respectively. The small
+vLLM latency changes are not evidence of a general gain from one trial. Automatic
+warming therefore remains experimental and disabled by default. Useful-byte
+and retention accounting, followed by better hint admission, is the next gate.
+
+vLLM recorded no prepared-reference output differences. Both SGLang modes
+recorded nine differences, all for prefix 11. A separate native SGLang probe
+reproduced the same split: cold computation matched the prepared reference;
+an immediate 4,032-token HBM hit matched all nine differing cached OrbitKV
+responses. The one uncached OrbitKV response for that prefix matched native
+cold computation. This reproduces the difference without OrbitKV and does not
+establish batch-invariant output equality. Exact GPU-byte and engine recovery
+gates remain separate correctness evidence.
+
+See the [summaries and complete window counters](../benches/results/qwen3-8b-queued-warming-summary.json),
+[CSV](../benches/results/qwen3-8b-queued-warming-summary.csv), and
+[native output control, inputs and reproduction script](../benches/results/qwen3-8b-queued-warming-output-control.json).
+Raw samples and logs remain under `benches/results/runs/queued-warming-*` on the
+measurement host. Initial SGLang logs repeat the first-layer wait callback;
+the collector pairs each enqueue with its first callback, and the adapter now
+emits `first_use` once per restored batch.
+
+Reproduce an experimental window from the repository root:
+
+```bash
+.venv/vllm-release/bin/python -m benches.single_node \
+  --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
+  --workload sustained --concurrencies 8 --duration-seconds 30 \
+  --max-requests 1000 --working-set 12 --reuse-ratio 0.75 \
+  --lengths 4096 --gpu-tokens 8192 --output-tokens 16 \
+  --host-gib 4 --query-budget-gib 3 --ssd-gib 16 \
+  --queue-warmup on --trace-transfers \
+  --output benches/results/runs/queued-warming-vllm-on
+```
+
+Use a fresh output directory for each run; switch `on` to `off` for the control.
+Use `.venv/sglang-release/bin/python` and `--engine sglang` for SGLang.
+
 ## Qualification and remaining P3 work
 
 CPU gates cover foreground budget headroom, operation pressure, unpolled
@@ -101,6 +165,8 @@ pinned-release hook test checks salted keys, logprob boundaries and HBM skipping
 The GPU integration gate warms real SSD pages without polling, waits for query
 bytes to return to zero, leases them through an immediate DRAM query and checks
 exact restored GPU contents for both supported stored layouts.
+For changes to enqueue warming, run both engine E2E commands from the
+[test gates](../python/tests/README.md) with `ORBITKV_QUEUE_WARMUP=1`.
 
 Use the [benchmark harness](../benches/README.md) with a working set exceeding
 HBM and host cache. Compare `--queue-warmup on` and `off` at equal capacities;
