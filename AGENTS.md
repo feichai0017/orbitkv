@@ -160,6 +160,7 @@ cargo run -r --bin orbitkv-metaserver
 - Use `.venv` for the Python virtual environment
 - Keep changes scoped and aligned with the existing module structure
 - Before 1.0, remove obsolete APIs and compatibility code instead of adding aliases or fallback paths. Keep boundaries that own behavior; remove classes and functions that only forward calls without a separate responsibility.
+- Organize modules by the behavior and resources they own. A new type or trait must have a concrete responsibility; avoid temporary context wrappers, configuration-only wrappers for a few constructor arguments, and speculative abstraction layers. Call the behavior owner directly when another function would only forward the call.
 - Code should be self-documenting. If a comment seems necessary, first try refactoring so the code explains itself.
 
 ### Rust
@@ -185,6 +186,9 @@ cargo run -r --bin orbitkv-metaserver
 
 ## Testing Principles
 
+- Keep test implementations and fixtures under `tests/`, separate from production source. Rust private unit tests live in each crate's `tests/unit/` tree, mirroring `src/`, and are loaded with `#[cfg(test)]` plus `#[path = "..."] mod tests;` from the owning module. Preserve private access and test names; do not expose production internals just to move tests.
+- Rust integration tests remain in each crate's `tests/` root with shared fixtures under `tests/common/`. Python tests and support code live in `python/tests/`. Performance workloads and results stay in the repository-root `benches/`.
+- Keep test-only helper implementations in the test modules too. Do not duplicate business logic or add forwarding production APIs for tests.
 - Do not add tests just for the sake of adding tests.
 - Before adding or keeping a test, answer: would skipping this test materially reduce confidence to merge a PR in its trigger area? If not, delete it or keep it out of routine gates.
 - Merge tests that protect the same contract; prefer table-driven cases with clear ids over copy-pasted methods.

@@ -10,6 +10,28 @@ Run the same command used by the pre-commit hook before merging Rust changes:
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+On CUDA 13 development machines, use
+`--no-default-features --features cuda-13,mooncake`, as configured in `prek.toml`.
+
+## Test Layout
+
+Keep each crate's private unit tests in `tests/unit/`, mirroring the source
+module tree. For example, `src/storage/read_cache.rs` loads
+`tests/unit/storage/read_cache.rs` with:
+
+```rust
+#[cfg(test)]
+#[path = "../../tests/unit/storage/read_cache.rs"]
+mod tests;
+```
+
+These remain unit tests inside the owning module, so `use super::*` preserves
+private access without expanding the production API. Test-only fixtures and
+helper implementations belong in the same test tree. Public integration tests
+stay in `tests/`, with shared fixtures in `tests/common/`. Cargo discovers the
+existing integration targets and runs the unit tests through their library or
+binary target; no additional test crate or runner is needed.
+
 ## Enabled Strict Lints
 
 The first strict pass enables rules that are low-noise on the current codebase

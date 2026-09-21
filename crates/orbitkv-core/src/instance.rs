@@ -905,4 +905,5 @@ impl InstanceContext {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/instance.rs"]
 mod tests;

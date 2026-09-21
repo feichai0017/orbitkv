@@ -145,6 +145,7 @@ impl Engine for P2pTransferService {
             blocks: found_blocks,
         } = self
             .engine
+            .storage
             .authorize_transfer(owner, &req.requester_id, &records)
             .ok_or_else(|| Status::failed_precondition("stale owner or residency candidate"))?;
 
