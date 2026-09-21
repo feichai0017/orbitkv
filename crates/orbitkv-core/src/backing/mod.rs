@@ -1,4 +1,6 @@
 #[cfg(feature = "mooncake")]
+mod fetch_plan;
+#[cfg(feature = "mooncake")]
 pub(super) mod mooncake;
 #[cfg(feature = "mooncake")]
 pub(super) mod mooncake_fetch;

@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 
 use dashmap::{DashMap, mapref::entry::Entry};
 use orbitkv_state::{
-    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryOperation, InventoryRecord,
-    InventoryStatus, StateKey,
+    BlockCandidates, CacheOwner, DISCOVERY_MAX_REPLICAS, INVENTORY_BATCH_BYTES,
+    INVENTORY_BATCH_RECORDS, InventoryOperation, InventoryRecord, InventoryStatus, ReplicaLocation,
+    StateKey,
 };
 use parking_lot::Mutex;
 use uuid::Uuid;
@@ -16,12 +17,6 @@ use uuid::Uuid;
 pub const DEFAULT_NODE_STALE_SECS: u64 = 30;
 pub const DEFAULT_TTL_MINUTES: u64 = 120;
 pub const DEFAULT_INVENTORY_BYTES_PER_NODE: usize = 256 * 1024 * 1024;
-
-#[derive(Debug, Clone)]
-pub struct PrefixEntry {
-    pub block_hash: Vec<u8>,
-    pub nodes: Vec<Arc<str>>,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct StoreConfig {
@@ -288,9 +283,8 @@ impl BlockHashStore {
         let reclaimable = candidates
             .into_iter()
             .filter(|r| {
-                self.visible_owners(&r.key)
+                self.visible_replicas(&r.key, node)
                     .into_iter()
-                    .filter(|owner| owner.as_ref() != node)
                     .take(2)
                     .count()
                     == 2
@@ -401,40 +395,58 @@ impl BlockHashStore {
         stats
     }
 
-    fn visible_owners(&self, key: &StateKey) -> Vec<Arc<str>> {
-        let candidates: Vec<_> = self
+    fn visible_replicas(&self, key: &StateKey, exclude: &str) -> Vec<ReplicaLocation> {
+        let mut candidates: Vec<_> = self
             .blocks
             .get(key)
-            .map(|owners| owners.iter().cloned().collect())
+            .map(|owners| {
+                owners
+                    .iter()
+                    .filter(|owner| owner.as_ref() != exclude)
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
+        candidates.sort_unstable();
         candidates
             .into_iter()
-            .filter(|owner| {
-                let Some(inventory) = self.node(owner) else {
-                    return false;
-                };
+            .filter_map(|endpoint| {
+                let inventory = self.node(&endpoint)?;
                 let state = inventory.lock();
-                !state.retired
-                    && state.progress.ready
-                    && state.last_seen.elapsed() <= self.config.node_stale_after
-                    && state.entries.contains_key(key)
+                if state.retired
+                    || !state.progress.ready
+                    || state.last_seen.elapsed() > self.config.node_stale_after
+                {
+                    return None;
+                }
+                Some(ReplicaLocation {
+                    owner: CacheOwner {
+                        endpoint: endpoint.to_string(),
+                        incarnation: state.node_id,
+                    },
+                    sequence: *state.entries.get(key)?,
+                })
             })
+            .take(DISCOVERY_MAX_REPLICAS)
             .collect()
     }
 
-    pub fn query_prefix(&self, namespace: &str, hashes: &[Vec<u8>]) -> Vec<PrefixEntry> {
-        let mut result = Vec::new();
-        for hash in hashes {
-            let nodes = self.visible_owners(&StateKey::new(namespace.to_owned(), hash.clone()));
-            if nodes.is_empty() {
-                break;
-            }
-            result.push(PrefixEntry {
-                block_hash: hash.clone(),
-                nodes,
-            });
-        }
-        result
+    /// Return bounded owner evidence for every position, including misses.
+    /// Candidates confer no right to read memory; the owner must validate and pin.
+    pub fn locate_blocks(
+        &self,
+        namespace: &str,
+        hashes: &[Vec<u8>],
+        exclude: &str,
+    ) -> Vec<BlockCandidates> {
+        hashes
+            .iter()
+            .map(|hash| {
+                let key = StateKey::new(namespace.to_owned(), hash.clone());
+                let replicas = self.visible_replicas(&key, exclude);
+                BlockCandidates { key, replicas }
+            })
+            .collect()
     }
 
     /// Cleanup is proportional to the expired owners' inventories, not all keys.

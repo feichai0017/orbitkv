@@ -41,6 +41,22 @@ impl TransferLockGuard {
         self.spawn_release();
     }
 
+    /// Keep source and destination memory alive even if the async caller is
+    /// cancelled. The blocking operation must drain submitted transfers before
+    /// returning; an elapsed deadline alone is not terminal completion.
+    pub(super) async fn run_with_buffers<B: Send + 'static, R: Send + 'static>(
+        self,
+        buffers: B,
+        transfer: impl FnOnce() -> R + Send + 'static,
+    ) -> Result<(B, R), tokio::task::JoinError> {
+        tokio::task::spawn_blocking(move || {
+            let result = transfer();
+            self.release();
+            (buffers, result)
+        })
+        .await
+    }
+
     fn spawn_release(&mut self) {
         let session_id = std::mem::take(&mut self.session_id);
         if session_id.is_empty() {
@@ -182,5 +198,31 @@ mod tests {
         drop(guard(&client, ""));
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finishes() {
+        let (client, counter) = start_counter_server().await;
+        let buffer = Arc::new(());
+        let observed = Arc::downgrade(&buffer);
+        let g = guard(&client, "in-flight");
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (finish, finished) = std::sync::mpsc::channel();
+        let task = tokio::spawn(async move {
+            g.run_with_buffers(buffer, move || {
+                started.send(()).unwrap();
+                finished.recv_timeout(Duration::from_secs(5)).unwrap();
+            })
+            .await
+            .unwrap()
+        });
+        ready.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(observed.upgrade().is_some());
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+        finish.send(()).unwrap();
+        wait_for_count(&counter, 1).await;
+        assert!(observed.upgrade().is_none());
     }
 }

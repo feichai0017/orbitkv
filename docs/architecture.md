@@ -38,8 +38,9 @@ host and needs neither MetaServer nor peer gRPC. Current SSD backing is a cache
 file truncated on Cache Manager startup, not durable KV storage across manager
 restarts. In the current multi-node path,
 each manager asynchronously advertises sealed block hashes to the separate
-MetaServer, asks it for candidates after a local miss, then authorizes/pins a
-source through peer gRPC before Mooncake reads bytes. That directory can lose
+MetaServer, checks cached candidates after a local miss, and looks up missing
+evidence in bounded batches. It then validates/pins a source through peer gRPC
+before Mooncake reads bytes. That directory can lose
 remote-hit information on restart; it is not a high-availability deployment.
 
 Standalone deployment has no gRPC listener. Registration, health, sessions, and
@@ -248,8 +249,10 @@ synchronizes its sealed DRAM inventory asynchronously and heartbeats its node
 session. Actual insertions and removals share a monotonic residency sequence;
 bounded snapshot pages and ordered deltas reconstruct the directory after
 restart or lost history. Incomplete replacement views stay hidden until commit.
-After a local miss, it queries the service for candidate owners. A selected
-source Cache Manager authorizes and pins its blocks through gRPC, then Mooncake reads
+After a local miss, it checks a bounded positive candidate index, batching
+uncached keys through `LocateBlocks`. The requester plans contiguous spans. A
+selected source checks its runtime UUID and each insertion sequence before
+pinning the batch through gRPC, then Mooncake reads
 the bytes into the destination's pinned memory. The destination can cache that
 replica and restore it to framework HBM through its normal cache API. Network
 gRPC carries control metadata and leases; Mooncake carries KV bytes. Mooncake's
@@ -258,9 +261,13 @@ P2P handshake supplies transport endpoint metadata, not KV ownership.
 The present catalog is soft state and has no replicated persistence. Recovery
 from directory restart is implemented and tested over real gRPC, including idle
 owners, concurrent eviction and journal overflow. It remains a single service:
-remote discovery can be unavailable during failure or reconstruction. D0 covers
-DRAM evidence; remote SSD, an embedded candidate index, multi-host failover and
-transfer-capability fencing require later qualification. See the
+cold remote discovery can be unavailable during failure or reconstruction;
+unexpired cached candidates still reach their source without a directory RPC.
+DRAM evidence and bounded candidate caching are implemented. Remote SSD,
+embedded catalogs, multi-host failover and transfer-capability fencing require
+later qualification. Caller cancellation now retains transfer buffers and the
+source-release guard through blocking completion; source timeout reclamation
+is not yet qualified as transport revocation. See the
 [protocol and limits](../crates/orbitkv-metaserver/README.md).
 
 The agreed target keeps one Cache Manager per host, embeds a sharded replica

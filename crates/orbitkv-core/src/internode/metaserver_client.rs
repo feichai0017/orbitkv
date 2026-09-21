@@ -3,14 +3,18 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+#[cfg(feature = "mooncake")]
+use super::discovery::{CANDIDATE_CACHE_BYTES, CandidateIndex};
 use log::warn;
 use orbitkv_common::grpc::{GRPC_CLIENT_HTTP2_KEEPALIVE_INTERVAL, GRPC_CONNECT_TIMEOUT};
-use orbitkv_proto::proto::engine::meta_server_client::MetaServerClient as GrpcClient;
 #[cfg(feature = "mooncake")]
-use orbitkv_proto::proto::engine::{FetchSegment, QueryPrefixBlocksRequest};
+use orbitkv_proto::proto::engine::LocateBlocksRequest;
+use orbitkv_proto::proto::engine::meta_server_client::MetaServerClient as GrpcClient;
 use orbitkv_proto::proto::engine::{
     HeartbeatNodeRequest, SyncInventoryRequest, UnregisterNodeRequest,
 };
+#[cfg(feature = "mooncake")]
+use orbitkv_state::{BlockCandidates, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_KEYS, ReplicaLocation};
 use orbitkv_state::{InventoryOperation, InventoryStatus, StateKey};
 use tokio::sync::{Notify, watch};
 use tokio::time::{Duration, Instant};
@@ -27,21 +31,6 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
 const MIN_RETRY: Duration = Duration::from_millis(100);
 const MAX_RETRY: Duration = Duration::from_secs(5);
-
-#[cfg(feature = "mooncake")]
-#[derive(Debug)]
-pub(crate) enum ClientError {
-    RpcFailed(String),
-}
-
-#[cfg(feature = "mooncake")]
-impl std::fmt::Display for ClientError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::RpcFailed(msg) => write!(f, "RPC failed: {msg}"),
-        }
-    }
-}
 
 pub struct MetaServerClientConfig {
     pub metaserver_addr: String,
@@ -71,6 +60,13 @@ struct Acknowledgement {
 }
 
 pub struct MetaServerClient {
+    pub(crate) node_id: Uuid,
+    #[cfg(feature = "mooncake")]
+    advertise_addr: String,
+    #[cfg(feature = "mooncake")]
+    candidates: parking_lot::Mutex<CandidateIndex>,
+    #[cfg(feature = "mooncake")]
+    discovery_gate: tokio::sync::Mutex<()>,
     read_cache: Weak<ReadCache>,
     control: Arc<Control>,
     shutdown: watch::Sender<bool>,
@@ -98,10 +94,11 @@ impl MetaServerClient {
         let control = Arc::new(Control::default());
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (progress_tx, progress) = watch::channel(Acknowledgement::default());
+        let node_id = Uuid::new_v4();
         let worker = InventorySync {
             client: client.clone(),
-            node: config.advertise_addr,
-            node_id: Uuid::new_v4().to_string(),
+            node: config.advertise_addr.clone(),
+            node_id: node_id.to_string(),
             epoch: String::new(),
             progress: InventoryStatus::default(),
             generation: 0,
@@ -119,6 +116,13 @@ impl MetaServerClient {
             progress_tx,
         ));
         Ok(Self {
+            node_id,
+            #[cfg(feature = "mooncake")]
+            advertise_addr: config.advertise_addr,
+            #[cfg(feature = "mooncake")]
+            candidates: parking_lot::Mutex::new(CandidateIndex::new(CANDIDATE_CACHE_BYTES)),
+            #[cfg(feature = "mooncake")]
+            discovery_gate: tokio::sync::Mutex::new(()),
             read_cache,
             control,
             shutdown,
@@ -173,22 +177,116 @@ impl MetaServerClient {
     }
 
     #[cfg(feature = "mooncake")]
-    pub(crate) async fn query_plan(
+    pub(crate) async fn locate_blocks(
         &self,
         namespace: &str,
         hashes: &[Vec<u8>],
-        exclude_node: &str,
-    ) -> Result<Vec<FetchSegment>, ClientError> {
-        let mut client = self.query_client.clone();
-        let response = client
-            .query_prefix_blocks(timed(QueryPrefixBlocksRequest {
-                namespace: namespace.to_owned(),
-                block_hashes: hashes.to_vec(),
-                exclude_node: exclude_node.to_owned(),
-            }))
-            .await
-            .map_err(|e| ClientError::RpcFailed(e.to_string()))?;
-        Ok(response.into_inner().segments)
+    ) -> Result<Vec<BlockCandidates>, String> {
+        let keys: Vec<_> = hashes
+            .iter()
+            .map(|hash| StateKey::new(namespace.into(), hash.clone()))
+            .collect();
+        let cached = || {
+            let mut index = self.candidates.lock();
+            let now = std::time::Instant::now();
+            keys.iter()
+                .map(|key| index.get(key, now))
+                .collect::<Vec<_>>()
+        };
+        let rows = cached();
+        let hits = rows.iter().filter(|row| row.is_some()).count();
+        for (result, count) in [("hit", hits), ("miss", rows.len() - hits)] {
+            core_metrics().candidate_cache_lookups.add(
+                count as u64,
+                &[opentelemetry::KeyValue::new("result", result)],
+            );
+        }
+        if rows.iter().all(Option::is_some) {
+            return Ok(rows.into_iter().flatten().collect());
+        }
+        // Coalesce concurrent misses; a waiter rechecks the cache after the lookup.
+        // Hits never wait for an unrelated directory RPC.
+        let _lookup = self.discovery_gate.lock().await;
+        let mut rows = cached();
+        let missing: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| row.is_none().then_some(i))
+            .collect();
+        let mut cursor = 0;
+        while cursor < missing.len() {
+            let start = cursor;
+            let mut bytes = namespace.len();
+            while cursor < missing.len() && cursor - start < DISCOVERY_MAX_KEYS {
+                let next = hashes[missing[cursor]].len();
+                if bytes.saturating_add(next) > DISCOVERY_MAX_BYTES {
+                    break;
+                }
+                bytes += next;
+                cursor += 1;
+            }
+            if cursor == start {
+                return Err("discovery key exceeds byte budget".into());
+            }
+            let batch: Vec<_> = missing[start..cursor]
+                .iter()
+                .map(|&i| hashes[i].clone())
+                .collect();
+            orbitkv_state::validate_discovery_query(namespace, &batch)?;
+            let response = self
+                .query_client
+                .clone()
+                .locate_blocks(timed(LocateBlocksRequest {
+                    namespace: namespace.into(),
+                    block_hashes: batch,
+                    exclude_node: self.advertise_addr.clone(),
+                }))
+                .await;
+            core_metrics().candidate_lookup_rpcs.add(
+                1,
+                &[opentelemetry::KeyValue::new(
+                    "result",
+                    if response.is_ok() { "ok" } else { "error" },
+                )],
+            );
+            let response = match response {
+                Ok(response) => response.into_inner(),
+                Err(error) => {
+                    warn!("Candidate lookup failed; retaining known prefix evidence: {error}");
+                    break;
+                }
+            };
+            if response.blocks.len() != cursor - start {
+                return Err("discovery response count mismatch".into());
+            }
+            // Validate the whole batch before populating the index.
+            let validated: Vec<_> = response
+                .blocks
+                .into_iter()
+                .zip(&missing[start..cursor])
+                .map(|(row, &i)| row.into_candidates(keys[i].clone(), &self.advertise_addr))
+                .collect::<Result<_, _>>()?;
+            let mut index = self.candidates.lock();
+            for (row, &i) in validated.into_iter().zip(&missing[start..cursor]) {
+                index.insert(row.clone(), std::time::Instant::now());
+                rows[i] = Some(row);
+            }
+        }
+        Ok(rows
+            .into_iter()
+            .zip(keys)
+            .map(|(row, key)| {
+                row.unwrap_or(BlockCandidates {
+                    key,
+                    replicas: Vec::new(),
+                })
+            })
+            .collect())
+    }
+
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn reject_candidate(&self, key: &StateKey, replica: &ReplicaLocation) {
+        self.candidates.lock().reject(key, replica);
     }
 }
 

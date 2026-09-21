@@ -1,23 +1,26 @@
-// Remote block fetch: MetaServer query -> OrbitKV authorization -> Mooncake READ.
+// Candidate discovery -> requester planning -> source authorization -> Mooncake READ.
 
 use std::collections::HashMap;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
-use log::{debug, info, warn};
+use hashlink::LinkedHashMap;
+use log::{info, warn};
 use orbitkv_proto::proto::engine::engine_client::EngineClient;
 use orbitkv_proto::proto::engine::{
-    FetchSegment, QueryBlocksForTransferRequest, QueryBlocksForTransferResponse, TransferBlockInfo,
+    QueryBlocksForTransferRequest, QueryBlocksForTransferResponse, TransferBlockInfo,
 };
 use orbitkv_transfer::{TransferOp, TransferSlice};
+use parking_lot::Mutex;
 use tonic::transport::{Channel, Endpoint};
 
 use orbitkv_common::NumaNode;
 
 use opentelemetry::KeyValue;
 
+pub(crate) use super::fetch_plan::FetchPlan;
+use super::fetch_plan::{FetchSegment, SegmentFetcher, SegmentOutcome, execute_fetch_plan};
 use super::transfer_lock_guard::TransferLockGuard;
 use super::{AllocateFn, MooncakeTransport, PrefetchResult};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
@@ -49,139 +52,39 @@ pub(crate) struct MooncakeFetchStore {
     advertise_addr: String,
     /// Lazy gRPC channel cache keyed by remote address. Tonic channels multiplex
     /// requests over a single HTTP/2 connection; cloning is cheap.
-    grpc_channels: Arc<DashMap<String, EngineClient<Channel>>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FetchPlanSegment {
-    node: String,
-    start: usize,
-    end: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FetchPlan {
-    segments: Vec<FetchPlanSegment>,
-    block_count: usize,
-}
-
-impl FetchPlan {
-    pub(crate) fn block_count(&self) -> usize {
-        self.block_count
-    }
-
-    fn segment_blocks_summary(&self) -> String {
-        self.segments
-            .iter()
-            .map(|segment| (segment.end - segment.start).to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-}
-
-fn validate_fetch_plan(
-    segments: Vec<FetchSegment>,
-    hash_count: usize,
-    exclude_node: &str,
-) -> Result<Option<FetchPlan>, String> {
-    if segments.is_empty() {
-        return Ok(None);
-    }
-
-    let mut validated = Vec::with_capacity(segments.len());
-    let mut offset = 0usize;
-    for (index, segment) in segments.into_iter().enumerate() {
-        if segment.node.is_empty() {
-            return Err(format!("segment {index} has an empty node"));
-        }
-        if segment.node == exclude_node {
-            return Err(format!("segment {index} selects the excluded requester"));
-        }
-        if segment.block_count == 0 {
-            return Err(format!("segment {index} has zero blocks"));
-        }
-        if validated
-            .last()
-            .is_some_and(|previous: &FetchPlanSegment| previous.node == segment.node)
-        {
-            return Err(format!(
-                "segment {index} repeats the previous node instead of merging"
-            ));
-        }
-
-        let count = usize::try_from(segment.block_count)
-            .map_err(|_| format!("segment {index} block count exceeds usize"))?;
-        let end = offset
-            .checked_add(count)
-            .ok_or_else(|| format!("segment {index} block count overflows"))?;
-        if end > hash_count {
-            return Err(format!(
-                "segment {index} ends at block {end}, beyond request length {hash_count}"
-            ));
-        }
-        validated.push(FetchPlanSegment {
-            node: segment.node,
-            start: offset,
-            end,
-        });
-        offset = end;
-    }
-
-    Ok(Some(FetchPlan {
-        segments: validated,
-        block_count: offset,
-    }))
-}
-
-#[tonic::async_trait]
-trait SegmentFetcher {
-    async fn fetch_segment(&self, remote_addr: &str, hashes: &[Vec<u8>]) -> PrefetchResult;
+    grpc_channels: Arc<Mutex<LinkedHashMap<String, EngineClient<Channel>>>>,
 }
 
 struct MooncakeSegmentFetcher<'a> {
     store: &'a MooncakeFetchStore,
     req_id: &'a str,
-    namespace: &'a str,
 }
 
 #[tonic::async_trait]
 impl SegmentFetcher for MooncakeSegmentFetcher<'_> {
-    async fn fetch_segment(&self, remote_addr: &str, hashes: &[Vec<u8>]) -> PrefetchResult {
-        self.store
-            .fetch_blocks(remote_addr, self.req_id, self.namespace, hashes)
-            .await
-    }
-}
-
-async fn execute_fetch_plan<F: SegmentFetcher>(
-    fetcher: &F,
-    plan: &FetchPlan,
-    namespace: &str,
-    hashes: &[Vec<u8>],
-) -> (PrefetchResult, usize, Option<(usize, usize, usize)>) {
-    let mut fetched = Vec::with_capacity(plan.block_count);
-    let mut completed_segments = 0usize;
-    let mut failed_segment = None;
-
-    for (index, segment) in plan.segments.iter().enumerate() {
-        let expected = &hashes[segment.start..segment.end];
-        let returned = fetcher.fetch_segment(&segment.node, expected).await;
-        let contiguous = returned
-            .iter()
-            .zip(expected)
-            .take_while(|((key, _), hash)| key.namespace == namespace && key.hash == **hash)
-            .count();
-        let returned_count = returned.len();
-        fetched.extend(returned.into_iter().take(contiguous));
-
-        if contiguous != expected.len() || returned_count != expected.len() {
-            failed_segment = Some((index, expected.len(), contiguous));
-            break;
+    async fn fetch_segment(&self, segment: &FetchSegment) -> SegmentOutcome {
+        let result = mooncake_fetch_task(
+            &self.store.transfer,
+            &self.store.allocate_fn,
+            &self.store.grpc_channels,
+            segment,
+            self.req_id,
+            &self.store.advertise_addr,
+        )
+        .await;
+        if matches!(result, SegmentOutcome::Rejected) {
+            for record in &segment.records {
+                self.store.metaserver_client.reject_candidate(
+                    &record.key,
+                    &orbitkv_state::ReplicaLocation {
+                        owner: segment.owner.clone(),
+                        sequence: record.sequence,
+                    },
+                );
+            }
         }
-        completed_segments += 1;
+        result
     }
-
-    (fetched, completed_segments, failed_segment)
 }
 
 impl MooncakeFetchStore {
@@ -200,48 +103,28 @@ impl MooncakeFetchStore {
             transfer,
             allocate_fn,
             advertise_addr,
-            grpc_channels: Arc::new(DashMap::new()),
+            grpc_channels: Arc::new(Mutex::new(LinkedHashMap::new())),
         }
     }
 
-    /// Query MetaServer for a validated ordered plan covering a prefix of `hashes`.
+    /// Use cached positive evidence before consulting the directory.
     pub(crate) async fn query_plan(
         &self,
         namespace: &str,
         hashes: &[Vec<u8>],
     ) -> Option<FetchPlan> {
-        if hashes.is_empty() {
-            return None;
-        }
-
-        let segments = match self
+        let candidates = match self
             .metaserver_client
-            .query_plan(namespace, hashes, &self.advertise_addr)
+            .locate_blocks(namespace, hashes)
             .await
         {
-            Ok(segments) => segments,
+            Ok(candidates) => candidates,
             Err(e) => {
-                warn!("MetaServer query failed for remote fetch: {e}");
+                warn!("Candidate discovery failed: {e}");
                 return None;
             }
         };
-
-        let plan = match validate_fetch_plan(segments, hashes.len(), &self.advertise_addr) {
-            Ok(plan) => plan?,
-            Err(error) => {
-                warn!("MetaServer returned invalid remote fetch plan: {error}");
-                return None;
-            }
-        };
-
-        debug!(
-            "Remote prefix query: segments={} prefix={}/{}",
-            plan.segments.len(),
-            plan.block_count,
-            hashes.len(),
-        );
-
-        Some(plan)
+        FetchPlan::new(candidates)
     }
 
     pub(crate) async fn fetch_plan(
@@ -251,63 +134,30 @@ impl MooncakeFetchStore {
         namespace: &str,
         hashes: &[Vec<u8>],
     ) -> PrefetchResult {
+        if !plan.matches(namespace, hashes) {
+            warn!("Remote fetch plan does not match the requested state");
+            return Vec::new();
+        }
         let started_at = Instant::now();
         let fetcher = MooncakeSegmentFetcher {
             store: self,
             req_id,
-            namespace,
         };
-        let (fetched, completed_segments, failure) =
-            execute_fetch_plan(&fetcher, plan, namespace, hashes).await;
+        let (fetched, attempts, completed) = execute_fetch_plan(&fetcher, plan).await;
         let metrics = core_metrics();
         metrics
             .remote_fetch_plan_segments
-            .record(plan.segments.len() as u64, &[]);
+            .record(attempts as u64, &[]);
         metrics
             .remote_fetch_plan_completed_segments
-            .record(completed_segments as u64, &[]);
-        let (failed_segment, failed_planned_blocks, failed_returned_blocks) = failure
-            .map(|(index, planned, returned)| {
-                (index.to_string(), planned.to_string(), returned.to_string())
-            })
-            .unwrap_or_else(|| ("none".into(), "none".into(), "none".into()));
-
+            .record(completed as u64, &[]);
         info!(
-            "Mooncake multi-node fetch plan summary: req_id={} planned_segments={} completed_segments={} planned_blocks={} segment_blocks={} fetched_blocks={} failed_segment={} failed_segment_planned_blocks={} failed_segment_returned_blocks={} total_ms={:.2}",
-            req_id,
-            plan.segments.len(),
-            completed_segments,
-            plan.block_count,
-            plan.segment_blocks_summary(),
+            "Mooncake fetch plan: req_id={req_id} attempted_segments={attempts} completed_segments={completed} planned_blocks={} fetched_blocks={} total_ms={:.2}",
+            plan.block_count(),
             fetched.len(),
-            failed_segment,
-            failed_planned_blocks,
-            failed_returned_blocks,
-            started_at.elapsed().as_secs_f64() * 1000.0,
+            started_at.elapsed().as_secs_f64() * 1000.0
         );
-
         fetched
-    }
-
-    /// Fetch `hashes` from `remote_addr`.
-    pub(crate) async fn fetch_blocks(
-        &self,
-        remote_addr: &str,
-        req_id: &str,
-        namespace: &str,
-        hashes: &[Vec<u8>],
-    ) -> PrefetchResult {
-        mooncake_fetch_task(
-            &self.transfer,
-            &self.allocate_fn,
-            &self.grpc_channels,
-            remote_addr,
-            req_id,
-            &self.advertise_addr,
-            namespace,
-            hashes,
-        )
-        .await
     }
 }
 
@@ -315,62 +165,63 @@ impl MooncakeFetchStore {
 ///
 /// 1. gRPC QueryBlocksForTransfer authorizes and pins the blocks.
 /// 2. Mooncake opens the returned segment and READs all block ranges.
-/// 3. ReleaseTransferLock is fire-and-forget and crash-safe via timeout.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Mooncake task arguments are the per-fetch context passed from the scheduler"
-)]
+/// 3. ReleaseTransferLock is sent once the blocking READ has finished.
 async fn mooncake_fetch_task(
     transfer: &Arc<MooncakeTransport>,
     allocate_fn: &AllocateFn,
-    grpc_channels: &DashMap<String, EngineClient<Channel>>,
-    remote_addr: &str,
+    grpc_channels: &Mutex<LinkedHashMap<String, EngineClient<Channel>>>,
+    segment: &FetchSegment,
     req_id: &str,
     advertise_addr: &str,
-    namespace: &str,
-    block_hashes: &[Vec<u8>],
-) -> PrefetchResult {
+) -> SegmentOutcome {
+    let remote_addr = &segment.owner.endpoint;
+    let namespace = &segment.records[0].key.namespace;
+    let block_hashes: Vec<_> = segment.records.iter().map(|r| r.key.hash.clone()).collect();
     let t0 = Instant::now();
 
     // Query the OrbitKV authority before exposing any physical addresses.
     let query_start = Instant::now();
-    let (client, mut response) = match query_remote_blocks(
-        grpc_channels,
-        remote_addr,
-        namespace,
-        block_hashes,
-        advertise_addr,
-    )
-    .await
-    {
-        Ok(cr) => cr,
-        Err(e) => {
-            warn!("Remote query to {remote_addr} failed: {e}");
-            core_metrics()
-                .remote_fetch_total
-                .add(1, &[KeyValue::new("status", "error")]);
-            return Vec::new();
-        }
-    };
+    let (client, mut response) =
+        match query_remote_blocks(grpc_channels, segment, advertise_addr).await {
+            Ok(cr) => cr,
+            Err(QueryError::Rejected) => {
+                core_metrics()
+                    .remote_fetch_total
+                    .add(1, &[KeyValue::new("status", "rejected")]);
+                return SegmentOutcome::Rejected;
+            }
+            Err(QueryError::Failed(e)) => {
+                warn!("Remote query to {remote_addr} failed: {e}");
+                core_metrics()
+                    .remote_fetch_total
+                    .add(1, &[KeyValue::new("status", "error")]);
+                return SegmentOutcome::Failed;
+            }
+        };
     let query_elapsed = query_start.elapsed();
 
-    // The holder pinned the blocks when the query created this session, so
-    // every exit from here — completion, error, panic, or this future being
-    // dropped — must send ReleaseTransferLock. The guard's Drop covers the
-    // paths no explicit call can reach.
+    // The guard moves into the blocking transfer with the destination buffers.
+    // Cancelling this future cannot release either while the READ is running.
     let lock_guard = TransferLockGuard::new(
         client,
         std::mem::take(&mut response.transfer_session_id),
         remote_addr,
         req_id,
     );
-    if response.transfer_endpoint.is_empty() {
-        warn!("Remote query to {remote_addr} returned an empty Mooncake endpoint");
+    if response.transfer_endpoint.is_empty()
+        || response.blocks.len() != block_hashes.len()
+        || response
+            .blocks
+            .iter()
+            .zip(&block_hashes)
+            .any(|(block, hash)| block.block_hash != *hash)
+    {
+        warn!("Remote query to {remote_addr} returned invalid transfer authorization");
         lock_guard.release();
         core_metrics()
             .remote_fetch_total
             .add(1, &[KeyValue::new("status", "error")]);
-        return Vec::new();
+        return SegmentOutcome::Failed;
     }
 
     // Mooncake READ all blocks + build SealedBlocks.
@@ -388,6 +239,7 @@ async fn mooncake_fetch_task(
         &response.transfer_endpoint,
         &blocks,
         transfer_timeout,
+        lock_guard,
     )
     .await
     {
@@ -397,16 +249,12 @@ async fn mooncake_fetch_task(
             transfer
                 .engine()
                 .invalidate_segment(&response.transfer_endpoint);
-            lock_guard.release();
             core_metrics()
                 .remote_fetch_total
                 .add(1, &[KeyValue::new("status", "error")]);
-            return Vec::new();
+            return SegmentOutcome::Failed;
         }
     };
-
-    // 4. Release transfer lock (fire-and-forget: spawns a detached task)
-    lock_guard.release();
 
     let elapsed = t0.elapsed();
     let mb = total_bytes as f64 / (1024.0 * 1024.0);
@@ -437,7 +285,7 @@ async fn mooncake_fetch_task(
     m.remote_fetch_duration_seconds
         .record(elapsed.as_secs_f64(), ok);
     m.remote_fetch_bytes.add(total_bytes, ok);
-    result
+    SegmentOutcome::Fetched(result)
 }
 
 /// One fetched slot: its Mooncake-staged segments plus the NUMA node they sit on.
@@ -454,6 +302,7 @@ async fn fetch_blocks_via_mooncake(
     transfer_endpoint: &str,
     blocks: &[TransferBlockInfo],
     transfer_timeout: Duration,
+    lock_guard: TransferLockGuard,
 ) -> Result<(PrefetchResult, TransferTiming), String> {
     if blocks.is_empty() {
         return Ok((Vec::new(), TransferTiming::default()));
@@ -550,17 +399,18 @@ async fn fetch_blocks_via_mooncake(
     let wait_start = Instant::now();
     let transfer = Arc::clone(transfer);
     let transfer_endpoint = transfer_endpoint.to_string();
-    tokio::task::spawn_blocking(move || {
-        transfer.engine().submit_and_wait(
-            TransferOp::Read,
-            &transfer_endpoint,
-            &all_descs,
-            transfer_timeout,
-        )
-    })
-    .await
-    .map_err(|error| format!("Mooncake READ task failed: {error}"))?
-    .map_err(|error| format!("Mooncake READ failed: {error}"))?;
+    let (block_allocs, transferred) = lock_guard
+        .run_with_buffers(block_allocs, move || {
+            transfer.engine().submit_and_wait(
+                TransferOp::Read,
+                &transfer_endpoint,
+                &all_descs,
+                transfer_timeout,
+            )
+        })
+        .await
+        .map_err(|error| format!("Mooncake READ task failed: {error}"))?;
+    transferred.map_err(|error| format!("Mooncake READ failed: {error}"))?;
     timing.mooncake_wait = wait_start.elapsed();
 
     // Build SealedBlocks from allocated memory
@@ -748,10 +598,11 @@ struct TransferTiming {
 }
 
 fn get_or_create_channel(
-    cache: &DashMap<String, EngineClient<Channel>>,
+    cache: &Mutex<LinkedHashMap<String, EngineClient<Channel>>>,
     addr: &str,
 ) -> Result<EngineClient<Channel>, String> {
-    if let Some(client) = cache.get(addr) {
+    let mut cache = cache.lock();
+    if let Some(client) = cache.to_back(addr) {
         return Ok(client.clone());
     }
     let url = if addr.starts_with("http://") || addr.starts_with("https://") {
@@ -760,54 +611,62 @@ fn get_or_create_channel(
         format!("http://{addr}")
     };
     let channel = Endpoint::from_shared(url)
-        .map_err(|e| format!("invalid remote address: {e}"))?
-        .connect_timeout(Duration::from_secs(5))
+        .map_err(|e| e.to_string())?
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(3))
         .connect_lazy();
-    // Match the engine server's 64 MiB message cap: a QueryBlocksForTransfer
-    // response carries per-slot transfer descriptors, so a large block batch
-    // overflows tonic's default 4 MiB decode limit.
     const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
     let client = EngineClient::new(channel)
         .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
         .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
+    if cache.len() == 64 {
+        cache.pop_front();
+    }
     cache.insert(addr.to_string(), client.clone());
     Ok(client)
 }
 
-/// Get/create gRPC channel and call QueryBlocksForTransfer.
+enum QueryError {
+    Rejected,
+    Failed(String),
+}
+
 async fn query_remote_blocks(
-    grpc_channels: &DashMap<String, EngineClient<Channel>>,
-    remote_addr: &str,
-    namespace: &str,
-    block_hashes: &[Vec<u8>],
+    grpc_channels: &Mutex<LinkedHashMap<String, EngineClient<Channel>>>,
+    segment: &FetchSegment,
     advertise_addr: &str,
-) -> Result<(EngineClient<Channel>, QueryBlocksForTransferResponse), String> {
-    let mut client = get_or_create_channel(grpc_channels, remote_addr)?;
-
+) -> Result<(EngineClient<Channel>, QueryBlocksForTransferResponse), QueryError> {
+    let mut client = get_or_create_channel(grpc_channels, &segment.owner.endpoint)
+        .map_err(QueryError::Failed)?;
     let request = QueryBlocksForTransferRequest {
-        namespace: namespace.to_string(),
-        block_hashes: block_hashes.to_vec(),
+        namespace: segment.records[0].key.namespace.clone(),
+        block_hashes: segment.records.iter().map(|r| r.key.hash.clone()).collect(),
         requester_id: advertise_addr.to_string(),
+        owner_incarnation: segment.owner.incarnation.to_string(),
+        residency_sequences: segment.records.iter().map(|r| r.sequence).collect(),
     };
-
     let response = client
         .query_blocks_for_transfer(request)
         .await
-        .map_err(|e| format!("QueryBlocksForTransfer RPC failed: {e}"))?
+        .map_err(|e| {
+            if e.code() == tonic::Code::FailedPrecondition {
+                QueryError::Rejected
+            } else {
+                QueryError::Failed(e.to_string())
+            }
+        })?
         .into_inner();
-
-    if let Some(st) = &response.status
-        && !st.ok
+    if !response.status.as_ref().is_some_and(|st| st.ok) || response.transfer_session_id.is_empty()
     {
-        return Err(format!("remote returned error: {}", st.message));
+        return Err(QueryError::Failed("missing transfer authorization".into()));
     }
-
     Ok((client, response))
 }
 
 /// Compute client-side transfer timeout from server's lock timeout.
-/// Returns `max(server_timeout - 60s, 10s)` so the client always finishes
-/// before the server force-releases the lock.
+/// This is a submission budget, not proof of source lifetime: Mooncake drains
+/// already-submitted work even past the deadline. Source timeout/revocation
+/// qualification is still required before the distributed path is production-ready.
 fn transfer_timeout_from_server(lock_timeout_secs: u32) -> Duration {
     let server = Duration::from_secs(lock_timeout_secs as u64);
     server
@@ -818,7 +677,6 @@ fn transfer_timeout_from_server(lock_timeout_secs: u32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
     use std::num::NonZeroU64;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -839,153 +697,6 @@ mod tests {
 
     fn remaining(bytes: u64) -> HashMap<NumaNode, u64> {
         HashMap::from([(NumaNode(0), bytes)])
-    }
-
-    fn segment(node: &str, block_count: u32) -> FetchSegment {
-        FetchSegment {
-            node: node.to_string(),
-            block_count,
-        }
-    }
-
-    fn fetched_block(hash: u8) -> (StateKey, Arc<SealedBlock>) {
-        (
-            StateKey::new("ns".to_string(), vec![hash]),
-            Arc::new(SealedBlock::from_slots(Vec::new())),
-        )
-    }
-
-    #[derive(Default)]
-    struct FakeSegmentFetcher {
-        calls: Mutex<Vec<(String, Vec<Vec<u8>>)>>,
-        responses: Mutex<VecDeque<PrefetchResult>>,
-    }
-
-    #[tonic::async_trait]
-    impl SegmentFetcher for FakeSegmentFetcher {
-        async fn fetch_segment(&self, remote_addr: &str, hashes: &[Vec<u8>]) -> PrefetchResult {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((remote_addr.to_string(), hashes.to_vec()));
-            self.responses
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_default()
-        }
-    }
-
-    #[test]
-    fn validates_ordered_fetch_plan_offsets() {
-        let plan = validate_fetch_plan(
-            vec![segment("node-a", 2), segment("node-b", 1)],
-            3,
-            "requester",
-        )
-        .expect("plan should be valid")
-        .expect("plan should be non-empty");
-
-        assert_eq!(plan.block_count, 3);
-        assert_eq!(plan.segment_blocks_summary(), "2,1");
-        assert_eq!(
-            plan.segments,
-            vec![
-                FetchPlanSegment {
-                    node: "node-a".into(),
-                    start: 0,
-                    end: 2,
-                },
-                FetchPlanSegment {
-                    node: "node-b".into(),
-                    start: 2,
-                    end: 3,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_fetch_plans() {
-        for (segments, expected) in [
-            (vec![segment("", 1)], "empty node"),
-            (vec![segment("node-a", 0)], "zero blocks"),
-            (vec![segment("requester", 1)], "excluded requester"),
-            (vec![segment("node-a", 2)], "beyond request length"),
-            (
-                vec![segment("node-a", 1), segment("node-a", 1)],
-                "repeats the previous node",
-            ),
-        ] {
-            let error =
-                validate_fetch_plan(segments, 1, "requester").expect_err("plan should be rejected");
-            assert!(error.contains(expected), "unexpected error: {error}");
-        }
-    }
-
-    #[tokio::test]
-    async fn fetch_plan_executes_segments_in_order() {
-        let plan = validate_fetch_plan(
-            vec![segment("node-a", 2), segment("node-b", 1)],
-            3,
-            "requester",
-        )
-        .unwrap()
-        .unwrap();
-        let fetcher = FakeSegmentFetcher {
-            calls: Mutex::new(Vec::new()),
-            responses: Mutex::new(VecDeque::from([
-                vec![fetched_block(1), fetched_block(2)],
-                vec![fetched_block(3)],
-            ])),
-        };
-        let hashes = vec![vec![1], vec![2], vec![3]];
-
-        let (fetched, completed, failure) =
-            execute_fetch_plan(&fetcher, &plan, "ns", &hashes).await;
-
-        assert_eq!(fetched.len(), 3);
-        assert_eq!(completed, 2);
-        assert_eq!(failure, None);
-        assert_eq!(
-            *fetcher.calls.lock().unwrap(),
-            vec![
-                ("node-a".into(), vec![vec![1], vec![2]]),
-                ("node-b".into(), vec![vec![3]]),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn fetch_plan_stops_after_first_short_segment() {
-        let plan = validate_fetch_plan(
-            vec![
-                segment("node-a", 1),
-                segment("node-b", 1),
-                segment("node-c", 1),
-            ],
-            3,
-            "requester",
-        )
-        .unwrap()
-        .unwrap();
-        let fetcher = FakeSegmentFetcher {
-            calls: Mutex::new(Vec::new()),
-            responses: Mutex::new(VecDeque::from([
-                vec![fetched_block(1)],
-                Vec::new(),
-                vec![fetched_block(3)],
-            ])),
-        };
-        let hashes = vec![vec![1], vec![2], vec![3]];
-
-        let (fetched, completed, failure) =
-            execute_fetch_plan(&fetcher, &plan, "ns", &hashes).await;
-
-        assert_eq!(fetched.len(), 1);
-        assert_eq!(completed, 1);
-        assert_eq!(failure, Some((1, 1, 0)));
-        assert_eq!(fetcher.calls.lock().unwrap().len(), 2);
     }
 
     #[test]

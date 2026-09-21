@@ -98,6 +98,10 @@ pub(crate) struct CoreMetrics {
     #[cfg(feature = "mooncake")]
     pub remote_fetch_total: Counter<u64>,
     #[cfg(feature = "mooncake")]
+    pub candidate_cache_lookups: Counter<u64>,
+    #[cfg(feature = "mooncake")]
+    pub candidate_lookup_rpcs: Counter<u64>,
+    #[cfg(feature = "mooncake")]
     pub remote_fetch_duration_seconds: Histogram<f64>,
     #[cfg(feature = "mooncake")]
     pub remote_fetch_bytes: Counter<u64>,
@@ -458,9 +462,15 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_description("Total bytes fetched via Mooncake from remote nodes")
                 .build(),
             #[cfg(feature = "mooncake")]
+            candidate_cache_lookups: meter.u64_counter("orbitkv_candidate_cache_lookups")
+                .with_description("Candidate keys checked before discovery coalescing, by hit or miss").build(),
+            #[cfg(feature = "mooncake")]
+            candidate_lookup_rpcs: meter.u64_counter("orbitkv_candidate_lookup_rpcs")
+                .with_description("Batched directory lookups, by RPC outcome").build(),
+            #[cfg(feature = "mooncake")]
             remote_fetch_plan_segments: meter
                 .u64_histogram("orbitkv_remote_fetch_plan_segments")
-                .with_description("Number of segments planned per executed Mooncake fetch plan")
+                .with_description("Number of segments attempted per Mooncake fetch plan, including stale-candidate retries")
                 .with_boundaries(remote_fetch_plan_segment_boundaries())
                 .build(),
             #[cfg(feature = "mooncake")]

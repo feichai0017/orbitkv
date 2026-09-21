@@ -40,7 +40,7 @@ The [protobuf schema](../orbitkv-proto/proto/engine.proto) defines four RPCs:
 | --- | --- |
 | `HeartbeatNode` | Register/refresh an owner session; return the directory epoch and acknowledged inventory progress |
 | `SyncInventory` | Begin a replacement view, send bounded snapshot pages and ordered deltas, then commit the complete view |
-| `QueryPrefixBlocks` | Plan a contiguous prefix from live, committed remote owners, excluding the requester |
+| `LocateBlocks` | Return position-aligned candidate rows from live, committed owners, excluding the requester; the Manager plans transfers |
 | `UnregisterNode` | Remove only the matching owner session and its entries |
 
 A Manager process creates a random `node_id`. Heartbeats run approximately
@@ -92,8 +92,23 @@ source must validate and pin blocks before Mooncake reads them.
   admission budget, not a hard process-RSS limit or a cluster-wide capacity cap.
   The owner's resident index scales with its real cached blocks.
 - Directory recovery does not recover lost payloads. Manager restart and durable
-  SSD recovery, etcd membership, catalog replication, local candidate caching
-  and qualified cross-host transfer lifetimes remain separate work.
+  SSD recovery, etcd membership, catalog replication and qualified cross-host
+  transfer lifetimes remain separate work. Manager-side candidate caching and
+  planning are implemented; they do not turn this service into a replicated catalog.
+
+## Discovery contract
+
+`LocateBlocks` accepts at most 128 keys and 64 KiB of namespace/hash bytes per
+request. Every requested position gets a row, including misses, with at most
+four candidates. Each candidate carries the owner's endpoint (at most 4096
+bytes), runtime UUID and insertion sequence. Even worst-case bounded responses
+fit the default 4 MiB gRPC limit. Empty rows are not global-absence proofs.
+The old prefix-plan RPC is removed; upgrade the directory and all Managers together.
+
+The Manager caches positive rows for five seconds within a 16 MiB logical-byte
+budget, coalesces cold requests and chooses contiguous source spans. Source
+authorization checks the UUID and insertion sequences under its residency lock;
+cached evidence never grants memory access. See the [D1 discovery behavior](../../docs/distributed-cache.md).
 
 ## Operations
 

@@ -148,8 +148,11 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   including concurrent eviction, duplicates and replay overflow.
 - [ ] D1: use etcd for member incarnations and configuration; recover Watches
   after disconnection or compaction without per-block etcd operations.
-- [ ] D1: embed the catalog, add bounded candidate indexing, and move fetch
-  planning from the directory to the requesting Manager.
+- [x] D1 discovery: bounded positive candidate indexing, coalesced batched
+  lookup, Manager-side planning and source runtime/residency checks.
+- [x] D1 cancellation: hold destination buffers and source-release guard in the
+  blocking transfer until it finishes; caller cancellation cannot drop them.
+- [ ] D1: embed the catalog and connect it to etcd membership/configuration.
 - [ ] D1: qualify source incarnation checks, transfer completion/revocation,
   cancellation and sender/receiver budgets on two real hosts for both engines.
 - [ ] D1: replace the MetaServer crate/deployment with the behavior-owning

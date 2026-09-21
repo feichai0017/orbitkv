@@ -16,7 +16,10 @@ use cudarc::driver::sys;
 use orbitkv_core::sync_state::{LOAD_STATE_ERROR, LOAD_STATE_SUCCESS};
 use orbitkv_core::*;
 use orbitkv_metaserver::{BlockHashStore, GrpcMetaService};
-use orbitkv_proto::proto::engine::meta_server_server::MetaServerServer;
+use orbitkv_proto::proto::engine::{
+    QueryBlocksForTransferRequest, ReleaseTransferLockRequest, engine_client::EngineClient,
+    meta_server_server::MetaServerServer,
+};
 use orbitkv_server::proto::engine::engine_server::EngineServer;
 use orbitkv_state::group_hash;
 use tonic::transport::Server;
@@ -205,14 +208,18 @@ async fn wait_for_metaserver_registration(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        let found = store.query_prefix(namespace, hashes);
-        if found.len() >= expected {
+        let found = store.locate_blocks(namespace, hashes, "");
+        let count = found
+            .iter()
+            .take_while(|row| !row.replicas.is_empty())
+            .count();
+        if count >= expected {
             return;
         }
         assert!(
             Instant::now() < deadline,
             "timed out waiting for MetaServer registration ({} / {})",
-            found.len(),
+            count,
             expected
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -229,10 +236,10 @@ async fn wait_for_metaserver_ownership(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        let found = store.query_prefix(namespace, hashes);
+        let found = store.locate_blocks(namespace, hashes, "");
         let owned = found
             .iter()
-            .filter(|entry| entry.nodes.iter().any(|n| &**n == node))
+            .filter(|entry| entry.replicas.iter().any(|r| r.owner.endpoint == node))
             .count();
         if owned >= expected {
             return;
@@ -371,6 +378,43 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     )
     .await;
 
+    // Source authorization fences both restarts and individual residency episodes.
+    let evidence = meta_store.locate_blocks(&cache_namespace, &stored_hashes, "requester");
+    let mut peer = EngineClient::connect(format!("http://127.0.0.1:{port_a}"))
+        .await
+        .unwrap();
+    let authorization = QueryBlocksForTransferRequest {
+        namespace: cache_namespace.clone(),
+        block_hashes: stored_hashes.clone(),
+        requester_id: "test-requester".into(),
+        owner_incarnation: evidence[0].replicas[0].owner.incarnation.to_string(),
+        residency_sequences: evidence.iter().map(|r| r.replicas[0].sequence).collect(),
+    };
+    let mut stale_runtime = authorization.clone();
+    stale_runtime.owner_incarnation = uuid::Uuid::new_v4().to_string();
+    let mut stale_residency = authorization.clone();
+    stale_residency.residency_sequences[0] += 1;
+    for stale in [stale_runtime, stale_residency] {
+        assert_eq!(
+            peer.query_blocks_for_transfer(stale)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::FailedPrecondition
+        );
+    }
+    let granted = peer
+        .query_blocks_for_transfer(authorization.clone())
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(granted.blocks.len(), NUM_BLOCKS);
+    peer.release_transfer_lock(ReleaseTransferLockRequest {
+        transfer_session_id: granted.transfer_session_id,
+    })
+    .await
+    .unwrap();
+
     // ── 7. Create Engine B (fetcher) ──
     let port_b = get_free_port();
     let config_b = StorageConfig {
@@ -481,18 +525,53 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .flush_saves_and_inventory()
         .await
         .expect("evicted inventory");
-    let remaining = meta_store.query_prefix(&cache_namespace, &stored_delayed);
+    let remaining = meta_store.locate_blocks(&cache_namespace, &stored_delayed, "");
     assert_eq!(remaining.len(), NUM_BLOCKS);
     for entry in remaining {
         assert_eq!(
-            entry.nodes,
-            vec![Arc::<str>::from(format!("127.0.0.1:{port_b}"))]
+            entry
+                .replicas
+                .into_iter()
+                .map(|r| r.owner.endpoint)
+                .collect::<Vec<_>>(),
+            vec![format!("127.0.0.1:{port_b}")]
         );
     }
     assert!(
         meta_store
-            .query_prefix(NAMESPACE, &delayed_hashes)
-            .is_empty()
+            .locate_blocks(NAMESPACE, &delayed_hashes, "")
+            .iter()
+            .all(|row| row.replicas.is_empty())
+    );
+
+    assert_eq!(
+        peer.query_blocks_for_transfer(authorization.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::FailedPrecondition
+    );
+    engine_a
+        .batch_save_kv_blocks_from_ipc(
+            "inst-a",
+            0,
+            0,
+            DEVICE_ID,
+            vec![LayerSave {
+                layer_name: LAYER.into(),
+                block_ids: block_ids.clone(),
+                block_hashes: block_hashes.clone(),
+            }],
+        )
+        .await
+        .unwrap();
+    engine_a.flush_saves_and_inventory().await.unwrap();
+    assert_eq!(
+        peer.query_blocks_for_transfer(authorization)
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::FailedPrecondition
     );
 
     // ── 10. Load from Engine B cache → GPU ──

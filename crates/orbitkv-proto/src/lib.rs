@@ -1,3 +1,4 @@
+mod discovery;
 mod inventory;
 
 pub mod proto {
