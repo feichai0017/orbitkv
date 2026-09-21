@@ -36,12 +36,18 @@ An experimental distributed path extends the same cache API to peer managers.
   yields to foreground ownership and tracks restored, unused and pending pages.
   It remains opt-in: [pressure controls](docs/queued-warming.md#page-use-and-reclamation-controls)
   still show no established throughput gain.
+  The [next policy steps](docs/queued-warming.md#reference-implementations-and-policy-order)
+  draw on reviewed LMCache, HiCache, FlexKV and Dynamo implementations.
 - **Identify compatible state.** Versioned keys bind immutable model artifacts,
   computation settings and registered storage geometry. Complete hybrid-state
   recovery contracts remain [in progress](docs/state-identity.md).
 - **Build toward shared caching.** Embedded catalog shards discover peer
   replicas, Mooncake Transfer Engine moves bytes, and etcd tracks membership
   and placement. Multi-node serving is still experimental.
+
+The [delivery plan](docs/roadmap.md#current-delivery-priorities) prioritizes
+single-node failure recovery, bounded preparation experiments, then real
+two-host DP and P/D qualification. Catalog HA gates production distributed use.
 
 ## Get started
 
