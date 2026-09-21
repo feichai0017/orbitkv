@@ -144,6 +144,15 @@ The operation's quarter-budget limit ends at read completion; it does **not**
 cap all prepared resident pages. Their replacement priority and the pinned
 pool's physical limit govern subsequent retention.
 
+Pressure reclaim stops each batch once the allocation's requested footprint
+has been selected (still at most 512 pages), releases those references, then
+checks the allocator's actual largest contiguous free region. Fragmentation or
+shared slabs can require another batch. The previous count-only batch could
+discard every eligible page in a small pool: a Qwen3-8B page in these controls
+is 9 MiB, so a 4 GiB pool holds fewer than 512 pages. Byte-bounded reclaim applies
+to ordinary demand and writes as well as warming; its effect must be separated
+from the warming on/off comparison.
+
 ## Initial pressure controls
 
 Measured September 21, 2026 at source `2c1b27e3`, using Qwen3-8B on one H20.

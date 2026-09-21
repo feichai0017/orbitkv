@@ -154,12 +154,16 @@ impl ReadCache {
     }
 
     pub(super) fn retain_warmed(&self, keys: &[StateKey], blocks: &[Arc<SealedBlock>]) {
+        if !blocks.iter().any(|block| block.was_warmed()) {
+            return;
+        }
         let mut inner = self.inner.lock();
         for (key, block) in keys.iter().zip(blocks) {
-            if inner
-                .cache
-                .peek(key)
-                .is_some_and(|resident| Arc::ptr_eq(&resident, block))
+            if block.was_warmed()
+                && inner
+                    .cache
+                    .peek(key)
+                    .is_some_and(|resident| Arc::ptr_eq(&resident, block))
             {
                 retain_warmed(&mut inner, key, block);
             }
@@ -232,22 +236,31 @@ impl ReadCache {
             .collect()
     }
 
-    pub(super) fn remove_lru_batch(&self, batch_size: usize) -> Vec<(StateKey, Arc<SealedBlock>)> {
+    pub(super) fn remove_lru_batch(
+        &self,
+        batch_size: usize,
+        target_bytes: u64,
+    ) -> Vec<(StateKey, Arc<SealedBlock>)> {
         let removed = {
             let mut inner = self.inner.lock();
             let mut removed = Vec::with_capacity(batch_size);
+            let mut removed_bytes = 0;
             remove_lru_batch_from_class(
                 &mut inner,
                 ResidentClass::Reclaimable,
                 batch_size,
+                target_bytes,
                 &mut removed,
+                &mut removed_bytes,
             );
-            if removed.len() < batch_size {
+            if removed.len() < batch_size && removed_bytes < target_bytes {
                 remove_lru_batch_from_class(
                     &mut inner,
                     ResidentClass::Retained,
                     batch_size,
+                    target_bytes,
                     &mut removed,
+                    &mut removed_bytes,
                 );
             }
             removed
@@ -453,11 +466,13 @@ fn remove_lru_batch_from_class(
     inner: &mut ReadCacheInner,
     class: ResidentClass,
     batch_size: usize,
+    target_bytes: u64,
     removed: &mut Vec<RemovedResident>,
+    removed_bytes: &mut u64,
 ) {
     let candidates = class_lru(inner, class).len();
     for _ in 0..candidates {
-        if removed.len() == batch_size {
+        if removed.len() == batch_size || *removed_bytes >= target_bytes {
             break;
         }
 
@@ -471,6 +486,7 @@ fn remove_lru_batch_from_class(
         if inner.cache.is_cache_owned_only(&key) {
             let block = remove_lru(inner, class)
                 .expect("cache-owned LRU candidate must remain resident while locked");
+            *removed_bytes = removed_bytes.saturating_add(block.block.memory_footprint());
             removed.push(block);
         } else {
             class_lru(inner, class).get(&key);

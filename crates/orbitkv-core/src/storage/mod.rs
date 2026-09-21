@@ -475,7 +475,9 @@ impl StorageEngine {
         while largest_free < required_bytes {
             let used_before = self.allocator.usage().0;
 
-            let evicted = self.read_cache.remove_lru_batch(RECLAIM_BATCH_SIZE);
+            let evicted = self
+                .read_cache
+                .remove_lru_batch(RECLAIM_BATCH_SIZE, required_bytes);
 
             if evicted.is_empty() {
                 break;

@@ -135,6 +135,9 @@ and a passing gate; design text alone does not close an item.
   unused release and live pending bytes; record completed byte-seconds. Keep
   enqueue peeks cold, reclaim unused warming before retained pages, and skip
   new hints while foreground query ownership is active.
+- [x] Bound each pressure-reclaim batch by the allocation's requested bytes,
+  then recheck real contiguous capacity; cover small-pool preservation and
+  fragmented free space instead of unconditionally evicting up to 512 pages.
 - [ ] Qualify queued warming under delayed reads, cancellation and sustained
   pressure; calibrate admission from page outcomes and engine consumption, add
   priority/deadline and per-device/staging budgets (remaining P3).

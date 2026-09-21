@@ -68,6 +68,11 @@ cache budget. To enable an SSD backing cache, add for example
 `--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb` to the
 manager command. The current SSD cache file is truncated on manager startup;
 it is not durable across a manager restart. Both engines have single-rank recovery gates after forced DRAM eviction.
+
+Under DRAM pressure, each reclaim batch stops after selecting the requested
+allocation's footprint (at most 512 pages), then rechecks real contiguous free
+space. This avoids discarding an entire small cache for one small allocation;
+fragmentation or shared slab ownership can require more than one batch.
 SGLang holds a pending request in its scheduler queue until a leased result is
 available, with a five-second preparation budget before recomputation.
 vLLM gives an admitted restore priority until its request reaches the first

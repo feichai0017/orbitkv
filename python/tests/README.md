@@ -21,6 +21,9 @@ vLLM scheduler tests cover bounded hint tickets and revalidated admission;
 `integration/test_sglang_admission.py` exercises the pinned upstream queue/key
 contract. `integration/test_sglang_direct_transfer.py` also proves unpolled SSD
 warmups release reservations and supply DRAM pages for a later leased GPU restore.
+A released query lease does not count as use, last-owner cleanup settles unused
+bytes, and a fresh read credits its footprint once after successful H2D across
+all layers. These checks cover both stored page layouts.
 
 ## What To Run
 

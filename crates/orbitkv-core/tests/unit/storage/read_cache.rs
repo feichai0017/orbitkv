@@ -73,7 +73,7 @@ fn reclaimable_blocks_are_evicted_before_retained_blocks() {
     cache.batch_insert(vec![(retained.clone(), make_block())]);
     cache.batch_insert_reclaimable(vec![(reclaimable.clone(), make_block())]);
 
-    let evicted = cache.remove_lru_batch(2);
+    let evicted = cache.remove_lru_batch(2, u64::MAX);
     assert_eq!(
         evicted.into_iter().map(|(key, _)| key).collect::<Vec<_>>(),
         vec![reclaimable, retained]
@@ -88,7 +88,7 @@ fn pressure_reclaim_ignores_weak_references() {
     let weak = Arc::downgrade(&block);
     cache.batch_insert(vec![(key.clone(), block)]);
 
-    assert_eq!(cache.remove_lru_batch(1)[0].0, key);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, key);
     assert!(weak.upgrade().is_none());
 }
 
@@ -101,11 +101,11 @@ fn pressure_reclaim_waits_for_external_strong_reference() {
     let weak = Arc::downgrade(&block);
     cache.batch_insert(vec![(key.clone(), block)]);
 
-    assert!(cache.remove_lru_batch(1).is_empty());
+    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
     assert_class(&cache, &key, ResidentClass::Retained);
 
     drop(external);
-    assert_eq!(cache.remove_lru_batch(1)[0].0, key);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, key);
     assert!(weak.upgrade().is_none());
 }
 
@@ -127,7 +127,7 @@ fn local_hit_refreshes_recency_without_changing_class() {
         resident_metadata(&cache, &hit).unwrap().inserted_at,
         inserted_at
     );
-    assert_eq!(cache.remove_lru_batch(1)[0].0, oldest);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, oldest);
     assert_class(&cache, &hit, ResidentClass::Reclaimable);
 }
 
@@ -145,8 +145,8 @@ fn warmup_hits_do_not_refresh_recency_and_unused_pages_are_reclaimable() {
     let block = make_block();
     block.mark_warmed();
     cache.batch_insert_reclaimable(vec![(warmed.clone(), block)]);
-    assert_eq!(cache.remove_lru_batch(1)[0].0, warmed);
-    assert_eq!(cache.remove_lru_batch(1)[0].0, oldest);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, warmed);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, oldest);
     assert_class(&cache, &newest, ResidentClass::Retained);
 }
 
@@ -163,9 +163,9 @@ fn demand_promotes_only_the_matching_warmup_generation() {
     assert_class(&cache, &key, ResidentClass::Reclaimable);
     cache.retain_warmed(std::slice::from_ref(&key), std::slice::from_ref(&block));
     assert_class(&cache, &key, ResidentClass::Retained);
-    assert!(cache.remove_lru_batch(1).is_empty());
+    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
     drop(block);
-    assert_eq!(cache.remove_lru_batch(1)[0].0, key);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, key);
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn serving_hit_refreshes_recency_without_changing_class() {
         resident_metadata(&cache, &hit).unwrap().inserted_at,
         inserted_at
     );
-    assert_eq!(cache.remove_lru_batch(1)[0].0, oldest);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, oldest);
     assert_class(&cache, &hit, ResidentClass::Retained);
 }
 
@@ -213,9 +213,9 @@ fn already_existing_insert_keeps_original_class() {
 
     assert_class(&cache, &remote_first, ResidentClass::Reclaimable);
     assert_class(&cache, &local_first, ResidentClass::Retained);
-    assert_eq!(cache.remove_lru_batch(1)[0].0, remote_other);
-    assert_eq!(cache.remove_lru_batch(1)[0].0, remote_first);
-    assert_eq!(cache.remove_lru_batch(1)[0].0, local_other);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, remote_other);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, remote_first);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX)[0].0, local_other);
     assert_class(&cache, &local_first, ResidentClass::Retained);
 }
 
@@ -258,7 +258,7 @@ fn reinsert_after_eviction_starts_new_residence_episode() {
     cache.batch_insert(vec![(key.clone(), make_block())]);
     let first_inserted_at = backdate_resident(&cache, &key, Duration::from_secs(60));
 
-    cache.remove_lru_batch(1);
+    cache.remove_lru_batch(1, u64::MAX);
     cache.batch_insert(vec![(key.clone(), make_block())]);
 
     let second_inserted_at = resident_metadata(&cache, &key).unwrap().inserted_at;
@@ -286,10 +286,10 @@ fn inventory_tracks_actual_residency_and_fences_old_reclaim_hints() {
     cache.batch_insert_refs(&[(key.clone(), make_block())]);
     assert_eq!(cache.inventory_sequence(shard), 1);
     let pinned = cache.get_blocks_aligned(std::slice::from_ref(&key));
-    assert!(cache.remove_lru_batch(1).is_empty());
+    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
     assert_eq!(cache.inventory_sequence(shard), 1);
     drop(pinned);
-    assert_eq!(cache.remove_lru_batch(1).len(), 1);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX).len(), 1);
     assert_eq!(cache.inventory_sequence(shard), 2);
     assert!(!cache.inventory_changes(shard, 1, 2).unwrap()[0].present);
     // SSD restore uses the retained insertion path, and publishes a new episode.
@@ -328,11 +328,11 @@ fn reclaimable_hash_for_evicted_block_is_noop() {
     let cache = make_cache();
     let key = StateKey::new("ns".into(), vec![1]);
     cache.batch_insert(vec![(key.clone(), make_block())]);
-    cache.remove_lru_batch(1);
+    cache.remove_lru_batch(1, u64::MAX);
 
     cache.mark_reclaimable_hashes("ns", &[key.hash]);
 
-    assert!(cache.remove_lru_batch(1).is_empty());
+    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
 }
 
 #[test]
@@ -343,9 +343,9 @@ fn pin_residencies_fences_eviction_and_reinsertion() {
     let shard = catalog_shard(&key);
     let first = cache.inventory_page(shard, None).unwrap();
     let pinned = cache.pin_residencies(&first).unwrap();
-    assert!(cache.remove_lru_batch(1).is_empty());
+    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
     drop(pinned);
-    assert_eq!(cache.remove_lru_batch(1).len(), 1);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX).len(), 1);
     cache.batch_insert(vec![(key.clone(), make_block())]);
     assert!(cache.pin_residencies(&first).is_none());
     let current = cache.inventory_page(shard, None).unwrap();
@@ -353,7 +353,7 @@ fn pin_residencies_fences_eviction_and_reinsertion() {
     mixed.extend(first);
     assert!(cache.pin_residencies(&mixed).is_none());
     assert!(cache.pin_residencies(&current).is_some());
-    assert_eq!(cache.remove_lru_batch(1).len(), 1);
+    assert_eq!(cache.remove_lru_batch(1, u64::MAX).len(), 1);
 }
 
 #[test]

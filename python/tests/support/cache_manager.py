@@ -5,8 +5,10 @@ and test helpers for connector testing against a running server.
 """
 
 import contextlib
+import errno
 import logging
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -46,12 +48,26 @@ def _torch():
     return pytest.importorskip("torch", reason="torch is required for GPU integration tests")
 
 
-def find_available_port() -> int:
-    """Find an available TCP port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        return s.getsockname()[1]
+def find_available_port(*, avoid_ephemeral: bool = False) -> int:
+    """Select a free port; delayed listeners can avoid outgoing TCP's range."""
+    low, high = (
+        map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
+        if avoid_ephemeral
+        else (0, 0)
+    )
+    for _ in range(128):
+        port = 1024 + secrets.randbelow(65536 - 1024) if avoid_ephemeral else 0
+        if avoid_ephemeral and low <= port <= high:
+            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+            except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
+                continue
+            return s.getsockname()[1]
+    raise RuntimeError("No free test listener port found")
 
 
 def find_cache_manager_binary() -> str | None:
