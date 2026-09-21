@@ -108,6 +108,13 @@ and a passing gate; design text alone does not close an item.
   byte admission retained through result leases and GPU completion.
 - [x] Share identical backing reads with independent cancellation and leases;
   make SSD read queue pressure wait for capacity.
+- [x] Record shared/mixed 1/4/8-request bursts on both engines with a 2 GiB
+  query budget; preserve output differences and native/deterministic controls
+  in `docs/concurrent-performance.md`.
+- [x] Retire SGLang queries when HBM covers the legal recovery boundary;
+  enforce admission expiry without another lookup and test simultaneous recovery.
+- [ ] Profile vLLM duplicate H2D restores for shared prefixes; any reuse must
+  respect engine-owned GPU destinations, mutable tails, and completion fences.
 - [ ] Complete delivery-loss/restart fault qualification and deadline/priority
   demand hints; current gates cover revisions, cancellation, and session cleanup.
 - [ ] Qualify delayed-read cancellation under concurrent serving and multi-rank

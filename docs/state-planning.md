@@ -292,8 +292,11 @@ The single-rank serving gate passes DRAM and forced-SSD recovery across engine
 restart, with cached tokens, positive GPU-load bytes, and equal deterministic
 outputs. Real-buffer integration tests also cancel or disconnect during SSD
 reads and verify unconsumed results leave no pinned blocks. Other-request
-progress and delayed completion are covered by controlled admission tests;
-concurrent serving and multi-rank admission still need separate qualification.
+progress and delayed completion are covered by controlled admission tests.
+The serving gate also restores four shared prefixes concurrently. The
+[bounded 1/4/8-request baseline](concurrent-performance.md) records shared and
+mixed workloads; sustained contention and multi-rank admission still need
+separate qualification.
 
 ### P1: make pending work an owned operation
 
@@ -324,33 +327,19 @@ It distinguishes preparation, ready leases, and restoration, with queueing and
 backing reconstruction included in preparation. Exact per-device staging and
 first-use scheduling are P3/P4 work.
 
-Introduce one semantic operation identity bound to the Manager session epoch,
-registered instance, request revision, model/storage identity, and group.
-Treat the wire request ID as a message correlation ID, not the identity of
-the entire prefetch. Bind query content so a changed prefix cannot consume an
-older result. Repeated polls observe one operation and do not launch new reads
-or mint duplicate leases.
+The wire request ID remains message correlation; tickets identify semantic
+work. The core owns backing operations and resources, while the endpoint owns
+encoding, authentication, and delivery. Polling observes one operation and
+cannot start a retired read or mint a second lease. An abandoned reply releases
+its lease. Cancellation ends waiting interest; submitted I/O and GPU consumers
+retain their buffers until completion. Reconnecting cannot adopt old work.
 
-Evolve the existing query protocol with operation polling and cancellation,
-reusing the current descriptor/eventfd channel and completion infrastructure.
-Keep a resident fast path. The core owns backing work and resources; the
-endpoint owns encoding, authentication, and delivery. Update PyO3 and
-`orbitkv.pyi` together. Remove superseded query paths when switching both
-adapters; do not retain an old API facade.
-
-The lifecycle must distinguish pending preparation, a ready leased result,
-an authoritative miss, failure, and cancellation being drained. An abandoned
-reply releases its lease. A completed backing read is inserted or discarded
-under a bounded policy even if the caller never polls again. A deadline ends
-waiting interest; it is not evidence that I/O stopped touching its buffers.
-Submitted work releases resources only after completion. Reusing a request ID
-or reconnecting cannot attach to an old operation.
-
-Acceptance: test identical request IDs in different sessions/namespaces/groups,
-changed revisions, repeated polls, cancellation before/during/after I/O,
-disconnects, result-delivery loss, and restart epochs. Check both operation
-counts and retained bytes return to baseline without relying on the periodic
-stale-entry sweep. Fault tests must retain pages when DMA completion is unknown.
+Current gates cover session isolation, changed revisions, repeated polls,
+retirement, cancellation/disconnect during a shared SSD read, delivered-lease
+cleanup, and reservation lifetime through multiple consumers. Continue with
+delivery-loss and restart fault injection; unknown DMA completion must retain
+pages. The burst baseline checks that retained query bytes return to zero
+without a stale-entry sweep after every completed burst.
 
 ### P2: qualify actual SGLang SSD recovery
 
@@ -358,8 +347,10 @@ The single-rank serving gate and the
 [Qwen3-8B SSD follow-up](ssd-performance.md#query-readiness-follow-up) now pass:
 both engines consume all 15 forced-SSD restores with matching SSD-read and
 GPU-load bytes. Cold and DRAM controls are retained, including the observed
-vLLM 1K storage-stage latency increase. Concurrent and multi-rank serving remain
-unqualified; controlled admission tests only cover the scheduling decisions.
+vLLM 1K storage-stage latency increase. The later
+[concurrent baseline](concurrent-performance.md) retains shared/mixed burst
+measurements and output controls. Multi-rank serving, sustained contention, and
+injected faults under concurrent serving remain separate gates.
 
 Connect the P0 admission lifecycle to P1. A ready, leased result must be consumed
 by the request's subsequent prefix match and restore. A verified miss, bounded
@@ -380,17 +371,16 @@ DRAM controls and investigate regressions before introducing predictive policy.
 
 ### P3: prepare declared demand within a byte budget
 
-Add a demand revision, required boundary, priority, and optional first-use/wait
-budget to the shared state/channel contract. Begin with exact queued prompts;
+Operation revisions, conservative byte ownership, and shared backing reads are
+implemented in P1. Next expose queued demand with a required boundary, priority,
+and optional first-use/wait budget in the shared contract. Begin with exact queued prompts;
 derive timing only from information available at enqueue. Relative budgets are
 interpreted at the receiver; do not compare monotonic clocks across hosts.
 
 Extend `storage/prefetch.rs` rather than adding a second scheduler facade.
-Use explicit byte reservations for staging, in-flight reads, and completed
-but unconsumed results, globally and per instance. Keep capacity for normal
-demand restores. Same-state requests may share a backing read, but each owner
-has its own interest and lease; cancelling one cannot cancel another's work.
-Give overdue demand work priority, cap speculative traffic, and bound write
+Refine the current global/per-instance ownership budget with device and staging
+accounting. Keep capacity for normal demand restores and independent leases
+for owners of shared reads. Give overdue demand work priority, cap speculative traffic, and bound write
 starvation. Application workflow hints remain disabled until this lifecycle
 and resource accounting pass their gates.
 

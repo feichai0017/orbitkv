@@ -109,6 +109,9 @@ per output token, budget waits/bypasses, coalesced reads, and memory peaks sampl
 every 25 ms. These peaks are lower bounds on the true peak; lifecycle gates
 separately check hard accounting limits. The fixed number of bursts is not a
 steady-state load, natural memory-pressure experiment, or tail-latency SLO.
+The [recorded concurrent baseline](../docs/concurrent-performance.md) includes
+the discovered SGLang admission regression and native/deterministic controls
+for output differences; ordinary greedy output is not assumed batch invariant.
 
 ```bash
 python -m benches.report \
