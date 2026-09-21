@@ -1,5 +1,9 @@
 # Recorded measurements
 
+Generated CSV and JSON preserve model output, request IDs and source diffs
+verbatim. They are excluded from prose spellchecking; correct the harness or
+write an explanatory report instead of rewriting recorded evidence.
+
 | Files | Experiment |
 | --- | --- |
 | `catalog-cleanup-d0.json` | D0 owner cleanup: 10,000 owned keys in a million-key directory, 10 CPU samples; setup and directory destruction excluded |
