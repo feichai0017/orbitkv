@@ -76,6 +76,7 @@ The old block-count prefetch limit has been removed.
 
 - `--nics`: Optional Mooncake RDMA rail allow-list (e.g., `--nics mlx5_0,mlx5_1` or `--nics mlx5_0 mlx5_1`). Omit it to let Mooncake select the available transport, including TCP fallback.
 - `--metaserver-addr`: MetaServer gRPC address for cross-node block hash registry (e.g., `http://10.0.0.100:50056`). Setting it enables Mooncake remote transfer and block discovery. Requires `--addr` to be a routable IP (not `0.0.0.0` or `127.0.0.1`).
+- `--etcd-endpoints`: optional comma-separated HTTP etcd endpoints for leased membership. Requires `--node-id` and the current `--metaserver-addr`. Use the same `--cluster-name` (default `orbitkv`) across Managers and distinct stable Node IDs. `--membership-ttl-secs` defaults to 30 and accepts 12–3600; remote admission uses half the acknowledged TTL. See [membership deployment](p2p.md#leased-manager-membership).
 - `--transfer-lock-timeout-secs`: Transfer lock timeout in seconds (default: `120`). Blocks held for a Mooncake transfer are locked for at most this duration before being force-released.
 - `--inventory-journal-bytes`: Retained residency-change bytes (default: `16777216`, 16 MiB). Lag beyond this history triggers a paginated inventory resnapshot.
 

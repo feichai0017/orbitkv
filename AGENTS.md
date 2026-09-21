@@ -48,6 +48,8 @@ orbitkv/
 | gRPC protocol changes | `crates/orbitkv-proto/` |
 | Cache Manager cache operations and process endpoint | `crates/orbitkv-server/src/cache/`, `endpoint/` |
 | Cross-node metadata service | `crates/orbitkv-metaserver/` |
+| etcd member registration, renewal and Watch | `crates/orbitkv-server/src/cluster/` |
+| Cached membership and remote admission | `crates/orbitkv-core/src/internode/membership.rs` |
 | Mooncake remote transfer path | `crates/orbitkv-transfer/` |
 | PyO3 bindings | `python/src/lib.rs` |
 | Python package and helpers | `python/orbitkv/` |
@@ -98,6 +100,10 @@ cargo test
 ```
 
 On CUDA 13 dev machines, pass `--no-default-features --features cuda-13,mooncake` to `cargo test`/`cargo clippy` (default `cuda-12` can fail with missing `libcudart` symbols).
+
+Run Cargo builds/checks/Clippy and Mooncake runtime tests sequentially in one
+checkout. Native builds restage `.orbitkv/mooncake` shared libraries; overwriting
+them while a source-built Manager or test has them mapped can crash that process.
 
 ### Python Bindings
 

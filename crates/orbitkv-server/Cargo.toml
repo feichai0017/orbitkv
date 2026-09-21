@@ -28,6 +28,8 @@ path = "src/main.rs"
 orbitkv-common.workspace = true
 orbitkv-core = { workspace = true, default-features = false }
 orbitkv-channel.workspace = true
+orbitkv-state.workspace = true
+etcd-client.workspace = true
 orbitkv-proto = { path = "../orbitkv-proto" }
 pyo3 = { workspace = true, features = ["auto-initialize"] }
 cudarc.workspace = true
@@ -54,8 +56,8 @@ fastrace = { workspace = true, features = ["enable"], optional = true }
 thiserror = "2"
 
 [dev-dependencies]
-orbitkv-state.workspace = true
 orbitkv-metaserver = { path = "../orbitkv-metaserver", default-features = false }
+tempfile = "3"
 
 [build-dependencies]
 pyo3-build-config.workspace = true

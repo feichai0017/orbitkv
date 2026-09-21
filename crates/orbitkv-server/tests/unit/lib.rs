@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn cli_membership_requires_stable_node_identity_and_current_directory() {
+    let flags = [
+        "orbitkv-cache-manager",
+        "--etcd-endpoints",
+        "http://127.0.0.1:2379",
+    ];
+    assert!(Cli::try_parse_from(flags).is_err());
+    assert!(Cli::try_parse_from(flags.into_iter().chain(["--node-id", "node-a"])).is_err());
+    let cli = Cli::try_parse_from(flags.into_iter().chain([
+        "--node-id",
+        "node-a",
+        "--metaserver-addr",
+        "http://127.0.0.1:50056",
+    ]))
+    .unwrap();
+    assert_eq!(cli.node_id.as_deref(), Some("node-a"));
+    assert_eq!(cli.membership_ttl_secs, 30);
+    assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--membership-ttl-secs", "0"]).is_err());
+}
+
+#[test]
 fn parse_hll_windows_canonicalizes_labels() {
     let windows = parse_hll_windows("15m,60m,24h").unwrap();
 

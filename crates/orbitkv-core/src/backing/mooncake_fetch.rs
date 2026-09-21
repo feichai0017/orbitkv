@@ -48,6 +48,7 @@ const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 /// Mooncake READ to fetch them.
 pub(crate) struct MooncakeFetchStore {
     metaserver_client: Arc<MetaServerClient>,
+    membership: Option<Arc<crate::MembershipView>>,
     transfer: Arc<MooncakeTransport>,
     allocate_fn: AllocateFn,
     advertise_addr: String,
@@ -59,6 +60,13 @@ pub(crate) struct MooncakeFetchStore {
 #[tonic::async_trait]
 impl SegmentFetcher for MooncakeFetchStore {
     async fn fetch_segment(&self, segment: &FetchSegment, req_id: &str) -> SegmentOutcome {
+        if self
+            .membership
+            .as_ref()
+            .is_some_and(|view| !view.permits(&segment.owner))
+        {
+            return SegmentOutcome::Rejected;
+        }
         let remote_addr = &segment.owner.endpoint;
         let namespace = &segment.records[0].key.namespace;
         let block_hashes: Vec<_> = segment.records.iter().map(|r| r.key.hash.clone()).collect();
@@ -189,6 +197,7 @@ impl MooncakeFetchStore {
         transfer: Arc<MooncakeTransport>,
         allocate_fn: AllocateFn,
         advertise_addr: String,
+        membership: Option<Arc<crate::MembershipView>>,
     ) -> Self {
         info!(
             "Mooncake remote fetch enabled (advertise={})",
@@ -196,6 +205,7 @@ impl MooncakeFetchStore {
         );
         Self {
             metaserver_client,
+            membership,
             transfer,
             allocate_fn,
             advertise_addr,
@@ -209,7 +219,14 @@ impl MooncakeFetchStore {
         namespace: &str,
         hashes: &[Vec<u8>],
     ) -> Option<FetchPlan> {
-        let candidates = match self
+        if self
+            .membership
+            .as_ref()
+            .is_some_and(|view| !view.permits(view.owner()))
+        {
+            return None;
+        }
+        let mut candidates = match self
             .metaserver_client
             .locate_blocks(namespace, hashes)
             .await
@@ -220,6 +237,11 @@ impl MooncakeFetchStore {
                 return None;
             }
         };
+        if let Some(view) = &self.membership {
+            for row in &mut candidates {
+                row.replicas.retain(|replica| view.permits(&replica.owner));
+            }
+        }
         FetchPlan::new(candidates)
     }
 

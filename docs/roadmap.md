@@ -98,7 +98,8 @@ The [distributed cache design](distributed-cache.md) selects etcd for membership
 and configuration, an embedded replica catalog, and Mooncake TE for payloads.
 D0 inventory recovery and D1 candidate discovery/planning are implemented
 against the current standalone directory.
-The embedded deployment and etcd integration remain planned. The first serving
+Optional etcd registration, renewal, cached membership and remote admission are
+also implemented. The embedded catalog deployment remains planned. The first serving
 gate uses matching dense-attention namespaces and TP=1, testing each engine
 separately.
 
@@ -110,7 +111,10 @@ Deliver in order:
 - D1 discovery (implemented): bounded positive candidate caching, batched and
   coalesced lookup, Manager-side planning, exact source runtime/residency checks,
   and buffer/hold ownership through asynchronous cancellation;
-- D1 deployment (remaining): etcd membership, embedded catalog serving and
+- D1 membership (implemented): transactional Node ID registration, persistent
+  epochs, lease deadlines, bounded snapshots and Watch repair; new remote work
+  stops when membership evidence or registration validity is unavailable;
+- D1 deployment (remaining): embedded catalog serving and
   qualified peer transfer lifetimes including source timeout/revocation; retire
   the standalone MetaServer deployment after cutover;
 - D2: versioned rendezvous shard placement, replicated evidence, handoff,

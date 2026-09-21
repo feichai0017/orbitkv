@@ -2,8 +2,9 @@
 
 Status: D0 owner-inventory recovery is implemented against the standalone
 MetaServer. The first D1 slice implements Manager-side candidate caching,
-fetch planning and source residency checks. etcd membership, embedded catalogs,
-replication and remote SSD remain planned. Mooncake TE carries KV bytes; the
+fetch planning and source residency checks. Optional etcd membership now gates
+remote admission using a cached member view and registration deadlines. Embedded
+catalogs, replication and remote SSD remain planned. Mooncake TE carries KV bytes; the
 standalone MetaServer has not been replaced.
 
 D0 records actual DRAM insertions/removals, retains a bounded change journal,
@@ -43,6 +44,36 @@ Implemented discovery behavior:
   cancellation; source timeout reclamation still lacks transport revocation
   qualification. It does **not** establish safe source failure or partition
   handling.
+
+Implemented membership behavior (enable on every Manager in the test cluster):
+
+- `--etcd-endpoints`, `--cluster-name`, `--node-id` and `--membership-ttl-secs`
+  configure registration. A transaction requires an absent live Node ID,
+  increments its persistent epoch and writes a leased record containing the
+  peer endpoint and runtime UUID. The directory inventory uses that same UUID.
+- Member snapshots use pages of 128 records at one revision, followed by Watch
+  from the next revision. Reconnect, compaction, malformed records or overflow
+  invalidate the view and trigger a fresh snapshot. The limit is 4,096 members,
+  with at most 1 KiB of JSON per member. etcd stores no block hashes or payloads.
+- Keepalives run separately from snapshot/Watch repair. Local registration is
+  valid until half the acknowledged TTL, measured from sending the request.
+  Delayed responses cannot revive an expired or explicitly fenced runtime.
+  Restart the Manager to obtain a new incarnation after registration expires.
+- Source admission and requester candidate selection consult only this local
+  view. An incomplete view or expired registration disables new remote work;
+  local DRAM/SSD operations continue. Existing transfer holds can still be
+  released. Membership expiry does not forcibly free transfer buffers.
+- Graceful shutdown revokes the lease. Abrupt shutdown stops renewal and lets
+  etcd expire it. An observed own-record removal, changed epoch/lease binding,
+  or coordinator cluster change
+  fences the runtime. Watch evidence is a hint, not an authorization or transport
+  revocation guarantee; bounded-clock assumptions and multi-host failure behavior
+  still need qualification.
+
+This stage still requires `--metaserver-addr` for block discovery. It does not
+claim that the directory is decentralized or HA. The initial etcd connector
+uses HTTP cluster endpoints; credential and TLS options are not exposed yet.
+See [membership deployment and test commands](p2p.md#leased-manager-membership).
 
 The remaining sections describe the target architecture.
 
@@ -337,7 +368,7 @@ embedded implementation, not as an isolated rename.
 | Step | Deliverable | Gate |
 | --- | --- | --- |
 | D0: recoverable evidence (implemented) | Inventory transitions, identities, sequences, bounded journal and snapshot protocol | Concurrent insert/evict during replay, lost deltas, duplicates and overflow cannot produce a false complete view; test using the current directory deployment |
-| D1: embedded catalog (discovery slice implemented) | Candidate index, requester planning and source version checks implemented; add etcd membership and embedded peer catalog, then replace standalone MetaServer deployment | Two real hosts, each engine separately: positive remote TE/GPU bytes, identity rejection, cancellation, source restart and directory replay |
+| D1: embedded catalog (discovery and membership slices implemented) | Candidate index, requester planning, source version checks and optional etcd membership implemented; add the embedded peer catalog, then replace standalone MetaServer deployment | Two real hosts, each engine separately: positive remote TE/GPU bytes, identity rejection, cancellation, source restart and directory replay |
 | D2: replicated placement | Versioned rendezvous assignment, repair, handoff and bounded subscriptions | Three catalog failure domains; partitions, etcd outage, lease expiry and placement changes preserve the failure contract |
 | D3: tier and cost planning | Remote SSD staging, measured source selection and demand warming | Forced source DRAM eviction proves remote SSD reads; bounded sender/receiver memory and latency under mixed load |
 

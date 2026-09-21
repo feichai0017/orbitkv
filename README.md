@@ -72,7 +72,8 @@ component-presence check. The MetaServer is a separate, non-HA, in-memory
 directory with automatic resident-inventory replay after restart. Versioned
 snapshots, bounded journals, Manager-side candidate caching and fetch planning
 are implemented. Sources check owner/runtime and residency versions before
-authorizing transfers; embedded catalogs and etcd membership are next in the
+authorizing transfers. Optional etcd membership adds leased registration and
+cached member admission; embedded catalogs remain next in the
 [distributed cache plan](docs/distributed-cache.md). See [architecture](docs/architecture.md)
 and the [model-aware state plan](docs/state-identity.md) for the implementation
 boundary. [State demand and transfer planning](docs/state-planning.md) describes

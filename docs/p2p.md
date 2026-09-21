@@ -101,6 +101,58 @@ orbitkv-cache-manager \
   --metaserver-addr http://10.0.0.100:50056
 ```
 
+### Leased Manager membership
+
+To exercise the membership stage, add etcd configuration to **each** Manager.
+Use the same cluster name and endpoints, and a distinct stable Node ID per
+Manager. The existing MetaServer remains responsible for block discovery.
+
+```bash
+orbitkv-cache-manager \
+  --addr 10.0.0.1:50055 --pool-size 30gb \
+  --metaserver-addr http://10.0.0.100:50056 \
+  --etcd-endpoints http://10.0.0.101:2379,http://10.0.0.102:2379,http://10.0.0.103:2379 \
+  --cluster-name inference --node-id cache-a --membership-ttl-secs 30
+```
+
+On the second host use its peer address and `--node-id cache-b`. Registration
+rejects an already live Node ID. The member keys live under
+`/orbitkv/v1/inference/members/`; persistent restart counters live under
+`/orbitkv/v1/inference/epochs/`. Do not delete a live member key to replace a
+running Manager; shut it down or wait for its lease to expire.
+
+A Manager starts remote operations only after receiving a complete member view
+and a valid lease acknowledgement. It stops new remote operations when either
+is unavailable. Local cache hits and SSD recovery remain available. If its
+registration deadline expires, restart it to register a new runtime incarnation.
+Graceful shutdown revokes the registration; crashes rely on etcd lease expiry.
+Without these flags, single-node deployment requires no etcd connection.
+
+The connector currently accepts HTTP cluster endpoints. TLS/auth configuration,
+multi-host lease/clock qualification and directory replication are separate
+work. Membership fencing does not solve the existing source transfer-timeout
+revocation limitation.
+
+The real etcd gate starts isolated temporary servers and tests duplicate
+registration, epoch increments, Watch/compaction repair, coordinator stalls and
+member-count limits. Run it on a machine with an etcd binary (validated with
+etcd `3.7.1`):
+
+```bash
+ETCD_BIN=/path/to/etcd cargo test --release \
+  --no-default-features --features cuda-13,mooncake \
+  --lib cluster::tests::etcd -- --ignored
+```
+
+The separate Mooncake gate checks source/requester admission and GPU byte
+integrity, including local loads after membership loss:
+
+```bash
+MC_FORCE_TCP=1 cargo test --release -p orbitkv-server \
+  --no-default-features --features cuda-13,mooncake \
+  --test p2p_mooncake -- --ignored
+```
+
 ### 3. Launch inference engine
 
 Same adapter setup as single-node; the node-local Cache Manager handles remote

@@ -6,7 +6,9 @@ pub const DISCOVERY_MAX_BYTES: usize = 64 * 1024;
 pub const DISCOVERY_MAX_REPLICAS: usize = 4;
 pub const DISCOVERY_MAX_ENDPOINT_BYTES: usize = 4096;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct CacheOwner {
     pub endpoint: String,
     pub incarnation: uuid::Uuid,

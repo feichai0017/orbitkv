@@ -289,9 +289,15 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     let meta_store = spawn_metaserver(meta_port).await;
 
     // ── 2. Create Engine A (source of blocks) ──
+    let membership_a = Arc::new(MembershipView::new(orbitkv_state::CacheOwner {
+        endpoint: format!("127.0.0.1:{port_a}"),
+        incarnation: uuid::Uuid::new_v4(),
+    }));
+    membership_a.replace_members([membership_a.owner().clone()]);
     let config_a = StorageConfig {
         metaserver_addr: Some(format!("http://127.0.0.1:{meta_port}")),
         advertise_addr: Some(format!("127.0.0.1:{port_a}")),
+        membership: Some(membership_a.clone()),
         mooncake_nic_names: mooncake_nics(),
         ..StorageConfig::default()
     };
@@ -390,6 +396,15 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         owner_incarnation: evidence[0].replicas[0].owner.incarnation.to_string(),
         residency_sequences: evidence.iter().map(|r| r.replicas[0].sequence).collect(),
     };
+    assert_eq!(
+        peer.query_blocks_for_transfer(authorization.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::FailedPrecondition,
+        "registration must be valid before source authorization"
+    );
+    assert!(membership_a.renew(Instant::now(), Duration::from_secs(300)));
     let mut stale_runtime = authorization.clone();
     stale_runtime.owner_incarnation = uuid::Uuid::new_v4().to_string();
     let mut stale_residency = authorization.clone();
@@ -417,9 +432,16 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // ── 7. Create Engine B (fetcher) ──
     let port_b = get_free_port();
+    let membership_b = Arc::new(MembershipView::new(orbitkv_state::CacheOwner {
+        endpoint: format!("127.0.0.1:{port_b}"),
+        incarnation: uuid::Uuid::new_v4(),
+    }));
+    membership_b.replace_members([membership_a.owner().clone(), membership_b.owner().clone()]);
+    assert!(membership_b.renew(Instant::now(), Duration::from_secs(300)));
     let config_b = StorageConfig {
         metaserver_addr: Some(format!("http://127.0.0.1:{meta_port}")),
         advertise_addr: Some(format!("127.0.0.1:{port_b}")),
+        membership: Some(membership_b.clone()),
         mooncake_nic_names: mooncake_nics(),
         ..StorageConfig::default()
     };
@@ -575,6 +597,59 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     );
 
     // ── 10. Load from Engine B cache → GPU ──
+    let fresh = meta_store.locate_blocks(&cache_namespace, &stored_hashes, "requester");
+    let fresh_authorization = QueryBlocksForTransferRequest {
+        namespace: cache_namespace.clone(),
+        block_hashes: stored_hashes.clone(),
+        requester_id: "test-requester".into(),
+        owner_incarnation: membership_a.owner().incarnation.to_string(),
+        residency_sequences: fresh
+            .iter()
+            .map(|row| {
+                row.replicas
+                    .iter()
+                    .find(|replica| replica.owner == *membership_a.owner())
+                    .unwrap()
+                    .sequence
+            })
+            .collect(),
+    };
+    let held = peer
+        .query_blocks_for_transfer(fresh_authorization.clone())
+        .await
+        .unwrap()
+        .into_inner();
+    membership_a.fence();
+    membership_b.fence();
+    assert_eq!(
+        peer.query_blocks_for_transfer(fresh_authorization)
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::FailedPrecondition
+    );
+    peer.release_transfer_lock(ReleaseTransferLockRequest {
+        transfer_session_id: held.transfer_session_id,
+    })
+    .await
+    .unwrap();
+    let resident = engine_b
+        .count_prefix_hit_blocks_with_prefetch("inst-b", "fenced-local-hit", &delayed_hashes, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        resident.blocks.len(),
+        NUM_BLOCKS,
+        "local hits survive membership loss"
+    );
+    let remote = engine_b
+        .count_prefix_hit_blocks_with_prefetch("inst-b", "fenced-remote-miss", &block_hashes, false)
+        .await
+        .unwrap();
+    assert!(
+        remote.blocks.is_empty(),
+        "fenced requester must not fetch remote-only blocks"
+    );
     let load_state = LoadState::new().expect("create LoadState");
     let shm_name = load_state.shm_name().to_string();
 
