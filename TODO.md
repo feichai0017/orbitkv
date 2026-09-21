@@ -141,10 +141,18 @@ and a passing gate; design text alone does not close an item.
 - [x] Repeat matched warming controls with page outcomes and byte-bounded
   reclamation: vLLM admits little warming; SGLang leaves 92.9% of prepared
   footprints unused. Keep warming opt-in; no throughput improvement is established.
-- [ ] Qualify queued warming under delayed reads, cancellation and sustained
-  pressure; calibrate admission from queue position, expected use time, page
-  outcomes and engine consumption. Add priority/deadline and per-device/staging
-  budgets (remaining P3); foreground query ownership alone is insufficient.
+- [x] Review pinned LMCache/SGLang/FlexKV/Dynamo implementations, distinguish
+  request-owned prefetch from unlocked warming, and separate open RFC/PR ideas
+  from release behavior (`docs/queued-warming.md`).
+- [ ] Qualify bounded preparation for near-admission requests using existing
+  query/lease ownership; keep prepared residency budgeted through consumer
+  handoff, cancellation or expiry. Ordinary demand remains the control.
+- [ ] Add best-effort/relative-timeout stopping and bounded read submission;
+  drain submitted work and expose only a completed legal prefix. Cover shared
+  reads, queue reordering, cancellation, and expiry without polling (P3).
+- [ ] Compare retention and SSD write-admission policies independently; then
+  calibrate expected use time and priority from page outcomes and engine
+  consumption. Qualify per-device/staging budgets and multi-rank behavior.
 - [ ] Calibrate restore-versus-recompute and write admission using
   `docs/state-planning.md` (P4); speculative workflow hints remain optional.
 - [ ] Profile the measured restore latency gap to both built-in CPU caches;

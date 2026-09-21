@@ -97,9 +97,11 @@ successful H2D, unused releases and completed byte-seconds; hints yield to
 foreground ownership and enter the reclaimable class. The
 [page-use controls](queued-warming.md#page-use-and-reclamation-controls) still
 show no established throughput gain; SGLang releases most warmed pages unused.
-Next use queue position and expected use time, and qualify exposed-wait
-and read-amplification tradeoffs, then add measured restore-versus-recompute
-decisions. Generation-safe layer readiness precedes copy/compute overlap. The
+Next follow the [reference-based policy sequence](queued-warming.md#reference-implementations-and-policy-order):
+budget prepared residency for selected consumers, add explicit stopping and
+drain, then calibrate expected use time and restore-versus-recompute decisions.
+Measure exposed wait and read amplification separately from retention changes.
+Generation-safe layer readiness precedes copy/compute overlap. The
 [implementation stages](state-planning.md#implementation-sequence) retain the
 larger ownership/fault-qualification requirements and later Dynamo integration.
 Multi-rank serving and sustained concurrent goodput remain separate qualification

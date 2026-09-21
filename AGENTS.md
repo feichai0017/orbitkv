@@ -166,6 +166,7 @@ there is no standalone directory binary. See `docs/p2p.md`.
 - Use English in comments
 - Use `.venv` for the Python virtual environment
 - Keep changes scoped and aligned with the existing module structure
+- Prefer established KV-cache ownership, prefetch, retention and transfer patterns over speculative policy machinery. Record the upstream release/commit and distinguish implemented behavior from open proposals; extend OrbitKV's existing owners and validate with matched workloads.
 - Update affected documentation, README capability claims, and website content with each behavior or deployment change. The website renders `docs/` directly; keep one source for technical documentation.
 - Before 1.0, remove obsolete APIs and compatibility code instead of adding aliases or fallback paths. Keep boundaries that own behavior; remove classes and functions that only forward calls without a separate responsibility.
 - Organize modules by the behavior and resources they own. A new type or trait must have a concrete responsibility; avoid temporary context wrappers, configuration-only wrappers for a few constructor arguments, and speculative abstraction layers. Call the behavior owner directly when another function would only forward the call.

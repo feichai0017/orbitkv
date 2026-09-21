@@ -376,10 +376,15 @@ implemented in P1. The first [queued-warming implementation](queued-warming.md)
 announces exact prefixes from both engine queues, caps warmup bytes at a quarter
 of global/per-instance budgets, skips hints under pressure, and releases their
 ownership without a lease or another poll. Optional logs expose the transfer
-lifecycle. P3 is not complete: next enrich queued demand with a required boundary, priority,
-and optional first-use/wait budget in the shared contract. Begin with exact queued prompts;
-derive timing only from information available at enqueue. Relative budgets are
-interpreted at the receiver; do not compare monotonic clocks across hosts.
+lifecycle. P3 is not complete. Follow the
+[reviewed implementations and policy order](queued-warming.md#reference-implementations-and-policy-order):
+first qualify bounded consumer-owned preparation and result retention, then
+explicit best-effort/timeout stopping with submitted work draining. Existing
+demand leases already provide ownership; extend that lifecycle for a bounded
+lookahead rather than pinning every enqueue hint. Add calibrated first-use
+estimates only after these controls. Begin with exact queued prompts and
+engine-provided scheduling evidence. Relative budgets are interpreted at the
+receiver; do not compare monotonic clocks across hosts.
 
 Warmup-origin physical pages now carry first-successful-H2D / last-owner-release
 accounting with pending bytes and completed byte-seconds. New hints yield while
@@ -388,8 +393,10 @@ These measurements describe page reuse, not causal latency savings or confirmed
 engine consumption; use them to calibrate the next admission policy.
 The [matched page-use controls](queued-warming.md#page-use-and-reclamation-controls)
 leave 92.9% of SGLang's prepared footprint unused and admit little vLLM warming.
-Next relate hints to queue position and expected use time: the absence of a
-query lease is not proof that a queued request can soon consume prepared KV.
+Queue position can bound the first lookahead without an execution-time model.
+The absence of a query lease is not proof that a queued request can soon
+consume prepared KV; prepared residency must remain inside the admission
+budget through handoff or expiry.
 
 Extend `storage/prefetch.rs` rather than adding a second scheduler facade.
 Refine the current global/per-instance ownership budget with device and staging

@@ -271,6 +271,78 @@ Raw samples, prefixes and logs remain under
 `benches/results/runs/warmup-accounting-*` on the measurement host. Use the
 reproduction command above with a fresh output directory and this source revision.
 
+## Reference implementations and policy order
+
+Source review: September 22, 2026. The following implementations inform the
+next P3 changes; the proposed OrbitKV policies below are **not implemented**.
+Source availability alone does not qualify another project's performance on
+OrbitKV's engine releases or workload.
+
+| Reference | Verified behavior | Application to OrbitKV |
+| --- | --- | --- |
+| [LMCache v0.5.5 prefetch controller](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py) | Request lookup transfers completed write reservations into reader locks; WARM finishes writes without retaining reader locks. | Keep demand-owned preparation distinct from optional warming. Reuse existing query/lease ownership when preparing an actual consumer's prefix. |
+| [SGLang v0.5.20 HiCache](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/hiradix_cache.py) | Minimum prefetch size, rate limiting, and `best_effort`, `timeout`, `wait_complete` termination; completed results are clamped to a usable prefix. | Define when the engine stops waiting, and expose only a completed legal recovery boundary. Validate rank agreement separately. |
+| [FlexKV replacement policies](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/docs/eviction_policy/README_en.md) and [transfer scheduler](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/scheduler.py) | LRU/LFU/SLRU and per-tier reclamation are separate from dependency-driven transfer graphs. | Compare retention policies independently from read admission; preserve completion dependencies across SSD, DRAM and GPU. |
+| [Dynamo v1.4.2 KVBM offload](https://github.com/ai-dynamo/dynamo/blob/2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a/lib/kvbm-engine/docs/offload.md) and [onboarding](https://github.com/ai-dynamo/dynamo/blob/2ecbdfdf192c69c02c6d21e931d20d3b4a0bb64a/lib/kvbm-engine/docs/onboarding.md) | Offload filters precede batching; transfer commitment retains ownership. Session holders protect blocks from eviction until released. | Separate write admission from read prefetch and replacement; preserve transfer lifetimes. Keep Mooncake TE for bytes and request routing as a separate integration. |
+
+LMCache's [warm-prefetch entry point](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/multiprocess/warm_prefetch.py)
+explicitly leaves prepared pages unpinned. Thus, "pin every warmup" is not the
+lesson from its request lookup path. OrbitKV already retains demand query
+results through leases and GPU completion; the missing experiment is bounded
+early preparation tied to a selected consumer, without holding an entire queue.
+
+Two useful references have a different maturity status:
+
+- [FlexKV #291](https://github.com/taco-project/FlexKV/pull/291), checked open
+  and unmerged at head `fb7cc97d6723553688bd64ce0639d206ea3fb325`, proposes
+  chunked prefetch, stopping new submissions, draining submitted work, and
+  protected-result handoff. Treat it as a design proposal, not a shipped
+  baseline or an established speedup.
+- [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504)
+  proposes cached membership and peer route authorities outside the metadata
+  hot path. It informs the distributed catalog plan, not a ready-made SSD
+  prefetch policy. OrbitKV's etcd membership and Mooncake TE direction remains.
+
+Implement and measure in this order:
+
+1. **Bound demand preparation and retention.** Keep ordinary demand as the
+   control. Where an engine exposes candidates close to admission, try a small
+   byte-bounded lookahead using the existing query operation/revision and lease
+   lifecycle. Account for in-flight buffers and prepared-but-unconsumed pages
+   until consumption, cancellation or expiry. Preserve foreground headroom;
+   unavailable budget falls back to normal demand. A consumer must acquire its
+   validated page references before preparation ownership is released. HBM
+   hits, request reordering, boundary changes and disconnects must retire stale
+   interest. Queue knowledge must come from the engine; enqueue time alone is
+   not an execution-time estimate. This is an experiment, not guaranteed gain.
+2. **Add explicit stop policies and bounded submission.** Begin with
+   best-effort at actual scheduling eligibility and a relative wait budget;
+   retain wait-complete as a control with lifecycle expiry. Stop issuing new
+   bounded read batches after cancellation/deadline. Submitted SSD/TE work
+   drains while its buffers remain owned. Return only completed contiguous
+   pages at a valid component/checkpoint boundary. Shared-read consumers have
+   independent interest: cancelling one must not revoke another's work.
+3. **Tune retention and write admission separately.** Compare the existing
+   replacement classes with a reuse-based protected segment; do not promote
+   speculative peeks as demand hits. Measure SSD write admission independently
+   from read prefetch. A retained replica still needs normal pressure eviction;
+   a live transfer's references remain protected. Model-specific recovery
+   requirements always take precedence over replacement scores.
+4. **Calibrate timing after the lifecycle baseline.** Only then add expected
+   first-use estimates, bandwidth/queue cost and priority tuning. Use observed
+   data to decide whether restoration beats recomputation in P4. Keep these
+   decisions in the existing query/prefetch/storage owners, with engine hints
+   supplied by the adapters.
+
+Qualification compares demand-only, current optional warming, bounded
+consumer-owned preparation, and then chunked stopping as separate steps.
+Keep bytes, model, request sequence, tracing and hardware equal; repeat in
+reversed order. Include pressure, duplicate prefixes, cancellation, queue
+reordering, expiry without polling and an HBM-hit workload for hook overhead.
+Require exact restoration and bounded resource cleanup before claiming lower
+TTFT or higher throughput. Report read/write amplification, useful/unused
+footprints, prepared-page residency and exposed wait, not just hit counts.
+
 ## Qualification and remaining P3 work
 
 CPU gates cover foreground budget headroom, operation pressure, unpolled
@@ -287,9 +359,10 @@ HBM and host cache. Compare `--queue-warmup on` and `off` at equal capacities;
 `--trace-transfers` enables timeline capture. A quiet serial server may see no
 benefit, and an overloaded backend may perform extra reads.
 
-P3 remains open for calibrated priority/deadline hints, per-device/staging
-reservations, engine-consumption-level usefulness and admission calibration,
-and delayed-read/reordering/cancellation qualification under sustained serving.
+P3 follows the [reference-based order](#reference-implementations-and-policy-order):
+bounded demand preparation/retention, explicit stopping and drain, then
+calibrated priority/deadline hints. Per-device/staging reservations,
+engine-consumption-level usefulness and fault qualification remain open.
 The fixed warmup share is an initial admission policy, not a cost-aware scheduler.
 Restore-versus-recompute decisions remain P4. See the
 [implementation sequence](state-planning.md#implementation-sequence).
