@@ -47,7 +47,7 @@ without confidence intervals or a long-duration soak.
 
 There are 1,225 completed requests and no request failures in these six runs.
 Relative to each engine's native control, DRAM throughput is 2.28× for vLLM and
-2.52× for SGLang; SSD throughput is 1.97× and 2.09× respectively. These ratios
+2.52× for SGLang; SSD throughput is 1.97× and 2.08× respectively. These ratios
 apply to this deliberately constrained HBM workload, not arbitrary serving.
 
 | Engine / tier | SSD read (GiB) | GPU load (GiB) | Sampled query peak (GiB) |
