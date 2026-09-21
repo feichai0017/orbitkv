@@ -48,16 +48,12 @@ def _torch():
     return pytest.importorskip("torch", reason="torch is required for GPU integration tests")
 
 
-def find_available_port(*, avoid_ephemeral: bool = False) -> int:
-    """Select a free port; delayed listeners can avoid outgoing TCP's range."""
-    low, high = (
-        map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
-        if avoid_ephemeral
-        else (0, 0)
-    )
+def find_available_port() -> int:
+    """Avoid outgoing TCP ports while GPU initialization delays the listener."""
+    low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     for _ in range(128):
-        port = 1024 + secrets.randbelow(65536 - 1024) if avoid_ephemeral else 0
-        if avoid_ephemeral and low <= port <= high:
+        port = 1024 + secrets.randbelow(65536 - 1024)
+        if low <= port <= high:
             continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:

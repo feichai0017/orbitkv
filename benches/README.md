@@ -44,6 +44,8 @@ Use `--output benches/results/runs/<name>` for an explicit empty directory. The
 harness owns the engine and the OrbitKV/LMCache process; do not start other GPU
 workloads during measurement. An OrbitKV source run uses the staged Cache Manager
 binary in `python/orbitkv/` and the Python adapters from this checkout.
+Listener ports, including SGLang's rendezvous port, are chosen outside Linux's
+outgoing ephemeral range to reduce startup conflicts during GPU initialization.
 
 Use `--backend native`, `cpu`, `orbitkv`, `lmcache`, or `flexkv`. Compare within
 one engine, using identical model, GPU token capacity, host capacity, request

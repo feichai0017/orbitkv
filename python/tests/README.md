@@ -97,6 +97,12 @@ Set `ORBITKV_CACHE_MANAGER_BINARY` to an absolute path to test a specific build
 (for example `target/debug/orbitkv-cache-manager`) instead of a previously
 installed or release binary. Both integration and vLLM helpers honor this override.
 
+Automatically selected listener ports exclude Linux's outgoing ephemeral range.
+GPU and pinned-pool initialization can delay binding long enough for an outgoing
+connection to claim a released `bind(0)` port. The SGLang restart gate also passes
+an explicit rendezvous port. Other test jobs can still race for a selected port;
+run GPU gates sequentially on the same host.
+
 ## vLLM Correctness E2E Gate
 
 Use the vLLM `0.29.0` release environment described in

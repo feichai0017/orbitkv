@@ -79,7 +79,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         launch_cmd[launch_cmd.index("--port") + 1] = str(port)
         # Torch's listener starts after worker initialization; avoid an
         # intervening outgoing connection claiming its selected port.
-        launch_cmd += ["--nccl-port", str(find_available_port(avoid_ephemeral=True))]
+        launch_cmd += ["--nccl-port", str(find_available_port())]
         launch_env = dict(env)
         if fingerprint is not None:
             launch_env["ORBITKV_MODEL_FINGERPRINT"] = fingerprint
