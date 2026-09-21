@@ -9,6 +9,7 @@
 
 mod bundle;
 mod component;
+mod discovery;
 mod format;
 mod inventory;
 mod key;
@@ -16,6 +17,10 @@ mod page;
 
 pub use bundle::{BundleComponent, RecoveryContract, StateBundle};
 pub use component::StateComponent;
+pub use discovery::{
+    BlockCandidates, CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_ENDPOINT_BYTES,
+    DISCOVERY_MAX_KEYS, DISCOVERY_MAX_REPLICAS, ReplicaLocation, validate_discovery_query,
+};
 pub use format::{StateDType, StateFormat, StateLayout};
 pub use inventory::{
     INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryOperation, InventoryRecord,

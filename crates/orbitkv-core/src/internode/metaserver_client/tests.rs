@@ -21,6 +21,7 @@ struct Catalog {
     offline: Arc<AtomicBool>,
     lose_reply: Arc<AtomicUsize>,
     begins: Arc<AtomicUsize>,
+    locates: Arc<AtomicUsize>,
     pause_page: Arc<AtomicBool>,
     page_received: Arc<Notify>,
     release_page: Arc<Notify>,
@@ -38,6 +39,7 @@ impl Catalog {
             offline: Arc::new(AtomicBool::new(false)),
             lose_reply: Arc::new(AtomicUsize::new(0)),
             begins: Arc::new(AtomicUsize::new(0)),
+            locates: Arc::new(AtomicUsize::new(0)),
             pause_page: Arc::new(AtomicBool::new(false)),
             page_received: Arc::new(Notify::new()),
             release_page: Arc::new(Notify::new()),
@@ -55,7 +57,8 @@ impl Catalog {
         !self
             .store
             .read()
-            .query_prefix("ns", &[key.to_be_bytes().to_vec()])
+            .locate_blocks("ns", &[key.to_be_bytes().to_vec()], "")[0]
+            .replicas
             .is_empty()
     }
 }
@@ -74,11 +77,12 @@ impl MetaServer for Catalog {
     ) -> Result<Response<wire::UnregisterNodeResponse>, Status> {
         self.service()?.unregister_node(request).await
     }
-    async fn query_prefix_blocks(
+    async fn locate_blocks(
         &self,
-        request: Request<wire::QueryPrefixBlocksRequest>,
-    ) -> Result<Response<wire::QueryPrefixBlocksResponse>, Status> {
-        self.service()?.query_prefix_blocks(request).await
+        request: Request<wire::LocateBlocksRequest>,
+    ) -> Result<Response<wire::LocateBlocksResponse>, Status> {
+        self.locates.fetch_add(1, Ordering::AcqRel);
+        self.service()?.locate_blocks(request).await
     }
     async fn sync_inventory(
         &self,
@@ -281,4 +285,107 @@ async fn snapshot_overflow_and_ambiguous_page_restart_with_a_new_generation() {
         client.shutdown().await;
         server.stop().await;
     }
+}
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_evidence() {
+    let catalog = Catalog::new();
+    let server = TestServer::start(catalog.clone(), "127.0.0.1:0".parse().unwrap()).await;
+    let source = cache(64 * 1024);
+    for key in 0..300 {
+        insert(&source, key);
+    }
+    let owner = client(&server, &source);
+    owner
+        .flush_with_timeout(Duration::from_secs(5))
+        .await
+        .unwrap();
+    let destination = cache(4096);
+    let requester = Arc::new(
+        MetaServerClient::new(
+            MetaServerClientConfig::new(
+                format!("http://{}", server.addr),
+                "requester:50055".into(),
+            ),
+            Arc::downgrade(&destination),
+        )
+        .unwrap(),
+    );
+    let hashes: Vec<_> = (0_u32..300).map(|k| k.to_be_bytes().to_vec()).collect();
+    let queries = (0..16).map(|_| requester.locate_blocks("ns", &hashes));
+    let responses = futures::future::join_all(queries).await;
+    for response in &responses {
+        let rows = response.as_ref().unwrap();
+        assert_eq!(rows.len(), 300);
+        assert!(
+            rows.iter()
+                .all(|r| r.replicas.len() == 1 && r.replicas[0].owner.incarnation == owner.node_id)
+        );
+    }
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 3);
+    catalog.offline.store(true, Ordering::Release);
+    assert_eq!(
+        requester.locate_blocks("ns", &hashes).await.unwrap().len(),
+        300
+    );
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 3);
+    let mut extended = hashes.clone();
+    extended.push(999_u32.to_be_bytes().to_vec());
+    let partial = requester.locate_blocks("ns", &extended).await.unwrap();
+    assert!(partial[..300].iter().all(|row| !row.replicas.is_empty()));
+    assert!(partial[300].replicas.is_empty());
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 4);
+    catalog.offline.store(false, Ordering::Release);
+    let old = responses[0].as_ref().unwrap()[0].clone();
+    source.clear_for_test();
+    insert(&source, 0);
+    owner
+        .flush_with_timeout(Duration::from_secs(5))
+        .await
+        .unwrap();
+    requester.reject_candidate(&old.key, &old.replicas[0]);
+    let current = requester.locate_blocks("ns", &hashes[..1]).await.unwrap();
+    assert!(current[0].replicas[0].sequence > old.replicas[0].sequence);
+    requester.reject_candidate(&old.key, &old.replicas[0]);
+    assert_eq!(
+        requester.locate_blocks("ns", &hashes[..1]).await.unwrap(),
+        current
+    );
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 5);
+    let missing = vec![999_u32.to_be_bytes().to_vec()];
+    assert!(
+        requester.locate_blocks("ns", &missing).await.unwrap()[0]
+            .replicas
+            .is_empty()
+    );
+    insert(&source, 999);
+    owner
+        .flush_with_timeout(Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(
+        requester.locate_blocks("ns", &missing).await.unwrap()[0]
+            .replicas
+            .len(),
+        1
+    );
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 7);
+    // The requester never discovers itself, and namespaces never share evidence.
+    assert!(
+        owner.locate_blocks("ns", &hashes[..1]).await.unwrap()[0]
+            .replicas
+            .is_empty()
+    );
+    assert!(
+        requester
+            .locate_blocks("different-model", &hashes[..1])
+            .await
+            .unwrap()[0]
+            .replicas
+            .is_empty()
+    );
+    requester.shutdown().await;
+    owner.shutdown().await;
+    server.stop().await;
 }

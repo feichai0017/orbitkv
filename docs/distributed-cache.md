@@ -1,9 +1,10 @@
 # Distributed cache design
 
 Status: D0 owner-inventory recovery is implemented against the standalone
-MetaServer. D1–D3 remain planned: etcd for membership and configuration,
-Mooncake Transfer Engine for KV bytes, and a replica catalog embedded in Cache
-Managers. The standalone MetaServer has not been replaced.
+MetaServer. The first D1 slice implements Manager-side candidate caching,
+fetch planning and source residency checks. etcd membership, embedded catalogs,
+replication and remote SSD remain planned. Mooncake TE carries KV bytes; the
+standalone MetaServer has not been replaced.
 
 D0 records actual DRAM insertions/removals, retains a bounded change journal,
 and recovers with paginated snapshots plus a complete delta interval. Heartbeat
@@ -11,6 +12,38 @@ responses carry the catalog epoch and progress, so an idle owner also repairs a
 directory restart. The current stream spans all namespaces of one Manager
 process; per-shard streams, replica placement and subscriptions come later.
 See [implemented protocol and limits](../crates/orbitkv-metaserver/README.md).
+The discovery slice replaces `QueryPrefixBlocks` and directory-generated fetch
+segments with `LocateBlocks`. Upgrade all Managers and the directory together;
+there is no old-protocol fallback.
+
+Implemented discovery behavior:
+
+- Each row carries the exact StateKey and up to four candidates, qualified by
+  owner endpoint, runtime UUID and insertion sequence. Rows remain aligned with
+  the request across gaps; empty rows do not prove global absence.
+- Managers retain positive hints in an LRU index with a 16 MiB logical byte
+  budget and a five-second TTL. Reads do not extend the TTL. Misses are not
+  cached. A failed directory lookup preserves any already-known prefix.
+  Concurrent misses recheck after an in-flight lookup; warm hits do not
+  wait for the directory. Empty results cause waiting callers to look up again;
+  this does not provide negative-result coalescing or a subscription stream.
+- Cold lookups use batches of at most 128 keys and 64 KiB of namespace/hash
+  bytes. Each RPC has a three-second deadline. The source-channel LRU retains
+  at most 64 clients. These are initial fixed limits, not calibrated SLOs.
+- The requester selects the longest contiguous span, using endpoint/incarnation
+  ordering to break ties. Source authorization checks the runtime UUID and all
+  insertion sequences before pinning under the cache lock. Rejection grants no
+  addresses and creates no transfer session.
+- A source rejection removes only the attempted candidate versions from the
+  index. Planning can try existing alternatives at most twice per fetch; it
+  issues no new directory RPC during these retries. Another query can refresh
+  missing evidence. Payload-transfer failures stop the prefix without retries.
+- A blocking READ owns its destination buffers and source-release guard until
+  it returns, even if the asynchronous caller is cancelled. This fixes caller
+  cancellation; source timeout reclamation still lacks transport revocation
+  qualification. It does **not** establish safe source failure or partition
+  handling.
+
 The remaining sections describe the target architecture.
 
 The first serving gate covers immutable, sealed dense-attention KV in matching
@@ -304,7 +337,7 @@ embedded implementation, not as an isolated rename.
 | Step | Deliverable | Gate |
 | --- | --- | --- |
 | D0: recoverable evidence (implemented) | Inventory transitions, identities, sequences, bounded journal and snapshot protocol | Concurrent insert/evict during replay, lost deltas, duplicates and overflow cannot produce a false complete view; test using the current directory deployment |
-| D1: embedded catalog | etcd membership, candidate index, Manager-side planning and peer protocol; replace standalone MetaServer deployment | Two real hosts, each engine separately: positive remote TE/GPU bytes, identity rejection, cancellation, source restart and directory replay |
+| D1: embedded catalog (discovery slice implemented) | Candidate index, requester planning and source version checks implemented; add etcd membership and embedded peer catalog, then replace standalone MetaServer deployment | Two real hosts, each engine separately: positive remote TE/GPU bytes, identity rejection, cancellation, source restart and directory replay |
 | D2: replicated placement | Versioned rendezvous assignment, repair, handoff and bounded subscriptions | Three catalog failure domains; partitions, etcd outage, lease expiry and placement changes preserve the failure contract |
 | D3: tier and cost planning | Remote SSD staging, measured source selection and demand warming | Forced source DRAM eviction proves remote SSD reads; bounded sender/receiver memory and latency under mixed load |
 

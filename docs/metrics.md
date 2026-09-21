@@ -232,7 +232,13 @@ Tier values:
 This metric intentionally records decisions, not completed service outcomes.
 For backing failure correlation, use:
 
-- `orbitkv_remote_fetch_total{status="error"}` for Mooncake fetch failures
+- `orbitkv_candidate_cache_lookups{result="hit|miss"}` counts key checks before
+  lookup coalescing; `orbitkv_candidate_lookup_rpcs{result="ok|error"}` counts
+  actual batched directory RPCs (an OK RPC can still contain a miss).
+- `orbitkv_remote_fetch_total{status="rejected"}` counts source authorization
+  rejection before payload submission; `status="error"` counts other fetch failures.
+- `orbitkv_remote_fetch_plan_segments` includes attempted alternative-source
+  segments; `orbitkv_remote_fetch_plan_completed_segments` counts completed ones.
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
 
 The legacy `orbitkv_cache_block_hits_total` and

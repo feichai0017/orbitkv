@@ -558,7 +558,15 @@ async fn run_holder(cli: &Cli, shape: &Shape, pool_bytes: usize) {
             "metaserver registration",
             shape.blocks,
             Duration::from_secs(60),
-            || Some(meta_store.query_prefix(NAMESPACE, &hashes).len()),
+            || {
+                Some(
+                    meta_store
+                        .locate_blocks(NAMESPACE, &hashes, "")
+                        .iter()
+                        .take_while(|row| !row.replicas.is_empty())
+                        .count(),
+                )
+            },
         )
         .await;
         info!(

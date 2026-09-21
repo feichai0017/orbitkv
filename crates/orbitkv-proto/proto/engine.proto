@@ -93,6 +93,8 @@ message QueryBlocksForTransferRequest {
   string namespace = 1;
   repeated bytes block_hashes = 2;
   string requester_id = 3;             // For lock tracking / logging
+  string owner_incarnation = 4;        // Runtime UUID from discovery
+  repeated uint64 residency_sequences = 5; // Parallel to block_hashes; exact insertions
 }
 
 message QueryBlocksForTransferResponse {
@@ -163,21 +165,27 @@ message SyncInventoryResponse {
   repeated InventoryRecord reclaimable = 2;
 }
 
-message QueryPrefixBlocksRequest {
+message LocateBlocksRequest {
   string namespace = 1;
   repeated bytes block_hashes = 2;  // ordered by prefix position
   string exclude_node = 3;          // requester address; never return it as an owner
 }
 
-message FetchSegment {
-  string node = 1;
-  uint32 block_count = 2;
+message ReplicaLocation {
+  string endpoint = 1;
+  string incarnation = 2;
+  uint64 sequence = 3;
 }
 
-message QueryPrefixBlocksResponse {
-  reserved 1;
-  reserved "nodes";
-  repeated FetchSegment segments = 2;
+message BlockCandidates {
+  bytes block_hash = 1;
+  repeated ReplicaLocation replicas = 2;
+}
+
+// One row per requested key, including empty rows. Replicas are bounded hints;
+// an empty row is not proof of global absence. The requester plans transfers.
+message LocateBlocksResponse {
+  repeated BlockCandidates blocks = 1;
 }
 
 message HeartbeatNodeRequest {
@@ -204,5 +212,5 @@ service MetaServer {
   rpc HeartbeatNode(HeartbeatNodeRequest) returns (HeartbeatNodeResponse);
   rpc UnregisterNode(UnregisterNodeRequest) returns (UnregisterNodeResponse);
   rpc SyncInventory(SyncInventoryRequest) returns (SyncInventoryResponse);
-  rpc QueryPrefixBlocks(QueryPrefixBlocksRequest) returns (QueryPrefixBlocksResponse);
+  rpc LocateBlocks(LocateBlocksRequest) returns (LocateBlocksResponse);
 }

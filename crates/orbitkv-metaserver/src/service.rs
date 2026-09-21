@@ -7,54 +7,10 @@ use uuid::Uuid;
 use crate::metric::record_rpc_result;
 use crate::proto::engine::meta_server_server::MetaServer;
 use crate::proto::engine::{
-    FetchSegment, HeartbeatNodeRequest, HeartbeatNodeResponse, QueryPrefixBlocksRequest,
-    QueryPrefixBlocksResponse, SyncInventoryRequest, SyncInventoryResponse, UnregisterNodeRequest,
-    UnregisterNodeResponse,
+    HeartbeatNodeRequest, HeartbeatNodeResponse, LocateBlocksRequest, LocateBlocksResponse,
+    SyncInventoryRequest, SyncInventoryResponse, UnregisterNodeRequest, UnregisterNodeResponse,
 };
-use crate::store::{BlockHashStore, PrefixEntry, StoreError};
-fn plan_fetch_segments(
-    entries: &[PrefixEntry],
-    exclude_node: &str,
-) -> Result<Vec<FetchSegment>, &'static str> {
-    let mut segments = Vec::new();
-    let mut offset = 0usize;
-
-    while offset < entries.len() {
-        let mut best: Option<(&str, usize)> = None;
-        for candidate in &entries[offset].nodes {
-            let candidate = candidate.as_ref();
-            if candidate == exclude_node {
-                continue;
-            }
-
-            let end = entries[offset..]
-                .iter()
-                .take_while(|entry| entry.nodes.iter().any(|node| node.as_ref() == candidate))
-                .count()
-                + offset;
-
-            if best.is_none_or(|(best_node, best_end)| {
-                end > best_end || (end == best_end && candidate < best_node)
-            }) {
-                best = Some((candidate, end));
-            }
-        }
-
-        let Some((node, end)) = best else {
-            break;
-        };
-        let block_count =
-            u32::try_from(end - offset).map_err(|_| "fetch segment block count exceeds uint32")?;
-        segments.push(FetchSegment {
-            node: node.to_string(),
-            block_count,
-        });
-        offset = end;
-    }
-
-    Ok(segments)
-}
-
+use crate::store::{BlockHashStore, StoreError};
 #[derive(Clone)]
 pub struct GrpcMetaService {
     store: Arc<BlockHashStore>,
@@ -163,99 +119,30 @@ impl MetaServer for GrpcMetaService {
         result
     }
 
-    async fn query_prefix_blocks(
+    async fn locate_blocks(
         &self,
-        request: Request<QueryPrefixBlocksRequest>,
-    ) -> Result<Response<QueryPrefixBlocksResponse>, Status> {
+        request: Request<LocateBlocksRequest>,
+    ) -> Result<Response<LocateBlocksResponse>, Status> {
         let start = Instant::now();
         let req = request.into_inner();
         let result = async {
-            if req.block_hashes.is_empty() {
-                return Err(Status::invalid_argument("block_hashes cannot be empty"));
+            orbitkv_state::validate_discovery_query(&req.namespace, &req.block_hashes)
+                .map_err(Status::invalid_argument)?;
+            if req.exclude_node.len() > orbitkv_state::DISCOVERY_MAX_ENDPOINT_BYTES {
+                return Err(Status::invalid_argument("requester endpoint too long"));
             }
             let store = Arc::clone(&self.store);
-            let existing = tokio::task::spawn_blocking(move || {
-                store.query_prefix(&req.namespace, &req.block_hashes)
+            let blocks = tokio::task::spawn_blocking(move || {
+                store.locate_blocks(&req.namespace, &req.block_hashes, &req.exclude_node)
             })
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
-            let segments = plan_fetch_segments(&existing, &req.exclude_node)
-                .map_err(Status::invalid_argument)?;
-            Ok(Response::new(QueryPrefixBlocksResponse { segments }))
+            Ok(Response::new(LocateBlocksResponse {
+                blocks: blocks.into_iter().map(Into::into).collect(),
+            }))
         }
         .await;
-        record_rpc_result("query_prefix_blocks", &result, start);
+        record_rpc_result("locate_blocks", &result, start);
         result
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn prefix_entry(hash: u8, nodes: &[&str]) -> PrefixEntry {
-        PrefixEntry {
-            block_hash: vec![hash],
-            nodes: nodes.iter().map(|node| Arc::<str>::from(*node)).collect(),
-        }
-    }
-
-    fn planned(entries: &[PrefixEntry], exclude_node: &str) -> Vec<(String, u32)> {
-        plan_fetch_segments(entries, exclude_node)
-            .expect("small test plan should fit uint32")
-            .into_iter()
-            .map(|segment| (segment.node, segment.block_count))
-            .collect()
-    }
-
-    #[test]
-    fn planner_combines_fragmented_remote_prefix() {
-        let entries = vec![
-            prefix_entry(1, &["node-a"]),
-            prefix_entry(2, &["node-a"]),
-            prefix_entry(3, &["node-b"]),
-            prefix_entry(4, &["node-b"]),
-        ];
-
-        assert_eq!(
-            planned(&entries, "requester"),
-            vec![("node-a".into(), 2), ("node-b".into(), 2)]
-        );
-    }
-
-    #[test]
-    fn planner_chooses_farthest_owner_and_stable_tie_break() {
-        let entries = vec![
-            prefix_entry(1, &["node-c", "node-b", "node-a"]),
-            prefix_entry(2, &["node-c", "node-b", "node-a"]),
-            prefix_entry(3, &["node-c"]),
-        ];
-
-        assert_eq!(planned(&entries, "requester"), vec![("node-c".into(), 3)]);
-        assert_eq!(
-            planned(&entries[..2], "requester"),
-            vec![("node-a".into(), 2)]
-        );
-    }
-
-    #[test]
-    fn planner_excludes_requester_and_stops_at_remote_gap() {
-        let entries = vec![
-            prefix_entry(1, &["requester", "node-a"]),
-            prefix_entry(2, &["requester"]),
-            prefix_entry(3, &["node-b"]),
-        ];
-
-        assert_eq!(planned(&entries, "requester"), vec![("node-a".into(), 1)]);
-    }
-
-    #[test]
-    fn planner_keeps_single_owner_prefix_in_one_segment() {
-        let entries = vec![
-            prefix_entry(1, &["node-a"]),
-            prefix_entry(2, &["node-a"]),
-            prefix_entry(3, &["node-a"]),
-        ];
-
-        assert_eq!(planned(&entries, "requester"), vec![("node-a".into(), 3)]);
     }
 }

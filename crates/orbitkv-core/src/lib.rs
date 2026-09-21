@@ -1051,29 +1051,14 @@ impl OrbitKVEngine {
     // Cross-node transfer: serving side
     // =========================================================================
 
-    /// Look up blocks and lock them for Mooncake transfer. Returns metadata
-    /// for each found block plus a session ID for later unlock.
-    pub fn query_blocks_for_transfer(
+    /// Authorize an exact set of residency episodes in this owner incarnation.
+    pub(crate) fn authorize_transfer(
         &self,
-        namespace: &str,
-        block_hashes: &[Vec<u8>],
-        requester_id: &str,
-    ) -> (String, Vec<(StateKey, Arc<SealedBlock>)>) {
-        let keys: Vec<StateKey> = block_hashes
-            .iter()
-            .map(|h| StateKey::new(namespace.to_string(), h.clone()))
-            .collect();
-
-        let found = self.storage.get_blocks_for_transfer(&keys);
-        let session_id = self.storage.lock_blocks_for_transfer(requester_id, &found);
-
-        debug!(
-            "query_blocks_for_transfer: namespace={namespace} requested={} found={} session={session_id}",
-            block_hashes.len(),
-            found.len(),
-        );
-
-        (session_id, found)
+        owner: uuid::Uuid,
+        requester: &str,
+        records: &[orbitkv_state::InventoryRecord],
+    ) -> Option<storage::TransferAuthorization> {
+        self.storage.authorize_transfer(owner, requester, records)
     }
 
     pub fn transfer_lock_timeout(&self) -> std::time::Duration {

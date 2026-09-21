@@ -33,8 +33,10 @@ sequenceDiagram
 
 ### Step 2: Discover & Fetch
 
-Node B needs the same blocks. It queries the MetaServer, discovers Node A has
-them, and reads them through Mooncake's selected transport.
+Node B needs the same blocks. It first checks its bounded candidate index.
+Uncached keys use batched `LocateBlocks` calls to the MetaServer. Node B plans
+contiguous source spans, validates each source runtime and residency version
+through authorization, and reads the bytes with Mooncake.
 
 ```mermaid
 sequenceDiagram
@@ -42,9 +44,13 @@ sequenceDiagram
     participant M as MetaServer
     participant A as OrbitKV (Node A)
 
-    B->>M: who has these blocks?
-    M-->>B: Node A
-    B->>A: gRPC authorize + pin blocks
+    B->>B: check candidate index
+    opt missing or expired evidence
+        B->>M: LocateBlocks (bounded batch)
+        M-->>B: endpoints + runtime UUIDs + insertion sequences
+    end
+    B->>B: plan contiguous source spans
+    B->>A: gRPC validate versions + pin blocks
     A-->>B: Mooncake endpoint + ranges + lease
     B->>A: Mooncake READ
     B->>A: gRPC release lease

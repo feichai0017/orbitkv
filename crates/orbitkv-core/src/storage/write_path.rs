@@ -381,10 +381,12 @@ mod tests {
             inflight.is_empty(),
             "ordered complete batch should skip inflight storage"
         );
-        let cached = engine.read_cache.get_blocks(std::slice::from_ref(&key));
+        let cached = engine
+            .read_cache
+            .get_blocks_aligned(std::slice::from_ref(&key));
         assert_eq!(cached.len(), 1, "sealed block should be in read cache");
 
-        let sealed = &cached[0].1;
+        let sealed = cached[0].as_ref().expect("sealed block should be present");
         assert_eq!(sealed.memory_footprint(), expected_footprint);
         assert_eq!(sealed.slots().len(), 3);
         assert_eq!(sealed.slot_numas(), &[NumaNode(1); 3]);

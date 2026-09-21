@@ -119,11 +119,34 @@ impl Engine for P2pTransferService {
             ));
         }
 
-        let (session_id, found_blocks) = self.engine.query_blocks_for_transfer(
-            &req.namespace,
-            &req.block_hashes,
-            &req.requester_id,
-        );
+        orbitkv_state::validate_discovery_query(&req.namespace, &req.block_hashes)
+            .map_err(Status::invalid_argument)?;
+        if req.residency_sequences.len() != req.block_hashes.len()
+            || req.residency_sequences.contains(&0)
+        {
+            return Err(Status::invalid_argument("missing residency sequences"));
+        }
+        let owner = req
+            .owner_incarnation
+            .parse()
+            .map_err(|_| Status::invalid_argument("invalid owner incarnation"))?;
+        let records: Vec<_> = req
+            .block_hashes
+            .iter()
+            .zip(&req.residency_sequences)
+            .map(|(hash, &sequence)| orbitkv_state::InventoryRecord {
+                key: orbitkv_state::StateKey::new(req.namespace.clone(), hash.clone()),
+                sequence,
+                present: true,
+            })
+            .collect();
+        let crate::storage::TransferAuthorization {
+            session_id,
+            blocks: found_blocks,
+        } = self
+            .engine
+            .authorize_transfer(owner, &req.requester_id, &records)
+            .ok_or_else(|| Status::failed_precondition("stale owner or residency candidate"))?;
 
         let blocks: Vec<TransferBlockInfo> = found_blocks
             .iter()

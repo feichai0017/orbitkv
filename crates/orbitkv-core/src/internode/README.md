@@ -1,7 +1,8 @@
 # Cross-node coordination
 
 `metaserver_client.rs` owns the current directory synchronization state machine,
-heartbeat and remote prefix-plan queries. `p2p_service.rs` authorizes and pins
+heartbeat and bounded `LocateBlocks` queries through the positive candidate
+index in `discovery.rs`. `p2p_service.rs` authorizes and pins
 source blocks for Mooncake and releases completed transfer holds.
 
 The engine channel remains UDS/iceoryx2. These network services run only when
@@ -36,10 +37,15 @@ Requests have deadlines, and retries use backoff with jitter. An inventory
 flush waits for an actual acknowledgement or returns an error; there is no
 success path that silently drops pending changes.
 
-The requesting Manager still calls `query_plan` on a local miss. Moving plan
-construction and a bounded candidate index into the Manager belongs to D1.
-Mooncake is responsible for payload bytes, while the source service owns block
-validation and holds. The directory never grants direct memory access.
+The requesting Manager plans transfers in `backing/fetch_plan.rs`. A 16 MiB
+logical-byte LRU retains positive evidence for five seconds without extending
+the TTL on hits. Cold lookups are coalesced and split at 128 keys / 64 KiB.
+There is no negative cache. The source validates its runtime UUID and exact
+insertion sequences atomically with payload pinning. Rejected versions are
+invalidated locally; up to two alternate-source retries use existing candidates.
+Mooncake transfers payload bytes. The blocking operation retains destination
+buffers and the source-release guard across caller cancellation. Source
+timeout/revocation and cross-host failure qualification remain open. The directory never grants direct memory access.
 
 ## Configuration
 

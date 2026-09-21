@@ -92,6 +92,11 @@ impl Default for StorageConfig {
     }
 }
 
+pub(crate) struct TransferAuthorization {
+    pub(crate) session_id: String,
+    pub(crate) blocks: Vec<(StateKey, Arc<SealedBlock>)>,
+}
+
 pub(crate) struct StorageEngine {
     allocator: Arc<PinnedAllocator>,
     read_cache: Arc<ReadCache>,
@@ -207,7 +212,7 @@ impl StorageEngine {
 
         #[cfg(not(feature = "mooncake"))]
         if metaserver_client.is_some() {
-            warn!(
+            log::warn!(
                 "MetaServer was configured, but this binary was built without the `mooncake` feature; remote transfer is disabled"
             );
         }
@@ -547,22 +552,21 @@ impl StorageEngine {
 
     // ---- Cross-node transfer: serving side ----
 
-    /// Look up specific blocks by key (non-prefix). For cross-node transfer.
-    pub(crate) fn get_blocks_for_transfer(
+    pub(crate) fn authorize_transfer(
         &self,
-        keys: &[StateKey],
-    ) -> Vec<(StateKey, Arc<SealedBlock>)> {
-        self.read_cache.get_blocks(keys)
-    }
-
-    /// Lock blocks for a transfer session, returning the session ID.
-    pub(crate) fn lock_blocks_for_transfer(
-        &self,
-        requester_id: &str,
-        blocks: &[(StateKey, Arc<SealedBlock>)],
-    ) -> String {
-        self.transfer_lock
-            .lock_blocks(requester_id, blocks.to_vec())
+        owner: uuid::Uuid,
+        requester: &str,
+        records: &[orbitkv_state::InventoryRecord],
+    ) -> Option<TransferAuthorization> {
+        if self.metaserver_client.as_ref()?.node_id != owner {
+            return None;
+        }
+        let found = self.read_cache.pin_residencies(records)?;
+        let session = self.transfer_lock.lock_blocks(requester, found.clone());
+        Some(TransferAuthorization {
+            session_id: session,
+            blocks: found,
+        })
     }
 
     pub(crate) fn transfer_lock_timeout(&self) -> Duration {
@@ -695,31 +699,6 @@ mod tests {
     // ---- Cross-node transfer: serving side tests ----
 
     #[tokio::test]
-    async fn get_blocks_for_transfer_returns_correct_blocks() {
-        let storage = make_engine();
-        let key1 = StateKey::new("ns".into(), vec![1]);
-        let key2 = StateKey::new("ns".into(), vec![2]);
-        let key3 = StateKey::new("ns".into(), vec![3]);
-        let block = Arc::new(SealedBlock::from_slots(Vec::new()));
-
-        storage.test_insert_cache(key1.clone(), block.clone());
-        storage.test_insert_cache(key3.clone(), block.clone());
-
-        // Request keys 1, 2, 3 — only 1 and 3 are present (non-prefix semantics)
-        let result = storage.get_blocks_for_transfer(&[key1.clone(), key2, key3.clone()]);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].0, key1);
-        assert_eq!(result[1].0, key3);
-    }
-
-    #[tokio::test]
-    async fn get_blocks_for_transfer_empty_keys() {
-        let storage = make_engine();
-        let result = storage.get_blocks_for_transfer(&[]);
-        assert!(result.is_empty());
-    }
-
-    #[tokio::test]
     async fn pinned_memory_regions_returns_non_empty() {
         let storage = make_engine();
         let regions = storage.pinned_memory_regions();
@@ -732,23 +711,5 @@ mod tests {
         for (_ptr, size) in &regions {
             assert!(*size > 0, "region size should be non-zero");
         }
-    }
-
-    #[tokio::test]
-    async fn lock_and_release_transfer_when_enabled() {
-        let storage = make_engine();
-        let key = StateKey::new("ns".into(), vec![1]);
-        let block = Arc::new(SealedBlock::from_slots(Vec::new()));
-
-        storage.test_insert_cache(key.clone(), block.clone());
-
-        let session_id = storage.lock_blocks_for_transfer("node-a", &[(key, block)]);
-        assert!(
-            !session_id.is_empty(),
-            "lock_blocks_for_transfer should return a UUID when enabled"
-        );
-
-        let released = storage.release_transfer_lock(&session_id);
-        assert_eq!(released, 1);
     }
 }

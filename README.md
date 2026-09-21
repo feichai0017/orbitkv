@@ -70,8 +70,9 @@ recovery semantics remain open: Publish carries raw block IDs, absolute token
 span evidence is not carried by both adapters, and bundle completeness is a
 component-presence check. The MetaServer is a separate, non-HA, in-memory
 directory with automatic resident-inventory replay after restart. Versioned
-snapshots and bounded journals are implemented; embedded catalogs, etcd
-membership and candidate caching are next in the
+snapshots, bounded journals, Manager-side candidate caching and fetch planning
+are implemented. Sources check owner/runtime and residency versions before
+authorizing transfers; embedded catalogs and etcd membership are next in the
 [distributed cache plan](docs/distributed-cache.md). See [architecture](docs/architecture.md)
 and the [model-aware state plan](docs/state-identity.md) for the implementation
 boundary. [State demand and transfer planning](docs/state-planning.md) describes

@@ -164,18 +164,24 @@ impl ReadCache {
         }
     }
 
-    /// Look up specific blocks by key without prefix-scan semantics (does not
-    /// stop at first miss). Used by the serving side of cross-node transfer.
-    pub(super) fn get_blocks(&self, keys: &[StateKey]) -> Vec<(StateKey, Arc<SealedBlock>)> {
+    /// Check every insertion version and acquire payload Arcs under the same
+    /// cache lock. A stale batch exposes no addresses and creates no session.
+    pub(super) fn pin_residencies(
+        &self,
+        records: &[InventoryRecord],
+    ) -> Option<Vec<(StateKey, Arc<SealedBlock>)>> {
         let mut inner = self.inner.lock();
-        let mut found = Vec::new();
-        for key in keys {
-            if let Some(block) = inner.cache.get(key) {
-                refresh_recency(&mut inner, key);
-                found.push((key.clone(), block));
-            }
+        let inventory = inner.inventory.as_ref()?;
+        if records.is_empty() || !records.iter().all(|r| inventory.contains_record(r)) {
+            return None;
         }
-        found
+        let mut found = Vec::with_capacity(records.len());
+        for record in records {
+            let block = inner.cache.get(&record.key)?;
+            refresh_recency(&mut inner, &record.key);
+            found.push((record.key.clone(), block));
+        }
+        Some(found)
     }
 
     /// Position-aligned membership: entry `i` is the block for `keys[i]`, or
@@ -632,7 +638,14 @@ mod tests {
             (oldest.clone(), make_block()),
         ]);
         let inserted_at = backdate_resident(&cache, &hit, Duration::from_secs(60));
-        assert_eq!(cache.get_blocks(std::slice::from_ref(&hit)).len(), 1);
+        assert_eq!(
+            cache
+                .get_blocks_aligned(std::slice::from_ref(&hit))
+                .iter()
+                .flatten()
+                .count(),
+            1
+        );
 
         assert_eq!(
             resident_metadata(&cache, &hit).unwrap().inserted_at,
@@ -730,7 +743,7 @@ mod tests {
         assert_eq!(first.len(), 1);
         cache.batch_insert_refs(&[(key.clone(), make_block())]);
         assert_eq!(cache.inventory_sequence(), 1);
-        let pinned = cache.get_blocks(std::slice::from_ref(&key));
+        let pinned = cache.get_blocks_aligned(std::slice::from_ref(&key));
         assert!(cache.remove_lru_batch(1).is_empty());
         assert_eq!(cache.inventory_sequence(), 1);
         drop(pinned);
@@ -781,75 +794,23 @@ mod tests {
     }
 
     #[test]
-    fn get_blocks_returns_existing_skips_missing() {
-        let cache = make_cache();
-        let key1 = StateKey::new("ns".into(), vec![1]);
-        let key2 = StateKey::new("ns".into(), vec![2]);
-        let key3 = StateKey::new("ns".into(), vec![3]);
-
-        cache.batch_insert(vec![
-            (key1.clone(), make_block()),
-            (key3.clone(), make_block()),
-        ]);
-
-        // key2 is missing — get_blocks should skip it (unlike prefix scan, no break)
-        let result = cache.get_blocks(&[key1.clone(), key2.clone(), key3.clone()]);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].0, key1);
-        assert_eq!(result[1].0, key3);
-    }
-
-    #[test]
-    fn get_blocks_empty_input_returns_empty() {
-        let cache = make_cache();
-        let result = cache.get_blocks(&[]);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn get_blocks_all_missing_returns_empty() {
-        let cache = make_cache();
-        let key1 = StateKey::new("ns".into(), vec![10]);
-        let key2 = StateKey::new("ns".into(), vec![20]);
-
-        let result = cache.get_blocks(&[key1, key2]);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn get_blocks_is_idempotent() {
-        let cache = make_cache();
+    fn pin_residencies_fences_eviction_and_reinsertion() {
+        let cache = ReadCache::new(1024 * 1024, false, None, Some(4096));
         let key = StateKey::new("ns".into(), vec![1]);
         cache.batch_insert(vec![(key.clone(), make_block())]);
-
-        // Call get_blocks twice; both should return the same result
-        let result1 = cache.get_blocks(std::slice::from_ref(&key));
-        let result2 = cache.get_blocks(std::slice::from_ref(&key));
-        assert_eq!(result1.len(), 1);
-        assert_eq!(result2.len(), 1);
-        assert_eq!(result1[0].0, result2[0].0);
-    }
-
-    #[test]
-    fn get_blocks_does_not_break_at_first_miss() {
-        // Contrast with get_prefix_blocks which stops at first miss
-        let cache = make_cache();
-        let keys: Vec<StateKey> = (0u8..5)
-            .map(|i| StateKey::new("ns".into(), vec![i]))
-            .collect();
-
-        // Insert only even-indexed keys: 0, 2, 4
-        for key in keys.iter().step_by(2) {
-            cache.batch_insert(vec![(key.clone(), make_block())]);
-        }
-
-        // get_blocks: returns keys 0, 2, 4 (skips 1, 3)
-        let result = cache.get_blocks(&keys);
-        assert_eq!(result.len(), 3);
-
-        // get_prefix_blocks: stops at key 1 (first miss), returns only key 0
-        let (prefix_hit, _) = cache.get_prefix_blocks(&keys);
-        assert_eq!(prefix_hit, 1);
+        let first = cache.inventory_page(None).unwrap();
+        let pinned = cache.pin_residencies(&first).unwrap();
+        assert!(cache.remove_lru_batch(1).is_empty());
+        drop(pinned);
+        assert_eq!(cache.remove_lru_batch(1).len(), 1);
+        cache.batch_insert(vec![(key.clone(), make_block())]);
+        assert!(cache.pin_residencies(&first).is_none());
+        let current = cache.inventory_page(None).unwrap();
+        let mut mixed = current.clone();
+        mixed.extend(first);
+        assert!(cache.pin_residencies(&mixed).is_none());
+        assert!(cache.pin_residencies(&current).is_some());
+        assert_eq!(cache.remove_lru_batch(1).len(), 1);
     }
 
     #[test]
@@ -865,7 +826,14 @@ mod tests {
 
         let removed = cache.remove_all();
         assert_eq!(removed.len(), 2);
-        assert_eq!(cache.get_blocks(&[key1, key2]).len(), 0);
+        assert_eq!(
+            cache
+                .get_blocks_aligned(&[key1, key2])
+                .iter()
+                .flatten()
+                .count(),
+            0
+        );
         let inner = cache.inner.lock();
         assert!(inner.reclaimable.is_empty());
         assert!(inner.retained.is_empty());
@@ -880,7 +848,14 @@ mod tests {
         let cold = StateKey::new("ns".into(), vec![2]);
         cache.batch_insert_reclaimable(vec![(hot.clone(), make_block())]);
         for _ in 0..2 {
-            assert_eq!(cache.get_blocks(std::slice::from_ref(&hot)).len(), 1);
+            assert_eq!(
+                cache
+                    .get_blocks_aligned(std::slice::from_ref(&hot))
+                    .iter()
+                    .flatten()
+                    .count(),
+                1
+            );
         }
         cache.batch_insert_reclaimable(vec![(cold.clone(), make_block())]);
         cache.batch_insert_reclaimable(vec![(hot.clone(), make_block())]);

@@ -97,7 +97,7 @@ fn snapshot_cut_preserves_newer_samples_and_replays_evictions() {
     };
     let progress = sync(&store, "a", id, 1, page.clone()).unwrap().0;
     assert_eq!(sync(&store, "a", id, 1, page.clone()).unwrap().0, progress);
-    assert!(store.query_prefix("ns", &[vec![1]]).is_empty());
+    assert!(prefix(&store, "ns", &[vec![1]]).is_empty());
     assert_eq!(
         sync(
             &store,
@@ -133,15 +133,15 @@ fn snapshot_cut_preserves_newer_samples_and_replays_evictions() {
         InventoryOperation::Commit { sequence: 6 },
     )
     .unwrap();
-    assert!(store.query_prefix("ns", &[vec![1]]).is_empty());
-    assert_eq!(store.query_prefix("ns", &[vec![2], vec![3]]).len(), 2);
+    assert!(prefix(&store, "ns", &[vec![1]]).is_empty());
+    assert_eq!(prefix(&store, "ns", &[vec![2], vec![3]]).len(), 2);
     let remove = InventoryOperation::Delta {
         after: 6,
         records: vec![record(2, 7, false)],
     };
     sync(&store, "a", id, 1, remove.clone()).unwrap();
     sync(&store, "a", id, 1, remove).unwrap();
-    assert!(store.query_prefix("ns", &[vec![2]]).is_empty());
+    assert!(prefix(&store, "ns", &[vec![2]]).is_empty());
     assert_eq!(
         sync(
             &store,
@@ -174,7 +174,7 @@ fn snapshot_cut_preserves_newer_samples_and_replays_evictions() {
         InventoryOperation::Begin { sequence: 7 },
     )
     .unwrap();
-    assert!(store.query_prefix("ns", &[vec![3]]).is_empty());
+    assert!(prefix(&store, "ns", &[vec![3]]).is_empty());
     assert_eq!(
         sync(
             &store,
@@ -235,7 +235,7 @@ fn malformed_batches_are_atomic_and_owner_budget_is_enforced() {
     ] {
         assert_eq!(sync(&store, "a", id, 1, op), Err(error));
         assert_eq!(store.heartbeat_node("a", id).unwrap(), before);
-        assert_eq!(store.query_prefix("ns", &[vec![1]]).len(), 1);
+        assert_eq!(prefix(&store, "ns", &[vec![1]]).len(), 1);
     }
     sync(
         &store,
@@ -248,8 +248,8 @@ fn malformed_batches_are_atomic_and_owner_budget_is_enforced() {
         },
     )
     .unwrap();
-    assert!(store.query_prefix("ns", &[vec![1]]).is_empty());
-    assert_eq!(store.query_prefix("ns", &[vec![2]]).len(), 1);
+    assert!(prefix(&store, "ns", &[vec![1]]).is_empty());
+    assert_eq!(prefix(&store, "ns", &[vec![2]]).len(), 1);
     sync(
         &store,
         "a",
@@ -293,10 +293,14 @@ fn sessions_epochs_liveness_and_cleanup_fence_old_evidence() {
         Err(StoreError::StaleSession)
     );
     store.node("a").unwrap().lock().last_seen -= Duration::from_secs(DEFAULT_NODE_STALE_SECS + 1);
-    assert!(store.query_prefix("ns", &[vec![1]]).is_empty());
+    assert!(prefix(&store, "ns", &[vec![1]]).is_empty());
     assert_eq!(
-        store.query_prefix("ns", &[vec![2]])[0].nodes,
-        vec![Arc::<str>::from("b")]
+        prefix(&store, "ns", &[vec![2]])[0]
+            .replicas
+            .iter()
+            .map(|r| r.owner.endpoint.as_str())
+            .collect::<Vec<_>>(),
+        vec!["b"]
     );
     let current = Uuid::new_v4();
     assert_eq!(
@@ -411,16 +415,48 @@ fn concurrent_owner_updates_and_queries_preserve_accounting() {
                         },
                     )
                     .unwrap();
-                    store.query_prefix("ns", &[vec![1]]);
+                    prefix(store, "ns", &[vec![1]]);
                 }
             });
         }
     });
-    assert_eq!(store.query_prefix("ns", &[vec![1]])[0].nodes.len(), 4);
+    assert_eq!(prefix(&store, "ns", &[vec![1]])[0].replicas.len(), 4);
     assert_counts(&store);
     for (node, id) in owners {
         assert_eq!(store.unregister_node(&node, id), Ok(1));
     }
     assert_counts(&store);
     assert_eq!(store.entry_count(), 0);
+}
+
+fn prefix(store: &BlockHashStore, namespace: &str, hashes: &[Vec<u8>]) -> Vec<BlockCandidates> {
+    store
+        .locate_blocks(namespace, hashes, "")
+        .into_iter()
+        .take_while(|row| !row.replicas.is_empty())
+        .collect()
+}
+
+#[test]
+fn discovery_is_position_aligned_bounded_and_preserves_source_versions() {
+    let store = BlockHashStore::new();
+    let id = seed(&store, "a", &[1, 3]);
+    for node in ["b", "c", "d", "e", "f"] {
+        seed(&store, node, &[1]);
+    }
+    let rows = store.locate_blocks("ns", &[vec![1], vec![2], vec![3]], "b");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].replicas.len(), DISCOVERY_MAX_REPLICAS);
+    assert!(rows[0].replicas.iter().all(|r| r.owner.endpoint != "b"));
+    assert!(rows[1].replicas.is_empty());
+    assert_eq!(
+        rows[2].replicas,
+        vec![ReplicaLocation {
+            owner: CacheOwner {
+                endpoint: "a".into(),
+                incarnation: id
+            },
+            sequence: 2,
+        }]
+    );
 }
