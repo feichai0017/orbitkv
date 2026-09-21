@@ -10,7 +10,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .metrics import metrics, percentile
+from .metrics import cached_tokens, measure, percentile
 from .workload import evict_host_cache, generate
 
 PATTERNS = ("shared", "mixed")
@@ -20,69 +20,21 @@ def phases(ssd: bool) -> tuple[str, ...]:
     return ("cold", "after_pressure", "after_host_eviction") if ssd else ("cold", "after_pressure")
 
 
-def cached_tokens(engine: str, sample: dict) -> int:
-    usage = sample["usage"]
-    if engine == "sglang":
-        return usage.get("cached_tokens", 0)
-    return (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-
-
-def delta(before: dict, after: dict) -> dict:
-    return {
-        key: value - before.get(key, 0)
-        for key, value in after.items()
-        if value != before.get(key, 0)
-    }
-
-
 def burst(
     args, base_url: str, manager_url: str | None, prompts: list[list[int]]
 ) -> tuple[list, dict]:
     barrier = threading.Barrier(len(prompts))
-    stop = threading.Event()
-    peaks = {}
-    errors = []
-
-    def observe():
-        while not stop.is_set():
-            try:
-                for key, value in metrics(manager_url).items():
-                    if key in ("orbitkv_pool_used_bytes", "orbitkv_query_reserved_bytes"):
-                        peaks[key] = max(value, peaks.get(key, 0))
-            except Exception as error:
-                errors.append(str(error))
-                return
-            stop.wait(0.025)
 
     def request(tokens):
         barrier.wait(timeout=30)
         return generate(base_url, args.engine, str(args.model), tokens, args.output_tokens)
 
-    before = metrics(base_url)
-    manager_before = metrics(manager_url)
-    monitor = threading.Thread(target=observe, daemon=True)
-    monitor.start()
-    started = time.perf_counter()
-    try:
-        with ThreadPoolExecutor(max_workers=len(prompts)) as executor:
-            results = list(executor.map(request, prompts))
-        elapsed = time.perf_counter() - started
-    finally:
-        stop.set()
-        monitor.join(timeout=12)
-    if monitor.is_alive() or errors:
-        raise RuntimeError(f"Memory observation failed: {errors}")
-    time.sleep(args.settle_seconds)
-    manager_after = metrics(manager_url)
-    if manager_after.get("orbitkv_query_reserved_bytes", 0) != 0:
-        raise RuntimeError(f"Query reservations survived a completed burst: {manager_after}")
-    return results, {
-        "wall_seconds": elapsed,
-        "metrics_delta": delta(before, metrics(base_url)),
-        "manager_delta": delta(manager_before, manager_after),
-        "sampled_peak_bytes": peaks,
-        "manager_after": manager_after,
-    }
+    with (
+        measure(base_url, manager_url, args.settle_seconds) as measurement,
+        ThreadPoolExecutor(max_workers=len(prompts)) as executor,
+    ):
+        results = list(executor.map(request, prompts))
+    return results, measurement
 
 
 def run_workload(args, base_url: str, manager_url: str | None) -> tuple[list, list]:

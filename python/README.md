@@ -28,6 +28,10 @@ The distribution names are `orbitkv-llm` (CUDA 12) and
 install one extra per environment. Install a wheel matching the host CUDA
 runtime and Python ABI.
 
+The two extras are declared mutually exclusive for `uv` resolution: these
+engine releases pin different `numba` versions. Use one engine environment
+per installation, including when running the benchmark matrix.
+
 ```bash
 cd python
 uv venv ../.venv/vllm-release --python 3.11

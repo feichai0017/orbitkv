@@ -1,5 +1,8 @@
 # Deployment
 
+For LMCache/Mooncake integration boundaries and OrbitKV's single-node, DP and
+P/D execution order, see [distributed deployment comparison](distributed-comparison.md).
+
 | Mode | Processes | Status |
 | --- | --- | --- |
 | Single-node vLLM or SGLang cache | Engine + one local Cache Manager | Single-rank DRAM and forced-SSD recovery validated on both; concurrent and multi-rank workloads need separate qualification |

@@ -192,6 +192,7 @@ class SchedulerConnector:
 
         # Load state
         self._pending_load_intents: dict[str, LoadIntent] = {}
+        self._restores_awaiting_compute: set[str] = set()
         self._prefetch_start_times: dict[str, float] = {}
         self._pending_query_probes: dict[str, _QueryProbe] = {}
 
@@ -294,7 +295,7 @@ class SchedulerConnector:
         if not query_hashes:
             self._release_pending_query_probe(req_id)
             self._external_matched_blocks[req_id] = computed_blocks
-            return (0, False)
+            return (None if self._restores_awaiting_compute else 0, False)
 
         probe = self._pending_query_probes.get(req_id)
 
@@ -347,7 +348,14 @@ class SchedulerConnector:
         probe: _QueryProbe,
         lookup_us: float | None,
         reused: bool,
-    ) -> tuple[int, bool]:
+    ) -> tuple[int | None, bool]:
+        # vLLM stops traversing deferred requests when allocation fails. A
+        # newly ready lookup (even a miss) can otherwise block the completed
+        # restore behind it, whose GPU pages prevent that allocation. Keep
+        # prefetching, but admit another lookup only after the restore runs.
+        if self._restores_awaiting_compute:
+            return (None, False)
+
         # `_finish_cache_lookup` may release the probe, so snapshot what the
         # junction hint needs first.
         computed_blocks = probe.computed_blocks
@@ -566,6 +574,7 @@ class SchedulerConnector:
             if not load_intent.leases or any(not lease for lease in load_intent.leases):
                 raise RuntimeError(f"req {req_id} missing query lease for external load")
             self._pending_load_intents[req_id] = load_intent
+            self._restores_awaiting_compute.add(req_id)
             self._pending_query_probes.pop(req_id, None)
             logger.debug(
                 "[OrbitKVConnector] req=%s alloc: total_blocks=%d computed_blocks=%d "
@@ -581,6 +590,9 @@ class SchedulerConnector:
 
     def build_connector_meta(self, scheduler_output: "SchedulerOutput") -> OrbitKVConnectorMetadata:
         potential_saves: dict[str, SaveIntent] = {}
+        self._restores_awaiting_compute.difference_update(
+            req_id for req_id, tokens in scheduler_output.num_scheduled_tokens.items() if tokens > 0
+        )
 
         load_intents = self._pending_load_intents
         self._pending_load_intents = {}
@@ -1081,6 +1093,7 @@ class SchedulerConnector:
         block_ids: tuple[list[int], ...],
     ) -> tuple[bool, dict | None]:
         req_id = request.request_id
+        self._restores_awaiting_compute.discard(req_id)
 
         # Check if there are pending saves for this request
         if req_id in self._pending_saves:

@@ -1,7 +1,11 @@
 # OrbitKV roadmap
 
-The order is local correctness, recoverable distributed cache, then KV-aware
-routing. Milestones describe intended gates, not deployed capabilities. The
+The execution order is sustained single-node qualification, independent-replica
+cache sharing (DP), P/D plus cache reuse, then replicated catalogs and scale.
+Cancellation and transport lifetime safety apply at every stage. Cross-host
+TP/PP and KV-aware routing have later gates. See the
+[deployment comparison and priority rationale](distributed-comparison.md).
+Milestones describe intended gates, not deployed capabilities. The
 detailed work queue lives in [TODO.md](../TODO.md).
 
 ## M0: framework-neutral foundation

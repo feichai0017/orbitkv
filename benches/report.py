@@ -17,20 +17,20 @@ def collect_run(directory: Path) -> dict:
     manifest = json.loads((directory / "manifest.json").read_text())
     args = manifest["arguments"]
     samples = [json.loads(line) for line in (directory / "samples.jsonl").read_text().splitlines()]
-    if args.get("workload") == "concurrent":
-        from . import concurrent
+    if args.get("workload") in ("concurrent", "sustained"):
+        from . import concurrent, sustained
 
-        batches = [
-            json.loads(line) for line in (directory / "batches.jsonl").read_text().splitlines()
-        ]
-        concurrent.validate(args, samples, batches)
+        workload = sustained if args["workload"] == "sustained" else concurrent
+        evidence = "windows.jsonl" if args["workload"] == "sustained" else "batches.jsonl"
+        batches = [json.loads(line) for line in (directory / evidence).read_text().splitlines()]
+        workload.validate(args, samples, batches)
         return {
             "directory": str(directory.resolve()),
             "manifest": manifest,
             "storage": json.loads((directory / "storage.json").read_text())
             if args.get("ssd_gib", 0)
             else None,
-            "summary": concurrent.summarize(samples, batches),
+            "summary": workload.summarize(samples, batches),
         }
     expected = {
         (length, repeat, phase)

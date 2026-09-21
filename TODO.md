@@ -111,6 +111,12 @@ and a passing gate; design text alone does not close an item.
 - [x] Record shared/mixed 1/4/8-request bursts on both engines with a 2 GiB
   query budget; preserve output differences and native/deterministic controls
   in `docs/concurrent-performance.md`.
+- [x] Add bounded sustained mixed reuse/cold traffic, admission and completion
+  timing, post-run drain checks and incomplete-report rejection in `benches/`.
+- [x] Prioritize admitted vLLM restores through their first compute step so
+  deferred lookups cannot strand them behind a GPU allocation failure.
+- [ ] Record sustained single-node native/DRAM/SSD controls for both engines;
+  separate throughput, transfer evidence and output diagnostics.
 - [x] Retire SGLang queries when HBM covers the legal recovery boundary;
   enforce admission expiry without another lookup and test simultaneous recovery.
 - [ ] Profile vLLM duplicate H2D restores for shared prefixes; any reuse must
@@ -146,7 +152,7 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   history; detect lost notifications and require resynchronization.
 - [x] D0: implement paginated inventory snapshots with a complete delta cut,
   including concurrent eviction, duplicates and replay overflow.
-- [ ] D1: use etcd for member incarnations and configuration; recover Watches
+- [x] D1: use etcd for member incarnations and configuration; recover Watches
   after disconnection or compaction without per-block etcd operations.
 - [x] D1 discovery: bounded positive candidate indexing, coalesced batched
   lookup, Manager-side planning and source runtime/residency checks.

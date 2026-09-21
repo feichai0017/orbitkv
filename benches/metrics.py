@@ -4,8 +4,85 @@ from __future__ import annotations
 
 import math
 import statistics
+import threading
+import time
+from contextlib import contextmanager
 
 import requests
+
+
+def delta(before: dict, after: dict) -> dict:
+    return {
+        key: value - before.get(key, 0)
+        for key, value in after.items()
+        if value != before.get(key, 0)
+    }
+
+
+def cached_tokens(engine: str, sample: dict) -> int:
+    usage = sample["usage"]
+    if engine == "sglang":
+        return usage.get("cached_tokens", 0)
+    return (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+
+
+@contextmanager
+def measure(base_url: str, manager_url: str | None, settle_seconds: float):
+    before, manager_before = metrics(base_url), metrics(manager_url)
+    stop = threading.Event()
+    peaks, errors, result = {}, [], {}
+
+    def observe():
+        while not stop.is_set():
+            try:
+                for key, value in metrics(manager_url).items():
+                    if key in ("orbitkv_pool_used_bytes", "orbitkv_query_reserved_bytes"):
+                        peaks[key] = max(value, peaks.get(key, 0))
+            except Exception as error:
+                errors.append(str(error))
+                return
+            stop.wait(0.025)
+
+    monitor = threading.Thread(target=observe, daemon=True)
+    monitor.start()
+    started = time.perf_counter()
+    try:
+        yield result
+        result["wall_seconds"] = time.perf_counter() - started
+        drain_started = time.perf_counter()
+        time.sleep(settle_seconds)
+        deadline = time.monotonic() + 30
+        quiet = 0
+        while True:
+            manager_after = metrics(manager_url)
+            busy = any(
+                manager_after.get(name, 0) != 0
+                for name in (
+                    "orbitkv_query_reserved_bytes",
+                    "orbitkv_inflight_bytes",
+                    "orbitkv_ssd_write_queue_pending",
+                    "orbitkv_ssd_write_inflight",
+                    "orbitkv_ssd_prefetch_inflight",
+                )
+            )
+            quiet = 0 if busy else quiet + 1
+            if quiet >= 3:
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Cache work survived completed requests: {manager_after}")
+            time.sleep(0.1)
+        result.update(
+            drain_seconds=time.perf_counter() - drain_started,
+            metrics_delta=delta(before, metrics(base_url)),
+            manager_delta=delta(manager_before, manager_after),
+            sampled_peak_bytes=peaks,
+            manager_after=manager_after,
+        )
+    finally:
+        stop.set()
+        monitor.join(timeout=12)
+    if monitor.is_alive() or errors:
+        raise RuntimeError(f"Memory observation failed: {errors}")
 
 
 def workload_phases(ssd: bool = False) -> tuple[str, ...]:
