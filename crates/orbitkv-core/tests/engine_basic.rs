@@ -293,7 +293,7 @@ async fn shared_manager_reuses_only_matching_model_and_storage_identity() {
         );
         let result = a
             .engine
-            .count_prefix_hit_blocks_with_prefetch(id, id, &hashes, false)
+            .count_prefix_hit_blocks_with_prefetch(id, id, &hashes, orbitkv_core::QueryMode::Demand)
             .await
             .unwrap();
         let orbitkv_core::QueryResult { blocks, .. } = result;

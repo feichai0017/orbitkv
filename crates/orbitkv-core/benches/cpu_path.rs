@@ -192,7 +192,12 @@ impl BenchFixture {
         {
             let QueryResult { blocks, missing } = self
                 .engine
-                .count_prefix_hit_blocks_with_prefetch(INSTANCE_ID, req_id, hashes, false)
+                .count_prefix_hit_blocks_with_prefetch(
+                    INSTANCE_ID,
+                    req_id,
+                    hashes,
+                    orbitkv_core::QueryMode::Demand,
+                )
                 .await
                 .expect("query");
             assert_eq!(blocks.len(), hashes.len());

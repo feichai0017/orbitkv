@@ -48,6 +48,75 @@ async fn allocate_bounded_reclaim_terminates() {
 }
 
 #[tokio::test]
+async fn reclaim_preserves_residents_and_rechecks_real_contiguous_capacity() {
+    use crate::block::{RawBlock, Segment};
+
+    const PAGE: usize = 64 * 1024;
+    for fragmented in [false, true] {
+        let storage = StorageEngine::new_with_config(
+            16 * PAGE,
+            false,
+            StorageConfig {
+                hint_value_size_bytes: Some(PAGE),
+                ..StorageConfig::default()
+            },
+            &[],
+        )
+        .unwrap();
+        let mut blocks = Vec::new();
+        for i in 0..16 {
+            let allocation = storage
+                .allocate(NonZeroU64::new(PAGE as u64).unwrap(), None)
+                .unwrap();
+            let slot =
+                RawBlock::single_segment(Segment::new(allocation.as_non_null(), PAGE, allocation));
+            blocks.push((
+                StateKey::new("ns".into(), vec![i]),
+                Arc::new(SealedBlock::from_slots(vec![(slot, NumaNode::UNKNOWN)])),
+            ));
+        }
+        let mut keys = blocks
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        if fragmented {
+            // First victims leave separate holes; footprint alone is not
+            // proof that the allocator can satisfy a contiguous request.
+            blocks.sort_by_key(|(key, _)| match key.hash[0] {
+                0 => 0,
+                2 => 1,
+                4 => 2,
+                6 => 3,
+                1 => 4,
+                3 => 5,
+                other => other as usize + 6,
+            });
+            storage.read_cache.batch_insert(blocks);
+        } else {
+            let warm = blocks.pop().unwrap();
+            warm.1.mark_warmed();
+            storage.read_cache.batch_insert(blocks);
+            storage.read_cache.batch_insert_reclaimable(vec![warm]);
+            keys.rotate_right(1);
+        }
+        assert_eq!(storage.allocator.usage().0, (16 * PAGE) as u64);
+        let required = if fragmented { 2 * PAGE } else { PAGE };
+        let allocated = storage.allocate(NonZeroU64::new(required as u64).unwrap(), None);
+        assert!(allocated.is_some(), "fragmented={fragmented}");
+        let remaining = storage.read_cache.contains_keys(&keys);
+        if fragmented {
+            assert!(remaining.iter().filter(|present| **present).count() >= 8);
+        } else {
+            assert!(!remaining[0], "reclaimable warmup goes first");
+            assert!(
+                remaining[1..].iter().all(|present| *present),
+                "one-page demand must not evict the retained cache"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn gc_stale_inflight_returns_zero_when_empty() {
     let storage = make_engine();
     let cleaned = storage

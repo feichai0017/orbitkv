@@ -221,6 +221,8 @@ def sglang_command(args: Namespace, port: int, cache_config: Path | None) -> lis
         sys.executable,
         "-m",
         "sglang.launch_server",
+        "--nccl-port",
+        str(free_port()),
         "--model-path",
         str(args.model),
         "--host",

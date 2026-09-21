@@ -6,7 +6,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from orbitkv.logging_utils import trace_transfer
+from orbitkv.logging_utils import get_connector_logger, trace_transfer
 
 
 def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **kwargs: Any) -> Any:
@@ -36,7 +36,12 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     # req=None keeps this HBM-only: no external lookup, allocation or load marker.
     resident = scheduler.tree_cache.match_prefix(MatchPrefixParams(key=key, cow_mamba=False))
     keys = wrapper._tail_hashes(key, resident, int(resident.device_indices.numel()))
-    linker.client.warm_prefix(linker.instance_id, linker._hashes(keys), req.rid)
+    try:
+        linker.client.warm_prefix(linker.instance_id, linker._hashes(keys), req.rid)
+    except (RuntimeError, OSError):
+        get_connector_logger().warning(
+            "Queued warmup failed for request %s", req.rid, exc_info=True
+        )
     return result
 
 

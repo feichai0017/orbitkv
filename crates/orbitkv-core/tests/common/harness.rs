@@ -416,7 +416,12 @@ impl TestEnv {
     /// Query prefix hits. Returns raw QueryResult.
     pub async fn query(&self, hashes: &[Vec<u8>]) -> QueryResult {
         self.engine
-            .count_prefix_hit_blocks_with_prefetch(&self.instance_id, "test", hashes, false)
+            .count_prefix_hit_blocks_with_prefetch(
+                &self.instance_id,
+                "test",
+                hashes,
+                orbitkv_core::QueryMode::Demand,
+            )
             .await
             .expect("query")
     }

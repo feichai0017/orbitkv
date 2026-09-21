@@ -448,16 +448,10 @@ impl StorageEngine {
         req_id: &str,
         namespace: &str,
         hashes: &[Vec<u8>],
-        wait_for_full_prefix: bool,
+        mode: crate::QueryMode,
     ) -> QueryResult {
         self.prefetch
-            .check_and_prefetch(
-                &self.read_cache,
-                req_id,
-                namespace,
-                hashes,
-                wait_for_full_prefix,
-            )
+            .check_and_prefetch(&self.read_cache, req_id, namespace, hashes, mode)
             .await
     }
 
@@ -481,7 +475,9 @@ impl StorageEngine {
         while largest_free < required_bytes {
             let used_before = self.allocator.usage().0;
 
-            let evicted = self.read_cache.remove_lru_batch(RECLAIM_BATCH_SIZE);
+            let evicted = self
+                .read_cache
+                .remove_lru_batch(RECLAIM_BATCH_SIZE, required_bytes);
 
             if evicted.is_empty() {
                 break;

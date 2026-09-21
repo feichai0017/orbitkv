@@ -44,6 +44,8 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
                 'unused NaN\ncounter{worker="a"} 10\ncounter{worker="b"} 5\nidle +Inf\n'
                 'orbitkv_query_reserved_bytes{phase="warming"} 100\n'
                 'orbitkv_query_reserved_bytes{phase="ready"} 200\n'
+                'orbitkv_warmup_wait_byte_seconds_total{outcome="restored"} 300\n'
+                'orbitkv_warmup_wait_byte_seconds_total{outcome="unused"} 40\n'
             ),
             raise_for_status=lambda: None,
         ),
@@ -53,8 +55,24 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
         "counter": 15,
         "orbitkv_query_reserved_bytes": 300,
         "orbitkv_query_reserved_bytes_warming": 100,
+        "orbitkv_warmup_wait_byte_seconds_total": 340,
+        "orbitkv_warmup_wait_byte_seconds_total_restored": 300,
+        "orbitkv_warmup_wait_byte_seconds_total_unused": 40,
     }
     json.dumps(observed, allow_nan=False)
+
+
+@pytest.mark.parametrize("flag", [["--queue-warmup", "on"], ["--trace-transfers"]])
+def test_non_orbitkv_runs_reject_inapplicable_controls(monkeypatch, flag):
+    from benches.single_node import main
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["bench", "--engine", "vllm", "--backend", "native", "--model", "/missing", *flag],
+    )
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])

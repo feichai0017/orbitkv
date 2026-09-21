@@ -381,6 +381,16 @@ and optional first-use/wait budget in the shared contract. Begin with exact queu
 derive timing only from information available at enqueue. Relative budgets are
 interpreted at the receiver; do not compare monotonic clocks across hosts.
 
+Warmup-origin physical pages now carry first-successful-H2D / last-owner-release
+accounting with pending bytes and completed byte-seconds. New hints yield while
+foreground query ownership is active, and warmup peeks do not change recency.
+These measurements describe page reuse, not causal latency savings or confirmed
+engine consumption; use them to calibrate the next admission policy.
+The [matched page-use controls](queued-warming.md#page-use-and-reclamation-controls)
+leave 92.9% of SGLang's prepared footprint unused and admit little vLLM warming.
+Next relate hints to queue position and expected use time: the absence of a
+query lease is not proof that a queued request can soon consume prepared KV.
+
 Extend `storage/prefetch.rs` rather than adding a second scheduler facade.
 Refine the current global/per-instance ownership budget with device and staging
 accounting. Keep capacity for normal demand restores and independent leases

@@ -61,6 +61,15 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
     pool.get_cached_block.assert_not_called()
     client.warm_prefix.assert_not_called()
 
+    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
+    pool.get_cached_block.side_effect = None
+    pool.get_cached_block.return_value = None
+    client.warm_prefix.side_effect = RuntimeError("manager unavailable")
+    scheduler.on_new_request(req)
+    client.warm_prefix.assert_called_once()
+    assert req.request_id in scheduler._queued_at
+    assert not scheduler._pending_load_intents
+
 
 def step(tokens=0):
     return SimpleNamespace(

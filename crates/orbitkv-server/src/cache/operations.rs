@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::QueryLeaseId;
 use orbitkv_core::{
-    EngineError, LayerSave, OrbitKVEngine, QueryOwner, QueryReservation, QueryResult,
+    EngineError, LayerSave, OrbitKVEngine, QueryMode, QueryOwner, QueryReservation, QueryResult,
 };
 use thiserror::Error;
 
@@ -255,7 +255,13 @@ pub(crate) async fn execute_query(
             &input.instance_id,
             &input.request_id,
             &input.block_hashes,
-            input.wait_for_full_prefix,
+            if input.warmup {
+                QueryMode::Warmup
+            } else if input.wait_for_full_prefix {
+                QueryMode::WaitForFullPrefix
+            } else {
+                QueryMode::Demand
+            },
         )
         .await?;
     trace_query(

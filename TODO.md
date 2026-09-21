@@ -131,9 +131,20 @@ and a passing gate; design text alone does not close an item.
 - [x] Record matched Qwen3-8B warming on/off pressure controls and native output
   diagnostics. Keep automatic warming opt-in: initial controls increased SSD
   bytes per request without improving throughput (`docs/queued-warming.md`).
+- [x] Attribute warmup page footprints to first successful H2D, last-owner
+  unused release and live pending bytes; record completed byte-seconds. Keep
+  enqueue peeks cold, reclaim unused warming before retained pages, and skip
+  new hints while foreground query ownership is active.
+- [x] Bound each pressure-reclaim batch by the allocation's requested bytes,
+  then recheck real contiguous capacity; cover small-pool preservation and
+  fragmented free space instead of unconditionally evicting up to 512 pages.
+- [x] Repeat matched warming controls with page outcomes and byte-bounded
+  reclamation: vLLM admits little warming; SGLang leaves 92.9% of prepared
+  footprints unused. Keep warming opt-in; no throughput improvement is established.
 - [ ] Qualify queued warming under delayed reads, cancellation and sustained
-  pressure; account useful bytes and unused retained byte-seconds, add
-  priority/deadline and per-device/staging budgets (remaining P3).
+  pressure; calibrate admission from queue position, expected use time, page
+  outcomes and engine consumption. Add priority/deadline and per-device/staging
+  budgets (remaining P3); foreground query ownership alone is insufficient.
 - [ ] Calibrate restore-versus-recompute and write admission using
   `docs/state-planning.md` (P4); speculative workflow hints remain optional.
 - [ ] Profile the measured restore latency gap to both built-in CPU caches;

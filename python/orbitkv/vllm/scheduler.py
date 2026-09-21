@@ -296,9 +296,14 @@ class SchedulerConnector:
                 resident += 1
         if resident < len(hashes):
             for client in self._clients:
-                client.warm_prefix(
-                    self._ctx.instance_id, list(hashes[resident:]), request.request_id
-                )
+                try:
+                    client.warm_prefix(
+                        self._ctx.instance_id, list(hashes[resident:]), request.request_id
+                    )
+                except (RuntimeError, OSError):
+                    logger.warning(
+                        "Queued warmup failed for request %s", request.request_id, exc_info=True
+                    )
 
     def get_num_new_matched_tokens(
         self,

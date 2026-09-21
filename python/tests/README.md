@@ -21,6 +21,9 @@ vLLM scheduler tests cover bounded hint tickets and revalidated admission;
 `integration/test_sglang_admission.py` exercises the pinned upstream queue/key
 contract. `integration/test_sglang_direct_transfer.py` also proves unpolled SSD
 warmups release reservations and supply DRAM pages for a later leased GPU restore.
+A released query lease does not count as use, last-owner cleanup settles unused
+bytes, and a fresh read credits its footprint once after successful H2D across
+all layers. These checks cover both stored page layouts.
 
 ## What To Run
 
@@ -93,6 +96,12 @@ Requirements:
 Set `ORBITKV_CACHE_MANAGER_BINARY` to an absolute path to test a specific build
 (for example `target/debug/orbitkv-cache-manager`) instead of a previously
 installed or release binary. Both integration and vLLM helpers honor this override.
+
+Automatically selected listener ports exclude Linux's outgoing ephemeral range.
+GPU and pinned-pool initialization can delay binding long enough for an outgoing
+connection to claim a released `bind(0)` port. The SGLang restart gate also passes
+an explicit rendezvous port. Other test jobs can still race for a selected port;
+run GPU gates sequentially on the same host.
 
 ## vLLM Correctness E2E Gate
 

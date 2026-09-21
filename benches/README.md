@@ -44,6 +44,8 @@ Use `--output benches/results/runs/<name>` for an explicit empty directory. The
 harness owns the engine and the OrbitKV/LMCache process; do not start other GPU
 workloads during measurement. An OrbitKV source run uses the staged Cache Manager
 binary in `python/orbitkv/` and the Python adapters from this checkout.
+Listener ports, including SGLang's rendezvous port, are chosen outside Linux's
+outgoing ephemeral range to reduce startup conflicts during GPU initialization.
 
 Use `--backend native`, `cpu`, `orbitkv`, `lmcache`, or `flexkv`. Compare within
 one engine, using identical model, GPU token capacity, host capacity, request
@@ -111,6 +113,15 @@ of clocks on different hosts. Missing stages are not counted as zero latency.
 The [initial Qwen3-8B pressure controls](../docs/queued-warming.md#initial-pressure-controls)
 increased SSD bytes per request without a throughput gain. These results also
 retain a native HBM control for SGLang's prepared-reference output differences.
+The [page-use/reclamation controls](../docs/queued-warming.md#page-use-and-reclamation-controls)
+retain complete starting/ending counters and show why warming stays opt-in:
+vLLM admits few hints, while SGLang releases most prepared pages unused.
+Reports also retain warmup prepared/restored/unused byte deltas, completed
+byte-seconds by outcome, and pending bytes before/after the window and at the
+sampled peak. These count physical page footprints, not exact layer-copy bytes.
+Carry-in and live pending pages prevent treating a window ratio as a completed
+cohort hit rate. Enabling warming or transfer tracing for another backend is
+rejected rather than recorded as an ineffective control.
 
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \

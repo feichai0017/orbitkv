@@ -36,9 +36,10 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
         while not stop.is_set():
             try:
                 for key, value in metrics(manager_url).items():
-                    if key == "orbitkv_pool_used_bytes" or key.startswith(
-                        "orbitkv_query_reserved_bytes"
-                    ):
+                    if key in (
+                        "orbitkv_pool_used_bytes",
+                        "orbitkv_warmup_pending_bytes",
+                    ) or key.startswith("orbitkv_query_reserved_bytes"):
                         peaks[key] = max(value, peaks.get(key, 0))
             except Exception as error:
                 errors.append(str(error))
@@ -78,6 +79,7 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
             metrics_delta=delta(before, metrics(base_url)),
             manager_delta=delta(manager_before, manager_after),
             sampled_peak_bytes=peaks,
+            manager_before=manager_before,
             manager_after=manager_after,
         )
     finally:
@@ -111,6 +113,11 @@ def metrics(url: str | None) -> dict[str, float]:
             if name == "orbitkv_query_reserved_bytes" and 'phase="warming"' in series:
                 key = "orbitkv_query_reserved_bytes_warming"
                 values[key] = values.get(key, 0) + number
+            if name == "orbitkv_warmup_wait_byte_seconds_total":
+                for outcome in ("restored", "unused"):
+                    if f'outcome="{outcome}"' in series:
+                        key = f"{name}_{outcome}"
+                        values[key] = values.get(key, 0) + number
     return values
 
 

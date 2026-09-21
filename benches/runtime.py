@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import importlib.metadata
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -19,9 +21,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    """Avoid outgoing TCP ports while GPU initialization delays the listener."""
+    low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
+    for _ in range(128):
+        port = 1024 + secrets.randbelow(65536 - 1024)
+        if low <= port <= high:
+            continue
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
+                continue
+            return sock.getsockname()[1]
+    raise RuntimeError("No free benchmark listener port found")
 
 
 @contextlib.contextmanager

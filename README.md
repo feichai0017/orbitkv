@@ -29,10 +29,13 @@ An experimental distributed path extends the same cache API to peer managers.
 - **Keep ownership explicit.** The engine controls HBM allocation and execution.
   OrbitKV retains external replicas and transfer leases through completion.
 - **Bound preparation.** Byte budgets cover pending reads, ready leases and GPU
-  consumers; identical backing reads can share preparation.
+  consumers; identical backing reads can share preparation. Pressure reclaim
+  works in byte-bounded batches and rechecks actual contiguous capacity.
 - **Prepare queued demand (experimental).** Both engine adapters can warm missing prefixes
-  within a separate budget share, then revalidate them at admission. See
-  [queued warming](docs/queued-warming.md) for limits and qualification.
+  within a separate budget share, then revalidate them at admission. Warming
+  yields to foreground ownership and tracks restored, unused and pending pages.
+  It remains opt-in: [pressure controls](docs/queued-warming.md#page-use-and-reclamation-controls)
+  still show no established throughput gain.
 - **Identify compatible state.** Versioned keys bind immutable model artifacts,
   computation settings and registered storage geometry. Complete hybrid-state
   recovery contracts remain [in progress](docs/state-identity.md).

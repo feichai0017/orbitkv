@@ -44,6 +44,17 @@ OrbitKV exposes the following metrics for monitoring KV cache operations:
   demand query will bypass restoration.
 - **orbitkv_query_coalesced_reads_total** counts owners joining an identical
   backing-read plan. It is not a byte-savings counter.
+- **orbitkv_warmup_prepared_bytes_total**, **orbitkv_warmup_restored_bytes_total**,
+  **orbitkv_warmup_unused_bytes_total**, and **orbitkv_warmup_pending_bytes**
+  follow each warmup-origin page through successful local H2D or last-owner
+  release. A query hit is not use; restored bytes count unique page footprints,
+  not individual layer copies or exact H2D traffic.
+- **orbitkv_warmup_wait_byte_seconds_total** records byte-weighted time from
+  preparation to first successful H2D or unused release, labelled by `outcome`.
+  Unresolved live intervals are excluded. See the
+  [accounting contract](queued-warming.md#measuring-whether-preparation-was-useful).
+- **orbitkv_warmup_foreground_skips_total** counts hints skipped because
+  foreground preparation, leases or GPU transfers already own query bytes.
 
 Optional [request timelines](queued-warming.md#observing-the-path) correlate
 enqueue, preparation, restore and engine consumption. Cache-tier probe counts
