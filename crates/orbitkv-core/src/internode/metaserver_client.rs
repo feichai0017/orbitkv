@@ -32,20 +32,6 @@ const FLUSH_TIMEOUT: Duration = Duration::from_secs(30);
 const MIN_RETRY: Duration = Duration::from_millis(100);
 const MAX_RETRY: Duration = Duration::from_secs(5);
 
-pub struct MetaServerClientConfig {
-    pub metaserver_addr: String,
-    pub advertise_addr: String,
-}
-
-impl MetaServerClientConfig {
-    pub fn new(metaserver_addr: String, advertise_addr: String) -> Self {
-        Self {
-            metaserver_addr,
-            advertise_addr,
-        }
-    }
-}
-
 #[derive(Default)]
 struct Control {
     flush_requests: AtomicU64,
@@ -59,7 +45,7 @@ struct Acknowledgement {
     stopped: bool,
 }
 
-pub struct MetaServerClient {
+pub(crate) struct MetaServerClient {
     pub(crate) node_id: Uuid,
     #[cfg(feature = "mooncake")]
     advertise_addr: String,
@@ -77,10 +63,11 @@ pub struct MetaServerClient {
 
 impl MetaServerClient {
     pub(crate) fn new(
-        config: MetaServerClientConfig,
+        metaserver_addr: String,
+        advertise_addr: String,
         read_cache: Weak<ReadCache>,
     ) -> Result<Self, String> {
-        let endpoint = Endpoint::from_shared(config.metaserver_addr)
+        let endpoint = Endpoint::from_shared(metaserver_addr)
             .map_err(|e| e.to_string())?
             .connect_timeout(GRPC_CONNECT_TIMEOUT)
             .timeout(RPC_TIMEOUT)
@@ -97,7 +84,7 @@ impl MetaServerClient {
         let node_id = Uuid::new_v4();
         let worker = InventorySync {
             client: client.clone(),
-            node: config.advertise_addr.clone(),
+            node: advertise_addr.clone(),
             node_id: node_id.to_string(),
             epoch: String::new(),
             progress: InventoryStatus::default(),
@@ -118,7 +105,7 @@ impl MetaServerClient {
         Ok(Self {
             node_id,
             #[cfg(feature = "mooncake")]
-            advertise_addr: config.advertise_addr,
+            advertise_addr,
             #[cfg(feature = "mooncake")]
             candidates: parking_lot::Mutex::new(CandidateIndex::new(CANDIDATE_CACHE_BYTES)),
             #[cfg(feature = "mooncake")]
@@ -134,7 +121,7 @@ impl MetaServerClient {
 
     /// Wait for a fresh heartbeat and acknowledgement through the current local
     /// inventory sequence. Concurrent eviction can legitimately remove a block.
-    pub async fn flush(&self) -> Result<(), String> {
+    pub(crate) async fn flush(&self) -> Result<(), String> {
         self.flush_with_timeout(FLUSH_TIMEOUT).await
     }
 
@@ -166,7 +153,7 @@ impl MetaServerClient {
         }
     }
 
-    pub async fn shutdown(&self) {
+    pub(crate) async fn shutdown(&self) {
         let _ = self.shutdown.send(true);
         let mut progress = self.progress.clone();
         let _ = tokio::time::timeout(
@@ -614,4 +601,5 @@ fn timed<T>(message: T) -> Request<T> {
 }
 
 #[cfg(test)]
+#[path = "../../tests/unit/internode/metaserver_client.rs"]
 mod tests;

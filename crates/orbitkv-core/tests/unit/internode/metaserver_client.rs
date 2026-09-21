@@ -160,7 +160,8 @@ fn insert(cache: &ReadCache, key: u32) {
 
 fn client(server: &TestServer, cache: &Arc<ReadCache>) -> MetaServerClient {
     MetaServerClient::new(
-        MetaServerClientConfig::new(format!("http://{}", server.addr), "owner:50055".into()),
+        format!("http://{}", server.addr),
+        "owner:50055".into(),
         Arc::downgrade(cache),
     )
     .unwrap()
@@ -304,10 +305,8 @@ async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_e
     let destination = cache(4096);
     let requester = Arc::new(
         MetaServerClient::new(
-            MetaServerClientConfig::new(
-                format!("http://{}", server.addr),
-                "requester:50055".into(),
-            ),
+            format!("http://{}", server.addr),
+            "requester:50055".into(),
             Arc::downgrade(&destination),
         )
         .unwrap(),

@@ -579,4 +579,5 @@ impl RedundancyCounters {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/store.rs"]
 mod tests;

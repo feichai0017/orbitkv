@@ -19,8 +19,9 @@ use orbitkv_common::NumaNode;
 
 use opentelemetry::KeyValue;
 
-pub(crate) use super::fetch_plan::FetchPlan;
-use super::fetch_plan::{FetchSegment, SegmentFetcher, SegmentOutcome, execute_fetch_plan};
+use super::fetch_plan::{
+    FetchPlan, FetchSegment, SegmentFetcher, SegmentOutcome, execute_fetch_plan,
+};
 use super::transfer_lock_guard::TransferLockGuard;
 use super::{AllocateFn, MooncakeTransport, PrefetchResult};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
@@ -55,35 +56,130 @@ pub(crate) struct MooncakeFetchStore {
     grpc_channels: Arc<Mutex<LinkedHashMap<String, EngineClient<Channel>>>>,
 }
 
-struct MooncakeSegmentFetcher<'a> {
-    store: &'a MooncakeFetchStore,
-    req_id: &'a str,
-}
-
 #[tonic::async_trait]
-impl SegmentFetcher for MooncakeSegmentFetcher<'_> {
-    async fn fetch_segment(&self, segment: &FetchSegment) -> SegmentOutcome {
-        let result = mooncake_fetch_task(
-            &self.store.transfer,
-            &self.store.allocate_fn,
-            &self.store.grpc_channels,
-            segment,
-            self.req_id,
-            &self.store.advertise_addr,
-        )
-        .await;
-        if matches!(result, SegmentOutcome::Rejected) {
-            for record in &segment.records {
-                self.store.metaserver_client.reject_candidate(
-                    &record.key,
-                    &orbitkv_state::ReplicaLocation {
-                        owner: segment.owner.clone(),
-                        sequence: record.sequence,
-                    },
-                );
-            }
+impl SegmentFetcher for MooncakeFetchStore {
+    async fn fetch_segment(&self, segment: &FetchSegment, req_id: &str) -> SegmentOutcome {
+        let remote_addr = &segment.owner.endpoint;
+        let namespace = &segment.records[0].key.namespace;
+        let block_hashes: Vec<_> = segment.records.iter().map(|r| r.key.hash.clone()).collect();
+        let t0 = Instant::now();
+
+        // Query the OrbitKV authority before exposing any physical addresses.
+        let query_start = Instant::now();
+        let (client, mut response) =
+            match query_remote_blocks(&self.grpc_channels, segment, &self.advertise_addr).await {
+                Ok(cr) => cr,
+                Err(QueryError::Rejected) => {
+                    core_metrics()
+                        .remote_fetch_total
+                        .add(1, &[KeyValue::new("status", "rejected")]);
+                    for record in &segment.records {
+                        self.metaserver_client.reject_candidate(
+                            &record.key,
+                            &orbitkv_state::ReplicaLocation {
+                                owner: segment.owner.clone(),
+                                sequence: record.sequence,
+                            },
+                        );
+                    }
+                    return SegmentOutcome::Rejected;
+                }
+                Err(QueryError::Failed(e)) => {
+                    warn!("Remote query to {remote_addr} failed: {e}");
+                    core_metrics()
+                        .remote_fetch_total
+                        .add(1, &[KeyValue::new("status", "error")]);
+                    return SegmentOutcome::Failed;
+                }
+            };
+        let query_elapsed = query_start.elapsed();
+
+        // The guard moves into the blocking transfer with the destination buffers.
+        // Cancelling this future cannot release either while the READ is running.
+        let lock_guard = TransferLockGuard::new(
+            client,
+            std::mem::take(&mut response.transfer_session_id),
+            remote_addr,
+            req_id,
+        );
+        if response.transfer_endpoint.is_empty()
+            || response.blocks.len() != block_hashes.len()
+            || response
+                .blocks
+                .iter()
+                .zip(&block_hashes)
+                .any(|(block, hash)| block.block_hash != *hash)
+        {
+            warn!("Remote query to {remote_addr} returned invalid transfer authorization");
+            lock_guard.release();
+            core_metrics()
+                .remote_fetch_total
+                .add(1, &[KeyValue::new("status", "error")]);
+            return SegmentOutcome::Failed;
         }
-        result
+
+        // Mooncake READ all blocks + build SealedBlocks.
+        let transfer_timeout = transfer_timeout_from_server(response.lock_timeout_secs);
+        let blocks = response.blocks;
+        let total_bytes: u64 = blocks
+            .iter()
+            .flat_map(|b| &b.slots)
+            .map(|s| s.k_size + s.v_size)
+            .sum();
+        let (result, transfer_timing) = match fetch_blocks_via_mooncake(
+            &self.transfer,
+            &self.allocate_fn,
+            namespace,
+            &response.transfer_endpoint,
+            &blocks,
+            transfer_timeout,
+            lock_guard,
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Mooncake transfer from {remote_addr} failed: {e}");
+                self.transfer
+                    .engine()
+                    .invalidate_segment(&response.transfer_endpoint);
+                core_metrics()
+                    .remote_fetch_total
+                    .add(1, &[KeyValue::new("status", "error")]);
+                return SegmentOutcome::Failed;
+            }
+        };
+
+        let elapsed = t0.elapsed();
+        let mb = total_bytes as f64 / (1024.0 * 1024.0);
+        let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+        let throughput_mib_s = if elapsed.as_secs_f64() > 0.0 {
+            mb / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        info!(
+            "Mooncake fetch summary: req_id={req_id} remote={remote_addr} blocks={}/{} slots={} descs={} slabs={} bytes_mib={mb:.1} total_ms={elapsed_ms:.2} tp_mib_s={throughput_mib_s:.0}",
+            result.len(),
+            block_hashes.len(),
+            transfer_timing.slot_count,
+            transfer_timing.transfer_desc_count,
+            transfer_timing.numa_slab_count,
+        );
+        info!(
+            "Mooncake fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
+            query_elapsed.as_secs_f64() * 1000.0,
+            transfer_timing.build_transfer_tasks.as_secs_f64() * 1000.0,
+            transfer_timing.mooncake_wait.as_secs_f64() * 1000.0,
+            transfer_timing.rebuild.as_secs_f64() * 1000.0,
+        );
+        let m = core_metrics();
+        let ok = &[KeyValue::new("status", "ok")];
+        m.remote_fetch_total.add(1, ok);
+        m.remote_fetch_duration_seconds
+            .record(elapsed.as_secs_f64(), ok);
+        m.remote_fetch_bytes.add(total_bytes, ok);
+        SegmentOutcome::Fetched(result)
     }
 }
 
@@ -139,11 +235,7 @@ impl MooncakeFetchStore {
             return Vec::new();
         }
         let started_at = Instant::now();
-        let fetcher = MooncakeSegmentFetcher {
-            store: self,
-            req_id,
-        };
-        let (fetched, attempts, completed) = execute_fetch_plan(&fetcher, plan).await;
+        let (fetched, attempts, completed) = execute_fetch_plan(self, plan, req_id).await;
         let metrics = core_metrics();
         metrics
             .remote_fetch_plan_segments
@@ -159,133 +251,6 @@ impl MooncakeFetchStore {
         );
         fetched
     }
-}
-
-/// Execute a Mooncake fetch against a single remote node.
-///
-/// 1. gRPC QueryBlocksForTransfer authorizes and pins the blocks.
-/// 2. Mooncake opens the returned segment and READs all block ranges.
-/// 3. ReleaseTransferLock is sent once the blocking READ has finished.
-async fn mooncake_fetch_task(
-    transfer: &Arc<MooncakeTransport>,
-    allocate_fn: &AllocateFn,
-    grpc_channels: &Mutex<LinkedHashMap<String, EngineClient<Channel>>>,
-    segment: &FetchSegment,
-    req_id: &str,
-    advertise_addr: &str,
-) -> SegmentOutcome {
-    let remote_addr = &segment.owner.endpoint;
-    let namespace = &segment.records[0].key.namespace;
-    let block_hashes: Vec<_> = segment.records.iter().map(|r| r.key.hash.clone()).collect();
-    let t0 = Instant::now();
-
-    // Query the OrbitKV authority before exposing any physical addresses.
-    let query_start = Instant::now();
-    let (client, mut response) =
-        match query_remote_blocks(grpc_channels, segment, advertise_addr).await {
-            Ok(cr) => cr,
-            Err(QueryError::Rejected) => {
-                core_metrics()
-                    .remote_fetch_total
-                    .add(1, &[KeyValue::new("status", "rejected")]);
-                return SegmentOutcome::Rejected;
-            }
-            Err(QueryError::Failed(e)) => {
-                warn!("Remote query to {remote_addr} failed: {e}");
-                core_metrics()
-                    .remote_fetch_total
-                    .add(1, &[KeyValue::new("status", "error")]);
-                return SegmentOutcome::Failed;
-            }
-        };
-    let query_elapsed = query_start.elapsed();
-
-    // The guard moves into the blocking transfer with the destination buffers.
-    // Cancelling this future cannot release either while the READ is running.
-    let lock_guard = TransferLockGuard::new(
-        client,
-        std::mem::take(&mut response.transfer_session_id),
-        remote_addr,
-        req_id,
-    );
-    if response.transfer_endpoint.is_empty()
-        || response.blocks.len() != block_hashes.len()
-        || response
-            .blocks
-            .iter()
-            .zip(&block_hashes)
-            .any(|(block, hash)| block.block_hash != *hash)
-    {
-        warn!("Remote query to {remote_addr} returned invalid transfer authorization");
-        lock_guard.release();
-        core_metrics()
-            .remote_fetch_total
-            .add(1, &[KeyValue::new("status", "error")]);
-        return SegmentOutcome::Failed;
-    }
-
-    // Mooncake READ all blocks + build SealedBlocks.
-    let transfer_timeout = transfer_timeout_from_server(response.lock_timeout_secs);
-    let blocks = response.blocks;
-    let total_bytes: u64 = blocks
-        .iter()
-        .flat_map(|b| &b.slots)
-        .map(|s| s.k_size + s.v_size)
-        .sum();
-    let (result, transfer_timing) = match fetch_blocks_via_mooncake(
-        transfer,
-        allocate_fn,
-        namespace,
-        &response.transfer_endpoint,
-        &blocks,
-        transfer_timeout,
-        lock_guard,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("Mooncake transfer from {remote_addr} failed: {e}");
-            transfer
-                .engine()
-                .invalidate_segment(&response.transfer_endpoint);
-            core_metrics()
-                .remote_fetch_total
-                .add(1, &[KeyValue::new("status", "error")]);
-            return SegmentOutcome::Failed;
-        }
-    };
-
-    let elapsed = t0.elapsed();
-    let mb = total_bytes as f64 / (1024.0 * 1024.0);
-    let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
-    let throughput_mib_s = if elapsed.as_secs_f64() > 0.0 {
-        mb / elapsed.as_secs_f64()
-    } else {
-        0.0
-    };
-    info!(
-        "Mooncake fetch summary: req_id={req_id} remote={remote_addr} blocks={}/{} slots={} descs={} slabs={} bytes_mib={mb:.1} total_ms={elapsed_ms:.2} tp_mib_s={throughput_mib_s:.0}",
-        result.len(),
-        block_hashes.len(),
-        transfer_timing.slot_count,
-        transfer_timing.transfer_desc_count,
-        transfer_timing.numa_slab_count,
-    );
-    info!(
-        "Mooncake fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
-        query_elapsed.as_secs_f64() * 1000.0,
-        transfer_timing.build_transfer_tasks.as_secs_f64() * 1000.0,
-        transfer_timing.mooncake_wait.as_secs_f64() * 1000.0,
-        transfer_timing.rebuild.as_secs_f64() * 1000.0,
-    );
-    let m = core_metrics();
-    let ok = &[KeyValue::new("status", "ok")];
-    m.remote_fetch_total.add(1, ok);
-    m.remote_fetch_duration_seconds
-        .record(elapsed.as_secs_f64(), ok);
-    m.remote_fetch_bytes.add(total_bytes, ok);
-    SegmentOutcome::Fetched(result)
 }
 
 /// One fetched slot: its Mooncake-staged segments plus the NUMA node they sit on.
@@ -675,92 +640,5 @@ fn transfer_timeout_from_server(lock_timeout_secs: u32) -> Duration {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::num::NonZeroU64;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
-
-    fn test_allocate_fn(calls: Arc<AtomicUsize>) -> AllocateFn {
-        let allocator = Arc::new(crate::pinned_pool::PinnedAllocator::new_global(
-            32 * 1024 * 1024,
-            1,
-            false,
-            false,
-            None,
-        ));
-        Arc::new(move |size, _numa| {
-            calls.fetch_add(1, Ordering::Relaxed);
-            allocator.allocate(NonZeroU64::new(size)?, NumaNode::UNKNOWN)
-        })
-    }
-
-    fn remaining(bytes: u64) -> HashMap<NumaNode, u64> {
-        HashMap::from([(NumaNode(0), bytes)])
-    }
-
-    #[test]
-    fn chunked_slabs_bump_within_chunk_then_refill() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let allocate_fn = test_allocate_fn(Arc::clone(&calls));
-        let mut slabs = ChunkedSlabs::new(&allocate_fn, 1024, remaining(1536));
-
-        let (p1, a1) = slabs.alloc_segment(NumaNode(0), 512, "K").expect("first");
-        let (p2, _a2) = slabs.alloc_segment(NumaNode(0), 512, "V").expect("second");
-        assert_eq!(p2.as_ptr() as usize - p1.as_ptr() as usize, 512);
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-
-        // Third segment exceeds the current chunk: a fresh chunk is allocated
-        // while earlier segments stay valid through their own chunk Arc.
-        let (_p3, a3) = slabs.alloc_segment(NumaNode(0), 512, "K").expect("third");
-        assert_eq!(calls.load(Ordering::Relaxed), 2);
-        assert_eq!(slabs.chunk_count, 2);
-        assert!(!Arc::ptr_eq(&a1, &a3));
-    }
-
-    #[test]
-    fn chunked_slabs_oversized_segment_gets_dedicated_chunk() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let allocate_fn = test_allocate_fn(Arc::clone(&calls));
-        let mut slabs = ChunkedSlabs::new(&allocate_fn, 1024, remaining(4096));
-
-        slabs
-            .alloc_segment(NumaNode(0), 4096, "K")
-            .expect("oversized segment");
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-        assert_eq!(slabs.chunk_count, 1);
-    }
-
-    #[test]
-    fn chunked_slabs_allocation_failure_is_an_error() {
-        let allocate_fn: AllocateFn = Arc::new(|_, _| None);
-        let mut slabs = ChunkedSlabs::new(&allocate_fn, 1024, remaining(512));
-
-        let err = match slabs.alloc_segment(NumaNode(0), 512, "K") {
-            Ok(_) => panic!("allocation should fail"),
-            Err(err) => err,
-        };
-        assert!(err.contains("failed to allocate fetch chunk"));
-    }
-
-    #[test]
-    fn chunked_slabs_chunk_clamped_to_batch_remaining() {
-        // A small fetch must not request the whole chunk_bytes cap — that
-        // fails outright on pools smaller than the cap (jz p2p IT regression).
-        let sizes = Arc::new(Mutex::new(Vec::new()));
-        let recorded = Arc::clone(&sizes);
-        let inner = test_allocate_fn(Arc::new(AtomicUsize::new(0)));
-        let allocate_fn: AllocateFn = Arc::new(move |size, numa| {
-            recorded.lock().unwrap().push(size);
-            inner(size, numa)
-        });
-        let mut slabs = ChunkedSlabs::new(&allocate_fn, 256 << 20, remaining(4096));
-
-        slabs.alloc_segment(NumaNode(0), 1024, "K").expect("first");
-        slabs.alloc_segment(NumaNode(0), 3072, "V").expect("second");
-
-        // One chunk sized to the batch total, not to the 256 MiB cap.
-        assert_eq!(*sizes.lock().unwrap(), vec![4096]);
-        assert_eq!(slabs.chunk_count, 1);
-    }
-}
+#[path = "../../tests/unit/backing/mooncake_fetch.rs"]
+mod tests;
