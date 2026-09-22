@@ -85,9 +85,10 @@ checkpoint is not a longer restorable prefix. The engine adapter supplies
 model-specific rules; the shared contract checks component coverage and
 compatibility. Generation-qualified HBM references must enter the actual
 transfer path before stale page IDs can be rejected at that boundary.
-SGLang's [compiled recovery contract](hybrid-recovery.md) now implements the
-prefix, window and checkpoint cases on the query/restore path; vLLM still uses
-its existing adapter reconciliation. This is a prerequisite for cost selection,
+The [compiled recovery contract](hybrid-recovery.md) implements SGLang's
+prefix, window and checkpoint cases and vLLM's attention/recurrent recovery.
+Adapters supply absolute coverage backed by leases and keep engine-specific
+allocation and handoff logic. This is a prerequisite for cost selection,
 not a latency estimator or an automatic model-graph proof.
 Cross-engine byte reuse, dynamic LoRA, and live weight changes remain outside
 the present supported contract.

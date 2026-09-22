@@ -255,8 +255,9 @@ bytes before transfer. Fixed shards and owner replay are implemented; directory 
 
 The target recovery contract must reject incomplete or incompatible bundles;
 the Manager wire protocol does not yet enforce `StateBundle` completeness.
-SGLang now validates compiled prefix/window/checkpoint requirements before
-restore in its adapter, using the shared Rust contract and leased group positions;
+SGLang validates prefix/window/checkpoint requirements and vLLM validates
+attention/recurrent requirements in their adapters before restore, using the
+shared Rust contract with absolute token coverage and leased group positions;
 see [hybrid recovery](hybrid-recovery.md). This does not add generation-qualified
 page references to the transfer protocol.
 

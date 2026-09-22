@@ -89,6 +89,10 @@ Runs tests that start or require a local `orbitkv-cache-manager` but do not run 
   restores poisoned Full + SWA and Full + recurrent/conv buffers from DRAM and
   SSD, rejects incomplete plans and completes published destinations before
   releasing an aborted request. Run this for recovery-rule or hybrid-layout changes.
+- `test_vllm_recovery.py` checks vLLM's absolute-span evidence against the real
+  Rust validator and restores attention/conv/temporal buffers through the real
+  scheduler/worker adapters from DRAM and forced SSD. Run this for vLLM hybrid
+  query, boundary selection or lease-handoff changes, followed by the vLLM E2E.
 
 Hybrid serving changes also require both Qwen3.5 and the native Full + SWA
 fixture through the SGLang E2E. See [the fixture and commands](../../docs/hybrid-recovery.md#reproducible-gates).

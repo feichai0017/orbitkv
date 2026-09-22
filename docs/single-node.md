@@ -9,7 +9,7 @@ No Catalog or peer gRPC listener is needed for this deployment.
 
 | Adapter | Validated release | Single-node path | Current limit |
 | --- | --- | --- | --- |
-| vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Cross-host TP query fan-out is unsupported; model-specific hybrid layouts need their own recovery qualification |
+| vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Attention + aligned recurrent layouts share the recovery validator; cross-host TP and further hybrid layouts need separate qualification |
 | SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA with one KV pool; single-rank DRAM/SSD recovery qualified; multi-rank TP needs separate serving validation |
 
 These are tested release targets, not an assertion that every model or GPU

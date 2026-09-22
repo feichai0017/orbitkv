@@ -30,9 +30,10 @@ class RecurrentLoadHold:
     group ``g``'s hit blocks; ``hit_positions[g][shard]`` lists each leased
     block's position in the scheduler's query hash list (lease order).
     ``checkpoint`` is the chosen query position — the mamba state stored
-    there covers all tokens through the end of that block (vLLM convention:
-    state block ``i`` ends at token ``(i + 1) * block_size``), so the
-    resumable prefix is ``checkpoint + 1`` blocks.
+    there covers all tokens through the end of that block. Its absolute end
+    is ``(computed_blocks + checkpoint + 1) * block_size``; the scheduler
+    validates that boundary, while the worker addresses the lease by its
+    query-relative position. The externally restored span is ``checkpoint + 1`` blocks.
     """
 
     leases: tuple[tuple[bytes, ...], ...]

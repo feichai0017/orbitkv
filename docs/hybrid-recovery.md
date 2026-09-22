@@ -1,8 +1,8 @@
 # Compiled hybrid recovery
 
-OrbitKV's SGLang adapter compiles the registered GPU pools into a recovery
-contract. Every lookup must supply enough leased state to resume at one legal
-token boundary. An attention hit alone is insufficient for a hybrid model.
+OrbitKV's SGLang and vLLM hybrid adapters use the same compiled recovery
+contract. Every hybrid lookup must supply enough leased state to resume at
+one legal token boundary. An attention hit alone is insufficient.
 
 ## Rules and runtime ownership
 
@@ -12,8 +12,8 @@ token boundary. An attention hit alone is insufficient for a hybrid model.
 | Sliding window | Complete trailing window through t, rounded up to pages | Independent SWA K/V pages |
 | Recurrent / convolution | Checkpoint exactly at t | All conv and temporal tensors in one sealed group |
 
-`orbitkv-state::RecoveryContract` validates declarations at registration. The
-adapter derives the absolute query origin from SGLang's valid HBM prefix and
+`orbitkv-state::RecoveryContract` validates declared groups at adapter setup. Each
+adapter derives the absolute query origin from the engine's valid HBM prefix and
 converts each leased hit position into an absolute token end. The validator
 rejects mismatched namespaces, malformed coverage, unknown groups and gaps.
 It returns every legal boundary: ranks intersect these sets, since taking the
@@ -55,7 +55,38 @@ It saves sealed tree checkpoints, restores them into tree slots, and hands off
 to SGLang's normal request-state copy-on-write after the transfer fence. There
 is no second radix tree or patched engine submodule.
 
-## Deployment and limits
+## vLLM hybrid handoff
+
+`CacheGroupLayout` maps vLLM's attention groups to storage group zero and each
+aligned Mamba group to a checkpoint requirement. The scheduler compiles these
+requirements once in `RecoveryContract`. It translates the valid HBM prefix
+and per-shard leased positions into absolute token coverage, then intersects
+the validator's legal boundary sets across shards. The adapter no longer has
+a separate hybrid reconciliation algorithm. Existing vLLM layout restrictions
+still apply: this does not add vLLM SWA support or cross-engine byte reuse.
+
+Attention is queried first. Checkpoint queries stop at that attention prefix,
+and completed groups remain leased while other groups fetch backing data.
+`Loading` defers admission rather than failing an SSD checkpoint query. While
+the scheduler polls, a hybrid query that has not completed within five seconds
+falls back to recomputation; request drift, cancellation and shutdown also
+retire its completed leases and cancel pending group operations. Submitted
+reads retain their buffers through the Manager's existing completion path.
+Expiry of adapter-held ready groups without another engine callback remains
+part of the single-node fault/pressure qualification.
+
+The final-token limit may select an earlier validated boundary. The scheduler
+keeps the original attention lease and supplies null destinations for unused
+pages; it does not issue another attention query. Allocation must preserve the
+selected checkpoint exactly. Unused leased pages remain charged to the query
+budget until the combined restore completes. The worker restores only that recurrent page,
+including its conv and temporal tensors, alongside the selected attention
+prefix. All leases move to the existing combined restore operation and remain
+owned until GPU completion. HBM allocation and inference scheduling stay in
+vLLM. Dense-only and optional P/D partial-tail semantics retain their existing
+prefix path; hybrid P/D partial tails remain unsupported.
+
+## SGLang deployment and limits
 
 Use the same per-host Cache Manager and SGLang flags as
 [single-node deployment](single-node.md). No additional service is required:
@@ -85,11 +116,28 @@ is therefore bypassed for hybrid pools.
 This is validation of engine-declared recovery requirements and registered
 formats. It is not a formal proof of the model's numerical implementation.
 Page-generation fencing, live weight changes and cross-engine byte reuse remain
-open. vLLM retains its existing adapter-level hybrid reconciliation; migrating
-it to the same validator is a separate step. Multi-rank and remote hybrid
-serving require additional qualification.
+open. Multi-rank and remote hybrid serving require additional qualification.
 
 ## Reproducible gates
+
+For vLLM 0.29.0, run from `python/`:
+
+```bash
+../.venv/vllm-release/bin/python -m pytest -m integration \
+  tests/integration/test_vllm_recovery.py
+../.venv/vllm-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_vllm_e2e_correctness.py \
+  --model /path/to/Qwen3.5-0.8B --max-model-len 4096
+```
+
+The native integration gate checks nonzero origins, missing checkpoints,
+partial attention coverage, final-token clamping and malformed evidence. The
+GPU cases use real vLLM scheduler/worker adapters to restore poisoned attention,
+conv and temporal destinations from DRAM and forced SSD. They also check that
+unused leased pages remain untouched. Unit tests separately cover pending
+group cancellation, query drift/expiry, shard intersection and allocation
+changes. The serving gate compares matching native-vLLM cache execution plans
+and requires real GPU loads after engine restart.
 
 Use the pinned SGLang 0.5.20 environment and a freshly built extension/Manager.
 From `python/`:

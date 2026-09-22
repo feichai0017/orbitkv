@@ -40,8 +40,9 @@ An experimental distributed path extends the same cache API to peer managers.
   draw on reviewed LMCache, HiCache, FlexKV and Dynamo implementations.
 - **Identify compatible state.** Versioned keys bind immutable model artifacts,
   computation settings and registered storage geometry. SGLang compiles prefix,
-  sliding-window and recurrent-checkpoint requirements, then validates complete
-  recovery boundaries before loading. See [hybrid recovery](docs/hybrid-recovery.md).
+  window and checkpoint requirements; vLLM hybrid models use the same validator
+  for attention and recurrent state. Both require a complete recovery boundary
+  before loading. See [hybrid recovery](docs/hybrid-recovery.md).
 - **Build toward shared caching.** Embedded catalog shards discover peer
   replicas, Mooncake Transfer Engine moves bytes, and etcd tracks membership
   and placement. Multi-node serving is still experimental.

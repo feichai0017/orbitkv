@@ -69,6 +69,7 @@ def test_accepts_full_attention_with_aligned_mamba(spec_type):
     assert layout.has_recurrent_state
     assert layout.recurrent_group_indices == frozenset({1})
     assert layout.recurrent_layer_names == frozenset({"recurrent"})
+    assert layout.recovery_groups == ((0, "attention", 0), (1, "recurrent", 0))
 
 
 @pytest.mark.parametrize("spec_type", [FullAttentionSpec, MLAAttentionSpec])
@@ -199,3 +200,45 @@ def test_rejects_non_align_mamba_mode():
 
     with pytest.raises(RuntimeError, match="mamba_cache_mode='align'"):
         CacheGroupLayout.from_config(config)
+
+
+class TestStorageGroupIds:
+    def test_attention_first_layout(self):
+        config = _config(
+            _group("attn", _full_attention()),
+            _group("mamba", _mamba()),
+        )
+        layout = CacheGroupLayout.from_config(config)
+        assert layout.storage_group_ids == (0, 1)
+
+    def test_recurrent_group_can_come_first(self):
+        # vLLM group order is not guaranteed; attention must always map to
+        # storage group 0 regardless of connector position.
+        config = _config(
+            _group("mamba", _mamba()),
+            _group("attn", _full_attention()),
+        )
+        layout = CacheGroupLayout.from_config(config)
+        assert layout.hash_group_index == 1
+        assert layout.storage_group_ids == (1, 0)
+        assert layout.recovery_groups == ((0, "attention", 0), (1, "recurrent", 0))
+
+    def test_single_group_defaults_to_zero(self):
+        config = _config(_group("attn", _full_attention()))
+        layout = CacheGroupLayout.from_config(config)
+        assert layout.storage_group_ids == (0,)
+
+    def test_multiple_recurrent_groups_get_dense_ids(self):
+        config = _config(
+            _group("attn", _full_attention()),
+            _group("mamba_a", _mamba()),
+            _group("mamba_b", _mamba()),
+        )
+        layout = CacheGroupLayout.from_config(config)
+        assert layout.storage_group_ids == (0, 1, 2)
+        assert layout.recurrent_group_indices == frozenset({1, 2})
+        assert layout.recovery_groups == (
+            (0, "attention", 0),
+            (1, "recurrent", 0),
+            (2, "recurrent", 0),
+        )

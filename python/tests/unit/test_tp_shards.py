@@ -19,7 +19,7 @@ from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
 from orbitkv.vllm import OrbitKVConnector  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext, TpShardTopology  # noqa: E402
 from orbitkv.vllm.metadata import LoadIntent, OrbitKVConnectorMetadata  # noqa: E402
-from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerConnector, _QueryProbe  # noqa: E402
 from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 
@@ -358,7 +358,7 @@ def test_scheduler_uses_common_prefix_and_exact_per_shard_leases():
     scheduler = SchedulerConnector(_context(), clients=(first, second))
     hashes = [b"h0", b"h1", b"h2"]
 
-    ready = scheduler._count_available_block_prefix(hashes, "request")
+    ready = scheduler._query_recovery("request", _QueryProbe(0, tuple(hashes)))
 
     assert ready is not None
     assert ready.num_hit_blocks == 2
@@ -388,7 +388,7 @@ def test_scheduler_releases_ready_shards_when_another_shard_is_loading():
     second.query_prefetch.return_value = QueryLoading()
     scheduler = SchedulerConnector(_context(), clients=(first, second))
 
-    assert scheduler._count_available_block_prefix([b"h0", b"h1"], "request") is None
+    assert scheduler._query_recovery("request", _QueryProbe(0, (b"h0", b"h1"))) is None
     first.release.assert_called_once_with(b"first")
 
 
@@ -427,7 +427,7 @@ def test_scheduler_rejects_invalid_shard_query_results_without_leaking_lease(inv
     scheduler = SchedulerConnector(_context(), clients=(first, second))
 
     with pytest.raises(RuntimeError, match="TP shard 1"):
-        scheduler._count_available_block_prefix([b"h0", b"h1"], "request")
+        scheduler._query_recovery("request", _QueryProbe(0, (b"h0", b"h1")))
 
     first.release.assert_called_once_with(b"first")
     if invalid_ready.lease:

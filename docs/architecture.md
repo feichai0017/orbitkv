@@ -6,8 +6,9 @@ OrbitKV is a KV cache for vLLM and SGLang and a proposed framework-neutral
 state planner. It does not schedule model execution. Each framework owns its
 HBM allocation and active GPU page lifecycle. Its adapter exposes block
 identity and registered GPU buffers; OrbitKV currently owns external pinned
-DRAM/SSD replicas and transfer leases. Shared recovery semantics and joint
-placement/routing policy are future work.
+DRAM/SSD replicas and transfer leases. SGLang and vLLM hybrid layouts share
+compiled recovery validation; general model planning and joint placement/routing
+policy remain future work.
 
 The data plane is derived from PegaFlow 0.24.5. The vLLM connector and SGLang
 direct GPU linker have passed single-node GPU recovery tests.

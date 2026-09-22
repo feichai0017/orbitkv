@@ -20,7 +20,7 @@ from vllm.v1.kv_cache_interface import (  # noqa: E402
 from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext, OrbitKVConnectorMode  # noqa: E402
 from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent  # noqa: E402
-from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
+from orbitkv.vllm.scheduler import SchedulerConnector, _QueryProbe  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -705,7 +705,7 @@ class TestSchedulerQueryProbeReuse:
         engine_client.query_prefetch.return_value = QueryLoading()
         hashes = [_hash(i) for i in range(4)]
 
-        assert sc._count_available_block_prefix(hashes, "r1") is None
+        assert sc._query_recovery("r1", _QueryProbe(0, tuple(hashes))) is None
         engine_client.query_prefetch.assert_called_once_with(
             sc._ctx.instance_id,
             hashes,
@@ -719,7 +719,7 @@ class TestSchedulerQueryProbeReuse:
         sc = SchedulerConnector(_make_ctx(client=engine_client, wait_for_full_prefix=True))
         hashes = [_hash(i) for i in range(4)]
 
-        assert sc._count_available_block_prefix(hashes, "r1") is None
+        assert sc._query_recovery("r1", _QueryProbe(0, tuple(hashes))) is None
         engine_client.query_prefetch.assert_called_once_with(
             sc._ctx.instance_id,
             hashes,
@@ -756,7 +756,7 @@ class TestSchedulerQueryProbeReuse:
         engine_client.query_prefetch.return_value = object()
 
         with pytest.raises(TypeError, match="unexpected outcome"):
-            sc._count_available_block_prefix([_hash(i) for i in range(4)], "r1")
+            sc._query_recovery("r1", _QueryProbe(0, tuple(_hash(i) for i in range(4))))
 
     def test_committed_probe_is_not_released_on_cleanup(self):
         sc, engine_client = self._make_connector()

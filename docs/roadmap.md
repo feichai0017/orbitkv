@@ -18,6 +18,11 @@ also exist; real two-host serving, catalog replication and online placement
 changes remain unqualified or unimplemented. Automatic queued warming stays
 opt-in because the recorded controls do not establish a throughput benefit.
 
+SGLang hybrid pools and vLLM aligned recurrent groups now use the same recovery
+validator with absolute token coverage. This closes the duplicated boundary
+logic; delayed completion, lost delivery, restart and page-generation gates
+below remain required before distributed serving qualification.
+
 The milestone identifiers below name work areas, not a requirement to finish
 every optimization before starting the next area. In particular, page-lifetime
 and identity fixes apply to every path as it is qualified; they cannot wait for
@@ -142,11 +147,12 @@ Gate:
 
 ## M2: common StateBundle query and native local transport
 
-Versioned model/storage keys isolate deployments. SGLang now uses compiled
-prefix/window/checkpoint rules with absolute-span and leased-group evidence;
-see [hybrid recovery](hybrid-recovery.md). Shared vLLM validation and page-generation
-enforcement remain open. Complete those local semantics before using cache
-metadata as evidence for distributed routing.
+Versioned model/storage keys isolate deployments. SGLang uses compiled
+prefix/window/checkpoint rules, and vLLM's aligned recurrent layouts use the
+same validator with absolute-span and leased-group evidence; see
+[hybrid recovery](hybrid-recovery.md). Page-generation enforcement and wider
+recovery coverage remain open. Complete those local semantics before using
+cache metadata as evidence for distributed routing.
 
 Deliver:
 
@@ -154,7 +160,7 @@ Deliver:
   request-specific adapter evidence;
 - validate token spans, model/format compatibility, and required components at
   each recovery boundary;
-- move vLLM hybrid reconciliation from the adapter into common bundle logic;
+- use common bundle validation for vLLM hybrid boundaries;
 - use local restore operations and eventfd wakeups for both adapters;
 - define framework-neutral region registration and transfer-plan operations;
 - add generation validation to every local page reference.

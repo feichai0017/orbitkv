@@ -17,11 +17,10 @@ class ShardedQueryReady:
     # HMA only: per recurrent group, per shard membership leases and their
     # hit positions (see RecurrentLoadHold for the wire/load contract).
     recurrent_hold: RecurrentLoadHold | None = None
-    # HMA only: sorted query positions the hit may legally end at (every
-    # recurrent group holds a checkpoint there on every shard, below the
-    # attention prefix). Drives boundary re-derivation under token clamps.
-    usable_positions: tuple[int, ...] = ()
-    # HMA only: the attention-only prefix hit before recurrent reconcile
+    # HMA only: absolute token ends validated by the shared recovery contract
+    # on every shard. The scheduler selects from these under its token limit.
+    boundaries: tuple[int, ...] = ()
+    # HMA only: the attention-only prefix hit before recovery validation
     # shrank it. Tells the scheduler where a shared prefix ends without a
     # usable recurrent checkpoint (see SchedulerConnector's junction hint).
     attention_hit_blocks: int = 0
@@ -104,12 +103,12 @@ class TpShardQueryClient:
         block_hashes: list[bytes],
         req_id: str,
         group_id: int,
-    ) -> list[tuple[tuple[int, ...], bytes]]:
+    ) -> list[tuple[tuple[int, ...], bytes]] | None:
         """Per-shard membership query over one hybrid storage group.
 
         Returns ``(hit_positions, lease)`` per shard; the lease pins exactly
-        the hit blocks in positions order. Membership queries are local-only,
-        so every shard answers Ready immediately (never Loading).
+        the hit blocks in positions order. SSD/remote reads may still be
+        loading; retire completed shard leases before retrying that group.
         """
         results: list[tuple[tuple[int, ...], bytes]] = []
         try:
@@ -121,19 +120,18 @@ class TpShardQueryClient:
                     group_id=group_id,
                 )
                 if isinstance(result, QueryLoading):
-                    raise RuntimeError(
-                        f"TP shard {shard_index} membership query for group {group_id} "
-                        "returned Loading; membership queries are local-only"
-                    )
+                    self.release(tuple(lease for _, lease in results), req_id)
+                    return None
                 if not isinstance(result, QueryReady):
                     raise TypeError(f"query_prefetch returned unexpected outcome {type(result)!r}")
                 positions = tuple(result.hit_positions)
+                results.append((positions, result.lease))
                 if len(positions) != result.num_hit_blocks:
                     raise RuntimeError(
                         f"TP shard {shard_index} reported {result.num_hit_blocks} hits "
                         f"but returned {len(positions)} positions"
                     )
-                if any(position >= len(block_hashes) for position in positions):
+                if any(position < 0 or position >= len(block_hashes) for position in positions):
                     raise RuntimeError(
                         f"TP shard {shard_index} returned hit positions outside "
                         f"a {len(block_hashes)}-hash query"
@@ -142,7 +140,6 @@ class TpShardQueryClient:
                     raise RuntimeError(
                         f"TP shard {shard_index} returned {len(positions)} hits without a lease"
                     )
-                results.append((positions, result.lease))
         except Exception:
             self.release(tuple(lease for _, lease in results), req_id)
             raise
@@ -154,10 +151,13 @@ class TpShardQueryClient:
             released = self._release_one(client, lease, req_id) and released
         return released
 
-    def cancel(self, instance_id: str, req_id: str) -> None:
+    def cancel(self, instance_id: str, req_id: str, group_id: int = 0) -> None:
         for client in self._clients:
             try:
-                client.cancel_query(instance_id, req_id)
+                if group_id:
+                    client.cancel_query(instance_id, req_id, group_id=group_id)
+                else:
+                    client.cancel_query(instance_id, req_id)
             except Exception:
                 logger.exception("Could not cancel cache query: req=%s", req_id)
 

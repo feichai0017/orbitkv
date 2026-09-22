@@ -307,7 +307,7 @@ class ClientContext:
         self._registered = False
 
     def query(self, block_hashes: list[bytes]) -> dict:
-        """Query available blocks (like SchedulerConnector._count_available_block_prefix).
+        """Query available attention-prefix blocks.
 
         Args:
             block_hashes: List of block hashes to query
