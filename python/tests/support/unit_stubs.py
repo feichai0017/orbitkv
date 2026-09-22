@@ -201,9 +201,10 @@ def _install_native_extension_stub() -> None:
             self.admitted = admitted
 
     class _QueryReady:
-        def __init__(self, num_hit_blocks: int = 0, lease: bytes = b"") -> None:
+        def __init__(self, num_hit_blocks: int = 0, lease: bytes = b"", hit_positions=None) -> None:
             self.num_hit_blocks = num_hit_blocks
             self.lease = lease
+            self.hit_positions = [] if hit_positions is None else hit_positions
 
     module.ChannelProbeClient = getattr(module, "ChannelProbeClient", MagicMock)
     module.ChannelClient = getattr(module, "ChannelClient", MagicMock)
@@ -214,6 +215,7 @@ def _install_native_extension_stub() -> None:
     )
     module.QueryLoading = getattr(module, "QueryLoading", _QueryLoading)
     module.QueryReady = getattr(module, "QueryReady", _QueryReady)
+    module.RecoveryContract = getattr(module, "RecoveryContract", MagicMock)
     module.__version__ = getattr(module, "__version__", "test")
 
 

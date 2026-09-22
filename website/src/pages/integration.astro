@@ -28,8 +28,9 @@ import { localUrl } from "../data/site";
         <code>OrbitKVConnector</code> uses vLLM's KV connector callbacks for
         prefix lookup, save, and restore. The local control path is UDS +
         iceoryx2; registered GPU buffers move data through CUDA IPC. Single-node
-        recovery has been checked on vLLM 0.29.0. Multi-host TP query fan-out is
-        not yet supported.
+        recovery has been checked on vLLM 0.29.0. Hybrid attention/recurrent
+        layouts use the same recovery validator as SGLang, including deferred
+        SSD checkpoint queries. Multi-host TP query fan-out is not yet supported.
       </p>
       <a class="text-link" href={localUrl("/docs/single-node/#vllm")}>
         vLLM install and deployment <span aria-hidden="true">↗</span>

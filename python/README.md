@@ -98,6 +98,14 @@ llm = LLM(
 )
 ```
 
+For FullAttention/MLA + aligned Mamba layouts, vLLM uses the shared Rust recovery
+contract to join attention pages with exact recurrent/conv checkpoints. SSD
+checkpoint queries may defer admission; completed groups stay leased through
+the worker handoff. The final-token clamp selects an earlier validated boundary
+and skips unused leased pages. See [hybrid recovery](../docs/hybrid-recovery.md)
+for the supported layouts, limits and DRAM/SSD validation commands. HBM remains
+owned by vLLM; no additional service or deployment flag is required.
+
 ### SGLang direct GPU cache
 
 For supported full-attention or hybrid models on SGLang `0.5.20`, use the
@@ -304,7 +312,7 @@ Neither engine is required to import the base package or discover its plugins.
 | `identity.py` | Framework-neutral model and computation identity |
 | `client/` | Cache Manager connections, CUDA registration, and transfer ownership |
 | `vllm/config.py` | Deployment configuration, model namespace, and rank topology |
-| `vllm/layout.py` | Cache groups and hybrid recovery boundaries |
+| `vllm/layout.py` | Cache groups, storage mapping and shared recovery requirements |
 | `vllm/metadata.py` | Scheduler/worker transfer intents and completion reports |
 | `vllm/scheduler.py`, `worker.py` | Scheduling decisions and GPU page lifetime |
 | `vllm/metrics.py` | Connector measurements |

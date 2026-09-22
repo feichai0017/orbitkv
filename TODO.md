@@ -59,12 +59,19 @@ numbers below group work areas rather than imposing a strict serial schedule.
   records; include actual registered storage geometry and invalidate old keys.
 - [x] Carry SGLang's engine-held prefix origin and leased group positions into
   shared recovery validation; intersect legal boundary sets across ranks.
-- [ ] Carry vLLM spans and component evidence into shared recovery validation.
+- [x] Carry vLLM hybrid spans and leased component evidence into shared recovery
+  validation; intersect absolute legal boundaries across shards.
 - [ ] Support adapter identities and invalidate caches on live weight updates.
-- [ ] Convert the vLLM cache-group layout to `StateBundle`.
+- [x] Compile vLLM cache-group requirements and assemble hybrid `StateBundle`
+  evidence through the shared native binding.
 - [x] Compile prefix/window/checkpoint rules and validate complete token coverage
   in the registered model/format namespace before SGLang advertises a hit.
-- [ ] Move hybrid-boundary reconciliation out of `orbitkv.vllm`.
+- [x] Move hybrid-boundary validation out of `orbitkv.vllm`; retain engine-owned
+  allocation and checkpoint handoff, and skip unused leased pages after clamping.
+- [x] Handle asynchronous vLLM checkpoint queries from SSD, retain completed
+  groups during preparation, and retire pending groups on cancel/drift/expiry.
+  Verify native validation and exact DRAM/SSD GPU restoration in
+  `python/tests/integration/test_vllm_recovery.py`.
 - [ ] Define framework-neutral region registration RPCs.
 - [x] Pass the descriptor-arena memfd and notification eventfd over UDS.
 - [x] Add bounded restore operations that replace per-load `PyLoadState`

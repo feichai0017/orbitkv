@@ -308,7 +308,7 @@ def _request(num_tokens: int, num_hashes: int) -> SimpleNamespace:
 def test_attention_prefix_without_checkpoint_hints_the_junction():
     """The first sharer of a prefix recomputes it but commits its end state."""
     scheduler, _ = _make_scheduler()
-    scheduler._count_available_block_prefix = MagicMock(
+    scheduler._query_recovery = MagicMock(
         return_value=ShardedQueryReady(0, (b"",), attention_hit_blocks=8)
     )
     request = _request(num_tokens=200, num_hashes=12)
@@ -319,7 +319,7 @@ def test_attention_prefix_without_checkpoint_hints_the_junction():
 
 def test_checkpoint_short_of_attention_prefix_hints_the_junction():
     scheduler, _ = _make_scheduler()
-    scheduler._count_available_block_prefix = MagicMock(
+    scheduler._query_recovery = MagicMock(
         return_value=ShardedQueryReady(
             3,
             (b"lease",),
@@ -328,7 +328,7 @@ def test_checkpoint_short_of_attention_prefix_hints_the_junction():
                 hit_positions=(((2,),),),
                 checkpoint=2,
             ),
-            usable_positions=(2,),
+            boundaries=(3 * VBS,),
             attention_hit_blocks=8,
         )
     )
@@ -382,7 +382,7 @@ def test_load_targets_cover_every_leased_block_when_the_hit_shrinks():
     block (`None` for the ones it no longer wants) or the engine rejects it:
     `query lease block count 5 does not match destination block count 4`."""
     scheduler, _ = _make_scheduler()
-    scheduler._count_available_block_prefix = MagicMock(
+    scheduler._query_recovery = MagicMock(
         return_value=ShardedQueryReady(
             5,
             (b"lease",),
@@ -391,7 +391,7 @@ def test_load_targets_cover_every_leased_block_when_the_hit_shrinks():
                 hit_positions=(((3, 4),),),
                 checkpoint=4,
             ),
-            usable_positions=(3, 4),
+            boundaries=(4 * VBS, 5 * VBS),
             attention_hit_blocks=5,
         )
     )

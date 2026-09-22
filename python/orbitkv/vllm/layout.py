@@ -1,4 +1,4 @@
-"""vLLM cache-group layout and resumable hybrid checkpoint boundaries."""
+"""Compile vLLM cache groups into storage and shared recovery requirements."""
 
 from dataclasses import dataclass
 
@@ -19,6 +19,7 @@ class CacheGroupLayout:
     recurrent_group_indices: frozenset[int]
     recurrent_layer_names: frozenset[str]
     storage_group_ids: tuple[int, ...] = (0,)
+    recovery_groups: tuple[tuple[int, str, int], ...] = ((0, "attention", 0),)
 
     @classmethod
     def from_config(cls, kv_cache_config) -> "CacheGroupLayout":
@@ -123,6 +124,23 @@ class CacheGroupLayout:
                 for layer_name in group.layer_names
             ),
             storage_group_ids=storage_group_ids,
+            recovery_groups=(
+                (
+                    0,
+                    "mla"
+                    if all(
+                        isinstance(spec, (MLAAttentionSpec, UniformTypeKVCacheSpecs))
+                        for index, spec in enumerate(specs)
+                        if index not in recurrent_group_indices
+                    )
+                    else "attention",
+                    0,
+                ),
+                *(
+                    (storage_group_ids[index], "recurrent", 0)
+                    for index in sorted(recurrent_group_indices)
+                ),
+            ),
         )
 
     @property
@@ -137,43 +155,3 @@ class CacheGroupLayout:
                     raise RuntimeError(f"KV cache layer belongs to multiple groups: {name}")
                 result[name] = group_index
         return result
-
-    def storage_group_of(self, group_index: int) -> int:
-        """Engine storage group id for a connector cache group index."""
-        return self.storage_group_ids[group_index]
-
-
-def reconcile_hybrid_hit(
-    attention_hit_blocks: int,
-    recurrent_hits: tuple[tuple[tuple[int, ...], ...], ...],
-) -> tuple[int, int | None, frozenset[int]]:
-    """Combine per-group query results into one hybrid hit.
-
-    ``attention_hit_blocks`` is the (already shard-minimized) attention prefix
-    length in blocks. ``recurrent_hits[g][s]`` lists the query positions whose
-    checkpoint block is cached in recurrent group ``g`` on shard ``s``.
-
-    HMA needs the whole prefix resumable: every recurrent group must hold a
-    checkpoint state inside the attention prefix (attention KV alone cannot
-    skip mamba's sequential prefill), and that state must exist on every TP
-    shard. Returns ``(hit_blocks, checkpoint, usable)`` where ``hit_blocks``
-    is ``checkpoint + 1`` — the checkpoint covers tokens through the end of
-    its own block — and ``usable`` is every legal boundary position (for
-    re-derivation when the token budget later shrinks the hit). ``(0, None,
-    frozenset())`` means no usable boundary: recompute from scratch.
-    """
-    if attention_hit_blocks <= 0 or not recurrent_hits:
-        return 0, None, frozenset()
-    # A checkpoint position is usable only inside the attention prefix AND
-    # present in every recurrent group on every shard.
-    usable: set[int] | None = None
-    for group_hits in recurrent_hits:
-        for shard_hits in group_hits:
-            in_prefix = {p for p in shard_hits if p < attention_hit_blocks}
-            usable = in_prefix if usable is None else usable & in_prefix
-            if not usable:
-                return 0, None, frozenset()
-    if not usable:
-        return 0, None, frozenset()
-    checkpoint = max(usable)
-    return checkpoint + 1, checkpoint, frozenset(usable)

@@ -38,18 +38,19 @@ the registered instance. Hashing model files and storage layouts stays out of
 the per-block hot path. Old raw-hash keys and process protocol versions are
 invalidated; there is no compatibility lookup or old client alias.
 
-SGLang now compiles registered groups into `RecoveryContract` rules and validates
+SGLang and vLLM hybrid adapters compile groups into `RecoveryContract` rules and validate
 `StateBundle` evidence on live queries. Prefixes require contiguous pages; windows
 require the complete rounded trailing range; recurrent/conv state requires an
 exact checkpoint at the selected end. The bridge obtains the absolute origin
-from SGLang's valid HBM prefix and matches each group against leased page positions.
+from the engine's valid HBM prefix and matches each group against leased page positions.
 It never numbers a partial transfer from zero. Model/layout isolation comes from
 the registered namespace; the engine remains responsible for declaring all required
 state and holding the base prefix valid. This is a recovery-contract check, not
 a formal proof of the model's mathematics. See [hybrid recovery](hybrid-recovery.md).
 
-vLLM still reconciles hybrid groups inside its adapter. `StateDescriptor` and
-`StateFormat` remain planning types; their fields are not a new per-page wire
+vLLM compiles attention and aligned recurrent groups; its existing SWA and
+hybrid P/D-tail restrictions remain. `StateDescriptor` and `StateFormat`
+remain planning types; their fields are not a new per-page wire
 protocol. Publish still uses raw engine block IDs without generation checks.
 Cross-engine reuse, dynamic LoRA and live weight updates are unsupported: LoRA
 is rejected at startup; weight changes require an engine restart and a new
@@ -112,6 +113,6 @@ implementation check or a conversion path.
 
 The remaining design is a work plan. Single-node GPU recovery and model/storage
 identity isolation are implemented for the validated adapters and layouts;
-common vLLM validation, further model capabilities, page-generation enforcement
+further model capabilities, page-generation enforcement
 and full performance qualification remain open. See [single-node deployment](single-node.md),
 [architecture](architecture.md), and [the implementation checklist](../TODO.md).
