@@ -17,6 +17,7 @@ _NATIVE_EXPORTS = {
     "OrbitKVInternal",
     "QueryLoading",
     "QueryReady",
+    "RecoveryContract",
 }
 
 try:
@@ -59,4 +60,5 @@ __all__ = [
     "OrbitKVInternal",
     "QueryLoading",
     "QueryReady",
+    "RecoveryContract",
 ]

@@ -6,6 +6,7 @@ pub(crate) mod transfer_lock;
 mod write_path;
 
 use bytesize::ByteSize;
+use futures::{StreamExt, stream};
 use log::{debug, info};
 use std::collections::HashSet;
 use std::num::NonZeroU64;
@@ -368,11 +369,12 @@ impl StorageEngine {
         }
     }
 
-    /// Position-aligned membership lookup in the resident read cache: entry
+    /// Position-aligned membership across resident and backing tiers: entry
     /// `i` is the sealed block for `hashes[i]`, or `None` on miss. Hashes must
     /// already carry any group encoding (see `group_hash`).
-    pub(crate) fn get_membership(
+    pub(crate) async fn get_membership(
         &self,
+        req_id: &str,
         namespace: &str,
         hashes: &[Vec<u8>],
     ) -> Vec<Option<Arc<crate::block::SealedBlock>>> {
@@ -380,7 +382,35 @@ impl StorageEngine {
             .iter()
             .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
             .collect();
-        self.read_cache.get_blocks_aligned(&keys)
+        let resident = self.read_cache.get_blocks_aligned(&keys);
+        // Auxiliary state can have holes (checkpoints or evicted windows).
+        // Bound independent reads and reuse prefix fetch coalescing/cancellation
+        // without waiting for absent checkpoints to be published.
+        stream::iter(
+            hashes
+                .iter()
+                .cloned()
+                .zip(resident)
+                .map(|(hash, block)| async move {
+                    if block.is_some() {
+                        return block;
+                    }
+                    self.prefetch
+                        .check_and_prefetch(
+                            &self.read_cache,
+                            req_id,
+                            namespace,
+                            std::slice::from_ref(&hash),
+                            crate::QueryMode::Demand,
+                        )
+                        .await
+                        .blocks
+                        .pop()
+                }),
+        )
+        .buffered(8)
+        .collect()
+        .await
     }
 
     /// Evict all blocks from the resident in-memory read cache.

@@ -254,7 +254,11 @@ bytes before transfer. Fixed shards and owner replay are implemented; directory 
   publication are planning targets, not current guarantees.
 
 The target recovery contract must reject incomplete or incompatible bundles;
-the current hot path does not enforce `StateBundle` completeness.
+the Manager wire protocol does not yet enforce `StateBundle` completeness.
+SGLang now validates compiled prefix/window/checkpoint requirements before
+restore in its adapter, using the shared Rust contract and leased group positions;
+see [hybrid recovery](hybrid-recovery.md). This does not add generation-qualified
+page references to the transfer protocol.
 
 ## Remaining work
 

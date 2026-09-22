@@ -129,7 +129,7 @@ Deliver:
 - switch framework adapters to the available local `QueryBundle`, publish,
   restore, completion, and lease-release APIs;
 - support full-attention MHA and MLA layouts;
-- reject hybrid, draft, DSA, and auxiliary GPU state until complete recovery
+- reject unsupported draft, DSA, and auxiliary GPU state until complete recovery
   contracts are available;
 - expose cold miss, partial prefix, warm hit, cancellation, and restart metrics.
 
@@ -142,10 +142,11 @@ Gate:
 
 ## M2: common StateBundle query and native local transport
 
-Versioned model/storage keys now isolate deployments. The component-presence
-check is not a safe, model-aware recovery proof. [State identity and recovery](state-identity.md)
-defines the migration and gates. Complete those local semantics before using
-cache metadata as evidence for distributed routing.
+Versioned model/storage keys isolate deployments. SGLang now uses compiled
+prefix/window/checkpoint rules with absolute-span and leased-group evidence;
+see [hybrid recovery](hybrid-recovery.md). Shared vLLM validation and page-generation
+enforcement remain open. Complete those local semantics before using cache
+metadata as evidence for distributed routing.
 
 Deliver:
 

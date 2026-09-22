@@ -26,7 +26,7 @@ def test_linker_failure_never_acknowledges_gpu_destinations(failure):
     linker = object.__new__(OrbitKVLinker)
     linker.instance_id = "failed-transfer"
     linker.device_id = 0
-    linker.layout = SimpleNamespace(layer_names=["kv:0"])
+    linker.layout = SimpleNamespace(pools={"kv": SimpleNamespace(layer_names=["kv:0"])})
     linker._load_error = None
     linker._load_queue = queue.Queue()
     linker._completed_loads = queue.Queue()
@@ -46,7 +46,7 @@ def test_linker_failure_never_acknowledges_gpu_destinations(failure):
     linker._load_queue.put(
         (
             index,
-            [_Load(str(i), bytes([i]), (i,)) for i in range(12)],
+            [_Load(str(i), (("kv", bytes([i]), (i,)),)) for i in range(12)],
             SimpleNamespace(synchronize=lambda: None),
         )
     )
@@ -61,9 +61,8 @@ def test_linker_failure_never_acknowledges_gpu_destinations(failure):
     for observe in (linker.num_completed_loads, linker.pop_completed_load):
         with pytest.raises(RuntimeError, match="GPU pages remain held"):
             observe()
-    linker.layer_done_counter.set_consumer(index)
     with pytest.raises((ConnectionError, TimeoutError)):
-        linker.layer_done_counter.wait_until(0)
+        linker.layer_done_counter.set_consumer(index)
 
 
 def test_restore_window_never_acknowledges_a_partially_completed_batch():
@@ -73,7 +72,7 @@ def test_restore_window_never_acknowledges_a_partially_completed_batch():
     linker = object.__new__(OrbitKVLinker)
     linker.instance_id = "windowed-restore"
     linker.device_id = 0
-    linker.layout = SimpleNamespace(layer_names=["kv:0"])
+    linker.layout = SimpleNamespace(pools={"kv": SimpleNamespace(layer_names=["kv:0"])})
     linker._load_error = None
     linker._load_queue = queue.Queue()
     linker._completed_loads = queue.Queue()
@@ -99,7 +98,7 @@ def test_restore_window_never_acknowledges_a_partially_completed_batch():
 
     linker.client.start_restore.side_effect = submit
     linker.client.wait_restore.side_effect = complete
-    pending = [_Load(str(i), bytes([i]), (i,)) for i in range(12)]
+    pending = [_Load(str(i), (("kv", bytes([i]), (i,)),)) for i in range(12)]
     linker._load_queue.put((index, pending, SimpleNamespace(synchronize=lambda: None)))
     linker._load_queue.put(None)
     linker._load_worker()
@@ -304,7 +303,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         linker = object.__new__(OrbitKVLinker)
         linker.instance_id = instance
         linker.device_id = resolve_device_id()
-        linker.layout = SimpleNamespace(layer_names=names)
+        linker.layout = SimpleNamespace(pools={"kv": SimpleNamespace(layer_names=names)})
         linker.client = client
         linker._load_error = None
         linker._load_queue = queue.Queue()
@@ -323,7 +322,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
                 time.sleep(0.001)
             assert isinstance(lookup, QueryReady)
             assert lookup.num_hit_blocks == end - start
-            pending.append(_Load(rid, lookup.lease, tuple(range(start + 3, end + 3))))
+            pending.append(_Load(rid, (("kv", lookup.lease, tuple(range(start + 3, end + 3))),)))
         index = linker.layer_done_counter.update_producer()
         ready = torch.cuda.Event()
         ready.record()

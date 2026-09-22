@@ -17,7 +17,7 @@ export const layers = [
     name: "orbitkv-state",
     role: "Name the state.",
     detail:
-      "Versioned model and storage keys across cache tiers; complete token-span and recovery validation is still planned.",
+      "Versioned model/storage keys and compiled prefix, window and checkpoint recovery rules used by SGLang.",
     path: "crates/orbitkv-state/src/lib.rs",
   },
   {
@@ -59,7 +59,7 @@ export const layers = [
     name: "orbitkv.sglang",
     role: "Link SGLang GPU pages.",
     detail:
-      "A direct linker for full-attention MHA/MLA models; hybrid state is not yet supported.",
+      "Direct GPU recovery for full attention, sliding windows and recurrent/conv checkpoints, validated at a common token boundary.",
     path: "python/orbitkv/sglang/linker.py",
   },
   {

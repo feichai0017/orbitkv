@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -28,18 +28,18 @@ from .layout import GpuLayout
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Lookup:
     keys: tuple[str, ...]
-    lease: bytes
-    hit_pages: int
+    origin: int
+    groups: dict[PoolName, Any] = field(default_factory=dict)
+    boundaries: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
 class _Load:
     rid: str
-    lease: bytes
-    targets: tuple[int | None, ...]
+    groups: tuple[tuple[PoolName, bytes, tuple[int | None, ...]], ...]
 
 
 class _LayerDoneCounter:
@@ -59,6 +59,10 @@ class _LayerDoneCounter:
 
     def set_consumer(self, index: int) -> None:
         self.consumer_index = index
+        # CUDA graph replay can bypass Python pool accessors. This linker
+        # completes whole restores, so fence them before forward construction.
+        self.wait_until(0)
+        self.wait_until(self.num_layers - 1)
 
     def wait_until(self, threshold: int) -> None:
         index = self.consumer_index
@@ -102,11 +106,16 @@ class OrbitKVLinker(UnifiedCacheLinker):
     _QUERY_WAIT_SECONDS = 5.0
 
     def __init__(self, server_args: Any, params: Any, *, components: set[ComponentType]):
-        if components != {ComponentType.FULL}:
-            raise ValueError("OrbitKV direct GPU linker currently supports full-attention KV only")
         self.layout = GpuLayout.from_pool(params, components)
         self.page_size = self.layout.page_size
         self.namespace = derive_namespace(server_args, params, self.layout)
+        from orbitkv import RecoveryContract
+
+        self.recovery = RecoveryContract(
+            self.namespace,
+            self.page_size,
+            [(pool.group_id, pool.kind, pool.window) for pool in self.layout.pools.values()],
+        )
         self.instance_id = f"sglang-{uuid.uuid4().hex}"
         self.device_id = resolve_device_id()
         endpoint = os.environ.get("ORBITKV_SGLANG_ENDPOINT", "unix:///run/orbitkv/orbitkv.sock")
@@ -115,7 +124,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self.client = CacheManagerClient(endpoint.removeprefix("unix://"))
         try:
             self.client.start_session_watcher(self.instance_id, self.namespace, 1, 1)
-            wrappers = [serialize_gpu_buffer(tensor) for tensor in self.layout.pool.kv_buffer]
+            pools = list(self.layout.pools.values())
+            wrappers = [
+                serialize_gpu_buffer(tensor) for pool in pools for tensor in pool.entry.kv_buffer
+            ]
             ok, message = self.client.register_context_batch(
                 self.instance_id,
                 self.namespace,
@@ -124,14 +136,15 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 1,
                 1,
                 self.device_id,
-                self.layout.layer_names,
+                [name for pool in pools for name in pool.layer_names],
                 wrappers,
-                self.layout.num_blocks,
-                self.layout.block_bytes,
+                [count for pool in pools for count in pool.num_blocks],
+                [size for pool in pools for size in pool.block_bytes],
                 [0] * len(wrappers),
                 [1] * len(wrappers),
                 "direct",
                 False,
+                layer_group_ids=[pool.group_id for pool in pools for _ in pool.layer_names],
             )
             if not ok:
                 raise RuntimeError(f"OrbitKV GPU registration failed: {message}")
@@ -139,8 +152,10 @@ class OrbitKVLinker(UnifiedCacheLinker):
             self.client.close()
             raise
 
-        self.layer_done_counter = _LayerDoneCounter(self.layout.pool_group.num_layers)
+        self.layer_done_counter = _LayerDoneCounter(self.layout.num_layers)
         self._lookups: dict[str, _Lookup] = {}
+        self._origins: dict[str, int] = {}
+        self._load_boundaries: dict[str, tuple[int, dict[PoolName, set[str]]]] = {}
         self._pending_queries: dict[str, tuple[tuple[str, ...], float]] = {}
         self._expired_queries: set[str] = set()
         self._queued_loads: dict[str, _Load] = {}
@@ -163,8 +178,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._offload_thread.start()
         logger.info(
             "OrbitKV direct GPU linker registered %s buffers, %s pages on device %s",
-            len(self.layout.layer_names),
-            self.layout.num_blocks[0],
+            sum(len(pool.layer_names) for pool in self.layout.pools.values()),
+            self.layout.pools[PoolName.KV].num_blocks[0],
             self.device_id,
         )
 
@@ -174,12 +189,15 @@ class OrbitKVLinker(UnifiedCacheLinker):
 
     def _release_lookup(self, rid: str) -> None:
         lookup = self._lookups.pop(rid, None)
-        if lookup is not None and lookup.lease:
-            self.client.release(lookup.lease)
+        if lookup is not None:
+            for result in lookup.groups.values():
+                if result.lease:
+                    self.client.release(result.lease)
 
     def cancel_query(self, rid: str) -> None:
         self._pending_queries.pop(rid, None)
-        self.client.cancel_query(self.instance_id, rid)
+        for pool in self.layout.pools.values():
+            self.client.cancel_query(self.instance_id, rid, group_id=pool.group_id)
         self._release_lookup(rid)
 
     def expire_query(self, rid: str) -> None:
@@ -195,66 +213,137 @@ class OrbitKVLinker(UnifiedCacheLinker):
         return int(rid in self._pending_queries)
 
     def lookup(self, rid: str, transfers: list[PoolTransfer]) -> list[int]:
-        if len(transfers) != 1 or transfers[0].name != PoolName.KV:
-            raise ValueError("OrbitKV direct linker expected one KV lookup")
-        keys = tuple(transfers[0].keys or ())
+        by_name = {transfer.name: transfer for transfer in transfers}
+        if len(by_name) != len(transfers) or set(by_name) != set(self.layout.pools):
+            raise ValueError("SGLang lookup must declare every registered state pool")
+        keys = tuple(by_name[PoolName.KV].keys or ())
         if not keys or rid in self._expired_queries:
             return []
+        if rid not in self._origins:
+            raise ValueError("SGLang lookup requires an engine-supplied absolute token origin")
+        origin = self._origins[rid]
         lookup = self._lookups.get(rid)
-        if lookup is not None:
-            if lookup.keys == keys:
-                return list(range(1, lookup.hit_pages + 1))
-            self._release_lookup(rid)
-        pending = self._pending_queries.get(rid)
-        if pending is not None and pending[0] != keys:
+        if lookup is not None and (lookup.keys != keys or lookup.origin != origin):
             self.cancel_query(rid)
-            pending = None
+            lookup = None
+        pending = self._pending_queries.get(rid)
         started = pending[1] if pending is not None else time.monotonic()
         if time.monotonic() - started >= self._QUERY_WAIT_SECONDS:
             logger.warning("Cache query wait expired; recomputing request %s", rid)
             self.expire_query(rid)
             return []
+        if lookup is None:
+            if len(set(keys)) != len(keys):
+                raise ValueError("SGLang lookup contains duplicate page hashes")
+            lookup = _Lookup(keys, origin)
+            self._lookups[rid] = lookup
         from orbitkv import QueryReady
 
-        result = self.client.query_prefetch(
-            self.instance_id, self._hashes(keys), rid, wait_for_full_prefix=False
-        )
-        if not isinstance(result, QueryReady):
+        loading = False
+        for name, pool in self.layout.pools.items():
+            if name in lookup.groups:
+                continue
+            # Sparse auxiliary hits are queried against the same full chain.
+            # A shortened window in PoolTransfer cannot describe earlier boundaries.
+            result = self.client.query_prefetch(
+                self.instance_id,
+                self._hashes(keys),
+                rid,
+                wait_for_full_prefix=False,
+                group_id=pool.group_id,
+            )
+            if not isinstance(result, QueryReady):
+                loading = True
+                continue
+            if result.num_hit_blocks and not result.lease:
+                raise RuntimeError("OrbitKV reported state hits without a restore lease")
+            lookup.groups[name] = result
+        if loading:
             self._pending_queries[rid] = (keys, started)
             return []
         self._pending_queries.pop(rid, None)
-        hit_pages = result.num_hit_blocks
-        if hit_pages and not result.lease:
-            raise RuntimeError("OrbitKV reported GPU page hits without a restore lease")
-        self._lookups[rid] = _Lookup(keys, result.lease, hit_pages)
-        return list(range(1, hit_pages + 1))
+        coverage = []
+        for name, pool in self.layout.pools.items():
+            result = lookup.groups[name]
+            positions = range(result.num_hit_blocks) if pool.group_id == 0 else result.hit_positions
+            coverage.append(
+                (
+                    pool.group_id,
+                    [origin + (position + 1) * self.page_size for position in positions],
+                )
+            )
+        lookup.boundaries = tuple(
+            self.recovery.restorable_boundaries(
+                self.namespace,
+                origin,
+                origin + len(keys) * self.page_size,
+                coverage,
+            )
+        )
+        if not lookup.boundaries:
+            self._release_lookup(rid)
+        return [(boundary - origin) // self.page_size for boundary in lookup.boundaries]
 
     def load(self, rid: str, transfers: list[PoolTransfer]) -> bool:
         self._check_load_failure()
         if rid in self._queued_loads:
             raise ValueError(f"duplicate OrbitKV load for {rid}")
-        if len(transfers) != 1 or transfers[0].name != PoolName.KV:
-            self._release_lookup(rid)
-            return False
-        transfer = transfers[0]
-        keys = tuple(transfer.keys or ())
-        if not keys or transfer.device_indices is None:
-            self._release_lookup(rid)
-            return False
         lookup = self._lookups.pop(rid, None)
         if lookup is None:
-            raise RuntimeError(f"SGLang load for {rid} has no OrbitKV lookup lease")
+            raise RuntimeError(f"SGLang load for {rid} has no OrbitKV lookup leases")
+        groups = []
         try:
-            block_ids = self.layout.block_ids(transfer.device_indices, len(keys))
-            positions = {key: index for index, key in enumerate(lookup.keys[: lookup.hit_pages])}
-            if len(positions) != lookup.hit_pages:
-                raise ValueError("SGLang lookup contains duplicate page hashes")
-            targets: list[int | None] = [None] * lookup.hit_pages
-            for key, block_id in zip(keys, block_ids, strict=True):
-                targets[positions[key]] = block_id
-            self._queued_loads[rid] = _Load(rid, lookup.lease, tuple(targets))
+            by_name = {transfer.name: transfer for transfer in transfers}
+            if len(by_name) != len(transfers) or not set(by_name) <= set(self.layout.pools):
+                raise ValueError("SGLang load contains unknown or duplicate state pools")
+            boundary, resident = self._load_boundaries.pop(rid)
+            if boundary not in lookup.boundaries:
+                raise ValueError("SGLang selected an unproved recovery boundary")
+            for name, result in lookup.groups.items():
+                pool = self.layout.pools[name]
+                positions = (
+                    list(range(result.num_hit_blocks))
+                    if pool.group_id == 0
+                    else result.hit_positions
+                )
+                held = {lookup.keys[position]: index for index, position in enumerate(positions)}
+                targets: list[int | None] = [None] * len(positions)
+                transfer = by_name.get(name)
+                keys = ()
+                if transfer is not None:
+                    keys = tuple(transfer.keys or ())
+                    if transfer.device_indices is None or len(set(keys)) != len(keys):
+                        raise ValueError("SGLang load has missing destinations or duplicate keys")
+                    block_ids = pool.block_ids(transfer.device_indices, len(keys))
+                    for key, block_id in zip(keys, block_ids, strict=True):
+                        position = held[key]
+                        token_end = lookup.origin + (positions[position] + 1) * self.page_size
+                        if token_end > boundary:
+                            raise ValueError("SGLang load exceeds its proved recovery boundary")
+                        if pool.kind == "recurrent" and token_end != boundary:
+                            raise ValueError(
+                                "Recurrent state must match the exact recovery boundary"
+                            )
+                        targets[position] = block_id
+                end_page = (boundary - lookup.origin) // self.page_size
+                expected = lookup.keys[:end_page]
+                if pool.kind == "recurrent":
+                    expected = expected[-1:]
+                elif pool.kind == "window":
+                    window_pages = (pool.window + self.page_size - 1) // self.page_size
+                    expected = expected[-window_pages:]
+                retained = resident.get(name, set())
+                if set(keys) & retained or set(keys) | retained != set(expected):
+                    raise ValueError(
+                        "GPU destinations and retained state do not cover the recovery plan"
+                    )
+                if result.lease:
+                    groups.append((name, result.lease, tuple(targets)))
+            self._queued_loads[rid] = _Load(rid, tuple(groups))
         except Exception:
-            self.client.release(lookup.lease)
+            for result in lookup.groups.values():
+                if result.lease:
+                    self.client.release(result.lease)
             raise
         return True
 
@@ -294,8 +383,19 @@ class OrbitKVLinker(UnifiedCacheLinker):
                                     self.instance_id,
                                     0,
                                     self.device_id,
-                                    [self.layout.layer_names],
-                                    [(load.lease, [list(load.targets)])],
+                                    [pool.layer_names for pool in self.layout.pools.values()],
+                                    [
+                                        (
+                                            lease,
+                                            [
+                                                list(targets)
+                                                if name == pool_name
+                                                else [None] * len(targets)
+                                                for name in self.layout.pools
+                                            ],
+                                        )
+                                        for pool_name, lease, targets in load.groups
+                                    ],
                                 )
                             )
                         for load, restore in zip(
@@ -312,7 +412,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     logger.exception("OrbitKV SGLang GPU restore failed")
                     for load in pending[submitted:]:
                         try:
-                            self.client.release(load.lease)
+                            for _, lease, _ in load.groups:
+                                self.client.release(lease)
                         except Exception:
                             logger.warning(
                                 "Could not release an unsubmitted SGLang restore lease",
@@ -325,10 +426,13 @@ class OrbitKVLinker(UnifiedCacheLinker):
     def cancel_queued_load(self, rid: str) -> bool:
         self.cancel_query(rid)
         self._expired_queries.discard(rid)
+        self._origins.pop(rid, None)
+        self._load_boundaries.pop(rid, None)
         load = self._queued_loads.pop(rid, None)
         if load is None:
             return False
-        self.client.release(load.lease)
+        for _, lease, _ in load.groups:
+            self.client.release(lease)
         return True
 
     def num_completed_loads(self) -> int:
@@ -346,15 +450,30 @@ class OrbitKVLinker(UnifiedCacheLinker):
             ) from self._load_error
 
     def offload(self, transfers: list[PoolTransfer]) -> bool:
-        if len(transfers) != 1 or transfers[0].name != PoolName.KV:
+        by_name = {transfer.name: transfer for transfer in transfers}
+        if (
+            len(by_name) != len(transfers)
+            or PoolName.KV not in by_name
+            or not set(by_name) <= set(self.layout.pools)
+        ):
             return False
-        transfer = transfers[0]
-        keys = list(transfer.keys or ())
-        if not keys or transfer.device_indices is None:
-            return False
-        block_ids = self.layout.block_ids(transfer.device_indices, len(keys))
-        hashes = self._hashes(keys)
-        saves = [(name, block_ids, hashes) for name in self.layout.layer_names]
+        saves = []
+        # Earlier tree nodes may have lost their auxiliary state. Preserve
+        # their attention prefix; the recovery contract decides completeness
+        # when it joins this prefix with a later window or checkpoint.
+        for name, transfer in by_name.items():
+            pool = self.layout.pools[name]
+            keys = list(transfer.keys or ())
+            if not keys or transfer.device_indices is None:
+                return False
+            if pool.kind == "recurrent" and len(keys) != 1:
+                raise ValueError("Recurrent offload requires exactly one boundary checkpoint")
+            full_keys = by_name[PoolName.KV].keys or ()
+            if keys != list(full_keys[-len(keys) :]):
+                raise ValueError("Offload state groups must end at the same prefix boundary")
+            block_ids = pool.block_ids(transfer.device_indices, len(keys))
+            hashes = self._hashes(keys)
+            saves.extend((layer, block_ids, hashes) for layer in pool.layer_names)
         ready = torch.cuda.Event()
         ready.record()
         self._offload_queue.put((saves, ready))
@@ -393,6 +512,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
         for rid in list(self._pending_queries):
             self.cancel_query(rid)
         self._expired_queries.clear()
+        self._origins.clear()
+        self._load_boundaries.clear()
         for rid in list(self._lookups):
             self._release_lookup(rid)
         for rid in list(self._queued_loads):

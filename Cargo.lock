@@ -2151,6 +2151,7 @@ dependencies = [
  "orbitkv-core",
  "orbitkv-proto",
  "orbitkv-server",
+ "orbitkv-state",
  "orbitkv-transfer",
  "prost",
  "pyo3",

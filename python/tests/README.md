@@ -34,7 +34,7 @@ all layers. These checks cover both stored page layouts.
 | Server client, native extension, CUDA IPC registration, session lifecycle | Integration | `uv run --group test pytest -m integration` | Server/native/GPU lifecycle regression |
 | Distributed startup, placement, embedded catalog protocol and packaged Manager | Distributed process gate | `ETCD_BIN=/path/to/etcd pytest -m integration tests/integration/test_distributed_cache.py` | Starts two Managers and real etcd, checks remote Mooncake/GPU bytes and local recovery after coordinator loss; requires built native artifacts and CUDA. |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
-| SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores the same prompt after a RadixCache flush and engine restart, with DRAM and forced-SSD cases, GPU-load counters, and a cold identity control. |
+| SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores after HBM flush and engine restart, with DRAM/forced-SSD byte counters. Output IDs and finite log probabilities match native HBM reuse; a changed identity matches cold computation. |
 | Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
@@ -85,6 +85,13 @@ Runs tests that start or require a local `orbitkv-cache-manager` but do not run 
 - `test_sglang_direct_transfer.py` writes SGLang-shaped GPU pages through CUDA
   IPC, clears their source slots, and verifies a byte-exact restore into new
   slots. Run this when changing page registration or GPU transfer layout.
+- `test_sglang_recovery.py` joins sparse auxiliary state with a full prefix,
+  restores poisoned Full + SWA and Full + recurrent/conv buffers from DRAM and
+  SSD, rejects incomplete plans and completes published destinations before
+  releasing an aborted request. Run this for recovery-rule or hybrid-layout changes.
+
+Hybrid serving changes also require both Qwen3.5 and the native Full + SWA
+fixture through the SGLang E2E. See [the fixture and commands](../../docs/hybrid-recovery.md#reproducible-gates).
 
 Requirements:
 - built Python extension, for example `uv run maturin develop -r`

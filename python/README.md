@@ -100,7 +100,7 @@ llm = LLM(
 
 ### SGLang direct GPU cache
 
-For ordinary full-attention MHA or MLA models on SGLang `0.5.20`, use the
+For supported full-attention or hybrid models on SGLang `0.5.20`, use the
 OrbitKV RadixCache backend. Install the OrbitKV wheel in the SGLang environment
 so its `sglang.srt.plugins` entry point is visible to the scheduler process.
 The Cache Manager and SGLang worker must run on the same host; the Unix socket
@@ -137,10 +137,12 @@ is rejected. Restart the engine when weights change; live refits are unsupported
 See [state identity](../docs/state-identity.md) for the exact boundary.
 
 Each tensor-parallel rank registers its local buffers; SGLang
-intersects restorable prefixes across ranks. This direct path currently accepts
-full-attention MHA and MLA layouts with one KV pool. It rejects hybrid
-SWA/Mamba, DSA, draft-model, and auxiliary GPU state until their complete
-recovery contracts are implemented. Both `--radix-cache-backend orbitkv` and
+intersects sets of legal boundaries across ranks. This direct path accepts
+full-attention MHA/MLA, Full + SWA, and Full + recurrent/conv pools. The compiled
+contract requires a complete window or an exact checkpoint at the selected
+boundary. DSA, draft, ReplaySSM, int8 checkpoints, SWA request rings and unknown
+auxiliary state remain rejected. See [hybrid recovery](../docs/hybrid-recovery.md)
+for model evidence, restrictions and reproducible gates. Both `--radix-cache-backend orbitkv` and
 `--enable-unified-cache-external-linker`
 are required: the second flag makes SGLang schedule device loads and drain
 the linker's completion queues. Startup fails if it is omitted. The GPU E2E
@@ -308,6 +310,8 @@ Neither engine is required to import the base package or discover its plugins.
 | `vllm/metrics.py` | Connector measurements |
 | `vllm/pd/` | Experimental vLLM prefill/decode handoff |
 | `sglang/config.py`, `layout.py` | SGLang identity and GPU page-layout validation |
+| `sglang/recovery.py` | Absolute recovery evidence, recurrent checkpoints and tree handoff |
+| `crates/orbitkv-state`, `src/recovery.rs` | Compiled recovery rules and their PyO3 binding |
 | `sglang/linker.py` | RadixCache lookup/offload/restore lifecycle |
 | `sglang/plugin.py` | Backend registration and cache construction |
 

@@ -589,8 +589,8 @@ impl OrbitKVEngine {
     /// eligible for the same SSD prefetch and Catalog + Mooncake remote fetch
     /// as prefix queries.
     ///
-    /// Where [`Self::query_group_membership`] answers from the resident read
-    /// cache only, this treats `block_hashes` as an exact want-set: misses are
+    /// Where [`Self::query_group_membership`] allows sparse hits, this treats
+    /// `block_hashes` as an exact want-set: misses are
     /// pulled from remote tiers, and the future waits until the whole
     /// set is fetchable (the prefix machinery over an explicit key list *is*
     /// a set fetch once the full length is required). Use it when partial
@@ -644,9 +644,10 @@ impl OrbitKVEngine {
     ///
     /// The returned blocks hold plain `Arc` refs, not leases: pin what you
     /// need via [`Self::create_query_lease`].
-    pub fn query_group_membership(
+    pub async fn query_group_membership(
         &self,
         instance_id: &str,
+        req_id: &str,
         group_id: u32,
         block_hashes: &[Vec<u8>],
     ) -> Result<Vec<Option<Arc<SealedBlock>>>, EngineError> {
@@ -661,7 +662,10 @@ impl OrbitKVEngine {
             .iter()
             .map(|hash| group_hash(hash, group_id))
             .collect();
-        Ok(self.storage.get_membership(namespace, &encoded))
+        Ok(self
+            .storage
+            .get_membership(req_id, namespace, &encoded)
+            .await)
     }
 
     /// Create an opaque lease that owns query-ready blocks.

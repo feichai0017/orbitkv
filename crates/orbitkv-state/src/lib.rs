@@ -15,7 +15,9 @@ mod inventory;
 mod key;
 mod page;
 
-pub use bundle::{BundleComponent, RecoveryContract, StateBundle};
+pub use bundle::{
+    BundleComponent, RecoveryContract, RecoveryError, RecoveryRule, StateBundle, StateRequirement,
+};
 pub use component::StateComponent;
 pub use discovery::{
     BlockCandidates, CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_ENDPOINT_BYTES,

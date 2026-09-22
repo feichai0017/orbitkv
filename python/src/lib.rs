@@ -18,6 +18,8 @@ use std::time::Duration;
 #[cfg(feature = "mooncake")]
 mod mooncake;
 
+mod recovery;
+
 // Custom Python exceptions for error classification
 create_exception!(orbitkv, OrbitKVError, PyException);
 create_exception!(orbitkv, OrbitKVInternal, OrbitKVError);
@@ -620,6 +622,7 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("OrbitKVInternal", m.py().get_type::<OrbitKVInternal>())?;
     m.add_class::<QueryLoading>()?;
     m.add_class::<QueryReady>()?;
+    m.add_class::<recovery::PyRecoveryContract>()?;
 
     Ok(())
 }
