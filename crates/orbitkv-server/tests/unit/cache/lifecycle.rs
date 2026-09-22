@@ -38,6 +38,9 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
         ))),
         Arc::clone(&shutdown),
         lifecycle.clone(),
+        0,
+        None,
+        usize::MAX,
     )
     .unwrap();
     let (first, second) = tokio::task::spawn_blocking(move || {
@@ -74,6 +77,7 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
                         warmup: false,
                         discover: false,
                         materialize: false,
+                        prepare: false,
                         group_id: 0,
                     })
                 )

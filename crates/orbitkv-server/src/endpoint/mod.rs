@@ -79,6 +79,9 @@ impl ProcessEndpoint {
         hll_tracker: Arc<std::sync::Mutex<MultiWindowHllTracker>>,
         shutdown: Arc<Notify>,
         lifecycle: crate::cache::lifecycle::LifecycleService,
+        read_batch_bytes: u64,
+        read_timeout: Option<Duration>,
+        read_max_batches: usize,
     ) -> Result<Self, ProcessEndpointError> {
         // A dead Manager's clients can keep its iceoryx2 service alive.
         // Publish a fresh incarnation through the stable bootstrap socket.
@@ -108,6 +111,9 @@ impl ProcessEndpoint {
                 let mut sessions = HashMap::new();
                 let mut operations = HashMap::new();
                 let mut queries = pending::PendingQueries::default();
+                queries.read_batch_bytes = read_batch_bytes;
+                queries.read_timeout = read_timeout;
+                queries.read_max_batches = read_max_batches;
                 let mut next_operation_id = 1u64;
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();

@@ -15,6 +15,7 @@ fn request(operation_id: u64, revision: u64) -> QueryBundleRequest {
         warmup: false,
         discover: false,
         materialize: false,
+        prepare: false,
     }
 }
 
@@ -235,4 +236,100 @@ fn warmups_skip_full_capacity_and_reap_unpolled_completions() {
     queries.retain_sessions(&engine, |_| true);
     assert!(queries.pending.is_empty());
     assert_eq!(queries.warming.available_permits(), MAX_ACTIVE_WARMUPS);
+}
+
+#[test]
+fn prepared_results_remain_owned_until_claim_or_expiry_without_further_polling() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let engine = engine();
+    let hll = tracker();
+    let mut queries = PendingQueries::default();
+    queries.sessions.entry(1).or_default();
+    for id in 1..=3 {
+        let mut request = request(id, 1);
+        request.prepare = true;
+        request.materialize = true;
+        queries.insert(1, request);
+        let result_engine = Arc::clone(&engine);
+        let permit = Arc::clone(&queries.capacity).try_acquire_owned().unwrap();
+        assert!(
+            queries
+                .start_query(
+                    (1, id),
+                    async move {
+                        QueryReply {
+                            outcome: Ok(QueryOutcome::Ready {
+                                num_hit_blocks: 0,
+                                lease: vec![],
+                                hit_positions: vec![],
+                            }),
+                            engine: result_engine,
+                            delivered: false,
+                            _permits: vec![permit],
+                        }
+                    },
+                    runtime.handle()
+                )
+                .is_none()
+        );
+    }
+    queries.retain_sessions(&engine, |_| true);
+    assert_eq!(
+        queries.pending.len(),
+        3,
+        "ready preparations need a consumer, not eager retirement"
+    );
+    let claimed = queries
+        .execute(
+            1,
+            QueryCommand::Claim {
+                ticket: request(1, 1).ticket,
+                count_lookup: true,
+            },
+            &engine,
+            runtime.handle(),
+            &hll,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(matches!(claimed.outcome, Ok(QueryOutcome::Ready { .. })));
+    drop(claimed);
+    let expired = queries.pending.get_mut(&(1, 2)).unwrap();
+    expired.expires = Instant::now();
+    let control = Arc::clone(&expired.control);
+    queries.retain_sessions(&engine, |_| true);
+    assert!(!control.can_submit(0));
+    let retired = queries
+        .execute(
+            1,
+            QueryCommand::Claim {
+                ticket: request(2, 1).ticket,
+                count_lookup: true,
+            },
+            &engine,
+            runtime.handle(),
+            &hll,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(matches!(retired.outcome, Ok(QueryOutcome::Busy)));
+    queries.pending.get_mut(&(1, 3)).unwrap().expires = Instant::now();
+    let expired = queries
+        .execute(
+            1,
+            QueryCommand::Claim {
+                ticket: request(3, 1).ticket,
+                count_lookup: true,
+            },
+            &engine,
+            runtime.handle(),
+            &hll,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(expired.outcome, Ok(QueryOutcome::Busy)),
+        "a claim cannot extend expired ownership between sweeps"
+    );
+    assert_eq!(queries.capacity.available_permits(), MAX_ACTIVE_QUERIES);
 }

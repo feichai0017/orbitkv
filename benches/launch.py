@@ -50,6 +50,7 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             PYO3_PYTHON=sys.executable,
             PYTHONHOME=sys.base_prefix,
             ORBITKV_QUEUE_WARMUP="1" if args.queue_warmup == "on" else "0",
+            ORBITKV_PREPARE_REQUESTS="1" if args.prepare_requests == "on" else "0",
             ORBITKV_TRACE_TRANSFERS="1" if args.trace_transfers else "0",
         )
         env["LD_LIBRARY_PATH"] = os.pathsep.join(
@@ -81,6 +82,19 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             backend_configuration["query_budget_bytes"] = int(args.query_budget_gib * 1024**3)
         backend_configuration["queue_warmup"] = args.queue_warmup
         backend_configuration["trace_transfers"] = args.trace_transfers
+        backend_configuration["prepare_requests"] = args.prepare_requests
+        for flag, value in (
+            ("--query-read-batch", args.read_batch_mib * 1024**2),
+            ("--query-read-timeout-ms", args.read_timeout_ms),
+            ("--query-read-max-batches", args.read_max_batches),
+        ):
+            if value:
+                manager_command += [flag, str(value)]
+        backend_configuration["read_controls"] = {
+            "batch_mib": args.read_batch_mib,
+            "timeout_ms": args.read_timeout_ms,
+            "max_batches": args.read_max_batches,
+        }
         plugin = args.output / "orbitkv_benchmark-0.0.dist-info"
         plugin.mkdir()
         (plugin / "METADATA").write_text("Name: orbitkv-benchmark\nVersion: 0.0\n")

@@ -62,7 +62,13 @@ def collect(directory: Path, samples: list[dict]) -> dict:
                     intervals[label].append((now - starts.pop(pid)) / 1e6)
     for event in events:
         if event["stage"] == "host_ready":
-            label = "warmup_prepare_ms" if event["warmup"] else "demand_prepare_ms"
+            label = (
+                "prepared_read_ms"
+                if event.get("prepare")
+                else "warmup_prepare_ms"
+                if event["warmup"]
+                else "demand_prepare_ms"
+            )
             intervals[label].append(event["elapsed_us"] / 1000)
         elif event["stage"] in (
             "discovery_ready",

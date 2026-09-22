@@ -171,6 +171,10 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
                     b["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes", 0)
                     for b in measurements
                 ),
+                "sampled_peak_speculative_bytes": max(
+                    b["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes_speculative", 0)
+                    for b in measurements
+                ),
                 **manager,
             }
         )

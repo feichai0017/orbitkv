@@ -735,7 +735,7 @@ impl OrbitKVEngine {
         instance_id: &str,
         group_id: u32,
         blocks: usize,
-        warming: bool,
+        mode: QueryMode,
     ) -> Result<QueryAdmission, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
@@ -745,7 +745,7 @@ impl OrbitKVEngine {
             .ok_or_else(|| EngineError::InvalidArgument("query bytes overflow".into()))?;
         Ok(self
             .query_budget
-            .reserve(instance_id, &topology.cache_namespace, bytes, warming))
+            .reserve(instance_id, &topology.cache_namespace, bytes, mode))
     }
 
     /// Move preparation ownership into the result lease and then GPU consumers.
@@ -780,6 +780,11 @@ impl OrbitKVEngine {
     pub fn release_query_session(&self, session: u64) {
         self.query_leases
             .release_owner(|owner| owner.session == session);
+    }
+
+    /// Move a prepared lease into foreground ownership without releasing bytes.
+    pub fn claim_query(&self, lease: &QueryLeaseId) {
+        self.query_leases.claim(lease);
     }
 
     pub fn cancel_query(&self, owner: QueryOwner) {

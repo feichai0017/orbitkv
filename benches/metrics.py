@@ -113,6 +113,11 @@ def metrics(url: str | None) -> dict[str, float]:
             if name == "orbitkv_query_reserved_bytes" and 'phase="warming"' in series:
                 key = "orbitkv_query_reserved_bytes_warming"
                 values[key] = values.get(key, 0) + number
+            if name == "orbitkv_query_reserved_bytes" and any(
+                f'phase="{phase}"' in series for phase in ("warming", "preloading", "prepared")
+            ):
+                key = "orbitkv_query_reserved_bytes_speculative"
+                values[key] = values.get(key, 0) + number
             if name == "orbitkv_warmup_wait_byte_seconds_total":
                 for outcome in ("restored", "unused"):
                     if f'outcome="{outcome}"' in series:

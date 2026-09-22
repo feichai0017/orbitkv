@@ -15,6 +15,8 @@ use crate::{
 
 const MAX_WARMUPS: usize = 16;
 const WARMUP_TTL: Duration = Duration::from_secs(5);
+const MAX_PREPARATIONS: usize = 4;
+const PREPARATION_TTL: Duration = Duration::from_millis(900);
 const COMPLETION_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -28,6 +30,7 @@ struct PendingQuery {
     ticket: QueryTicket,
     hashes: BlockHashes,
     intent: QueryIntent,
+    prepared_until: Option<Instant>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +106,22 @@ impl Queries {
         intent: QueryIntent,
     ) -> Result<QueryCommand, ChannelError> {
         if let Some(query) = self.pending.get_mut(key) {
+            if query.prepared_until.is_some()
+                && query.hashes == *hashes
+                && (intent == QueryIntent::Recovery
+                    || (key.group == 0
+                        && intent
+                            == QueryIntent::Lookup {
+                                wait_for_full_prefix: false,
+                            }))
+            {
+                query.prepared_until = None;
+                query.intent = intent;
+                return Ok(QueryCommand::Claim {
+                    ticket: query.ticket,
+                    count_lookup: intent != QueryIntent::Recovery,
+                });
+            }
             if query.hashes == *hashes && query.intent == intent {
                 return Ok(QueryCommand::Poll(query.ticket));
             }
@@ -113,6 +132,7 @@ impl Queries {
                 .ok_or(ChannelError::SessionRequiresReconnect)?;
             query.hashes = hashes.clone();
             query.intent = intent;
+            query.prepared_until = None;
         } else {
             let ticket = self.ticket()?;
             self.pending.insert(
@@ -121,6 +141,7 @@ impl Queries {
                     ticket,
                     hashes: hashes.clone(),
                     intent,
+                    prepared_until: None,
                 },
             );
         }
@@ -140,6 +161,7 @@ impl Queries {
             warmup: false,
             discover: intent == QueryIntent::Candidates,
             materialize: intent == QueryIntent::Recovery,
+            prepare: false,
         }))
     }
 
@@ -239,6 +261,14 @@ impl CacheClient {
         if let Some((ticket, _)) = queries.warmups.remove(&key) {
             self.cancel(ticket)?;
         }
+        if queries.pending.get(&key).is_some_and(|query| {
+            query
+                .prepared_until
+                .is_some_and(|until| Instant::now() >= until)
+        }) && let Some(query) = queries.pending.remove(&key)
+        {
+            self.cancel(query.ticket)?;
+        }
         let previous = queries.pending.get(&key).map(|query| query.ticket);
         let command = queries.prepare(&key, hashes, intent)?;
         let response = self
@@ -318,6 +348,102 @@ impl CacheClient {
         Ok(response)
     }
 
+    /// Prepare one compiled range without transferring its lease to the caller.
+    /// A later matching demand claims it; changed/expired work is retired.
+    pub fn prepare_recovery(
+        &self,
+        instance: &str,
+        hashes: &BlockHashes,
+        request: &str,
+        read: RecoveryRead<'_>,
+    ) -> Result<bool, ChannelError> {
+        if hashes.as_slice().is_empty() {
+            return Ok(false);
+        }
+        let range = read.contract.read_range(
+            read.namespace,
+            read.span,
+            read.group,
+            hashes.as_slice().len(),
+        )?;
+        if range.is_empty() {
+            return Ok(false);
+        }
+        let hashes = hashes
+            .slice(range)
+            .ok_or(orbitkv_state::RecoveryError::InvalidSpan)?;
+        let key = QueryKey {
+            instance: instance.into(),
+            request: request.into(),
+            group: read.group,
+        };
+        let mut queries = self
+            .queries
+            .lock()
+            .map_err(|_| ChannelError::SessionRequiresReconnect)?;
+        let now = Instant::now();
+        let expired: Vec<_> = queries
+            .pending
+            .iter()
+            .filter(|(_, query)| query.prepared_until.is_some_and(|until| now >= until))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in expired {
+            if let Some(query) = queries.pending.remove(&key) {
+                self.cancel(query.ticket)?;
+            }
+        }
+        if queries.pending.contains_key(&key)
+            || queries
+                .pending
+                .values()
+                .filter(|q| q.prepared_until.is_some())
+                .count()
+                >= MAX_PREPARATIONS
+        {
+            return Ok(false);
+        }
+        let ticket = queries.ticket()?;
+        let response = self.channel.query_bundle(
+            next_id(&self.requests)?,
+            &QueryCommand::Submit(QueryBundleRequest {
+                ticket,
+                instance_id: instance.into(),
+                request_id: request.into(),
+                block_hashes: hashes.as_slice().to_vec(),
+                group_id: read.group,
+                wait_for_full_prefix: false,
+                warmup: false,
+                discover: false,
+                materialize: true,
+                prepare: true,
+            }),
+        );
+        match response {
+            Ok(response) if response.outcome == QueryOutcomeCode::Loading => {
+                queries.pending.insert(
+                    key,
+                    PendingQuery {
+                        ticket,
+                        hashes,
+                        intent: QueryIntent::Recovery,
+                        prepared_until: Some(now + PREPARATION_TTL),
+                    },
+                );
+                Ok(true)
+            }
+            Ok(response) if response.outcome == QueryOutcomeCode::Busy => Ok(false),
+            Ok(_) => {
+                self.channel.close();
+                Err(ChannelError::SessionRequiresReconnect)
+            }
+            Err(error) => {
+                let _ = self.cancel(ticket);
+                Err(error)
+            }
+        }
+    }
+
     pub fn warm_prefix(
         &self,
         instance: &str,
@@ -367,6 +493,7 @@ impl CacheClient {
                 warmup: true,
                 discover: false,
                 materialize: false,
+                prepare: false,
             }),
         )?;
         match response.outcome {

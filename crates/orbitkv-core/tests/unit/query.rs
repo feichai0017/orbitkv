@@ -1,7 +1,7 @@
 use super::*;
 
 fn reserve(budget: &Arc<QueryBudget>, instance: &str, bytes: u64) -> QueryReservation {
-    match budget.reserve(instance, "state", bytes, false) {
+    match budget.reserve(instance, "state", bytes, QueryMode::Demand) {
         QueryAdmission::Admitted(reservation) => reservation,
         _ => panic!("expected admission"),
     }
@@ -12,16 +12,16 @@ fn bytes_remain_charged_until_all_consumers_finish() {
     let budget = QueryBudget::new(100, 80).unwrap();
     let first = reserve(&budget, "a", 70);
     assert!(matches!(
-        budget.reserve("a", "state", 11, false),
+        budget.reserve("a", "state", 11, QueryMode::Demand),
         QueryAdmission::Busy
     ));
     let second = reserve(&budget, "b", 30);
     assert!(matches!(
-        budget.reserve("c", "state", 1, false),
+        budget.reserve("c", "state", 1, QueryMode::Demand),
         QueryAdmission::Busy
     ));
     assert!(matches!(
-        budget.reserve("b", "state", 81, false),
+        budget.reserve("b", "state", 81, QueryMode::Demand),
         QueryAdmission::TooLarge
     ));
     assert!(first.ready(71).is_err());
@@ -40,7 +40,7 @@ fn bytes_remain_charged_until_all_consumers_finish() {
 #[test]
 fn warmups_leave_foreground_headroom_and_hold_bytes_until_io_drains() {
     let budget = QueryBudget::new(100, 80).unwrap();
-    let QueryAdmission::Admitted(first) = budget.reserve("a", "ns", 20, true) else {
+    let QueryAdmission::Admitted(first) = budget.reserve("a", "ns", 20, QueryMode::Warmup) else {
         panic!("warmup should fit");
     };
     assert!(
@@ -48,18 +48,18 @@ fn warmups_leave_foreground_headroom_and_hold_bytes_until_io_drains() {
         "warmup cannot become a restore lease"
     );
     assert!(matches!(
-        budget.reserve("a", "ns", 1, true),
+        budget.reserve("a", "ns", 1, QueryMode::Warmup),
         QueryAdmission::Busy
     ));
     assert!(matches!(
-        budget.reserve("b", "ns", 21, true),
+        budget.reserve("b", "ns", 21, QueryMode::Warmup),
         QueryAdmission::TooLarge
     ));
-    let QueryAdmission::Admitted(second) = budget.reserve("b", "ns", 5, true) else {
+    let QueryAdmission::Admitted(second) = budget.reserve("b", "ns", 5, QueryMode::Warmup) else {
         panic!("global warmup budget should fit");
     };
     assert!(matches!(
-        budget.reserve("c", "ns", 1, true),
+        budget.reserve("c", "ns", 1, QueryMode::Warmup),
         QueryAdmission::Busy
     ));
     let foreground = reserve(&budget, "a", 60);
@@ -88,19 +88,47 @@ fn foreground_ownership_suppresses_new_warmups_until_the_last_gpu_owner_releases
             _ => {}
         }
         assert!(matches!(
-            budget.reserve("b", "ns", 1, true),
+            budget.reserve("b", "ns", 1, QueryMode::Warmup),
             QueryAdmission::Busy
         ));
     }
     let gpu = foreground.clone();
     drop(foreground);
     assert!(matches!(
-        budget.reserve("b", "ns", 1, true),
+        budget.reserve("b", "ns", 1, QueryMode::Warmup),
         QueryAdmission::Busy
     ));
     drop(gpu);
     assert!(matches!(
-        budget.reserve("b", "ns", 1, true),
+        budget.reserve("b", "ns", 1, QueryMode::Warmup),
         QueryAdmission::Admitted(_)
     ));
+}
+
+#[test]
+fn prepared_pages_keep_headroom_until_claim_and_total_bytes_until_gpu_completion() {
+    let budget = QueryBudget::new(400, 400).unwrap();
+    let QueryAdmission::Admitted(prepared) = budget.reserve("a", "ns", 100, QueryMode::Prepare)
+    else {
+        panic!("preparation should fit");
+    };
+    assert_eq!(prepared.batch_blocks(10, 24), 2);
+    assert_eq!(prepared.batch_blocks(10, 1), 1);
+    prepared.ready(80).unwrap();
+    assert_eq!(budget.usage.lock().warming, 80);
+    assert!(matches!(
+        budget.reserve("b", "ns", 21, QueryMode::Prepare),
+        QueryAdmission::Busy
+    ));
+    let io = prepared.clone();
+    prepared.claim();
+    prepared.claim();
+    assert_eq!(budget.usage.lock().warming, 0);
+    assert_eq!(budget.usage.lock().total, 80);
+    prepared.restoring();
+    drop(prepared);
+    assert_eq!(budget.usage.lock().total, 80);
+    drop(io);
+    assert_eq!(budget.usage.lock().total, 0);
+    assert!(budget.usage.lock().warming_instances.is_empty());
 }

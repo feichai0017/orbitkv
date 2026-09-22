@@ -50,10 +50,14 @@ def transfer(keys):
     return [SimpleNamespace(name=PoolName.KV, keys=keys)]
 
 
-def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(linker, monkeypatch):
+@pytest.mark.parametrize("preparation", [False, True], ids=["warming", "owned"])
+def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
+    linker, monkeypatch, preparation
+):
     from orbitkv import BlockHashes
 
-    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
+    setting = "ORBITKV_PREPARE_REQUESTS" if preparation else "ORBITKV_QUEUE_WARMUP"
+    monkeypatch.setenv(setting, "1")
     import torch
     from sglang.srt.mem_cache.radix_cache import RadixKey
     from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
@@ -82,9 +86,14 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(lin
         scheduler.waiting_queue.append(req)
 
     enqueue_request(accepted, scheduler, req)
-    linker.client.warm_prefix.assert_called_once_with(
-        "admission", BlockHashes(linker._hashes(hashes[1:])), req.rid
-    )
+    batch = BlockHashes(linker._hashes(hashes[1:]))
+    if preparation:
+        linker.client.prepare_recovery.assert_called_once_with(
+            "admission", batch, req.rid, linker.recovery, linker.namespace, 64, 192, 0
+        )
+    else:
+        linker.client.warm_prefix.assert_called_once_with("admission", batch, req.rid)
+    submit = linker.client.prepare_recovery if preparation else linker.client.warm_prefix
     assert cache.match_prefix.call_args.args[0].req is None
     assert not linker._lookups and not linker._queued_loads
     abort_request(MagicMock(), scheduler, req)
@@ -93,18 +102,23 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(lin
     linker.client.reset_mock()
     scheduler.waiting_queue.clear()
     enqueue_request(MagicMock(), scheduler, req)
-    linker.client.warm_prefix.assert_not_called()
+    submit.assert_not_called()
 
-    linker.client.warm_prefix.side_effect = RuntimeError("manager unavailable")
+    submit.side_effect = RuntimeError("manager unavailable")
     enqueue_request(accepted, scheduler, req)
     assert scheduler.waiting_queue[-1] is req
-    linker.client.warm_prefix.assert_called_once()
+    submit.assert_called_once()
     linker.client.reset_mock()
     cache.match_prefix.reset_mock()
-    monkeypatch.delenv("ORBITKV_QUEUE_WARMUP")
+    monkeypatch.delenv(setting)
     enqueue_request(accepted, scheduler, req)
     cache.match_prefix.assert_not_called()
-    linker.client.warm_prefix.assert_not_called()
+    submit.assert_not_called()
+    if preparation:
+        monkeypatch.setenv(setting, "1")
+        scheduler.waiting_queue[:] = [object()] * 4
+        enqueue_request(accepted, scheduler, req)
+        submit.assert_not_called()
 
 
 def test_first_use_is_observed_once_even_when_the_first_layer_wait_repeats(monkeypatch):

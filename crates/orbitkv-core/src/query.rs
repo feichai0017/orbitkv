@@ -20,11 +20,14 @@ pub enum QueryMode {
     Demand,
     WaitForFullPrefix,
     Warmup,
+    Prepare,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Warming,
+    Preloading,
+    Prepared,
     Preparing,
     Ready,
     Restoring,
@@ -34,10 +37,16 @@ impl Phase {
     fn label(self) -> &'static str {
         match self {
             Self::Warming => "warming",
+            Self::Preloading => "preloading",
+            Self::Prepared => "prepared",
             Self::Preparing => "preparing",
             Self::Ready => "ready",
             Self::Restoring => "restoring",
         }
+    }
+
+    fn speculative(self) -> bool {
+        matches!(self, Self::Warming | Self::Preloading | Self::Prepared)
     }
 }
 
@@ -71,7 +80,6 @@ struct Reservation {
     pub(crate) instance: String,
     pub(crate) namespace: String,
     state: Mutex<(u64, Phase)>,
-    warming: bool,
 }
 
 impl QueryBudget {
@@ -91,8 +99,9 @@ impl QueryBudget {
         instance: &str,
         namespace: &str,
         bytes: u64,
-        warming: bool,
+        mode: QueryMode,
     ) -> QueryAdmission {
+        let warming = matches!(mode, QueryMode::Warmup | QueryMode::Prepare);
         let limit = if warming {
             self.per_instance / 4
         } else {
@@ -123,7 +132,11 @@ impl QueryBudget {
         let phase = if warming {
             usage.warming += bytes;
             *usage.warming_instances.entry(instance.into()).or_default() += bytes;
-            Phase::Warming
+            if mode == QueryMode::Prepare {
+                Phase::Preloading
+            } else {
+                Phase::Warming
+            }
         } else {
             Phase::Preparing
         };
@@ -133,7 +146,6 @@ impl QueryBudget {
             instance: instance.into(),
             namespace: namespace.into(),
             state: Mutex::new((bytes, phase)),
-            warming,
         })))
     }
 }
@@ -155,15 +167,40 @@ impl QueryReservation {
 
     pub(crate) fn ready(&self, bytes: u64) -> Result<(), String> {
         let mut state = self.0.state.lock();
-        if state.1 != Phase::Preparing || bytes > state.0 {
+        if !matches!(state.1, Phase::Preparing | Phase::Preloading) || bytes > state.0 {
             return Err("query result exceeds its registered layout byte reservation".into());
         }
         let released = state.0 - bytes;
-        self.0.release_bytes(released);
+        self.0.release_bytes(released, state.1);
         account(-(state.0 as i64), state.1);
-        account(bytes as i64, Phase::Ready);
-        *state = (bytes, Phase::Ready);
+        let phase = if state.1 == Phase::Preloading {
+            Phase::Prepared
+        } else {
+            Phase::Ready
+        };
+        account(bytes as i64, phase);
+        *state = (bytes, phase);
         Ok(())
+    }
+
+    /// Bound a read submission using this group's registered bytes per page.
+    pub fn batch_blocks(&self, requested: usize, byte_limit: u64) -> usize {
+        let bytes = self.0.state.lock().0;
+        if requested == 0 || byte_limit == 0 || bytes == 0 {
+            return requested.max(1);
+        }
+        (byte_limit / (bytes / requested as u64).max(1)).max(1) as usize
+    }
+
+    pub(crate) fn claim(&self) {
+        let mut state = self.0.state.lock();
+        if state.1 == Phase::Prepared {
+            let mut usage = self.0.budget.usage.lock();
+            release_speculative(&mut usage, &self.0.instance, state.0);
+            account(-(state.0 as i64), state.1);
+            state.1 = Phase::Ready;
+            account(state.0 as i64, state.1);
+        }
     }
 
     pub(crate) fn restoring(&self) {
@@ -177,17 +214,11 @@ impl QueryReservation {
 }
 
 impl Reservation {
-    fn release_bytes(&self, bytes: u64) {
+    fn release_bytes(&self, bytes: u64, phase: Phase) {
         let mut usage = self.budget.usage.lock();
         usage.total -= bytes;
-        if self.warming {
-            usage.warming -= bytes;
-            if let Some(instance) = usage.warming_instances.get_mut(&self.instance) {
-                *instance -= bytes;
-                if *instance == 0 {
-                    usage.warming_instances.remove(&self.instance);
-                }
-            }
+        if phase.speculative() {
+            release_speculative(&mut usage, &self.instance, bytes);
         }
         if let Some(instance) = usage.instances.get_mut(&self.instance) {
             *instance -= bytes;
@@ -201,8 +232,18 @@ impl Reservation {
 impl Drop for Reservation {
     fn drop(&mut self) {
         let (bytes, phase) = *self.state.get_mut();
-        self.release_bytes(bytes);
+        self.release_bytes(bytes, phase);
         account(-(bytes as i64), phase);
+    }
+}
+
+fn release_speculative(usage: &mut Usage, instance: &str, bytes: u64) {
+    usage.warming -= bytes;
+    if let Some(used) = usage.warming_instances.get_mut(instance) {
+        *used -= bytes;
+        if *used == 0 {
+            usage.warming_instances.remove(instance);
+        }
     }
 }
 

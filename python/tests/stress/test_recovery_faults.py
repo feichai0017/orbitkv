@@ -59,6 +59,10 @@ def test_concurrent_model_recovery_faults(engine, request, tmp_path, monkeypatch
         ssd_gib=8,
         query_budget_gib=1,
         queue_warmup="off",
+        prepare_requests="on" if os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1" else "off",
+        read_batch_mib=32,
+        read_timeout_ms=0,
+        read_max_batches=0,
         trace_transfers=True,
         orbitkv_transfer_backend=None,
     )
@@ -187,8 +191,7 @@ def test_concurrent_model_recovery_faults(engine, request, tmp_path, monkeypatch
             before_cancel = manager_logs[-1].read_text().count('"stage":"query_cancel"')
             abandoned.close()
             until(
-                lambda: manager_logs[-1].read_text().count('"stage":"query_cancel"')
-                > before_cancel
+                lambda: manager_logs[-1].read_text().count('"stage":"query_cancel"') > before_cancel
             )
             assert metrics(launch.manager_url)["orbitkv_query_reserved_bytes"] > 0
             independent = pool.submit(infer, [rng.choice(vocabulary) for _ in range(513)])
