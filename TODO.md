@@ -66,6 +66,18 @@ numbers below group work areas rather than imposing a strict serial schedule.
   evidence through the shared native binding.
 - [x] Compile prefix/window/checkpoint rules and validate complete token coverage
   in the registered model/format namespace before SGLang advertises a hit.
+- [x] Compile state demand: normalize those rules to page requirements
+  and expose `required_ranges(namespace, start, end)` as absolute aligned
+  group intervals from a valid HBM origin; use the same rules for leased evidence.
+- [x] Gate SGLang exact transferred-plus-retained coverage and vLLM hybrid
+  allocation against those ranges. Query SGLang attention first, bound auxiliary
+  hashes by its hit and preserve every candidate boundary until selection.
+  Rust/Python unit and native/CUDA DRAM/SSD exact-byte gates pass.
+  Dense and P/D paths stay unchanged.
+- [ ] Separate candidate discovery from byte materialization, then fetch only
+  selected required ranges while preserving a valid fallback and revalidating
+  actual leases. Qualify after the ordinary-demand fault gate; compare SSD bytes
+  and lookup rounds independently (`docs/state-planning.md`).
 - [x] Move hybrid-boundary validation out of `orbitkv.vllm`; retain engine-owned
   allocation and checkpoint handoff, and skip unused leased pages after clamping.
 - [x] Handle asynchronous vLLM checkpoint queries from SSD, retain completed
@@ -248,10 +260,16 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 
 ## M5 — semantic state compiler
 
+The existing compiler validates declared prefix/window/checkpoint recovery.
+The M2 increment adds deterministic page demand and adapter consumption of the
+same rules; its gate is tracked above. This is a limited implementation toward
+M5, with no measured latency claim. The general compiler work remains open:
+
 - [ ] Define the `may_read(query, state)` IR.
 - [ ] Compile full-attention retention.
 - [ ] Compile sliding-window and sink-local retention.
-- [ ] Compile recurrent checkpoint contracts.
+- [ ] Derive recurrent checkpoint placement and retention from the general IR;
+  declared exact-boundary checkpoint recovery is already implemented.
 - [ ] Solve Minimum Persistent State Realization for hybrid bundles.
 - [ ] Emit placement, checkpoint, prefetch, and reclamation plans.
 - [ ] Measure Retention Amplification and semantic reclaim latency.

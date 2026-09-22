@@ -29,12 +29,13 @@ import { layers, localUrl } from "../data/site";
           src={localUrl("/architecture.svg")}
           width="1120"
           height="660"
-          alt="Each inference host has an engine with its own HBM and an OrbitKV Cache Manager with DRAM, SSD and embedded catalog shards. UDS and iceoryx2 carry engine commands, CUDA IPC exposes GPU buffers, peer gRPC carries control, Mooncake transfers remote bytes, and etcd tracks membership and placement."
+          alt="Each engine owns HBM and uses compiled page demand and recovery evidence. Per-host Cache Managers own DRAM, SSD and catalog shards; Mooncake transfers remote bytes and etcd tracks membership. General lifetime analysis, retention and physical planning remain future work."
         />
         <figcaption>
           Single-node recovery is validated. The multi-node path is
           experimental; catalogs currently have one copy per shard. A shared API
-          does not imply interchangeable KV layouts.
+          does not imply interchangeable KV layouts. Declared page demand is
+          implemented; general lifetime and physical planning remain future work.
         </figcaption>
       </figure>
       <div class="layer-grid">
@@ -71,25 +72,26 @@ import { layers, localUrl } from "../data/site";
       <h2>How a request reuses KV</h2>
       <ol class="compile-flow">
         <li>
-          <h3>Identify</h3>
+          <h3>Compile</h3>
           <p>
-            The engine adapter supplies prefix identity and registered storage
-            geometry.
+            The adapter declares prefix, window and checkpoint rules. The
+            shared contract turns them into page requirements for known token
+            ranges from a valid HBM origin.
           </p>
         </li>
         <li>
           <h3>Prepare</h3>
           <p>
             The manager finds DRAM, SSD or remote candidates within query byte
-            budgets. Shared recovery rules validate SGLang's prefix, window and
-            checkpoint coverage and vLLM's attention/recurrent boundaries.
+            budgets. The same compiled requirements validate leased evidence
+            and yield complete recovery boundaries across ranks.
           </p>
         </li>
         <li>
           <h3>Restore</h3>
           <p>
-            Leases retain source pages and destinations until transfer
-            completion is known.
+            Compiled ranges select SGLang's transferred and retained keys and
+            vLLM's hybrid allocation. Leases hold pages through transfer completion.
           </p>
         </li>
         <li>
@@ -105,6 +107,12 @@ import { layers, localUrl } from "../data/site";
         computation, avoiding deferred-queue capacity stalls. SGLang waits for
         leased readiness before allocating restore destinations. Each retains
         its own scheduler and HBM allocator.
+      </p>
+      <p class="reading-copy">
+        Shared page requirements remove duplicate adapter arithmetic. They do
+        not predict future tokens, analyze arbitrary model graphs or authorize
+        reclamation. Automatic hybrid warming remains disabled. Exact GPU-byte
+        gates qualify recovery; TTFT effects remain unmeasured.
       </p>
       <a class="text-link" href={localUrl("/docs/architecture/")}>
         Read the architecture and ownership contracts →
@@ -127,8 +135,8 @@ import { layers, localUrl } from "../data/site";
         Qualify sustained single-node serving, then matching independent
         replicas, then P/D with reusable cache. Replicated catalog shards and
         controlled placement handoff precede production distributed deployment.
-        General resharding, cross-engine byte reuse, complete recovery proofs,
-        and KV-aware routing remain future work.
+        General lifetime IR, retention and placement plans, bounded stopping,
+        resharding, cross-engine byte reuse and KV-aware routing remain future work.
       </p>
       <div class="doc-links">
         <a href={localUrl("/docs/distributed-cache/")}>

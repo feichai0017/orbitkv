@@ -382,6 +382,9 @@ def test_load_targets_cover_every_leased_block_when_the_hit_shrinks():
     block (`None` for the ones it no longer wants) or the engine rejects it:
     `query lease block count 5 does not match destination block count 4`."""
     scheduler, _ = _make_scheduler()
+    scheduler._cache_groups.storage_group_ids = (0, 1)
+    scheduler._recovery = MagicMock()
+    scheduler._recovery.required_ranges.return_value = [(0, 0, 64), (1, 48, 64)]
     scheduler._query_recovery = MagicMock(
         return_value=ShardedQueryReady(
             5,

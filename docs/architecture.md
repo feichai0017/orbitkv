@@ -7,15 +7,15 @@ state planner. It does not schedule model execution. Each framework owns its
 HBM allocation and active GPU page lifecycle. Its adapter exposes block
 identity and registered GPU buffers; OrbitKV currently owns external pinned
 DRAM/SSD replicas and transfer leases. SGLang and vLLM hybrid layouts share
-compiled recovery validation; general model planning and joint placement/routing
-policy remain future work.
+compiled page demand and recovery validation; general lifetime analysis,
+retention and joint placement/routing policy remain future work.
 
 The data plane is derived from PegaFlow 0.24.5. The vLLM connector and SGLang
 direct GPU linker have passed single-node GPU recovery tests.
 
 ## Process topology
 
-![Engine ownership, cache tiers, and distributed control](../website/public/architecture.svg)
+![Current compiled page demand, engine ownership and cache tiers; future lifetime and physical planning](../website/public/architecture.svg)
 
 Run one OrbitKV Cache Manager per inference host. Framework adapters run in the
 inference processes and use the same cache API for local DRAM, SSD, and remote
@@ -87,7 +87,7 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | --- | --- | --- |
 | Framework adapters | `python/orbitkv/vllm`, `python/orbitkv/sglang` | Framework-specific hashes, layout, and page-lifetime events |
 | Cache client | `python/orbitkv/client/manager.py`, `connection.py` | Query, publish, restore, release, lifecycle through the node-local connection |
-| State contract | `orbitkv-state` | State identity, format compatibility, bundles, page-reference types |
+| State contract | `orbitkv-state` | State identity, format compatibility, compiled page demand, recovery validation, page-reference types |
 | Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
 | Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
@@ -139,12 +139,22 @@ are:
 - `StateBundle` and `RecoveryContract`: the components needed to claim that a
   logical boundary is restorable.
 
-`RecoveryContract::compile` validates declared group rules once at registration.
-`restorable_boundaries` checks namespace identity, aligned absolute token spans,
-gap-free prefix/window coverage and exact checkpoint positions. SGLang uses this
-validator on live query leases and intersects the resulting boundary sets across
-ranks. It validates the engine's declared state requirements, not the numerical
-implementation of the model. vLLM's hybrid reconciliation still lives in its adapter.
+`RecoveryContract::compile` normalizes declared prefix/window/checkpoint rules
+once at registration. `required_ranges(namespace, start, end)` exposes
+absolute page-aligned intervals per group from the engine's valid HBM prefix
+origin. Prefix demand covers the tail, window demand rounds up to pages and is
+capped by that tail, and checkpoint demand selects its final page.
+`restorable_boundaries` uses the same requirements to check namespace identity,
+aligned spans and complete leased coverage. Both adapters intersect legal
+boundary sets across ranks or shards; hybrid reconciliation is shared.
+
+SGLang checks exact transferred-plus-retained keys against those ranges;
+vLLM uses them for hybrid allocation. This compiles declared semantic
+requirements into deterministic page demand. It does not analyze arbitrary model
+graphs, prove the model's mathematics, predict future tokens, authorize reclaim
+or enable automatic hybrid warming. General retention and physical planning
+remain future work; this increment has no measured latency claim. See the
+[known-range example and ownership lessons](hybrid-recovery.md).
 
 Physical bytes may be shared across vLLM and SGLang only when their
 `StateFormat` values are compatible. Sharing the core and policy never implies
@@ -154,14 +164,15 @@ blind cross-framework byte reuse.
 
 The adapters resolve a shared versioned identity at startup and translate native
 hashes and GPU layouts into the cache API. The manager binds registered storage
-geometry and uses `StateKey` across tiers. Full recovery evidence is the next step:
+geometry and uses `StateKey` across tiers. Supported layouts use the common
+recovery contract:
 
 | Concern | vLLM | SGLang |
 | --- | --- | --- |
 | Prefix identity | `Request.block_hashes` | Radix page hashes |
 | Local GPU pages | vLLM block IDs + CUDA IPC | Radix page indices + CUDA IPC on the direct path |
 | Host pages | OrbitKV-owned pinned blocks | OrbitKV-owned pinned blocks |
-| Hybrid state | KV cache groups and checkpoints | Unsupported until complete recovery contracts are implemented |
+| Hybrid state | Attention + aligned recurrent groups; shared demand and validation | Full + SWA or Full + recurrent/conv; shared demand and validation |
 | Lifecycle | KVConnector callbacks | Radix-cache events |
 
 Adapters do not decide which component set is a legal recovery point. That
@@ -207,6 +218,8 @@ incompatible byte reuse. Full attention, Full + SWA and Full + recurrent/conv
 have explicit recovery rules. Convolution and recurrent tensors share one
 sealed checkpoint group; SWA has independent page coverage. SGLang retains
 authority over HBM allocation, request-state copy-on-write and prefix-tree nodes.
+Lookup queries attention first and caps auxiliary hashes at its hit, preserving
+all candidate boundaries until selection. Restore then uses the compiled ranges.
 The [hybrid recovery contract](hybrid-recovery.md) describes the pinned-release
 component bridge and unsupported representations.
 
@@ -344,7 +357,7 @@ gates. No router dependency is introduced into the current single-node core.
 | --- | --- | --- |
 | M0 | local page identity and execution | external replicas and current data plane |
 | M1 | GPU pages | Pinned DRAM/SSD replicas and direct GPU restore |
-| M2 | GPU pages | Common recovery contracts and transfer operations |
+| M2 | GPU pages | Compiled page demand, common recovery validation and transfer operations |
 | M2.5 | GPU pages and execution | recoverable replica catalog and remote cache fetch |
 | M3 | execution and local page identity | KV-aware routing and restore plans |
 | M4 | HBM allocation, physical GPU page IDs, and execution | external replica handles, validated GPU references, and transfer fences |

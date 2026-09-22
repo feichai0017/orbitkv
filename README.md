@@ -39,10 +39,11 @@ An experimental distributed path extends the same cache API to peer managers.
   The [next policy steps](docs/queued-warming.md#reference-implementations-and-policy-order)
   draw on reviewed LMCache, HiCache, FlexKV and Dynamo implementations.
 - **Identify compatible state.** Versioned keys bind immutable model artifacts,
-  computation settings and registered storage geometry. SGLang compiles prefix,
-  window and checkpoint requirements; vLLM hybrid models use the same validator
-  for attention and recurrent state. Both require a complete recovery boundary
-  before loading. See [hybrid recovery](docs/hybrid-recovery.md).
+  computation settings and registered storage geometry. A shared recovery
+  contract compiles declared prefix, window and checkpoint rules into exact
+  page ranges and validates leased evidence with the same requirements.
+  SGLang restore and vLLM hybrid allocation consume those ranges, removing
+  duplicate rule arithmetic. See [hybrid recovery](docs/hybrid-recovery.md).
 - **Build toward shared caching.** Embedded catalog shards discover peer
   replicas, Mooncake Transfer Engine moves bytes, and etcd tracks membership
   and placement. Multi-node serving is still experimental.
@@ -50,6 +51,11 @@ An experimental distributed path extends the same cache API to peer managers.
 The [delivery plan](docs/roadmap.md#current-delivery-priorities) prioritizes
 single-node failure recovery, bounded preparation experiments, then real
 two-host DP and P/D qualification. Catalog HA gates production distributed use.
+Compiled demand describes a known token range from a valid HBM prefix; it does
+not predict future tokens, analyze arbitrary model graphs, authorize reclamation
+or enable automatic hybrid warming. Qualification uses
+[exact GPU-byte gates](docs/hybrid-recovery.md#reproducible-gates); TTFT effects
+remain unmeasured.
 
 ## Get started
 
@@ -98,11 +104,14 @@ external restore from a native HBM hit. See the
 
 ## Architecture
 
-![OrbitKV architecture: engine-owned HBM, per-host Cache Managers, DRAM and SSD, embedded catalogs, Mooncake transfers and etcd membership](website/public/architecture.svg)
+![OrbitKV architecture: compiled page demand, engine-owned HBM and cache tiers; general lifetime and physical planning remain future work](website/public/architecture.svg)
 
-1. The engine adapter identifies a reusable prefix and registers GPU buffers.
-2. The manager prepares matching DRAM, SSD or remote blocks within byte budgets.
-3. Leases retain sources and destinations until transfers finish.
+1. The engine adapter supplies known prefix hashes, a valid HBM origin and
+   declared state requirements.
+2. The manager prepares matching DRAM, SSD or remote blocks within byte budgets;
+   the contract validates complete recovery boundaries.
+3. Compiled ranges select the required pages; leases retain sources and
+   destinations until transfers finish.
 4. The engine resumes computation and publishes completed KV for later reuse.
 
 The engine always connects to its host's manager. Remote discovery and transfer

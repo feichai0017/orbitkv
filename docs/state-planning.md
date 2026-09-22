@@ -1,7 +1,7 @@
 # State demand and transfer planning
 
-Status: readiness and query ownership foundations implemented; predictive
-planning remains a design proposal. The existing cache API,
+Status: readiness, query ownership and compiled page demand implemented;
+predictive planning remains a design proposal. The existing cache API,
 engine-owned HBM, and one Cache Manager per host remain the foundation.
 The [SSD experiment](ssd-performance.md) supplies initial
 measurements; predictive policies require separate evaluation.
@@ -87,11 +87,27 @@ compatibility. Generation-qualified HBM references must enter the actual
 transfer path before stale page IDs can be rejected at that boundary.
 The [compiled recovery contract](hybrid-recovery.md) implements SGLang's
 prefix, window and checkpoint cases and vLLM's attention/recurrent recovery.
-Adapters supply absolute coverage backed by leases and keep engine-specific
-allocation and handoff logic. This is a prerequisite for cost selection,
+The same normalized rules emit `required_ranges` for a selected boundary;
+SGLang checks transferred plus retained pages and vLLM masks hybrid destinations
+against those ranges. Adapters supply absolute coverage backed by leases and
+keep engine-specific allocation and handoff logic. This is a prerequisite for
+cost selection,
 not a latency estimator or an automatic model-graph proof.
 Cross-engine byte reuse, dynamic LoRA, and live weight changes remain outside
 the present supported contract.
+
+After ordinary-demand fault qualification, the next read-reduction step is to
+separate candidate discovery from materializing bytes. The pinned
+[LMCache v0.5.5 prefetch controller](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py)
+trims per-group load plans to the usable attention windows while protecting the
+existing L1 fallback. OrbitKV currently caps auxiliary reads at the attention
+hit, but still materializes candidates before selecting a boundary. A later
+implementation should select from availability evidence, reserve and fetch
+only required ranges, then validate the actual leases. Stale evidence must
+fall back to a still-valid boundary or recomputation; it cannot promise a hit.
+Preserve query-relative positions and other consumers' read ownership. Measure
+avoided SSD bytes and added lookup rounds separately before claiming a latency
+gain. This is planned work, not part of the current range compiler.
 
 ## Decide when to copy, retain, and restore
 

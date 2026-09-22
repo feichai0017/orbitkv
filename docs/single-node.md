@@ -9,8 +9,8 @@ No Catalog or peer gRPC listener is needed for this deployment.
 
 | Adapter | Validated release | Single-node path | Current limit |
 | --- | --- | --- | --- |
-| vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Attention + aligned recurrent layouts share the recovery validator; cross-host TP and further hybrid layouts need separate qualification |
-| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA with one KV pool; single-rank DRAM/SSD recovery qualified; multi-rank TP needs separate serving validation |
+| vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Attention + aligned recurrent layouts share compiled page demand and validation; SWA remains unsupported, cross-host TP and further hybrid layouts need separate qualification |
+| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA, Full + SWA, or Full + recurrent/conv; TP=1 DRAM/SSD recovery gates; combined SWA + recurrent unsupported, multi-rank serving unqualified |
 
 These are tested release targets, not an assertion that every model or GPU
 topology is qualified. The local cache has correctness gates, but no current
@@ -82,9 +82,12 @@ behind it in vLLM's deferred queue. Transfer completion alone does not open
 this gate. Cancellation does, without releasing any outstanding GPU copy holds.
 See the [SSD measurements](ssd-performance.md) for latency and scope.
 
-Both adapters also announce exact queued prefixes for bounded early DRAM warming.
-This is experimental and disabled by default; set `ORBITKV_QUEUE_WARMUP=1` in
-the engine environment to enable it. Warmup owns at most a quarter of global/per-instance query
+For supported dense layouts, both adapters also announce exact queued prefixes
+for bounded early DRAM warming. Hybrid layouts bypass automatic warming;
+compiled recovery demand does not enable it.
+Automatic warming is experimental and disabled by default; set
+`ORBITKV_QUEUE_WARMUP=1` in the engine environment to enable it for dense layouts.
+Warmup owns at most a quarter of global/per-instance query
 budgets and retains no restore lease. It cannot promise a hit at later admission.
 See [queued warming](queued-warming.md) for cancellation, timeline tracing and
 the remaining performance qualification.
@@ -169,9 +172,12 @@ Changed keys, request cancellation, and reset cancel pending manager queries;
 submitted GPU loads retain their existing completion fences. SGLang owns the radix tree and HBM pages; OrbitKV saves
 page-aligned KV externally and restores it into SGLang-owned slots. The current
 linker accepts full-attention MHA/MLA, Full + SWA, and Full + recurrent/conv.
-It compiles registered groups into recovery requirements and checks their
-absolute token boundaries before loading. DSA, draft and unsupported auxiliary
-representations remain rejected. See [hybrid recovery](hybrid-recovery.md) for
+It compiles registered groups into page requirements used both to validate
+absolute token boundaries and select exact restore ranges. Attention lookup
+bounds auxiliary queries while preserving every candidate recovery boundary.
+Transferred and engine-retained keys must together cover the selected ranges
+exactly. DSA, draft and unsupported auxiliary representations remain rejected.
+See [hybrid recovery](hybrid-recovery.md) for
 the Qwen3.5 and Full + SWA gates and deployment limits.
 
 Both engines fingerprint local weights, tokenizer and processor artifacts at

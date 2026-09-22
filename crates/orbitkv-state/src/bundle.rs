@@ -52,13 +52,14 @@ pub enum RecoveryError {
     InvalidCoverage(u32),
 }
 
-/// Compiles engine-declared state requirements once at registration.
-/// This validates recovery evidence, not the model's numerical implementation.
+/// Compiles engine-declared state requirements into page demand and validation.
+/// This does not analyze the model's numerical implementation or predict requests.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecoveryContract {
     namespace: String,
     page_tokens: u64,
-    requirements: BTreeMap<u32, RecoveryRule>,
+    // None retains the full queried tail; Some(n) retains its last n pages.
+    requirements: BTreeMap<u32, Option<u64>>,
 }
 
 impl RecoveryContract {
@@ -102,11 +103,16 @@ impl RecoveryContract {
             {
                 return Err(RecoveryError::InvalidContract("invalid sliding window"));
             }
-            if rules.insert(requirement.group, requirement.rule).is_some() {
+            let pages = match requirement.rule {
+                RecoveryRule::Prefix => None,
+                RecoveryRule::Window { tokens } => Some(tokens.div_ceil(page_tokens)),
+                RecoveryRule::Checkpoint => Some(1),
+            };
+            if rules.insert(requirement.group, pages).is_some() {
                 return Err(RecoveryError::InvalidGroup(requirement.group));
             }
         }
-        if rules.get(&0) != Some(&RecoveryRule::Prefix) {
+        if rules.get(&0) != Some(&None) {
             return Err(RecoveryError::InvalidContract(
                 "group zero must supply the attention prefix",
             ));
@@ -118,19 +124,48 @@ impl RecoveryContract {
         })
     }
 
-    /// Return every legal boundary: checkpoint/window hits need not be dense.
-    /// Intersect these sets across ranks; taking the minimum of maxima is unsafe.
-    pub fn restorable_boundaries(&self, bundle: &StateBundle) -> Result<Vec<u64>, RecoveryError> {
-        if bundle.namespace != self.namespace {
+    /// Minimal page-aligned demand per group for one declared recovery boundary.
+    /// The engine must retain valid state at span.start. These ranges describe
+    /// required state, not its availability, leases, or permission to reclaim it.
+    pub fn required_ranges(
+        &self,
+        namespace: &str,
+        span: TokenRange,
+    ) -> Result<Vec<(u32, TokenRange)>, RecoveryError> {
+        self.validate_span(namespace, span)?;
+        Ok(self
+            .requirements
+            .iter()
+            .map(|(&group, &pages)| (group, self.required_span(span, pages)))
+            .collect())
+    }
+
+    fn required_span(&self, span: TokenRange, pages: Option<u64>) -> TokenRange {
+        let count = ((span.end - span.start) / self.page_tokens).min(pages.unwrap_or(u64::MAX));
+        TokenRange {
+            start: span.end - count * self.page_tokens,
+            end: span.end,
+        }
+    }
+
+    fn validate_span(&self, namespace: &str, span: TokenRange) -> Result<(), RecoveryError> {
+        if namespace != self.namespace {
             return Err(RecoveryError::IncompatibleNamespace);
         }
-        let span = bundle.span;
         if span.end < span.start
             || !span.start.is_multiple_of(self.page_tokens)
             || !span.end.is_multiple_of(self.page_tokens)
         {
             return Err(RecoveryError::InvalidSpan);
         }
+        Ok(())
+    }
+
+    /// Return every legal boundary: checkpoint/window hits need not be dense.
+    /// Intersect these sets across ranks; taking the minimum of maxima is unsafe.
+    pub fn restorable_boundaries(&self, bundle: &StateBundle) -> Result<Vec<u64>, RecoveryError> {
+        let span = bundle.span;
+        self.validate_span(&bundle.namespace, span)?;
         let mut coverage = BTreeMap::new();
         for component in &bundle.components {
             if !self.requirements.contains_key(&component.group)
@@ -158,22 +193,18 @@ impl RecoveryContract {
             if (boundary - span.start) / self.page_tokens != index as u64 + 1 {
                 break;
             }
-            let complete = self.requirements.iter().all(|(group, rule)| {
+            let complete = self.requirements.iter().all(|(group, &pages)| {
                 let ends = coverage[group];
-                match rule {
-                    RecoveryRule::Checkpoint => ends.binary_search(&boundary).is_ok(),
-                    RecoveryRule::Prefix | RecoveryRule::Window { .. } => {
-                        let count = match rule {
-                            RecoveryRule::Window { tokens } => tokens.div_ceil(self.page_tokens),
-                            _ => (boundary - span.start) / self.page_tokens,
-                        }
-                        .min((boundary - span.start) / self.page_tokens);
-                        let begin = boundary - count * self.page_tokens;
-                        let first = ends.partition_point(|&end| end <= begin);
-                        let last = ends.partition_point(|&end| end <= boundary);
-                        last - first == count as usize
-                    }
-                }
+                let needed = self.required_span(
+                    TokenRange {
+                        start: span.start,
+                        end: boundary,
+                    },
+                    pages,
+                );
+                let first = ends.partition_point(|&end| end <= needed.start);
+                let last = ends.partition_point(|&end| end <= needed.end);
+                (last - first) as u64 == (needed.end - needed.start) / self.page_tokens
             });
             if complete {
                 result.push(boundary);

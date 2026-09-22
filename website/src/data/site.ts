@@ -17,7 +17,7 @@ export const layers = [
     name: "orbitkv-state",
     role: "Name the state.",
     detail:
-      "Versioned model/storage keys and compiled recovery rules shared by SGLang and vLLM hybrid adapters.",
+      "Versioned model/storage keys and compiled rules for demanded page ranges and leased-evidence validation, shared by SGLang and vLLM hybrid adapters.",
     path: "crates/orbitkv-state/src/lib.rs",
   },
   {
