@@ -71,7 +71,7 @@ limits bound retained payloads; identical backing reads can be shared while
 each request keeps its own ticket and lease. See [query budgets](server.md#query-ownership-budgets).
 Publish holds its
 iceoryx2 reply until D2H finishes, so the caller does not release source HBM
-pages early while the dispatcher remains free. The Python cache client opens a
+pages early while the dispatcher remains free. The Rust cache client opens a
 separate descriptor session for Publish on its first save, so an in-flight
 save does not serialize the worker's Query/Restore calls behind that reply.
 Instance cleanup serializes against registration, drains GPU load/save queues,
@@ -86,7 +86,8 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Layer | Code | Owns |
 | --- | --- | --- |
 | Framework adapters | `python/orbitkv/vllm`, `python/orbitkv/sglang` | Framework-specific hashes, layout, and page-lifetime events |
-| Cache client | `python/orbitkv/client/manager.py`, `connection.py` | Query, publish, restore, release, lifecycle through the node-local connection |
+| Cache client | `orbitkv-channel/src/cache_client.rs`, `python/src/client.rs` | Rust query/warming ownership, independent publish session, client-bound restore handles and GIL-free waiting; PyO3 API |
+| Connection setup | `python/orbitkv/client/connection.py` | Engine endpoint options and same-host socket selection |
 | State contract | `orbitkv-state` | State identity, format compatibility, compiled page demand, recovery validation, page-reference types |
 | Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
@@ -107,7 +108,9 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 vLLM adapter                SGLang adapter
 block hashes / CUDA IPC     radix hashes / CUDA IPC
                              /
-       python/orbitkv/client (cache API)
+       PyO3 CacheManagerClient (cache API)
+                    |
+       Rust CacheClient (request ownership)
                     |
     orbitkv-channel / iceoryx2 + UDS
                     |

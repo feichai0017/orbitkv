@@ -20,7 +20,7 @@ from tests.support.unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.orbitkv import QueryReady
+from orbitkv.orbitkv import BlockHashes, QueryReady
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.scheduler import SchedulerConnector
 
@@ -232,7 +232,7 @@ class TestTailLoad:
         assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (49, True)
         sc._ctx.client.query_prefetch.assert_called_once_with(
             "test",
-            [*req.block_hashes, b"tail:2"],
+            BlockHashes([*req.block_hashes, b"tail:2"]),
             req_id="r1",
             wait_for_full_prefix=False,
         )
@@ -309,7 +309,7 @@ class TestTailLoad:
 
         assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (48, True)
         queried_hashes = sc._ctx.client.query_prefetch.call_args.args[1]
-        assert queried_hashes == req.block_hashes
+        assert queried_hashes == BlockHashes(req.block_hashes)
 
     def test_sub_block_prompt_loads_one_page_and_recomputes_last_token(self):
         req = _make_request("r1", prompt_len=10, full_hashes=0)

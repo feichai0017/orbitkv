@@ -51,11 +51,12 @@ orbitkv/
 | etcd member registration, renewal and Watch | `crates/orbitkv-server/src/cluster/` |
 | Cached membership and remote admission | `crates/orbitkv-catalog/src/membership.rs` |
 | Mooncake remote transfer path | `crates/orbitkv-transfer/` |
-| PyO3 bindings | `python/src/lib.rs` |
+| PyO3 bindings | `python/src/` |
 | Python package and helpers | `python/orbitkv/` |
 | vLLM connector | `python/orbitkv/vllm/` |
 | SGLang adapter | `python/orbitkv/sglang/` |
-| Framework-neutral Python client | `python/orbitkv/client/` |
+| Cache client ownership | `crates/orbitkv-channel/src/cache_client.rs` |
+| Python connection configuration | `python/orbitkv/client/` |
 
 ## Key Entry Points
 
@@ -72,13 +73,13 @@ orbitkv/
 - `crates/orbitkv-server/src/http_server.rs`: HTTP health and metrics
 - `crates/orbitkv-catalog/src/`: embedded catalog implementation
 - `crates/orbitkv-transfer/src/`: transfer engine implementation
-- `python/src/lib.rs`: PyO3 bindings
+- `python/src/lib.rs`, `python/src/client.rs`: PyO3 module and cache client bindings
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
 - `python/orbitkv/vllm/worker.py`: vLLM worker-side connector
 - `python/orbitkv/vllm/connector.py`: vLLM connector entry point
 - `python/orbitkv/vllm/pd/`: P/D connector
 - `python/orbitkv/sglang/linker.py`: direct SGLang GPU-page linker
-- `python/orbitkv/client/manager.py`: Cache Manager operations and restore/publish lifetime
+- `crates/orbitkv-channel/src/cache_client.rs`: query tickets, publish connection and restore lifetime
 - `python/orbitkv/client/connection.py`: Cache Manager socket selection for adapters
 - `python/orbitkv/identity.py`: shared model-artifact and computation fingerprinting
 - `python/orbitkv/orbitkv.pyi`: Python type stubs
@@ -166,6 +167,7 @@ there is no standalone directory binary. See `docs/p2p.md`.
 - Use English in comments
 - Use `.venv` for the Python virtual environment
 - Keep changes scoped and aligned with the existing module structure
+- Keep Python limited to engine callbacks, layout inspection, GPU allocation and handoff. Put shared cache state machines, planning, batching and waiting in Rust; release the GIL around native work and prepare immutable native hash batches once per lookup instead of converting per-page inputs on repeated polls. Do not add a Python forwarding facade over the native client.
 - Prefer established KV-cache ownership, prefetch, retention and transfer patterns over speculative policy machinery. Record the upstream release/commit and distinguish implemented behavior from open proposals; extend OrbitKV's existing owners and validate with matched workloads.
 - Update affected documentation, README capability claims, and website content with each behavior or deployment change. The website renders `docs/` directly; keep one source for technical documentation.
 - Before 1.0, remove obsolete APIs and compatibility code instead of adding aliases or fallback paths. Keep boundaries that own behavior; remove classes and functions that only forward calls without a separate responsibility.

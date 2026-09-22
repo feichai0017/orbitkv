@@ -8,7 +8,7 @@ end just because a request is cancelled or a scheduler lookup is repeated.
 The relevant code is the
 [adapter scheduler](../python/orbitkv/vllm/scheduler.py),
 [worker](../python/orbitkv/vllm/worker.py),
-[manager client](../python/orbitkv/client/manager.py) and
+[Rust manager client](../crates/orbitkv-channel/src/cache_client.rs) and
 [vLLM V1 scheduler](https://github.com/vllm-project/vllm/blob/v0.29.0/vllm/v1/core/sched/scheduler.py).
 
 ## Scheduler admission

@@ -36,7 +36,7 @@ const capabilities = [
     title: "Connect both engines.",
     label: "Integrate",
     detail:
-      "vLLM and SGLang register GPU pages with the same Cache Manager through engine-specific adapters.",
+      "vLLM and SGLang share a Rust cache client for queries and transfer lifetimes; their adapters retain GPU allocation and engine callbacks.",
     href: "/integration/",
   },
   {

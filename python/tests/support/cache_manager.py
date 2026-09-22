@@ -117,7 +117,7 @@ def wait_for_server_ready(
         if process is not None and process.poll() is not None:
             return False
         try:
-            client = orbitkv_module.ChannelClient(bootstrap_socket)
+            client = orbitkv_module.CacheManagerClient(bootstrap_socket)
             ok, _ = client.health()
             client.close()
             if ok:
@@ -315,7 +315,11 @@ class ClientContext:
         Returns:
             Query result dict
         """
-        return self.client.query_prefetch(self.instance_id, block_hashes, req_id="test")
+        from orbitkv import BlockHashes
+
+        return self.client.query_prefetch(
+            self.instance_id, BlockHashes(block_hashes), req_id="test"
+        )
 
     def get_kv_cache(self, layer: int = 0) -> "torch.Tensor":
         """Get KV cache tensor for a specific layer."""

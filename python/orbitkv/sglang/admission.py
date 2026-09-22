@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from orbitkv import BlockHashes
 from orbitkv.logging_utils import get_connector_logger, trace_transfer
 
 
@@ -41,7 +42,7 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     resident = scheduler.tree_cache.match_prefix(MatchPrefixParams(key=key, cow_mamba=False))
     keys = wrapper._tail_hashes(key, resident, int(resident.device_indices.numel()))
     try:
-        linker.client.warm_prefix(linker.instance_id, linker._hashes(keys), req.rid)
+        linker.client.warm_prefix(linker.instance_id, BlockHashes(linker._hashes(keys)), req.rid)
     except (RuntimeError, OSError):
         get_connector_logger().warning(
             "Queued warmup failed for request %s", req.rid, exc_info=True

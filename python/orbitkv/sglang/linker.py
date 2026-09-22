@@ -18,7 +18,7 @@ from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
 from sglang.srt.mem_cache.unified_cache.components import ComponentType
 from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinker
 
-from orbitkv.client import CacheManagerClient
+from orbitkv import BlockHashes, CacheManagerClient
 from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
 from orbitkv.logging_utils import trace_transfer
 
@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 class _Lookup:
     keys: tuple[str, ...]
     origin: int
+    hashes: BlockHashes
     groups: dict[PoolName, Any] = field(default_factory=dict)
     boundaries: tuple[int, ...] = ()
 
@@ -235,7 +236,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         if lookup is None:
             if len(set(keys)) != len(keys):
                 raise ValueError("SGLang lookup contains duplicate page hashes")
-            lookup = _Lookup(keys, origin)
+            lookup = _Lookup(keys, origin, BlockHashes(self._hashes(keys)))
             self._lookups[rid] = lookup
         from orbitkv import QueryReady
 
@@ -246,14 +247,14 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     continue
                 # Preserve every candidate boundary, but never read auxiliary
                 # state beyond the leased attention prefix.
-                query_keys = (
-                    keys
+                query_hashes = (
+                    lookup.hashes
                     if pool.group_id == 0
-                    else keys[: lookup.groups[PoolName.KV].num_hit_blocks]
+                    else lookup.hashes[: lookup.groups[PoolName.KV].num_hit_blocks]
                 )
                 result = self.client.query_prefetch(
                     self.instance_id,
-                    self._hashes(query_keys),
+                    query_hashes,
                     rid,
                     wait_for_full_prefix=False,
                     group_id=pool.group_id,
@@ -264,7 +265,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                         break
                     continue
                 lookup.groups[name] = result
-                if not 0 <= result.num_hit_blocks <= len(query_keys):
+                if not 0 <= result.num_hit_blocks <= len(query_hashes):
                     raise ValueError("OrbitKV returned an invalid state hit count")
                 if result.num_hit_blocks and not result.lease:
                     raise RuntimeError("OrbitKV reported state hits without a restore lease")

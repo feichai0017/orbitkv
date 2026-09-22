@@ -17,7 +17,7 @@ from vllm.v1.kv_cache_interface import (  # noqa: E402
     MambaSpec,
 )
 
-from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
+from orbitkv.orbitkv import BlockHashes, QueryLoading, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext, OrbitKVConnectorMode  # noqa: E402
 from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent  # noqa: E402
 from orbitkv.vllm.scheduler import SchedulerConnector, _QueryProbe  # noqa: E402
@@ -712,7 +712,7 @@ class TestSchedulerQueryProbeReuse:
         assert sc._query_recovery("r1", _QueryProbe(0, tuple(hashes))) is None
         engine_client.query_prefetch.assert_called_once_with(
             sc._ctx.instance_id,
-            hashes,
+            BlockHashes(hashes),
             req_id="r1",
             wait_for_full_prefix=False,
         )
@@ -726,7 +726,7 @@ class TestSchedulerQueryProbeReuse:
         assert sc._query_recovery("r1", _QueryProbe(0, tuple(hashes))) is None
         engine_client.query_prefetch.assert_called_once_with(
             sc._ctx.instance_id,
-            hashes,
+            BlockHashes(hashes),
             req_id="r1",
             wait_for_full_prefix=True,
         )

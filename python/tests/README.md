@@ -67,6 +67,12 @@ Runs:
 
 This gate must collect and run without torch, vLLM, CUDA, external models, or a running OrbitKV server. Stub modules are allowed only inside tests that explicitly mock the connector boundary, and they must not shadow a real runtime during integration or E2E collection.
 
+Shared client ownership is tested in Rust under
+`crates/orbitkv-channel/tests/unit/cache_client.rs`: query revisions, immutable
+hash snapshots and shared views, warming limits/expiry, separate publish traffic, lost restore
+notifications, deadlines, and client-bound handles. These replace the old mocked
+Python facade tests. The GPU process-boundary gate below verifies the PyO3 API.
+
 ## Server Integration Gate
 
 ```bash

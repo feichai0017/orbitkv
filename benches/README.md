@@ -8,6 +8,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 
 | Path | Responsibility |
 | --- | --- |
+| `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
 | `catalog.rs` | Rust directory cleanup microbenchmark, run through Cargo |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
 | `launch.py` | Engine/backend commands and matched memory budgets |
@@ -233,3 +234,24 @@ Inventory population and destruction of the remaining directory are outside
 the timed section. It measures owner-index cleanup, not remote discovery or
 end-to-end serving latency. Criterion writes local raw output to
 `target/criterion/`; copy reviewed reports into `benches/results/`.
+
+## Native client polling
+
+```bash
+PYTHONPATH=python .venv/sglang-release/bin/python -m benches.client \
+  --label rust-client --output benches/results/runs/client-poll
+```
+
+Requires built source artifacts in `target/release`, the native extension, and
+one CUDA GPU for registration. It publishes 1024 pages, leases them to occupy
+the 64 MiB instance budget, then measures admitted pending queries with
+64/256/1024 hashes. A native `BlockHashes` batch is constructed outside the
+timed loop and reused across polls. The script owns its Manager process and
+records three batches of 1000 calls per size, wall percentiles and caller thread
+CPU time. This isolates the client/control path; it is not a TTFT, SSD throughput,
+or production concurrency measurement. Do not run it alongside Cargo builds or
+other GPU workloads.
+
+See the [controlled client measurements](../docs/client-performance.md) for the
+baseline, final path and old-client/new-Manager control. Raw per-batch summaries
+are in `results/client-control-2026-09-22.json`.

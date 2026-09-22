@@ -154,10 +154,14 @@ def dual_device_server():
 
 def _wait_for_ready_lease(engine_client, instance_id: str, block_hashes: list[bytes]) -> bytes:
     """Poll until every saved block is queryable, returning its load lease."""
+    from orbitkv import BlockHashes
+
     deadline = time.time() + WAIT_TIMEOUT_SECONDS
     last = None
     while time.time() < deadline:
-        result = engine_client.query_prefetch(instance_id, block_hashes, req_id="mla-replica-load")
+        result = engine_client.query_prefetch(
+            instance_id, BlockHashes(block_hashes), req_id="mla-replica-load"
+        )
         last = result
         if isinstance(result, QueryReady):
             if result.num_hit_blocks == len(block_hashes):

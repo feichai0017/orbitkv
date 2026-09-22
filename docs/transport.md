@@ -38,7 +38,8 @@ The initial command vocabulary is `QueryBundle`, `Restore`, `Publish`,
 `Release`, and lifecycle probes. Variable-length hashes and page arrays do not
 live in the message. KV bytes never live in the message.
 
-One inference process gets one iceoryx2 client endpoint. The Cache Manager exclusively
+Each cache client gets a query/restore iceoryx2 endpoint and opens a separate
+publish endpoint on its first save. The Cache Manager exclusively
 creates and owns the server endpoint; clients only open it. The endpoint uses
 iceoryx2's thread-safe IPC service because the server owns it on a dedicated
 control thread. Calls spin only for a bounded number of iterations and then
@@ -70,9 +71,11 @@ caller still waits: success means D2H copies have completed and host
 publication has been queued. A later query observes the blocks after the write
 pipeline seals them. `Restore` submits
 the existing in-process GPU load, returns an operation ID, signals its session's
-eventfd at terminal completion, and is consumed through a follow-up poll. Python
-exposes both non-blocking `restore_submit`/`restore_poll` plus the notification
-fd and a synchronous `restore` convenience wrapper.
+eventfd at terminal completion, and is consumed through a follow-up poll. The native Python
+`CacheManagerClient` exposes `start_restore`/`poll_restore`, a notification fd,
+and `wait_restore`. Rust owns eventfd waiting and the 50 ms lost-notification
+fallback. A handle is bound to the issuing client, including clients connected
+to the same Manager epoch. A timeout leaves its GPU ownership unresolved.
 Both adapters use these operations through their same-host Cache Manager; KV
 payload bytes do not travel through the descriptor arena. The adapter exposes
 one cache API:
@@ -100,10 +103,21 @@ cancel the replacement. Unknown or retired polls never submit new work. The
 transport's session epoch rejects messages from an earlier Manager lifetime.
 Both native clients and the Manager must be rebuilt together.
 
-The Python Cache Manager client owns tickets for both engine adapters. It submits
+The [client polling experiment](client-performance.md) measures the final
+control path and separates client migration from Manager allocation savings.
+
+Rust `CacheClient` owns tickets for both engine adapters, exposed directly as
+`CacheManagerClient` by PyO3; the Python facade and raw Python `ChannelClient`
+API have been removed. It submits
 once, polls without resending hashes, and retires the ticket after a terminal
-result. Operation-capacity pressure explicitly reports unadmitted `Loading`,
-which retries with a fresh ticket. A submitted operation can wait for its
+result. Calls release the GIL. Each engine prepares an immutable Rust `BlockHashes`
+batch once per lookup; prefix slices share its allocation. Reusing the same
+batch/view makes native pending-query identity comparison constant time, with
+no per-page Python conversion on polls. Constructing a fresh batch still costs
+O(number of hashes), so callers should keep and reuse it. Operation-capacity pressure explicitly reports unadmitted `Loading`,
+which retries with a fresh ticket. While waiting for admission, the Manager borrows its stored request instead of
+cloning the full hash chain on every poll; it copies read inputs only after a
+reservation succeeds. A submitted operation can wait for its
 [byte budget](server.md#query-ownership-budgets) before touching cache pages.
 Outstanding operations are bounded to 128 per session and 1024 globally and
 expire after 60 seconds. Cancellation, disconnect,

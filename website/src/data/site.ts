@@ -24,7 +24,7 @@ export const layers = [
     name: "orbitkv-channel",
     role: "Control the Cache Manager.",
     detail:
-      "Versioned iceoryx2 requests plus UDS bootstrap and lifecycle for both adapters.",
+      "Rust ownership of query revisions, warming and transfer waits; versioned iceoryx2 requests plus UDS lifecycle for both adapters.",
     path: "crates/orbitkv-channel/src/lib.rs",
   },
   {

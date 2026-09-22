@@ -51,6 +51,8 @@ def transfer(keys):
 
 
 def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(linker, monkeypatch):
+    from orbitkv import BlockHashes
+
     monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
     import torch
     from sglang.srt.mem_cache.radix_cache import RadixKey
@@ -81,7 +83,7 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(lin
 
     enqueue_request(accepted, scheduler, req)
     linker.client.warm_prefix.assert_called_once_with(
-        "admission", linker._hashes(hashes[1:]), req.rid
+        "admission", BlockHashes(linker._hashes(hashes[1:])), req.rid
     )
     assert cache.match_prefix.call_args.args[0].req is None
     assert not linker._lookups and not linker._queued_loads
@@ -182,7 +184,7 @@ def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker)
 def test_hybrid_query_limits_auxiliary_reads_and_retains_earlier_boundaries(linker, kind):
     from sglang.srt.mem_cache.hicache_storage import PoolName
 
-    from orbitkv import QueryLoading, QueryReady, RecoveryContract
+    from orbitkv import BlockHashes, QueryLoading, QueryReady, RecoveryContract
 
     auxiliary = PoolName.MAMBA if kind == "recurrent" else PoolName.SWA
     window = 128 if kind == "window" else 0
@@ -212,7 +214,7 @@ def test_hybrid_query_limits_auxiliary_reads_and_retains_earlier_boundaries(link
     assert linker._lookups["req"].boundaries == (128, 192)
     calls = linker.client.query_prefetch.call_args_list
     assert [entry.kwargs["group_id"] for entry in calls] == [0, 0, 1, 1]
-    assert calls[2].args[1] == calls[3].args[1] == linker._hashes(keys[:3])
+    assert calls[2].args[1] == calls[3].args[1] == BlockHashes(linker._hashes(keys[:3]))
     linker.cancel_query("req")
     assert sorted(entry.args[0] for entry in linker.client.release.call_args_list) == [
         b"attention",

@@ -112,8 +112,8 @@ Deliver:
   Python client;
 - bootstrap a generation-checked descriptor arena over UDS and execute
   `QueryBundle` through the cache service;
-- add a framework-neutral Python cache client for local query, publish,
-  restore, and lease release;
+- expose a framework-neutral Rust cache client through PyO3 for query, publish,
+  restore, and lease release; keep connection configuration in Python;
 - integrate a pinned upstream Mooncake Transfer Engine as the single remote
   movement implementation;
 - preserve current vLLM behavior.

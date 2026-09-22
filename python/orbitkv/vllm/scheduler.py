@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from orbitkv.client.manager import CacheManagerClient
+from orbitkv import BlockHashes, CacheManagerClient
 from orbitkv.logging_utils import get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext
 from orbitkv.vllm.layout import CacheGroupLayout
@@ -62,6 +62,7 @@ class _QueryProbe:
 
     computed_blocks: int
     query_hashes: tuple[bytes, ...]
+    native_hashes: BlockHashes = field(init=False)
     tail_tokens: int = 0
     started_at: float = field(default_factory=time.monotonic)
 
@@ -83,6 +84,9 @@ class _QueryProbe:
     # this after validation or the last-token clamp; the load must
     # still address every leased block (extra ones as `None` targets).
     leased_blocks: int = 0
+
+    def __post_init__(self) -> None:
+        self.native_hashes = BlockHashes(self.query_hashes)
 
     @property
     def is_ready(self) -> bool:
@@ -307,11 +311,10 @@ class SchedulerConnector:
                     break
                 resident += 1
         if resident < len(hashes):
+            demand = BlockHashes(hashes[resident:])
             for client in self._clients:
                 try:
-                    client.warm_prefix(
-                        self._ctx.instance_id, list(hashes[resident:]), request.request_id
-                    )
+                    client.warm_prefix(self._ctx.instance_id, demand, request.request_id)
                 except (RuntimeError, OSError):
                     logger.warning(
                         "Queued warmup failed for request %s", request.request_id, exc_info=True
@@ -1197,7 +1200,7 @@ class SchedulerConnector:
             else:
                 ready = self._tp_shard_client.query(
                     self._ctx.instance_id,
-                    list(probe.query_hashes),
+                    probe.native_hashes,
                     req_id,
                     self._ctx.wait_for_full_prefix,
                 )
@@ -1240,7 +1243,7 @@ class SchedulerConnector:
             probe.groups[group_id] = None
             result = self._tp_shard_client.query_group_membership(
                 self._ctx.instance_id,
-                list(probe.query_hashes[:attention_blocks]),
+                probe.native_hashes[:attention_blocks],
                 req_id,
                 group_id,
             )
