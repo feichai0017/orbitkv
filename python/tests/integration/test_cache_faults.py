@@ -42,7 +42,6 @@ def fault_cache(tmp_path, monkeypatch, request):
     server = CacheManagerProcess(
         find_available_port(),
         http_port=find_available_port(),
-        bootstrap_socket=str(tmp_path / "cache.sock"),
         ssd_cache_path=tmp_path / "ssd",
         extra_args=request.param if isinstance(getattr(request, "param", None), tuple) else (),
         channel_service=f"orbitkv/fault/{tmp_path.name}"
@@ -178,6 +177,7 @@ def test_stopping_submits_no_second_ssd_batch_and_drains_the_first(fault_cache, 
         assert timed_out.num_hit_blocks == 0 and not timed_out.lease
     assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] > 0
     assert query(client, ctx, [b"independent"], "other").num_hit_blocks == 0
+    observed_lookups = fetch_orbitkv_metrics(server.http_port).get("orbitkv_hll_total_requests", 0)
     (directory / "ssd.pause").unlink()
     if stop == "best-effort":
         result = query(client, ctx, hashes, "bounded")
@@ -194,6 +194,37 @@ def test_stopping_submits_no_second_ssd_batch_and_drains_the_first(fault_cache, 
         == page_bytes
     )
     assert after.get("orbitkv_ssd_prefetch_inflight", 0) == 0
+    assert after.get("orbitkv_hll_total_requests", 0) == observed_lookups, (
+        "unread pages are not authoritative cache misses"
+    )
+
+
+@pytest.mark.parametrize("fault_cache", [("--query-read-batch", "1")], indirect=True)
+def test_cancelled_preparation_does_not_stop_another_shared_read_owner(fault_cache):
+    from orbitkv import BlockHashes, QueryLoading, RecoveryContract
+
+    server, client, ctx, directory = fault_cache
+    hashes = [bytes([i]) * 32 for i in range(1, 5)]
+    publish(client, ctx, hashes)
+    drain_ssd(server)
+    arm(directory, "ssd")
+    batch = BlockHashes(hashes)
+    contract = RecoveryContract(ctx.namespace, 16, [(0, "attention", 0)])
+    assert client.prepare_recovery(
+        ctx.instance_id, batch, "forecast", contract, ctx.namespace, 0, 64, 0
+    )
+    reached(directory, "ssd")
+    assert isinstance(client.query_prefetch(ctx.instance_id, batch, "demand"), QueryLoading)
+    client.cancel_query(ctx.instance_id, "forecast")
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] > 0
+    (directory / "ssd.pause").unlink()
+    result = query(client, ctx, hashes, "demand")
+    assert result.num_hit_blocks == 4
+    client.release(result.lease)
+    until(
+        lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_query_reserved_bytes", 0) == 0
+    )
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_coalesced_reads_total"] > 0
 
 
 def test_prepared_result_expires_without_poll_then_claim_holds_bytes_through_restore(fault_cache):
@@ -224,6 +255,7 @@ def test_prepared_result_expires_without_poll_then_claim_holds_bytes_through_res
     assert ready.num_hit_blocks == 1 and ready.lease
     assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] > 0
     ctx.get_kv_cache()[:, 1:2].zero_()
+    torch.cuda.synchronize()
     restore = client.start_restore(
         ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[1]])]
     )

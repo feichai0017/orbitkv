@@ -132,3 +132,26 @@ fn prepared_pages_keep_headroom_until_claim_and_total_bytes_until_gpu_completion
     assert_eq!(budget.usage.lock().total, 0);
     assert!(budget.usage.lock().warming_instances.is_empty());
 }
+
+#[test]
+fn owned_lookahead_can_overlap_foreground_only_within_both_budgets() {
+    let budget = QueryBudget::new(100, 100).unwrap();
+    let foreground = reserve(&budget, "a", 70);
+    let QueryAdmission::Admitted(prepared) = budget.reserve("a", "ns", 25, QueryMode::Prepare)
+    else {
+        panic!("owned lookahead should use available speculative headroom");
+    };
+    assert!(matches!(
+        budget.reserve("b", "ns", 1, QueryMode::Prepare),
+        QueryAdmission::Busy
+    ));
+    assert!(matches!(
+        budget.reserve("b", "ns", 6, QueryMode::Demand),
+        QueryAdmission::Busy
+    ));
+    let remaining_foreground = reserve(&budget, "b", 5);
+    prepared.ready(25).unwrap();
+    assert_eq!(budget.usage.lock().total, 100);
+    drop((foreground, prepared, remaining_foreground));
+    assert_eq!(budget.usage.lock().total, 0);
+}

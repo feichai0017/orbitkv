@@ -15,9 +15,8 @@ No Catalog or peer gRPC listener is needed for this deployment.
 These are tested release targets, not an assertion that every model or GPU
 topology is qualified. The local cache has correctness gates, but no current
 end-to-end throughput or tail-latency result proves that it is fully optimized.
-The revised deferred Publish path still needs concurrent load/save profiling;
-a live manager that never finishes Publish can retain a save source indefinitely
-until an operational watchdog is implemented.
+The Publish watchdog reports retained ownership, but a live Manager that never
+finishes still retains its source until completion or confirmed process death.
 
 The [single-node benchmark](single-node-performance.md) separates cold prefill,
 HBM hits, and external restores after GPU cache pressure. The
@@ -85,6 +84,11 @@ See the [SSD measurements](ssd-performance.md) for latency and scope.
 For supported dense layouts, both adapters also announce exact queued prefixes
 for bounded early DRAM warming. Hybrid layouts bypass automatic warming;
 compiled recovery demand does not enable it.
+`ORBITKV_PREPARE_REQUESTS=1` selects a separate consumer-owned experiment: a
+small accepted-queue lookahead whose ready results remain budgeted at the
+Manager until claimed or expired. Rust chooses the contract's required ranges;
+automatic hybrid lookahead remains disabled. See
+[request preparation](request-preparation.md) for batch and deadline controls.
 Automatic warming is experimental and disabled by default; set
 `ORBITKV_QUEUE_WARMUP=1` in the engine environment to enable it for dense layouts.
 Warmup owns at most a quarter of global/per-instance query

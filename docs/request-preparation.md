@@ -41,9 +41,11 @@ stateDiagram-v2
 ```
 
 Preloading and prepared pages share the speculative quarter of the global and
-per-instance query budget with optional warming. New speculation is skipped
-while foreground query ownership exists. A range larger than this quarter is
-skipped, not truncated into an unproved hybrid state. Limits are four prepared
+per-instance query budget with optional warming. Owned preparation can overlap
+foreground requests only within that share and the remaining total budget;
+unowned warming still yields whenever foreground ownership exists. A range
+larger than this quarter is skipped, not truncated into an unproved hybrid
+state. Limits are four prepared
 operations per native client and Manager session, with the existing global
 speculative-operation cap. Ready results retain their byte reservation and
 operation permits. Claiming moves their bytes into foreground accounting without

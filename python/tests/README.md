@@ -25,6 +25,13 @@ A released query lease does not count as use, last-owner cleanup settles unused
 bytes, and a fresh read credits its footprint once after successful H2D across
 all layers. These checks cover both stored page layouts.
 
+Consumer-owned preparation uses `ORBITKV_PREPARE_REQUESTS=1` instead. Native
+fault tests cover ready-result expiry without polling, claim-to-GPU ownership,
+shared-read cancellation, bounded batches and deadline fallback. The Qwen3
+serving fault gate below runs both ordinary and prepared paths with the
+corresponding environment setting. Automatic hybrid preparation stays disabled;
+hybrid recovery E2Es continue to qualify ordinary selected-range reads.
+
 ## What To Run
 
 | Change area | Gate | Command | Failure boundary |
@@ -182,13 +189,15 @@ This is a targeted single-GPU vLLM scenario for warm-hit pressure. The checked p
 The dense Qwen3 serving fault gate runs each engine in its own pinned environment:
 
 ```bash
-ORBITKV_FAULT_TESTS=1 \
+ORBITKV_FAULT_TESTS=1 ORBITKV_PREPARE_REQUESTS=1 \
 ORBITKV_CACHE_MANAGER_BINARY=/path/to/test-hooks/orbitkv-cache-manager-py \
 ../.venv/vllm-release/bin/python -m pytest -m stress \
-  tests/stress/test_recovery_faults.py -k vllm --model /workspace/models/qwen3-8b
+  tests/stress/test_recovery_faults.py -k vllm --model /workspace/models/qwen3-8b \
+  --basetemp=/workspace/orbitkv/benches/results/runs/serving-fault-vllm
 ```
 
-Use the SGLang environment and `-k sglang` for the other engine. Build the
+Use `ORBITKV_PREPARE_REQUESTS=0` for ordinary demand, and the SGLang environment
+with `-k sglang` for the other engine. Build the
 Manager with `orbitkv-server/test-hooks`, retain that binary separately, then
 complete the ordinary native build before starting any GPU processes. Never
 restage Mooncake libraries while a Manager or engine is running. The gate uses

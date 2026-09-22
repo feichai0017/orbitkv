@@ -301,6 +301,14 @@ class SchedulerConnector:
             or self._cache_groups.group_count > 1
             or (not prepare and os.environ.get("ORBITKV_QUEUE_WARMUP") != "1")
             or (prepare and len(self._queued_at) > 4)
+            or (
+                prepare
+                and (
+                    self._ctx.wait_for_full_prefix
+                    or self._tail_load_enabled
+                    or self._tail_save_enabled
+                )
+            )
         ):
             return
         # Warm the same whole pages admission will query, including a page

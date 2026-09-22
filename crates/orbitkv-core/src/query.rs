@@ -112,7 +112,7 @@ impl QueryBudget {
             return QueryAdmission::TooLarge;
         }
         let mut usage = self.usage.lock();
-        if warming && usage.total > usage.warming {
+        if mode == QueryMode::Warmup && usage.total > usage.warming {
             core_metrics().warmup_foreground_skips.add(1, &[]);
             return QueryAdmission::Busy;
         }

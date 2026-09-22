@@ -126,6 +126,19 @@ Carry-in and live pending pages prevent treating a window ratio as a completed
 cohort hit rate. Enabling warming or transfer tracing for another backend is
 rejected rather than recorded as an ineffective control.
 
+Consumer-owned preparation has a separate `--prepare-requests on|off` control;
+it cannot be combined with `--queue-warmup on`. The Manager read controls are
+`--read-batch-mib`, `--read-timeout-ms` and `--read-max-batches`, all disabled by
+default for ordinary demand. Prepared reads always use at most 32 MiB per
+batch, or one oversized page. Retained prepared pages remain budgeted.
+See [ownership and stopping](../docs/request-preparation.md) and the
+[ordinary recovery profile](../docs/recovery-performance.md).
+The [paired reproduction script](results/20260922-preparation/reproduce.sh)
+compares preparation on/off three times, reverses the middle pair's order,
+and separates unbounded, deadline and one-batch controls. Fixed request caps
+preserve the request sequence; duration-only runs can sample different traffic.
+Additional DRAM-only runs record their larger host capacity explicitly.
+
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \

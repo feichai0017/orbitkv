@@ -317,6 +317,7 @@ impl PendingQueries {
             return match receiver.try_recv() {
                 Ok(reply) => {
                     if task.count_claim
+                        && task.control.max_batches == usize::MAX
                         && let Ok(QueryOutcome::Ready { num_hit_blocks, .. }) = &reply.outcome
                     {
                         record_prefix_reuse(
@@ -446,9 +447,13 @@ impl PendingQueries {
             QUERY_TIMEOUT
         };
         let expires = Instant::now() + timeout;
-        let deadline = self.read_timeout.map_or(expires, |timeout| {
-            expires.min(Instant::now() + timeout.min(QUERY_TIMEOUT))
-        });
+        let deadline = if request.wait_for_full_prefix {
+            expires
+        } else {
+            self.read_timeout.map_or(expires, |timeout| {
+                expires.min(Instant::now() + timeout.min(QUERY_TIMEOUT))
+            })
+        };
         let batch_bytes = if request.prepare {
             if self.read_batch_bytes == 0 {
                 32 << 20

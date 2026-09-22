@@ -1,0 +1,56 @@
+{
+  "measured_requests": 234,
+  "traced_requests": 234,
+  "stage_counts": {
+    "read_start": 340,
+    "host_ready": 340,
+    "restore_complete": 156,
+    "restore_notification": 156,
+    "restore_delivered": 156,
+    "query_cancel": 8,
+    "queued": 234,
+    "first_use": 234,
+    "restore_submit": 156,
+    "restore_link": 156,
+    "gpu_ready": 156
+  },
+  "intervals": {
+    "queued_to_first_use_ms": {
+      "count": 234,
+      "p50": 80.515769,
+      "p95": 489.9097634,
+      "p99": 1829.15308432
+    },
+    "restore_ms": {
+      "count": 156,
+      "p50": 7.363549,
+      "p95": 26.044434499999998,
+      "p99": 26.23151425
+    },
+    "demand_prepare_ms": {
+      "count": 340,
+      "p50": 0.0345,
+      "p95": 261.81730000000016,
+      "p99": 316.59205000000003
+    },
+    "manager_restore_ms": {
+      "count": 156,
+      "p50": 4.781499999999999,
+      "p95": 22.602,
+      "p99": 22.810950000000002
+    },
+    "completion_signal_ms": {
+      "count": 156,
+      "p50": 0.0735,
+      "p95": 0.136,
+      "p99": 0.16044999999999998
+    },
+    "completion_delivery_ms": {
+      "count": 156,
+      "p50": 2.9905,
+      "p95": 6.176,
+      "p99": 7.2379999999999995
+    }
+  },
+  "notes": "Durations use one process's monotonic clock or Manager-local elapsed_us. Manager restore includes submission/worker queue and synchronized copy; completion signal/delivery start at the worker's terminal timestamp. Manager batches are counted once even when several requests share them. Engine callback observations are not GPU kernel timestamps. Dense lookup can fuse discovery with preparation; missing stages are not zero latency."
+}

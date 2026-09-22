@@ -34,13 +34,13 @@ An experimental distributed path extends the same cache API to peer managers.
 - **Bound preparation.** Byte budgets cover pending reads, ready leases and GPU
   consumers; identical backing reads can share preparation. Pressure reclaim
   works in byte-bounded batches and rechecks actual contiguous capacity.
-- **Prepare queued demand (experimental).** Both engine adapters can warm missing prefixes
-  within a separate budget share, then revalidate them at admission. Warming
-  yields to foreground ownership and tracks restored, unused and pending pages.
-  It remains opt-in: [pressure controls](docs/queued-warming.md#page-use-and-reclamation-controls)
-  still show no established throughput gain.
-  The [next policy steps](docs/queued-warming.md#reference-implementations-and-policy-order)
-  draw on reviewed LMCache, HiCache, FlexKV and Dynamo implementations.
+- **Prepare queued demand (experimental).** Dense-layout adapters can select a
+  small queue lookahead; Rust reads compiled ranges and keeps ready pages
+  budgeted until claim, cancellation or expiry. Optional bounded batches and
+  read deadlines stop new work while submitted I/O drains safely. See
+  [consumer-owned preparation](docs/request-preparation.md). Preparation and
+  [unowned warming](docs/queued-warming.md) remain separate, disabled-by-default
+  experiments; no universal throughput advantage is claimed.
 - **Identify compatible state.** Versioned keys bind immutable model artifacts,
   computation settings and registered storage geometry. A shared recovery
   contract compiles declared prefix, window and checkpoint rules into exact
@@ -60,8 +60,9 @@ Compiled demand describes a known token range from a valid HBM prefix; it does
 not predict future tokens, analyze arbitrary model graphs, authorize reclamation
 or enable automatic hybrid warming. Qualification uses
 [exact GPU-byte gates](docs/hybrid-recovery.md#reproducible-gates) and
-[deterministic fault gates](docs/fault-qualification.md); TTFT effects
-remain unmeasured.
+[deterministic fault gates](docs/fault-qualification.md), including Qwen3-8B
+serving with both engines. Ordinary recovery is measured independently from
+the effect of selecting compiled hybrid ranges.
 
 ## Get started
 
@@ -156,6 +157,7 @@ Results include environment, workload, transfer evidence and limitations:
 | [SSD recovery](docs/ssd-performance.md) | Forced DRAM eviction, SSD restoration and engine readiness |
 | [Concurrent bursts](docs/concurrent-performance.md) | Shared and mixed prefixes at concurrency 1/4/8 with byte budgets |
 | [Sustained serving](docs/sustained-performance.md) | Bounded mixed reuse/cold traffic, throughput, tail latency and post-run drain |
+| [Ordinary recovery profile](docs/recovery-performance.md) | Host-read, H2D and completion observations; Qwen3-8B fault controls and resource drain |
 
 Workloads, harness tests and recorded results live in [`benches/`](benches/README.md).
 These are scoped measurements, not a claim that every workload is faster.

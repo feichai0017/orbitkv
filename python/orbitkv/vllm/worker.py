@@ -13,7 +13,7 @@ import torch
 
 from orbitkv import RestoreHandle
 from orbitkv.client.gpu import serialize_gpu_buffer
-from orbitkv.logging_utils import get_connector_logger, trace_transfer
+from orbitkv.logging_utils import TRANSFER_TRACING, get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext, parse_env_int
 from orbitkv.vllm.layout import CacheGroupLayout
 from orbitkv.vllm.metadata import (
@@ -663,8 +663,9 @@ class WorkerConnector:
             return
 
         try:
-            for req_id in request_ids:
-                trace_transfer("restore_submit", req_id, engine="vllm")
+            if TRANSFER_TRACING:
+                for req_id in request_ids:
+                    trace_transfer("restore_submit", req_id, engine="vllm")
             restore = self._client.start_restore(
                 self._ctx.instance_id,
                 self._ctx.effective_tp_rank,
@@ -672,8 +673,9 @@ class WorkerConnector:
                 layer_groups,
                 loads,
             )
-            for req_id in request_ids:
-                trace_transfer("restore_link", req_id, engine="vllm", restore_key=restore.key)
+            if TRANSFER_TRACING:
+                for req_id in request_ids:
+                    trace_transfer("restore_link", req_id, engine="vllm", restore_key=restore.key)
         except Exception as error:
             self._ctx.state_manager.mark_unavailable(f"restore submit exception: {error}")
             # A lost acknowledgement can hide an accepted transfer. Releasing

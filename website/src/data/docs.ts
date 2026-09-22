@@ -19,6 +19,7 @@ export const docGroups = [
       { slug: "hybrid-recovery", title: "Compiled hybrid recovery" },
       { slug: "state-planning", title: "Demand & transfer planning" },
       { slug: "queued-warming", title: "Queued-request warming" },
+      { slug: "request-preparation", title: "Consumer-owned preparation" },
       { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
     ],
   },
@@ -48,6 +49,7 @@ export const docGroups = [
       { slug: "ssd-performance", title: "SSD recovery" },
       { slug: "concurrent-performance", title: "Concurrent query budgets" },
       { slug: "sustained-performance", title: "Sustained serving" },
+      { slug: "recovery-performance", title: "Recovery stage profile" },
     ],
   },
   {

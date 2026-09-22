@@ -224,8 +224,10 @@ pub(crate) async fn execute_query(
     };
     let mut blocks = Vec::new();
     let mut hit_positions = Vec::new();
+    let mut complete_evidence = true;
     for (batch, hashes) in input.block_hashes.chunks(batch_blocks).enumerate() {
         if !input.control.can_submit(batch) {
+            complete_evidence = false;
             trace_query(
                 "read_stopped",
                 &input,
@@ -300,7 +302,7 @@ pub(crate) async fn execute_query(
         });
     }
     let hit = blocks.len();
-    if input.group_id == 0 && !input.materialize {
+    if input.group_id == 0 && !input.materialize && complete_evidence {
         record_prefix_reuse(
             engine,
             hll_tracker,
@@ -309,7 +311,9 @@ pub(crate) async fn execute_query(
             hit,
         );
     }
-    let lease = if hit == 0 || (input.wait_for_full_prefix && hit != input.block_hashes.len()) {
+    let lease = if hit == 0
+        || (input.group_id > 0 && input.wait_for_full_prefix && hit != input.block_hashes.len())
+    {
         Vec::new()
     } else {
         engine

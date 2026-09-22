@@ -73,6 +73,13 @@ device's buffers. `orbitkv_query_budget_waits_total` counts admission attempts
 delayed by bytes, and `orbitkv_query_coalesced_reads_total` counts joined reads.
 The old block-count prefetch limit has been removed.
 
+Opt-in consumer preparation adds `preloading` and `prepared` phases. Both stay
+within the speculative quarter-budget until a foreground claim; expiry never
+releases an unfinished I/O's buffers. `--query-read-batch`,
+`--query-read-timeout-ms`, and `--query-read-max-batches` control ordinary read
+submission and recompute fallback. Defaults preserve ordinary demand behavior.
+See [request preparation](request-preparation.md) for limits and control runs.
+
 ### Cross-Node (Multi-Node Setup)
 
 - `--nics`: Optional Mooncake RDMA rail allow-list (e.g., `--nics mlx5_0,mlx5_1` or `--nics mlx5_0 mlx5_1`). Omit it to let Mooncake select the available transport, including TCP fallback.
