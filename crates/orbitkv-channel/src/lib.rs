@@ -30,7 +30,7 @@ pub use bootstrap::{
     PeerCredentials,
 };
 #[cfg(target_os = "linux")]
-pub use cache_client::{BlockHashes, CacheClient, RestoreHandle};
+pub use cache_client::{BlockHashes, CacheClient, RecoveryRead, RestoreHandle};
 pub use cache_protocol::{
     CancelQueryRequest, PublishLayer, PublishRequest, QueryBundleRequest, QueryBundleResponse,
     QueryCodecError, QueryCommand, QueryOutcomeCode, QueryTicket, ReleaseRequest, RestoreCommand,

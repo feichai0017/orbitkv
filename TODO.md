@@ -4,7 +4,7 @@ This is the repository-wide execution checklist. Completed items must have code
 and a passing gate; design text alone does not close an item.
 
 Follow the [current delivery priorities](docs/roadmap.md#current-delivery-priorities):
-close the ordinary-demand fault gate, qualify bounded consumer preparation and
+maintain the deterministic demand fault gate, qualify bounded consumer preparation and
 stopping, and start real two-host DP once demand lifetimes are qualified.
 Warming gains are not a DP prerequisite. P/D with cache reuse follows; replicated
 catalogs are required before production distributed deployment. Milestone
@@ -72,14 +72,14 @@ numbers below group work areas rather than imposing a strict serial schedule.
   and expose `required_ranges(namespace, start, end)` as absolute aligned
   group intervals from a valid HBM origin; use the same rules for leased evidence.
 - [x] Gate SGLang exact transferred-plus-retained coverage and vLLM hybrid
-  allocation against those ranges. Query SGLang attention first, bound auxiliary
-  hashes by its hit and preserve every candidate boundary until selection.
-  Rust/Python unit and native/CUDA DRAM/SSD exact-byte gates pass.
-  Dense and P/D paths stay unchanged.
-- [ ] Separate candidate discovery from byte materialization, then fetch only
-  selected required ranges while preserving a valid fallback and revalidating
-  actual leases. Qualify after the ordinary-demand fault gate; compare SSD bytes
-  and lookup rounds independently (`docs/state-planning.md`).
+  allocation against compiled ranges.
+- [x] Separate metadata candidate discovery from byte materialization. Rust
+  computes rank-common legal boundaries and fetches only selected required
+  ranges; actual leases are revalidated before admission. vLLM clamps before
+  reading; SGLang synchronizes readiness before allocation. A stale range
+  releases partial leases and falls back to the valid HBM origin.
+  Exact SSD-byte gates cover selected prefixes, windows and checkpoints;
+  additional discovery rounds are not claimed as a TTFT improvement.
 - [x] Move hybrid-boundary validation out of `orbitkv.vllm`; retain engine-owned
   allocation and checkpoint handoff, and skip unused leased pages after clamping.
 - [x] Handle asynchronous vLLM checkpoint queries from SSD, retain completed
@@ -158,8 +158,13 @@ numbers below group work areas rather than imposing a strict serial schedule.
   enforce admission expiry without another lookup and test simultaneous recovery.
 - [ ] Profile vLLM duplicate H2D restores for shared prefixes; any reuse must
   respect engine-owned GPU destinations, mutable tails, and completion fences.
-- [ ] Complete delivery-loss/restart fault qualification and deadline/priority
-  demand hints; current gates cover revisions, cancellation, and session cleanup.
+- [x] Qualify deterministic SSD delay/cancel, lost restore notifications,
+  Manager restart with live old clients, and stalled/malformed Publish replies
+  using real CUDA registrations and bounded test-only barriers. Assert other
+  queries progress and reservations drain; fence ambiguous Publish replies
+  until peer death and create a fresh channel incarnation on every restart.
+  See `docs/fault-qualification.md`.
+- [ ] Add deadline/priority demand hints and expand model-serving fault/soak runs.
 - [ ] Qualify delayed-read cancellation under concurrent serving and multi-rank
   SGLang TP; controlled admission tests do not replace those workload gates.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;

@@ -173,8 +173,9 @@ submitted GPU loads retain their existing completion fences. SGLang owns the rad
 page-aligned KV externally and restores it into SGLang-owned slots. The current
 linker accepts full-attention MHA/MLA, Full + SWA, and Full + recurrent/conv.
 It compiles registered groups into page requirements used both to validate
-absolute token boundaries and select exact restore ranges. Attention lookup
-bounds auxiliary queries while preserving every candidate recovery boundary.
+absolute token boundaries and select exact restore ranges. Hybrid queries
+discover candidates without payload reads, then acquire only the selected
+attention/window/checkpoint ranges and validate their actual leases.
 Transferred and engine-retained keys must together cover the selected ranges
 exactly. DSA, draft and unsupported auxiliary representations remain rejected.
 See [hybrid recovery](hybrid-recovery.md) for

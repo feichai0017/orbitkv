@@ -28,6 +28,7 @@ struct PendingQuery {
     ticket: QueryTicket,
     hashes: BlockHashes,
     wait_for_full_prefix: bool,
+    discover: bool,
 }
 
 /// Immutable query hashes with shared, allocation-free prefix views.
@@ -94,9 +95,13 @@ impl Queries {
         key: &QueryKey,
         hashes: &BlockHashes,
         wait: bool,
+        discover: bool,
     ) -> Result<QueryCommand, ChannelError> {
         if let Some(query) = self.pending.get_mut(key) {
-            if query.hashes == *hashes && query.wait_for_full_prefix == wait {
+            if query.hashes == *hashes
+                && query.wait_for_full_prefix == wait
+                && query.discover == discover
+            {
                 return Ok(QueryCommand::Poll(query.ticket));
             }
             query.ticket.revision = query
@@ -106,6 +111,7 @@ impl Queries {
                 .ok_or(ChannelError::SessionRequiresReconnect)?;
             query.hashes = hashes.clone();
             query.wait_for_full_prefix = wait;
+            query.discover = discover;
         } else {
             let ticket = self.ticket()?;
             self.pending.insert(
@@ -114,6 +120,7 @@ impl Queries {
                     ticket,
                     hashes: hashes.clone(),
                     wait_for_full_prefix: wait,
+                    discover,
                 },
             );
         }
@@ -126,6 +133,7 @@ impl Queries {
             group_id: key.group,
             wait_for_full_prefix: wait,
             warmup: false,
+            discover,
         }))
     }
 
@@ -143,6 +151,14 @@ pub struct RestoreHandle {
     pub operation_id: u64,
     pub session_epoch: u64,
     owner: u64,
+}
+
+/// One selected group range within a compiled recovery contract.
+pub struct RecoveryRead<'a> {
+    pub contract: &'a orbitkv_state::RecoveryContract,
+    pub namespace: &'a str,
+    pub span: orbitkv_state::TokenRange,
+    pub group: u32,
 }
 
 /// Owns query revisions, warming interests, and independent publish/restore
@@ -204,6 +220,7 @@ impl CacheClient {
         request: &str,
         wait: bool,
         group: u32,
+        discover: bool,
     ) -> Result<QueryBundleResponse, ChannelError> {
         let key = QueryKey {
             instance: instance.into(),
@@ -218,12 +235,23 @@ impl CacheClient {
             self.cancel(ticket)?;
         }
         let previous = queries.pending.get(&key).map(|query| query.ticket);
-        let command = queries.prepare(&key, hashes, wait)?;
+        let command = queries.prepare(&key, hashes, wait, discover)?;
         let response = self
             .channel
             .query_bundle(next_id(&self.requests)?, &command);
         match response {
             Ok(response) => {
+                if (discover && response.outcome == QueryOutcomeCode::Ready)
+                    || response.outcome == QueryOutcomeCode::Candidates
+                        && (!discover
+                            || response
+                                .hit_positions
+                                .iter()
+                                .any(|&p| p as usize >= hashes.as_slice().len()))
+                {
+                    self.channel.close();
+                    return Err(ChannelError::SessionRequiresReconnect);
+                }
                 queries.complete(&key, response.outcome);
                 Ok(response)
             }
@@ -239,6 +267,49 @@ impl CacheClient {
                 Err(error)
             }
         }
+    }
+
+    /// Materialize exactly one group's demand, then validate actual leased
+    /// coverage. Stale hints become a miss; partial leases never escape.
+    pub fn read_recovery(
+        &self,
+        instance: &str,
+        hashes: &BlockHashes,
+        request: &str,
+        read: RecoveryRead<'_>,
+    ) -> Result<QueryBundleResponse, ChannelError> {
+        let RecoveryRead {
+            contract,
+            namespace,
+            span,
+            group,
+        } = read;
+        let range = contract.read_range(namespace, span, group, hashes.as_slice().len())?;
+        let selected = hashes
+            .slice(range.clone())
+            .ok_or(orbitkv_state::RecoveryError::InvalidSpan)?;
+        let mut response =
+            self.query_prefetch(instance, &selected, request, false, group, false)?;
+        if response.outcome == QueryOutcomeCode::Ready {
+            let complete = response.num_hit_blocks as usize == range.len()
+                && (range.is_empty() || !response.lease.is_empty())
+                && (group == 0
+                    || response
+                        .hit_positions
+                        .iter()
+                        .copied()
+                        .eq(0..range.len() as u32));
+            if !complete {
+                if !response.lease.is_empty() {
+                    self.release(std::mem::take(&mut response.lease))?;
+                }
+                response.num_hit_blocks = 0;
+                response.hit_positions.clear();
+            } else {
+                response.hit_positions = (range.start as u32..range.end as u32).collect();
+            }
+        }
+        Ok(response)
     }
 
     pub fn warm_prefix(
@@ -288,6 +359,7 @@ impl CacheClient {
                 group_id: 0,
                 wait_for_full_prefix: false,
                 warmup: true,
+                discover: false,
             }),
         )?;
         match response.outcome {
@@ -301,7 +373,7 @@ impl CacheClient {
             {
                 Ok(true)
             }
-            QueryOutcomeCode::Ready => {
+            QueryOutcomeCode::Ready | QueryOutcomeCode::Candidates => {
                 self.channel.close();
                 Err(ChannelError::SessionRequiresReconnect)
             }

@@ -23,14 +23,14 @@ fn polls_reuse_hash_storage_and_changed_demand_revises_one_ticket() {
     let mut queries = Queries::default();
     let key = key("model", 0);
     let batch = hashes(&[b"one", b"two"]);
-    let first = queries.prepare(&key, &batch, false).unwrap();
+    let first = queries.prepare(&key, &batch, false, false).unwrap();
     let QueryCommand::Submit(first) = first else {
         panic!("expected submit")
     };
     let storage = queries.pending[&key].hashes.as_slice()[0].as_ptr();
     for _ in 0..10 {
         assert_eq!(
-            queries.prepare(&key, &batch, false).unwrap(),
+            queries.prepare(&key, &batch, false, false).unwrap(),
             QueryCommand::Poll(first.ticket)
         );
         assert_eq!(queries.pending[&key].hashes.as_slice()[0].as_ptr(), storage);
@@ -39,7 +39,8 @@ fn polls_reuse_hash_storage_and_changed_demand_revises_one_ticket() {
         (vec![b"changed".as_slice()], false, 2),
         (vec![b"changed".as_slice()], true, 3),
     ] {
-        let QueryCommand::Submit(changed) = queries.prepare(&key, &hashes(&bytes), wait).unwrap()
+        let QueryCommand::Submit(changed) =
+            queries.prepare(&key, &hashes(&bytes), wait, false).unwrap()
         else {
             panic!("expected revision")
         };
@@ -52,15 +53,20 @@ fn polls_reuse_hash_storage_and_changed_demand_revises_one_ticket() {
         );
     }
     queries.pending.get_mut(&key).unwrap().ticket.revision = u64::MAX;
-    assert!(queries.prepare(&key, &hashes(&[b"new"]), false).is_err());
+    assert!(
+        queries
+            .prepare(&key, &hashes(&[b"new"]), false, false)
+            .is_err()
+    );
 }
 
 #[test]
 fn terminal_and_busy_queries_retire_and_instances_and_groups_do_not_alias() {
     let mut queries = Queries::default();
     for (index, key) in [key("a", 0), key("a", 1), key("b", 0)].iter().enumerate() {
-        let QueryCommand::Submit(request) =
-            queries.prepare(key, &hashes(&[b"hash"]), false).unwrap()
+        let QueryCommand::Submit(request) = queries
+            .prepare(key, &hashes(&[b"hash"]), false, false)
+            .unwrap()
         else {
             panic!("expected submit")
         };
@@ -70,7 +76,7 @@ fn terminal_and_busy_queries_retire_and_instances_and_groups_do_not_alias() {
         queries.complete(&key("a", 0), outcome);
         assert!(matches!(
             queries
-                .prepare(&key("a", 0), &hashes(&[b"hash"]), false)
+                .prepare(&key("a", 0), &hashes(&[b"hash"]), false, false)
                 .unwrap(),
             QueryCommand::Submit(_)
         ));
@@ -93,16 +99,18 @@ fn hash_views_share_storage_but_do_not_hide_changed_content_or_bounds() {
     assert!(batch.slice(Range { start: 1, end: 0 }).is_none());
     assert!(view.slice(2..2).unwrap().as_slice().is_empty());
     let mut queries = Queries::default();
-    queries.prepare(&key("m", 0), &view, false).unwrap();
+    queries.prepare(&key("m", 0), &view, false, false).unwrap();
     // Different allocations with equal values retain their operation too.
     assert!(matches!(
         queries
-            .prepare(&key("m", 0), &hashes(&[b"second", b"third"]), false)
+            .prepare(&key("m", 0), &hashes(&[b"second", b"third"]), false, false)
             .unwrap(),
         QueryCommand::Poll(_)
     ));
     assert!(matches!(
-        queries.prepare(&key("m", 0), &prefix, false).unwrap(),
+        queries
+            .prepare(&key("m", 0), &prefix, false, false)
+            .unwrap(),
         QueryCommand::Submit(_)
     ));
 }
@@ -236,7 +244,7 @@ fn warming_is_bounded_expires_and_is_cancelled_before_demand() {
             .unwrap()
     );
     client
-        .query_prefetch("m", &hashes(&[b"changed"]), "0", false, 0)
+        .query_prefetch("m", &hashes(&[b"changed"]), "0", false, 0, false)
         .unwrap();
     assert_eq!(
         &events.lock().unwrap()[MAX_WARMUPS..],
@@ -253,7 +261,7 @@ fn warming_is_bounded_expires_and_is_cancelled_before_demand() {
     assert!(client.queries.lock().unwrap().warmups.is_empty());
     assert!(
         client
-            .query_prefetch("m", &hashes(&[b"h"]), "closed", false, 0)
+            .query_prefetch("m", &hashes(&[b"h"]), "closed", false, 0, false)
             .is_err()
     );
 }
@@ -277,12 +285,12 @@ fn rejected_revision_retires_the_previous_interest_without_reusing_its_ticket() 
     });
     let client = peer.client();
     client
-        .query_prefetch("m", &hashes(&[b"small"]), "r", false, 0)
+        .query_prefetch("m", &hashes(&[b"small"]), "r", false, 0, false)
         .unwrap();
     let oversized = BlockHashes::new(vec![vec![0; 32]; 1024]);
     assert!(
         client
-            .query_prefetch("m", &oversized, "r", false, 0)
+            .query_prefetch("m", &oversized, "r", false, 0, false)
             .is_err()
     );
     assert!(client.queries.lock().unwrap().pending.is_empty());
@@ -300,7 +308,7 @@ fn rejected_revision_retires_the_previous_interest_without_reusing_its_ticket() 
         ]
     );
     client
-        .query_prefetch("m", &hashes(&[b"small"]), "r", false, 0)
+        .query_prefetch("m", &hashes(&[b"small"]), "r", false, 0, false)
         .unwrap();
     assert_eq!(
         client.queries.lock().unwrap().pending[&key("m", 0)]
@@ -394,7 +402,7 @@ fn blocked_publish_does_not_serialize_query_or_restore() {
             })
         });
         started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let result = client.query_prefetch("m", &hashes(&[b"h"]), "r", false, 0);
+        let result = client.query_prefetch("m", &hashes(&[b"h"]), "r", false, 0, false);
         finish.store(true, Ordering::Release);
         assert_eq!(result.unwrap().outcome, QueryOutcomeCode::Loading);
         publish.join().unwrap().unwrap();
@@ -411,4 +419,76 @@ fn blocked_publish_does_not_serialize_query_or_restore() {
             })
             .is_err()
     );
+}
+
+#[test]
+fn planned_read_fetches_only_its_window_and_releases_a_stale_partial_lease() {
+    use orbitkv_state::{
+        RecoveryContract, RecoveryRule, StateComponent, StateRequirement, TokenRange,
+    };
+    let contract = RecoveryContract::compile(
+        "model".into(),
+        16,
+        vec![
+            StateRequirement {
+                group: 0,
+                components: [StateComponent::AttentionKv].into(),
+                rule: RecoveryRule::Prefix,
+            },
+            StateRequirement {
+                group: 1,
+                components: [StateComponent::SlidingWindowKv].into(),
+                rule: RecoveryRule::Window { tokens: 32 },
+            },
+        ],
+    )
+    .unwrap();
+    let released = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&released);
+    let peer = Peer::new(move |command, bytes, _| match command.code {
+        CommandCode::QueryBundle => {
+            let QueryCommand::Submit(request) = QueryCommand::decode(bytes).unwrap() else {
+                panic!("unexpected poll")
+            };
+            assert!(!request.discover);
+            assert_eq!(request.block_hashes, vec![b"c".to_vec(), b"d".to_vec()]);
+            let count = if request.request_id == "stale" { 1 } else { 2 };
+            Some(
+                QueryBundleResponse {
+                    outcome: QueryOutcomeCode::Ready,
+                    num_hit_blocks: count,
+                    lease: vec![7],
+                    hit_positions: (0..count as u32).collect(),
+                }
+                .encode()
+                .unwrap(),
+            )
+        }
+        CommandCode::Release => {
+            observed.store(true, Ordering::Release);
+            Some(Vec::new())
+        }
+        other => panic!("unexpected {other:?}"),
+    });
+    let client = peer.client();
+    let batch = hashes(&[b"a", b"b", b"c", b"d"]);
+    let read = || RecoveryRead {
+        contract: &contract,
+        namespace: "model",
+        span: TokenRange {
+            start: 64,
+            end: 128,
+        },
+        group: 1,
+    };
+    let ready = client
+        .read_recovery("m", &batch, "complete", read())
+        .unwrap();
+    assert_eq!(ready.hit_positions, vec![2, 3]);
+    assert_eq!(ready.lease, vec![7]);
+    assert!(!released.load(Ordering::Acquire));
+    let miss = client.read_recovery("m", &batch, "stale", read()).unwrap();
+    assert_eq!(miss.num_hit_blocks, 0);
+    assert!(miss.lease.is_empty());
+    assert!(released.load(Ordering::Acquire));
 }

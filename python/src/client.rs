@@ -173,6 +173,10 @@ impl PyCacheManagerClient {
         self.inner.socket().to_string_lossy().into_owned()
     }
     #[getter]
+    fn service_name(&self) -> String {
+        self.inner.channel().service_name().to_owned()
+    }
+    #[getter]
     fn session_epoch(&self) -> u64 {
         self.inner.channel().session_epoch()
     }
@@ -291,6 +295,65 @@ impl PyCacheManagerClient {
                     req_id,
                     wait_for_full_prefix,
                     group_id,
+                    false,
+                )
+            })
+            .map_err(client_error)?;
+        query_response(py, response)
+    }
+
+    #[pyo3(signature = (instance_id, block_hashes, req_id, group_id=0))]
+    fn query_candidates(
+        &self,
+        py: Python<'_>,
+        instance_id: &str,
+        block_hashes: &PyBlockHashes,
+        req_id: &str,
+        group_id: u32,
+    ) -> PyResult<Py<PyAny>> {
+        let response = py
+            .detach(|| {
+                self.inner.query_prefetch(
+                    instance_id,
+                    &block_hashes.0,
+                    req_id,
+                    false,
+                    group_id,
+                    true,
+                )
+            })
+            .map_err(client_error)?;
+        query_response(py, response)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "native boundary for engine recovery context"
+    )]
+    fn read_recovery(
+        &self,
+        py: Python<'_>,
+        instance_id: &str,
+        block_hashes: &PyBlockHashes,
+        req_id: &str,
+        contract: &crate::recovery::PyRecoveryContract,
+        namespace: &str,
+        start: u64,
+        end: u64,
+        group_id: u32,
+    ) -> PyResult<Py<PyAny>> {
+        let response = py
+            .detach(|| {
+                self.inner.read_recovery(
+                    instance_id,
+                    &block_hashes.0,
+                    req_id,
+                    orbitkv_channel::RecoveryRead {
+                        contract: &contract.contract,
+                        namespace,
+                        span: orbitkv_state::TokenRange { start, end },
+                        group: group_id,
+                    },
                 )
             })
             .map_err(client_error)?;

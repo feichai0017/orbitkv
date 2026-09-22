@@ -24,6 +24,8 @@ pub enum ChannelError {
     #[error(transparent)]
     Transport(#[from] TransportError),
     #[error(transparent)]
+    Recovery(#[from] orbitkv_state::RecoveryError),
+    #[error(transparent)]
     Codec(#[from] QueryCodecError),
     #[error("cache request returned {0:?}")]
     Status(StatusCode),
@@ -300,24 +302,35 @@ impl ChannelClient {
                 return Err(error.into());
             }
         };
+        // A malformed acknowledgement is not evidence that the peer stopped
+        // reading publish sources. Poison the session and fence its process.
+        let ambiguous = || {
+            self.close();
+            if let Some(peer) = peer {
+                log::error!(
+                    "publish acknowledgement is invalid; holding source pages until Cache Manager exits"
+                );
+                TransportClient::wait_for_peer_exit(peer);
+            }
+        };
         if response.status != StatusCode::Ok {
             if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED != 0 {
                 self.bootstrap
                     .complete_request(descriptor)
-                    .inspect_err(|_| self.close())?;
+                    .inspect_err(|_| ambiguous())?;
             } else {
                 self.close();
             }
             return Err(ChannelError::Status(response.status));
         }
         if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED == 0 {
-            self.close();
+            ambiguous();
             return Err(ChannelError::SessionRequiresReconnect);
         }
         let payload = self
             .bootstrap
             .read_response(descriptor, response.descriptor)
-            .inspect_err(|_| self.close())?;
+            .inspect_err(|_| ambiguous())?;
         Ok(payload)
     }
 }

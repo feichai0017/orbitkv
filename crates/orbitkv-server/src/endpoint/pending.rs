@@ -139,6 +139,9 @@ impl PendingQueries {
         let ticket = match command {
             QueryCommand::Poll(ticket) => ticket,
             QueryCommand::Submit(request) => {
+                if request.discover && (request.warmup || request.wait_for_full_prefix) {
+                    return Err(invalid("discovery cannot warm or wait for publication"));
+                }
                 if request.warmup && (request.group_id != 0 || request.wait_for_full_prefix) {
                     return Err(invalid("warmup requires a non-waiting attention prefix"));
                 }
@@ -241,35 +244,40 @@ impl PendingQueries {
             };
             permits.push(permit);
         }
-        let admission = engine.reserve_query(
-            &request.instance_id,
-            request.group_id,
-            request.block_hashes.len(),
-            warmup,
-        );
-        let reservation = match admission {
-            Ok(QueryAdmission::Busy) if !warmup => return Ok(None),
-            Ok(QueryAdmission::Admitted(reservation)) => reservation,
-            result => {
-                self.pending.remove(&key);
-                return Ok(Some(QueryReply {
-                    outcome: match result {
-                        Err(error) => Err(error),
-                        Ok(QueryAdmission::Busy | QueryAdmission::TooLarge) if warmup => {
-                            Ok(QueryOutcome::Busy)
-                        }
-                        Ok(QueryAdmission::TooLarge) => Ok(QueryOutcome::Ready {
-                            num_hit_blocks: 0,
-                            lease: Vec::new(),
-                            hit_positions: Vec::new(),
-                        }),
-                        _ => unreachable!(),
-                    },
-                    engine: Arc::clone(engine),
-                    delivered: false,
-                    _permits: permits,
-                }));
-            }
+        let reservation = if request.discover {
+            None
+        } else {
+            let admission = engine.reserve_query(
+                &request.instance_id,
+                request.group_id,
+                request.block_hashes.len(),
+                warmup,
+            );
+            let reservation = match admission {
+                Ok(QueryAdmission::Busy) if !warmup => return Ok(None),
+                Ok(QueryAdmission::Admitted(reservation)) => reservation,
+                result => {
+                    self.pending.remove(&key);
+                    return Ok(Some(QueryReply {
+                        outcome: match result {
+                            Err(error) => Err(error),
+                            Ok(QueryAdmission::Busy | QueryAdmission::TooLarge) if warmup => {
+                                Ok(QueryOutcome::Busy)
+                            }
+                            Ok(QueryAdmission::TooLarge) => Ok(QueryOutcome::Ready {
+                                num_hit_blocks: 0,
+                                lease: Vec::new(),
+                                hit_positions: Vec::new(),
+                            }),
+                            _ => unreachable!(),
+                        },
+                        engine: Arc::clone(engine),
+                        delivered: false,
+                        _permits: permits,
+                    }));
+                }
+            };
+            Some(reservation)
         };
         let request = request.clone();
         let input = QueryInput {
@@ -279,6 +287,7 @@ impl PendingQueries {
             wait_for_full_prefix: request.wait_for_full_prefix,
             group_id: request.group_id,
             warmup: request.warmup,
+            discover: request.discover,
         };
         let engine = Arc::clone(engine);
         let hll = Arc::clone(hll);

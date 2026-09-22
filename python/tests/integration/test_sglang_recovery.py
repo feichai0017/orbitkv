@@ -119,7 +119,10 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             0,
             0,
             linker.device_id,
-            [(layer, orphan_blocks, linker._hashes([orphan])) for layer in orphan_pool.layer_names],
+            [
+                (layer, orphan_blocks * 2, linker._hashes([orphan, keys[0]]))
+                for layer in orphan_pool.layer_names
+            ],
         )
         assert saved, message
         if channel_server.ssd_cache_path is not None:
@@ -147,8 +150,18 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
         while not (boundaries := linker.lookup("restore", transfers)):
             assert time.monotonic() < deadline
             time.sleep(0.01)
-        # Attention pages 1..4 exist; only boundary 4 has complete auxiliary state.
-        assert boundaries == [4]
+        # Attention pages 1..4 exist; boundaries 1 and 4 have complete auxiliary state; only 4 is selected.
+        assert boundaries == [1, 4]
+        if channel_server.ssd_cache_path is not None:
+            assert (
+                fetch_orbitkv_metrics(channel_server.http_port).get(
+                    "orbitkv_ssd_prefetch_bytes_total", 0
+                )
+                == 0
+            )
+        while linker.prepare_recovery("restore", 80) == 0:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
         held = linker._lookups["restore"].groups[auxiliary]
         assert held.hit_positions == ([3] if kind == "recurrent" else [2, 3])
         linker._load_boundaries["restore"] = (80, {PoolName.KV: {keys[0]}})
@@ -201,7 +214,8 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             ("unneeded-state", 80, False),
         ]:
             linker._origins[rid] = 64
-            assert linker.lookup(rid, transfers) == [4]
+            assert linker.lookup(rid, transfers) == [1, 4]
+            assert linker.prepare_recovery(rid, 80) == 1
             linker._load_boundaries[rid] = (
                 boundary,
                 {PoolName.KV: {keys[0]}} if rid == "overlapping-state" else {},
@@ -231,7 +245,8 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
         linker.pop_completed_load()
         rid = "cancel-published"
         linker._origins[rid] = 64
-        assert linker.lookup(rid, transfers) == [4]
+        assert linker.lookup(rid, transfers) == [1, 4]
+        assert linker.prepare_recovery(rid, 80) == 1
         linker._load_boundaries[rid] = (80, {})
         conv[target] = -1
         temporal[target] = -1
@@ -267,7 +282,7 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             "match",
             lambda self, key, req, result: self.cache_linker.lookup(req.rid, transfers),
         )
-        assert wrapper.match(None, req, SimpleNamespace(device_indices=torch.arange(64))) == [4]
+        assert wrapper.match(None, req, SimpleNamespace(device_indices=torch.arange(64))) == [1, 4]
         assert rid not in linker._origins
         wrapper.hit_markers[rid] = SimpleNamespace(device_hit_len=64, tail_hashes=keys)
         monkeypatch.setattr(UnifiedCacheLinkerWrapper, "load_back", lambda self, req: None)

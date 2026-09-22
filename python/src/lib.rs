@@ -43,6 +43,25 @@ impl QueryLoading {
     }
 }
 
+#[pyclass(frozen)]
+struct QueryCandidates {
+    #[pyo3(get)]
+    num_hit_blocks: usize,
+    #[pyo3(get)]
+    hit_positions: Vec<u32>,
+}
+
+#[pymethods]
+impl QueryCandidates {
+    #[new]
+    fn new(hit_positions: Vec<u32>) -> Self {
+        Self {
+            num_hit_blocks: hit_positions.len(),
+            hit_positions,
+        }
+    }
+}
+
 fn query_response(
     py: Python<'_>,
     response: orbitkv_channel::QueryBundleResponse,
@@ -52,6 +71,14 @@ fn query_response(
             py,
             QueryLoading {
                 admitted: response.outcome == QueryOutcomeCode::Loading,
+            },
+        )
+        .map(|value| value.into_any()),
+        QueryOutcomeCode::Candidates => Py::new(
+            py,
+            QueryCandidates {
+                num_hit_blocks: u64_to_usize(response.num_hit_blocks, "num_hit_blocks")?,
+                hit_positions: response.hit_positions,
             },
         )
         .map(|value| value.into_any()),
@@ -229,6 +256,7 @@ fn orbitkv(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("OrbitKVInternal", m.py().get_type::<OrbitKVInternal>())?;
     m.add_class::<QueryLoading>()?;
     m.add_class::<QueryReady>()?;
+    m.add_class::<QueryCandidates>()?;
     m.add_class::<recovery::PyRecoveryContract>()?;
 
     Ok(())

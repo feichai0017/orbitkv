@@ -140,6 +140,93 @@ impl RecoveryContract {
             .collect())
     }
 
+    /// Translate the compiled demand into a slice of the original hash batch.
+    pub fn read_range(
+        &self,
+        namespace: &str,
+        span: TokenRange,
+        group: u32,
+        batch_len: usize,
+    ) -> Result<std::ops::Range<usize>, RecoveryError> {
+        self.validate_span(namespace, span)?;
+        let pages = *self
+            .requirements
+            .get(&group)
+            .ok_or(RecoveryError::InvalidGroup(group))?;
+        let needed = self.required_span(span, pages);
+        let start = usize::try_from((needed.start - span.start) / self.page_tokens)
+            .map_err(|_| RecoveryError::InvalidSpan)?;
+        let end = usize::try_from((needed.end - span.start) / self.page_tokens)
+            .map_err(|_| RecoveryError::InvalidSpan)?;
+        if end > batch_len {
+            return Err(RecoveryError::InvalidSpan);
+        }
+        Ok(start..end)
+    }
+
+    /// Keep page expansion and cross-rank intersection out of engine Python loops.
+    /// Candidate evidence is provisional; use read_range and validate the leases
+    /// again before admitting a selected boundary.
+    pub fn common_boundaries(
+        &self,
+        namespace: &str,
+        span: TokenRange,
+        shards: &[Vec<(u32, Vec<u32>)>],
+    ) -> Result<Vec<u64>, RecoveryError> {
+        self.validate_span(namespace, span)?;
+        let mut common: Option<BTreeSet<u64>> = None;
+        for groups in shards {
+            let components = groups
+                .iter()
+                .map(|(group, positions)| {
+                    let page_ends = positions
+                        .iter()
+                        .map(|&position| {
+                            u64::from(position)
+                                .checked_add(1)
+                                .and_then(|n| n.checked_mul(self.page_tokens))
+                                .and_then(|n| n.checked_add(span.start))
+                                .ok_or(RecoveryError::InvalidCoverage(*group))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(BundleComponent {
+                        group: *group,
+                        page_ends,
+                    })
+                })
+                .collect::<Result<Vec<_>, RecoveryError>>()?;
+            let legal: BTreeSet<_> = self
+                .restorable_boundaries(&StateBundle {
+                    namespace: namespace.into(),
+                    span,
+                    components,
+                })?
+                .into_iter()
+                .collect();
+            if let Some(common) = &mut common {
+                common.retain(|end| legal.contains(end));
+            } else {
+                common = Some(legal);
+            }
+        }
+        Ok(common.unwrap_or_default().into_iter().collect())
+    }
+
+    /// Select one rank-common boundary under the engine's usable-token limit.
+    /// Returning a scalar avoids exporting every candidate to Python for vLLM.
+    pub fn select_boundary(
+        &self,
+        namespace: &str,
+        span: TokenRange,
+        shards: &[Vec<(u32, Vec<u32>)>],
+        limit: u64,
+    ) -> Result<Option<u64>, RecoveryError> {
+        Ok(self
+            .common_boundaries(namespace, span, shards)?
+            .into_iter()
+            .rfind(|&end| end <= limit))
+    }
+
     fn required_span(&self, span: TokenRange, pages: Option<u64>) -> TokenRange {
         let count = ((span.end - span.start) / self.page_tokens).min(pages.unwrap_or(u64::MAX));
         TokenRange {

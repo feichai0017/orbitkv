@@ -123,10 +123,20 @@ impl TransportClient {
             .client
             .send_copy(command.encode())
             .map_err(|error| TransportError::Send(error.to_string()))?;
-        let deadline = peer.is_none().then(|| Instant::now() + options.timeout);
+        let started = Instant::now();
+        let deadline = peer.is_none().then(|| started + options.timeout);
+        let mut next_warning = started + options.timeout;
         let mut next_peer_check = Instant::now();
         let mut spins = 0;
         loop {
+            if peer.is_some() && Instant::now() >= next_warning {
+                log::warn!(
+                    "publish request {} is still pending after {:?}; retaining source pages until completion or Cache Manager exit",
+                    command.request_id,
+                    started.elapsed()
+                );
+                next_warning = Instant::now() + Duration::from_secs(60);
+            }
             if let Some(message) = pending
                 .receive()
                 .map_err(|error| TransportError::Receive(error.to_string()))?

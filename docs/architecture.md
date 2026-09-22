@@ -155,7 +155,11 @@ aligned spans and complete leased coverage. Both adapters intersect legal
 boundary sets across ranks or shards; hybrid reconciliation is shared.
 
 SGLang checks exact transferred-plus-retained keys against those ranges;
-vLLM uses them for hybrid allocation. This compiles declared semantic
+vLLM uses them for hybrid allocation. Hybrid discovery returns metadata-only
+candidate positions; Rust computes legal boundaries and `read_recovery` uses
+those same ranges to slice actual reads and revalidate leased coverage.
+Discovery is not a hit promise. A stale selected range falls back to the valid
+engine-owned origin. This compiles declared semantic
 requirements into deterministic page demand. It does not analyze arbitrary model
 graphs, prove the model's mathematics, predict future tokens, authorize reclaim
 or enable automatic hybrid warming. General retention and physical planning
@@ -224,8 +228,9 @@ incompatible byte reuse. Full attention, Full + SWA and Full + recurrent/conv
 have explicit recovery rules. Convolution and recurrent tensors share one
 sealed checkpoint group; SWA has independent page coverage. SGLang retains
 authority over HBM allocation, request-state copy-on-write and prefix-tree nodes.
-Lookup queries attention first and caps auxiliary hashes at its hit, preserving
-all candidate boundaries until selection. Restore then uses the compiled ranges.
+Hybrid lookup discovers group positions without reading payloads and preserves
+all legal boundaries until rank intersection. Rust reads only the selected
+compiled ranges; SGLang admits the hit after every rank holds complete leases.
 The [hybrid recovery contract](hybrid-recovery.md) describes the pinned-release
 component bridge and unsupported representations.
 

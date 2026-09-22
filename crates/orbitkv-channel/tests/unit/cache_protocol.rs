@@ -30,6 +30,7 @@ fn request_round_trip_preserves_variable_hashes() {
         group_id: 3,
         wait_for_full_prefix: true,
         warmup: false,
+        discover: false,
     };
     assert_eq!(
         QueryBundleRequest::decode(&request.encode().unwrap()).unwrap(),
@@ -174,4 +175,25 @@ fn restore_request_and_response_round_trip() {
         RestoreCommand::decode(&poll.encode().unwrap()).unwrap(),
         poll
     );
+}
+
+#[test]
+fn candidate_hints_cannot_carry_leases_or_ambiguous_positions() {
+    for (lease, positions, count) in [
+        (vec![1], vec![1, 2], 2),
+        (vec![], vec![2, 1], 2),
+        (vec![], vec![1, 1], 2),
+        (vec![], vec![1, 2], 1),
+    ] {
+        let response = QueryBundleResponse {
+            outcome: QueryOutcomeCode::Candidates,
+            num_hit_blocks: count,
+            lease,
+            hit_positions: positions,
+        };
+        assert_eq!(
+            QueryBundleResponse::decode(&response.encode().unwrap()),
+            Err(QueryCodecError::InvalidCandidates)
+        );
+    }
 }

@@ -72,6 +72,7 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
                         block_hashes: vec![],
                         wait_for_full_prefix: true,
                         warmup: false,
+                        discover: false,
                         group_id: 0,
                     })
                 )

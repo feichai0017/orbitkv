@@ -9,6 +9,7 @@ orbitkv-cache-manager
 ### Options
 
 - `--addr`: Peer control bind address in distributed mode and local socket port seed (default: `127.0.0.1:50055`)
+- `--channel-service`: optional iceoryx2 name prefix. Every Manager startup appends a unique incarnation and advertises it through the stable UDS bootstrap socket. Old clients cannot block a restart by retaining the previous service.
 - `--devices`: CUDA device IDs to initialize, comma-separated (default: auto-detect all available GPUs, e.g., `--devices 0,1,2,3`)
 - `--pool-size`: Pinned memory pool size (default: `30gb`, supports: `kb`, `mb`, `gb`, `tb`)
 - `--hint-value-size`: Hint for typical value size to tune cache and allocator (optional, supports: `kb`, `mb`, `gb`, `tb`)

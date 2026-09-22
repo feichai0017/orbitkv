@@ -13,6 +13,8 @@ workspace = true
 iceoryx2.workspace = true
 memmap2.workspace = true
 rustix.workspace = true
+log.workspace = true
+orbitkv-state.workspace = true
 thiserror = "2"
 
 [dev-dependencies]

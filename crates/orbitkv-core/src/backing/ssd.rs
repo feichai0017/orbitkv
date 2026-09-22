@@ -180,6 +180,13 @@ impl SsdBackingStore {
         }
     }
 
+    pub(crate) fn contains_keys(&self, keys: &[StateKey]) -> Vec<bool> {
+        let inner = self.inner.lock();
+        keys.iter()
+            .map(|key| inner.ring.get(key).is_some())
+            .collect()
+    }
+
     /// Count consecutive SSD-resident keys from the start of `keys`.
     pub(crate) fn prefix_len(&self, keys: &[StateKey]) -> usize {
         let inner = self.inner.lock();

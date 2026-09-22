@@ -328,7 +328,7 @@ def test_checkpoint_short_of_attention_prefix_hints_the_junction():
                 hit_positions=(((2,),),),
                 checkpoint=2,
             ),
-            boundaries=(3 * VBS,),
+            boundary=3 * VBS,
             attention_hit_blocks=8,
         )
     )
@@ -374,27 +374,22 @@ def test_junction_hint_is_hma_only():
     assert request.shared_prefix_boundary == 0
 
 
-def test_load_targets_cover_every_leased_block_when_the_hit_shrinks():
-    """The server pins `num_hit_blocks` blocks under the query lease and walks
-    lease and destination vector in lock step. An exact-prompt repeat clamps
-    the hit by the recomputed final token, the reconcile drops to the
-    previous checkpoint, and the load must still send one target per leased
-    block (`None` for the ones it no longer wants) or the engine rejects it:
-    `query lease block count 5 does not match destination block count 4`."""
+def test_load_targets_cover_only_the_selected_checkpoint_prefix():
+    """The scheduler clamps before reading; no surplus attention/state lease exists."""
     scheduler, _ = _make_scheduler()
     scheduler._cache_groups.storage_group_ids = (0, 1)
     scheduler._recovery = MagicMock()
     scheduler._recovery.required_ranges.return_value = [(0, 0, 64), (1, 48, 64)]
     scheduler._query_recovery = MagicMock(
         return_value=ShardedQueryReady(
-            5,
+            4,
             (b"lease",),
             recurrent_hold=RecurrentLoadHold(
                 leases=((b"membership",),),
-                hit_positions=(((3, 4),),),
-                checkpoint=4,
+                hit_positions=(((3,),),),
+                checkpoint=3,
             ),
-            boundaries=(4 * VBS, 5 * VBS),
+            boundary=4 * VBS,
             attention_hit_blocks=5,
         )
     )
@@ -410,7 +405,7 @@ def test_load_targets_cover_every_leased_block_when_the_hit_shrinks():
 
     intent = scheduler._pending_load_intents["r1"]
     assert intent.num_tokens == 4 * VBS
-    assert intent.block_ids_by_group == ((10, 11, 12, 13, None), (None, None, None, 23, None))
+    assert intent.block_ids_by_group == ((10, 11, 12, 13), (None, None, None, 23))
     assert intent.recurrent_hold.checkpoint == 3
 
 

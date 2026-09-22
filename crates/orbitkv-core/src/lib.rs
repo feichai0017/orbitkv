@@ -7,6 +7,10 @@
 //! - SSD caching tier
 //! - Catalog-backed block discovery and Mooncake remote fetch
 
+#[cfg(feature = "test-hooks")]
+#[path = "../tests/support/faults.rs"]
+pub mod test_faults;
+
 #[macro_use]
 mod trace;
 
@@ -583,6 +587,37 @@ impl OrbitKVEngine {
         }
 
         Ok(status)
+    }
+
+    /// Find candidate positions without loading or pinning their payloads.
+    pub async fn discover_candidates(
+        &self,
+        instance_id: &str,
+        group_id: u32,
+        hashes: &[Vec<u8>],
+    ) -> Result<Vec<u32>, EngineError> {
+        let instance = self.get_instance(instance_id)?;
+        let topology = instance.sealed_topology()?;
+        topology.group_total_slots(group_id)?;
+        let encoded: Vec<_> = hashes
+            .iter()
+            .map(|hash| group_hash(hash, group_id))
+            .collect();
+        let hits = self
+            .storage
+            .discover(&topology.cache_namespace, &encoded)
+            .await;
+        let limit = if group_id == 0 {
+            hits.iter().take_while(|&&hit| hit).count()
+        } else {
+            hits.len()
+        };
+        Ok(hits
+            .into_iter()
+            .take(limit)
+            .enumerate()
+            .filter_map(|(i, hit)| hit.then_some(i as u32))
+            .collect())
     }
 
     /// All-or-nothing membership fetch over one hybrid-cache storage group,

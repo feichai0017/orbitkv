@@ -13,6 +13,7 @@ fn request(operation_id: u64, revision: u64) -> QueryBundleRequest {
         group_id: 0,
         wait_for_full_prefix: false,
         warmup: false,
+        discover: false,
     }
 }
 
