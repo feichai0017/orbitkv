@@ -15,7 +15,7 @@ use orbitkv_transfer::{TransferOp, TransferSlice};
 use parking_lot::Mutex;
 use tonic::transport::{Channel, Endpoint};
 
-use orbitkv_common::NumaNode;
+use crate::numa::NumaNode;
 
 use opentelemetry::KeyValue;
 

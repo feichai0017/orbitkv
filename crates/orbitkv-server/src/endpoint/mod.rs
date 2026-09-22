@@ -10,6 +10,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::metric::hll::MultiWindowHllTracker;
 use log::{error, info};
 use orbitkv_channel::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
@@ -18,7 +19,6 @@ use orbitkv_channel::{
     Response, RestoreCommand, RestoreResponse, RestoreState, StatusCode, TransportError,
     TransportServer,
 };
-use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::{EngineError, OrbitKVEngine};
 use thiserror::Error;
 use tokio::runtime::Handle;

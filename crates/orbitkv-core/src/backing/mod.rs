@@ -23,8 +23,8 @@ pub use ssd_cache::{
 };
 
 use crate::block::{SealedBlock, StateKey};
+use crate::numa::NumaNode;
 use crate::pinned_pool::PinnedAllocation;
-use orbitkv_common::NumaNode;
 
 #[cfg(feature = "mooncake")]
 pub(crate) use mooncake::{MooncakeTransport, new_mooncake};

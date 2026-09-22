@@ -10,8 +10,8 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 
 use crate::block::{RawBlock, Segment};
+use crate::numa::NumaNode;
 use crate::pinned_pool::PinnedAllocation;
-use orbitkv_common::NumaNode;
 
 /// Per-slot metadata (one slot = one layer's KV cache).
 ///

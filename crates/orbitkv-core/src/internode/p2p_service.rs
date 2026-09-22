@@ -92,7 +92,7 @@ impl P2pTransferService {
 
     fn build_transfer_slot_info(
         raw_block: &crate::RawBlock,
-        numa_node: orbitkv_common::NumaNode,
+        numa_node: crate::NumaNode,
     ) -> TransferSlotInfo {
         let layer_block = LayerBlock::new(raw_block);
         TransferSlotInfo {

@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
+use crate::metric::hll::MultiWindowHllTracker;
 use orbitkv_channel::{QueryBundleRequest, QueryCommand, QueryTicket};
-use orbitkv_common::hll::MultiWindowHllTracker;
 use orbitkv_core::{EngineError, OrbitKVEngine, QueryAdmission, QueryOwner};
 use tokio::runtime::Handle;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};

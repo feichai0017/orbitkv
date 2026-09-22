@@ -8,8 +8,8 @@ use tokio::sync::oneshot;
 use crate::backing::SsdBackingStore;
 use crate::block::{InflightBlock, SealedBlock, SlotInsertResult, StateKey};
 use crate::metrics::core_metrics;
+use crate::numa::NumaNode;
 use crate::offload::InsertEntries;
-use orbitkv_common::NumaNode;
 
 use super::read_cache::ReadCache;
 

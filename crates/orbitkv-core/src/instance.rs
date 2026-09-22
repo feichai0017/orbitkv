@@ -33,8 +33,8 @@ use cudarc::driver::CudaContext;
 use log::info;
 
 use crate::layout::KVCacheLayout;
+use crate::numa::NumaNode;
 use crate::{EngineError, TransferMode, gpu_worker::GpuWorkerPool};
-use orbitkv_common::NumaNode;
 use orbitkv_state::{StorageSlot, storage_namespace};
 
 /// Registration state protected by a single mutex.

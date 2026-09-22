@@ -90,6 +90,9 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Connection setup | `python/orbitkv/client/connection.py` | Engine endpoint options and same-host socket selection |
 | State contract | `orbitkv-state` | State identity, format compatibility, compiled page demand, recovery validation, page-reference types |
 | Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
+| Process utilities | `orbitkv-common` | Shared logging setup and peer connection defaults |
+| Hardware locality | `orbitkv-core/src/numa.rs` | NUMA topology and allocation/worker affinity |
+| Cache statistics | `orbitkv-server/src/metric/hll.rs` | Namespaced miss cardinality and windowed reuse estimates |
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
 | Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
 | Peer control | `orbitkv-proto`, `orbitkv-core/src/internode/p2p_service.rs` | Network authorization and transfer locks |

@@ -4,14 +4,14 @@ use std::collections::HashSet;
 #[test]
 fn hll_empty_cardinality_is_zero() {
     let hll = HyperLogLog::new(14);
-    assert_eq!(hll.cardinality(), 0.0);
+    assert_eq!(estimate_cardinality(&hll.registers), 0.0);
 }
 
 #[test]
 fn hll_single_insert() {
     let mut hll = HyperLogLog::new(14);
     hll.insert(&sha256_like(42));
-    assert!(hll.cardinality() >= 0.5); // Should be ~1
+    assert!(estimate_cardinality(&hll.registers) >= 0.5); // Should be ~1
 }
 
 #[test]
@@ -20,7 +20,7 @@ fn hll_accuracy_1000_distinct() {
     for i in 0u32..1000 {
         hll.insert(&sha256_like(i));
     }
-    let est = hll.cardinality();
+    let est = estimate_cardinality(&hll.registers);
     assert!((900.0..1100.0).contains(&est), "expected ~1000, got {est}");
 }
 
@@ -30,7 +30,7 @@ fn hll_accuracy_10000_distinct() {
     for i in 0u32..10_000 {
         hll.insert(&sha256_like(i));
     }
-    let est = hll.cardinality();
+    let est = estimate_cardinality(&hll.registers);
     assert!(
         (9000.0..11000.0).contains(&est),
         "expected ~10000, got {est}"
@@ -45,9 +45,9 @@ fn hll_duplicates_dont_increase_cardinality() {
         hll.insert(&hash);
     }
     assert!(
-        hll.cardinality() < 5.0,
+        estimate_cardinality(&hll.registers) < 5.0,
         "cardinality should be ~1 for repeated inserts, got {}",
-        hll.cardinality()
+        estimate_cardinality(&hll.registers)
     );
 }
 
@@ -63,10 +63,10 @@ fn hll_merge() {
         b.insert(&sha256_like(i));
     }
 
-    let card_a = a.cardinality();
-    let card_b = b.cardinality();
+    let card_a = estimate_cardinality(&a.registers);
+    let card_b = estimate_cardinality(&b.registers);
     a.merge(&b);
-    let card_merged = a.cardinality();
+    let card_merged = estimate_cardinality(&a.registers);
 
     assert!(card_merged > card_a);
     assert!(card_merged > card_b);
@@ -82,9 +82,9 @@ fn hll_clear() {
     for i in 0u32..100 {
         hll.insert(&sha256_like(i));
     }
-    assert!(hll.cardinality() > 50.0);
+    assert!(estimate_cardinality(&hll.registers) > 50.0);
     hll.clear();
-    assert_eq!(hll.cardinality(), 0.0);
+    assert_eq!(estimate_cardinality(&hll.registers), 0.0);
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn tracker_empty_metric() {
     assert_eq!(m.cardinality, 0.0);
     assert_eq!(m.total_requests, 0);
     assert_eq!(m.estimated_hit_rate, 0.0);
-    assert_eq!(m.window_slot_count, 0);
+    assert_eq!(tracker.slots.len(), 0);
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn tracker_records_and_reports() {
     for i in 0u32..100 {
         let hash = sha256_like(i);
         for _ in 0..10 {
-            tracker.record(&hash);
+            tracker.record_hashes_with_total(&[hash], 1);
         }
     }
 
@@ -192,7 +192,7 @@ fn tracker_records_and_reports() {
         "expected ~100 cardinality, got {}",
         m.cardinality
     );
-    assert_eq!(m.window_slot_count, 1);
+    assert_eq!(tracker.slots.len(), 1);
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn tracker_all_unique_low_hit_rate() {
     let mut tracker = HllTracker::new(Duration::from_secs(3600), Duration::from_secs(86400), 14);
 
     for i in 0u32..1000 {
-        tracker.record(&sha256_like(i));
+        tracker.record_hashes_with_total(&[sha256_like(i)], 1);
     }
 
     let m = tracker.metric();
@@ -216,16 +216,16 @@ fn tracker_all_unique_low_hit_rate() {
 fn tracker_bucket_rotation() {
     let mut tracker = HllTracker::new(Duration::from_millis(1), Duration::from_secs(86400), 10);
 
-    tracker.record(&sha256_like(0));
+    tracker.record_hashes_with_total(&[sha256_like(0)], 1);
     std::thread::sleep(Duration::from_millis(5));
-    tracker.record(&sha256_like(1));
+    tracker.record_hashes_with_total(&[sha256_like(1)], 1);
 
     let m = tracker.metric();
     assert_eq!(m.total_requests, 2);
     assert!(
-        m.window_slot_count >= 2,
+        tracker.slots.len() >= 2,
         "expected >= 2 slots, got {}",
-        m.window_slot_count
+        tracker.slots.len()
     );
 }
 
@@ -234,15 +234,15 @@ fn tracker_bucket_expiry() {
     let mut tracker = HllTracker::new(Duration::from_millis(1), Duration::from_millis(10), 10);
 
     for i in 0u32..10 {
-        tracker.record(&sha256_like(i));
+        tracker.record_hashes_with_total(&[sha256_like(i)], 1);
     }
 
     std::thread::sleep(Duration::from_millis(20));
-    tracker.record(&sha256_like(100));
+    tracker.record_hashes_with_total(&[sha256_like(100)], 1);
 
     let m = tracker.metric();
     assert_eq!(m.total_requests, 1);
-    assert_eq!(m.window_slot_count, 1);
+    assert_eq!(tracker.slots.len(), 1);
 }
 
 #[test]
@@ -253,8 +253,8 @@ fn tracker_hit_rate_50_percent() {
     // Expected hit rate ≈ (20000 - 10000) / 20000 = 0.50
     for i in 0u32..10_000 {
         let hash = sha256_like(i);
-        tracker.record(&hash);
-        tracker.record(&hash);
+        tracker.record_hashes_with_total(&[hash], 1);
+        tracker.record_hashes_with_total(&[hash], 1);
     }
 
     let m = tracker.metric();
@@ -278,9 +278,9 @@ fn tracker_hit_rate_66_percent() {
     // Expected hit rate ≈ (30000 - 10000) / 30000 = 0.6667
     for i in 0u32..10_000 {
         let hash = sha256_like(i);
-        tracker.record(&hash);
-        tracker.record(&hash);
-        tracker.record(&hash);
+        tracker.record_hashes_with_total(&[hash], 1);
+        tracker.record_hashes_with_total(&[hash], 1);
+        tracker.record_hashes_with_total(&[hash], 1);
     }
 
     let m = tracker.metric();
@@ -302,7 +302,7 @@ fn hll_distinct_count_scaling() {
             hll.insert(&hash);
             seen.insert(hash);
         }
-        let est = hll.cardinality();
+        let est = estimate_cardinality(&hll.registers);
         let actual = seen.len() as f64;
         let error = (est - actual).abs() / actual;
         assert!(
@@ -327,8 +327,8 @@ fn multi_window_records_into_each_window() {
 
     for i in 0u32..1000 {
         let hash = sha256_like(i);
-        tracker.record_hashes(&[hash.to_vec()]);
-        tracker.record_hashes(&[hash.to_vec()]);
+        tracker.record_namespaced_misses("test", 1, &[hash.to_vec()]);
+        tracker.record_namespaced_misses("test", 1, &[hash.to_vec()]);
     }
 
     let metrics = tracker.metrics();

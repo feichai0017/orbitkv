@@ -10,8 +10,8 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 /// Allowed range for `bucket_bits` (register index width).
-pub const MIN_BUCKET_BITS: u8 = 4;
-pub const MAX_BUCKET_BITS: u8 = 18;
+pub(crate) const MIN_BUCKET_BITS: u8 = 4;
+pub(crate) const MAX_BUCKET_BITS: u8 = 18;
 
 // ============================================================================
 // HyperLogLog core
@@ -23,7 +23,7 @@ pub const MAX_BUCKET_BITS: u8 = 18;
 /// The full hash is used: top `bucket_bits` bits select the register,
 /// remaining bits are scanned for leading zeros.
 #[derive(Debug)]
-pub struct HyperLogLog {
+pub(crate) struct HyperLogLog {
     registers: Vec<u8>,
     bucket_bits: u8,
     /// Mask that zeros out the top `bucket_bits` bits in a big-endian u32
@@ -37,7 +37,7 @@ impl HyperLogLog {
     /// `bucket_bits` determines the number of buckets (2^bucket_bits) and estimation
     /// accuracy (~1.04 / sqrt(2^bucket_bits)). 16 gives 65536 buckets
     /// and ~0.4% standard error.
-    pub fn new(bucket_bits: u8) -> Self {
+    pub(crate) fn new(bucket_bits: u8) -> Self {
         assert!(
             (MIN_BUCKET_BITS..=MAX_BUCKET_BITS).contains(&bucket_bits),
             "HLL bucket_bits must be in {MIN_BUCKET_BITS}..={MAX_BUCKET_BITS}, got {bucket_bits}"
@@ -57,7 +57,7 @@ impl HyperLogLog {
     ///
     /// Shorter hashes are implicitly zero-padded; longer hashes give
     /// more leading-zero headroom and better accuracy.
-    pub fn insert(&mut self, hash: &[u8]) {
+    pub(crate) fn insert(&mut self, hash: &[u8]) {
         let index = bucket_index(hash, self.bucket_bits);
         let rho = count_leading_zeros(hash, self.bucket_bits, self.lz_mask) + 1;
 
@@ -67,13 +67,8 @@ impl HyperLogLog {
         }
     }
 
-    /// Estimate the cardinality (number of distinct elements).
-    pub fn cardinality(&self) -> f64 {
-        estimate_cardinality(&self.registers)
-    }
-
     /// Merge another HLL into this one (element-wise max of registers).
-    pub fn merge(&mut self, other: &HyperLogLog) {
+    pub(crate) fn merge(&mut self, other: &HyperLogLog) {
         assert_eq!(
             self.bucket_bits, other.bucket_bits,
             "cannot merge HLLs with different bucket_bits"
@@ -86,13 +81,8 @@ impl HyperLogLog {
     }
 
     /// Reset all registers to zero.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.registers.fill(0);
-    }
-
-    /// Number of bits used for bucket indexing.
-    pub fn bucket_bits(&self) -> u8 {
-        self.bucket_bits
     }
 }
 
@@ -205,15 +195,13 @@ fn alpha_m(m: usize) -> f64 {
 
 /// Metric snapshot returned by [`HllTracker::metric`].
 #[derive(Debug, Clone)]
-pub struct HllMetric {
+pub(crate) struct HllMetric {
     /// Estimated number of distinct miss block identities in the window.
-    pub cardinality: f64,
+    pub(crate) cardinality: f64,
     /// Total block requests (including duplicates) in the window.
-    pub total_requests: u64,
+    pub(crate) total_requests: u64,
     /// Estimated hit rate assuming infinite cache: `(total - cardinality) / total`.
-    pub estimated_hit_rate: f64,
-    /// Number of active time slots in the sliding window.
-    pub window_slot_count: usize,
+    pub(crate) estimated_hit_rate: f64,
 }
 
 struct WindowSlot {
@@ -233,7 +221,7 @@ struct WindowSlot {
 /// ```
 ///
 /// Thread safety: wrap in `Mutex<HllTracker>` at the call site.
-pub struct HllTracker {
+pub(crate) struct HllTracker {
     slots: VecDeque<WindowSlot>,
     /// Merge of all finalized slots (everything except the active back slot).
     /// Incrementally updated on slot rotation; full recompute only after expiry.
@@ -251,7 +239,7 @@ impl HllTracker {
     /// - `slot_duration`: how long each time slot lasts (e.g. 1 hour)
     /// - `window_duration`: total sliding window (e.g. 24 hours)
     /// - `bucket_bits`: HLL bucket index bits (4..=18, default 16)
-    pub fn new(slot_duration: Duration, window_duration: Duration, bucket_bits: u8) -> Self {
+    pub(crate) fn new(slot_duration: Duration, window_duration: Duration, bucket_bits: u8) -> Self {
         Self {
             slots: VecDeque::new(),
             merged: HyperLogLog::new(bucket_bits),
@@ -267,18 +255,16 @@ impl HllTracker {
     /// Lazily creates/rotates slots. Slot boundaries are aligned to multiples of
     /// `slot_duration` from the first slot, so gaps without requests don't cause
     /// time drift. For example with 1h slots: if the first slot starts at 0:00
-    /// and the next request arrives at 1:30, the new slot starts at 1:00 (not 1:30).
-    pub fn record(&mut self, hash: &[u8]) {
-        let hashes = [hash];
-        self.record_hashes_with_total(&hashes, 1);
-    }
-
     /// Record a batch of distinct identities while accounting for a possibly
     /// larger observation count. The identities are inserted into HLL, while
     /// `total_requests` is used as the denominator. This is used by the
     /// miss-only reference: only cache misses enter HLL, but every queried
     /// block still contributes to the total observation count.
-    pub fn record_hashes_with_total<T: AsRef<[u8]>>(&mut self, hashes: &[T], total_requests: u64) {
+    pub(crate) fn record_hashes_with_total<T: AsRef<[u8]>>(
+        &mut self,
+        hashes: &[T],
+        total_requests: u64,
+    ) {
         if total_requests == 0 {
             return;
         }
@@ -316,15 +302,10 @@ impl HllTracker {
         slot.request_count += total_requests;
     }
 
-    /// Record a batch of block hashes from a gRPC request.
-    pub fn record_hashes(&mut self, hashes: &[Vec<u8>]) {
-        self.record_hashes_with_total(hashes, hashes.len() as u64);
-    }
-
     /// Compute and return the current metric snapshot.
     ///
     /// Triggers slot expiry and merged recomputation if needed.
-    pub fn metric(&mut self) -> HllMetric {
+    pub(crate) fn metric(&mut self) -> HllMetric {
         self.expire_old_slots(Instant::now());
         self.ensure_merged();
 
@@ -345,7 +326,6 @@ impl HllTracker {
             cardinality,
             total_requests: total,
             estimated_hit_rate: hit_rate,
-            window_slot_count: self.slots.len(),
         }
     }
 
@@ -382,9 +362,9 @@ impl HllTracker {
 /// Tracks the same hash stream across multiple sliding windows in parallel.
 ///
 /// Each window is identified by a human-readable label (`"15m"`, `"1h"`, `"1d"`).
-/// `record_hashes` feeds all windows under a single lock; metric collection
+/// `record_namespaced_misses` feeds all windows under a single lock; metric collection
 /// returns one snapshot per window with the label preserved for Prometheus.
-pub struct MultiWindowHllTracker {
+pub(crate) struct MultiWindowHllTracker {
     windows: Vec<(String, HllTracker)>,
 }
 
@@ -394,7 +374,7 @@ impl MultiWindowHllTracker {
     ///
     /// Panics if `windows` is empty, contains a duplicate duration, or any
     /// window is shorter than 1 minute.
-    pub fn new(windows: Vec<(String, Duration)>, bucket_bits: u8) -> Self {
+    pub(crate) fn new(windows: Vec<(String, Duration)>, bucket_bits: u8) -> Self {
         assert!(
             !windows.is_empty(),
             "MultiWindowHllTracker needs at least one window"
@@ -426,17 +406,11 @@ impl MultiWindowHllTracker {
         Self { windows: trackers }
     }
 
-    pub fn record_hashes(&mut self, hashes: &[Vec<u8>]) {
-        for (_, tracker) in &mut self.windows {
-            tracker.record_hashes(hashes);
-        }
-    }
-
     /// Record all queried blocks in the denominator but insert only the
     /// identities that were misses into HLL. Repeated misses remain deduped by
     /// HLL, preserving the infinite-cache reuse reference without discarding
     /// historical observations.
-    pub fn record_namespaced_misses(
+    pub(crate) fn record_namespaced_misses(
         &mut self,
         namespace: &str,
         total_requests: u64,
@@ -457,7 +431,7 @@ impl MultiWindowHllTracker {
     }
 
     /// Snapshot every window. Returned in insertion order.
-    pub fn metrics(&mut self) -> Vec<(String, HllMetric)> {
+    pub(crate) fn metrics(&mut self) -> Vec<(String, HllMetric)> {
         self.windows
             .iter_mut()
             .map(|(label, tracker)| (label.clone(), tracker.metric()))
@@ -509,5 +483,5 @@ fn derive_slot_duration(window: Duration) -> Duration {
 // ============================================================================
 
 #[cfg(test)]
-#[path = "../tests/unit/hll.rs"]
+#[path = "../../tests/unit/metric/hll.rs"]
 mod tests;

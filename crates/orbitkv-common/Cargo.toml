@@ -12,4 +12,3 @@ workspace = true
 log.workspace = true
 logforth.workspace = true
 colored.workspace = true
-libc.workspace = true

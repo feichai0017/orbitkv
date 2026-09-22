@@ -19,17 +19,18 @@ mod instance;
 mod internode;
 mod layout;
 mod lease;
-mod query;
-pub use orbitkv_common::logging;
 mod metrics;
+mod numa;
 mod offload;
 mod pinned_mem;
 mod pinned_pool;
+mod query;
 mod seal_offload;
 mod storage;
 pub mod sync_state;
 pub mod transfer;
 
+pub use crate::numa::NumaNode;
 pub use backing::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
     DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig,
@@ -40,8 +41,7 @@ pub use instance::{GpuContext, InstanceContext};
 pub use internode::P2pTransferService;
 use layout::KVCacheLayout;
 pub use lease::QueryLeaseId;
-pub use orbitkv_common::NumaNode;
-use orbitkv_common::NumaTopology;
+use numa::NumaTopology;
 use orbitkv_state::group_hash;
 pub use orbitkv_state::{
     BundleComponent, LocalPageRef, RecoveryContract, StateBundle, StateComponent, StateDescriptor,

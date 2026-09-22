@@ -14,6 +14,8 @@ numbers below group work areas rather than imposing a strict serial schedule.
 
 - [x] Import and rename the PegaFlow 0.24.5 data plane.
 - [x] Move Rust packages under `crates/`.
+- [x] Keep NUMA topology/affinity in Core and HLL reuse statistics in Server;
+  limit `orbitkv-common` to shared process logging and peer-connection defaults.
 - [x] Remove the unused repository-root `src/main.rs`.
 - [x] Add `orbitkv-state` with state identity, format, page generation, and
   recovery-bundle types.

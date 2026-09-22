@@ -19,8 +19,8 @@ use crate::backing::{MooncakeFetchStore, MooncakeTransport};
 use crate::block::{QueryResult, SealedBlock, StateKey};
 use crate::internode::CatalogClient;
 use crate::metrics::core_metrics;
+use crate::numa::NumaNode;
 use crate::pinned_pool::{PinnedAllocation, PinnedAllocator};
-use orbitkv_common::NumaNode;
 
 use prefetch::PrefetchScheduler;
 #[cfg(feature = "mooncake")]

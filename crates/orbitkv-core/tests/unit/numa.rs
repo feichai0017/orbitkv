@@ -15,16 +15,6 @@ fn test_pin_unknown_node_fails() {
 }
 
 #[test]
-fn test_format_cpu_list() {
-    assert_eq!(format_cpu_list(&[]), "");
-    assert_eq!(format_cpu_list(&[0]), "0");
-    assert_eq!(format_cpu_list(&[0, 1, 2, 3]), "0-3");
-    assert_eq!(format_cpu_list(&[0, 2, 4]), "0,2,4");
-    assert_eq!(format_cpu_list(&[0, 1, 2, 4, 5]), "0-2,4-5");
-    assert_eq!(format_cpu_list(&[0, 1, 2, 4, 6, 7, 8]), "0-2,4,6-8");
-}
-
-#[test]
 fn test_parse_cpulist_range() {
     let cpus = parse_cpulist("0-3").unwrap();
     assert_eq!(cpus, vec![0, 1, 2, 3]);
@@ -100,35 +90,4 @@ fn closest_cpu_numa_node_uses_first_reported_id() {
         parse_closest_cpu_numa_node("NUMA IDs of closest CPU: 1,18-33\n"),
         NumaNode(1)
     );
-}
-
-#[test]
-fn test_query_pages_numa_empty() {
-    let result = query_pages_numa(&[]);
-    assert!(result.is_empty());
-}
-
-#[test]
-fn test_query_pages_numa_stack_memory() {
-    // Stack memory should reside on a valid NUMA node.
-    let buf = [0u8; 4096];
-    let addrs = [buf.as_ptr()];
-    let nodes = query_pages_numa(&addrs);
-    assert_eq!(nodes.len(), 1);
-    // After touching the memory, it should be on a valid node.
-    assert!(
-        nodes[0].is_valid(),
-        "stack memory should be on a valid NUMA node"
-    );
-}
-
-#[test]
-fn test_query_pages_numa_heap_memory() {
-    let buf = vec![0u8; 8192];
-    let addrs = [buf.as_ptr(), unsafe { buf.as_ptr().add(4096) }];
-    let nodes = query_pages_numa(&addrs);
-    assert_eq!(nodes.len(), 2);
-    for node in &nodes {
-        assert!(node.is_valid());
-    }
 }

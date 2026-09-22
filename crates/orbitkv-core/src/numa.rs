@@ -43,41 +43,6 @@ impl std::fmt::Display for NumaNode {
     }
 }
 
-/// Format a list of CPUs into a compact range representation
-///
-/// Example: [0, 1, 2, 3, 8, 9, 10] -> "0-3,8-10"
-pub fn format_cpu_list(cpus: &[usize]) -> String {
-    if cpus.is_empty() {
-        return String::new();
-    }
-
-    let mut result = Vec::new();
-    let mut start = cpus[0];
-    let mut prev = cpus[0];
-
-    for &cpu in &cpus[1..] {
-        if cpu == prev + 1 {
-            prev = cpu;
-        } else {
-            if start == prev {
-                result.push(format!("{}", start));
-            } else {
-                result.push(format!("{}-{}", start, prev));
-            }
-            start = cpu;
-            prev = cpu;
-        }
-    }
-
-    if start == prev {
-        result.push(format!("{}", start));
-    } else {
-        result.push(format!("{}-{}", start, prev));
-    }
-
-    result.join(",")
-}
-
 // ============================================================================
 // CPU Topology from sysfs
 // ============================================================================
@@ -85,7 +50,7 @@ pub fn format_cpu_list(cpus: &[usize]) -> String {
 /// Read CPU-to-NUMA mapping from sysfs
 ///
 /// Returns a map of NUMA node ID -> list of CPU IDs.
-pub fn read_cpu_topology_from_sysfs() -> Result<HashMap<u32, Vec<usize>>, String> {
+fn read_cpu_topology_from_sysfs() -> Result<HashMap<u32, Vec<usize>>, String> {
     let mut node_to_cpus: HashMap<u32, Vec<usize>> = HashMap::new();
 
     let node_dir = std::path::Path::new("/sys/devices/system/node");
@@ -175,7 +140,7 @@ fn parse_cpulist(cpulist: &str) -> Result<Vec<usize>, String> {
 /// Sets the CPU affinity of the calling thread to only run on CPUs
 /// belonging to the specified NUMA node. Critical for ensuring
 /// first-touch memory allocations land on the correct node.
-pub fn pin_thread_to_numa_node(node: NumaNode) -> Result<(), String> {
+pub(crate) fn pin_thread_to_numa_node(node: NumaNode) -> Result<(), String> {
     if node.is_unknown() {
         return Err("Cannot pin to unknown NUMA node".to_string());
     }
@@ -221,7 +186,7 @@ pub fn pin_thread_to_numa_node(node: NumaNode) -> Result<(), String> {
 /// Spawns a temporary thread, pins it to the specified NUMA node,
 /// runs the closure, and returns the result. Useful for first-touch
 /// memory allocation policy.
-pub fn run_on_numa<T, F>(node: NumaNode, f: F) -> Result<T, String>
+pub(crate) fn run_on_numa<T, F>(node: NumaNode, f: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
@@ -341,7 +306,7 @@ fn get_gpu_numa_affinity() -> Vec<(u32, NumaNode)> {
 /// Built once during engine initialization. Provides efficient lookup
 /// of NUMA affinity for GPU devices.
 #[derive(Debug, Clone)]
-pub struct NumaTopology {
+pub(crate) struct NumaTopology {
     gpu_numa_map: HashMap<i32, NumaNode>,
     numa_nodes: Vec<NumaNode>,
 }
@@ -350,7 +315,7 @@ impl NumaTopology {
     /// Detect and build the GPU-NUMA topology.
     ///
     /// Queries nvidia-smi for GPU NUMA affinity and reads system NUMA topology.
-    pub fn detect() -> Self {
+    pub(crate) fn detect() -> Self {
         let gpu_affinity = get_gpu_numa_affinity();
         let gpu_numa_map: HashMap<i32, NumaNode> = gpu_affinity
             .into_iter()
@@ -377,7 +342,7 @@ impl NumaTopology {
     /// Get the preferred NUMA node for a GPU device.
     ///
     /// Returns `NumaNode::UNKNOWN` if the device is not found.
-    pub fn numa_for_gpu(&self, device_id: i32) -> NumaNode {
+    pub(crate) fn numa_for_gpu(&self, device_id: i32) -> NumaNode {
         self.gpu_numa_map
             .get(&device_id)
             .copied()
@@ -385,12 +350,12 @@ impl NumaTopology {
     }
 
     /// Get all NUMA nodes in the system.
-    pub fn numa_nodes(&self) -> &[NumaNode] {
+    pub(crate) fn numa_nodes(&self) -> &[NumaNode] {
         &self.numa_nodes
     }
 
     /// Get all valid NUMA nodes that have at least one GPU attached.
-    pub fn gpu_numa_nodes(&self) -> Vec<NumaNode> {
+    pub(crate) fn gpu_numa_nodes(&self) -> Vec<NumaNode> {
         let mut nodes: Vec<NumaNode> = self
             .gpu_numa_map
             .values()
@@ -403,17 +368,17 @@ impl NumaTopology {
     }
 
     /// Get the number of NUMA nodes.
-    pub fn num_nodes(&self) -> usize {
+    pub(crate) fn num_nodes(&self) -> usize {
         self.numa_nodes.len()
     }
 
     /// Check if this is a multi-NUMA system.
-    pub fn is_multi_numa(&self) -> bool {
+    pub(crate) fn is_multi_numa(&self) -> bool {
         self.numa_nodes.len() > 1
     }
 
     /// Log the detected topology.
-    pub fn log_summary(&self) {
+    pub(crate) fn log_summary(&self) {
         log::info!("=== GPU-NUMA Topology ===");
         log::info!("NUMA nodes: {}", self.num_nodes());
 
@@ -433,67 +398,6 @@ impl Default for NumaTopology {
     fn default() -> Self {
         Self::detect()
     }
-}
-
-// ============================================================================
-// move_pages(2) NUMA query
-// ============================================================================
-
-/// Query the NUMA node of each address via `move_pages(2)`.
-///
-/// Each address is page-aligned internally; only one page per address is
-/// queried (suitable for contiguous regions where the first page determines
-/// placement). Returns `NumaNode::UNKNOWN` for any address that yields an
-/// error status.
-pub fn query_pages_numa(addrs: &[*const u8]) -> Vec<NumaNode> {
-    if addrs.is_empty() {
-        return Vec::new();
-    }
-
-    let count = addrs.len();
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
-
-    // Page-align each address.
-    let pages: Vec<*const libc::c_void> = addrs
-        .iter()
-        .map(|&addr| {
-            let aligned = (addr as usize) & !(page_size - 1);
-            aligned as *const libc::c_void
-        })
-        .collect();
-
-    let mut status: Vec<libc::c_int> = vec![0; count];
-
-    // SAFETY: move_pages with nodes=NULL is a query-only operation. We pass
-    // page-aligned addresses, correct count, and a properly sized status
-    // buffer. pid=0 targets the calling process.
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_move_pages,
-            0_i32,                           // pid: current process
-            count,                           // count
-            pages.as_ptr(),                  // pages
-            std::ptr::null::<libc::c_int>(), // nodes: NULL = query only
-            status.as_mut_ptr(),             // status: output
-            0_i32,                           // flags
-        )
-    };
-
-    if ret != 0 {
-        // Syscall itself failed; return all UNKNOWN.
-        return vec![NumaNode::UNKNOWN; count];
-    }
-
-    status
-        .iter()
-        .map(|&s| {
-            if s >= 0 {
-                NumaNode(s as u32)
-            } else {
-                NumaNode::UNKNOWN
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
