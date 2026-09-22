@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from orbitkv.client.manager import (
+from orbitkv import (
     CacheManagerClient,
 )
 

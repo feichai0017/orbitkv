@@ -206,8 +206,22 @@ def _install_native_extension_stub() -> None:
             self.lease = lease
             self.hit_positions = [] if hit_positions is None else hit_positions
 
+    class _BlockHashes(list):
+        def __getitem__(self, view):
+            return type(self)(super().__getitem__(view))
+
+    module.BlockHashes = getattr(module, "BlockHashes", _BlockHashes)
     module.ChannelProbeClient = getattr(module, "ChannelProbeClient", MagicMock)
-    module.ChannelClient = getattr(module, "ChannelClient", MagicMock)
+    module.CacheManagerClient = getattr(module, "CacheManagerClient", MagicMock)
+    module.RestoreHandle = getattr(module, "RestoreHandle", MagicMock)
+
+    @dataclass(frozen=True)
+    class _RestoreStatus:
+        done: bool
+        success: bool
+        message: str = ""
+
+    module.RestoreStatus = getattr(module, "RestoreStatus", _RestoreStatus)
     module.MooncakeTransferEngine = getattr(module, "MooncakeTransferEngine", MagicMock)
     module.OrbitKVError = getattr(module, "OrbitKVError", type("OrbitKVError", (Exception,), {}))
     module.OrbitKVInternal = getattr(

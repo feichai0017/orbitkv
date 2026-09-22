@@ -131,7 +131,7 @@ def test_native_contract_rejects_duplicate_or_unordered_evidence(positions):
 def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
     torch = pytest.importorskip("torch")
     cache_config = config()
-    from orbitkv.client.manager import CacheManagerClient
+    from orbitkv import CacheManagerClient
     from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
     from orbitkv.vllm.scheduler import SchedulerConnector
     from orbitkv.vllm.worker import WorkerConnector

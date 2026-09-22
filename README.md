@@ -25,7 +25,10 @@ An experimental distributed path extends the same cache API to peer managers.
 - **Extend cache capacity.** Keep prefixes beyond the engine's HBM cache using
   NUMA-aware host memory and SSD backing.
 - **Use either engine.** vLLM and SGLang register their GPU buffers through
-  CUDA IPC and share the same UDS + iceoryx2 manager API.
+  CUDA IPC and share the same UDS + iceoryx2 manager API. A Rust client owns
+  query revisions, warming cancellation, publish sessions and restore waits.
+  Immutable hash batches avoid repeated per-page conversion during polling;
+  Python keeps the engine callbacks and GPU allocation handoff.
 - **Keep ownership explicit.** The engine controls HBM allocation and execution.
   OrbitKV retains external replicas and transfer leases through completion.
 - **Bound preparation.** Byte budgets cover pending reads, ready leases and GPU

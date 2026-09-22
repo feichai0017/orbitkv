@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from orbitkv.client.manager import CacheManagerClient
+from orbitkv import BlockHashes, CacheManagerClient
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.orbitkv import QueryLoading, QueryReady
 from orbitkv.vllm.metadata import RecurrentLoadHold
@@ -33,7 +33,7 @@ class TpShardQueryClient:
     def query(
         self,
         instance_id: str,
-        block_hashes: list[bytes],
+        block_hashes: BlockHashes,
         req_id: str,
         wait_for_full_prefix: bool,
     ) -> ShardedQueryReady | None:
@@ -100,7 +100,7 @@ class TpShardQueryClient:
     def query_group_membership(
         self,
         instance_id: str,
-        block_hashes: list[bytes],
+        block_hashes: BlockHashes,
         req_id: str,
         group_id: int,
     ) -> list[tuple[tuple[int, ...], bytes]] | None:

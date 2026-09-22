@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from orbitkv.logging_utils import get_connector_logger
 
 if TYPE_CHECKING:
-    from orbitkv.client.manager import CacheManagerClient
+    from orbitkv import CacheManagerClient
 
 logger = get_connector_logger()
 

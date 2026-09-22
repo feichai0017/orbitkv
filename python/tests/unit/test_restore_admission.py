@@ -9,6 +9,7 @@ from tests.support.unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
+from orbitkv import BlockHashes  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
 from orbitkv.vllm.tp_shards import ShardedQueryReady  # noqa: E402
@@ -45,7 +46,7 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
     req = request("queued", 64)
     scheduler.on_new_request(req)
     client.warm_prefix.assert_called_once_with(
-        "warm", [b"queued-1", b"queued-2", b"queued-3"], "queued"
+        "warm", BlockHashes([b"queued-1", b"queued-2", b"queued-3"]), "queued"
     )
     client.query_prefetch.assert_not_called()
     assert not scheduler._pending_load_intents

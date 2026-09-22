@@ -59,7 +59,7 @@ def channel_client_context(
 
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
     ctx = ClientContext(
-        client=orbitkv_native.ChannelClient(channel_server.bootstrap_socket),
+        client=orbitkv_native.CacheManagerClient(channel_server.bootstrap_socket),
         instance_id=instance_id,
         namespace=namespace,
         device_id=0,
@@ -75,7 +75,7 @@ def channel_client_context(
 @pytest.fixture
 def client(orbitkv_server: CacheManagerProcess):
     """Create a local Cache Manager client for integration tests."""
-    from orbitkv.client.manager import CacheManagerClient
+    from orbitkv import CacheManagerClient
 
     client = CacheManagerClient(orbitkv_server.bootstrap_socket)
     yield client

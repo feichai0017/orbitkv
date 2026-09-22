@@ -13,7 +13,7 @@ from tests.support.unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
+from orbitkv.orbitkv import BlockHashes, QueryLoading, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext, TpShardTopology  # noqa: E402
 from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
 
@@ -155,7 +155,7 @@ def test_ready_groups_remain_owned_while_another_checkpoint_loads(hybrid):
         2,
     ]
     # Checkpoint queries stop at the available attention prefix, not the whole prompt.
-    assert client.query_prefetch.call_args_list[1].args[1] == req.block_hashes[4:8]
+    assert client.query_prefetch.call_args_list[1].args[1] == BlockHashes(req.block_hashes[4:8])
     scheduler._cleanup_request("r")
     assert client.release.call_args_list == [call(b"attention"), call(b"state-1"), call(b"state-2")]
 

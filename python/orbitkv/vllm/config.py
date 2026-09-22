@@ -14,7 +14,7 @@ from orbitkv.identity import model_config_identity, model_identity, state_namesp
 from orbitkv.logging_utils import get_connector_logger
 
 if TYPE_CHECKING:
-    from orbitkv.client.manager import CacheManagerClient
+    from orbitkv import CacheManagerClient
     from orbitkv.vllm.state_manager import ServiceStateManager
 
 logger = get_connector_logger()

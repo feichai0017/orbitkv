@@ -22,7 +22,7 @@ def main() -> int:
     endpoint, instance_id, ready_file = sys.argv[1], sys.argv[2], sys.argv[3]
 
     orbitkv_module = importlib.import_module("orbitkv.orbitkv")
-    client = orbitkv_module.ChannelClient(endpoint)
+    client = orbitkv_module.CacheManagerClient(endpoint)
 
     device = torch.device("cuda:0")
     kv = torch.rand((2, 16, 16, 8, 128), dtype=torch.bfloat16, device=device).contiguous()

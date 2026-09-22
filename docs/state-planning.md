@@ -51,6 +51,17 @@ Both adapters currently acknowledge whole restores. SGLang's eight-request
 submission window does not establish layer readiness; vLLM's layer callback is
 not a per-layer completion fence. These are prerequisites for true overlap.
 
+Shared client ownership now lives in Rust: query revisions, warming cancellation,
+the independent publish connection, and eventfd/fallback restore waiting.
+PyO3 exposes this owner directly; Python no longer maintains a second query map,
+request counter or waiting loop. Each adapter prepares an immutable Rust
+`BlockHashes` batch once per lookup. Prefix views share its allocation, so repeated
+polls need neither per-page Python conversion nor hash copying/comparison when
+reusing that batch and view. Changed inputs still revise the owned operation;
+equivalent independently built batches are compared by value. Python still
+checks engine request drift and handles GPU allocation. Candidate discovery and
+fetching only selected ranges remain a separate next step.
+
 ## Minimal demand contract
 
 Evolve `orbitkv-state` and the existing channel instead of introducing a second

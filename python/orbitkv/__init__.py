@@ -1,7 +1,7 @@
 """OrbitKV - High-performance key-value storage engine with Python bindings.
 
 This package provides:
-1. ChannelClient: node-local Cache Manager client
+1. CacheManagerClient: node-local Cache Manager client
 2. OrbitKVConnector: vLLM KV connector for distributed inference
 """
 
@@ -11,13 +11,16 @@ from typing import Any
 
 _NATIVE_EXPORTS = {
     "ChannelProbeClient",
-    "ChannelClient",
+    "CacheManagerClient",
+    "BlockHashes",
     "MooncakeTransferEngine",
     "OrbitKVError",
     "OrbitKVInternal",
     "QueryLoading",
     "QueryReady",
     "RecoveryContract",
+    "RestoreHandle",
+    "RestoreStatus",
 }
 
 try:
@@ -54,11 +57,14 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "__version__",
     "ChannelProbeClient",
-    "ChannelClient",
+    "CacheManagerClient",
+    "BlockHashes",
     "MooncakeTransferEngine",
     "OrbitKVError",
     "OrbitKVInternal",
     "QueryLoading",
     "QueryReady",
     "RecoveryContract",
+    "RestoreHandle",
+    "RestoreStatus",
 ]

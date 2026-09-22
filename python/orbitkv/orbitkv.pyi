@@ -3,6 +3,8 @@
 This module provides local Cache Manager bindings for LLM inference.
 """
 
+from collections.abc import Sequence
+
 __version__: str
 
 # Custom exceptions for error classification
@@ -86,12 +88,20 @@ class ChannelProbeClient:
     def ping(self, value: int = 0, request_id: int = 1) -> int: ...
     def shutdown(self, request_id: int = 1) -> None: ...
 
-class ChannelClient:
-    """UDS-bootstrapped iceoryx2 client for framework-neutral cache operations."""
+class BlockHashes:
+    """Immutable Rust-owned query hashes; slices share storage and are cheap to poll."""
+
+    def __init__(self, hashes: Sequence[bytes]) -> None: ...
+    def __len__(self) -> int: ...
+    def __getitem__(self, view: slice) -> BlockHashes: ...
+
+class CacheManagerClient:
+    """Native owner of query, publish and restore lifetimes."""
 
     def __init__(
         self,
         bootstrap_socket: str,
+        *,
         timeout_ms: int = 5000,
         spin_iterations: int = 64,
     ) -> None: ...
@@ -121,54 +131,58 @@ class ChannelClient:
         layer_group_ids: list[int] | None = None,
     ) -> tuple[bool, str]: ...
     @property
-    def service_name(self) -> str: ...
+    def transport(self) -> str: ...
+    @property
+    def bootstrap_socket(self) -> str: ...
     @property
     def session_epoch(self) -> int: ...
     @property
     def notification_fd(self) -> int: ...
-    def query_submit(
+    def query_prefetch(
         self,
         instance_id: str,
-        block_hashes: list[bytes],
+        block_hashes: BlockHashes,
         req_id: str,
-        operation_id: int,
-        revision: int,
         wait_for_full_prefix: bool = False,
         group_id: int = 0,
-        warmup: bool = False,
-        request_id: int = 1,
     ) -> QueryLoading | QueryReady: ...
-    def release(self, lease: bytes, request_id: int = 1) -> None: ...
-    def query_poll(
-        self, operation_id: int, revision: int, request_id: int = 1
-    ) -> QueryLoading | QueryReady: ...
-    def cancel_query(self, operation_id: int, revision: int, request_id: int = 1) -> None: ...
-    def publish(
+    def warm_prefix(self, instance_id: str, block_hashes: BlockHashes, req_id: str) -> bool: ...
+    def release(self, lease: bytes) -> None: ...
+    def cancel_query(self, instance_id: str, req_id: str, group_id: int = 0) -> None: ...
+    def save(
         self,
         instance_id: str,
         tp_rank: int,
         pp_rank: int,
         device_id: int,
         saves: list[tuple[str, list[int], list[bytes]]],
-        request_id: int = 1,
-    ) -> None: ...
-    def restore(
+    ) -> tuple[bool, str]: ...
+    def start_restore(
         self,
         instance_id: str,
         tp_rank: int,
         device_id: int,
         layer_groups: list[list[str]],
         loads: list[tuple[bytes, list[list[int | None]]]],
-        timeout_ms: int = 5000,
-        request_id: int = 1,
-    ) -> None: ...
-    def restore_submit(
-        self,
-        instance_id: str,
-        tp_rank: int,
-        device_id: int,
-        layer_groups: list[list[str]],
-        loads: list[tuple[bytes, list[list[int | None]]]],
-        request_id: int = 1,
-    ) -> int: ...
-    def restore_poll(self, operation_id: int, request_id: int = 1) -> tuple[str, str]: ...
+    ) -> RestoreHandle: ...
+    def poll_restore(self, handle: RestoreHandle) -> RestoreStatus: ...
+    def wait_restore(self, handle: RestoreHandle, *, timeout: float) -> RestoreStatus:
+        """Wait without the GIL; timeout keeps GPU destinations owned."""
+        ...
+    def restore_completions_ready(self, *, timeout: float = 0.0) -> bool: ...
+
+class RestoreHandle:
+    """Client-bound GPU restore identity, created only by start_restore."""
+
+    @property
+    def operation_id(self) -> int: ...
+    @property
+    def session_epoch(self) -> int: ...
+    @property
+    def key(self) -> str: ...
+
+class RestoreStatus:
+    done: bool
+    success: bool
+    message: str
+    def __init__(self, done: bool, success: bool, message: str = "") -> None: ...

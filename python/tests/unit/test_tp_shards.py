@@ -15,7 +15,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: E402
     KVConnectorRole,
 )
 
-from orbitkv.orbitkv import QueryLoading, QueryReady  # noqa: E402
+from orbitkv.orbitkv import BlockHashes, QueryLoading, QueryReady  # noqa: E402
 from orbitkv.vllm import OrbitKVConnector  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext, TpShardTopology  # noqa: E402
 from orbitkv.vllm.metadata import LoadIntent, OrbitKVConnectorMetadata  # noqa: E402
@@ -366,13 +366,13 @@ def test_scheduler_uses_common_prefix_and_exact_per_shard_leases():
     assert first.query_prefetch.call_args_list == [
         call(
             "instance",
-            hashes,
+            BlockHashes(hashes),
             req_id="request",
             wait_for_full_prefix=False,
         ),
         call(
             "instance",
-            hashes[:2],
+            BlockHashes(hashes[:2]),
             req_id="request:tp-common-2",
             wait_for_full_prefix=False,
         ),
@@ -404,8 +404,18 @@ def test_scheduler_cancels_drifted_prefetch_before_querying_new_hashes():
     first.cancel_query.assert_called_once_with("instance", "request")
     second.cancel_query.assert_called_once_with("instance", "request")
     assert first.query_prefetch.call_args_list == [
-        call("instance", request.block_hashes, req_id="request", wait_for_full_prefix=False),
-        call("instance", request.block_hashes[2:], req_id="request", wait_for_full_prefix=False),
+        call(
+            "instance",
+            BlockHashes(request.block_hashes),
+            req_id="request",
+            wait_for_full_prefix=False,
+        ),
+        call(
+            "instance",
+            BlockHashes(request.block_hashes[2:]),
+            req_id="request",
+            wait_for_full_prefix=False,
+        ),
     ]
     scheduler.shutdown()
     assert first.cancel_query.call_count == 2

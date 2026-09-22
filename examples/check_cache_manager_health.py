@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from orbitkv import ChannelClient
+from orbitkv import CacheManagerClient
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    client = ChannelClient(args.socket)
+    client = CacheManagerClient(args.socket)
     ok, message = client.health()
     client.close()
     status = "healthy" if ok else "unhealthy"

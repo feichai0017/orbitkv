@@ -13,6 +13,8 @@
 mod arena;
 #[cfg(target_os = "linux")]
 mod bootstrap;
+#[cfg(target_os = "linux")]
+mod cache_client;
 mod cache_protocol;
 #[cfg(target_os = "linux")]
 mod client;
@@ -27,6 +29,8 @@ pub use bootstrap::{
     BootstrapClient, BootstrapError, BootstrapInfo, BootstrapServer, BootstrapSession,
     PeerCredentials,
 };
+#[cfg(target_os = "linux")]
+pub use cache_client::{BlockHashes, CacheClient, RestoreHandle};
 pub use cache_protocol::{
     CancelQueryRequest, PublishLayer, PublishRequest, QueryBundleRequest, QueryBundleResponse,
     QueryCodecError, QueryCommand, QueryOutcomeCode, QueryTicket, ReleaseRequest, RestoreCommand,

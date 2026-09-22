@@ -12,9 +12,13 @@ session-epoch fencing. A mode-0600 Unix socket verifies peer credentials and
 passes a sealed memfd arena
 plus a liveness eventfd. Every client owns one arena slot guarded by a client
 token and a monotonic request/response generation. Python exposes diagnostics
-through `ChannelProbeClient` and cache operations through `ChannelClient`. Restore uses an
-operation ID plus the bootstrapped eventfd so GPU completion never blocks the
-Cache Manager's channel thread.
+through `ChannelProbeClient` and cache operations through the PyO3
+`CacheManagerClient`. Rust `CacheClient` owns query revisions, warming interests,
+an independent publish connection and restore handles bound to their issuer.
+Restore uses an operation ID plus the bootstrapped eventfd with bounded fallback
+polling. Waiting releases the GIL and never blocks the Cache Manager dispatcher;
+a deadline does not release GPU destinations. The low-level Rust `ChannelClient`
+owns descriptor framing and session failure, without a second Python facade.
 
 Run the two-process latency harness in separate terminals:
 

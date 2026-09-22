@@ -17,6 +17,21 @@ import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
+def test_native_hash_batch_is_an_immutable_snapshot_with_shared_views():
+    from orbitkv import BlockHashes
+
+    source = [b"first", b"second", b"third"]
+    batch = BlockHashes(source)
+    source[0] = b"changed"
+    assert batch == BlockHashes([b"first", b"second", b"third"])
+    assert batch[1:][:1] == BlockHashes([b"second"])
+    assert len(batch[3:]) == 0
+    assert len(batch[2:1]) == 0
+    assert batch[-2:] == batch[1:]
+    with pytest.raises(ValueError, match="unit slice step"):
+        batch[::2]
+
+
 @pytest.mark.parametrize(
     ("case", "hash_count"),
     [
@@ -32,11 +47,13 @@ def test_query_prefetch_ready_zero_contract(
     block_hashes: list[bytes],
 ):
     """A fresh server query returns Ready(0), not a dict or miss sentinel."""
+    from orbitkv import BlockHashes
+
     requested_hashes = block_hashes[:hash_count]
 
     result = client.query_prefetch(
         registered_instance,
-        requested_hashes,
+        BlockHashes(requested_hashes),
         req_id=f"query-contract-{case}",
     )
 

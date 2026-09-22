@@ -6,10 +6,22 @@ GPU-validated adapters for the releases below.
 
 ## Features
 
-- **CacheManagerClient**: One client for lifecycle, queries, publication and asynchronous restores across storage tiers
+- **CacheManagerClient**: Native Rust owner of lifecycle, queries, publication and asynchronous restores across storage tiers, exposed directly through PyO3
 - **OrbitKVConnector**: vLLM external-cache connector; Cache Manager selects RAM, SSD, or configured remote fetch
 - **OrbitKVLinker**: SGLang direct GPU-page cache through the same Cache Manager channel
 - **PdConnector**: experimental vLLM P/D handoff through Mooncake; independent of the external-cache connector
+
+Import the native API with `from orbitkv import BlockHashes, CacheManagerClient`.
+Build `hashes = BlockHashes(page_hashes)` once for a lookup, then reuse it in
+`client.query_prefetch(instance_id, hashes, request_id)` until ready. A slice
+such as `hashes[:hit_blocks]` shares the native allocation. `warm_prefix` also
+takes a `BlockHashes`; `save` still accepts the per-layer hash lists.
+The old Python `client/manager.py` and Python `ChannelClient` API are removed.
+`query_prefetch` owns submission/revision/polling internally; `start_restore`
+returns a client-bound handle for `poll_restore` or `wait_restore(timeout=...)`.
+Native calls release the GIL, including eventfd waits. A wait timeout never
+releases GPU destinations or cancels an already submitted copy. Socket selection
+stays in `orbitkv.client.connection`; engine page allocation stays in the adapters.
 
 ## Installation
 

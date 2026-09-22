@@ -122,10 +122,11 @@ def test_restore_window_never_acknowledges_a_partially_completed_batch():
 def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
     channel_server, layer_count, page_count, page_first
 ):
+    from orbitkv import BlockHashes
+
     torch = pytest.importorskip("torch")
-    from orbitkv import QueryLoading, QueryReady
+    from orbitkv import CacheManagerClient, QueryLoading, QueryReady
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
-    from orbitkv.client.manager import CacheManagerClient
     from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
 
     if not torch.cuda.is_available():
@@ -203,9 +204,11 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             abandoned = CacheManagerClient(channel_server.bootstrap_socket)
             survivor = CacheManagerClient(channel_server.bootstrap_socket)
             try:
-                outcome = abandoned.query_prefetch(instance, hashes, "abandoned")
+                outcome = abandoned.query_prefetch(instance, BlockHashes(hashes), "abandoned")
                 assert isinstance(outcome, QueryLoading)
-                surviving_result = survivor.query_prefetch(instance, hashes, "abandoned")
+                surviving_result = survivor.query_prefetch(
+                    instance, BlockHashes(hashes), "abandoned"
+                )
                 if page_first:
                     abandoned.close()
                 else:
@@ -214,7 +217,9 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
                 deadline = time.monotonic() + 5
                 while isinstance(surviving_result, QueryLoading):
                     assert time.monotonic() < deadline
-                    surviving_result = survivor.query_prefetch(instance, hashes, "abandoned")
+                    surviving_result = survivor.query_prefetch(
+                        instance, BlockHashes(hashes), "abandoned"
+                    )
                     time.sleep(0.001)
                 assert surviving_result.num_hit_blocks == page_count
                 survivor.release(surviving_result.lease)
@@ -245,7 +250,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             # ready lease/budget. The later demand must revalidate and lease them.
             before = fetch_orbitkv_metrics(channel_server.http_port)
             warm_hashes = hashes[:4]
-            assert client.warm_prefix(instance, warm_hashes, "queued-warmup")
+            assert client.warm_prefix(instance, BlockHashes(warm_hashes), "queued-warmup")
             deadline = time.monotonic() + 5
             while True:
                 observed = fetch_orbitkv_metrics(channel_server.http_port)
@@ -258,7 +263,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
                     break
                 assert time.monotonic() < deadline, observed
                 time.sleep(0.01)
-            demanded = client.query_prefetch(instance, warm_hashes, "queued-warmup")
+            demanded = client.query_prefetch(instance, BlockHashes(warm_hashes), "queued-warmup")
             assert isinstance(demanded, QueryReady)
             assert demanded.num_hit_blocks == len(warm_hashes)
             assert demanded.lease
@@ -284,7 +289,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             assert discarded["orbitkv_warmup_unused_bytes_total"] == warm_bytes
             assert discarded["orbitkv_warmup_pending_bytes"] == 0
             assert discarded["orbitkv_warmup_wait_byte_seconds_total"] > 0
-            assert client.warm_prefix(instance, warm_hashes, "next-warmup")
+            assert client.warm_prefix(instance, BlockHashes(warm_hashes), "next-warmup")
             deadline = time.monotonic() + 5
             while True:
                 observed = fetch_orbitkv_metrics(channel_server.http_port)
@@ -316,7 +321,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             rid = f"sglang-poison-{start}"
             deadline = time.monotonic() + 30
             while True:
-                lookup = client.query_prefetch(instance, hashes[start:end], rid)
+                lookup = client.query_prefetch(instance, BlockHashes(hashes[start:end]), rid)
                 if isinstance(lookup, QueryReady) or time.monotonic() >= deadline:
                     break
                 time.sleep(0.001)

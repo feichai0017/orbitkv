@@ -215,19 +215,20 @@ impl PendingQueries {
                 }
             };
         }
-        let request = task.request.clone();
+        let request = &task.request;
+        let warmup = request.warmup;
         let session = self
             .sessions
             .get(&token)
             .ok_or_else(|| invalid("unknown query session"))?;
         let mut permits = Vec::with_capacity(4);
         let mut capacities = vec![Arc::clone(&session.capacity), Arc::clone(&self.capacity)];
-        if request.warmup {
+        if warmup {
             capacities.extend([Arc::clone(&session.warming), Arc::clone(&self.warming)]);
         }
         for capacity in capacities {
             let Ok(permit) = capacity.try_acquire_owned() else {
-                if request.warmup {
+                if warmup {
                     self.pending.remove(&key);
                     return Ok(Some(QueryReply {
                         outcome: Ok(QueryOutcome::Busy),
@@ -244,17 +245,17 @@ impl PendingQueries {
             &request.instance_id,
             request.group_id,
             request.block_hashes.len(),
-            request.warmup,
+            warmup,
         );
         let reservation = match admission {
-            Ok(QueryAdmission::Busy) if !request.warmup => return Ok(None),
+            Ok(QueryAdmission::Busy) if !warmup => return Ok(None),
             Ok(QueryAdmission::Admitted(reservation)) => reservation,
             result => {
                 self.pending.remove(&key);
                 return Ok(Some(QueryReply {
                     outcome: match result {
                         Err(error) => Err(error),
-                        Ok(QueryAdmission::Busy | QueryAdmission::TooLarge) if request.warmup => {
+                        Ok(QueryAdmission::Busy | QueryAdmission::TooLarge) if warmup => {
                             Ok(QueryOutcome::Busy)
                         }
                         Ok(QueryAdmission::TooLarge) => Ok(QueryOutcome::Ready {
@@ -270,6 +271,7 @@ impl PendingQueries {
                 }));
             }
         };
+        let request = request.clone();
         let input = QueryInput {
             instance_id: request.instance_id,
             block_hashes: request.block_hashes,

@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 
+from orbitkv import RestoreHandle
 from orbitkv.client.gpu import serialize_gpu_buffer
-from orbitkv.client.manager import RestoreHandle
 from orbitkv.logging_utils import get_connector_logger, trace_transfer
 from orbitkv.vllm.config import ConnectorContext, parse_env_int
 from orbitkv.vllm.layout import CacheGroupLayout

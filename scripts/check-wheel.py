@@ -134,7 +134,7 @@ def check_install(path: Path, variant: str) -> None:
         "import orbitkv.vllm.plugin; import orbitkv.sglang.plugin; "
         "from orbitkv.client import CacheManagerClient; "
         f"assert orbitkv.__version__ == metadata.version({distribution!r}); "
-        "assert orbitkv.ChannelProbeClient and orbitkv.ChannelClient and CacheManagerClient"
+        "assert orbitkv.ChannelProbeClient and orbitkv.CacheManagerClient is CacheManagerClient"
     )
     with tempfile.TemporaryDirectory(prefix="orbitkv-wheel-") as directory:
         root = Path(directory)

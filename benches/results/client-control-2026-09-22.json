@@ -1,0 +1,317 @@
+{
+  "date": "2026-09-22",
+  "baseline_commit": "31fa1f6b",
+  "scope": "Admitted query polling while a ready lease occupies the instance byte budget; no timed storage I/O or model compute",
+  "baseline_method": "Archived main Python manager.py with its pre-change native extension; the same harness loop with Python lists instead of native BlockHashes",
+  "runs": [
+    {
+      "case": "baseline",
+      "description": "Python client from main 31fa1f6b; Manager before deferred query-copy change",
+      "label": "python-client-31fa1f6b",
+      "python": "3.11.2 (main, Apr  8 2026, 01:58:00) [GCC 12.2.0]",
+      "gpu": "NVIDIA H20",
+      "command": [
+        "/workspace/orbitkv/target/release/orbitkv-cache-manager",
+        "--addr",
+        "127.0.0.1:10063",
+        "--http-addr",
+        "127.0.0.1:10079",
+        "--pool-size",
+        "256mb",
+        "--query-budget",
+        "67108864",
+        "--query-instance-budget",
+        "67108864"
+      ],
+      "samples": [
+        {
+          "repeat": 0,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 107.168,
+          "p95_us": 109.104,
+          "mean_us": 105.259788,
+          "thread_cpu_us": 105.512701
+        },
+        {
+          "repeat": 0,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 109.671,
+          "p95_us": 115.958,
+          "mean_us": 109.72073,
+          "thread_cpu_us": 109.959442
+        },
+        {
+          "repeat": 0,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 123.531,
+          "p95_us": 132.688,
+          "mean_us": 124.341386,
+          "thread_cpu_us": 124.62961299999999
+        },
+        {
+          "repeat": 1,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 107.1005,
+          "p95_us": 108.946,
+          "mean_us": 105.247565,
+          "thread_cpu_us": 105.478549
+        },
+        {
+          "repeat": 1,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 109.5695,
+          "p95_us": 111.54,
+          "mean_us": 109.195455,
+          "thread_cpu_us": 109.438949
+        },
+        {
+          "repeat": 1,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 123.5005,
+          "p95_us": 133.754,
+          "mean_us": 125.149057,
+          "thread_cpu_us": 125.40548600000001
+        },
+        {
+          "repeat": 2,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 107.122,
+          "p95_us": 109.068,
+          "mean_us": 105.41318,
+          "thread_cpu_us": 105.636516
+        },
+        {
+          "repeat": 2,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 109.902,
+          "p95_us": 117.776,
+          "mean_us": 110.11695,
+          "thread_cpu_us": 110.356774
+        },
+        {
+          "repeat": 2,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 122.9625,
+          "p95_us": 130.976,
+          "mean_us": 123.176008,
+          "thread_cpu_us": 123.444825
+        }
+      ]
+    },
+    {
+      "case": "final",
+      "description": "Rust client with immutable batches; Manager copies read inputs after byte admission",
+      "label": "rust-client-and-manager",
+      "python": "3.11.2 (main, Apr  8 2026, 01:58:00) [GCC 12.2.0]",
+      "gpu": "NVIDIA H20",
+      "command": [
+        "/workspace/orbitkv/target/release/orbitkv-cache-manager",
+        "--addr",
+        "127.0.0.1:25890",
+        "--http-addr",
+        "127.0.0.1:21663",
+        "--pool-size",
+        "256mb",
+        "--query-budget",
+        "67108864",
+        "--query-instance-budget",
+        "67108864"
+      ],
+      "samples": [
+        {
+          "repeat": 0,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 106.34049999999999,
+          "p95_us": 107.958,
+          "mean_us": 104.990173,
+          "thread_cpu_us": 105.305695
+        },
+        {
+          "repeat": 0,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 106.3435,
+          "p95_us": 107.814,
+          "mean_us": 104.852366,
+          "thread_cpu_us": 105.139649
+        },
+        {
+          "repeat": 0,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 106.4085,
+          "p95_us": 109.067,
+          "mean_us": 105.321107,
+          "thread_cpu_us": 105.614992
+        },
+        {
+          "repeat": 1,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 106.3235,
+          "p95_us": 107.722,
+          "mean_us": 104.685206,
+          "thread_cpu_us": 104.96950199999999
+        },
+        {
+          "repeat": 1,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 106.3825,
+          "p95_us": 107.839,
+          "mean_us": 104.917898,
+          "thread_cpu_us": 105.20673699999999
+        },
+        {
+          "repeat": 1,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 106.3825,
+          "p95_us": 107.9,
+          "mean_us": 104.86605,
+          "thread_cpu_us": 105.146625
+        },
+        {
+          "repeat": 2,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 106.408,
+          "p95_us": 108.159,
+          "mean_us": 105.094951,
+          "thread_cpu_us": 105.37812699999999
+        },
+        {
+          "repeat": 2,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 106.386,
+          "p95_us": 108.004,
+          "mean_us": 104.759136,
+          "thread_cpu_us": 105.045468
+        },
+        {
+          "repeat": 2,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 106.3885,
+          "p95_us": 108.448,
+          "mean_us": 105.286686,
+          "thread_cpu_us": 105.579127
+        }
+      ]
+    },
+    {
+      "case": "manager_control",
+      "description": "Archived Python client against the final Manager",
+      "label": "python-client-new-manager",
+      "python": "3.11.2 (main, Apr  8 2026, 01:58:00) [GCC 12.2.0]",
+      "gpu": "NVIDIA H20",
+      "command": [
+        "/workspace/orbitkv/target/release/orbitkv-cache-manager",
+        "--addr",
+        "127.0.0.1:20964",
+        "--http-addr",
+        "127.0.0.1:22589",
+        "--pool-size",
+        "256mb",
+        "--query-budget",
+        "67108864",
+        "--query-instance-budget",
+        "67108864"
+      ],
+      "samples": [
+        {
+          "repeat": 0,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 106.351,
+          "p95_us": 108.702,
+          "mean_us": 105.295276,
+          "thread_cpu_us": 105.53328599999999
+        },
+        {
+          "repeat": 0,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 106.31649999999999,
+          "p95_us": 108.415,
+          "mean_us": 104.959423,
+          "thread_cpu_us": 105.191778
+        },
+        {
+          "repeat": 0,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 106.33449999999999,
+          "p95_us": 108.282,
+          "mean_us": 105.126406,
+          "thread_cpu_us": 105.388095
+        },
+        {
+          "repeat": 1,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 106.34100000000001,
+          "p95_us": 108.96,
+          "mean_us": 105.183421,
+          "thread_cpu_us": 105.41331100000001
+        },
+        {
+          "repeat": 1,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 106.332,
+          "p95_us": 108.356,
+          "mean_us": 104.967769,
+          "thread_cpu_us": 105.19033
+        },
+        {
+          "repeat": 1,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 106.291,
+          "p95_us": 108.558,
+          "mean_us": 105.368287,
+          "thread_cpu_us": 105.631197
+        },
+        {
+          "repeat": 2,
+          "hashes": 64,
+          "calls": 1000,
+          "p50_us": 106.3355,
+          "p95_us": 108.132,
+          "mean_us": 105.075656,
+          "thread_cpu_us": 105.306926
+        },
+        {
+          "repeat": 2,
+          "hashes": 256,
+          "calls": 1000,
+          "p50_us": 106.301,
+          "p95_us": 108.091,
+          "mean_us": 105.017809,
+          "thread_cpu_us": 105.251524
+        },
+        {
+          "repeat": 2,
+          "hashes": 1024,
+          "calls": 1000,
+          "p50_us": 106.346,
+          "p95_us": 108.354,
+          "mean_us": 105.430878,
+          "thread_cpu_us": 105.679734
+        }
+      ]
+    }
+  ]
+}

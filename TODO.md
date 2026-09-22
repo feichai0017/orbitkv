@@ -87,7 +87,7 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [ ] Define framework-neutral region registration RPCs.
 - [x] Pass the descriptor-arena memfd and notification eventfd over UDS.
 - [x] Add bounded restore operations that replace per-load `PyLoadState`
-  for `ChannelClient`.
+  for the native Cache Manager client.
 - [x] Implement direct SGLang full-attention GPU restore through the process
   channel to Cache Manager.
 - [x] Switch vLLM Query/Publish/Restore/Release to the Cache Manager client.
@@ -133,6 +133,14 @@ numbers below group work areas rather than imposing a strict serial schedule.
   and drain late results after cancel/disconnect without another poll (P1 foundation).
 - [x] Add explicit query operation/revision tickets and global/per-instance
   byte admission retained through result leases and GPU completion.
+- [x] Move shared client query/warming ownership, independent publish sessions
+  and restore waiting into Rust. Remove the Python manager facade and raw
+  Python ChannelClient API; reuse immutable Rust hash batches and shared prefix
+  views on repeated polls and bind restore handles to their issuing client.
+  Keep engine allocation in Python. Avoid cloning pending Manager query inputs
+  until byte admission succeeds.
+- [ ] Profile remaining adapter hashing, per-page metadata and PyO3 conversion
+  under matched workloads before claiming a latency improvement from the Rust client.
 - [x] Share identical backing reads with independent cancellation and leases;
   make SSD read queue pressure wait for capacity.
 - [x] Record shared/mixed 1/4/8-request bursts on both engines with a 2 GiB

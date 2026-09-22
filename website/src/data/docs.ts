@@ -42,6 +42,7 @@ export const docGroups = [
       "Inspect metrics, reproduce measurements, and read their limits.",
     items: [
       { slug: "metrics", title: "Metrics & observability" },
+      { slug: "client-performance", title: "Client control overhead" },
       { slug: "single-node-performance", title: "Single-node comparisons" },
       { slug: "ssd-performance", title: "SSD recovery" },
       { slug: "concurrent-performance", title: "Concurrent query budgets" },

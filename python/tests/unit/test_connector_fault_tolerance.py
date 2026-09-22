@@ -13,7 +13,7 @@ install_connector_unit_stubs()
 
 from vllm.v1.kv_cache_interface import FullAttentionSpec  # noqa: E402
 
-from orbitkv.client.manager import RestoreStatus  # noqa: E402
+from orbitkv import RestoreStatus  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.metadata import LoadIntent, OrbitKVConnectorMetadata  # noqa: E402
 from orbitkv.vllm.worker import WorkerConnector  # noqa: E402

@@ -29,9 +29,8 @@ def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
-    from orbitkv import QueryReady
+    from orbitkv import CacheManagerClient, QueryReady
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
-    from orbitkv.client.manager import CacheManagerClient
 
     monkeypatch.setenv("MC_FORCE_TCP", "1")
     endpoint = f"http://127.0.0.1:{find_available_port()}"
@@ -143,9 +142,11 @@ def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
         assert ok, message
 
         def restore(request):
+            from orbitkv import BlockHashes
+
             deadline = time.monotonic() + 30
             while True:
-                result = clients[1].query_prefetch("consumer", hashes, request)
+                result = clients[1].query_prefetch("consumer", BlockHashes(hashes), request)
                 if isinstance(result, QueryReady) and result.num_hit_blocks == pages:
                     break
                 if isinstance(result, QueryReady) and result.lease:
