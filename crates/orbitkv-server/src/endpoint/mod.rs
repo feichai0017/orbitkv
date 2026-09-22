@@ -36,8 +36,14 @@ const MAX_RESTORE_OPERATIONS_PER_SESSION: usize = 1024;
 const MAX_RESTORE_ERROR_BYTES: usize = 4096;
 
 enum RestoreOperation {
-    Pending(tokio::sync::oneshot::Receiver<Result<(), EngineError>>),
-    Complete(Result<(), String>),
+    Pending {
+        receiver: tokio::sync::oneshot::Receiver<orbitkv_core::LoadOutcome>,
+        started: Instant,
+    },
+    Complete {
+        result: Result<(), String>,
+        completed_at: Instant,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -137,7 +143,7 @@ impl ProcessEndpoint {
                         queries.retain_sessions(&engine, |token| sessions.contains_key(&token));
                         next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
                     }
-                    advance_restore_operations(&sessions, &mut operations);
+                    advance_restore_operations(&sessions, &mut operations, session_epoch);
 
                     let mut request_shutdown = false;
                     match server.try_serve_deferred_for_epoch(session_epoch, |command, reply| {
@@ -302,24 +308,43 @@ fn dispatch(
 fn advance_restore_operations(
     sessions: &HashMap<u64, BootstrapSession>,
     operations: &mut HashMap<(u64, u64), RestoreOperation>,
+    epoch: u64,
 ) {
-    for ((token, _), operation) in operations.iter_mut() {
+    for ((token, id), operation) in operations.iter_mut() {
         #[cfg(feature = "test-hooks")]
         if orbitkv_core::test_faults::active("restore") {
             continue;
         }
-        let result = match operation {
-            RestoreOperation::Pending(receiver) => match receiver.try_recv() {
-                Ok(result) => Some(result.map_err(|error| truncate_error(error.to_string()))),
+        let completion = match operation {
+            RestoreOperation::Pending { receiver, started } => match receiver.try_recv() {
+                Ok(outcome) => Some((
+                    outcome
+                        .result
+                        .map_err(|error| truncate_error(error.to_string())),
+                    outcome.completed_at,
+                    *started,
+                )),
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
-                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                    Some(Err("restore completion channel closed".to_string()))
-                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => Some((
+                    Err("restore completion channel closed".to_string()),
+                    Instant::now(),
+                    *started,
+                )),
             },
-            RestoreOperation::Complete(_) => None,
+            RestoreOperation::Complete { .. } => None,
         };
-        if let Some(result) = result {
-            *operation = RestoreOperation::Complete(result);
+        if let Some((result, completed_at, started)) = completion {
+            crate::metric::timeline::record("restore_complete", || {
+                serde_json::json!({
+                    "restore_key": format!("manager:{epoch}:{id}"),
+                    "elapsed_us": completed_at.saturating_duration_since(started).as_micros() as u64,
+                    "success": result.is_ok(),
+                })
+            });
+            *operation = RestoreOperation::Complete {
+                result,
+                completed_at,
+            };
             #[cfg(feature = "test-hooks")]
             if orbitkv_core::test_faults::active("notification") {
                 continue;
@@ -329,6 +354,12 @@ fn advance_restore_operations(
             {
                 error!("Failed to notify local restore completion: {error}");
             }
+            crate::metric::timeline::record("restore_notification", || {
+                serde_json::json!({
+                    "restore_key": format!("manager:{epoch}:{id}"),
+                    "elapsed_us": completed_at.elapsed().as_micros() as u64,
+                })
+            });
         }
     }
 }
@@ -395,6 +426,7 @@ fn dispatch_restore(
                     block_ids_by_group: load.block_ids_by_group,
                 })
                 .collect();
+            let started = Instant::now();
             let receiver = match execute_restore(
                 engine,
                 RestoreInput {
@@ -410,7 +442,7 @@ fn dispatch_restore(
             };
             operations.insert(
                 (command.arg0, operation_id),
-                RestoreOperation::Pending(receiver),
+                RestoreOperation::Pending { receiver, started },
             );
             RestoreResponse {
                 operation_id,
@@ -420,17 +452,20 @@ fn dispatch_restore(
         }
         RestoreCommand::Poll { operation_id } => {
             match operations.get(&(command.arg0, operation_id)) {
-                Some(RestoreOperation::Pending(_)) => RestoreResponse {
+                Some(RestoreOperation::Pending { .. }) => RestoreResponse {
                     operation_id,
                     state: RestoreState::Pending,
                     message: String::new(),
                 },
-                Some(RestoreOperation::Complete(Ok(()))) => RestoreResponse {
+                Some(RestoreOperation::Complete { result: Ok(()), .. }) => RestoreResponse {
                     operation_id,
                     state: RestoreState::Succeeded,
                     message: String::new(),
                 },
-                Some(RestoreOperation::Complete(Err(message))) => {
+                Some(RestoreOperation::Complete {
+                    result: Err(message),
+                    ..
+                }) => {
                     let message = message.clone();
                     RestoreResponse {
                         operation_id,
@@ -460,8 +495,16 @@ fn dispatch_restore(
     {
         Ok(descriptor) => {
             response.descriptor = descriptor;
-            if let Some(key) = completed_operation {
-                operations.remove(&key);
+            if let Some(key) = completed_operation
+                && let Some(RestoreOperation::Complete { completed_at, .. }) =
+                    operations.remove(&key)
+            {
+                crate::metric::timeline::record("restore_delivered", || {
+                    serde_json::json!({
+                        "restore_key": format!("manager:{}:{}", command.session_epoch, key.1),
+                        "elapsed_us": completed_at.elapsed().as_micros() as u64,
+                    })
+                });
             }
         }
         Err(error) => return error_response(response, arena_error_status(&error), &error),

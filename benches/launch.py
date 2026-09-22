@@ -56,7 +56,10 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             [sysconfig.get_config_var("LIBDIR"), env.get("LD_LIBRARY_PATH", "")]
         )
         manager_command = [
-            str(ROOT / "python/orbitkv/orbitkv-cache-manager-py"),
+            env.get(
+                "ORBITKV_CACHE_MANAGER_BINARY",
+                str(ROOT / "python/orbitkv/orbitkv-cache-manager-py"),
+            ),
             "--addr",
             f"127.0.0.1:{manager_port}",
             "--http-addr",

@@ -288,6 +288,8 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                         "orbitkv_warmup_wait_byte_seconds_total_unused",
                         "orbitkv_load_duration_seconds_sum",
                         "orbitkv_load_duration_seconds_count",
+                        "orbitkv_ssd_prefetch_duration_seconds_sum",
+                        "orbitkv_ssd_prefetch_duration_seconds_count",
                         "orbitkv_save_duration_seconds_sum",
                         "orbitkv_save_duration_seconds_count",
                     )

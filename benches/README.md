@@ -45,6 +45,8 @@ Use `--output benches/results/runs/<name>` for an explicit empty directory. The
 harness owns the engine and the OrbitKV/LMCache process; do not start other GPU
 workloads during measurement. An OrbitKV source run uses the staged Cache Manager
 binary in `python/orbitkv/` and the Python adapters from this checkout.
+Set `ORBITKV_CACHE_MANAGER_BINARY` to select an explicitly built Manager.
+The extension and Manager must come from the same source revision and protocol.
 Listener ports, including SGLang's rendezvous port, are chosen outside Linux's
 outgoing ephemeral range to reduce startup conflicts during GPU initialization.
 
@@ -190,6 +192,19 @@ steady-state load, natural memory-pressure experiment, or tail-latency SLO.
 The [recorded concurrent baseline](../docs/concurrent-performance.md) includes
 the discovered SGLang admission regression and native/deterministic controls
 for output differences; ordinary greedy output is not assumed batch invariant.
+
+Add `--trace-transfers` to either engine's OrbitKV run for request-correlated
+discovery, host-read, restore and completion observations in `timeline.jsonl`
+and `timeline-summary.json`. Manager restore time includes dispatch and worker
+queueing; the load histogram separately measures the H2D worker task including
+stream synchronization. Completion signal and delivery intervals start at the
+GPU worker's terminal timestamp. A signal event records the notification attempt,
+whereas delivery records the terminal poll response. These are distinct from
+the engine's own restore-submit to GPU-ready interval. Shared restore batches
+are counted once, using the Manager epoch and operation ID. Dense ordinary
+queries combine candidate discovery and reading; missing separate discovery
+samples do not mean discovery takes zero time. No subtraction between process
+clocks is used, and these overlapping intervals must not be added to obtain TTFT.
 
 ## Report existing runs
 

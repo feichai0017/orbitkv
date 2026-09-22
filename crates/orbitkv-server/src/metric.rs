@@ -1,4 +1,5 @@
 pub(crate) mod hll;
+pub(crate) mod timeline;
 
 use crate::metric::hll::MultiWindowHllTracker;
 use opentelemetry::metrics::{Counter, Histogram, ObservableGauge};

@@ -19,6 +19,7 @@ mod backing;
 mod block;
 mod cache;
 mod gpu_worker;
+pub use gpu_worker::LoadOutcome;
 mod instance;
 mod internode;
 mod layout;
@@ -840,8 +841,8 @@ impl OrbitKVEngine {
 
     /// In-process variant of [`Self::batch_load_kv_blocks_multi_layer`]: instead
     /// of a caller-managed shared-memory `LoadState`, it returns a oneshot
-    /// receiver that resolves when the GPU worker finishes the load (`Ok`) or it
-    /// fails (`Err`). Poll it with `try_recv` to keep admission non-blocking, or
+    /// receiver carrying the result and terminal GPU-worker timestamp. Poll it
+    /// with `try_recv` to keep admission non-blocking, or
     /// await it. For in-process Rust embedders that register raw device pointers
     /// and have no second process to coordinate a `LoadState` with.
     ///
@@ -854,7 +855,7 @@ impl OrbitKVEngine {
         device_id: i32,
         layer_groups: &[Vec<&str>],
         loads: &[(QueryLeaseId, Vec<Vec<Option<usize>>>)],
-    ) -> Result<oneshot::Receiver<Result<(), EngineError>>, EngineError> {
+    ) -> Result<oneshot::Receiver<LoadOutcome>, EngineError> {
         let (reply, rx) = oneshot::channel();
         self.batch_load_kv_blocks_multi_layer_inner(
             instance_id,

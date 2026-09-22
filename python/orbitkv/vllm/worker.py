@@ -672,6 +672,8 @@ class WorkerConnector:
                 layer_groups,
                 loads,
             )
+            for req_id in request_ids:
+                trace_transfer("restore_link", req_id, engine="vllm", restore_key=restore.key)
         except Exception as error:
             self._ctx.state_manager.mark_unavailable(f"restore submit exception: {error}")
             # A lost acknowledgement can hide an accepted transfer. Releasing

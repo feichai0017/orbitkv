@@ -177,6 +177,28 @@ uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py \
 
 This is a targeted single-GPU vLLM scenario for warm-hit pressure. The checked profile uses `/data/models/Qwen3-4B`, `max_model_len=2048`, `gpu_memory_utilization=0.82`, `max_num_seqs=16`, and 12 concurrent repeated prompts; it has been validated on a 16GB GPU. Run it for cache warm-hit, pending lease release, scheduler/cache concurrency, or pressure-profile changes. It is not a default PR gate.
 
+## Model-serving fault stress
+
+The dense Qwen3 serving fault gate runs each engine in its own pinned environment:
+
+```bash
+ORBITKV_FAULT_TESTS=1 \
+ORBITKV_CACHE_MANAGER_BINARY=/path/to/test-hooks/orbitkv-cache-manager-py \
+../.venv/vllm-release/bin/python -m pytest -m stress \
+  tests/stress/test_recovery_faults.py -k vllm --model /workspace/models/qwen3-8b
+```
+
+Use the SGLang environment and `-k sglang` for the other engine. Build the
+Manager with `orbitkv-server/test-hooks`, retain that binary separately, then
+complete the ordinary native build before starting any GPU processes. Never
+restage Mooncake libraries while a Manager or engine is running. The gate uses
+private barriers, exact generated-output controls, real SSD reads, cancellation,
+lost completion signals and engine/Manager restart. Independent requests must
+progress while a cancelled read retains its buffers; reservations and submitted
+I/O must subsequently drain. Logs are retained separately for every process
+incarnation together with `fault-results.json`. This deterministic fault profile
+is separate from the ordinary performance benchmark.
+
 ## Release Smoke
 
 Release smoke validates the final installed package, not the source checkout. It should use a clean non-editable environment and record Python libdir, `PYTHONHOME`, `PYTHONPATH`, CUDA runtime path, package name/version, GPU, model path, and metrics excerpt.

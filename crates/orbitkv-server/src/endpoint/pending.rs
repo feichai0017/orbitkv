@@ -122,8 +122,14 @@ impl PendingQueries {
             .pending
             .get(&key)
             .is_some_and(|task| task.request.ticket == ticket)
+            && let Some(task) = self.pending.remove(&key)
         {
-            self.pending.remove(&key);
+            crate::metric::timeline::record("query_cancel", || {
+                serde_json::json!({
+                    "request_id": task.request.request_id,
+                    "operation_id": ticket.operation_id, "revision": ticket.revision,
+                })
+            });
         }
         engine.cancel_query(owner(token, ticket));
     }

@@ -8,21 +8,13 @@ use orbitkv_core::{
 use thiserror::Error;
 
 fn trace_query(stage: &str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
-    static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
-        std::env::var("ORBITKV_TRACE_TRANSFERS").is_ok_and(|value| value == "1")
+    crate::metric::timeline::record(stage, || {
+        serde_json::json!({
+            "request_id": input.request_id, "instance_id": input.instance_id,
+            "group_id": input.group_id, "warmup": input.warmup,
+            "elapsed_us": elapsed_us, "hit_blocks": hit_blocks,
+        })
     });
-    if *ENABLED {
-        log::info!(
-            "cache_timeline {}",
-            serde_json::json!({
-                "stage": stage, "request_id": input.request_id, "instance_id": input.instance_id,
-                "warmup": input.warmup, "elapsed_us": elapsed_us, "hit_blocks": hit_blocks,
-                "pid": std::process::id(),
-                "at_unix_ns": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default().as_nanos() as u64,
-            })
-        );
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -85,7 +77,7 @@ pub(crate) struct RestoreInput {
 pub(crate) fn execute_restore(
     engine: &OrbitKVEngine,
     input: RestoreInput,
-) -> Result<tokio::sync::oneshot::Receiver<Result<(), EngineError>>, EngineError> {
+) -> Result<tokio::sync::oneshot::Receiver<orbitkv_core::LoadOutcome>, EngineError> {
     if input.device_id < 0 {
         return Err(EngineError::InvalidArgument(format!(
             "device_id {} must be >= 0",
@@ -189,17 +181,23 @@ pub(crate) async fn execute_query(
     reservation: Option<QueryReservation>,
     owner: QueryOwner,
 ) -> Result<QueryOutcome, EngineError> {
+    let started = std::time::Instant::now();
     if input.discover {
         let hit_positions = engine
             .discover_candidates(&input.instance_id, input.group_id, &input.block_hashes)
             .await?;
+        trace_query(
+            "discovery_ready",
+            &input,
+            started.elapsed().as_micros() as u64,
+            hit_positions.len(),
+        );
         record_prefix_reuse(engine, hll_tracker, &input, hit_positions.len());
         return Ok(QueryOutcome::Candidates { hit_positions });
     }
     let reservation = reservation.ok_or_else(|| {
         EngineError::InvalidArgument("payload read requires a reservation".into())
     })?;
-    let started = std::time::Instant::now();
     trace_query("read_start", &input, 0, 0);
     if input.request_id.is_empty() {
         return Err(EngineError::InvalidArgument(
@@ -218,6 +216,12 @@ pub(crate) async fn execute_query(
             .await?;
         return {
             let QueryResult { blocks, .. } = status;
+            trace_query(
+                "host_ready",
+                &input,
+                started.elapsed().as_micros() as u64,
+                blocks.len(),
+            );
             let complete = blocks.len() == input.block_hashes.len();
             let hit_positions: Vec<u32> = (0..blocks.len() as u32).collect();
             let lease = if complete && !blocks.is_empty() {
@@ -253,6 +257,12 @@ pub(crate) async fn execute_query(
                 blocks.push(block);
             }
         }
+        trace_query(
+            "host_ready",
+            &input,
+            started.elapsed().as_micros() as u64,
+            blocks.len(),
+        );
         let lease = if blocks.is_empty() {
             Vec::new()
         } else {

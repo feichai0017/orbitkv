@@ -136,6 +136,10 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
                 "orbitkv_query_budget_waits_total",
                 "orbitkv_query_budget_bypasses_total",
                 "orbitkv_query_coalesced_reads_total",
+                "orbitkv_load_duration_seconds_sum",
+                "orbitkv_load_duration_seconds_count",
+                "orbitkv_ssd_prefetch_duration_seconds_sum",
+                "orbitkv_ssd_prefetch_duration_seconds_count",
             )
         }
         result.append(

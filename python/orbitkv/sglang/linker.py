@@ -466,6 +466,12 @@ class OrbitKVLinker(UnifiedCacheLinker):
                                     ],
                                 )
                             )
+                            trace_transfer(
+                                "restore_link",
+                                load.rid,
+                                engine="sglang",
+                                restore_key=restores[-1].key,
+                            )
                         for load, restore in zip(
                             pending[offset : offset + self._RESTORE_WINDOW], restores, strict=True
                         ):
