@@ -53,6 +53,10 @@ def hybrid(monkeypatch):
             *(_group(f"state.{index}", _mamba()) for index in range(1, groups)),
         )
         scheduler = SchedulerConnector(context, clients=current, kv_cache_config=config)
+        validator.required_ranges.return_value = [
+            (0, 64, 96),
+            *((index + 1, 80, 96) for index in range(groups)),
+        ]
         schedulers.append(scheduler)
         factory.assert_called_with(
             "model/layout",
@@ -102,6 +106,7 @@ def test_absolute_evidence_clamp_and_handoff_keep_the_original_leases(hybrid):
     assert scheduler.get_num_new_matched_tokens(req, 64) == (32, True)
     assert client.query_prefetch.call_count == 2
     scheduler.update_state_after_alloc(req, allocations(), 32)
+    validator.required_ranges.assert_called_once_with("model/layout", 64, 96)
     intent = scheduler._pending_load_intents["r"]
     assert intent.block_ids_by_group == ((None, 25, None, None), (44, 45, None, None))
     assert intent.recurrent_hold.checkpoint == 1

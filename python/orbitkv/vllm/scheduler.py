@@ -1115,12 +1115,25 @@ class SchedulerConnector:
                 f"load block mismatch: leased={leased_blocks} count={num_load_blocks}"
             )
         padding = (None,) * (leased_blocks - num_load_blocks)
+        required = None
+        if self._recovery is not None:
+            vbs = self._ctx.virtual_block_size
+            required = {
+                group: (start // vbs, end // vbs)
+                for group, start, end in self._recovery.required_ranges(
+                    self._ctx.namespace, start_block_idx * vbs, end_block_idx * vbs
+                )
+            }
 
         result: list[tuple[int | None, ...]] = []
         for group_index, block_ids in enumerate(block_ids_by_group):
             destinations: tuple[int | None, ...] = block_ids[start_block_idx:end_block_idx]
-            if group_index in self._cache_groups.recurrent_group_indices and destinations:
-                destinations = (None,) * (len(destinations) - 1) + (destinations[-1],)
+            if required is not None:
+                begin, end = required[self._cache_groups.storage_group_ids[group_index]]
+                destinations = tuple(
+                    block_id if begin <= position < end else None
+                    for position, block_id in enumerate(destinations, start=start_block_idx)
+                )
             result.append(destinations + padding)
         return tuple(result)
 

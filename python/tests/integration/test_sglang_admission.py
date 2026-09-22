@@ -178,6 +178,78 @@ def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker)
     assert not linker._lookups
 
 
+@pytest.mark.parametrize("kind", ["recurrent", "window"])
+def test_hybrid_query_limits_auxiliary_reads_and_retains_earlier_boundaries(linker, kind):
+    from sglang.srt.mem_cache.hicache_storage import PoolName
+
+    from orbitkv import QueryLoading, QueryReady, RecoveryContract
+
+    auxiliary = PoolName.MAMBA if kind == "recurrent" else PoolName.SWA
+    window = 128 if kind == "window" else 0
+    # Registration order must not allow auxiliary reads to precede attention.
+    linker.layout.pools = {
+        auxiliary: SimpleNamespace(group_id=1, kind=kind, window=window),
+        **linker.layout.pools,
+    }
+    linker.recovery = RecoveryContract(
+        linker.namespace, 64, [(0, "attention", 0), (1, kind, window)]
+    )
+    linker._origins["req"] = 64
+    keys = ["a", "b", "c", "d"]
+    transfers = [SimpleNamespace(name=name, keys=keys[-1:]) for name in linker.layout.pools]
+    transfers[-1].keys = keys
+    linker.client.query_prefetch.side_effect = [
+        QueryLoading(),
+        QueryReady(3, b"attention"),
+        QueryLoading(),
+        QueryReady(2, b"state", [0, 1]),
+    ]
+    assert linker.lookup("req", transfers) == []
+    assert linker.client.query_prefetch.call_count == 1
+    assert linker.lookup("req", transfers) == []
+    linker.client.release.assert_not_called()
+    assert linker.lookup("req", transfers) == [1, 2]
+    assert linker._lookups["req"].boundaries == (128, 192)
+    calls = linker.client.query_prefetch.call_args_list
+    assert [entry.kwargs["group_id"] for entry in calls] == [0, 0, 1, 1]
+    assert calls[2].args[1] == calls[3].args[1] == linker._hashes(keys[:3])
+    linker.cancel_query("req")
+    assert sorted(entry.args[0] for entry in linker.client.release.call_args_list) == [
+        b"attention",
+        b"state",
+    ]
+
+    linker.client.reset_mock()
+    linker.client.query_prefetch.side_effect = [QueryReady(0, b"")]
+    assert linker.lookup("req", transfers) == []
+    assert linker.client.query_prefetch.call_count == 1
+    assert not linker._lookups and not linker._pending_queries
+
+
+def test_invalid_hybrid_evidence_releases_all_groups(linker):
+    from sglang.srt.mem_cache.hicache_storage import PoolName
+
+    from orbitkv import QueryReady, RecoveryContract
+
+    linker.layout.pools[PoolName.MAMBA] = SimpleNamespace(group_id=1, kind="recurrent", window=0)
+    linker.recovery = RecoveryContract(
+        linker.namespace, 64, [(0, "attention", 0), (1, "recurrent", 0)]
+    )
+    linker.client.query_prefetch.side_effect = [
+        QueryReady(1, b"attention"),
+        QueryReady(1, b"outside-attention", [1]),
+    ]
+    with pytest.raises(ValueError, match="page ends"):
+        linker.lookup(
+            "req", [SimpleNamespace(name=name, keys=["a", "b"]) for name in linker.layout.pools]
+        )
+    assert not linker._lookups and not linker._pending_queries
+    assert sorted(entry.args[0] for entry in linker.client.release.call_args_list) == [
+        b"attention",
+        b"outside-attention",
+    ]
+
+
 def test_changed_keys_cancel_old_query_and_deadline_stops_restarting_io(linker):
     from orbitkv import QueryLoading
 

@@ -48,6 +48,23 @@ impl PyRecoveryContract {
         Ok(Self { contract })
     }
 
+    fn required_ranges(
+        &self,
+        namespace: String,
+        start: u64,
+        end: u64,
+    ) -> PyResult<Vec<(u32, u64, u64)>> {
+        self.contract
+            .required_ranges(&namespace, TokenRange { start, end })
+            .map(|groups| {
+                groups
+                    .into_iter()
+                    .map(|(group, span)| (group, span.start, span.end))
+                    .collect()
+            })
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
+
     fn restorable_boundaries(
         &self,
         namespace: String,

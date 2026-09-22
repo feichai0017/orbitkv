@@ -57,11 +57,14 @@ class QueryReady:
     ) -> None: ...
 
 class RecoveryContract:
-    """Compile registered state groups and validate leased token coverage."""
+    """Compile declared groups into page demand and validate leased coverage."""
 
     def __init__(
         self, namespace: str, page_tokens: int, groups: list[tuple[int, str, int]]
     ) -> None: ...
+    def required_ranges(self, namespace: str, start: int, end: int) -> list[tuple[int, int, int]]:
+        """Group/start/end demand from a valid HBM origin; does not promise hits."""
+        ...
     def restorable_boundaries(
         self, namespace: str, start: int, end: int, groups: list[tuple[int, list[int]]]
     ) -> list[int]: ...

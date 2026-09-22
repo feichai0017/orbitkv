@@ -123,6 +123,9 @@ def test_hma_accepts_different_allocator_block_counts():
 
 def test_hma_loads_only_final_recurrent_state():
     scheduler = _make_recurrent_scheduler()
+    scheduler._cache_groups.storage_group_ids = (0, 1)
+    scheduler._recovery = MagicMock()
+    scheduler._recovery.required_ranges.return_value = [(0, 16, 48), (1, 32, 48)]
     groups = (
         (11, 12, 13, 14),
         (21, 22, 23, 24, 25, 26, 27, 28, 29, 30),
@@ -132,6 +135,7 @@ def test_hma_loads_only_final_recurrent_state():
         (12, 13),
         (None, 23),
     )
+    scheduler._recovery.required_ranges.assert_called_once_with(scheduler._ctx.namespace, 16, 48)
 
 
 # ---------------------------------------------------------------------------

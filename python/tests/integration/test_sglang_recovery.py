@@ -26,6 +26,7 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
     from orbitkv.sglang.layout import GpuLayout, GpuPool
     from orbitkv.sglang.linker import OrbitKVLinker
     from orbitkv.sglang.recovery import RecoveryLinkerWrapper
+    from tests.support.metrics import fetch_orbitkv_metrics
 
     page_size = 4
     kv = torch.arange(64 * 128, dtype=torch.float32, device="cuda").reshape(64, 128)
@@ -105,9 +106,23 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
                 assert time.monotonic() < deadline
                 time.sleep(0.01)
             assert linker.pop_completed_offload()
+        # Seed a group left without attention, as independent tier eviction can
+        # produce. The SGLang offload callback itself publishes complete groups.
+        orphan = "prefix-without-attention"
+        orphan_pool = layout.pools[auxiliary]
+        orphan_blocks = orphan_pool.block_ids(
+            source if kind == "recurrent" else source[-page_size:], 1
+        )
+        torch.cuda.synchronize()
+        saved, message = linker.client.save(
+            linker.instance_id,
+            0,
+            0,
+            linker.device_id,
+            [(layer, orphan_blocks, linker._hashes([orphan])) for layer in orphan_pool.layer_names],
+        )
+        assert saved, message
         if channel_server.ssd_cache_path is not None:
-            from tests.support.metrics import fetch_orbitkv_metrics
-
             while True:
                 metrics = fetch_orbitkv_metrics(channel_server.http_port)
                 if metrics.get("orbitkv_ssd_write_bytes_total", 0) and not any(
@@ -127,22 +142,28 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             response.raise_for_status()
             assert response.json()["evicted_blocks"] > 0
 
-        transfers = [PoolTransfer(name=name, keys=keys) for name in layout.pools]
+        transfers = [PoolTransfer(name=name, keys=[*keys, orphan]) for name in layout.pools]
         linker._origins["restore"] = 64
         while not (boundaries := linker.lookup("restore", transfers)):
             assert time.monotonic() < deadline
             time.sleep(0.01)
         # Attention pages 1..4 exist; only boundary 4 has complete auxiliary state.
         assert boundaries == [4]
-        linker._load_boundaries["restore"] = (80, {})
+        held = linker._lookups["restore"].groups[auxiliary]
+        assert held.hit_positions == ([3] if kind == "recurrent" else [2, 3])
+        linker._load_boundaries["restore"] = (80, {PoolName.KV: {keys[0]}})
         kv[32:48].fill_(-1)
+        # The engine may retain a page populated after lookup and before load.
+        kv[32:36].copy_(expected[0][4:8])
         conv[target] = -1
         temporal[target] = -1
         assert linker.load(
             "restore",
             [
                 PoolTransfer(
-                    name=PoolName.KV, keys=keys, device_indices=torch.arange(32, 48, device="cuda")
+                    name=PoolName.KV,
+                    keys=keys[1:],
+                    device_indices=torch.arange(36, 48, device="cuda"),
                 ),
                 PoolTransfer(
                     name=auxiliary,
@@ -158,14 +179,33 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
         assert torch.equal(kv[32:48], expected[0][4:20])
         assert torch.equal(conv[target], expected[1][source])
         assert torch.equal(temporal[target], expected[2][source])
+        metrics = fetch_orbitkv_metrics(channel_server.http_port)
+        payload = 3 * sum(layout.pools[PoolName.KV].block_bytes) + len(state_keys) * sum(
+            layout.pools[auxiliary].block_bytes
+        )
+        assert metrics.get("orbitkv_load_bytes_total", 0) == payload
+        if channel_server.ssd_cache_path is not None:
+            # Stored blocks pad each registered tensor to the 512-byte slot alignment.
+            stored = 4 * sum(
+                (size + 511) // 512 * 512 for size in layout.pools[PoolName.KV].block_bytes
+            )
+            stored += len(state_keys) * sum(
+                (size + 511) // 512 * 512 for size in layout.pools[auxiliary].block_bytes
+            )
+            assert metrics.get("orbitkv_ssd_prefetch_bytes_total", 0) == stored
 
         for rid, boundary, omit_state in [
             ("wrong-boundary", 76, False),
             ("missing-state", 80, True),
+            ("overlapping-state", 80, False),
+            ("unneeded-state", 80, False),
         ]:
             linker._origins[rid] = 64
             assert linker.lookup(rid, transfers) == [4]
-            linker._load_boundaries[rid] = (boundary, {})
+            linker._load_boundaries[rid] = (
+                boundary,
+                {PoolName.KV: {keys[0]}} if rid == "overlapping-state" else {},
+            )
             selected = [
                 PoolTransfer(
                     name=PoolName.KV, keys=keys, device_indices=torch.arange(32, 48, device="cuda")
@@ -175,12 +215,13 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
                 selected.append(
                     PoolTransfer(
                         name=auxiliary,
-                        keys=state_keys,
+                        keys=[keys[0], *state_keys[1:]] if rid == "unneeded-state" else state_keys,
                         device_indices=target,
                     )
                 )
             with pytest.raises(
-                ValueError, match="unproved recovery boundary|do not cover the recovery plan"
+                ValueError,
+                match="unproved recovery boundary|do not cover the recovery plan|outside its required",
             ):
                 linker.load(rid, selected)
             assert rid not in linker._queued_loads

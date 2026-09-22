@@ -82,13 +82,19 @@ Runs tests that start or require a local `orbitkv-cache-manager` but do not run 
   restore with GPU byte verification, local lease release, and shutdown across
   a real process boundary;
 - `test_session_watcher.py`
+- `test_state_demand.py` checks the native public demand API, absolute ranges,
+  identity/alignment rejection and the distinction between required state and
+  available state. Run this for recovery-contract or binding changes; it needs
+  the extension but no engine, Manager or CUDA runtime.
 - `test_sglang_direct_transfer.py` writes SGLang-shaped GPU pages through CUDA
   IPC, clears their source slots, and verifies a byte-exact restore into new
   slots. Run this when changing page registration or GPU transfer layout.
 - `test_sglang_recovery.py` joins sparse auxiliary state with a full prefix,
   restores poisoned Full + SWA and Full + recurrent/conv buffers from DRAM and
-  SSD, rejects incomplete plans and completes published destinations before
-  releasing an aborted request. Run this for recovery-rule or hybrid-layout changes.
+  SSD, checks copied-plus-retained coverage, and verifies auxiliary state beyond
+  the attention prefix is not fetched. It rejects incomplete plans and completes
+  published destinations before releasing an aborted request. Run this for
+  recovery-rule or hybrid-layout changes.
 - `test_vllm_recovery.py` checks vLLM's absolute-span evidence against the real
   Rust validator and restores attention/conv/temporal buffers through the real
   scheduler/worker adapters from DRAM and forced SSD. Run this for vLLM hybrid

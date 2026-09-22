@@ -1,8 +1,9 @@
 # Compiled hybrid recovery
 
 OrbitKV's SGLang and vLLM hybrid adapters use the same compiled recovery
-contract. Every hybrid lookup must supply enough leased state to resume at
-one legal token boundary. An attention hit alone is insufficient.
+contract for page demand and leased evidence. Every hybrid lookup must supply
+enough state to resume at one legal token boundary. An attention hit alone is
+insufficient.
 
 ## Rules and runtime ownership
 
@@ -12,25 +13,62 @@ one legal token boundary. An attention hit alone is insufficient.
 | Sliding window | Complete trailing window through t, rounded up to pages | Independent SWA K/V pages |
 | Recurrent / convolution | Checkpoint exactly at t | All conv and temporal tensors in one sealed group |
 
-`orbitkv-state::RecoveryContract` validates declared groups at adapter setup. Each
-adapter derives the absolute query origin from the engine's valid HBM prefix and
-converts each leased hit position into an absolute token end. The validator
-rejects mismatched namespaces, malformed coverage, unknown groups and gaps.
-It returns every legal boundary: ranks intersect these sets, since taking the
-minimum of their largest checkpoints could select a checkpoint missing on one rank.
+`orbitkv-state::RecoveryContract::compile` normalizes declared groups at adapter
+setup: a prefix needs the whole queried tail, a window needs
+`ceil(window / page_size)` pages capped by that tail, and a checkpoint needs only
+its final page. The Python `required_ranges(namespace, start, end)` method
+returns `list[(group, start, end)]`: absolute, half-open, page-aligned intervals
+for each group, with `end` the chosen boundary. Complete valid engine state at
+the HBM prefix origin `start` is a prerequisite; the contract does not establish
+it. An empty span returns `(group, start, start)` for every registered group
+and creates no new restorable boundary.
+
+The same normalized requirements drive `restorable_boundaries`. Each adapter
+converts leased hit positions to absolute token ends; validation rejects
+mismatched namespaces, malformed coverage, unknown groups and gaps. It returns
+every legal boundary: ranks intersect these sets, since taking the minimum of
+their largest checkpoints could select a checkpoint missing on one rank.
+Required ranges describe demand; live leased evidence establishes availability.
+
+### Known-range example
+
+With 64-token pages, a valid HBM origin at 128 and a selected boundary at 512:
+
+| Declared layout | `required_ranges(namespace, 128, 512)` |
+| --- | --- |
+| Full attention (group 0) + 100-token SWA (group 1) | `[(0, 128, 512), (1, 384, 512)]` |
+| Full attention (group 0) + recurrent/conv (group 1) | `[(0, 128, 512), (1, 448, 512)]` |
+
+These are separate supported layouts. The window rounds up to two pages; for
+the shorter tail `[128, 192)` it needs only `[128, 192)`. The checkpoint requires
+the page ending at the selected boundary, including all its conv/temporal tensors.
+The output does not assert that any of these pages are cached or leased.
+
+### SGLang lookup and restore
 
 ```mermaid
 flowchart LR
-  Pools[Registered GPU pools] --> Compile[Compile recovery requirements]
-  Tree[SGLang valid prefix and page hashes] --> Query[Query each state group]
+  Pools[Declared group rules] --> Compile[Compiled page requirements]
+  Tree[Valid HBM origin and known hashes] --> Query[Attention then auxiliary lookup]
   Query --> Tiers[DRAM / SSD / remote]
   Tiers --> Evidence[Leases and absolute page coverage]
   Compile --> Validate[Validate legal boundaries]
   Evidence --> Validate
-  Validate --> Restore[Restore required groups]
+  Validate --> Select[Select common boundary]
+  Select --> Demand[required_ranges]
+  Compile --> Demand
+  Demand --> Restore[Restore required groups]
   Restore --> Fence[CUDA completion fence]
   Fence --> Resume[Engine resumes at selected boundary]
 ```
+
+SGLang queries attention first, then queries auxiliary hashes only through that
+attention hit. Within that prefix it preserves evidence for every candidate
+boundary. Truncating an auxiliary query to the latest window or checkpoint
+before selection would discard earlier legal recovery points. The selected
+boundary determines the final required ranges only after validation and rank
+intersection. Attention and auxiliary query phases are serialized; narrowing
+the lookup scope does not establish a TTFT improvement.
 
 Earlier attention pages can be saved after their auxiliary state has been
 evicted. Completeness is checked when joining groups for recovery. Sparse
@@ -40,10 +78,12 @@ and cancellation ownership; an absent checkpoint does not wait for a future
 publisher. Sparse remote discovery still issues per-key fetches, so batching
 that metadata work remains a distributed optimization.
 
-At load time, copied destinations plus engine-attested retained pages must
-cover exactly the chosen plan. All group leases remain held until the combined
-restore completes. Cancelling a request whose destinations are already inserted
-into the radix tree first finishes their queued restore, then releases tree pins.
+At load time, transferred keys and engine-attested retained keys must be
+disjoint and together equal the keys in each compiled range. SGLang uses the
+contract instead of Python formulas for each pool kind. All group leases remain
+held until the combined restore completes. Cancelling a request whose
+destinations are already inserted into the radix tree first finishes their
+queued restore, then releases tree pins.
 Transfer errors do not acknowledge partially restored destinations.
 The consumer handoff waits for the whole restore before forward construction;
 CUDA graph replay must not depend on Python per-layer accessors being invoked.
@@ -78,13 +118,36 @@ part of the single-node fault/pressure qualification.
 The final-token limit may select an earlier validated boundary. The scheduler
 keeps the original attention lease and supplies null destinations for unused
 pages; it does not issue another attention query. Allocation must preserve the
-selected checkpoint exactly. Unused leased pages remain charged to the query
-budget until the combined restore completes. The worker restores only that recurrent page,
+selected checkpoint exactly and uses the contract's required ranges for each
+hybrid group. Storage-group mapping applies the intervals to destination masks,
+preserving the original lease vector's length and order. Unused leased pages
+remain charged to the query budget until the
+combined restore completes. The worker restores only that recurrent page,
 including its conv and temporal tensors, alongside the selected attention
 prefix. All leases move to the existing combined restore operation and remain
 owned until GPU completion. HBM allocation and inference scheduling stay in
 vLLM. Dense-only and optional P/D partial-tail semantics retain their existing
 prefix path; hybrid P/D partial tails remain unsupported.
+
+## Scope and production-cache lessons
+
+Compilation here turns declared semantic requirements into deterministic page
+demand for a known range. It removes duplicate adapter arithmetic and bounds
+auxiliary lookup by the attention hit. No latency or throughput improvement has
+been measured for this increment. General model-graph analysis, numerical proofs,
+future-token prediction, retention and physical planning remain outside its scope.
+A required range grants neither a lease nor permission to reclaim state, and
+does not enable automatic hybrid warming.
+
+The [pinned production-cache source review](queued-warming.md#reference-implementations-and-policy-order)
+informs this work. OrbitKV applies the usable-boundary lesson to demand that
+includes every required component. LMCache's request reader locks and Dynamo's
+session holders illustrate consumer ownership; existing OrbitKV leases retain
+pages through GPU completion. HiCache's stopping policies inform the future
+bounded-submission work: stop new reads, drain submitted work and return only
+completed legal boundaries. That policy work remains open alongside bounded
+preparation for near-admission consumers. These are established cache lessons,
+not a novelty or performance claim.
 
 ## SGLang deployment and limits
 
@@ -120,6 +183,14 @@ open. Multi-rank and remote hybrid serving require additional qualification.
 
 ## Reproducible gates
 
+The compiled-demand increment has passed Rust/Python unit and native/CUDA
+DRAM/SSD exact-byte gates. The SGLang GPU gate checks mixed
+retained and copied pages against the shared plan. It also stores orphan
+auxiliary pages beyond the available attention prefix and requires no fetch of
+them, including no increase in SSD read bytes. vLLM checks destination masking
+with the original lease vector preserved. These gates qualify exact recovery
+and lookup scope; they do not measure a latency improvement.
+
 For vLLM 0.29.0, run from `python/`:
 
 ```bash
@@ -144,6 +215,7 @@ From `python/`:
 
 ```bash
 ../.venv/sglang-release/bin/python -m pytest -m integration \
+  tests/integration/test_state_demand.py \
   tests/integration/test_sglang_admission.py \
   tests/integration/test_sglang_direct_transfer.py \
   tests/integration/test_sglang_recovery.py

@@ -29,8 +29,10 @@ import { localUrl } from "../data/site";
         prefix lookup, save, and restore. The local control path is UDS +
         iceoryx2; registered GPU buffers move data through CUDA IPC. Single-node
         recovery has been checked on vLLM 0.29.0. Hybrid attention/recurrent
-        layouts use the same recovery validator as SGLang, including deferred
-        SSD checkpoint queries. Multi-host TP query fan-out is not yet supported.
+        layouts use the same compiled page ranges and evidence validation as
+        SGLang, including deferred SSD checkpoint queries. Hybrid allocation
+        consumes those ranges; dense and P/D paths keep their existing behavior.
+        Multi-host TP query fan-out is not yet supported.
       </p>
       <a class="text-link" href={localUrl("/docs/single-node/#vllm")}>
         vLLM install and deployment <span aria-hidden="true">↗</span>
@@ -42,8 +44,11 @@ import { localUrl } from "../data/site";
         <code>OrbitKVLinker</code> connects SGLang's radix cache to the same
         Cache Manager API through CUDA IPC. Full-attention MHA and MLA layouts
         share the direct GPU path with Full + SWA and Full + recurrent/conv.
-        Compiled recovery rules require a complete window or exact checkpoint;
-        unknown draft and auxiliary representations are rejected. Single-rank DRAM and
+        Attention is queried first; auxiliary lookup stops at its hit while
+        preserving every candidate boundary. These query phases are serialized.
+        Compiled ranges check exact
+        transferred-plus-retained coverage at the selected boundary. Unknown
+        draft and auxiliary representations are rejected. Single-rank DRAM and
         SSD recovery have been GPU-tested on SGLang 0.5.20. A plugin admission
         hook keeps pending requests queued until a leased result is ready, with
         a bounded wait before recomputation. Multi-rank serving remains
@@ -79,11 +84,13 @@ import { localUrl } from "../data/site";
       <h2>Model-aware reuse</h2>
       <p class="reading-copy">
         Current cache keys bind model-artifact content, engine configuration,
-        storage geometry, and native prefix hashes. Complete token coverage,
-        recovery components, and GPU page generations are not yet validated at
-        each transfer. These remain local correctness milestones; current
-        single-node recovery should not be read as full model-aware
-        qualification or a maximum-performance claim.
+        storage geometry, and native prefix hashes. Supported recovery rules
+        compile to deterministic page demand and validate complete leased
+        coverage. GPU page-generation enforcement remains open. The contract
+        validates engine-declared requirements without analyzing arbitrary model
+        graphs. Required ranges neither authorize reclamation nor enable
+        automatic hybrid warming. Exact GPU-byte gates qualify recovery;
+        TTFT effects remain unmeasured.
       </p>
       <a class="text-link" href={localUrl("/docs/state-identity/")}>
         State identity plan and gates <span aria-hidden="true">↗</span>
@@ -94,7 +101,7 @@ import { localUrl } from "../data/site";
       <p class="reading-copy">
         Qualify sustained single-node serving first, then independent replicas
         (DP), then P/D combined with cache reuse. Develop bounded early
-        prefetch, measured restore decisions, and common recovery validation.
+        prefetch, bounded stopping and measured restore decisions.
         Page generations and completion fences must protect overlap with
         execution. Managers embed fixed catalog shards and rebuild their
         evidence from owner inventories. etcd membership gates remote admission

@@ -162,3 +162,81 @@ fn compilation_rejects_undeclared_or_impossible_requirements() {
         .insert(StateComponent::RecurrentCheckpoint);
     assert!(RecoveryContract::compile("model".into(), 16, vec![invalid]).is_err());
 }
+
+#[test]
+fn demand_is_minimal_and_uses_the_engine_held_origin() {
+    let plan = contract(vec![
+        requirement(1, RecoveryRule::Window { tokens: 17 }),
+        requirement(2, RecoveryRule::Checkpoint),
+    ]);
+    for (origin, end, starts) in [
+        (0, 64, [0, 32, 48]),
+        (64, 144, [64, 112, 128]),
+        (64, 80, [64, 64, 64]),
+        (64, 64, [64, 64, 64]),
+    ] {
+        let ranges = plan
+            .required_ranges("model/layout/rank", TokenRange { start: origin, end })
+            .unwrap();
+        assert_eq!(
+            ranges,
+            starts
+                .into_iter()
+                .enumerate()
+                .map(|(group, start)| (group as u32, TokenRange { start, end }))
+                .collect::<Vec<_>>()
+        );
+        if origin == end {
+            continue;
+        }
+        let bundle = evidence(
+            origin,
+            end,
+            starts
+                .iter()
+                .map(|start| ((start + 16)..=end).step_by(16).collect())
+                .collect(),
+        );
+        assert!(plan.restorable_boundaries(&bundle).unwrap().contains(&end));
+        for group in 0..3 {
+            for page in 0..bundle.components[group].page_ends.len() {
+                let mut missing = bundle.clone();
+                missing.components[group].page_ends.remove(page);
+                assert!(!plan.restorable_boundaries(&missing).unwrap().contains(&end));
+            }
+        }
+    }
+}
+
+#[test]
+fn demand_checks_identity_and_alignment_without_expanding_long_prefixes() {
+    let plan = contract(vec![requirement(1, RecoveryRule::Checkpoint)]);
+    let end = u64::MAX / 16 * 16;
+    assert_eq!(
+        plan.required_ranges("model/layout/rank", TokenRange { start: 0, end }),
+        Ok(vec![
+            (0, TokenRange { start: 0, end }),
+            (
+                1,
+                TokenRange {
+                    start: end - 16,
+                    end
+                }
+            ),
+        ])
+    );
+    assert_eq!(
+        plan.required_ranges("other-model", TokenRange { start: 0, end: 16 }),
+        Err(RecoveryError::IncompatibleNamespace)
+    );
+    for span in [
+        TokenRange { start: 1, end: 16 },
+        TokenRange { start: 0, end: 17 },
+        TokenRange { start: 32, end: 16 },
+    ] {
+        assert_eq!(
+            plan.required_ranges("model/layout/rank", span),
+            Err(RecoveryError::InvalidSpan)
+        );
+    }
+}
