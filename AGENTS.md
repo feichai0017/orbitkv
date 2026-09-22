@@ -21,7 +21,7 @@ orbitkv/
 ├── crates/
 │   ├── orbitkv-state/           # Framework-neutral state and recovery contracts
 │   ├── orbitkv-channel/         # iceoryx2/UDS process transport
-│   ├── orbitkv-common/           # Logging, NUMA, and shared utilities
+│   ├── orbitkv-common/           # Process logging and peer-connection defaults
 │   ├── orbitkv-core/             # Cache engine, storage, and backing tiers
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
 │   ├── orbitkv-server/           # Cache Manager orchestration and protocol adapters
@@ -43,7 +43,9 @@ orbitkv/
 |--------|----------|
 | State identity and recovery contracts | `crates/orbitkv-state/` |
 | Inference-to-Cache-Manager process channel | `crates/orbitkv-channel/` |
-| Shared Rust utilities | `crates/orbitkv-common/` |
+| Process logging and peer-connection defaults | `crates/orbitkv-common/` |
+| NUMA topology and affinity | `crates/orbitkv-core/src/numa.rs` |
+| Cache reuse statistics | `crates/orbitkv-server/src/metric/hll.rs` |
 | Core engine and storage path | `crates/orbitkv-core/` |
 | gRPC protocol changes | `crates/orbitkv-proto/` |
 | Cache Manager cache operations and process endpoint | `crates/orbitkv-server/src/cache/`, `endpoint/` |

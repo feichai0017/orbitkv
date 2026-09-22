@@ -14,8 +14,8 @@ use log::{error, info, warn};
 
 use crate::allocator::{Allocation, ScaledOffsetAllocator};
 use crate::metrics::core_metrics;
+use crate::numa::{NumaNode, run_on_numa};
 use crate::pinned_mem::PinnedMemory;
-use orbitkv_common::{NumaNode, run_on_numa};
 
 #[derive(Clone, Copy)]
 pub(crate) struct MappedPinnedPtr {

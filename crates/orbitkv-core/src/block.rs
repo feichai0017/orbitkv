@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
+use crate::numa::NumaNode;
 use crate::pinned_pool::{MappedPinnedPtr, PinnedAllocation};
-use orbitkv_common::NumaNode;
 
 // ============================================================================
 // StateKey

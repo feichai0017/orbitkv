@@ -19,9 +19,9 @@ pub(crate) type InsertEntries = Vec<(StateKey, Vec<(usize, RawBlock)>)>;
 use crate::gpu_worker::{HostBlock, LayerTransferData, TransferBlock};
 use crate::layout::KVCacheLayout;
 use crate::metrics::core_metrics;
+use crate::numa::NumaNode;
 use crate::pinned_pool::PinnedAllocation;
 use crate::{EngineError, OrbitKVEngine};
-use orbitkv_common::NumaNode;
 use orbitkv_state::group_hash;
 
 // ============================================================================

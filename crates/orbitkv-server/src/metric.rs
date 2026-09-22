@@ -1,6 +1,8 @@
+pub(crate) mod hll;
+
+use crate::metric::hll::MultiWindowHllTracker;
 use opentelemetry::metrics::{Counter, Histogram, ObservableGauge};
 use opentelemetry::{KeyValue, global};
-use orbitkv_common::hll::MultiWindowHllTracker;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Instant;
 use tonic::Status;
@@ -19,7 +21,7 @@ static HLL_GAUGES: OnceLock<HllGaugeHandles> = OnceLock::new();
 /// The cardinality and total gauges remain available for compatibility. The
 /// direct hit-rate gauge is calculated from the same tracker snapshot and is
 /// clamped to the valid probability range.
-pub fn register_hll_gauges(tracker: &Arc<Mutex<MultiWindowHllTracker>>) {
+pub(crate) fn register_hll_gauges(tracker: &Arc<Mutex<MultiWindowHllTracker>>) {
     let t_card = Arc::clone(tracker);
     let t_total = Arc::clone(tracker);
     let t_hit_rate = Arc::clone(tracker);

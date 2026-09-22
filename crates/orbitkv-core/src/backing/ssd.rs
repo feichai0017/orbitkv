@@ -8,8 +8,8 @@ use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
 use crate::metrics::core_metrics;
+use crate::numa::NumaNode;
 use crate::pinned_pool::PinnedAllocation;
-use orbitkv_common::NumaNode;
 
 use super::SsdCacheConfig;
 use super::ssd_cache::{

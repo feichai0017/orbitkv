@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use orbitkv_common::hll::MultiWindowHllTracker;
+use crate::metric::hll::MultiWindowHllTracker;
 use orbitkv_core::QueryLeaseId;
 use orbitkv_core::{
     EngineError, LayerSave, OrbitKVEngine, QueryMode, QueryOwner, QueryReservation, QueryResult,

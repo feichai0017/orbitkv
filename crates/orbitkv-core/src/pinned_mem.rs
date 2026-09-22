@@ -31,8 +31,8 @@ use std::io;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
 
+use crate::numa::{NumaNode, pin_thread_to_numa_node};
 use cudarc::runtime::sys as rt;
-use orbitkv_common::{NumaNode, pin_thread_to_numa_node};
 
 /// Cached huge page size from /proc/meminfo
 static HUGE_PAGE_SIZE: OnceLock<Option<usize>> = OnceLock::new();

@@ -13,9 +13,9 @@ use super::ssd::SsdBackingStore;
 use super::uring::UringIoEngine;
 use crate::block::{RawBlock, SealedBlock, StateKey};
 use crate::metrics::core_metrics;
+use crate::numa::NumaNode;
 use crate::pinned_pool::PinnedAllocation;
 use crate::seal_offload::{self, SlotMeta};
-use orbitkv_common::NumaNode;
 use smallvec::SmallVec;
 
 /// SSD I/O alignment requirement (O_DIRECT requires 512-byte aligned I/O)

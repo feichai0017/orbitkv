@@ -10,9 +10,9 @@ use crate::EngineError;
 use crate::block::{RawBlock, SealedBlock};
 use crate::layout::{BlockCopies, KVCacheLayout};
 use crate::metrics::core_metrics;
+use crate::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::sync_state::LoadState;
 use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
-use orbitkv_common::{NumaNode, pin_thread_to_numa_node};
 
 /// A task to load KV blocks from CPU to GPU for multiple layers
 pub(crate) struct LoadTask {

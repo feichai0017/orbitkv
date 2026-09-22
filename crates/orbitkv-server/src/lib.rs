@@ -233,7 +233,7 @@ pub struct Cli {
 }
 
 fn parse_hll_bucket_bits(s: &str) -> Result<u8, String> {
-    use orbitkv_common::hll::{MAX_BUCKET_BITS, MIN_BUCKET_BITS};
+    use crate::metric::hll::{MAX_BUCKET_BITS, MIN_BUCKET_BITS};
     let v: u8 = s.parse().map_err(|e| format!("{e}"))?;
     if !(MIN_BUCKET_BITS..=MAX_BUCKET_BITS).contains(&v) {
         return Err(format!(
@@ -633,7 +633,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     })?;
 
     let hll_tracker = Arc::new(std::sync::Mutex::new(
-        orbitkv_common::hll::MultiWindowHllTracker::new(
+        crate::metric::hll::MultiWindowHllTracker::new(
             parse_hll_windows(&cli.metric_hll_windows)
                 .map_err(|err| format!("invalid --metric-hll-windows: {err}"))?,
             cli.metric_hll_bucket_bits,
