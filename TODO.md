@@ -81,7 +81,7 @@ numbers below group work areas rather than imposing a strict serial schedule.
   Exact SSD-byte gates cover selected prefixes, windows and checkpoints;
   additional discovery rounds are not claimed as a TTFT improvement.
 - [x] Move hybrid-boundary validation out of `orbitkv.vllm`; retain engine-owned
-  allocation and checkpoint handoff, and skip unused leased pages after clamping.
+  allocation and checkpoint handoff, and apply the token limit before reading.
 - [x] Handle asynchronous vLLM checkpoint queries from SSD, retain completed
   groups during preparation, and retire pending groups on cancel/drift/expiry.
   Verify native validation and exact DRAM/SSD GPU restoration in

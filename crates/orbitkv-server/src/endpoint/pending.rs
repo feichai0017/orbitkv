@@ -139,6 +139,13 @@ impl PendingQueries {
         let ticket = match command {
             QueryCommand::Poll(ticket) => ticket,
             QueryCommand::Submit(request) => {
+                if request.materialize
+                    && (request.discover || request.warmup || request.wait_for_full_prefix)
+                {
+                    return Err(invalid(
+                        "recovery reads cannot discover, warm or wait for publication",
+                    ));
+                }
                 if request.discover && (request.warmup || request.wait_for_full_prefix) {
                     return Err(invalid("discovery cannot warm or wait for publication"));
                 }
@@ -288,6 +295,7 @@ impl PendingQueries {
             group_id: request.group_id,
             warmup: request.warmup,
             discover: request.discover,
+            materialize: request.materialize,
         };
         let engine = Arc::clone(engine);
         let hll = Arc::clone(hll);

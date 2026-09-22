@@ -27,8 +27,14 @@ struct QueryKey {
 struct PendingQuery {
     ticket: QueryTicket,
     hashes: BlockHashes,
-    wait_for_full_prefix: bool,
-    discover: bool,
+    intent: QueryIntent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryIntent {
+    Lookup { wait_for_full_prefix: bool },
+    Candidates,
+    Recovery,
 }
 
 /// Immutable query hashes with shared, allocation-free prefix views.
@@ -94,14 +100,10 @@ impl Queries {
         &mut self,
         key: &QueryKey,
         hashes: &BlockHashes,
-        wait: bool,
-        discover: bool,
+        intent: QueryIntent,
     ) -> Result<QueryCommand, ChannelError> {
         if let Some(query) = self.pending.get_mut(key) {
-            if query.hashes == *hashes
-                && query.wait_for_full_prefix == wait
-                && query.discover == discover
-            {
+            if query.hashes == *hashes && query.intent == intent {
                 return Ok(QueryCommand::Poll(query.ticket));
             }
             query.ticket.revision = query
@@ -110,8 +112,7 @@ impl Queries {
                 .checked_add(1)
                 .ok_or(ChannelError::SessionRequiresReconnect)?;
             query.hashes = hashes.clone();
-            query.wait_for_full_prefix = wait;
-            query.discover = discover;
+            query.intent = intent;
         } else {
             let ticket = self.ticket()?;
             self.pending.insert(
@@ -119,8 +120,7 @@ impl Queries {
                 PendingQuery {
                     ticket,
                     hashes: hashes.clone(),
-                    wait_for_full_prefix: wait,
-                    discover,
+                    intent,
                 },
             );
         }
@@ -131,9 +131,15 @@ impl Queries {
             request_id: key.request.clone(),
             block_hashes: query.hashes.as_slice().to_vec(),
             group_id: key.group,
-            wait_for_full_prefix: wait,
+            wait_for_full_prefix: matches!(
+                intent,
+                QueryIntent::Lookup {
+                    wait_for_full_prefix: true
+                }
+            ),
             warmup: false,
-            discover,
+            discover: intent == QueryIntent::Candidates,
+            materialize: intent == QueryIntent::Recovery,
         }))
     }
 
@@ -213,14 +219,13 @@ impl CacheClient {
         }
     }
 
-    pub fn query_prefetch(
+    pub fn query(
         &self,
         instance: &str,
         hashes: &BlockHashes,
         request: &str,
-        wait: bool,
         group: u32,
-        discover: bool,
+        intent: QueryIntent,
     ) -> Result<QueryBundleResponse, ChannelError> {
         let key = QueryKey {
             instance: instance.into(),
@@ -235,12 +240,13 @@ impl CacheClient {
             self.cancel(ticket)?;
         }
         let previous = queries.pending.get(&key).map(|query| query.ticket);
-        let command = queries.prepare(&key, hashes, wait, discover)?;
+        let command = queries.prepare(&key, hashes, intent)?;
         let response = self
             .channel
             .query_bundle(next_id(&self.requests)?, &command);
         match response {
             Ok(response) => {
+                let discover = intent == QueryIntent::Candidates;
                 if (discover && response.outcome == QueryOutcomeCode::Ready)
                     || response.outcome == QueryOutcomeCode::Candidates
                         && (!discover
@@ -289,7 +295,7 @@ impl CacheClient {
             .slice(range.clone())
             .ok_or(orbitkv_state::RecoveryError::InvalidSpan)?;
         let mut response =
-            self.query_prefetch(instance, &selected, request, false, group, false)?;
+            self.query(instance, &selected, request, group, QueryIntent::Recovery)?;
         if response.outcome == QueryOutcomeCode::Ready {
             let complete = response.num_hit_blocks as usize == range.len()
                 && (range.is_empty() || !response.lease.is_empty())
@@ -360,6 +366,7 @@ impl CacheClient {
                 wait_for_full_prefix: false,
                 warmup: true,
                 discover: false,
+                materialize: false,
             }),
         )?;
         match response.outcome {

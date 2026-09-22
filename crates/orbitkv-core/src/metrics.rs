@@ -48,6 +48,8 @@ pub(crate) struct CoreMetrics {
     pub cache_resident_bytes: UpDownCounter<i64>,
     pub cache_block_hits: Counter<u64>,
     pub cache_block_misses: Counter<u64>,
+    pub cache_candidate_hits: Counter<u64>,
+    pub cache_candidate_misses: Counter<u64>,
     /// Per-decision block attribution for `query_prefetch`. Labelled by `tier`
     /// (`ram` | `remote` | `ssd` | `miss`). Each `query_prefetch` decision adds
     /// at most four times (one per non-zero tier) and the sum across tiers
@@ -279,6 +281,14 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             cache_block_misses: meter
                 .u64_counter("orbitkv_cache_block_misses")
                 .with_description("Complete blocks not found in cache (cache miss)")
+                .build(),
+            cache_candidate_hits: meter
+                .u64_counter("orbitkv_cache_candidate_hits")
+                .with_description("Candidate block positions available during metadata discovery; not leased reads")
+                .build(),
+            cache_candidate_misses: meter
+                .u64_counter("orbitkv_cache_candidate_misses")
+                .with_description("Block positions unavailable to recovery during metadata discovery")
                 .build(),
             cache_tier_block_requests: meter
                 .u64_counter("orbitkv_cache_tier_block_requests")

@@ -159,6 +159,22 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
                 "model.layers.1.mamba": (state[:, :64], state[:, 64:]),
             }
         )
+        req = SimpleNamespace(
+            request_id="cold",
+            num_tokens=128,
+            block_hashes=hashes,
+            shared_prefix_boundary=0,
+        )
+        deadline = time.monotonic() + 15
+        while (result := scheduler.get_num_new_matched_tokens(req, 64))[0] is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert result == (0, False)
+        cold_metrics = fetch_orbitkv_metrics(channel_server.http_port)
+        assert cold_metrics["orbitkv_cache_candidate_misses_total"] == 8
+        assert cold_metrics["orbitkv_hll_total_requests"] > 0
+        assert cold_metrics.get("orbitkv_ssd_prefetch_bytes_total", 0) == 0
+        assert cold_metrics.get("orbitkv_query_reserved_bytes", 0) == 0
         torch.cuda.synchronize()
         ok, message = client.save(
             identity,
@@ -232,8 +248,14 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
         assert (kv[10:12] == -1).all()  # Extra leased pages have no destination.
         assert (state[[8, 10, 11]] == -1).all()
         assert not worker._pending_loads
+        metrics = fetch_orbitkv_metrics(channel_server.http_port)
+        assert metrics["orbitkv_cache_candidate_hits_total"] == 6
+        assert metrics["orbitkv_cache_candidate_misses_total"] == 10
+        # One cold and one warm discovery, regardless of HLL window count.
+        assert (
+            metrics["orbitkv_hll_total_requests"] == 2 * cold_metrics["orbitkv_hll_total_requests"]
+        )
         if channel_server.ssd_cache_path is not None:
-            metrics = fetch_orbitkv_metrics(channel_server.http_port)
             page_bytes = kv[0].numel() * kv.element_size()
             state_bytes = state[0].numel() * state.element_size()
             assert (

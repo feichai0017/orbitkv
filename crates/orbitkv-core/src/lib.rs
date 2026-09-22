@@ -612,12 +612,20 @@ impl OrbitKVEngine {
         } else {
             hits.len()
         };
-        Ok(hits
+        let positions: Vec<_> = hits
             .into_iter()
             .take(limit)
             .enumerate()
             .filter_map(|(i, hit)| hit.then_some(i as u32))
-            .collect())
+            .collect();
+        let metrics = core_metrics();
+        metrics
+            .cache_candidate_hits
+            .add(positions.len() as u64, &[]);
+        metrics
+            .cache_candidate_misses
+            .add((hashes.len() - positions.len()) as u64, &[]);
+        Ok(positions)
     }
 
     /// All-or-nothing membership fetch over one hybrid-cache storage group,
