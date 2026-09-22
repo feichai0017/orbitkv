@@ -1,0 +1,23 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.1.1, pluggy-1.6.0 -- /workspace/orbitkv/python/../.venv/sglang-release/bin/python
+cachedir: .pytest_cache
+rootdir: /workspace/orbitkv/python
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 13 items
+
+tests/integration/test_cache_faults.py::test_ssd_cancellation_revisions_hold_buffers_until_io_drains PASSED [  7%]
+tests/integration/test_cache_faults.py::test_stopping_submits_no_second_ssd_batch_and_drains_the_first[fault_cache0-cancel] PASSED [ 15%]
+tests/integration/test_cache_faults.py::test_stopping_submits_no_second_ssd_batch_and_drains_the_first[fault_cache1-timeout] PASSED [ 23%]
+tests/integration/test_cache_faults.py::test_stopping_submits_no_second_ssd_batch_and_drains_the_first[fault_cache2-best-effort] PASSED [ 30%]
+tests/integration/test_cache_faults.py::test_cancelled_preparation_does_not_stop_another_shared_read_owner[fault_cache0] PASSED [ 38%]
+tests/integration/test_cache_faults.py::test_prepared_result_expires_without_poll_then_claim_holds_bytes_through_restore PASSED [ 46%]
+tests/integration/test_cache_faults.py::test_restore_timeout_and_lost_notification_preserve_destinations PASSED [ 53%]
+tests/integration/test_cache_faults.py::test_publish_stall_keeps_source_owned_without_stalling_queries[complete] PASSED [ 61%]
+tests/integration/test_cache_faults.py::test_publish_stall_keeps_source_owned_without_stalling_queries[kill] PASSED [ 69%]
+tests/integration/test_cache_faults.py::test_publish_stall_keeps_source_owned_without_stalling_queries[corrupt-ack] PASSED [ 76%]
+tests/integration/test_cache_faults.py::test_manager_restart_rejects_old_leases_and_restore_handles[None] PASSED [ 84%]
+tests/integration/test_cache_faults.py::test_manager_restart_rejects_old_leases_and_restore_handles[configured-prefix] PASSED [ 92%]
+tests/integration/test_session_watcher.py::test_crashed_client_releases_ipc PASSED [100%]
+
+============================= 13 passed in 40.88s ==============================

@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-9.1.1, pluggy-1.6.0 -- /workspace/orbitkv/python/../.venv/vllm-release/bin/python
+cachedir: .pytest_cache
+rootdir: /workspace/orbitkv/python
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collecting ... collected 9 items
+
+tests/integration/test_vllm_recovery.py::test_native_contract_gates_vllm_hits[clamp-to-earlier-checkpoint] PASSED [ 11%]
+tests/integration/test_vllm_recovery.py::test_native_contract_gates_vllm_hits[last-checkpoint] PASSED [ 22%]
+tests/integration/test_vllm_recovery.py::test_native_contract_gates_vllm_hits[missing-checkpoint] PASSED [ 33%]
+tests/integration/test_vllm_recovery.py::test_native_contract_gates_vllm_hits[clamp-has-no-checkpoint] PASSED [ 44%]
+tests/integration/test_vllm_recovery.py::test_native_contract_gates_vllm_hits[partial-attention] PASSED [ 55%]
+tests/integration/test_vllm_recovery.py::test_native_contract_rejects_duplicate_or_unordered_evidence[positions0] PASSED [ 66%]
+tests/integration/test_vllm_recovery.py::test_native_contract_rejects_duplicate_or_unordered_evidence[positions1] PASSED [ 77%]
+tests/integration/test_vllm_recovery.py::test_complete_checkpoint_restores_through_vllm_worker[dram] PASSED [ 88%]
+tests/integration/test_vllm_recovery.py::test_complete_checkpoint_restores_through_vllm_worker[ssd] PASSED [100%]
+
+============================== 9 passed in 11.07s ==============================

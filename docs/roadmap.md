@@ -23,8 +23,10 @@ validator with absolute token coverage. This closes the duplicated boundary
 logic. Hybrid demand now discovers metadata, selects a legal boundary and
 reads only its required ranges, then validates actual leases. Deterministic
 [process fault gates](fault-qualification.md) cover SSD delay/cancel, lost
-notifications, Publish fencing and restart. Multi-rank/concurrent serving
-fault stress and page-generation gates remain distinct qualifications.
+notifications, Publish fencing and restart. Deterministic Qwen3-8B TP=1 serving
+also covers cancellation with unrelated requests, lost notification and both
+process restarts in each engine. Multi-rank/long-running fault stress and
+page-generation gates remain distinct qualifications.
 
 The milestone identifiers below name work areas, not a requirement to finish
 every optimization before starting the next area. In particular, page-lifetime
@@ -49,25 +51,22 @@ gate, without claiming cross-host tensor parallelism.
 
 ### Next reviewable changes
 
-1. **Extend model-serving fault stress.** The deterministic Manager/CUDA gate
-   now checks delayed SSD completion, cancellation, dropped notification,
-   restart with old clients and malformed/stalled Publish acknowledgements.
-   The watchdog reports retained ownership; time alone cannot release DMA
-   pages. Extend this evidence to sustained concurrent engine traffic and
-   multiple ranks. Keep model/format rejection and output controls.
-2. **Prepare only selected consumers.** Use engine scheduling evidence to
-   select a bounded lookahead, and reuse the existing operation/revision and
-   lease lifecycle. Charge in-flight and ready-but-unconsumed residency until
-   handoff, cancellation or expiry; leave headroom for ordinary demand. Retire
-   changed requests and HBM hits, and expire abandoned ownership without
-   further polling. Keep this opt-in until the serving measurements pass.
-3. **Bound submission and stop waiting explicitly.** Add best-effort and
-   relative-timeout policies, with wait-complete as a control subject to
-   lifecycle expiry. Stop new read batches while submitted I/O retains its
-   buffers and drains. Expose only a completed contiguous prefix at a valid
-   engine recovery boundary; cancelling one shared-read owner cannot revoke
-   another. Run the policy comparisons before adding timing prediction or
-   changing retention/write admission.
+1. **Measure the implemented preparation policy.** The opt-in
+   [consumer-owned path](request-preparation.md) selects at most four dense
+   arrival-order candidates, keeps prepared leases budgeted, and retires stale
+   interests without another poll. Bounded batches, best-effort completion and
+   a conservative deadline miss are implemented. Compare these independently;
+   automatic hybrid forecasts and priority/token-budget prediction remain open.
+2. **Reduce measured exposed waits.** The
+   [ordinary Qwen3 profile](recovery-performance.md) separates host reads,
+   Manager restore and engine completion observation. Investigate read batching
+   and vLLM's completion-observation tail with matching traffic before changing
+   retention or SSD write admission. Keep deterministic output and ownership gates.
+3. **Start real two-host DP qualification.** Ordinary TP=1 demand lifetimes now
+   have native and model-serving fault evidence. Use independent same-format
+   replicas and Mooncake TE; require positive remote and GPU-copy bytes, source
+   incarnation rejection and catalog replay. Local policy tuning can continue
+   alongside it. Multi-rank fault soak remains a separate extension.
 
 Keep these changes separately reviewable. The existing
 [reference-based policy sequence](queued-warming.md#reference-implementations-and-policy-order)
