@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from orbitkv import BlockHashes, CacheManagerClient
+from orbitkv import BlockHashes, CacheManagerClient, QueryCandidates, RecoveryContract
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.orbitkv import QueryLoading, QueryReady
 from orbitkv.vllm.metadata import RecurrentLoadHold
@@ -17,9 +17,8 @@ class ShardedQueryReady:
     # HMA only: per recurrent group, per shard membership leases and their
     # hit positions (see RecurrentLoadHold for the wire/load contract).
     recurrent_hold: RecurrentLoadHold | None = None
-    # HMA only: absolute token ends validated by the shared recovery contract
-    # on every shard. The scheduler selects from these under its token limit.
-    boundaries: tuple[int, ...] = ()
+    # HMA only: the selected absolute boundary with complete leased state.
+    boundary: int = 0
     # HMA only: the attention-only prefix hit before recovery validation
     # shrank it. Tells the scheduler where a shared prefix ends without a
     # usable recurrent checkpoint (see SchedulerConnector's junction hint).
@@ -97,49 +96,45 @@ class TpShardQueryClient:
 
         return ShardedQueryReady(common_blocks, tuple(leases))
 
-    def query_group_membership(
+    def candidates(
+        self, instance_id: str, hashes: BlockHashes, req_id: str, group_id: int
+    ) -> list[tuple[int, ...]] | None:
+        results = []
+        for client in self._clients:
+            result = client.query_candidates(instance_id, hashes, req_id, group_id=group_id)
+            if isinstance(result, QueryLoading):
+                return None
+            if not isinstance(result, QueryCandidates):
+                raise TypeError("candidate discovery returned a payload result")
+            results.append(tuple(result.hit_positions))
+        return results
+
+    def read_recovery(
         self,
         instance_id: str,
-        block_hashes: BlockHashes,
+        hashes: BlockHashes,
         req_id: str,
+        contract: RecoveryContract,
+        namespace: str,
+        start: int,
+        end: int,
         group_id: int,
     ) -> list[tuple[tuple[int, ...], bytes]] | None:
-        """Per-shard membership query over one hybrid storage group.
-
-        Returns ``(hit_positions, lease)`` per shard; the lease pins exactly
-        the hit blocks in positions order. SSD/remote reads may still be
-        loading; retire completed shard leases before retrying that group.
-        """
-        results: list[tuple[tuple[int, ...], bytes]] = []
+        results = []
         try:
-            for shard_index, client in enumerate(self._clients):
-                result = client.query_prefetch(
-                    instance_id,
-                    block_hashes,
-                    req_id=req_id,
-                    group_id=group_id,
+            for client in self._clients:
+                result = client.read_recovery(
+                    instance_id, hashes, req_id, contract, namespace, start, end, group_id
                 )
                 if isinstance(result, QueryLoading):
                     self.release(tuple(lease for _, lease in results), req_id)
                     return None
                 if not isinstance(result, QueryReady):
-                    raise TypeError(f"query_prefetch returned unexpected outcome {type(result)!r}")
-                positions = tuple(result.hit_positions)
-                results.append((positions, result.lease))
-                if len(positions) != result.num_hit_blocks:
-                    raise RuntimeError(
-                        f"TP shard {shard_index} reported {result.num_hit_blocks} hits "
-                        f"but returned {len(positions)} positions"
-                    )
-                if any(position < 0 or position >= len(block_hashes) for position in positions):
-                    raise RuntimeError(
-                        f"TP shard {shard_index} returned hit positions outside "
-                        f"a {len(block_hashes)}-hash query"
-                    )
-                if positions and not result.lease:
-                    raise RuntimeError(
-                        f"TP shard {shard_index} returned {len(positions)} hits without a lease"
-                    )
+                    raise TypeError("recovery read returned an unleased candidate")
+                results.append((tuple(result.hit_positions), result.lease))
+                if not result.lease:
+                    self.release(tuple(lease for _, lease in results), req_id)
+                    return []
         except Exception:
             self.release(tuple(lease for _, lease in results), req_id)
             raise

@@ -369,6 +369,41 @@ impl StorageEngine {
         }
     }
 
+    /// Availability hints; concurrent eviction can invalidate them immediately.
+    /// Only a subsequent payload read and lease establishes recoverability.
+    pub(crate) async fn discover(&self, namespace: &str, hashes: &[Vec<u8>]) -> Vec<bool> {
+        let keys: Vec<_> = hashes
+            .iter()
+            .map(|hash| StateKey::new(namespace.to_owned(), hash.clone()))
+            .collect();
+        let mut present = self.read_cache.contains_keys(&keys);
+        if let Some(ssd) = &self.ssd_store {
+            for (hit, backing) in present.iter_mut().zip(ssd.contains_keys(&keys)) {
+                *hit |= backing;
+            }
+        }
+        #[cfg(feature = "mooncake")]
+        if let Some(catalog) = &self.catalog_client {
+            let missing: Vec<_> = present
+                .iter()
+                .enumerate()
+                .filter_map(|(i, hit)| (!hit).then_some(i))
+                .collect();
+            let hashes: Vec<_> = missing.iter().map(|&i| hashes[i].clone()).collect();
+            if !hashes.is_empty() {
+                match catalog.locate_blocks(namespace, &hashes).await {
+                    Ok(candidates) => {
+                        for (i, candidate) in missing.into_iter().zip(candidates) {
+                            present[i] = !candidate.replicas.is_empty();
+                        }
+                    }
+                    Err(error) => log::warn!("candidate discovery failed: {error}"),
+                }
+            }
+        }
+        present
+    }
+
     /// Position-aligned membership across resident and backing tiers: entry
     /// `i` is the sealed block for `hashes[i]`, or `None` on miss. Hashes must
     /// already carry any group encoding (see `group_hash`).

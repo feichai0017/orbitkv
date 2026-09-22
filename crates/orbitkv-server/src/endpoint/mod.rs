@@ -74,6 +74,9 @@ impl ProcessEndpoint {
         shutdown: Arc<Notify>,
         lifecycle: crate::cache::lifecycle::LifecycleService,
     ) -> Result<Self, ProcessEndpointError> {
+        // A dead Manager's clients can keep its iceoryx2 service alive.
+        // Publish a fresh incarnation through the stable bootstrap socket.
+        let service_name = format!("{service_name}/{}", uuid::Uuid::new_v4().simple());
         let server = TransportServer::bind(&service_name)?;
         let bootstrap = BootstrapServer::bind(
             &bootstrap_socket,
@@ -301,6 +304,10 @@ fn advance_restore_operations(
     operations: &mut HashMap<(u64, u64), RestoreOperation>,
 ) {
     for ((token, _), operation) in operations.iter_mut() {
+        #[cfg(feature = "test-hooks")]
+        if orbitkv_core::test_faults::active("restore") {
+            continue;
+        }
         let result = match operation {
             RestoreOperation::Pending(receiver) => match receiver.try_recv() {
                 Ok(result) => Some(result.map_err(|error| truncate_error(error.to_string()))),
@@ -313,6 +320,10 @@ fn advance_restore_operations(
         };
         if let Some(result) = result {
             *operation = RestoreOperation::Complete(result);
+            #[cfg(feature = "test-hooks")]
+            if orbitkv_core::test_faults::active("notification") {
+                continue;
+            }
             if let Some(session) = sessions.get(token)
                 && let Err(error) = session.notify()
             {
@@ -545,6 +556,8 @@ fn dispatch_publish(
     }
     let engine = Arc::clone(engine);
     runtime.spawn(async move {
+        #[cfg(feature = "test-hooks")]
+        orbitkv_core::test_faults::pause("publish").await;
         let result = execute_publish(
             &engine,
             PublishInput {
@@ -558,6 +571,10 @@ fn dispatch_publish(
         .await;
         if let Err(error) = result {
             response = error_response(response, engine_error_status(&error), &error);
+        }
+        #[cfg(feature = "test-hooks")]
+        if orbitkv_core::test_faults::active("publish_ack") {
+            response.value1 = 0;
         }
         if let Err(error) = reply.send(response) {
             error!("Failed to reply to completed publish: {error}");
@@ -644,6 +661,12 @@ fn dispatch_query(
             ..QueryBundleResponse::loading()
         },
         QueryOutcome::Loading => QueryBundleResponse::loading(),
+        QueryOutcome::Candidates { hit_positions } => QueryBundleResponse {
+            outcome: QueryOutcomeCode::Candidates,
+            num_hit_blocks: hit_positions.len() as u64,
+            lease: Vec::new(),
+            hit_positions,
+        },
         QueryOutcome::Ready {
             num_hit_blocks,
             lease,

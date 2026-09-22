@@ -49,34 +49,42 @@ The output does not assert that any of these pages are cached or leased.
 ```mermaid
 flowchart LR
   Pools[Declared group rules] --> Compile[Compiled page requirements]
-  Tree[Valid HBM origin and known hashes] --> Query[Attention then auxiliary lookup]
-  Query --> Tiers[DRAM / SSD / remote]
-  Tiers --> Evidence[Leases and absolute page coverage]
+  Tree[Valid HBM origin and known hashes] --> Query[Metadata-only discovery]
+  Query --> Tiers[DRAM / SSD indexes / catalog]
+  Tiers --> Evidence[Candidate group positions]
   Compile --> Validate[Validate legal boundaries]
   Evidence --> Validate
   Validate --> Select[Select common boundary]
   Select --> Demand[required_ranges]
   Compile --> Demand
-  Demand --> Restore[Restore required groups]
+  Demand --> Read[Read selected ranges and acquire leases]
+  Read --> Check[Validate actual leased coverage]
+  Check --> Restore[Restore required groups]
   Restore --> Fence[CUDA completion fence]
   Fence --> Resume[Engine resumes at selected boundary]
 ```
 
-SGLang queries attention first, then queries auxiliary hashes only through that
-attention hit. Within that prefix it preserves evidence for every candidate
-boundary. Truncating an auxiliary query to the latest window or checkpoint
-before selection would discard earlier legal recovery points. The selected
-boundary determines the final required ranges only after validation and rank
-intersection. Attention and auxiliary query phases are serialized; narrowing
-the lookup scope does not establish a TTFT improvement.
+SGLang discovers positions in each registered group without loading payloads or
+reserving payload bytes. Discovery inspects DRAM presence, the SSD index and
+batched catalog candidates. Rust intersects the compiled legal boundaries;
+SGLang then intersects those sets across attention ranks. Metadata is a hint:
+concurrent eviction or a remote restart can invalidate it.
 
-Earlier attention pages can be saved after their auxiliary state has been
-evicted. Completeness is checked when joining groups for recovery. Sparse
-membership fetches missing group pages through the existing backing-tier path
-with at most eight independent reads per query. These reads share preparation
-and cancellation ownership; an absent checkpoint does not wait for a future
-publisher. Sparse remote discovery still issues per-key fetches, so batching
-that metadata work remains a distributed optimization.
+Only the selected boundary enters `read_recovery`. Rust translates its
+`required_ranges` into shared views of the original hash batch and reads those
+pages. Attention needs the selected tail, SWA needs its trailing window, and a
+recurrent group needs one checkpoint. Each returned group must have a live
+lease covering its entire selected range; a partial result is released and
+becomes a miss. Completed groups stay owned while others load. SGLang reports
+host hits only once all ranks have complete leased state, before tree/GPU
+allocation. Missing selected state falls back to the engine's valid HBM origin
+and recomputation. Candidate discovery does not initiate warming.
+
+Demand uses the existing bounded backing-read and cancellation machinery.
+Sparse payload reads still have up to eight independent operations per group;
+only metadata discovery is batched across missing hashes. Extra lookup rounds
+are the cost of avoiding speculative payload reads; this change alone makes
+no TTFT claim.
 
 At load time, transferred keys and engine-attested retained keys must be
 disjoint and together equal the keys in each compiled range. SGLang uses the
@@ -99,41 +107,35 @@ is no second radix tree or patched engine submodule.
 
 `CacheGroupLayout` maps vLLM's attention groups to storage group zero and each
 aligned Mamba group to a checkpoint requirement. The scheduler compiles these
-requirements once in `RecoveryContract`. It translates the valid HBM prefix
-and per-shard leased positions into absolute token coverage, then intersects
-the validator's legal boundary sets across shards. The adapter no longer has
-a separate hybrid reconciliation algorithm. Existing vLLM layout restrictions
-still apply: this does not add vLLM SWA support or cross-engine byte reuse.
+requirements once in `RecoveryContract`. Rust computes the legal boundary
+intersection from candidate positions on every shard. Before materialization,
+the scheduler limits selection to the last token boundary usable by vLLM;
+the final prompt token still needs forward computation for logits. This avoids
+fetching a later checkpoint only to discard it during allocation.
 
-Attention is queried first. Checkpoint queries stop at that attention prefix,
-and completed groups remain leased while other groups fetch backing data.
-`Loading` defers admission rather than failing an SSD checkpoint query. While
-the scheduler polls, a hybrid query that has not completed within five seconds
-falls back to recomputation; request drift, cancellation and shutdown also
-retire its completed leases and cancel pending group operations. Submitted
-reads retain their buffers through the Manager's existing completion path.
-Expiry of adapter-held ready groups without another engine callback remains
-part of the single-node fault/pressure qualification.
+The selected attention prefix and each exact checkpoint use `read_recovery`.
+Ready groups remain leased while other groups load; `Loading` defers admission.
+If any actual range is missing, all owned groups are released and the request
+recomputes. The existing five-second preparation limit, request drift, cancel,
+shutdown and session teardown retire interests; submitted I/O retains its
+buffers until completion. The operation and lease lifecycle is shared with
+dense queries, including byte-budget admission.
 
-The final-token limit may select an earlier validated boundary. The scheduler
-keeps the original attention lease and supplies null destinations for unused
-pages; it does not issue another attention query. Allocation must preserve the
-selected checkpoint exactly and uses the contract's required ranges for each
-hybrid group. Storage-group mapping applies the intervals to destination masks,
-preserving the original lease vector's length and order. Unused leased pages
-remain charged to the query budget until the
-combined restore completes. The worker restores only that recurrent page,
-including its conv and temporal tensors, alongside the selected attention
-prefix. All leases move to the existing combined restore operation and remain
-owned until GPU completion. HBM allocation and inference scheduling stay in
-vLLM. Dense-only and optional P/D partial-tail semantics retain their existing
-prefix path; hybrid P/D partial tails remain unsupported.
+Allocation must preserve the selected checkpoint exactly. Lease positions stay
+relative to the original queried tail so the worker can map a one-page
+checkpoint to the right GPU slot. Required attention pages and conv/temporal
+state move into one restore operation, owned through GPU completion. There are
+no surplus attention/checkpoint leases after final-token clamping. HBM
+allocation and inference scheduling stay in vLLM. Dense queries and P/D's
+explicit handoff want-sets retain their separate existing demand behavior;
+hybrid P/D partial tails remain unsupported. This does not add vLLM SWA
+support or cross-engine byte reuse.
 
 ## Scope and production-cache lessons
 
 Compilation here turns declared semantic requirements into deterministic page
 demand for a known range. It removes duplicate adapter arithmetic and bounds
-auxiliary lookup by the attention hit. No latency or throughput improvement has
+payload reads by the selected recovery boundary. No latency or throughput improvement has
 been measured for this increment. General model-graph analysis, numerical proofs,
 future-token prediction, retention and physical planning remain outside its scope.
 A required range grants neither a lease nor permission to reclaim state, and
@@ -205,9 +207,18 @@ The native integration gate checks nonzero origins, missing checkpoints,
 partial attention coverage, final-token clamping and malformed evidence. The
 GPU cases use real vLLM scheduler/worker adapters to restore poisoned attention,
 conv and temporal destinations from DRAM and forced SSD. They also check that
-unused leased pages remain untouched. Unit tests separately cover pending
+unrequested GPU pages remain untouched and SSD bytes equal the selected ranges. Unit tests separately cover pending
 group cancellation, query drift/expiry, shard intersection and allocation
-changes. The serving gate compares matching native-vLLM cache execution plans
+changes. The vLLM SSD fixture stores four attention pages and two checkpoints, then
+selects an earlier boundary under the logits limit. Actual reads are exactly
+**8,704 bytes** (two attention pages plus one checkpoint), versus the former
+17,408-byte candidate materialization. SGLang fixtures also store an unused
+early checkpoint/window page and an orphan outside the attention prefix;
+metadata discovery reads zero payload bytes and materialization reads only
+the selected ranges. These synthetic byte controls establish read reduction,
+not serving latency or throughput gains.
+
+The serving gate compares matching native-vLLM cache execution plans
 and requires real GPU loads after engine restart.
 
 Use the pinned SGLang 0.5.20 environment and a freshly built extension/Manager.

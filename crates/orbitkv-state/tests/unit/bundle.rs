@@ -240,3 +240,83 @@ fn demand_checks_identity_and_alignment_without_expanding_long_prefixes() {
         );
     }
 }
+
+#[test]
+fn planned_ranges_skip_unused_windows_and_old_checkpoints() {
+    let plan = contract(vec![
+        requirement(1, RecoveryRule::Window { tokens: 17 }),
+        requirement(2, RecoveryRule::Checkpoint),
+    ]);
+    let span = TokenRange {
+        start: 64,
+        end: 144,
+    };
+    assert_eq!(
+        plan.read_range("model/layout/rank", span, 0, 5).unwrap(),
+        0..5
+    );
+    assert_eq!(
+        plan.read_range("model/layout/rank", span, 1, 5).unwrap(),
+        3..5
+    );
+    assert_eq!(
+        plan.read_range("model/layout/rank", span, 2, 5).unwrap(),
+        4..5
+    );
+    assert!(plan.read_range("other", span, 1, 5).is_err());
+    assert!(plan.read_range("model/layout/rank", span, 1, 4).is_err());
+    assert!(plan.read_range("model/layout/rank", span, 3, 5).is_err());
+}
+
+#[test]
+fn native_candidate_intersection_preserves_sparse_rank_boundaries() {
+    let plan = contract(vec![requirement(1, RecoveryRule::Checkpoint)]);
+    let span = TokenRange {
+        start: 64,
+        end: 128,
+    };
+    let shards = vec![
+        vec![(0, vec![0, 1, 2, 3]), (1, vec![1, 3])],
+        vec![(0, vec![0, 1, 2, 3]), (1, vec![0, 1, 2])],
+    ];
+    assert_eq!(
+        plan.common_boundaries("model/layout/rank", span, &shards)
+            .unwrap(),
+        vec![96]
+    );
+    let malformed = vec![vec![(0, vec![0, 1, 2, 3]), (1, vec![3, 1])]];
+    assert!(
+        plan.common_boundaries("model/layout/rank", span, &malformed)
+            .is_err()
+    );
+    assert!(
+        plan.common_boundaries("model/layout/rank", span, &[])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn selecting_under_the_engine_limit_happens_before_checkpoint_materialization() {
+    let plan = contract(vec![requirement(1, RecoveryRule::Checkpoint)]);
+    let span = TokenRange {
+        start: 64,
+        end: 128,
+    };
+    let shards = vec![vec![(0, vec![0, 1, 2, 3]), (1, vec![1, 3])]];
+    assert_eq!(
+        plan.select_boundary("model/layout/rank", span, &shards, 128)
+            .unwrap(),
+        Some(128)
+    );
+    assert_eq!(
+        plan.select_boundary("model/layout/rank", span, &shards, 127)
+            .unwrap(),
+        Some(96)
+    );
+    assert_eq!(
+        plan.select_boundary("model/layout/rank", span, &shards, 95)
+            .unwrap(),
+        None
+    );
+}

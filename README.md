@@ -45,19 +45,22 @@ An experimental distributed path extends the same cache API to peer managers.
   computation settings and registered storage geometry. A shared recovery
   contract compiles declared prefix, window and checkpoint rules into exact
   page ranges and validates leased evidence with the same requirements.
-  SGLang restore and vLLM hybrid allocation consume those ranges, removing
-  duplicate rule arithmetic. See [hybrid recovery](docs/hybrid-recovery.md).
+  Hybrid lookup discovers metadata first; Rust selects legal boundaries,
+  slices reads to the chosen window/checkpoint, and revalidates actual leases.
+  SGLang synchronizes rank readiness before HBM allocation; vLLM applies its
+  final-token limit before fetching state. See [hybrid recovery](docs/hybrid-recovery.md).
 - **Build toward shared caching.** Embedded catalog shards discover peer
   replicas, Mooncake Transfer Engine moves bytes, and etcd tracks membership
   and placement. Multi-node serving is still experimental.
 
 The [delivery plan](docs/roadmap.md#current-delivery-priorities) prioritizes
-single-node failure recovery, bounded preparation experiments, then real
+single-node qualification, bounded preparation experiments, then real
 two-host DP and P/D qualification. Catalog HA gates production distributed use.
 Compiled demand describes a known token range from a valid HBM prefix; it does
 not predict future tokens, analyze arbitrary model graphs, authorize reclamation
 or enable automatic hybrid warming. Qualification uses
-[exact GPU-byte gates](docs/hybrid-recovery.md#reproducible-gates); TTFT effects
+[exact GPU-byte gates](docs/hybrid-recovery.md#reproducible-gates) and
+[deterministic fault gates](docs/fault-qualification.md); TTFT effects
 remain unmeasured.
 
 ## Get started
@@ -111,10 +114,10 @@ external restore from a native HBM hit. See the
 
 1. The engine adapter supplies known prefix hashes, a valid HBM origin and
    declared state requirements.
-2. The manager prepares matching DRAM, SSD or remote blocks within byte budgets;
-   the contract validates complete recovery boundaries.
-3. Compiled ranges select the required pages; leases retain sources and
-   destinations until transfers finish.
+2. Hybrid queries discover candidate positions; the Rust contract finds legal
+   recovery boundaries under engine limits and rank agreement.
+3. The manager reads only the selected ranges within byte budgets and validates
+   actual leased coverage. Sources and destinations stay owned through transfer.
 4. The engine resumes computation and publishes completed KV for later reuse.
 
 The engine always connects to its host's manager. Remote discovery and transfer

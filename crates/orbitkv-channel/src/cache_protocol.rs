@@ -9,7 +9,7 @@ const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
-const QUERY_VERSION: u16 = 2;
+const QUERY_VERSION: u16 = 3;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
@@ -503,6 +503,8 @@ pub struct QueryBundleRequest {
     pub wait_for_full_prefix: bool,
     /// Best-effort preparation without a restore lease. Never waits for publication.
     pub warmup: bool,
+    /// Metadata hints only: no payload read, byte reservation, or restore lease.
+    pub discover: bool,
 }
 
 impl QueryBundleRequest {
@@ -526,7 +528,9 @@ impl QueryBundleRequest {
         push_u16(&mut bytes, QUERY_VERSION);
         push_u16(
             &mut bytes,
-            u16::from(self.wait_for_full_prefix) | (u16::from(self.warmup) << 1),
+            u16::from(self.wait_for_full_prefix)
+                | (u16::from(self.warmup) << 1)
+                | (u16::from(self.discover) << 2),
         );
         self.ticket.encode_into(&mut bytes)?;
         push_u32(&mut bytes, self.group_id);
@@ -550,7 +554,7 @@ impl QueryBundleRequest {
         decoder.expect_magic(QUERY_REQUEST_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
-        if flags & !3 != 0 {
+        if flags & !7 != 0 {
             return Err(QueryCodecError::InvalidFlags(flags));
         }
         let ticket = QueryTicket::decode_from(&mut decoder)?;
@@ -580,6 +584,7 @@ impl QueryBundleRequest {
             group_id,
             wait_for_full_prefix: flags & 1 != 0,
             warmup: flags & 2 != 0,
+            discover: flags & 4 != 0,
         })
     }
 }
@@ -590,6 +595,7 @@ pub enum QueryOutcomeCode {
     Ready = 1,
     Loading = 2,
     Busy = 3,
+    Candidates = 4,
 }
 
 impl TryFrom<u16> for QueryOutcomeCode {
@@ -600,6 +606,7 @@ impl TryFrom<u16> for QueryOutcomeCode {
             1 => Ok(Self::Ready),
             2 => Ok(Self::Loading),
             3 => Ok(Self::Busy),
+            4 => Ok(Self::Candidates),
             _ => Err(QueryCodecError::UnknownOutcome(value)),
         }
     }
@@ -665,6 +672,13 @@ impl QueryBundleResponse {
         {
             return Err(QueryCodecError::InvalidLoadingPayload);
         }
+        if outcome == QueryOutcomeCode::Candidates
+            && (!lease.is_empty()
+                || num_hit_blocks != hit_positions.len() as u64
+                || hit_positions.windows(2).any(|pair| pair[0] >= pair[1]))
+        {
+            return Err(QueryCodecError::InvalidCandidates);
+        }
         Ok(Self {
             outcome,
             num_hit_blocks,
@@ -676,6 +690,8 @@ impl QueryBundleResponse {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum QueryCodecError {
+    #[error("candidate hints must be ordered, unique and unleased")]
+    InvalidCandidates,
     #[error("query operation and revision must be nonzero")]
     InvalidQueryTicket,
     #[error("query payload is truncated")]

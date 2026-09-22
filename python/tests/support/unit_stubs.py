@@ -206,6 +206,13 @@ def _install_native_extension_stub() -> None:
             self.lease = lease
             self.hit_positions = [] if hit_positions is None else hit_positions
 
+    class _QueryCandidates:
+        def __init__(self, hit_positions):
+            self.hit_positions = hit_positions
+            self.num_hit_blocks = len(hit_positions)
+
+    module.QueryCandidates = getattr(module, "QueryCandidates", _QueryCandidates)
+
     class _BlockHashes(list):
         def __getitem__(self, view):
             return type(self)(super().__getitem__(view))

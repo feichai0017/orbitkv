@@ -93,7 +93,11 @@ host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
 returns `Loading`. Channel ABI 5 separates query submission from ticket polling.
-The query schema carries an explicit warmup flag: it prepares pages without a
+Query schema 3 distinguishes metadata-only discovery from leased payload reads.
+Discovery returns `Candidates`, never a restore lease, and uses bounded query
+operation capacity without reserving payload bytes. `read_recovery` translates
+compiled demand into exact hash views and validates complete leased coverage.
+The query schema also carries an explicit warmup flag: it prepares pages without a
 restore lease, skips on warmup-budget pressure and is retired without polling.
 See [queued warming](queued-warming.md); the previous ABI is not retained.
 An operation has a monotonically increasing ID within its authenticated session,
@@ -133,9 +137,17 @@ this revision are still required; the latency table below predates it.
 Publish requires a Cache Manager pidfd before submission. Once submitted, the client
 waits beyond the ordinary IPC timeout until it receives a reply or the Cache Manager
 process exits; ambiguous receive failures also keep its save-source pages pinned
-until process death. A live Cache Manager stalled forever will keep the vLLM save
-worker waiting. A watchdog/recovery policy is still needed for that availability
-case.
+until process death. Malformed descriptor acknowledgements use the same fence.
+A watchdog logs the first ordinary-deadline overrun and repeats at most once
+per minute; it does not treat elapsed time as DMA completion. A live Manager
+that never completes still holds the publishing worker's sources. Operators
+must resolve the stall or terminate that Manager before sources can be reused.
+
+Each Manager incarnation advertises a unique iceoryx2 service name through the
+stable UDS bootstrap address. `--channel-service` is a name prefix. Old client
+handles can keep their old service alive without preventing a new Manager from
+starting or accessing its new arena. Reconnect and register GPU buffers again;
+old leases and restore handles cannot be adopted. See [fault qualification](fault-qualification.md).
 
 Publish batches are split to the slot capacity negotiated at bootstrap. Each
 chunk carries the same page range across its layers; the client returns only

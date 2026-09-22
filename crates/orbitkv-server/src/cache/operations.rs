@@ -33,12 +33,16 @@ pub(crate) struct QueryInput {
     pub wait_for_full_prefix: bool,
     pub group_id: u32,
     pub warmup: bool,
+    pub discover: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum QueryOutcome {
     Busy,
     Loading,
+    Candidates {
+        hit_positions: Vec<u32>,
+    },
     Ready {
         num_hit_blocks: u64,
         lease: Vec<u8>,
@@ -181,9 +185,18 @@ pub(crate) async fn execute_query(
     engine: &OrbitKVEngine,
     hll_tracker: &Arc<Mutex<MultiWindowHllTracker>>,
     input: QueryInput,
-    reservation: QueryReservation,
+    reservation: Option<QueryReservation>,
     owner: QueryOwner,
 ) -> Result<QueryOutcome, EngineError> {
+    if input.discover {
+        return engine
+            .discover_candidates(&input.instance_id, input.group_id, &input.block_hashes)
+            .await
+            .map(|hit_positions| QueryOutcome::Candidates { hit_positions });
+    }
+    let reservation = reservation.ok_or_else(|| {
+        EngineError::InvalidArgument("payload read requires a reservation".into())
+    })?;
     let started = std::time::Instant::now();
     trace_query("read_start", &input, 0, 0);
     if input.request_id.is_empty() {

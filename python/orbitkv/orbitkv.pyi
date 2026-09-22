@@ -58,6 +58,13 @@ class QueryReady:
         hit_positions: list[int] = ...,
     ) -> None: ...
 
+class QueryCandidates:
+    """Provisional metadata only; cannot be passed to GPU restore."""
+
+    num_hit_blocks: int
+    hit_positions: list[int]
+    def __init__(self, hit_positions: list[int]) -> None: ...
+
 class RecoveryContract:
     """Compile declared groups into page demand and validate leased coverage."""
 
@@ -67,6 +74,17 @@ class RecoveryContract:
     def required_ranges(self, namespace: str, start: int, end: int) -> list[tuple[int, int, int]]:
         """Group/start/end demand from a valid HBM origin; does not promise hits."""
         ...
+    def select_boundary(
+        self,
+        namespace: str,
+        start: int,
+        end: int,
+        shards: list[list[tuple[int, list[int]]]],
+        limit: int,
+    ) -> int | None: ...
+    def common_boundaries(
+        self, namespace: str, start: int, end: int, shards: list[list[tuple[int, list[int]]]]
+    ) -> list[int]: ...
     def restorable_boundaries(
         self, namespace: str, start: int, end: int, groups: list[tuple[int, list[int]]]
     ) -> list[int]: ...
@@ -135,9 +153,27 @@ class CacheManagerClient:
     @property
     def bootstrap_socket(self) -> str: ...
     @property
+    def service_name(self) -> str: ...
+    @property
     def session_epoch(self) -> int: ...
     @property
     def notification_fd(self) -> int: ...
+    def query_candidates(
+        self, instance_id: str, block_hashes: BlockHashes, req_id: str, group_id: int = 0
+    ) -> QueryCandidates | QueryLoading: ...
+    def read_recovery(
+        self,
+        instance_id: str,
+        block_hashes: BlockHashes,
+        req_id: str,
+        contract: RecoveryContract,
+        namespace: str,
+        start: int,
+        end: int,
+        group_id: int,
+    ) -> QueryReady | QueryLoading:
+        """Read required_ranges and return only complete, revalidated group leases."""
+        ...
     def query_prefetch(
         self,
         instance_id: str,

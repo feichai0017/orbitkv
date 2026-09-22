@@ -208,7 +208,8 @@ pub struct Cli {
     #[arg(long, default_value_t = 120)]
     pub transfer_lock_timeout_secs: u64,
 
-    /// iceoryx2 service name for the node-local inference control path.
+    /// iceoryx2 service name prefix for the inference control path.
+    /// Each startup appends a unique incarnation, advertised through UDS.
     /// Defaults to a name derived from --addr.
     #[arg(long)]
     pub channel_service: Option<String>,

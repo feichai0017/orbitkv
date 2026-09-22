@@ -20,8 +20,11 @@ opt-in because the recorded controls do not establish a throughput benefit.
 
 SGLang hybrid pools and vLLM aligned recurrent groups now use the same recovery
 validator with absolute token coverage. This closes the duplicated boundary
-logic; delayed completion, lost delivery, restart and page-generation gates
-below remain required before distributed serving qualification.
+logic. Hybrid demand now discovers metadata, selects a legal boundary and
+reads only its required ranges, then validates actual leases. Deterministic
+[process fault gates](fault-qualification.md) cover SSD delay/cancel, lost
+notifications, Publish fencing and restart. Multi-rank/concurrent serving
+fault stress and page-generation gates remain distinct qualifications.
 
 The milestone identifiers below name work areas, not a requirement to finish
 every optimization before starting the next area. In particular, page-lifetime
@@ -30,7 +33,7 @@ the later general semantic compiler.
 
 | Priority | Deliverable | Acceptance boundary |
 | --- | --- | --- |
-| First: reliable ordinary demand | Complete single-node concurrent cancellation, lost-result, engine/Manager restart and stuck-Publish qualification for both engines. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
+| First: reliable ordinary demand | Maintain deterministic cancellation, lost-notification, engine/Manager restart and stuck-Publish gates; extend concurrent model-serving fault stress. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
 | Next: bounded preparation experiment | Prepare a small set of requests close to admission, retain their ready pages within the existing budget, then add explicit stop policies and bounded read submission. | Separate demand-only, current warming, consumer-owned preparation and stopping controls; bounded residency and cleanup under reordering/cancellation; measured exposed wait, TTFT and read amplification. Promote a policy only with repeatable benefit. |
 | First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TE path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
 | Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; separately integrate and qualify SGLang's native handoff lifecycle. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
@@ -46,14 +49,12 @@ gate, without claiming cross-host tensor parallelism.
 
 ### Next reviewable changes
 
-1. **Close the ordinary-demand fault gate.** Extend the existing integration
-   and serving tests with delayed SSD completion, lost delivery, disconnect,
-   engine/Manager restart and allocation reuse under concurrent traffic.
-   Verify independent owners of shared reads and handoff to GPU consumers.
-   Fix demonstrated ownership failures in the existing query/endpoint/transfer
-   owners. A stuck-Publish watchdog must report or fence a failed path without
-   treating elapsed time as proof of DMA completion. Preserve model/format
-   mismatch rejection and record the unsupported recovery cases.
+1. **Extend model-serving fault stress.** The deterministic Manager/CUDA gate
+   now checks delayed SSD completion, cancellation, dropped notification,
+   restart with old clients and malformed/stalled Publish acknowledgements.
+   The watchdog reports retained ownership; time alone cannot release DMA
+   pages. Extend this evidence to sustained concurrent engine traffic and
+   multiple ranks. Keep model/format rejection and output controls.
 2. **Prepare only selected consumers.** Use engine scheduling evidence to
    select a bounded lookahead, and reuse the existing operation/revision and
    lease lifecycle. Charge in-flight and ready-but-unconsumed residency until

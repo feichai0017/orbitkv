@@ -75,14 +75,19 @@ def context(client, *, instance_id="instance", namespace="model/layout"):
 )
 def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected):
     cache_config = config()
-    from orbitkv import QueryReady
+    from orbitkv import QueryCandidates, QueryReady
     from orbitkv.vllm.scheduler import SchedulerConnector
 
     client = MagicMock()
-    client.query_prefetch.side_effect = [
-        QueryReady(attention, b"attention"),
-        QueryReady(len(positions), b"state" if positions else b"", positions),
+    client.query_candidates.side_effect = [
+        QueryCandidates(list(range(attention))),
+        QueryCandidates(positions),
     ]
+    client.read_recovery.side_effect = (
+        lambda *args: QueryReady((args[6] - args[5]) // 16, b"attention")
+        if args[-1] == 0
+        else QueryReady(1, b"state", [(args[6] - args[5]) // 16 - 1])
+    )
     scheduler = SchedulerConnector(context(client), kv_cache_config=cache_config)
     try:
         req = SimpleNamespace(
@@ -99,13 +104,13 @@ def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected)
 @pytest.mark.parametrize("positions", [[1, 1], [3, 1]])
 def test_native_contract_rejects_duplicate_or_unordered_evidence(positions):
     cache_config = config()
-    from orbitkv import QueryReady
+    from orbitkv import QueryCandidates
     from orbitkv.vllm.scheduler import SchedulerConnector
 
     client = MagicMock()
-    client.query_prefetch.side_effect = [
-        QueryReady(4, b"attention"),
-        QueryReady(2, b"state", positions),
+    client.query_candidates.side_effect = [
+        QueryCandidates([0, 1, 2, 3]),
+        QueryCandidates(positions),
     ]
     scheduler = SchedulerConnector(context(client), kv_cache_config=cache_config)
     req = SimpleNamespace(
@@ -117,10 +122,8 @@ def test_native_contract_rejects_duplicate_or_unordered_evidence(positions):
     try:
         with pytest.raises(ValueError, match="page ends"):
             scheduler.get_num_new_matched_tokens(req, 64)
-        assert sorted(entry.args[0] for entry in client.release.call_args_list) == [
-            b"attention",
-            b"state",
-        ]
+        client.read_recovery.assert_not_called()
+        client.release.assert_not_called()
         assert not scheduler._pending_query_probes
     finally:
         scheduler.shutdown()
@@ -201,8 +204,8 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
             time.sleep(0.01)
         assert result == (32, True)
         probe = scheduler._pending_query_probes["restore"]
-        assert probe.boundaries == (96, 128)
-        assert probe.leased_blocks == 4
+        assert probe.selected_boundary == 96
+        assert probe.leased_blocks == 2
         assert probe.recurrent_hold.checkpoint == 1
 
         blocks = SimpleNamespace(
@@ -234,8 +237,7 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
             page_bytes = kv[0].numel() * kv.element_size()
             state_bytes = state[0].numel() * state.element_size()
             assert (
-                metrics.get("orbitkv_ssd_prefetch_bytes_total", 0)
-                >= 4 * page_bytes + 2 * state_bytes
+                metrics.get("orbitkv_ssd_prefetch_bytes_total", 0) == 2 * page_bytes + state_bytes
             )
             assert metrics.get("orbitkv_load_bytes_total", 0) == 2 * page_bytes + state_bytes
             assert metrics.get("orbitkv_query_reserved_bytes", 0) == 0

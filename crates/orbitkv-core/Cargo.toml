@@ -9,6 +9,7 @@ license.workspace = true
 workspace = true
 
 [features]
+test-hooks = []
 default = ["cuda-12", "mooncake"]
 cuda-12 = ["cudarc/cuda-12080", "cudarc/nvrtc", "orbitkv-transfer?/cuda-12"]
 cuda-13 = ["cudarc/cuda-13000", "cudarc/nvrtc", "orbitkv-transfer?/cuda-13"]

@@ -13,12 +13,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 def test_python_channel_lifecycle_reaches_real_cache_manager(channel_server):
     orbitkv_native = importlib.import_module("orbitkv.orbitkv")
-    service_name = channel_server.channel_service
-    session_epoch = channel_server.channel_session_epoch
-    assert service_name is not None
-    assert session_epoch is not None
-    bootstrap_socket = channel_server.bootstrap_socket
-    assert bootstrap_socket is not None
+    connection = orbitkv_native.CacheManagerClient(channel_server.bootstrap_socket)
+    service_name, session_epoch = connection.service_name, connection.session_epoch
+    connection.close()
 
     client = orbitkv_native.ChannelProbeClient(service_name, session_epoch)
     assert client.service_name == service_name

@@ -358,7 +358,7 @@ def test_scheduler_uses_common_prefix_and_exact_per_shard_leases():
     scheduler = SchedulerConnector(_context(), clients=(first, second))
     hashes = [b"h0", b"h1", b"h2"]
 
-    ready = scheduler._query_recovery("request", _QueryProbe(0, tuple(hashes)))
+    ready = scheduler._query_recovery("request", _QueryProbe(0, tuple(hashes)), 10000)
 
     assert ready is not None
     assert ready.num_hit_blocks == 2
@@ -388,7 +388,7 @@ def test_scheduler_releases_ready_shards_when_another_shard_is_loading():
     second.query_prefetch.return_value = QueryLoading()
     scheduler = SchedulerConnector(_context(), clients=(first, second))
 
-    assert scheduler._query_recovery("request", _QueryProbe(0, (b"h0", b"h1"))) is None
+    assert scheduler._query_recovery("request", _QueryProbe(0, (b"h0", b"h1")), 10000) is None
     first.release.assert_called_once_with(b"first")
 
 
@@ -437,7 +437,7 @@ def test_scheduler_rejects_invalid_shard_query_results_without_leaking_lease(inv
     scheduler = SchedulerConnector(_context(), clients=(first, second))
 
     with pytest.raises(RuntimeError, match="TP shard 1"):
-        scheduler._query_recovery("request", _QueryProbe(0, (b"h0", b"h1")))
+        scheduler._query_recovery("request", _QueryProbe(0, (b"h0", b"h1")), 10000)
 
     first.release.assert_called_once_with(b"first")
     if invalid_ready.lease:

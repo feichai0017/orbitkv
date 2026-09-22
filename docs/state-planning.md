@@ -59,8 +59,9 @@ request counter or waiting loop. Each adapter prepares an immutable Rust
 polls need neither per-page Python conversion nor hash copying/comparison when
 reusing that batch and view. Changed inputs still revise the owned operation;
 equivalent independently built batches are compared by value. Python still
-checks engine request drift and handles GPU allocation. Candidate discovery and
-fetching only selected ranges remain a separate next step.
+checks engine request drift and handles GPU allocation. Hybrid discovery now
+separates metadata from payload reads; the selected ranges are sliced and
+validated in Rust before the adapter reports a hit.
 
 ## Minimal demand contract
 
@@ -107,18 +108,19 @@ not a latency estimator or an automatic model-graph proof.
 Cross-engine byte reuse, dynamic LoRA, and live weight changes remain outside
 the present supported contract.
 
-After ordinary-demand fault qualification, the next read-reduction step is to
-separate candidate discovery from materializing bytes. The pinned
-[LMCache v0.5.5 prefetch controller](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py)
-trims per-group load plans to the usable attention windows while protecting the
-existing L1 fallback. OrbitKV currently caps auxiliary reads at the attention
-hit, but still materializes candidates before selecting a boundary. A later
-implementation should select from availability evidence, reserve and fetch
-only required ranges, then validate the actual leases. Stale evidence must
-fall back to a still-valid boundary or recomputation; it cannot promise a hit.
-Preserve query-relative positions and other consumers' read ownership. Measure
-avoided SSD bytes and added lookup rounds separately before claiming a latency
-gain. This is planned work, not part of the current range compiler.
+Hybrid demand now separates candidate discovery from materializing bytes.
+The pinned
+[LMCache prefetch controller](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py)
+is a reference for trimming per-group demand while preserving an engine-owned
+fallback. OrbitKV's implementation discovers DRAM/SSD/catalog positions, uses
+Rust to compute legal boundary intersections, then slices actual reads to
+`required_ranges`. vLLM applies its final-token budget before reading; SGLang
+synchronizes selected-boundary readiness before allocating destinations.
+Actual leases must cover every selected page. Stale evidence releases partial
+state and falls back to recomputation from the valid HBM origin. This preserves
+query-relative positions and independent consumers' read ownership. See
+[hybrid recovery](hybrid-recovery.md) for exact-byte gates. Additional discovery
+rounds and avoided payload bytes are separate effects; no TTFT gain is claimed.
 
 ## Decide when to copy, retain, and restore
 
@@ -359,8 +361,10 @@ Expired replies drop resources while retaining a bounded tombstone until poll,
 cancel, or session teardown. Both adapters cancel superseded queries. Channel
 ABI 5 requires rebuilding the manager and client together.
 
-Remaining work includes deadline/priority hints and exhaustive delivery-loss/
-restart fault qualification. The current budget charges each owner's padded
+Deterministic [fault gates](fault-qualification.md) cover delayed SSD completion,
+cancelled ownership, lost completion notifications, stuck/malformed Publish
+acknowledgements and Manager restart with live old clients. Broader concurrent
+serving fault/soak runs and deadline/priority hints remain separate work. The current budget charges each owner's padded
 payload conservatively; physical allocator occupancy is a separate metric.
 It distinguishes preparation, ready leases, and restoration, with queueing and
 backing reconstruction included in preparation. Exact per-device staging and
@@ -375,9 +379,9 @@ retain their buffers until completion. Reconnecting cannot adopt old work.
 
 Current gates cover session isolation, changed revisions, repeated polls,
 retirement, cancellation/disconnect during a shared SSD read, delivered-lease
-cleanup, and reservation lifetime through multiple consumers. Continue with
-delivery-loss and restart fault injection; unknown DMA completion must retain
-pages. The burst baseline checks that retained query bytes return to zero
+cleanup, and reservation lifetime through multiple consumers. The new process
+fault gate verifies drain after delayed completion and rejects old handles and
+leases after restart; unknown DMA completion retains pages. The burst baseline checks that retained query bytes return to zero
 without a stale-entry sweep after every completed burst.
 
 ### P2: qualify actual SGLang SSD recovery

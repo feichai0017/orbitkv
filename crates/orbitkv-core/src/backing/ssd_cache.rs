@@ -979,6 +979,9 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
         io.readv_at_async(task.entry.shard_id, iovecs, task.entry.file_offset)
     };
 
+    #[cfg(feature = "test-hooks")]
+    crate::test_faults::pause("ssd").await;
+
     // Await IO result and rebuild block
     let expected_len = task.entry.len as usize;
     let block = match read_result {

@@ -4,7 +4,7 @@ Scheduler-side connector logic.
 
 import os
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from orbitkv import BlockHashes, CacheManagerClient
@@ -72,17 +72,15 @@ class _QueryProbe:
     # Hybrid (HMA): pinned recurrent checkpoints from the membership queries,
     # set when the shared validator found a complete recovery boundary.
     recurrent_hold: RecurrentLoadHold | None = None
-    # Absolute token boundaries proved by the shared contract on every shard.
-    boundaries: tuple[int, ...] = ()
     # Completed groups stay leased while other groups read from backing tiers.
     # None records a submitted group that must be cancelled on query retirement.
     groups: dict[int, list[tuple[tuple[int, ...], bytes]] | None] = field(default_factory=dict)
     # Attention-only prefix before validation; the junction hint needs this
     # even when no complete hybrid boundary exists.
     attention_hit_blocks: int = 0
-    # Blocks pinned by `leases` on the server. `hit_blocks` may shrink below
-    # this after validation or the last-token clamp; the load must
-    # still address every leased block (extra ones as `None` targets).
+    candidates: dict[int, list[tuple[int, ...]] | None] = field(default_factory=dict)
+    selected_boundary: int = 0
+    # Actual attention pages pinned by the selected group lease.
     leased_blocks: int = 0
 
     def __post_init__(self) -> None:
@@ -112,10 +110,10 @@ class _QueryProbe:
                 f"{len(self.query_hashes)} hashes"
             )
         self.hit_blocks = hit_blocks
-        self.leased_blocks = ready.attention_hit_blocks or hit_blocks
+        self.leased_blocks = hit_blocks
         self.leases = ready.leases
         self.recurrent_hold = ready.recurrent_hold
-        self.boundaries = ready.boundaries
+        self.selected_boundary = ready.boundary
         self.attention_hit_blocks = ready.attention_hit_blocks
         if ready.recurrent_hold is not None:
             self.groups.clear()  # Ownership moved into the scheduler/worker handoff.
@@ -366,7 +364,7 @@ class SchedulerConnector:
 
         # Keep completed state groups pinned while remaining queries advance.
         lookup_start = time.perf_counter()
-        ready = self._query_recovery(req_id, probe)
+        ready = self._query_recovery(req_id, probe, request.num_tokens - 1)
         lookup_us = (time.perf_counter() - lookup_start) * 1e6
 
         # Backend is still loading.  Keep the original snapshot.
@@ -478,21 +476,15 @@ class SchedulerConnector:
         locally_computed_tokens = computed_blocks * vbs
         hit_tokens = min(hit_tokens, max(0, num_tokens - locally_computed_tokens - 1))
 
-        if probe.recurrent_hold is not None:
-            # A mamba checkpoint is valid only at its own block boundary. If
-            # the token budget cut inside the validated span, fall back to
-            # the best earlier boundary; if none survives, drop the hit (a
-            # partial mamba resume cannot exist).
-            limit = locally_computed_tokens + hit_tokens
-            boundary = max((end for end in probe.boundaries if end <= limit), default=None)
-            if boundary is None:
-                if self._pending_query_probes.get(req_id) is probe:
-                    self._release_pending_query_probe(req_id)
-                return (0, False)
-            hit_blocks = (boundary - locally_computed_tokens) // vbs
-            hit_tokens = hit_blocks * vbs
-            probe.hit_blocks = hit_blocks
-            probe.recurrent_hold = replace(probe.recurrent_hold, checkpoint=hit_blocks - 1)
+        if probe.recurrent_hold is not None and (
+            hit_tokens != hit_blocks * vbs
+            or locally_computed_tokens + hit_tokens != probe.selected_boundary
+        ):
+            # The payload belongs to exactly one checkpoint. Engine budget
+            # drift cannot turn it into evidence for a different boundary.
+            if self._pending_query_probes.get(req_id) is probe:
+                self._release_pending_query_probe(req_id)
+            return (0, False)
 
         # Cacheable tails contain at least two tokens, so recomputing the final
         # prompt token cannot remove the last leased block from the load.
@@ -606,7 +598,7 @@ class SchedulerConnector:
                 if pending_probe.recurrent_hold is not None and (
                     num_external_tokens != pending_probe.require_hit_blocks() * vbs
                     or num_computed_blocks * vbs + num_external_tokens
-                    not in pending_probe.boundaries
+                    != pending_probe.selected_boundary
                 ):
                     self._release_pending_query_probe(req_id)
                     raise RuntimeError(f"req {req_id} allocation changed the recovery boundary")
@@ -1192,10 +1184,14 @@ class SchedulerConnector:
         self._pending_saves.discard(req_id)
         self._tail_saved.discard(req_id)
 
-    def _query_recovery(self, req_id: str, probe: _QueryProbe) -> ShardedQueryReady | None:
+    def _query_recovery(
+        self, req_id: str, probe: _QueryProbe, limit: int
+    ) -> ShardedQueryReady | None:
         """Advance one request-owned recovery query without reacquiring ready groups."""
         try:
-            if probe.leases:
+            if self._cache_groups.has_recurrent_state:
+                ready = self._query_hybrid(req_id, probe, limit)
+            elif probe.leases:
                 ready = ShardedQueryReady(probe.leased_blocks, probe.leases)
             else:
                 ready = self._tp_shard_client.query(
@@ -1207,8 +1203,6 @@ class SchedulerConnector:
                 if ready is not None:
                     probe.leases = ready.leases
                     probe.leased_blocks = ready.num_hit_blocks
-            if ready is not None and self._cache_groups.has_recurrent_state:
-                ready = self._query_hybrid(req_id, probe)
         except Exception:
             self._release_query_probe(req_id, probe)
             if self._pending_query_probes.get(req_id) is probe:
@@ -1226,67 +1220,93 @@ class SchedulerConnector:
             self._prefetch_tracker.on_prefetch_complete(duration_ms, ready.num_hit_blocks)
         return ready
 
-    def _query_hybrid(self, req_id: str, probe: _QueryProbe) -> ShardedQueryReady | None:
-        attention_blocks = probe.leased_blocks
-        miss = ShardedQueryReady(0, probe.leases, attention_hit_blocks=attention_blocks)
-        if attention_blocks == 0:
-            return miss
+    def _query_hybrid(
+        self, req_id: str, probe: _QueryProbe, limit: int
+    ) -> ShardedQueryReady | None:
+        def miss():
+            return ShardedQueryReady(
+                0, probe.leases, attention_hit_blocks=probe.attention_hit_blocks
+            )
+
         if time.monotonic() - probe.started_at >= self._HYBRID_QUERY_WAIT_SECONDS:
             logger.warning("Hybrid cache query wait expired; recomputing request %s", req_id)
-            return miss
-
-        group_ids = tuple(group for group, _, _ in self._cache_groups.recovery_groups if group)
-        loading = False
-        for group_id in group_ids:
-            if probe.groups.get(group_id) is not None:
-                continue
-            probe.groups[group_id] = None
-            result = self._tp_shard_client.query_group_membership(
-                self._ctx.instance_id,
-                probe.native_hashes[:attention_blocks],
-                req_id,
-                group_id,
-            )
-            probe.groups[group_id] = result
-            loading |= result is None
-        if loading:
-            return None
-
+            return miss()
+        group_ids = tuple(group for group, _, _ in self._cache_groups.recovery_groups)
         vbs = self._ctx.virtual_block_size
         origin = probe.computed_blocks * vbs
-        attention_ends = [origin + (position + 1) * vbs for position in range(attention_blocks)]
-        boundaries: set[int] | None = None
         assert self._recovery is not None
-        for shard in range(len(probe.leases)):
-            coverage = [(0, attention_ends)]
-            for group_id in group_ids:
-                group = probe.groups[group_id]
-                assert group is not None
-                positions, _ = group[shard]
-                coverage.append(
-                    (group_id, [origin + (position + 1) * vbs for position in positions])
+        if not probe.selected_boundary:
+            loading = False
+            for group in group_ids:
+                if probe.candidates.get(group) is not None:
+                    continue
+                probe.candidates[group] = None
+                result = self._tp_shard_client.candidates(
+                    self._ctx.instance_id, probe.native_hashes, req_id, group
                 )
-            legal = set(
-                self._recovery.restorable_boundaries(
-                    self._ctx.namespace, origin, origin + len(probe.query_hashes) * vbs, coverage
+                if result is None:
+                    loading = True
+                else:
+                    probe.candidates[group] = result
+            if loading:
+                return None
+            probe.attention_hit_blocks = min(map(len, probe.candidates[0]))
+            shards = [
+                [(group, probe.candidates[group][rank]) for group in group_ids]
+                for rank in range(len(self._clients))
+            ]
+            # Rust applies the engine's final-token budget before any reads.
+            probe.selected_boundary = (
+                self._recovery.select_boundary(
+                    self._ctx.namespace,
+                    origin,
+                    origin + len(probe.query_hashes) * vbs,
+                    shards,
+                    limit,
                 )
+                or 0
             )
-            boundaries = legal if boundaries is None else boundaries & legal
-        if not boundaries:
-            return miss
-
-        hit_blocks = (max(boundaries) - origin) // vbs
-        groups = [probe.groups[group_id] for group_id in group_ids]
+            if not probe.selected_boundary:
+                return miss()
+        loading = False
+        for group in group_ids:
+            if probe.groups.get(group) is not None:
+                continue
+            probe.groups[group] = None
+            result = self._tp_shard_client.read_recovery(
+                self._ctx.instance_id,
+                probe.native_hashes,
+                req_id,
+                self._recovery,
+                self._ctx.namespace,
+                origin,
+                probe.selected_boundary,
+                group,
+            )
+            if result is None:
+                loading = True
+                continue
+            probe.groups[group] = result
+            if not result:
+                return miss()
+        if loading:
+            return None
+        attention = probe.groups.pop(0)
+        assert attention is not None
+        probe.leases = tuple(lease for _, lease in attention)
+        hit_blocks = (probe.selected_boundary - origin) // vbs
+        probe.leased_blocks = hit_blocks
+        groups = [probe.groups[group] for group in group_ids if group]
         return ShardedQueryReady(
             hit_blocks,
             probe.leases,
-            attention_hit_blocks=attention_blocks,
+            attention_hit_blocks=probe.attention_hit_blocks,
             recurrent_hold=RecurrentLoadHold(
                 leases=tuple(tuple(lease for _, lease in group) for group in groups),
                 hit_positions=tuple(tuple(positions for positions, _ in group) for group in groups),
                 checkpoint=hit_blocks - 1,
             ),
-            boundaries=tuple(sorted(boundaries)),
+            boundary=probe.selected_boundary,
         )
 
     def _cancel_prefetch_tracking(self, req_id: str) -> None:
@@ -1343,6 +1363,8 @@ class SchedulerConnector:
         if probe.leases and any(probe.leases):
             released = self._tp_shard_client.release(probe.leases, req_id)
         self._cancel_prefetch_tracking(req_id)
+        for group_id in probe.candidates.keys() - probe.groups.keys():
+            self._tp_shard_client.cancel(self._ctx.instance_id, req_id, group_id)
         for group_id, group in probe.groups.items():
             self._tp_shard_client.cancel(self._ctx.instance_id, req_id, group_id)
             if group is not None:

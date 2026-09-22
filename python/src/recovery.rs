@@ -6,7 +6,7 @@ use pyo3::{exceptions::PyValueError, prelude::*};
 
 #[pyclass(name = "RecoveryContract", frozen)]
 pub(crate) struct PyRecoveryContract {
-    contract: RecoveryContract,
+    pub(crate) contract: RecoveryContract,
 }
 
 #[pymethods]
@@ -62,6 +62,31 @@ impl PyRecoveryContract {
                     .map(|(group, span)| (group, span.start, span.end))
                     .collect()
             })
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
+
+    fn select_boundary(
+        &self,
+        namespace: &str,
+        start: u64,
+        end: u64,
+        shards: Vec<Vec<(u32, Vec<u32>)>>,
+        limit: u64,
+    ) -> PyResult<Option<u64>> {
+        self.contract
+            .select_boundary(namespace, TokenRange { start, end }, &shards, limit)
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
+
+    fn common_boundaries(
+        &self,
+        namespace: &str,
+        start: u64,
+        end: u64,
+        shards: Vec<Vec<(u32, Vec<u32>)>>,
+    ) -> PyResult<Vec<u64>> {
+        self.contract
+            .common_boundaries(namespace, TokenRange { start, end }, &shards)
             .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 

@@ -128,6 +128,7 @@ Manager shutdown drains GPU queues before CUDA IPC mappings are released.
 Current tests cover revised queries, cancellation, retained budgets, scheduler
 admission and GPU recovery. They do not establish complete generation-safe page
 references or hybrid recovery proofs for arbitrary models. Publish can still
-retain a source indefinitely if a live manager never completes it; an
-operational watchdog and broader fault/soak qualification remain planned. See
+retain a source indefinitely if a live manager never completes it;
+the Publish watchdog reports stalled ownership; deterministic fault tests cover
+restart and lost notifications. Broader concurrent fault/soak qualification remains. See
 [the work queue](../TODO.md) and [transport ownership](transport.md).

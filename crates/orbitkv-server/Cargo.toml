@@ -10,6 +10,7 @@ default-run = "orbitkv-cache-manager"
 workspace = true
 
 [features]
+test-hooks = ["orbitkv-core/test-hooks"]
 default = ["cuda-12", "mooncake"]
 cuda-12 = ["orbitkv-core/cuda-12"]
 cuda-13 = ["orbitkv-core/cuda-13"]

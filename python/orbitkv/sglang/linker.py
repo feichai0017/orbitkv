@@ -18,7 +18,7 @@ from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
 from sglang.srt.mem_cache.unified_cache.components import ComponentType
 from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinker
 
-from orbitkv import BlockHashes, CacheManagerClient
+from orbitkv import BlockHashes, CacheManagerClient, QueryCandidates, QueryReady, RecoveryContract
 from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
 from orbitkv.logging_utils import trace_transfer
 
@@ -35,6 +35,8 @@ class _Lookup:
     hashes: BlockHashes
     groups: dict[PoolName, Any] = field(default_factory=dict)
     boundaries: tuple[int, ...] = ()
+    candidates: dict[PoolName, Any] = field(default_factory=dict)
+    selected: int = 0
 
 
 @dataclass(frozen=True)
@@ -110,8 +112,6 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self.layout = GpuLayout.from_pool(params, components)
         self.page_size = self.layout.page_size
         self.namespace = derive_namespace(server_args, params, self.layout)
-        from orbitkv import RecoveryContract
-
         self.recovery = RecoveryContract(
             self.namespace,
             self.page_size,
@@ -238,65 +238,29 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 raise ValueError("SGLang lookup contains duplicate page hashes")
             lookup = _Lookup(keys, origin, BlockHashes(self._hashes(keys)))
             self._lookups[rid] = lookup
-        from orbitkv import QueryReady
-
+        if len(self.layout.pools) > 1:
+            return self._discover_recovery(rid, lookup, started)
         try:
-            loading = False
-            for name, pool in sorted(self.layout.pools.items(), key=lambda item: item[1].group_id):
-                if name in lookup.groups:
-                    continue
-                # Preserve every candidate boundary, but never read auxiliary
-                # state beyond the leased attention prefix.
-                query_hashes = (
-                    lookup.hashes
-                    if pool.group_id == 0
-                    else lookup.hashes[: lookup.groups[PoolName.KV].num_hit_blocks]
-                )
+            if PoolName.KV not in lookup.groups:
                 result = self.client.query_prefetch(
-                    self.instance_id,
-                    query_hashes,
-                    rid,
-                    wait_for_full_prefix=False,
-                    group_id=pool.group_id,
+                    self.instance_id, lookup.hashes, rid, wait_for_full_prefix=False, group_id=0
                 )
                 if not isinstance(result, QueryReady):
-                    loading = True
-                    if pool.group_id == 0:
-                        break
-                    continue
-                lookup.groups[name] = result
-                if not 0 <= result.num_hit_blocks <= len(query_hashes):
+                    self._pending_queries[rid] = (keys, started)
+                    return []
+                lookup.groups[PoolName.KV] = result
+                if not 0 <= result.num_hit_blocks <= len(lookup.hashes):
                     raise ValueError("OrbitKV returned an invalid state hit count")
                 if result.num_hit_blocks and not result.lease:
                     raise RuntimeError("OrbitKV reported state hits without a restore lease")
-                if pool.group_id and len(result.hit_positions) != result.num_hit_blocks:
-                    raise ValueError("OrbitKV returned inconsistent state hit positions")
-                if pool.group_id == 0 and not result.num_hit_blocks:
-                    self._pending_queries.pop(rid, None)
-                    self._release_lookup(rid)
-                    return []
-            if loading:
-                self._pending_queries[rid] = (keys, started)
-                return []
             self._pending_queries.pop(rid, None)
-            coverage = []
-            for name, pool in self.layout.pools.items():
-                result = lookup.groups[name]
-                positions = (
-                    range(result.num_hit_blocks) if pool.group_id == 0 else result.hit_positions
-                )
-                coverage.append(
-                    (
-                        pool.group_id,
-                        [origin + (position + 1) * self.page_size for position in positions],
-                    )
-                )
+            count = lookup.groups[PoolName.KV].num_hit_blocks
             lookup.boundaries = tuple(
                 self.recovery.restorable_boundaries(
                     self.namespace,
                     origin,
-                    origin + lookup.groups[PoolName.KV].num_hit_blocks * self.page_size,
-                    coverage,
+                    origin + count * self.page_size,
+                    [(0, [origin + (position + 1) * self.page_size for position in range(count)])],
                 )
             )
         except Exception:
@@ -305,6 +269,86 @@ class OrbitKVLinker(UnifiedCacheLinker):
         if not lookup.boundaries:
             self._release_lookup(rid)
         return [(boundary - origin) // self.page_size for boundary in lookup.boundaries]
+
+    def _discover_recovery(self, rid: str, lookup: _Lookup, started: float) -> list[int]:
+        if lookup.boundaries:
+            return [(end - lookup.origin) // self.page_size for end in lookup.boundaries]
+        try:
+            loading = False
+            for name, pool in self.layout.pools.items():
+                if name in lookup.candidates:
+                    continue
+                result = self.client.query_candidates(
+                    self.instance_id, lookup.hashes, rid, group_id=pool.group_id
+                )
+                if not isinstance(result, QueryCandidates):
+                    loading = True
+                    continue
+                lookup.candidates[name] = result
+            if loading:
+                self._pending_queries[rid] = (lookup.keys, started)
+                return []
+            lookup.boundaries = tuple(
+                self.recovery.common_boundaries(
+                    self.namespace,
+                    lookup.origin,
+                    lookup.origin + len(lookup.keys) * self.page_size,
+                    [
+                        [
+                            (pool.group_id, lookup.candidates[name].hit_positions)
+                            for name, pool in self.layout.pools.items()
+                        ]
+                    ],
+                )
+            )
+            if not lookup.boundaries:
+                self._pending_queries.pop(rid, None)
+                self._release_lookup(rid)
+            return [(end - lookup.origin) // self.page_size for end in lookup.boundaries]
+        except Exception:
+            self.cancel_query(rid)
+            raise
+
+    def prepare_recovery(self, rid: str, boundary: int) -> int:
+        """Acquire the selected rank-common boundary before SGLang allocates HBM.
+
+        -1 is stale/missing, 0 is pending, 1 has every required leased page.
+        """
+        lookup = self._lookups[rid]
+        if boundary not in lookup.boundaries or (lookup.selected and lookup.selected != boundary):
+            self.expire_query(rid)
+            return -1
+        lookup.selected = boundary
+        try:
+            loading = False
+            for name, pool in self.layout.pools.items():
+                if name in lookup.groups:
+                    continue
+                result = self.client.read_recovery(
+                    self.instance_id,
+                    lookup.hashes,
+                    rid,
+                    self.recovery,
+                    self.namespace,
+                    lookup.origin,
+                    boundary,
+                    pool.group_id,
+                )
+                if not isinstance(result, QueryReady):
+                    loading = True
+                    continue
+                if not result.lease:
+                    self.expire_query(rid)
+                    return -1
+                lookup.groups[name] = result
+            if loading:
+                self._pending_queries.setdefault(rid, (lookup.keys, time.monotonic()))
+                return 0
+            self._pending_queries.pop(rid, None)
+            return 1
+        except Exception:
+            self.cancel_query(rid)
+            raise
 
     def load(self, rid: str, transfers: list[PoolTransfer]) -> bool:
         self._check_load_failure()
@@ -315,11 +359,15 @@ class OrbitKVLinker(UnifiedCacheLinker):
             raise RuntimeError(f"SGLang load for {rid} has no OrbitKV lookup leases")
         groups = []
         try:
+            if set(lookup.groups) != set(self.layout.pools):
+                raise RuntimeError("SGLang recovery leases are not ready")
             by_name = {transfer.name: transfer for transfer in transfers}
             if len(by_name) != len(transfers) or not set(by_name) <= set(self.layout.pools):
                 raise ValueError("SGLang load contains unknown or duplicate state pools")
             boundary, resident = self._load_boundaries.pop(rid)
-            if boundary not in lookup.boundaries:
+            if boundary not in lookup.boundaries or (
+                len(self.layout.pools) > 1 and lookup.selected != boundary
+            ):
                 raise ValueError("SGLang selected an unproved recovery boundary")
             required = {
                 group: lookup.keys[

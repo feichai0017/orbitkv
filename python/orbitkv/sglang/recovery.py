@@ -119,7 +119,21 @@ class RecoveryLinkerWrapper(UnifiedCacheLinkerWrapper):
     def match(self, key, req, result):
         self.cache_linker._origins[req.rid] = int(result.device_indices.numel())
         try:
-            return super().match(key, req, result)
+            matched = super().match(key, req, result)
+            hit = self.hit_markers.get(req.rid)
+            if hit is None or len(self.cache_linker.layout.pools) == 1:
+                return matched
+            boundary = hit.device_hit_len + len(hit.tail_hashes) * self.cache.page_size
+            state = torch.tensor(
+                [self.cache_linker.prepare_recovery(req.rid, boundary)], dtype=torch.int
+            )
+            self.cache._all_reduce_attn_groups(state, torch.distributed.ReduceOp.MIN)
+            if state.item() == 1:
+                return matched
+            self.hit_markers.pop(req.rid, None)
+            if state.item() < 0:
+                self.cache_linker.expire_query(req.rid)
+            return result
         finally:
             self.cache_linker._origins.pop(req.rid, None)
 
