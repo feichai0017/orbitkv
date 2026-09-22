@@ -78,15 +78,20 @@ include warmups and demand; they are not end-user request hit rates.
   - Use case: Detect memory exhaustion issues
 
 ### Cache Metrics (Block-level)
+- **orbitkv_cache_candidate_hits_total**, **orbitkv_cache_candidate_misses_total** (Counters)
+  - Metadata-only recovery discovery across attention and auxiliary groups
+  - Attention counts the available contiguous prefix; auxiliary groups count
+    independently available positions. The remaining positions count as misses.
+  - Candidates hold no leases and can become stale. These counters describe
+    planning availability, not completed reads, transferred bytes, or GPU reuse.
+
 - **orbitkv_cache_block_hits_total** (Counter)
-  - Legacy resident-cache hit counter
-  - Use case: Backward-compatible dashboards only; do not use for tier
-    contribution analysis
+  - Blocks returned by terminal prefix reads, including warmup reads
+  - Excludes metadata-only candidate discovery; does not prove GPU transfer
 
 - **orbitkv_cache_block_misses_total** (Counter)
-  - Legacy resident-cache miss counter
-  - Use case: Backward-compatible dashboards only; do not use for tier
-    contribution analysis
+  - Missing suffix blocks reported by terminal prefix reads
+  - Use candidate-miss counters for recovery plans rejected before payload reads
 
 - **orbitkv_cache_tier_block_requests_total** (Counter)
   - Per-decision `query_prefetch` block attribution by `tier`
@@ -173,6 +178,9 @@ include warmups and demand; they are not end-user request hit rates.
 
 - **orbitkv_hll_total_requests** (Gauge)
   - Total queried blocks in the same configured sliding window, including ready blocks and duplicates
+  - Hybrid recovery records attention-prefix discovery once. Materializing the
+    selected ranges does not count the same lookup again; auxiliary groups and
+    speculative warmup do not enter this denominator.
   - Labels: `window` (`15m`, `1h`, `1d` by default)
   - Use case: Denominator for HLL-based reference reuse rate
 
@@ -269,12 +277,12 @@ For backing failure correlation, use:
   segments; `orbitkv_remote_fetch_plan_completed_segments` counts completed ones.
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
 
-The legacy `orbitkv_cache_block_hits_total` and
-`orbitkv_cache_block_misses_total` counters are retained for compatibility.
-Their `Loading { hit, loading }` path only increments hits by `hit`; `loading`
-does not enter the legacy denominator. New dashboards should use
-`orbitkv_cache_tier_block_requests_total{tier}` instead of mixing legacy and
-tier counters.
+`orbitkv_cache_block_hits_total` and `orbitkv_cache_block_misses_total` count
+terminal prefix reads. Metadata discovery has separate candidate counters, so a
+cold hybrid lookup can record a candidate miss without issuing a payload read.
+Use `orbitkv_cache_tier_block_requests_total{tier}` for read-tier decisions;
+do not add candidate counters to that denominator. Verify actual GPU reuse with
+`orbitkv_load_bytes_total`, not candidate or query hits alone.
 
 ## Configuration
 

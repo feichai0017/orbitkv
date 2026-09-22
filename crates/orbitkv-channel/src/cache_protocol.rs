@@ -9,7 +9,7 @@ const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
-const QUERY_VERSION: u16 = 3;
+const QUERY_VERSION: u16 = 4;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
@@ -505,6 +505,8 @@ pub struct QueryBundleRequest {
     pub warmup: bool,
     /// Metadata hints only: no payload read, byte reservation, or restore lease.
     pub discover: bool,
+    /// Read a selected recovery range already counted by candidate discovery.
+    pub materialize: bool,
 }
 
 impl QueryBundleRequest {
@@ -530,7 +532,8 @@ impl QueryBundleRequest {
             &mut bytes,
             u16::from(self.wait_for_full_prefix)
                 | (u16::from(self.warmup) << 1)
-                | (u16::from(self.discover) << 2),
+                | (u16::from(self.discover) << 2)
+                | (u16::from(self.materialize) << 3),
         );
         self.ticket.encode_into(&mut bytes)?;
         push_u32(&mut bytes, self.group_id);
@@ -554,7 +557,7 @@ impl QueryBundleRequest {
         decoder.expect_magic(QUERY_REQUEST_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
-        if flags & !7 != 0 {
+        if flags & !15 != 0 {
             return Err(QueryCodecError::InvalidFlags(flags));
         }
         let ticket = QueryTicket::decode_from(&mut decoder)?;
@@ -585,6 +588,7 @@ impl QueryBundleRequest {
             wait_for_full_prefix: flags & 1 != 0,
             warmup: flags & 2 != 0,
             discover: flags & 4 != 0,
+            materialize: flags & 8 != 0,
         })
     }
 }

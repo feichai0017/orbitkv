@@ -441,7 +441,10 @@ class TestE2ECorrectness:
         # orbitkv_results forces the real cache plan to run against this server.
         del orbitkv_results
         counters = fetch_orbitkv_metrics(orbitkv_server.metrics_port)
-        assert counters.get("orbitkv_cache_block_misses_total", 0) > 0, (
+        misses = counters.get("orbitkv_cache_block_misses_total", 0) + counters.get(
+            "orbitkv_cache_candidate_misses_total", 0
+        )
+        assert misses > 0, (
             "execution plan exercised no cache miss; the RPC-health gate would be vacuous"
         )
         failures = fetch_orbitkv_rpc_failures(orbitkv_server.metrics_port)
@@ -457,10 +460,7 @@ class TestE2ECorrectness:
         """
         del orbitkv_results
         counters = fetch_orbitkv_metrics(orbitkv_server.metrics_port)
-        loads_happened = (
-            counters.get("orbitkv_cache_block_hits_total", 0) > 0
-            or counters.get("orbitkv_load_bytes_total", 0) > 0
-        )
+        loads_happened = counters.get("orbitkv_load_bytes_total", 0) > 0
         assert loads_happened, "plan performed no KV load; cannot assert load health"
         assert counters.get("orbitkv_load_failures_total", 0) == 0, (
             f"KV load failures during run: {counters.get('orbitkv_load_failures_total')}"

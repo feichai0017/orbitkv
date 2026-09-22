@@ -93,7 +93,8 @@ host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
 returns `Loading`. Channel ABI 5 separates query submission from ticket polling.
-Query schema 3 distinguishes metadata-only discovery from leased payload reads.
+Query schema 4 distinguishes metadata-only discovery from leased payload reads
+and marks selected recovery reads so HLL counts the logical discovery only once.
 Discovery returns `Candidates`, never a restore lease, and uses bounded query
 operation capacity without reserving payload bytes. `read_recovery` translates
 compiled demand into exact hash views and validates complete leased coverage.

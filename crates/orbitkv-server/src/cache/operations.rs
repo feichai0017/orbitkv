@@ -34,6 +34,7 @@ pub(crate) struct QueryInput {
     pub group_id: u32,
     pub warmup: bool,
     pub discover: bool,
+    pub materialize: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -189,10 +190,11 @@ pub(crate) async fn execute_query(
     owner: QueryOwner,
 ) -> Result<QueryOutcome, EngineError> {
     if input.discover {
-        return engine
+        let hit_positions = engine
             .discover_candidates(&input.instance_id, input.group_id, &input.block_hashes)
-            .await
-            .map(|hit_positions| QueryOutcome::Candidates { hit_positions });
+            .await?;
+        record_prefix_reuse(engine, hll_tracker, &input, hit_positions.len());
+        return Ok(QueryOutcome::Candidates { hit_positions });
     }
     let reservation = reservation.ok_or_else(|| {
         EngineError::InvalidArgument("payload read requires a reservation".into())
@@ -299,17 +301,8 @@ pub(crate) async fn execute_query(
         let QueryResult { blocks, missing } = status;
         let hit = blocks.len();
         let miss_count = missing.min(input.block_hashes.len());
-        let miss_start = input.block_hashes.len() - miss_count;
         debug_assert_eq!(hit + miss_count, input.block_hashes.len());
-        if let Ok(namespace) = engine.instance_namespace(&input.instance_id)
-            && let Ok(mut tracker) = hll_tracker.lock()
-        {
-            tracker.record_namespaced_misses(
-                &namespace,
-                input.block_hashes.len() as u64,
-                &input.block_hashes[miss_start..],
-            );
-        }
+        record_prefix_reuse(engine, hll_tracker, &input, hit);
         let lease = if hit == 0 {
             Vec::new()
         } else {
@@ -323,5 +316,24 @@ pub(crate) async fn execute_query(
             lease,
             hit_positions: Vec::new(),
         })
+    }
+}
+
+fn record_prefix_reuse(
+    engine: &OrbitKVEngine,
+    hll_tracker: &Mutex<MultiWindowHllTracker>,
+    input: &QueryInput,
+    hits: usize,
+) {
+    if input.group_id == 0
+        && !input.materialize
+        && let Ok(namespace) = engine.instance_namespace(&input.instance_id)
+        && let Ok(mut tracker) = hll_tracker.lock()
+    {
+        tracker.record_namespaced_misses(
+            &namespace,
+            input.block_hashes.len() as u64,
+            &input.block_hashes[hits..],
+        );
     }
 }

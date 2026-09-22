@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{
-    BlockHashes, CacheClient, CallOptions, ChannelError, PublishLayer, PublishRequest,
+    BlockHashes, CacheClient, CallOptions, ChannelError, PublishLayer, PublishRequest, QueryIntent,
     RestoreHandle, RestoreLease, RestoreRequest, RestoreState,
 };
 use orbitkv_proto::proto::engine::{
@@ -289,13 +289,14 @@ impl PyCacheManagerClient {
     ) -> PyResult<Py<PyAny>> {
         let response = py
             .detach(|| {
-                self.inner.query_prefetch(
+                self.inner.query(
                     instance_id,
                     &block_hashes.0,
                     req_id,
-                    wait_for_full_prefix,
                     group_id,
-                    false,
+                    QueryIntent::Lookup {
+                        wait_for_full_prefix,
+                    },
                 )
             })
             .map_err(client_error)?;
@@ -313,13 +314,12 @@ impl PyCacheManagerClient {
     ) -> PyResult<Py<PyAny>> {
         let response = py
             .detach(|| {
-                self.inner.query_prefetch(
+                self.inner.query(
                     instance_id,
                     &block_hashes.0,
                     req_id,
-                    false,
                     group_id,
-                    true,
+                    QueryIntent::Candidates,
                 )
             })
             .map_err(client_error)?;

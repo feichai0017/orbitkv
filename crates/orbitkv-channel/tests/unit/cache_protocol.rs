@@ -31,10 +31,17 @@ fn request_round_trip_preserves_variable_hashes() {
         wait_for_full_prefix: true,
         warmup: false,
         discover: false,
+        materialize: false,
     };
     assert_eq!(
         QueryBundleRequest::decode(&request.encode().unwrap()).unwrap(),
         request
+    );
+    let mut previous_schema = request.encode().unwrap();
+    previous_schema[4..6].copy_from_slice(&(QUERY_VERSION - 1).to_le_bytes());
+    assert_eq!(
+        QueryBundleRequest::decode(&previous_schema),
+        Err(QueryCodecError::UnsupportedVersion(QUERY_VERSION - 1))
     );
     for command in [
         QueryCommand::Submit(request.clone()),
