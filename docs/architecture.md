@@ -138,10 +138,12 @@ are:
 - `StateBundle` and `RecoveryContract`: the components needed to claim that a
   logical boundary is restorable.
 
-`StateBundle::has_required_components` currently checks availability by
-component kind only. It is not yet a proof of restorable state: token coverage,
-model/format compatibility, and the framework's recovery rule must be checked
-before a bundle is used to skip prefill or route a request.
+`RecoveryContract::compile` validates declared group rules once at registration.
+`restorable_boundaries` checks namespace identity, aligned absolute token spans,
+gap-free prefix/window coverage and exact checkpoint positions. SGLang uses this
+validator on live query leases and intersects the resulting boundary sets across
+ranks. It validates the engine's declared state requirements, not the numerical
+implementation of the model. vLLM's hybrid reconciliation still lives in its adapter.
 
 Physical bytes may be shared across vLLM and SGLang only when their
 `StateFormat` values are compatible. Sharing the core and policy never implies
@@ -190,7 +192,7 @@ remain in OrbitKV.
 
 ## SGLang integration
 
-### Stage 1: direct GPU linker for full-attention models
+### Direct GPU linker and compiled recovery
 
 `orbitkv.sglang.linker.OrbitKVLinker` is registered through SGLang's plugin
 entry point and selected by `--radix-cache-backend orbitkv` together with
@@ -200,10 +202,12 @@ scheduler to submit GPU restores and drain linker completions. It uses
 GPU slots during asynchronous saves and loads, and transfer bytes through the
 same Cache Manager API as vLLM. Each scheduler rank registers its local GPU KV
 buffers through CUDA IPC. A model-, rank-, and layout-scoped namespace prevents
-incompatible byte reuse. The direct path currently requires a single full-KV
-pool; hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state need a more
-complete recovery contract. SGLang retains authority over HBM allocation and
-prefix-tree nodes.
+incompatible byte reuse. Full attention, Full + SWA and Full + recurrent/conv
+have explicit recovery rules. Convolution and recurrent tensors share one
+sealed checkpoint group; SWA has independent page coverage. SGLang retains
+authority over HBM allocation, request-state copy-on-write and prefix-tree nodes.
+The [hybrid recovery contract](hybrid-recovery.md) describes the pinned-release
+component bridge and unsupported representations.
 
 Both DRAM and SSD recovery are GPU-validated at TP=1. SGLang's general plugin
 admission hook retains pending requests in the queue and consumes the ready

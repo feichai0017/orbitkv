@@ -1,4 +1,4 @@
-"""Validate SGLang GPU pools and map token indices to registered pages."""
+"""Compile SGLang state pools into registered groups and recovery requirements."""
 
 from __future__ import annotations
 
@@ -7,86 +7,148 @@ from typing import Any
 
 import torch
 from sglang.srt.mem_cache.hicache_storage import PoolName
-from sglang.srt.mem_cache.hybrid_cache.linker_pool_assembler import (
-    DevicePoolEntry,
-    DevicePoolGroup,
-    resolve_hybrid_device_pool_group,
+from sglang.srt.mem_cache.hybrid_cache.linker_pool_assembler import DevicePoolEntry
+from sglang.srt.mem_cache.memory_pool import (
+    HybridLinearKVPool,
+    MHATokenToKVPool,
+    MLATokenToKVPool,
 )
-from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool, MLATokenToKVPool
 from sglang.srt.mem_cache.unified_cache.components import ComponentType
 
 
 @dataclass(frozen=True)
-class GpuLayout:
-    page_size: int
-    pool_group: DevicePoolGroup
-    pool: DevicePoolEntry
-    row_span: int
+class GpuPool:
+    group_id: int
+    kind: str
+    window: int
+    entry: DevicePoolEntry
     layer_names: list[str]
     num_blocks: list[int]
     block_bytes: list[int]
 
     @classmethod
-    def from_pool(cls, params: Any, components: set[ComponentType]) -> GpuLayout:
-        page_size = params.page_size
-        kvcache = params.token_to_kv_pool_allocator.get_kvcache()
-        if type(kvcache) in (MHATokenToKVPool, MLATokenToKVPool):
-            # SGLang's stock direct-linker assembler does not implement its
-            # plain KV strategy. Both ordinary layouts expose page-aligned
-            # rows, so they can use the same DevicePoolEntry contract.
-            buffers = (
-                [list(kvcache.k_buffer), list(kvcache.v_buffer)]
-                if type(kvcache) is MHATokenToKVPool
-                else [list(kvcache.kv_buffer)]
-            )
-            entry = DevicePoolEntry(
-                name=PoolName.KV,
-                indices_from_pool=PoolName.KV,
-                device_pool=kvcache,
-                components=buffers,
-                layer_mapping={i: i for i in range(kvcache.layer_num)},
-                page_size=page_size,
-                rows_are_pages=bool(getattr(kvcache, "use_hnd", False)),
-            )
-            pool_group = DevicePoolGroup([entry], kvcache.layer_num, page_size)
-        else:
-            pool_group = resolve_hybrid_device_pool_group(
-                kvcache=kvcache,
-                page_size=page_size,
-                params=params,
-                components=components,
-            )
-        if set(pool_group.entry_map) != {PoolName.KV}:
-            raise ValueError(
-                "OrbitKV direct GPU linker requires one KV pool; auxiliary GPU pools are unsupported"
-            )
-        pool = pool_group.entry_map[PoolName.KV]
-        row_span = pool._row_span
-        if row_span not in (1, page_size):
-            raise ValueError(f"unsupported SGLang GPU page row span: {row_span}")
-
-        layer_names = [f"kv:{i}" for i in range(len(pool.kv_buffer))]
-        if not layer_names:
-            raise ValueError("SGLang KV pool has no GPU buffers")
-        num_blocks = []
-        block_bytes = []
-        for tensor in pool.kv_buffer:
+    def compile(cls, group_id: int, kind: str, window: int, entry: DevicePoolEntry) -> GpuPool:
+        names, counts, sizes = [], [], []
+        for index, tensor in enumerate(entry.kv_buffer):
             if tensor.device.type != "cuda" or not tensor.is_contiguous():
-                raise ValueError("OrbitKV direct GPU linker requires contiguous CUDA KV buffers")
-            if tensor.shape[0] % row_span:
-                raise ValueError("SGLang GPU KV buffer is not page aligned")
-            num_blocks.append(tensor.shape[0] // row_span)
-            block_bytes.append(tensor.stride(0) * tensor.element_size() * row_span)
-        if len(set(num_blocks)) != 1:
-            raise ValueError("SGLang GPU KV buffers have different page counts")
-
-        return cls(page_size, pool_group, pool, row_span, layer_names, num_blocks, block_bytes)
+                raise ValueError("OrbitKV requires contiguous CUDA state buffers")
+            if tensor.shape[0] % entry._row_span:
+                raise ValueError("SGLang GPU state buffer is not page aligned")
+            names.append(f"{entry.name}:{index}")
+            counts.append(tensor.shape[0] // entry._row_span)
+            sizes.append(tensor.stride(0) * tensor.element_size() * entry._row_span)
+        if not names or len(set(counts)) != 1:
+            raise ValueError("SGLang state group has no buffers or inconsistent page counts")
+        return cls(group_id, kind, window, entry, names, counts, sizes)
 
     def block_ids(self, indices: torch.Tensor, expected_pages: int) -> list[int]:
-        if indices.numel() != expected_pages * self.page_size:
-            raise ValueError("SGLang GPU indices do not cover exactly the requested pages")
-        rows = self.pool.prepare_locations(indices)
-        block_ids = [row // self.row_span for row in rows]
-        if any(block_id >= self.num_blocks[0] for block_id in block_ids):
-            raise ValueError("SGLang GPU page index is outside its registered buffers")
-        return block_ids
+        if indices.numel() != expected_pages * self.entry.page_size:
+            raise ValueError("SGLang GPU indices do not cover exactly the requested state pages")
+        indices = self.entry.translate_indices(indices)
+        rows = self.entry.prepare_locations(indices)
+        return [row // self.entry._row_span for row in rows]
+
+
+@dataclass(frozen=True)
+class GpuLayout:
+    page_size: int
+    num_layers: int
+    pools: dict[PoolName, GpuPool]
+
+    @classmethod
+    def from_pool(cls, params: Any, components: set[ComponentType]) -> GpuLayout:
+        page = params.page_size
+        kvcache = params.token_to_kv_pool_allocator.get_kvcache()
+        pools = {}
+
+        def attention(name, pool, mapping, kind, window=0):
+            if type(pool) not in (MHATokenToKVPool, MLATokenToKVPool):
+                raise ValueError(f"Unsupported SGLang attention pool: {type(pool).__name__}")
+            buffers = (
+                [list(pool.k_buffer), list(pool.v_buffer)]
+                if type(pool) is MHATokenToKVPool
+                else [list(pool.kv_buffer)]
+            )
+            entry = DevicePoolEntry(
+                name=name,
+                indices_from_pool=name,
+                device_pool=pool,
+                components=buffers,
+                layer_mapping=mapping,
+                page_size=page,
+                rows_are_pages=bool(getattr(pool, "use_hnd", False)),
+            )
+            pools[name] = GpuPool.compile(len(pools), kind, window, entry)
+
+        if components == {ComponentType.FULL}:
+            kind = "mla" if type(kvcache) is MLATokenToKVPool else "attention"
+            attention(PoolName.KV, kvcache, {i: i for i in range(kvcache.layer_num)}, kind)
+        elif components == {ComponentType.FULL, ComponentType.MAMBA}:
+            if not isinstance(kvcache, HybridLinearKVPool):
+                raise ValueError("Recurrent recovery requires HybridLinearKVPool")
+            attention(
+                PoolName.KV,
+                kvcache.full_kv_pool,
+                dict(kvcache.full_attention_layer_id_mapping),
+                "mla" if kvcache.use_mla else "attention",
+            )
+            request_pool = params.req_to_token_pool
+            mamba = request_pool.mamba_pool
+            state = mamba.mamba_cache
+            if (
+                getattr(mamba, "enable_linear_replayssm", False)
+                or getattr(mamba, "enable_linear_replayssm_spec", False)
+                or getattr(mamba, "_slot_siblings", ())
+            ):
+                raise ValueError(
+                    "Recurrent replay, draft, and sibling state need separate recovery rules"
+                )
+            mapping = dict(request_pool.mamba_map)
+            layers = len(mapping)
+            if not state.conv or state.temporal.shape[0] != layers:
+                raise ValueError("Recurrent pool does not cover all declared layers")
+            buffers = [list(tensor.unbind(0)) for tensor in state.conv]
+            buffers.append(list(state.temporal.unbind(0)))
+            if any(len(component) != layers for component in buffers):
+                raise ValueError("Convolution and recurrent layer coverage disagree")
+            entry = DevicePoolEntry(
+                name=PoolName.MAMBA,
+                indices_from_pool=PoolName.MAMBA,
+                device_pool=mamba,
+                components=buffers,
+                layer_mapping=mapping,
+                page_size=1,
+                rows_are_pages=True,
+                index_mapper=request_pool.translate_mamba_indices,
+            )
+            pools[PoolName.MAMBA] = GpuPool.compile(1, "recurrent", 0, entry)
+        elif components == {ComponentType.FULL, ComponentType.SWA}:
+            from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
+
+            if type(kvcache) is not SWAKVPool:
+                raise ValueError("Window recovery requires an ordinary SWAKVPool")
+            full = {
+                global_id: local_id
+                for global_id, (local_id, is_swa) in kvcache.layers_mapping.items()
+                if not is_swa
+            }
+            swa = {
+                global_id: local_id
+                for global_id, (local_id, is_swa) in kvcache.layers_mapping.items()
+                if is_swa
+            }
+            attention(PoolName.KV, kvcache.full_kv_pool, full, "attention")
+            attention(PoolName.SWA, kvcache.swa_kv_pool, swa, "window", params.sliding_window_size)
+        else:
+            raise ValueError(f"Unsupported SGLang state components: {components}")
+
+        layers = []
+        for pool in pools.values():
+            layers.extend(pool.entry.layer_mapping)
+        if len(set(layers)) != len(layers):
+            raise ValueError("Model layers belong to more than one recovery group")
+        start = getattr(kvcache, "start_layer", 0)
+        end = getattr(kvcache, "end_layer", start + len(layers))
+        if set(layers) != set(range(start, end)):
+            raise ValueError("Registered state does not cover every model layer")
+        return cls(page, len(layers), pools)

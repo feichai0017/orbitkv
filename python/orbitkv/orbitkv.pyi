@@ -56,6 +56,16 @@ class QueryReady:
         hit_positions: list[int] = ...,
     ) -> None: ...
 
+class RecoveryContract:
+    """Compile registered state groups and validate leased token coverage."""
+
+    def __init__(
+        self, namespace: str, page_tokens: int, groups: list[tuple[int, str, int]]
+    ) -> None: ...
+    def restorable_boundaries(
+        self, namespace: str, start: int, end: int, groups: list[tuple[int, list[int]]]
+    ) -> list[int]: ...
+
 class ChannelProbeClient:
     """Low-level iceoryx2 probe for Cache Manager channel diagnostics."""
 

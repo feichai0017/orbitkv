@@ -38,12 +38,19 @@ the registered instance. Hashing model files and storage layouts stays out of
 the per-block hot path. Old raw-hash keys and process protocol versions are
 invalidated; there is no compatibility lookup or old client alias.
 
-This is computation and storage isolation, **not a complete recovery proof**.
-`StateDescriptor` carries the future logical token span/component/format
-evidence; `StateBundle::has_required_components` only checks component presence.
-SGLang's current `PoolTransfer` provides chained hashes without absolute token
-ranges, so its adapter must not invent ranges by numbering a partial transfer
-from zero. Publish still uses raw engine block IDs without generation checks.
+SGLang now compiles registered groups into `RecoveryContract` rules and validates
+`StateBundle` evidence on live queries. Prefixes require contiguous pages; windows
+require the complete rounded trailing range; recurrent/conv state requires an
+exact checkpoint at the selected end. The bridge obtains the absolute origin
+from SGLang's valid HBM prefix and matches each group against leased page positions.
+It never numbers a partial transfer from zero. Model/layout isolation comes from
+the registered namespace; the engine remains responsible for declaring all required
+state and holding the base prefix valid. This is a recovery-contract check, not
+a formal proof of the model's mathematics. See [hybrid recovery](hybrid-recovery.md).
+
+vLLM still reconciles hybrid groups inside its adapter. `StateDescriptor` and
+`StateFormat` remain planning types; their fields are not a new per-page wire
+protocol. Publish still uses raw engine block IDs without generation checks.
 Cross-engine reuse, dynamic LoRA and live weight updates are unsupported: LoRA
 is rejected at startup; weight changes require an engine restart and a new
 artifact identity. Engine-specific hashes remain in separate identity domains.
@@ -105,6 +112,6 @@ implementation check or a conversion path.
 
 The remaining design is a work plan. Single-node GPU recovery and model/storage
 identity isolation are implemented for the validated adapters and layouts;
-absolute-span evidence, complete bundle proof, page-generation enforcement and
-full performance qualification remain open. See [single-node deployment](single-node.md),
+common vLLM validation, further model capabilities, page-generation enforcement
+and full performance qualification remain open. See [single-node deployment](single-node.md),
 [architecture](architecture.md), and [the implementation checklist](../TODO.md).

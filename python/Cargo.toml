@@ -26,6 +26,7 @@ mooncake = ["dep:orbitkv-transfer", "orbitkv-core/mooncake", "orbitkv-server/moo
 [dependencies]
 pyo3 = { workspace = true, features = ["extension-module"] }
 orbitkv-common.workspace = true
+orbitkv-state.workspace = true
 orbitkv-core = { workspace = true, default-features = false }
 orbitkv-channel.workspace = true
 orbitkv-proto = { path = "../crates/orbitkv-proto" }

@@ -127,10 +127,14 @@ def channel_server(request, tmp_path):
 
     service_name = f"orbitkv/test/python/{os.getpid()}/{uuid.uuid4().hex}"
     bootstrap_socket = f"/tmp/orbitkv-python-{os.getpid()}-{uuid.uuid4().hex}.sock"
-    mode = getattr(request, "param", "dram")
+    configuration = getattr(request, "param", "dram")
+    mode = configuration["tier"] if isinstance(configuration, dict) else configuration
+    pool_size = "256mb" if mode == "ssd" else "100mb"
+    if isinstance(configuration, dict):
+        pool_size = configuration.get("pool_size", pool_size)
     server = CacheManagerProcess(
         port=find_available_port(),
-        pool_size="256mb" if mode == "ssd" else "100mb",
+        pool_size=pool_size,
         query_budget="128kb" if mode == "budget" else None,
         query_instance_budget="64kb" if mode == "budget" else None,
         http_port=find_available_port(),

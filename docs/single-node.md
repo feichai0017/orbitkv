@@ -168,9 +168,11 @@ only their request queued, and the next prefix match consumes the ready lease.
 Changed keys, request cancellation, and reset cancel pending manager queries;
 submitted GPU loads retain their existing completion fences. SGLang owns the radix tree and HBM pages; OrbitKV saves
 page-aligned KV externally and restores it into SGLang-owned slots. The current
-linker accepts ordinary full-attention MHA and MLA with one KV pool. It rejects
-hybrid SWA/Mamba, DSA, draft-model, and auxiliary GPU state at startup because
-a partial component set cannot safely resume those models.
+linker accepts full-attention MHA/MLA, Full + SWA, and Full + recurrent/conv.
+It compiles registered groups into recovery requirements and checks their
+absolute token boundaries before loading. DSA, draft and unsupported auxiliary
+representations remain rejected. See [hybrid recovery](hybrid-recovery.md) for
+the Qwen3.5 and Full + SWA gates and deployment limits.
 
 Both engines fingerprint local weights, tokenizer and processor artifacts at
 startup, and bind the computation and registered storage layout to the cache

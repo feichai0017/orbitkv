@@ -1,5 +1,6 @@
 """Exercise the pinned SGLang admission hook with controlled backing completion."""
 
+import threading
 from array import array
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -15,7 +16,16 @@ def linker():
     from orbitkv.sglang.linker import OrbitKVLinker
 
     result = object.__new__(OrbitKVLinker)
+    from orbitkv import RecoveryContract
+
     result.instance_id = "admission"
+    result.namespace = "test-model-state"
+    result.layout = SimpleNamespace(
+        pools={"kv": SimpleNamespace(group_id=0, kind="attention", window=0)}
+    )
+    result.recovery = RecoveryContract(result.namespace, 64, [(0, "attention", 0)])
+    result._origins = dict.fromkeys(["slow", "req", "shared", "queued", "other"], 0)
+    result._load_boundaries = {}
     result.page_size = 64
     result.client = MagicMock()
     result._lookups = {}
@@ -76,7 +86,7 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(lin
     assert cache.match_prefix.call_args.args[0].req is None
     assert not linker._lookups and not linker._queued_loads
     abort_request(MagicMock(), scheduler, req)
-    linker.client.cancel_query.assert_called_once_with("admission", req.rid)
+    linker.client.cancel_query.assert_called_once_with("admission", req.rid, group_id=0)
 
     linker.client.reset_mock()
     scheduler.waiting_queue.clear()
@@ -109,6 +119,30 @@ def test_first_use_is_observed_once_even_when_the_first_layer_wait_repeats(monke
     counter.wait_until(0)
     counter.wait_until(1)
     trace.assert_called_once_with("first_use", "restored", engine="sglang")
+
+
+def test_graph_consumer_waits_without_any_python_layer_access():
+    from orbitkv.sglang.linker import _LayerDoneCounter
+
+    counter = _LayerDoneCounter(2)
+    index = counter.update_producer()
+    entered, executing = threading.Event(), threading.Event()
+
+    def replay():
+        entered.set()
+        counter.set_consumer(index)
+        executing.set()
+
+    thread = threading.Thread(target=replay, daemon=True)
+    thread.start()
+    assert entered.wait(timeout=1)
+    try:
+        assert not executing.wait(timeout=0.05)
+    finally:
+        counter.complete(index)
+        thread.join(timeout=1)
+    assert executing.is_set()
+    assert index not in counter._futures
     assert not counter.request_ids and not counter._futures
 
 
@@ -150,7 +184,7 @@ def test_changed_keys_cancel_old_query_and_deadline_stops_restarting_io(linker):
     linker.client.query_prefetch.return_value = QueryLoading()
     assert linker.lookup("req", transfer(["old"])) == []
     assert linker.lookup("req", transfer(["new"])) == []
-    linker.client.cancel_query.assert_called_once_with("admission", "req")
+    linker.client.cancel_query.assert_called_once_with("admission", "req", group_id=0)
     linker._QUERY_WAIT_SECONDS = 0
     assert linker.lookup("req", transfer(["new"])) == []
     assert linker.query_state("req") == 2
@@ -195,7 +229,7 @@ def test_resident_prefix_retires_unused_external_query(
     if not wait:
         assert req.rid not in linker._lookups
         if pending:
-            linker.client.cancel_query.assert_called_once_with("admission", req.rid)
+            linker.client.cancel_query.assert_called_once_with("admission", req.rid, group_id=0)
         else:
             linker.client.release.assert_called_once_with(b"lease")
 
@@ -205,6 +239,7 @@ def test_admission_expires_pending_work_without_another_lookup(linker):
     from orbitkv.sglang.admission import admit_request
 
     req = request("unpolled")
+    linker._origins[req.rid] = 0
     linker.client.query_prefetch.return_value = QueryLoading()
     linker.lookup(req.rid, transfer(["a", "b", "c"]))
     linker._QUERY_WAIT_SECONDS = 0
@@ -214,7 +249,7 @@ def test_admission_expires_pending_work_without_another_lookup(linker):
     original = MagicMock()
     admit_request(original, SimpleNamespace(tree_cache=cache), req)
     original.assert_called_once()
-    linker.client.cancel_query.assert_called_once_with("admission", req.rid)
+    linker.client.cancel_query.assert_called_once_with("admission", req.rid, group_id=0)
     assert linker.query_state(req.rid) == 2
     assert linker.lookup(req.rid, transfer(["a", "b", "c"])) == []
     linker.client.query_prefetch.assert_called_once()

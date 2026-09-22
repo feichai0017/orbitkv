@@ -80,7 +80,8 @@ async fn recurrent_group_seals_final_block_save() {
     // Membership is per group: group 0 holds all three prefix blocks...
     let attn_hits = env
         .engine
-        .query_group_membership(&env.instance_id, 0, &prefix_hashes)
+        .query_group_membership(&env.instance_id, "membership", 0, &prefix_hashes)
+        .await
         .expect("query group 0 membership");
     assert_eq!(
         attn_hits.iter().map(|b| b.is_some()).collect::<Vec<_>>(),
@@ -91,7 +92,8 @@ async fn recurrent_group_seals_final_block_save() {
     // identical hash bytes for blocks 0/1 exist in group 0 (isolation).
     let recur_hits = env
         .engine
-        .query_group_membership(&env.instance_id, 1, &prefix_hashes)
+        .query_group_membership(&env.instance_id, "membership", 1, &prefix_hashes)
+        .await
         .expect("query group 1 membership");
     assert_eq!(
         recur_hits.iter().map(|b| b.is_some()).collect::<Vec<_>>(),
@@ -190,7 +192,8 @@ async fn single_group_instances_are_unaffected() {
 
     let hits = env
         .engine
-        .query_group_membership(&env.instance_id, 0, &hashes[0..4])
+        .query_group_membership(&env.instance_id, "membership", 0, &hashes[0..4])
+        .await
         .expect("membership");
     assert_eq!(
         hits.iter().map(|b| b.is_some()).collect::<Vec<_>>(),
@@ -201,7 +204,8 @@ async fn single_group_instances_are_unaffected() {
     // all-miss answer.
     assert!(
         env.engine
-            .query_group_membership(&env.instance_id, 7, &hashes[0..1])
+            .query_group_membership(&env.instance_id, "membership", 7, &hashes[0..1])
+            .await
             .is_err()
     );
 }

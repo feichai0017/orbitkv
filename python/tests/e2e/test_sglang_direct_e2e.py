@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import math
 import os
 import signal
 import subprocess
@@ -22,7 +24,11 @@ from tests.support.paths import PYTHON_ROOT
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 
-@pytest.mark.parametrize("channel_server", ["dram", "ssd"], indirect=True)
+@pytest.mark.parametrize(
+    "channel_server",
+    [pytest.param({"tier": tier, "pool_size": "512mb"}, id=tier) for tier in ("dram", "ssd")],
+    indirect=True,
+)
 def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     pytest.importorskip("sglang")
     model = request.config.getoption("--model")
@@ -64,6 +70,17 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         "--enable-unified-cache-external-linker",
         "--enable-cache-report",
     ]
+    model_config = json.loads((Path(model) / "config.json").read_text())
+    text_config = model_config.get("text_config", model_config)
+    if "linear_attention" in text_config.get("layer_types", ()):
+        cmd += [
+            "--max-mamba-cache-size",
+            "64",
+            "--cuda-graph-max-bs-decode",
+            "4",
+            "--cuda-graph-max-bs-prefill",
+            "512",
+        ]
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
         [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
@@ -123,22 +140,39 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
 
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
     fragment = tokenizer.encode("A CUDA IPC cache correctness test for a long context. ")
-    tokens = (fragment * (512 // len(fragment) + 1))[:512]
+    # Keep one uncached token after a sealed recurrent checkpoint. Matching a
+    # 512-token prompt excludes its last token and cannot use checkpoint 512.
+    tokens = (fragment * (513 // len(fragment) + 1))[:513]
     payload = {
         "input_ids": tokens,
         "sampling_params": {"temperature": 0, "max_new_tokens": 8, "ignore_eos": True},
+        "return_logprob": True,
     }
     process, base_url = start_server()
     try:
         first = requests.post(f"{base_url}/generate", json=payload, timeout=90)
         first.raise_for_status()
         time.sleep(3)
+        before_native = fetch_orbitkv_metrics(channel_server.http_port).get(
+            "orbitkv_load_bytes_total", 0
+        )
+        native = requests.post(f"{base_url}/generate", json=payload, timeout=90)
+        native.raise_for_status()
+        assert native.json()["meta_info"]["cached_tokens"] >= 512
+        assert (
+            fetch_orbitkv_metrics(channel_server.http_port).get("orbitkv_load_bytes_total", 0)
+            == before_native
+        )
         flushed = requests.post(f"{base_url}/flush_cache?timeout=30", timeout=40)
         flushed.raise_for_status()
         second = requests.post(f"{base_url}/generate", json=payload, timeout=90)
         second.raise_for_status()
-        assert first.json()["text"] == second.json()["text"]
-        assert second.json()["meta_info"]["cached_tokens"] >= 64
+        assert native.json()["text"] == second.json()["text"]
+        assert second.json()["meta_info"]["cached_tokens"] >= 64, (
+            second.json(),
+            fetch_orbitkv_metrics(channel_server.http_port),
+            channel_server.read_logs()[-8000:],
+        )
     finally:
         stop_server(process)
 
@@ -179,7 +213,11 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
 
         with ThreadPoolExecutor(max_workers=4) as executor:
             restored = list(executor.map(restore, range(4)))
-        assert all(response.json()["meta_info"]["cached_tokens"] >= 448 for response in restored)
+        assert all(response.json()["meta_info"]["cached_tokens"] >= 512 for response in restored), (
+            [response.json() for response in restored],
+            fetch_orbitkv_metrics(channel_server.http_port),
+            channel_server.read_logs()[-8000:],
+        )
         after_restart_load = fetch_orbitkv_metrics(channel_server.http_port).get(
             "orbitkv_load_bytes_total", 0
         )
@@ -200,8 +238,19 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         cold = requests.post(f"{base_url}/generate", json=payload, timeout=90)
         cold.raise_for_status()
         assert cold.json()["meta_info"]["cached_tokens"] == 0
-        outputs = [response.json()["text"] for response in (first, second, *restored, cold)]
-        assert len(set(outputs)) == 1, outputs
+        # Cold and prefix-reuse execution can differ numerically, even in native
+        # SGLang. Compare the same computation shape, not two different baselines.
+        for reference, responses in ((cold, (first,)), (native, (second, *restored))):
+            expected_probs = [
+                item[0] for item in reference.json()["meta_info"]["output_token_logprobs"]
+            ]
+            assert len(expected_probs) == 8 and all(map(math.isfinite, expected_probs))
+            for response in responses:
+                assert response.json()["output_ids"] == reference.json()["output_ids"]
+                probabilities = [
+                    item[0] for item in response.json()["meta_info"]["output_token_logprobs"]
+                ]
+                assert probabilities == pytest.approx(expected_probs, abs=0.05)
         assert log_path.read_text().count("OrbitKV direct GPU linker registered") >= 3
     finally:
         stop_server(process)

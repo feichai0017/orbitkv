@@ -23,6 +23,10 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     trace_transfer("queued", req.rid, engine="sglang")
     if os.environ.get("ORBITKV_QUEUE_WARMUP") != "1":
         return result
+    # Hybrid demand must own every required component; the optional warming
+    # operation currently prepares only attention group zero.
+    if len(linker.layout.pools) != 1:
+        return result
     from sglang.srt.mem_cache.base_prefix_cache import MatchPrefixParams
     from sglang.srt.mem_cache.radix_cache import RadixKey
 

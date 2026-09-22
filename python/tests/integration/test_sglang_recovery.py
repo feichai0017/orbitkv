@@ -1,0 +1,237 @@
+"""Exercise compiled hybrid recovery against real CUDA buffers and cache leases."""
+
+from __future__ import annotations
+
+import time
+import uuid
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+import requests
+
+pytestmark = [pytest.mark.integration, pytest.mark.gpu]
+
+
+@pytest.mark.parametrize("channel_server", ["dram", "ssd"], indirect=True)
+@pytest.mark.parametrize("kind", ["recurrent", "window"])
+def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, monkeypatch, kind):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("sglang")
+    from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
+    from sglang.srt.mem_cache.hybrid_cache.linker_pool_assembler import DevicePoolEntry
+    from sglang.srt.mem_cache.unified_cache.components import ComponentType
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
+
+    from orbitkv.sglang.layout import GpuLayout, GpuPool
+    from orbitkv.sglang.linker import OrbitKVLinker
+    from orbitkv.sglang.recovery import RecoveryLinkerWrapper
+
+    page_size = 4
+    kv = torch.arange(64 * 128, dtype=torch.float32, device="cuda").reshape(64, 128)
+    conv = torch.arange(64 * 128, dtype=torch.float32, device="cuda").reshape(64, 128) + 1000
+    temporal = torch.arange(64 * 256, dtype=torch.float32, device="cuda").reshape(64, 256) + 2000
+    expected = [tensor.clone() for tensor in (kv, conv, temporal)]
+
+    def pool(name, kind, buffers, tokens, layer):
+        entry = DevicePoolEntry(
+            name=name,
+            indices_from_pool=name,
+            device_pool=None,
+            components=[[tensor] for tensor in buffers],
+            layer_mapping={layer: 0},
+            page_size=tokens,
+            rows_are_pages=tokens == 1,
+        )
+        return GpuPool.compile(layer, kind, 8 if kind == "window" else 0, entry)
+
+    auxiliary = PoolName.MAMBA if kind == "recurrent" else PoolName.SWA
+    source = (
+        torch.tensor([1], device="cuda")
+        if kind == "recurrent"
+        else torch.arange(12, 20, device="cuda")
+    )
+    target = (
+        torch.tensor([5], device="cuda")
+        if kind == "recurrent"
+        else torch.arange(40, 48, device="cuda")
+    )
+
+    layout = GpuLayout(
+        page_size,
+        2,
+        {
+            PoolName.KV: pool(PoolName.KV, "attention", [kv], page_size, 0),
+            auxiliary: pool(
+                auxiliary, kind, [conv, temporal], 1 if kind == "recurrent" else page_size, 1
+            ),
+        },
+    )
+    namespace = f"hybrid-proof-{uuid.uuid4().hex}"
+    monkeypatch.setattr(GpuLayout, "from_pool", classmethod(lambda cls, *args: layout))
+    monkeypatch.setattr("orbitkv.sglang.linker.derive_namespace", lambda *args: namespace)
+    monkeypatch.setenv("ORBITKV_SGLANG_ENDPOINT", f"unix://{channel_server.bootstrap_socket}")
+    component = ComponentType.MAMBA if kind == "recurrent" else ComponentType.SWA
+    linker = OrbitKVLinker(None, None, components={ComponentType.FULL, component})
+    keys = [f"prefix-{i}" for i in range(4)]
+    state_keys = keys[-1:] if kind == "recurrent" else keys[-2:]
+    try:
+        assert linker.offload(
+            [
+                PoolTransfer(
+                    name=PoolName.KV,
+                    keys=keys[:2],
+                    device_indices=torch.arange(4, 12, device="cuda"),
+                )
+            ]
+        )
+        assert linker.offload(
+            [
+                PoolTransfer(
+                    name=PoolName.KV,
+                    keys=keys[2:],
+                    device_indices=torch.arange(12, 20, device="cuda"),
+                ),
+                PoolTransfer(
+                    name=auxiliary,
+                    keys=state_keys,
+                    device_indices=source,
+                ),
+            ]
+        )
+        deadline = time.monotonic() + 10
+        for _ in range(2):
+            while not linker.num_completed_offloads():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            assert linker.pop_completed_offload()
+        if channel_server.ssd_cache_path is not None:
+            from tests.support.metrics import fetch_orbitkv_metrics
+
+            while True:
+                metrics = fetch_orbitkv_metrics(channel_server.http_port)
+                if metrics.get("orbitkv_ssd_write_bytes_total", 0) and not any(
+                    metrics.get(name, 0)
+                    for name in (
+                        "orbitkv_ssd_write_inflight",
+                        "orbitkv_ssd_write_queue_pending",
+                        "orbitkv_inflight_bytes",
+                    )
+                ):
+                    break
+                assert time.monotonic() < deadline, (metrics, channel_server.read_logs())
+                time.sleep(0.01)
+            response = requests.post(
+                f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup", timeout=10
+            )
+            response.raise_for_status()
+            assert response.json()["evicted_blocks"] > 0
+
+        transfers = [PoolTransfer(name=name, keys=keys) for name in layout.pools]
+        linker._origins["restore"] = 64
+        while not (boundaries := linker.lookup("restore", transfers)):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        # Attention pages 1..4 exist; only boundary 4 has complete auxiliary state.
+        assert boundaries == [4]
+        linker._load_boundaries["restore"] = (80, {})
+        kv[32:48].fill_(-1)
+        conv[target] = -1
+        temporal[target] = -1
+        assert linker.load(
+            "restore",
+            [
+                PoolTransfer(
+                    name=PoolName.KV, keys=keys, device_indices=torch.arange(32, 48, device="cuda")
+                ),
+                PoolTransfer(
+                    name=auxiliary,
+                    keys=state_keys,
+                    device_indices=target,
+                ),
+            ],
+        )
+        index = linker.start_layer_wise_loading()
+        linker.layer_done_counter.set_consumer(index)
+        linker.layer_done_counter.wait_until(1)
+        torch.cuda.synchronize()
+        assert torch.equal(kv[32:48], expected[0][4:20])
+        assert torch.equal(conv[target], expected[1][source])
+        assert torch.equal(temporal[target], expected[2][source])
+
+        for rid, boundary, omit_state in [
+            ("wrong-boundary", 76, False),
+            ("missing-state", 80, True),
+        ]:
+            linker._origins[rid] = 64
+            assert linker.lookup(rid, transfers) == [4]
+            linker._load_boundaries[rid] = (boundary, {})
+            selected = [
+                PoolTransfer(
+                    name=PoolName.KV, keys=keys, device_indices=torch.arange(32, 48, device="cuda")
+                )
+            ]
+            if not omit_state:
+                selected.append(
+                    PoolTransfer(
+                        name=auxiliary,
+                        keys=state_keys,
+                        device_indices=target,
+                    )
+                )
+            with pytest.raises(
+                ValueError, match="unproved recovery boundary|do not cover the recovery plan"
+            ):
+                linker.load(rid, selected)
+            assert rid not in linker._queued_loads
+
+        # An aborted request must finish already-published tree destinations,
+        # otherwise a later HBM match can read their uninitialized bytes.
+        linker.pop_completed_load()
+        rid = "cancel-published"
+        linker._origins[rid] = 64
+        assert linker.lookup(rid, transfers) == [4]
+        linker._load_boundaries[rid] = (80, {})
+        conv[target] = -1
+        temporal[target] = -1
+        linker.load(
+            rid,
+            [
+                PoolTransfer(
+                    name=PoolName.KV, keys=keys, device_indices=torch.arange(32, 48, device="cuda")
+                ),
+                PoolTransfer(name=auxiliary, keys=state_keys, device_indices=target),
+            ],
+        )
+        wrapper = object.__new__(RecoveryLinkerWrapper)
+        wrapper.cache_linker = linker
+        wrapper.cache = SimpleNamespace(dec_lock_ref=MagicMock())
+        wrapper.hit_markers = {}
+        wrapper.pending_loads = {rid: (7, "pin")}
+        wrapper.release_request(rid)
+        wrapper.cache.dec_lock_ref.assert_called_once_with(7, "pin")
+        assert not wrapper.pending_loads
+        assert rid not in linker._origins
+        torch.cuda.synchronize()
+        assert torch.equal(conv[target], expected[1][source])
+        assert torch.equal(temporal[target], expected[2][source])
+
+        # A cache hit can become entirely resident before destination allocation.
+        # No load() call occurs, but all lookup evidence still needs retirement.
+        rid = "became-resident"
+        req = SimpleNamespace(rid=rid)
+        wrapper.cache.page_size = page_size
+        monkeypatch.setattr(
+            UnifiedCacheLinkerWrapper,
+            "match",
+            lambda self, key, req, result: self.cache_linker.lookup(req.rid, transfers),
+        )
+        assert wrapper.match(None, req, SimpleNamespace(device_indices=torch.arange(64))) == [4]
+        assert rid not in linker._origins
+        wrapper.hit_markers[rid] = SimpleNamespace(device_hit_len=64, tail_hashes=keys)
+        monkeypatch.setattr(UnifiedCacheLinkerWrapper, "load_back", lambda self, req: None)
+        wrapper.load_back(req)
+        assert rid not in linker._lookups
+        assert rid not in linker._load_boundaries
+    finally:
+        linker.close()

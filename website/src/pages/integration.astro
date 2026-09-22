@@ -40,8 +40,9 @@ import { localUrl } from "../data/site";
       <p class="reading-copy">
         <code>OrbitKVLinker</code> connects SGLang's radix cache to the same
         Cache Manager API through CUDA IPC. Full-attention MHA and MLA layouts
-        have a direct GPU-page path; hybrid, draft, and auxiliary state are
-        rejected until complete recovery contracts exist. Single-rank DRAM and
+        share the direct GPU path with Full + SWA and Full + recurrent/conv.
+        Compiled recovery rules require a complete window or exact checkpoint;
+        unknown draft and auxiliary representations are rejected. Single-rank DRAM and
         SSD recovery have been GPU-tested on SGLang 0.5.20. A plugin admission
         hook keeps pending requests queued until a leased result is ready, with
         a bounded wait before recomputation. Multi-rank serving remains
@@ -49,6 +50,9 @@ import { localUrl } from "../data/site";
       </p>
       <a class="text-link" href={localUrl("/docs/single-node/#sglang")}>
         SGLang install and deployment <span aria-hidden="true">↗</span>
+      </a>
+      <a class="text-link" href={localUrl("/docs/hybrid-recovery/")}>
+        Hybrid recovery rules and validation <span aria-hidden="true">↗</span>
       </a>
       <a class="text-link" href={localUrl("/docs/ssd-performance/")}>
         SSD measurements and qualification <span aria-hidden="true">↗</span>

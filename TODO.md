@@ -41,15 +41,15 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Bind `orbitkv-channel` Publish to the shared core save path.
 - [x] Bind `orbitkv-channel` Restore to core oneshot completion and eventfd wakeup.
 - [x] Add Python bindings for the iceoryx2 local client.
-- [x] Reject SGLang hybrid, draft, DSA, and auxiliary GPU state at startup
-  until their complete recovery contracts are implemented.
+- [x] Reject SGLang representations without a complete recovery contract.
 - [ ] Add cold-miss, partial-prefix, warm-hit, cancellation, and restart tests.
 - [x] Run one real SGLang model E2E, including restore after radix-cache flush.
 - [x] Register a SGLang RadixCache plugin that transfers full-attention GPU KV
   through CUDA IPC and iceoryx2, with a real Cache Manager load after SGLang
   process restart and cold-inference output comparison.
-- [ ] Add direct GPU recovery contracts for hybrid SWA/Mamba, DSA, draft-model,
-  and auxiliary state.
+- [x] Add direct GPU recovery contracts for Full + SWA and Full + recurrent/conv,
+  including sparse SSD membership, exact-boundary validation and cancellation.
+- [ ] Add recovery contracts for DSA, draft-model and further auxiliary state.
 
 ## M2 — common bundle and local IPC
 
@@ -57,12 +57,13 @@ numbers below group work areas rather than imposing a strict serial schedule.
   both adapters; reject dynamic LoRA until adapter-content identities are available.
 - [x] Use the shared versioned `StateKey` across DRAM/SSD and remote directory
   records; include actual registered storage geometry and invalidate old keys.
-- [ ] Carry absolute token spans and component evidence from both engines into
-  shared recovery validation; SGLang PoolTransfer currently supplies only hashes.
+- [x] Carry SGLang's engine-held prefix origin and leased group positions into
+  shared recovery validation; intersect legal boundary sets across ranks.
+- [ ] Carry vLLM spans and component evidence into shared recovery validation.
 - [ ] Support adapter identities and invalidate caches on live weight updates.
 - [ ] Convert the vLLM cache-group layout to `StateBundle`.
-- [ ] Define a recovery validator for matching token coverage, model/format,
-  and complete hybrid component sets before using bundles for cache hits.
+- [x] Compile prefix/window/checkpoint rules and validate complete token coverage
+  in the registered model/format namespace before SGLang advertises a hit.
 - [ ] Move hybrid-boundary reconciliation out of `orbitkv.vllm`.
 - [ ] Define framework-neutral region registration RPCs.
 - [x] Pass the descriptor-arena memfd and notification eventfd over UDS.

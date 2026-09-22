@@ -38,13 +38,12 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
     from .linker import OrbitKVLinker
+    from .recovery import RecoveryLinkerWrapper, RecurrentComponent
 
     if ctx.disable_radix_cache:
         raise ValueError("OrbitKV direct GPU linker requires RadixCache")
     if ctx.enable_hierarchical_cache:
         raise ValueError("OrbitKV direct GPU linker does not support hierarchical cache")
-    if ctx.is_hybrid_swa or ctx.is_hybrid_ssm:
-        raise ValueError("OrbitKV direct GPU linker currently supports full-attention KV only")
     if (
         ctx.is_dsa
         or ctx.params.is_eagle
@@ -69,16 +68,24 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     # SGLang's built-in unified-cache factory hardcodes Mooncake/Mori when the
     # external-linker flag is set. Construct its public RadixCache component
     # directly and attach OrbitKV through the public linker interface.
-    ctx.params.tree_components = (ComponentType.FULL,)
+    components = [ComponentType.FULL]
+    if ctx.is_hybrid_swa:
+        components.append(ComponentType.SWA)
+    if ctx.is_hybrid_ssm:
+        components.append(ComponentType.MAMBA)
+        ctx.params.component_registry_override = {ComponentType.MAMBA: RecurrentComponent}
+    ctx.params.tree_components = tuple(components)
     cache = UnifiedRadixCache(ctx.params)
     linker = OrbitKVLinker(ctx.server_args, ctx.params, components=set(cache.components))
     try:
-        cache.init_cache_linker(linker)
+        cache.linker = RecoveryLinkerWrapper(cache, linker)
     except Exception:
         linker.close()
         raise
     counter = linker.layer_done_counter
     kvcache = ctx.params.token_to_kv_pool_allocator.get_kvcache()
     kvcache.register_layer_transfer_counter(counter)
+    if ctx.is_hybrid_ssm:
+        ctx.params.req_to_token_pool.register_layer_transfer_counter(counter)
     ctx.tp_worker.register_hicache_layer_transfer_counter(counter)
     return cache

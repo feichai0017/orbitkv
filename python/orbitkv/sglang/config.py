@@ -26,6 +26,18 @@ def derive_namespace(server_args: Any, params: Any, layout: GpuLayout) -> str:
         "attention_backend": server_args.attention_backend,
         "prefill_attention_backend": server_args.prefill_attention_backend,
         "decode_attention_backend": server_args.decode_attention_backend,
+        "mamba_backend": getattr(server_args, "mamba_backend", None),
+        "linear_attention": {
+            name: getattr(server_args, name, None)
+            for name in (
+                "linear_attn_backend",
+                "linear_attn_decode_backend",
+                "linear_attn_prefill_backend",
+                "linear_attn_verify_backend",
+                "enable_mamba_cache_stochastic_rounding",
+                "mamba_cache_philox_rounds",
+            )
+        },
     }
     representation = {
         "kv_cache_dtype": getattr(server_args, "kv_cache_dtype", None),
@@ -33,14 +45,25 @@ def derive_namespace(server_args: Any, params: Any, layout: GpuLayout) -> str:
         "pp": [params.pp_rank, params.pp_size],
         "cp": [params.attn_cp_rank, params.attn_cp_size],
         "page_size": layout.page_size,
-        "buffers": [
+        "groups": [
             {
-                "dtype": str(tensor.dtype),
-                "shape": list(tensor.shape[1:]),
-                "stride": list(tensor.stride()[1:]),
-                "block_bytes": block_bytes,
+                "group": pool.group_id,
+                "kind": pool.kind,
+                "window": pool.window,
+                "layers": sorted(pool.entry.layer_mapping.items()),
+                "buffers": [
+                    {
+                        "dtype": str(tensor.dtype),
+                        "shape": list(tensor.shape[1:]),
+                        "stride": list(tensor.stride()[1:]),
+                        "block_bytes": block_bytes,
+                    }
+                    for tensor, block_bytes in zip(
+                        pool.entry.kv_buffer, pool.block_bytes, strict=True
+                    )
+                ],
             }
-            for tensor, block_bytes in zip(layout.pool.kv_buffer, layout.block_bytes, strict=True)
+            for pool in layout.pools.values()
         ],
     }
     return state_namespace(

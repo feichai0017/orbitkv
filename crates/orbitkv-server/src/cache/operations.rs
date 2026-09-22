@@ -222,11 +222,14 @@ pub(crate) async fn execute_query(
     }
 
     if input.group_id > 0 {
-        let hits = engine.query_group_membership(
-            &input.instance_id,
-            input.group_id,
-            &input.block_hashes,
-        )?;
+        let hits = engine
+            .query_group_membership(
+                &input.instance_id,
+                &input.request_id,
+                input.group_id,
+                &input.block_hashes,
+            )
+            .await?;
         let mut hit_positions = Vec::new();
         let mut blocks = Vec::new();
         for (position, block) in hits.into_iter().enumerate() {

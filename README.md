@@ -39,8 +39,9 @@ An experimental distributed path extends the same cache API to peer managers.
   The [next policy steps](docs/queued-warming.md#reference-implementations-and-policy-order)
   draw on reviewed LMCache, HiCache, FlexKV and Dynamo implementations.
 - **Identify compatible state.** Versioned keys bind immutable model artifacts,
-  computation settings and registered storage geometry. Complete hybrid-state
-  recovery contracts remain [in progress](docs/state-identity.md).
+  computation settings and registered storage geometry. SGLang compiles prefix,
+  sliding-window and recurrent-checkpoint requirements, then validates complete
+  recovery boundaries before loading. See [hybrid recovery](docs/hybrid-recovery.md).
 - **Build toward shared caching.** Embedded catalog shards discover peer
   replicas, Mooncake Transfer Engine moves bytes, and etcd tracks membership
   and placement. Multi-node serving is still experimental.
@@ -118,7 +119,7 @@ Read the [architecture and crate boundaries](docs/architecture.md),
 | Scenario | Current scope |
 | --- | --- |
 | Single-node DRAM and SSD cache | GPU recovery gates and Qwen3-8B measurements for both pinned engines |
-| SGLang model layouts | Full-attention MHA/MLA with one KV pool; hybrid and auxiliary state rejected |
+| SGLang model layouts | Full-attention MHA/MLA, Full + SWA, and Full + recurrent/conv; explicit layout checks and TP=1 recovery gates |
 | Independent replicas / DP cache sharing | Embedded catalogs, etcd membership and Mooncake fetch implemented; cross-host serving qualification is next |
 | Prefill/decode separation | Experimental vLLM Mooncake `PdConnector`; current-request handoff is separate from reusable cache |
 | Cross-host TP/PP, layout conversion | Not qualified; the current vLLM scheduler cannot query remote TP shards through its local endpoint |
