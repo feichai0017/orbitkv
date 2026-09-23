@@ -22,7 +22,7 @@ Only after `allocate_slots()` succeeds does vLLM call
 `update_state_after_alloc()`. The adapter checks that the proposed load matches
 the query's hash slice and leases, then creates a load intent with the allocated
 GPU destinations. For hybrid layouts, the legal restore boundary also depends
-on matching attention and recurrent state; see [state identity](state-identity.md).
+on matching attention, window and recurrent state; see [state identity](state-identity.md).
 
 ```mermaid
 stateDiagram-v2

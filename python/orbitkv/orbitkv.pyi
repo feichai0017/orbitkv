@@ -66,7 +66,7 @@ class QueryCandidates:
     def __init__(self, hit_positions: list[int]) -> None: ...
 
 class RecoveryContract:
-    """Compile declared groups into page demand and validate leased coverage."""
+    """Compile attention, MLA, window, recurrent or convolution groups into page demand."""
 
     def __init__(
         self, namespace: str, page_tokens: int, groups: list[tuple[int, str, int]]

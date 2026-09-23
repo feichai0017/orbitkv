@@ -8,9 +8,8 @@ class CacheGroupLayout:
     """Stable vLLM cache-group order shared by scheduler and worker.
 
     `storage_group_ids` maps each connector cache group onto the engine's
-    hybrid storage groups: every attention-like group shares storage group 0
-    (prefix cadence, raw hash keys), while each recurrent group gets its own
-    id starting at 1 (membership semantics, group-encoded keys).
+    storage groups: full-attention layers share group 0; each sliding-window
+    or recurrent group has an independent key and recovery requirement.
     """
 
     layer_names: tuple[tuple[str, ...], ...]
@@ -20,6 +19,7 @@ class CacheGroupLayout:
     recurrent_layer_names: frozenset[str]
     storage_group_ids: tuple[int, ...] = (0,)
     recovery_groups: tuple[tuple[int, str, int], ...] = ((0, "attention", 0),)
+    window_group_indices: frozenset[int] = frozenset()
 
     @classmethod
     def from_config(cls, kv_cache_config) -> "CacheGroupLayout":
@@ -37,6 +37,7 @@ class CacheGroupLayout:
             FullAttentionSpec,
             MambaSpec,
             MLAAttentionSpec,
+            SlidingWindowSpec,
             UniformTypeKVCacheSpecs,
         )
 
@@ -57,8 +58,13 @@ class CacheGroupLayout:
                     "or uniformly grouped MLA layers"
                 )
         else:
-            if any(not isinstance(spec, (FullAttentionSpec, MambaSpec)) for spec in specs):
-                raise RuntimeError("OrbitKV HMA supports only FullAttention and Mamba cache groups")
+            if any(
+                not isinstance(spec, (FullAttentionSpec, SlidingWindowSpec, MambaSpec))
+                for spec in specs
+            ):
+                raise RuntimeError(
+                    "OrbitKV supports FullAttention, SlidingWindow and aligned Mamba groups"
+                )
 
             has_full_attention = any(isinstance(spec, FullAttentionSpec) for spec in specs)
             has_mamba = any(isinstance(spec, MambaSpec) for spec in specs)
@@ -66,8 +72,8 @@ class CacheGroupLayout:
                 raise RuntimeError(
                     "OrbitKV requires a dense FullAttention cache group for block hashes"
                 )
-            if not has_mamba:
-                raise RuntimeError("OrbitKV HMA requires both FullAttention and Mamba cache groups")
+            if not has_mamba and not any(isinstance(spec, SlidingWindowSpec) for spec in specs):
+                raise RuntimeError("OrbitKV hybrid layouts require window or recurrent state")
             if any(
                 isinstance(spec, MambaSpec) and spec.mamba_cache_mode != "align" for spec in specs
             ):
@@ -101,14 +107,14 @@ class CacheGroupLayout:
             for index, group in enumerate(groups)
             if isinstance(group.kv_cache_spec, MambaSpec)
         )
-        # Attention-like groups all share storage group 0 (they advance in
-        # per-block prefix cadence); each recurrent group gets a dense id
-        # from 1. Engine keys are raw only for group 0, so this keeps every
-        # existing single-group cache layout bit-identical.
+        window_group_indices = frozenset(
+            index for index, spec in enumerate(specs) if isinstance(spec, SlidingWindowSpec)
+        )
+        if any(specs[index].sliding_window <= 1 for index in window_group_indices):
+            raise RuntimeError("OrbitKV window recovery requires at least one past token")
+        auxiliary = recurrent_group_indices | window_group_indices
         storage_group_ids = tuple(
-            0
-            if index not in recurrent_group_indices
-            else 1 + sum(1 for other in recurrent_group_indices if other < index)
+            0 if index not in auxiliary else 1 + sum(1 for other in auxiliary if other < index)
             for index in range(len(groups))
         )
 
@@ -123,6 +129,7 @@ class CacheGroupLayout:
                 if isinstance(group.kv_cache_spec, MambaSpec)
                 for layer_name in group.layer_names
             ),
+            window_group_indices=window_group_indices,
             storage_group_ids=storage_group_ids,
             recovery_groups=(
                 (
@@ -131,14 +138,18 @@ class CacheGroupLayout:
                     if all(
                         isinstance(spec, (MLAAttentionSpec, UniformTypeKVCacheSpecs))
                         for index, spec in enumerate(specs)
-                        if index not in recurrent_group_indices
+                        if index not in auxiliary
                     )
                     else "attention",
                     0,
                 ),
                 *(
-                    (storage_group_ids[index], "recurrent", 0)
-                    for index in sorted(recurrent_group_indices)
+                    (
+                        storage_group_ids[index],
+                        "window" if index in window_group_indices else "recurrent",
+                        specs[index].sliding_window - 1 if index in window_group_indices else 0,
+                    )
+                    for index in sorted(auxiliary)
                 ),
             ),
         )

@@ -9,8 +9,8 @@ No Catalog or peer gRPC listener is needed for this deployment.
 
 | Adapter | Validated release | Single-node path | Current limit |
 | --- | --- | --- | --- |
-| vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Attention + aligned recurrent layouts share compiled page demand and validation; SWA remains unsupported, cross-host TP and further hybrid layouts need separate qualification |
-| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA, Full + SWA, or Full + recurrent/conv; TP=1 DRAM/SSD recovery gates; combined SWA + recurrent unsupported, multi-rank serving unqualified |
+| vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Full/MLA, Full + SWA, Full + aligned recurrent groups, and their combination; equal logical block sizes; cross-host TP remains unsupported |
+| SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full MHA/MLA, Full + SWA, Full + recurrent/conv, and their combination; ordinary contiguous pools; multi-rank serving remains unqualified |
 
 Start with a single-rank model and one Manager. Check
 [hybrid model compatibility](hybrid-recovery.md) before enabling other layouts.

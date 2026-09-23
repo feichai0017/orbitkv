@@ -118,9 +118,9 @@ def test_engine_limit_selects_earlier_checkpoint_before_payload_reads(hybrid):
     validator.required_ranges.assert_called_once_with("model/layout", 64, 96)
     intent = scheduler._pending_load_intents["r"]
     assert intent.block_ids_by_group == ((None, 25), (44, 45))
-    assert intent.recurrent_hold.checkpoint == 1
-    assert intent.recurrent_hold.hit_positions == (((1,),),)
-    assert intent.recurrent_hold.leases == ((b"state",),)
+    assert intent.recovery_hold.last_position == 1
+    assert intent.recovery_hold.hit_positions == (((1,),),)
+    assert intent.recovery_hold.leases == ((b"state",),)
     assert intent.leases == (b"attention",)
     scheduler._cleanup_request("r")
     client.release.assert_not_called()

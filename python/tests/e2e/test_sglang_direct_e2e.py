@@ -50,6 +50,8 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         "sglang.launch_server",
         "--model-path",
         model,
+        "--load-format",
+        request.config.getoption("--sglang-load-format"),
         "--host",
         "127.0.0.1",
         "--port",
@@ -72,7 +74,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     ]
     model_config = json.loads((Path(model) / "config.json").read_text())
     text_config = model_config.get("text_config", model_config)
-    if "linear_attention" in text_config.get("layer_types", ()):
+    if "linear_attention" in text_config.get("layer_types", ()) or text_config.get("use_sconv"):
         cmd += [
             "--max-mamba-cache-size",
             "64",
@@ -80,6 +82,14 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             "4",
             "--cuda-graph-max-bs-prefill",
             "512",
+        ]
+    if text_config.get("use_sconv"):
+        # The pinned deterministic Triton backend does not capture Inkling EXTEND.
+        cmd += [
+            "--cuda-graph-backend-prefill",
+            "disabled",
+            "--swa-full-tokens-ratio",
+            "1",
         ]
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(

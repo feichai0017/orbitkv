@@ -31,7 +31,7 @@ install_connector_unit_stubs()
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.metadata import (  # noqa: E402
     OrbitKVWorkerMetadata,
-    RecurrentLoadHold,
+    RecoveryLoadHold,
     SaveIntent,
 )
 from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
@@ -78,6 +78,7 @@ def _make_scheduler(world_size: int = 1) -> tuple[SchedulerConnector, _FakePool]
         group_count=2,
         hash_group_index=0,
         has_recurrent_state=True,
+        window_group_indices=frozenset(),
         recurrent_group_indices=frozenset({1}),
     )
     pool = _FakePool()
@@ -169,6 +170,34 @@ def test_boundary_job_is_released_only_after_every_worker_reports():
         )
     )
     assert pool.freed == [21]
+    assert not scheduler.has_pending_push_work()
+
+
+def test_window_save_outlives_request_and_waits_for_every_worker():
+    scheduler, pool = _make_scheduler(world_size=2)
+    scheduler._cache_groups.has_recurrent_state = False
+    scheduler._cache_groups.recurrent_group_indices = frozenset()
+    scheduler._cache_groups.window_group_indices = frozenset({1})
+    _register_request(scheduler, "window", 2)
+    scheduler._requests["window"].num_computed_tokens = 0
+    scheduler._allocated_blocks["window"] = [[1, 2], [0, 21]]
+    scheduler._scheduled_tokens["window"] = 0
+    scheduler._block_index_offsets["window"] = 0
+    scheduler._next_stored_block_idx["window"] = 0
+    output = _scheduler_output({})
+    output.scheduled_cached_reqs.req_ids = ["window"]
+    output.scheduled_cached_reqs.new_block_ids = [None]
+    output.scheduled_cached_reqs.num_computed_tokens = [0]
+    output.num_scheduled_tokens = {"window": 2 * VBS}
+    metadata = scheduler.build_connector_meta(output)
+    assert not metadata.save_intents
+    assert metadata.boundary_save_intents[0].block_ids_by_group == ((1, 2), (0, 21))
+    assert pool.touched == [1, 2, 21]
+    scheduler._cleanup_request("window")
+    scheduler._release_boundary_jobs({0: 1})
+    assert not pool.freed
+    scheduler._release_boundary_jobs({0: 1})
+    assert pool.freed == [21, 2, 1]
     assert not scheduler.has_pending_push_work()
 
 
@@ -323,10 +352,10 @@ def test_checkpoint_short_of_attention_prefix_hints_the_junction():
         return_value=ShardedQueryReady(
             3,
             (b"lease",),
-            recurrent_hold=RecurrentLoadHold(
+            recovery_hold=RecoveryLoadHold(
                 leases=((b"membership",),),
                 hit_positions=(((2,),),),
-                checkpoint=2,
+                last_position=2,
             ),
             boundary=3 * VBS,
             attention_hit_blocks=8,
@@ -365,6 +394,7 @@ def test_junction_hint_is_hma_only():
         group_count=1,
         hash_group_index=0,
         has_recurrent_state=False,
+        window_group_indices=frozenset(),
         recurrent_group_indices=frozenset(),
     )
     request = _request(num_tokens=200, num_hashes=12)
@@ -384,10 +414,10 @@ def test_load_targets_cover_only_the_selected_checkpoint_prefix():
         return_value=ShardedQueryReady(
             4,
             (b"lease",),
-            recurrent_hold=RecurrentLoadHold(
+            recovery_hold=RecoveryLoadHold(
                 leases=((b"membership",),),
                 hit_positions=(((3,),),),
-                checkpoint=3,
+                last_position=3,
             ),
             boundary=4 * VBS,
             attention_hit_blocks=5,
@@ -406,7 +436,7 @@ def test_load_targets_cover_only_the_selected_checkpoint_prefix():
     intent = scheduler._pending_load_intents["r1"]
     assert intent.num_tokens == 4 * VBS
     assert intent.block_ids_by_group == ((10, 11, 12, 13), (None, None, None, 23))
-    assert intent.recurrent_hold.checkpoint == 3
+    assert intent.recovery_hold.last_position == 3
 
 
 def test_boundaries_inside_the_loaded_prefix_are_not_saved():

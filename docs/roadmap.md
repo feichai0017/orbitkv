@@ -1,6 +1,6 @@
 # OrbitKV roadmap
 
-The execution order is sustained single-node qualification, independent-replica
+The execution order is single-node hybrid-layout qualification, independent-replica
 cache sharing (DP), P/D plus cache reuse, then replicated catalogs and scale.
 Cancellation and transport lifetime safety apply at every stage. Cross-host
 TP/PP and KV-aware routing have later gates. See the
@@ -18,7 +18,7 @@ also exist; real two-host serving, catalog replication and online placement
 changes remain unqualified or unimplemented. Automatic queued warming stays
 opt-in because the recorded controls do not establish a throughput benefit.
 
-SGLang hybrid pools and vLLM aligned recurrent groups now use the same recovery
+SGLang hybrid pools and vLLM window/aligned recurrent groups use the same recovery
 validator with absolute token coverage. This closes the duplicated boundary
 logic. Hybrid demand now discovers metadata, selects a legal boundary and
 reads only its required ranges, then validates actual leases. Deterministic
@@ -36,6 +36,7 @@ the later general semantic compiler.
 | Priority | Deliverable | Acceptance boundary |
 | --- | --- | --- |
 | First: reliable ordinary demand | Maintain deterministic cancellation, lost-notification, engine/Manager restart and stuck-Publish gates; extend concurrent model-serving fault stress. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
+| First: complete state-layout coverage | Full/MLA, Full + SWA, Full + recurrent/conv, and their combination in both adapters. | Exact DRAM/SSD bytes, missing-component rejection, legal recovery boundaries and GPU source ownership. Report native model-serving coverage separately from constructed GPU layouts. |
 | Implemented, opt-in: bounded preparation | Small arrival-order lookahead, retained leases, bounded reads and stopping controls. | Three matched pairs per engine completed. Keep off by default because SGLang P95 regresses despite a throughput gain; cutoffs also reduce throughput. |
 | First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TE path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
 | Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; separately integrate and qualify SGLang's native handoff lifecycle. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
@@ -51,35 +52,30 @@ gate, without claiming cross-host tensor parallelism.
 
 ### Next reviewable changes
 
-1. **Follow up on the preparation tradeoff.** The opt-in
-   [consumer-owned path](request-preparation.md) selects at most four dense
-   arrival-order candidates, keeps prepared leases budgeted, and retires stale
-   interests without another poll. Bounded batches, best-effort completion and
-   a conservative deadline miss are implemented and measured in three matched
-   pairs per engine. Keep preparation off: vLLM improves modestly, while SGLang
-   trades tail latency for throughput. Isolate SGLang admission effects before
-   revising selection; automatic hybrid forecasts and priority prediction remain open.
-2. **Reduce measured exposed waits.** The
-   [ordinary Qwen3 profile](recovery-performance.md) separates host reads,
-   Manager restore and engine completion observation. The
-   [large-working-set SSD comparison](ssd-performance.md) adds natural
-   read/write contention. Producer-stream save fences, separate SSD submission
-   queues and independent page-segment allocation for SSD reads and saves are implemented. Compute
-   batching remains a measured latency/throughput tradeoff, not a shared new
-   default. Optional Rust [retention and SSD write-admission policies](cache-policies.md)
-   have three matched short-window controls per engine. Protection reduces
-   writes with little throughput change; selective writes trade first-reuse
-   computation against later SSD churn. One extended pair per engine shows
-   throughput gains after continued cold traffic, with much lower write volume.
-   Keep both opt-in and measure the
-   intended workload duration. Continue with completion/admission overlap,
-   engine-use evidence and restorable-bundle retention; keep deterministic
-   output and ownership gates.
-3. **Start real two-host DP qualification.** Ordinary TP=1 demand lifetimes now
-   have native and model-serving fault evidence. Use independent same-format
-   replicas and Mooncake TE; require positive remote and GPU-copy bytes, source
-   incarnation rejection and catalog replay. Local policy tuning can continue
-   alongside it. Multi-rank fault soak remains a separate extension.
+1. **Close the single-node state-layout matrix.** Both adapters now compose
+   Full + SWA + recurrent/conv through the shared Rust recovery contract.
+   The [hybrid gates](hybrid-recovery.md#reproducible-gates) distinguish exact
+   DRAM/SSD GPU-byte coverage from native model-serving coverage. Keep missing
+   components, final-token limits, async save ownership and restart in the gate;
+   wider model and multi-rank compatibility need their own evidence.
+2. **Qualify real two-host DP.** Use independent matching TP=1 replicas,
+   embedded Manager catalogs, etcd membership and Mooncake TE. Require positive
+   remote and GPU-copy bytes, output controls, source-incarnation rejection,
+   catalog replay and bounded failed transfers. Start with full attention,
+   then carry the same complete-state contract into hybrid remote recovery.
+   Qualify vLLM and SGLang separately; cross-engine byte reuse is not implied.
+3. **Qualify P/D with cache reuse, then catalog HA.** Verify that a P-side
+   external-cache hit still produces a complete D-side handoff, and that later
+   requests can reuse completed state. Catalog replication, repair and placement
+   changes precede production distributed deployment. KV-aware request routing
+   and cross-host TP/PP follow these gates.
+
+Local performance work continues alongside DP: retain the existing
+[preparation](request-preparation.md) and Rust [retention/write-admission](cache-policies.md)
+controls as opt-in. Use the [ordinary-demand profile](recovery-performance.md)
+and [large-working-set SSD controls](ssd-performance.md) to choose further
+completion/admission overlap work. A new policy must preserve output and
+ownership gates and show a repeatable workload benefit before becoming a default.
 
 The [shared-cache driver and restart gate](shared-cache-qualification.md) now pass
 for both engines with independent TP=1 replicas over same-host TCP. Rust bounds
@@ -168,7 +164,7 @@ Gate:
 ## M2: common StateBundle query and native local transport
 
 Versioned model/storage keys isolate deployments. SGLang uses compiled
-prefix/window/checkpoint rules, and vLLM's aligned recurrent layouts use the
+prefix/window/checkpoint rules, and vLLM's window/aligned recurrent layouts use the
 same validator with absolute-span and leased-group evidence; see
 [hybrid recovery](hybrid-recovery.md). Page-generation enforcement and wider
 recovery coverage remain open. Complete those local semantics before using

@@ -80,10 +80,36 @@ class GpuLayout:
             )
             pools[name] = GpuPool.compile(len(pools), kind, window, entry)
 
-        if components == {ComponentType.FULL}:
+        supported = {ComponentType.FULL, ComponentType.SWA, ComponentType.MAMBA}
+        if ComponentType.FULL not in components or not components <= supported:
+            raise ValueError(f"Unsupported SGLang state components: {components}")
+
+        if ComponentType.SWA in components:
+            from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
+
+            if type(kvcache) is not SWAKVPool:
+                raise ValueError("Window recovery requires an ordinary SWAKVPool")
+            full = {
+                global_id: local_id
+                for global_id, (local_id, is_swa) in kvcache.layers_mapping.items()
+                if not is_swa
+            }
+            swa = {
+                global_id: local_id
+                for global_id, (local_id, is_swa) in kvcache.layers_mapping.items()
+                if is_swa
+            }
+            attention(
+                PoolName.KV,
+                kvcache.full_kv_pool,
+                full,
+                "mla" if type(kvcache.full_kv_pool) is MLATokenToKVPool else "attention",
+            )
+            attention(PoolName.SWA, kvcache.swa_kv_pool, swa, "window", params.sliding_window_size)
+        elif ComponentType.MAMBA not in components:
             kind = "mla" if type(kvcache) is MLATokenToKVPool else "attention"
             attention(PoolName.KV, kvcache, {i: i for i in range(kvcache.layer_num)}, kind)
-        elif components == {ComponentType.FULL, ComponentType.MAMBA}:
+        else:
             if not isinstance(kvcache, HybridLinearKVPool):
                 raise ValueError("Recurrent recovery requires HybridLinearKVPool")
             attention(
@@ -92,6 +118,8 @@ class GpuLayout:
                 dict(kvcache.full_attention_layer_id_mapping),
                 "mla" if kvcache.use_mla else "attention",
             )
+
+        if ComponentType.MAMBA in components:
             request_pool = params.req_to_token_pool
             mamba = request_pool.mamba_pool
             state = mamba.mamba_cache
@@ -108,7 +136,8 @@ class GpuLayout:
             if not state.conv or state.temporal.shape[0] != layers:
                 raise ValueError("Recurrent pool does not cover all declared layers")
             buffers = [list(tensor.unbind(0)) for tensor in state.conv]
-            buffers.append(list(state.temporal.unbind(0)))
+            if state.temporal.numel():
+                buffers.append(list(state.temporal.unbind(0)))
             if any(len(component) != layers for component in buffers):
                 raise ValueError("Convolution and recurrent layer coverage disagree")
             entry = DevicePoolEntry(
@@ -121,34 +150,23 @@ class GpuLayout:
                 rows_are_pages=True,
                 index_mapper=request_pool.translate_mamba_indices,
             )
-            pools[PoolName.MAMBA] = GpuPool.compile(1, "recurrent", 0, entry)
-        elif components == {ComponentType.FULL, ComponentType.SWA}:
-            from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
+            pools[PoolName.MAMBA] = GpuPool.compile(
+                len(pools), "recurrent" if state.temporal.numel() else "convolution", 0, entry
+            )
 
-            if type(kvcache) is not SWAKVPool:
-                raise ValueError("Window recovery requires an ordinary SWAKVPool")
-            full = {
-                global_id: local_id
-                for global_id, (local_id, is_swa) in kvcache.layers_mapping.items()
-                if not is_swa
-            }
-            swa = {
-                global_id: local_id
-                for global_id, (local_id, is_swa) in kvcache.layers_mapping.items()
-                if is_swa
-            }
-            attention(PoolName.KV, kvcache.full_kv_pool, full, "attention")
-            attention(PoolName.SWA, kvcache.swa_kv_pool, swa, "window", params.sliding_window_size)
-        else:
-            raise ValueError(f"Unsupported SGLang state components: {components}")
-
-        layers = []
-        for pool in pools.values():
-            layers.extend(pool.entry.layer_mapping)
-        if len(set(layers)) != len(layers):
-            raise ValueError("Model layers belong to more than one recovery group")
+        # Convolution/checkpoint state may accompany attention in the same layer.
+        # Full and sliding-window KV must still describe disjoint attention layers.
+        attention_layers = [
+            layer
+            for name, pool in pools.items()
+            if name != PoolName.MAMBA
+            for layer in pool.entry.layer_mapping
+        ]
+        if len(set(attention_layers)) != len(attention_layers):
+            raise ValueError("Model layers belong to more than one attention group")
+        layers = {layer for pool in pools.values() for layer in pool.entry.layer_mapping}
         start = getattr(kvcache, "start_layer", 0)
         end = getattr(kvcache, "end_layer", start + len(layers))
-        if set(layers) != set(range(start, end)):
+        if layers != set(range(start, end)):
             raise ValueError("Registered state does not cover every model layer")
         return cls(page, len(layers), pools)

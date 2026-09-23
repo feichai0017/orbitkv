@@ -27,9 +27,9 @@ import { localUrl } from "../data/site";
       <p class="reading-copy">
         Enable <code>OrbitKVConnector</code> to save computed prefixes and restore
         reusable blocks into vLLM-owned GPU memory. Version 0.29.0 is the validated
-        baseline. Supported attention/recurrent models use compiled recovery
-        ranges; sliding-window layouts and cross-host TP are outside current
-        support. Start with one rank and verify a restore after engine restart.
+        baseline. Full attention, sliding-window and aligned recurrent groups use
+        compiled recovery ranges, including combined layouts. Cross-host TP is
+        outside current support. Start with one rank and verify a restore after engine restart.
       </p>
       <a class="text-link" href={localUrl("/docs/single-node/#vllm")}>
         vLLM install and deployment <span aria-hidden="true">↗</span>
@@ -39,9 +39,9 @@ import { localUrl } from "../data/site";
       <h2>SGLang</h2>
       <p class="reading-copy">
         Enable the OrbitKV RadixCache backend and external linker on SGLang
-        0.5.20. The adapter supports full attention, Full + SWA, and Full +
-        recurrent/conv layouts through the same CUDA IPC path. SGLang owns GPU
-        pages; OrbitKV prepares external state and returns a validated restore.
+        0.5.20. The adapter supports full attention, Full + SWA, Full +
+        recurrent/conv and their combined layout through the same CUDA IPC path.
+        SGLang owns GPU pages; OrbitKV prepares external state and returns a validated restore.
         DRAM and SSD recovery have single-rank GPU gates. Multi-rank serving
         requires further qualification.
       </p>

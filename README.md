@@ -41,7 +41,8 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   reads and transfer completion.
 - **Model-aware recovery.** Cache identity includes model artifacts, computation
   settings and storage layout. Compiled recovery rules select the required
-  attention pages, sliding windows and recurrent checkpoints for supported layouts.
+  attention pages, sliding windows and recurrent/conv checkpoints, including
+  supported layouts that combine all three.
 - **Bounded resource use.** Byte budgets cover pending reads, ready pages and
   active GPU transfers. Cancellation retains submitted I/O until completion.
 - **Observable behavior.** Inspect Prometheus metrics and optional request

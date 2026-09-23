@@ -57,6 +57,138 @@ def context(client, *, instance_id="instance", namespace="model/layout"):
     )
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("channel_server", ["dram", "ssd"], indirect=True)
+@pytest.mark.parametrize("with_checkpoint", [False, True])
+def test_window_and_checkpoint_restore_only_required_destinations(channel_server, with_checkpoint):
+    torch = pytest.importorskip("torch")
+    from vllm.v1.kv_cache_interface import SlidingWindowSpec
+
+    from orbitkv import CacheManagerClient
+    from orbitkv.vllm.metadata import OrbitKVConnectorMetadata
+    from orbitkv.vllm.scheduler import SchedulerConnector
+    from orbitkv.vllm.worker import WorkerConnector
+    from tests.support.metrics import fetch_orbitkv_metrics
+
+    groups = list(config().kv_cache_groups)
+    window = SimpleNamespace(
+        layer_names=("model.layers.2.window",),
+        kv_cache_spec=SlidingWindowSpec(
+            block_size=16, num_kv_heads=1, head_size=32, dtype=torch.float32, sliding_window=33
+        ),
+    )
+    groups = [window, groups[1], *([groups[0]] if with_checkpoint else [])]
+    identity = f"window-checkpoint-{uuid.uuid4().hex}"
+    client = CacheManagerClient(channel_server.bootstrap_socket)
+    ctx = context(client, instance_id=identity, namespace=identity)
+    cache_config = SimpleNamespace(kv_cache_groups=groups)
+    client.start_session_watcher(identity, identity, 1, 1)
+    scheduler = SchedulerConnector(ctx, kv_cache_config=cache_config)
+    worker = WorkerConnector(ctx, kv_cache_config=cache_config)
+    kv = torch.arange(16 * 2 * 16 * 32, device="cuda", dtype=torch.float32).reshape(
+        16, 2, 16, 1, 32
+    )
+    swa = kv.clone() + 50000
+    state = torch.arange(16 * 128, device="cuda", dtype=torch.float32).reshape(16, 128) + 100000
+    expected = [tensor.clone() for tensor in (kv, swa, state)]
+    hashes = [index.to_bytes(32, "little") for index in range(4)]
+    buffers = {"model.layers.0.attn": kv, "model.layers.2.window": swa}
+    if with_checkpoint:
+        buffers["model.layers.1.mamba"] = (state[:, :64], state[:, 64:])
+
+    def lookup(rid):
+        req = SimpleNamespace(
+            request_id=rid, num_tokens=65, block_hashes=hashes, shared_prefix_boundary=0
+        )
+        deadline = time.monotonic() + 15
+        while (result := scheduler.get_num_new_matched_tokens(req, 0))[0] is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        return req, result
+
+    try:
+        worker.register_kv_caches(buffers)
+        torch.cuda.synchronize()
+        saved, message = client.save(
+            identity, 0, 0, 0, [("model.layers.0.attn", [1, 2, 3, 4], hashes)]
+        )
+        assert saved, message
+        assert lookup("missing-window")[1] == (0, False)
+        saves = [("model.layers.2.window", [3, 4], hashes[2:])]
+        saved, message = client.save(identity, 0, 0, 0, saves)
+        assert saved, message
+        if with_checkpoint:
+            assert lookup("missing-checkpoint")[1] == (0, False)
+            saved, message = client.save(
+                identity, 0, 0, 0, [("model.layers.1.mamba", [4], hashes[3:])]
+            )
+            assert saved, message
+        if channel_server.ssd_cache_path is not None:
+            deadline = time.monotonic() + 15
+            while True:
+                metrics = fetch_orbitkv_metrics(channel_server.http_port)
+                if metrics.get("orbitkv_ssd_write_bytes_total", 0) and not any(
+                    metrics.get(name, 0)
+                    for name in (
+                        "orbitkv_ssd_write_inflight",
+                        "orbitkv_ssd_write_queue_pending",
+                        "orbitkv_inflight_bytes",
+                    )
+                ):
+                    break
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            response = requests.post(
+                f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup", timeout=10
+            )
+            response.raise_for_status()
+            assert response.json()["evicted_blocks"] == 6 + with_checkpoint
+        req, result = lookup("restore-window")
+        assert result == (64, True)
+        destinations = [
+            [0, 0, 12, 13],
+            [8, 9, 10, 11],
+            *([[0, 0, 0, 14]] if with_checkpoint else []),
+        ]
+        blocks = SimpleNamespace(
+            get_block_ids=lambda: destinations,
+            blocks=[[SimpleNamespace(block_hash=None) for _ in range(4)] for _ in groups],
+        )
+        scheduler.update_state_after_alloc(req, blocks, 64)
+        kv[8:12].fill_(-1)
+        swa[8:14].fill_(-1)
+        state[8:15].fill_(-1)
+        torch.cuda.synchronize()
+        worker.start_load_kv(
+            OrbitKVConnectorMetadata(load_intents=scheduler._pending_load_intents),
+            SimpleNamespace(no_compile_layers={}),
+        )
+        deadline = time.monotonic() + 15
+        while worker.get_finished(set())[1] != {req.request_id}:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        torch.cuda.synchronize()
+        assert torch.equal(kv[8:12], expected[0][1:5])
+        assert torch.equal(swa[12:14], expected[1][3:5])
+        assert (swa[8:12] == -1).all()
+        if with_checkpoint:
+            assert torch.equal(state[14], expected[2][4])
+        assert (state[8:14] == -1).all()
+        metrics = fetch_orbitkv_metrics(channel_server.http_port)
+        payload = (
+            6 * kv[0].numel() * kv.element_size()
+            + with_checkpoint * state[0].numel() * state.element_size()
+        )
+        assert metrics["orbitkv_load_bytes_total"] == payload
+        if channel_server.ssd_cache_path is not None:
+            assert metrics["orbitkv_ssd_prefetch_bytes_total"] == payload
+        assert metrics.get("orbitkv_query_reserved_bytes", 0) == 0
+    finally:
+        scheduler.shutdown()
+        worker.shutdown()
+        client.close()
+
+
 def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel_server):
     torch = pytest.importorskip("torch")
     from orbitkv import BlockHashes, CacheManagerClient, QueryReady
@@ -151,8 +283,8 @@ def test_native_contract_gates_vllm_hits(attention, positions, tokens, expected)
         QueryCandidates(list(range(attention))),
         QueryCandidates(positions),
     ]
-    client.read_recovery.side_effect = (
-        lambda *args: QueryReady((args[6] - args[5]) // 16, b"attention")
+    client.read_recovery.side_effect = lambda *args: (
+        QueryReady((args[6] - args[5]) // 16, b"attention")
         if args[-1] == 0
         else QueryReady(1, b"state", [(args[6] - args[5]) // 16 - 1])
     )
@@ -290,7 +422,7 @@ def test_complete_checkpoint_restores_through_vllm_worker(channel_server):
         probe = scheduler._pending_query_probes["restore"]
         assert probe.selected_boundary == 96
         assert probe.leased_blocks == 2
-        assert probe.recurrent_hold.checkpoint == 1
+        assert probe.recovery_hold.last_position == 1
 
         blocks = SimpleNamespace(
             get_block_ids=lambda: ([0, 1, 2, 3, 8, 9, 10, 11],) * 2,

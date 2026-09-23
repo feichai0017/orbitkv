@@ -59,6 +59,12 @@ def orbitkv_pool_size(request) -> str:
 def pytest_addoption(parser):
     """Add custom command line options for E2E tests."""
     parser.addoption(
+        "--sglang-load-format",
+        choices=("auto", "dummy"),
+        default="auto",
+        help="SGLang model loader; dummy is only for deterministic generated fixtures",
+    )
+    parser.addoption(
         "--model",
         action="store",
         default="Qwen/Qwen3-0.6B",

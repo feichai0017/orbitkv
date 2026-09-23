@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from orbitkv import BlockHashes, CacheManagerClient, QueryCandidates, RecoveryContract
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.orbitkv import QueryLoading, QueryReady
-from orbitkv.vllm.metadata import RecurrentLoadHold
+from orbitkv.vllm.metadata import RecoveryLoadHold
 
 logger = get_connector_logger()
 
@@ -14,9 +14,9 @@ logger = get_connector_logger()
 class ShardedQueryReady:
     num_hit_blocks: int
     leases: tuple[bytes, ...]
-    # HMA only: per recurrent group, per shard membership leases and their
-    # hit positions (see RecurrentLoadHold for the wire/load contract).
-    recurrent_hold: RecurrentLoadHold | None = None
+    # HMA only: per auxiliary group, per shard membership leases and their
+    # hit positions (see RecoveryLoadHold for the wire/load contract).
+    recovery_hold: RecoveryLoadHold | None = None
     # HMA only: the selected absolute boundary with complete leased state.
     boundary: int = 0
     # HMA only: the attention-only prefix hit before recovery validation
