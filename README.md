@@ -34,7 +34,8 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 - **DRAM and SSD caching.** Reuse prefixes after GPU eviction or an engine
   restart while the Cache Manager remains alive.
 - **Direct GPU transfers.** Both engines register GPU buffers through CUDA IPC;
-  Rust handles cache queries, reads and transfer completion.
+  adapters fence the producing CUDA stream, and Rust handles cache queries,
+  reads and transfer completion.
 - **Model-aware recovery.** Cache identity includes model artifacts, computation
   settings and storage layout. Compiled recovery rules select the required
   attention pages, sliding windows and recurrent checkpoints for supported layouts.
@@ -115,7 +116,7 @@ Reports include configurations, final results and reproduction commands:
 | Report | Coverage |
 | --- | --- |
 | [Single-node comparisons](docs/single-node-performance.md) | Native HBM, engine CPU caches, OrbitKV, LMCache and FlexKV compatibility |
-| [SSD recovery](docs/ssd-performance.md) | Forced DRAM eviction and restore readiness |
+| [SSD recovery](docs/ssd-performance.md) | Restore readiness and sustained read/write pressure beyond DRAM capacity |
 | [Ordinary recovery](docs/recovery-performance.md) | Qwen3-8B host reads, GPU transfers, notification delays and resource drain |
 | [Request preparation](docs/request-preparation.md) | Repeated preparation controls, DRAM recovery and read stopping policies |
 | [Shared-cache qualification](docs/shared-cache-qualification.md) | Independent replicas, remote GPU restoration, catalog replay and restart gates |

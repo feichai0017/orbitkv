@@ -170,6 +170,19 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Profile ordinary Qwen3-8B cold/shared/mixed recovery with stage timing,
   TTFT, throughput, read/copy bytes and resource-drain evidence. Record output
   differences separately (`docs/recovery-performance.md`).
+- [x] Fence vLLM saves on producer-stream events outside CUDA graph capture;
+  verify exact restored bytes while unrelated GPU work remains in flight.
+- [x] Separate SSD read/write submission queues and distribute single-file
+  reads across existing io_uring workers. Preserve in-flight limits and qualify
+  SSD round trips, cancellation, lost notifications and stalled Publish.
+- [x] Reclaim SSD save/restore memory per page segment and NUMA node, so retained
+  prefix pages do not hold unrelated evicted pages. Verify real reclamation
+  and exact GPU bytes; measure total/speculative reservations independently
+  of phase transitions.
+- [x] Measure natural DRAM/SSD contention with a 27 GiB Qwen3-8B prefix set,
+  9 GiB GPU KV and 4 GiB Manager DRAM in both engines. Retain final code and
+  prefill-batch controls, allocation failures, write drops and cleanup. No
+  overall throughput gain or hardware limit is established (`docs/ssd-performance.md`).
 - [ ] Add per-request deadline/priority hints and long-running serving fault/soak
   runs; qualify multi-rank SGLang TP independently of TP=1 admission tests.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;

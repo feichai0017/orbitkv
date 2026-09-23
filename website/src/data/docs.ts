@@ -48,7 +48,7 @@ export const docGroups = [
       { slug: "fault-qualification", title: "Single-node fault gates" },
       { slug: "client-performance", title: "Client control overhead" },
       { slug: "single-node-performance", title: "Single-node comparisons" },
-      { slug: "ssd-performance", title: "SSD recovery" },
+      { slug: "ssd-performance", title: "SSD recovery & capacity pressure" },
       { slug: "concurrent-performance", title: "Concurrent query budgets" },
       { slug: "sustained-performance", title: "Sustained serving" },
       { slug: "recovery-performance", title: "Recovery stage profile" },

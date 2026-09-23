@@ -21,10 +21,10 @@ sustained runs mix 75% reusable-prefix choices with cold requests, use a
 12-prefix working set, and stop admission after 20 seconds or 128 requests per
 concurrency. They contain 356 vLLM and 353 SGLang requests. Outputs have 16 tokens.
 
-[Final results](../benches/results/20260922-recovery-baseline/summary.csv)
+[Archived results and reproduction commands](https://github.com/feichai0017/orbitkv/tree/4712f780c900120719f178b2ea36c9e0ac7c135f/benches/results/20260922-recovery-baseline)
 retain aggregate latency, throughput, transfer bytes and output-difference
-counts. [Reproduction commands](../benches/results/20260922-recovery-baseline/README.md)
-record the workload. Raw manifests, samples, timelines and service logs remain
+counts. The maintained report now measures
+[natural SSD capacity pressure](ssd-performance.md). Raw manifests, samples, timelines and service logs remain
 in ignored `benches/results/runs/` directories on the measurement host.
 
 ## Stage observations
@@ -68,8 +68,11 @@ tier mixture. Do not relabel every post-HBM-pressure request as a DRAM hit.
 Every measured burst/window ends with zero query-reserved bytes. The explicit
 settle-plus-drain check completes within 1.42 seconds, including a fixed
 1.2-second settling interval; this is not the actual last-page release latency.
-Sampled peaks remain within the configured query budget. Sampling every 25 ms
-is a lower bound on peaks; the ownership tests separately enforce exact limits.
+The historical phase-summed samples stayed below the configured query budget,
+but phase collection is not atomic and cannot verify that limit. Current runs
+use independent total and speculative counters updated under the admission
+lock. Sampling every 25 ms is still a lower bound on peaks; ownership tests
+separately enforce exact limits.
 
 Ordinary greedy performance runs are not batch-invariant output proofs. The
 burst profiles retain 25 vLLM and nine SGLang output differences from their cold

@@ -58,6 +58,7 @@ pub struct StorageConfig {
     pub enable_numa_affinity: bool,
     /// Allocate each block separately instead of contiguous batch allocation.
     /// Reduces fragmentation when blocks are freed in different order.
+    /// SSD-backed storage always uses independent allocations for reads and saves.
     pub blockwise_alloc: bool,
     /// Overdue threshold for cross-node transfers; expiry retains source allocations.
     pub transfer_lock_timeout: Duration,
@@ -122,7 +123,7 @@ impl StorageEngine {
         let ssd_cache_config = config.ssd_cache_config;
         #[cfg(feature = "mooncake")]
         let mooncake_nic_names = config.mooncake_nic_names;
-        let blockwise_alloc = config.blockwise_alloc;
+        let blockwise_alloc = config.blockwise_alloc || ssd_cache_config.is_some();
         let transfer_lock_timeout = config.transfer_lock_timeout;
         let transfer_budget = config.transfer_budget_bytes.unwrap_or(capacity_bytes / 2);
         if transfer_budget == 0

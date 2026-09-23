@@ -1,5 +1,6 @@
 """Native recovery validation and the vLLM scheduler/worker CUDA handoff."""
 
+import threading
 import time
 import uuid
 from types import SimpleNamespace
@@ -54,6 +55,73 @@ def context(client, *, instance_id="instance", namespace="model/layout"):
         client=client,
         state_manager=MagicMock(),
     )
+
+
+def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel_server):
+    torch = pytest.importorskip("torch")
+    from orbitkv import BlockHashes, CacheManagerClient, QueryReady
+    from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent
+    from orbitkv.vllm.worker import WorkerConnector
+
+    client = CacheManagerClient(channel_server.bootstrap_socket)
+    identity = f"producer-{uuid.uuid4().hex}"
+    client.start_session_watcher(identity, identity, 1, 1)
+    worker = WorkerConnector(context(client, instance_id=identity, namespace=identity))
+    kv = torch.zeros((2, 8, 16, 1, 32), device="cuda", dtype=torch.float32)
+    producer, unrelated = torch.cuda.Stream(), torch.cuda.Stream()
+    unrelated_done = torch.cuda.Event()
+    submitted = threading.Event()
+    overlapped = []
+    hashes = BlockHashes([b"h" * 32])
+
+    def save(*args):
+        overlapped.append(not unrelated_done.query())
+        submitted.set()
+        return client.save(*args)
+
+    try:
+        worker.register_kv_caches({"layer": kv})
+        worker._client = MagicMock(wraps=client)
+        worker._client.save.side_effect = save
+        torch.cuda.synchronize()
+        # A delayed producer verifies that the background thread cannot read
+        # the initial zeros. Independent work must not extend its save fence.
+        with torch.cuda.stream(producer):
+            torch.cuda._sleep(100_000_000)
+            kv[:, 1].fill_(17)
+        with torch.cuda.stream(unrelated):
+            torch.cuda._sleep(1_500_000_000)
+            unrelated_done.record()
+        with torch.cuda.stream(producer):
+            worker._current_metadata = OrbitKVConnectorMetadata(
+                save_intents={
+                    "save": SaveIntent(block_ids_by_group=((1,),), block_hashes=(b"h" * 32,))
+                }
+            )
+            worker.wait_for_save()
+
+        assert submitted.wait(10), "the save worker never submitted Publish"
+        worker._save_queue.join()
+        assert overlapped == [True], "Publish waited for unrelated GPU work"
+        assert worker.get_finished({"save"})[0] == {"save"}
+        deadline = time.monotonic() + 10
+        while True:
+            ready = client.query_prefetch(identity, hashes, "restore")
+            if isinstance(ready, QueryReady) and ready.num_hit_blocks == 1:
+                break
+            assert time.monotonic() < deadline, ready
+            time.sleep(0.01)
+        restored = client.wait_restore(
+            client.start_restore(identity, 0, 0, [["layer"]], [(ready.lease, [[2]])]),
+            timeout=10,
+        )
+        assert restored.success, restored.message
+        assert torch.equal(kv[:, 2].cpu(), torch.full_like(kv[:, 2], 17, device="cpu"))
+    finally:
+        producer.synchronize()
+        unrelated.synchronize()
+        worker.shutdown()
+        client.close()
 
 
 @pytest.mark.parametrize(

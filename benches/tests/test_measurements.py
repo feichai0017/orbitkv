@@ -42,10 +42,12 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
         lambda *a, **kw: SimpleNamespace(
             text=(
                 'unused NaN\ncounter{worker="a"} 10\ncounter{worker="b"} 5\nidle +Inf\n'
-                'orbitkv_query_reserved_bytes{phase="warming"} 100\n'
-                'orbitkv_query_reserved_bytes{phase="ready"} 200\n'
-                'orbitkv_query_reserved_bytes{phase="preloading"} 40\n'
-                'orbitkv_query_reserved_bytes{phase="prepared"} 60\n'
+                'orbitkv_query_reserved_bytes 400\n'
+                'orbitkv_query_speculative_reserved_bytes 200\n'
+                'orbitkv_query_reserved_bytes_by_phase{phase="warming"} 100\n'
+                'orbitkv_query_reserved_bytes_by_phase{phase="ready"} 200\n'
+                'orbitkv_query_reserved_bytes_by_phase{phase="preloading"} 100\n'
+                'orbitkv_query_reserved_bytes_by_phase{phase="prepared"} 60\n'
                 'orbitkv_warmup_wait_byte_seconds_total{outcome="restored"} 300\n'
                 'orbitkv_warmup_wait_byte_seconds_total{outcome="unused"} 40\n'
                 'orbitkv_remote_stage_duration_seconds_count{stage="read",status="ok"} 3\n'
@@ -64,8 +66,9 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
         "orbitkv_remote_stage_duration_seconds_sum": 0.012,
         "orbitkv_remote_stage_duration_seconds_sum_release": 0.012,
         "orbitkv_query_reserved_bytes": 400,
+        "orbitkv_query_reserved_bytes_by_phase": 460,
         "orbitkv_query_reserved_bytes_warming": 100,
-        "orbitkv_query_reserved_bytes_speculative": 200,
+        "orbitkv_query_speculative_reserved_bytes": 200,
         "orbitkv_warmup_wait_byte_seconds_total": 340,
         "orbitkv_warmup_wait_byte_seconds_total_restored": 300,
         "orbitkv_warmup_wait_byte_seconds_total_unused": 40,

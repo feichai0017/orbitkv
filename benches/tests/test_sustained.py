@@ -134,6 +134,8 @@ def test_report_counts_window_bytes_once_and_preserves_output_differences(tmp_pa
     (row,) = collect_run(tmp_path)["summary"]
     assert row["orbitkv_ssd_prefetch_bytes_total"] == 4096
     assert row["output_mismatches"] == 1
+    assert row["reuse_ttft_p95_ms"] == 10
+    assert row["cold_ttft_p95_ms"] is None
     assert row["requests_per_second"] == pytest.approx(2 / 1.1)
     assert row["cache_sources"] == {"cached_tier_unknown": 2, "miss": 0}
     (tmp_path / "failure.json").write_text('{"message":"request failed"}')
@@ -148,6 +150,8 @@ def test_report_counts_window_bytes_once_and_preserves_output_differences(tmp_pa
         "duplicate",
         "early",
         "leak",
+        "budget",
+        "speculative_budget",
         "timing",
         "nan",
         "prefix",
@@ -164,6 +168,16 @@ def test_incomplete_or_invalid_windows_cannot_be_reported(corruption):
         windows[0]["wall_seconds"] = 0.5
     elif corruption == "leak":
         windows[0]["manager_after"]["orbitkv_query_reserved_bytes"] = 4096
+    elif corruption in ("budget", "speculative_budget"):
+        args["query_budget_gib"] = 3
+        name, limit = (
+            ("orbitkv_query_reserved_bytes", 3 * 1024**3)
+            if corruption == "budget"
+            else ("orbitkv_query_speculative_reserved_bytes", 3 * 1024**3 // 4)
+        )
+        windows[0]["sampled_peak_bytes"][name] = limit
+        sustained.validate(args, samples, windows)
+        windows[0]["sampled_peak_bytes"][name] += 1
     elif corruption == "timing":
         samples[0]["submitted_seconds"] = 1.01
     elif corruption == "nan":

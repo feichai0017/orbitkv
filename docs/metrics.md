@@ -34,14 +34,19 @@ OrbitKV exposes the following metrics for monitoring KV cache operations:
 
 ### Query ownership and preparation
 
-- **orbitkv_query_reserved_bytes** tracks conservative per-owner bytes by
-  `phase`: `warming`, `preloading`, `prepared`, `preparing`, `ready`, or
-  `restoring`. Owned preparation moves from `preloading` to `prepared`, then
+- **orbitkv_query_reserved_bytes** tracks total conservative per-owner bytes.
+  Admission and release update this unlabelled counter under the budget lock;
+  use it to check the configured query budget. Shared physical pages may be
+  counted for several owners. Use the pool metric for actual allocator occupancy.
+- **orbitkv_query_speculative_reserved_bytes** tracks the speculative share under
+  the same lock; compare it with one quarter of the query budget.
+- **orbitkv_query_reserved_bytes_by_phase** separates `warming`, `preloading`,
+  `prepared`, `preparing`, `ready`, and `restoring`. Phase samples are diagnostic:
+  collection can overlap a transition, so their sum is not an atomic budget
+  snapshot. Owned preparation moves from `preloading` to `prepared`, then
   into foreground ownership on claim without releasing its total reservation.
   Unowned warming retains no ready lease; its bytes return to zero after
   preparation even without polling.
-  Shared physical pages may be counted for several owners. Use the pool metric
-  for actual allocator occupancy.
 - **orbitkv_query_budget_waits_total** and **orbitkv_query_budget_bypasses_total**
   include warmup admission attempts. A skipped warmup does not imply the later
   demand query will bypass restoration.

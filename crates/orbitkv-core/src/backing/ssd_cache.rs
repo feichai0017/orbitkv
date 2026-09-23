@@ -11,11 +11,9 @@ use std::time::Instant;
 
 use super::ssd::SsdBackingStore;
 use super::uring::UringIoEngine;
-use crate::block::{RawBlock, SealedBlock, StateKey};
+use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::metrics::core_metrics;
-use crate::numa::NumaNode;
-use crate::pinned_pool::PinnedAllocation;
-use crate::seal_offload::{self, SlotMeta};
+use crate::seal_offload::SlotMeta;
 use smallvec::SmallVec;
 
 /// SSD I/O alignment requirement (O_DIRECT requires 512-byte aligned I/O)
@@ -32,11 +30,6 @@ pub const DEFAULT_SSD_WRITE_INFLIGHT: usize = 2;
 
 /// Default max concurrent prefetches
 pub const DEFAULT_SSD_PREFETCH_INFLIGHT: usize = 16;
-
-/// Upper bound for one pinned-pool allocation while staging an SSD prefetch.
-/// Large contiguous requests can otherwise force disproportionate LRU reclaim
-/// from a fragmented pool.
-const SSD_PREFETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Result of a single prefetch I/O.
 type SinglePrefetchResult = (
@@ -423,18 +416,12 @@ impl BatchContext {
     }
 }
 
-/// Per-slot allocation reference: which allocation and offset within it.
-struct SlotAlloc {
-    allocation: Arc<PinnedAllocation>,
-    offset: usize,
-}
-
 /// Internal: single block prefetch task with per-slot allocated memory.
 struct PrefetchTask {
     key: StateKey,
     entry: SsdIndexEntry,
     /// One per slot (parallel to `entry.slots`), each from the correct NUMA pool.
-    slot_allocs: Vec<SlotAlloc>,
+    slots: Vec<RawBlock>,
     /// Shared batch context: per-block callback + completion counter.
     ctx: Arc<BatchContext>,
 }
@@ -627,7 +614,10 @@ async fn write_block_to_ssd(
         let iovecs: Vec<_> = block
             .slots()
             .iter()
-            .flat_map(seal_offload::write_iovecs)
+            .flat_map(|slot| {
+                slot.segment_iovecs()
+                    .map(|(ptr, size)| (ptr.as_ptr() as *const u8, size))
+            })
             .collect();
 
         io.writev_at_async(shard_id, iovecs, offset)?
@@ -666,8 +656,8 @@ pub(super) async fn ssd_prefetch_loop(
     debug!("SSD prefetch pipeline exiting");
 }
 
-/// Dispatcher: receives batches, allocates per-slot memory grouped by NUMA,
-/// then splits into block-level tasks.
+/// Dispatcher: receives batches, allocates page segments on their NUMA node,
+/// then submits block-level read tasks.
 async fn ssd_prefetch_dispatcher(
     store: Weak<SsdBackingStore>,
     mut batch_rx: tokio::sync::mpsc::Receiver<PrefetchBatch>,
@@ -688,170 +678,48 @@ async fn ssd_prefetch_dispatcher(
     debug!("SSD prefetch dispatcher exiting");
 }
 
-/// Slot reference for NUMA grouping during allocation.
-struct SlotRef {
-    block_idx: usize,
-    slot_idx: usize,
-    size: u64,
-}
-
-struct SlotPlacement {
-    block_idx: usize,
-    slot_idx: usize,
-    offset: u64,
-}
-
-struct PrefetchChunk {
-    capacity: u64,
-    size: u64,
-    slots: Vec<SlotPlacement>,
-}
-
-/// Group all slots across all blocks by NUMA node.
-///
-/// Returns a map from NUMA key (None = global/unknown) to its slot references.
-fn group_slots_by_numa(
-    is_numa: bool,
-    requests: &[PrefetchRequest],
-) -> HashMap<Option<NumaNode>, Vec<SlotRef>> {
-    let mut groups: HashMap<Option<NumaNode>, Vec<SlotRef>> = HashMap::new();
-    for (block_idx, req) in requests.iter().enumerate() {
-        for (slot_idx, meta) in req.entry.slots.iter().enumerate() {
-            let numa_key = if is_numa {
-                let numa = meta.numa_node;
-                if numa.is_unknown() { None } else { Some(numa) }
-            } else {
-                None
-            };
-            groups.entry(numa_key).or_default().push(SlotRef {
-                block_idx,
-                slot_idx,
-                size: meta.total_size(),
-            });
-        }
-    }
-    groups
-}
-
-fn chunk_slot_refs(refs: &[SlotRef], chunk_bytes: u64) -> Result<Vec<PrefetchChunk>, String> {
-    assert!(chunk_bytes > 0, "SSD prefetch chunk size must be non-zero");
-
-    let mut remaining = refs.iter().try_fold(0u64, |total, slot| {
-        total
-            .checked_add(slot.size)
-            .ok_or_else(|| "SSD prefetch allocation size overflow".to_string())
-    })?;
-    let mut chunks = Vec::new();
-    let mut current: Option<PrefetchChunk> = None;
-
-    for slot in refs {
-        let needs_new_chunk = current.as_ref().is_none_or(|chunk| {
-            chunk
-                .size
-                .checked_add(slot.size)
-                .is_none_or(|end| end > chunk.capacity)
-        });
-
-        if needs_new_chunk {
-            if let Some(chunk) = current.take() {
-                chunks.push(chunk);
-            }
-            current = Some(PrefetchChunk {
-                capacity: remaining.min(chunk_bytes).max(slot.size),
-                size: 0,
-                slots: Vec::new(),
-            });
-        }
-
-        let chunk = current
-            .as_mut()
-            .expect("non-empty slot list must have an active prefetch chunk");
-        chunk.slots.push(SlotPlacement {
-            block_idx: slot.block_idx,
-            slot_idx: slot.slot_idx,
-            offset: chunk.size,
-        });
-        chunk.size = chunk
-            .size
-            .checked_add(slot.size)
-            .expect("new SSD prefetch chunk must fit its first slot");
-        remaining = remaining
-            .checked_sub(slot.size)
-            .expect("SSD prefetch remaining bytes must cover every slot");
-    }
-
-    if let Some(chunk) = current {
-        chunks.push(chunk);
-    }
-    Ok(chunks)
-}
-
-/// Allocate per-slot memory grouped by NUMA, build PrefetchTasks, and enqueue.
-/// Returns false if the task channel is closed (should exit).
+/// Allocate each stored segment independently, then enqueue block reads.
+/// Read and write allocations use the same page/segment lifetime and sizes;
+/// a surviving prefix cannot pin unrelated pages from a larger batch.
 async fn dispatch_prefetch_batch(
     store: &SsdBackingStore,
     task_tx: &tokio::sync::mpsc::Sender<PrefetchTask>,
     batch: PrefetchBatch,
 ) -> bool {
     let PrefetchBatch { requests, done_tx } = batch;
-
-    // 1. Group all slots across all blocks by NUMA node
-    let numa_groups = group_slots_by_numa(store.is_numa(), &requests);
-
-    // 2. Allocate bounded chunks per NUMA group, assign per-slot offsets.
-    //    A failure still fails the whole batch because every requested block
-    //    must have all of its slots before it can be rebuilt.
-    let mut slot_allocs: Vec<Vec<Option<SlotAlloc>>> = requests
-        .iter()
-        .map(|r| (0..r.entry.slots.len()).map(|_| None).collect())
-        .collect();
-
-    for (numa_node, refs) in &numa_groups {
-        let chunks = match chunk_slot_refs(refs, SSD_PREFETCH_CHUNK_BYTES) {
-            Ok(chunks) => chunks,
-            Err(err) => {
-                warn!("SSD prefetch dispatcher: {err}, failing entire batch");
-                let _ = done_tx.send(Vec::new());
-                return true;
-            }
-        };
-        for chunk in chunks {
-            let allocation = match store.allocate_prefetch(chunk.size, *numa_node) {
-                Some(alloc) => alloc,
-                None => {
+    let mut block_slots = Vec::with_capacity(requests.len());
+    for req in &requests {
+        let mut slots = Vec::with_capacity(req.entry.slots.len());
+        for meta in &req.entry.slots {
+            let numa_node =
+                (store.is_numa() && !meta.numa_node.is_unknown()).then_some(meta.numa_node);
+            let mut segments = Vec::with_capacity(meta.segment_sizes.len());
+            for &size in &meta.segment_sizes {
+                let Some(allocation) = store.allocate_prefetch(size, numa_node) else {
                     warn!(
-                        "SSD prefetch dispatcher: alloc failed for {} bytes numa={:?}, failing entire batch",
-                        chunk.size, numa_node
+                        "SSD prefetch dispatcher: alloc failed for {size} bytes numa={numa_node:?}, failing entire batch"
                     );
                     let _ = done_tx.send(Vec::new());
                     return true;
-                }
-            };
-            for slot in chunk.slots {
-                let offset =
-                    usize::try_from(slot.offset).expect("SSD prefetch chunk offset must fit usize");
-                slot_allocs[slot.block_idx][slot.slot_idx] = Some(SlotAlloc {
-                    allocation: Arc::clone(&allocation),
-                    offset,
-                });
+                };
+                segments.push(Segment::new(
+                    allocation.mapped_ptr().host(),
+                    size as usize,
+                    allocation,
+                ));
             }
+            slots.push(RawBlock::new(segments));
         }
+        block_slots.push(slots);
     }
 
-    // 3. Build BatchContext + PrefetchTasks and enqueue
     let ctx = Arc::new(BatchContext::new(requests.len(), done_tx));
-
-    let mut iter = requests.into_iter().enumerate();
-    while let Some((block_idx, req)) = iter.next() {
-        let allocs: Vec<SlotAlloc> = slot_allocs[block_idx]
-            .drain(..)
-            .map(|opt| opt.expect("all slots must have allocations"))
-            .collect();
-
+    let mut iter = requests.into_iter().zip(block_slots);
+    while let Some((req, slots)) = iter.next() {
         let task = PrefetchTask {
             key: req.key,
             entry: req.entry,
-            slot_allocs: allocs,
+            slots,
             ctx: Arc::clone(&ctx),
         };
 
@@ -859,13 +727,12 @@ async fn dispatch_prefetch_batch(
             debug!("SSD prefetch dispatcher: worker channel closed");
             let task = err.0;
             ctx.complete_one(task.key, None);
-            for (_, req) in iter {
+            for (req, _) in iter {
                 ctx.complete_one(req.key, None);
             }
             return false;
         }
     }
-
     true
 }
 
@@ -965,14 +832,11 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
     // Build iovecs from per-slot allocations
     let read_result = {
         let iovecs: Vec<_> = task
-            .entry
             .slots
             .iter()
-            .zip(&task.slot_allocs)
-            .flat_map(|(meta, alloc)| {
-                let base_ptr = alloc.allocation.as_ptr() as *mut u8;
-                // SAFETY: each allocation is sized to fit its NUMA group's slots
-                unsafe { seal_offload::read_iovecs(meta, base_ptr, alloc.offset) }
+            .flat_map(|slot| {
+                slot.segment_iovecs()
+                    .map(|(ptr, size)| (ptr.as_ptr(), size))
             })
             .collect();
 
@@ -986,9 +850,15 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
     let expected_len = task.entry.len as usize;
     let block = match read_result {
         Ok(rx) => match rx.await {
-            Ok(Ok(bytes_read)) if bytes_read == expected_len => Some(Arc::new(
-                rebuild_sealed_block_per_slot(task.slot_allocs, &task.entry.slots),
-            )),
+            Ok(Ok(bytes_read)) if bytes_read == expected_len => {
+                Some(Arc::new(SealedBlock::from_slots(
+                    task.slots
+                        .into_iter()
+                        .zip(&task.entry.slots)
+                        .map(|(slot, meta)| (slot, meta.numa_node))
+                        .collect(),
+                )))
+            }
             Ok(Ok(n)) => {
                 warn!("SSD prefetch: short read {} of {} bytes", n, expected_len);
                 None
@@ -1009,32 +879,6 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
     };
 
     (key, task.entry, block, duration_secs(), block_size, ctx)
-}
-
-// ============================================================================
-// Block Rebuilding
-// ============================================================================
-
-/// Rebuild a SealedBlock from per-slot allocations (consumed).
-///
-/// Each slot may reside in a different NUMA-local allocation. Takes ownership
-/// of `SlotAlloc`s to move (not clone) the `Arc<PinnedAllocation>` references.
-fn rebuild_sealed_block_per_slot(
-    slot_allocs: Vec<SlotAlloc>,
-    slot_metas: &[SlotMeta],
-) -> SealedBlock {
-    let slots: Vec<(RawBlock, NumaNode)> = slot_metas
-        .iter()
-        .zip(slot_allocs)
-        .map(|(meta, alloc)| {
-            let raw = unsafe {
-                seal_offload::reconstruct_raw_block(meta, alloc.allocation, alloc.offset)
-            };
-            (raw, meta.numa_node)
-        })
-        .collect();
-
-    SealedBlock::from_slots(slots)
 }
 
 #[cfg(test)]

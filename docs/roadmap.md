@@ -61,9 +61,13 @@ gate, without claiming cross-host tensor parallelism.
    revising selection; automatic hybrid forecasts and priority prediction remain open.
 2. **Reduce measured exposed waits.** The
    [ordinary Qwen3 profile](recovery-performance.md) separates host reads,
-   Manager restore and engine completion observation. Investigate read batching
-   and vLLM's completion-observation tail with matching traffic before changing
-   retention or SSD write admission. Keep deterministic output and ownership gates.
+   Manager restore and engine completion observation. The
+   [large-working-set SSD comparison](ssd-performance.md) adds natural
+   read/write contention. Producer-stream save fences, separate SSD submission
+   queues and independent page-segment allocation for SSD reads and saves are implemented. Compute
+   batching remains a measured latency/throughput tradeoff, not a shared new
+   default. Continue with completion/admission overlap and separate retention
+   and SSD write-admission experiments. Keep deterministic output and ownership gates.
 3. **Start real two-host DP qualification.** Ordinary TP=1 demand lifetimes now
    have native and model-serving fault evidence. Use independent same-format
    replicas and Mooncake TE; require positive remote and GPU-copy bytes, source

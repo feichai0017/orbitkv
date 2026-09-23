@@ -182,7 +182,13 @@ def validate(args: dict, samples: list[dict], windows: list[dict]) -> None:
         query_limit = args.get("query_budget_gib")
         if (
             query_limit is not None
-            and window["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes_speculative", 0)
+            and window["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes", 0)
+            > query_limit * 1024**3
+        ):
+            raise ValueError("Query reservations exceeded their total byte budget")
+        if (
+            query_limit is not None
+            and window["sampled_peak_bytes"].get("orbitkv_query_speculative_reserved_bytes", 0)
             > query_limit * 1024**3 / 4
         ):
             raise ValueError("Speculative reservations exceeded their quarter-budget limit")
@@ -225,6 +231,7 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
         rows = [s for s in samples if s["concurrency"] == window["concurrency"]]
         ttft = [s["ttft_ms"] for s in rows]
         reused = [s for s in rows if s["kind"] == "reuse"]
+        cold = [s for s in rows if s["kind"] == "cold"]
         counters = window["manager_delta"]
         result.append(
             {
@@ -239,6 +246,12 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                 "ttft_p50_ms": statistics.median(ttft),
                 "ttft_p95_ms": percentile(ttft, 0.95),
                 "ttft_p99_ms": percentile(ttft, 0.99),
+                "reuse_ttft_p95_ms": percentile([s["ttft_ms"] for s in reused], 0.95)
+                if reused
+                else None,
+                "cold_ttft_p95_ms": percentile([s["ttft_ms"] for s in cold], 0.95)
+                if cold
+                else None,
                 "requests_per_second": len(rows) / window["wall_seconds"],
                 "output_tokens_per_second": sum(s["usage"]["completion_tokens"] for s in rows)
                 / window["wall_seconds"],
@@ -262,7 +275,7 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                     "orbitkv_query_reserved_bytes_warming", 0
                 ),
                 "sampled_peak_speculative_bytes": window["sampled_peak_bytes"].get(
-                    "orbitkv_query_reserved_bytes_speculative", 0
+                    "orbitkv_query_speculative_reserved_bytes", 0
                 ),
                 "sampled_peak_warmup_pending_bytes": window["sampled_peak_bytes"].get(
                     "orbitkv_warmup_pending_bytes", 0
@@ -295,6 +308,9 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                         "orbitkv_ssd_prefetch_duration_seconds_count",
                         "orbitkv_save_duration_seconds_sum",
                         "orbitkv_save_duration_seconds_count",
+                        "orbitkv_pool_alloc_failures_total",
+                        "orbitkv_ssd_prefetch_failures_total",
+                        "orbitkv_ssd_write_queue_full_total",
                     )
                 },
             }

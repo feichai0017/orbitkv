@@ -16,7 +16,7 @@ orbitkv-cache-manager
 - `--use-hugepages`: Use huge pages for pinned memory (default: `false`, requires pre-configured `/proc/sys/vm/nr_hugepages`)
 - `--enable-lfu-admission`: Enable TinyLFU cache admission policy (default: plain LRU)
 - `--disable-numa-affinity`: Disable NUMA-aware memory allocation (default: enabled)
-- `--blockwise-alloc`: Allocate each block separately instead of contiguous batch allocation. Reduces memory fragmentation when blocks are freed in different order (default: `false`)
+- `--blockwise-alloc`: Allocate each layer/page segment independently in DRAM-only mode (default: `false`). SSD-backed Managers always use this allocation policy so reads and writes share the same reclaimable units; surviving prefix pages do not pin other pages from a batch.
 - `--log-level`: Log level: `trace`, `debug`, `info`, `warn`, `error` (default: `info`)
 
 ### HTTP & Metrics
@@ -67,8 +67,11 @@ an authoritative backing-store miss. Cancellation drains submitted I/O before
 returning its bytes. A delivered lease remains charged until release, session
 disconnect, expiry, or completion of every GPU consumer.
 
-`orbitkv_query_reserved_bytes{phase="preparing|ready|restoring"}` tracks ownership
-through these phases. Preparation includes queued reads and reconstruction;
+`orbitkv_query_reserved_bytes` tracks total ownership under the budget lock;
+`orbitkv_query_reserved_bytes_by_phase{phase="preparing|ready|restoring"}` diagnoses
+the individual stages. Summed phase samples are not an atomic budget snapshot.
+Ownership remains charged through these phases. Preparation includes queued
+reads and reconstruction;
 it is a conservative payload reservation, not a measurement of a particular
 device's buffers. `orbitkv_query_budget_waits_total` counts admission attempts
 delayed by bytes, and `orbitkv_query_coalesced_reads_total` counts joined reads.

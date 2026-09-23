@@ -18,6 +18,7 @@ use io_uring::{IoUring, opcode, types::Fd};
 use log::{info, warn};
 use std::io;
 use std::os::unix::io::RawFd;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use tokio::sync::oneshot;
@@ -204,6 +205,8 @@ impl UringShard {
 pub(super) struct UringIoEngine {
     fds: Vec<RawFd>,
     txs: Vec<mpsc::SyncSender<IoCtx>>,
+    write_shards: usize,
+    next_read: AtomicUsize,
     #[allow(
         dead_code,
         reason = "join handles keep io_uring shard threads alive until Drop"
@@ -248,14 +251,27 @@ impl UringIoEngine {
             handles.push(handle);
         }
 
-        Ok(Self { fds, txs, handles })
+        // Keep each file's writes on one queue. Reads may use any of the
+        // remaining queues: tying them to the file id leaves all but one
+        // worker idle for a single cache file, and submit_and_wait can strand
+        // a newly queued read behind an unrelated write already in flight.
+        let write_shards = fds.len().min((cfg.threads / 2).max(1));
+        Ok(Self {
+            fds,
+            txs,
+            write_shards,
+            next_read: AtomicUsize::new(0),
+            handles,
+        })
     }
 
-    fn pick_tx(&self, shard_id: usize) -> &mpsc::SyncSender<IoCtx> {
-        let idx = if self.txs.len() == 1 {
-            0
-        } else {
-            shard_id % self.txs.len()
+    fn pick_tx(&self, shard_id: usize, io_type: IoType) -> &mpsc::SyncSender<IoCtx> {
+        let readers = self.txs.len() - self.write_shards;
+        let idx = match io_type {
+            IoType::Readv if readers > 0 => {
+                self.write_shards + self.next_read.fetch_add(1, Ordering::Relaxed) % readers
+            }
+            _ => shard_id % self.write_shards,
         };
         &self.txs[idx]
     }
@@ -339,12 +355,14 @@ impl UringIoEngine {
             iovecs: Some(iovecs_libc),
         };
 
-        self.pick_tx(shard_id).send(ctx).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("io_uring readv send failed: {e}"),
-            )
-        })?;
+        self.pick_tx(shard_id, IoType::Readv)
+            .send(ctx)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("io_uring readv send failed: {e}"),
+                )
+            })?;
         Ok(rx)
     }
 
@@ -393,12 +411,14 @@ impl UringIoEngine {
             iovecs: Some(iovecs_libc),
         };
 
-        self.pick_tx(shard_id).send(ctx).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("io_uring writev send failed: {e}"),
-            )
-        })?;
+        self.pick_tx(shard_id, IoType::Writev)
+            .send(ctx)
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("io_uring writev send failed: {e}"),
+                )
+            })?;
         Ok(rx)
     }
 }

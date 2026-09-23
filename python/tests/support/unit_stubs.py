@@ -30,6 +30,12 @@ def _install_torch_stub() -> None:
     torch = types.ModuleType("torch")
 
     class _Cuda:
+        Event = MagicMock
+
+        @staticmethod
+        def current_stream(_device=None):
+            return "producer-stream"
+
         @staticmethod
         def is_available() -> bool:
             return False

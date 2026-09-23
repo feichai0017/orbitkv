@@ -164,7 +164,9 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
 def vllm_command(
     args: Namespace, port: int, bytes_per_token: int, cache_port: int | None
 ) -> list[str]:
-    pressure_tokens = args.gpu_tokens * 3 // 4
+    pressure_tokens = (
+        max(args.lengths) if args.workload == "sustained" else args.gpu_tokens * 3 // 4
+    )
     command = [
         sys.executable,
         "-m",
@@ -189,7 +191,7 @@ def vllm_command(
         "--max-num-seqs",
         "8",
         "--max-num-batched-tokens",
-        "8192",
+        str(args.prefill_tokens),
         "--generation-config",
         "vllm",
         "--seed",
@@ -233,7 +235,9 @@ def vllm_command(
 
 
 def sglang_command(args: Namespace, port: int, cache_config: Path | None) -> list[str]:
-    pressure_tokens = args.gpu_tokens * 3 // 4
+    pressure_tokens = (
+        max(args.lengths) if args.workload == "sustained" else args.gpu_tokens * 3 // 4
+    )
     command = [
         sys.executable,
         "-m",
@@ -261,7 +265,7 @@ def sglang_command(args: Namespace, port: int, cache_config: Path | None) -> lis
         "--cuda-graph-max-bs-prefill",
         "8",
         "--chunked-prefill-size",
-        "8192",
+        str(args.prefill_tokens),
         "--random-seed",
         "42",
         "--enable-cache-report",

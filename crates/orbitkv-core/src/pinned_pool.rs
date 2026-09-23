@@ -73,11 +73,6 @@ impl PinnedAllocation {
         self.allocation.size_bytes.get()
     }
 
-    /// Get a const pointer to the allocated memory
-    pub(crate) fn as_ptr(&self) -> *const u8 {
-        self.ptr.as_ptr()
-    }
-
     /// Get the underlying NonNull pointer.
     #[cfg_attr(
         not(feature = "mooncake"),
