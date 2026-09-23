@@ -241,7 +241,8 @@ impl CatalogClient {
                     .map(|&i| hashes[i].clone())
                     .collect();
                 orbitkv_state::validate_discovery_query(namespace, &batch)?;
-                let response = match tokio::time::timeout_at(
+                let started = Instant::now();
+                let response = tokio::time::timeout_at(
                     deadline,
                     client.locate_blocks(timed(LocateBlocksRequest {
                         route: Some(route(&self.membership, shard, &owner)),
@@ -250,18 +251,26 @@ impl CatalogClient {
                         exclude_node: self.advertise_addr.clone(),
                     })),
                 )
-                .await
-                {
+                .await;
+                let result = match &response {
+                    Ok(Ok(_)) => "ok",
+                    Ok(Err(_)) => "error",
+                    Err(_) => "timeout",
+                };
+                core_metrics()
+                    .candidate_lookup_rpcs
+                    .add(1, &[opentelemetry::KeyValue::new("result", result)]);
+                core_metrics().remote_stage_duration_seconds.record(
+                    started.elapsed().as_secs_f64(),
+                    &[
+                        opentelemetry::KeyValue::new("stage", "discovery_rpc"),
+                        opentelemetry::KeyValue::new("status", result),
+                    ],
+                );
+                let response = match response {
                     Ok(response) => response,
                     Err(_) => break 'shards,
                 };
-                core_metrics().candidate_lookup_rpcs.add(
-                    1,
-                    &[opentelemetry::KeyValue::new(
-                        "result",
-                        if response.is_ok() { "ok" } else { "error" },
-                    )],
-                );
                 let response = match response {
                     Ok(response) => response.into_inner(),
                     Err(error) => {

@@ -124,6 +124,25 @@ async fn cleanup_memory_cache_handler(
     })
 }
 
+async fn sync_cache_handler(State(state): State<AppState>) -> impl IntoResponse {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        state.engine.flush_saves_and_inventory(),
+    )
+    .await
+    {
+        Ok(Ok(())) => (
+            StatusCode::OK,
+            "published residency acknowledged".to_string(),
+        ),
+        Ok(Err(error)) => (StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "cache synchronization timed out".to_string(),
+        ),
+    }
+}
+
 /// Start HTTP server for health check, optional Prometheus metrics, and instance management.
 pub async fn start_http_server(
     addr: std::net::SocketAddr,
@@ -169,17 +188,18 @@ pub(crate) async fn start_http_server_with_lifecycle(
         .route("/health", get(health_handler))
         .route("/instances", get(list_instances_handler))
         .route("/instances/cleanup", post(cleanup_handler))
+        .route("/cache/sync", post(sync_cache_handler))
         .route("/cache/memory/cleanup", post(cleanup_memory_cache_handler));
 
     if enable_prometheus {
         app = app.route("/metrics", get(metrics_handler));
         info!(
-            "Starting HTTP server on {} (/health, /metrics, /instances, /instances/cleanup, /cache/memory/cleanup)",
+            "Starting HTTP server on {} (/health, /metrics, /instances, /instances/cleanup, /cache/sync, /cache/memory/cleanup)",
             addr
         );
     } else {
         info!(
-            "Starting HTTP server on {} (/health, /instances, /instances/cleanup, /cache/memory/cleanup)",
+            "Starting HTTP server on {} (/health, /instances, /instances/cleanup, /cache/sync, /cache/memory/cleanup)",
             addr
         );
     }

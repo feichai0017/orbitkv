@@ -29,10 +29,11 @@ export const docGroups = [
     description: "Explore independent replicas and prefill/decode handoff.",
     items: [
       { slug: "p2p", title: "Cross-node deployment" },
+      { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
       { slug: "distributed-cache", title: "Embedded catalog design" },
       {
         slug: "distributed-comparison",
-        title: "LMCache & Mooncake comparison",
+        title: "LMCache, FlexKV & Mooncake comparison",
       },
       { slug: "pd", title: "P/D, cache reuse & NIXL" },
       { slug: "pd-mooncake-push", title: "Experimental Mooncake P/D" },

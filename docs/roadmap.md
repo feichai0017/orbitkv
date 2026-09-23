@@ -70,6 +70,13 @@ gate, without claiming cross-host tensor parallelism.
    incarnation rejection and catalog replay. Local policy tuning can continue
    alongside it. Multi-rank fault soak remains a separate extension.
 
+The [shared-cache driver and restart gate](shared-cache-qualification.md) now pass
+for both engines with independent TP=1 replicas over same-host TCP. Rust bounds
+source allocation reservations, retains overdue pins and exports remote stage
+timing. Transport revocation for
+permanently lost requesters remains open; neither a timeout nor an etcd lease
+expiry permits memory reuse. Physical two-host/RDMA evidence remains required.
+
 Keep these changes separately reviewable. The existing
 [reference-based policy sequence](queued-warming.md#reference-implementations-and-policy-order)
 defines the retained-page and stopping contracts. If a preparation policy
@@ -191,9 +198,9 @@ successful H2D, unused releases and completed byte-seconds; hints yield to
 foreground ownership and enter the reclaimable class. The
 [page-use controls](queued-warming.md#page-use-and-reclamation-controls) still
 show no established throughput gain; SGLang releases most warmed pages unused.
-Next follow the [reference-based policy sequence](queued-warming.md#reference-implementations-and-policy-order):
-budget prepared residency for selected consumers, add explicit stopping and
-drain, then calibrate expected use time and restore-versus-recompute decisions.
+The [reference-based policy sequence](queued-warming.md#reference-implementations-and-policy-order)
+now has consumer-owned preparation, stopping and drain. Next calibrate expected
+use time and restore-versus-recompute decisions without delaying DP qualification.
 Measure exposed wait and read amplification separately from retention changes.
 Generation-safe layer readiness precedes copy/compute overlap. The
 [implementation stages](state-planning.md#implementation-sequence) retain the
@@ -225,7 +232,7 @@ Deliver in order:
   stops when membership evidence or registration validity is unavailable;
 - D1 deployment (implemented): per-shard inventory replay and catalogs embedded
   in Managers; standalone directory binaries and flags removed. Cross-host
-  serving and source timeout/revocation qualification remain open;
+  serving and orphaned-transfer revocation qualification remain open;
 - D2: versioned rendezvous shard placement, replicated evidence, handoff,
   bounded subscriptions and failure recovery;
 - D3: remote SSD staging and calibrated source selection under sender and

@@ -5,16 +5,14 @@ Requires ETCD_BIN, built native artifacts, CUDA and MC_FORCE_TCP=1 on one host.
 """
 
 import hashlib
-import os
-import subprocess
 import time
 import uuid
 from contextlib import ExitStack
 
 import pytest
-import requests
 
 from tests.support.cache_manager import CacheManagerProcess, find_available_port
+from tests.support.cluster import etcd_server
 from tests.support.metrics import fetch_orbitkv_metrics
 
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
@@ -23,9 +21,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
     tmp_path, monkeypatch
 ):
-    binary = os.environ.get("ETCD_BIN")
-    if not binary:
-        pytest.skip("set ETCD_BIN to run the distributed process gate")
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
@@ -33,54 +28,8 @@ def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
     from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
 
     monkeypatch.setenv("MC_FORCE_TCP", "1")
-    endpoint = f"http://127.0.0.1:{find_available_port()}"
-    peer = f"http://127.0.0.1:{find_available_port()}"
     with ExitStack() as stack:
-        log = stack.enter_context((tmp_path / "etcd.log").open("wb"))
-        etcd = subprocess.Popen(
-            [
-                binary,
-                "--name",
-                "test",
-                "--data-dir",
-                str(tmp_path / "etcd-data"),
-                "--listen-client-urls",
-                endpoint,
-                "--advertise-client-urls",
-                endpoint,
-                "--listen-peer-urls",
-                peer,
-                "--initial-advertise-peer-urls",
-                peer,
-                "--initial-cluster",
-                f"test={peer}",
-                "--log-level",
-                "warn",
-            ],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-
-        def stop_etcd():
-            if etcd.poll() is None:
-                etcd.terminate()
-                try:
-                    etcd.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    etcd.kill()
-                    etcd.wait(timeout=5)
-
-        stack.callback(stop_etcd)
-        deadline = time.monotonic() + 15
-        while True:
-            assert etcd.poll() is None, (tmp_path / "etcd.log").read_text()
-            try:
-                if requests.get(f"{endpoint}/health", timeout=1).ok:
-                    break
-            except requests.RequestException:
-                pass
-            assert time.monotonic() < deadline, "etcd startup timed out"
-            time.sleep(0.05)
+        endpoint, stop_etcd = stack.enter_context(etcd_server(tmp_path))
 
         managers = []
         clients = []

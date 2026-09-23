@@ -1,5 +1,7 @@
 # OrbitKV
 
+[![Python package v0.1.0 — not yet published](https://img.shields.io/badge/Python_package-v0.1.0%20%28unreleased%29-203b30)](https://feichai0017.github.io/orbitkv/docs/releases/)
+
 **KV cache for vLLM and SGLang, backed by Rust.** Reuse computed prefixes from
 pinned DRAM and optional SSD after GPU eviction or an engine restart. Both
 adapters use CUDA IPC for GPU transfers and the same Cache Manager API.

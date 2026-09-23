@@ -1,6 +1,6 @@
 # Distributed cache deployment comparison
 
-Reviewed against official documentation on 2026-09-21. These are documented
+Reviewed against official documentation on 2026-09-23. These are documented
 integration paths, not OrbitKV benchmark results or a claim that every model,
 engine release and parallel layout works. OrbitKV's tested engine versions
 remain the pinned releases in [single-node setup](single-node.md).
@@ -28,6 +28,25 @@ The current MP documentation distinguishes three deployments:
 
 The old in-process PD examples describe a different integration. Do not mix
 their constraints with the MP deployment when comparing capabilities.
+
+## FlexKV
+
+- [Engine integration](https://github.com/taco-project/FlexKV) covers vLLM and
+  SGLang, CPU/SSD offload, TP/PP work and Mooncake-based remote reuse. These
+  features do not establish every model/topology combination.
+- [Distributed reuse](https://github.com/taco-project/FlexKV/blob/main/docs/dist_reuse/README_en.md)
+  uses a local snapshot of the global index, Redis metadata and Mooncake
+  transfer. Avoiding a centralized lookup on each request is therefore not
+  unique to OrbitKV. Its example still pins an older vLLM; verify compatibility
+  before using it as a current-release benchmark.
+- [SGLang integration](https://github.com/taco-project/FlexKV/blob/main/flexkv/integration/sglang/README.md)
+  distinguishes standard released-engine support from model-specific adaptations
+  tied to an upstream PR. Record the exact engine release and FlexKV commit.
+
+OrbitKV prioritizes independent-replica sharing and P/D reuse, followed by catalog
+HA. Compare bytes read, index/synchronization costs, tail latency and useful
+throughput at equal capacity. Native code, separate processes and hybrid-model
+support alone do not establish a performance advantage.
 
 ## Mooncake
 

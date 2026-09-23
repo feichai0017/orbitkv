@@ -59,8 +59,10 @@ pub struct StorageConfig {
     /// Allocate each block separately instead of contiguous batch allocation.
     /// Reduces fragmentation when blocks are freed in different order.
     pub blockwise_alloc: bool,
-    /// Transfer lock timeout for cross-node Mooncake transfers.
+    /// Overdue threshold for cross-node transfers; expiry retains source allocations.
     pub transfer_lock_timeout: Duration,
+    /// Source allocation reservations, including overdue transfers. Defaults to half the pool.
+    pub transfer_budget_bytes: Option<usize>,
     /// Optional leased membership. Its incarnation also identifies this inventory.
     pub membership: Option<Arc<orbitkv_catalog::MembershipView>>,
     /// Byte limit for retained residency changes used by directory synchronization.
@@ -81,6 +83,7 @@ impl Default for StorageConfig {
             enable_numa_affinity: true,
             blockwise_alloc: false,
             transfer_lock_timeout: Duration::from_secs(120),
+            transfer_budget_bytes: None,
             membership: None,
             inventory_journal_bytes: inventory::DEFAULT_INVENTORY_JOURNAL_BYTES,
             pool_shards: 1,
@@ -91,6 +94,11 @@ impl Default for StorageConfig {
 pub(crate) struct TransferAuthorization {
     pub(crate) session_id: String,
     pub(crate) blocks: Vec<(StateKey, Arc<SealedBlock>)>,
+}
+
+pub(crate) enum TransferAuthorizationError {
+    StaleReplica,
+    BudgetExhausted,
 }
 
 pub(crate) struct StorageEngine {
@@ -121,6 +129,16 @@ impl StorageEngine {
         let mooncake_nic_names = config.mooncake_nic_names;
         let blockwise_alloc = config.blockwise_alloc;
         let transfer_lock_timeout = config.transfer_lock_timeout;
+        let transfer_budget = config.transfer_budget_bytes.unwrap_or(capacity_bytes / 2);
+        if transfer_budget == 0
+            || transfer_budget > capacity_bytes
+            || transfer_budget > i64::MAX as usize
+        {
+            return Err(
+                "transfer budget must be positive and no larger than the pinned pool or i64::MAX"
+                    .into(),
+            );
+        }
 
         if blockwise_alloc {
             info!("Blockwise allocation enabled for batch_save");
@@ -231,6 +249,7 @@ impl StorageEngine {
 
             let transfer_lock = Arc::new(transfer_lock::TransferLockManager::new(
                 transfer_lock_timeout,
+                transfer_budget as u64,
             ));
 
             Self {
@@ -598,18 +617,27 @@ impl StorageEngine {
         owner: uuid::Uuid,
         requester: &str,
         records: &[orbitkv_state::InventoryRecord],
-    ) -> Option<TransferAuthorization> {
-        if self.catalog_client.as_ref()?.node_id != owner
+    ) -> Result<TransferAuthorization, TransferAuthorizationError> {
+        if self
+            .catalog_client
+            .as_ref()
+            .is_none_or(|client| client.node_id != owner)
             || self
                 .membership
                 .as_ref()
                 .is_some_and(|view| !view.permits(view.owner()))
         {
-            return None;
+            return Err(TransferAuthorizationError::StaleReplica);
         }
-        let found = self.read_cache.pin_residencies(records)?;
-        let session = self.transfer_lock.lock_blocks(requester, found.clone());
-        Some(TransferAuthorization {
+        let found = self
+            .read_cache
+            .pin_residencies(records)
+            .ok_or(TransferAuthorizationError::StaleReplica)?;
+        let session = self
+            .transfer_lock
+            .lock_blocks(requester, found.clone())
+            .ok_or(TransferAuthorizationError::BudgetExhausted)?;
+        Ok(TransferAuthorization {
             session_id: session,
             blocks: found,
         })
@@ -624,9 +652,8 @@ impl StorageEngine {
         self.transfer_lock.release(session_id)
     }
 
-    /// GC expired transfer lock sessions. Returns the number of sessions expired.
-    pub(crate) fn gc_expired_transfer_locks(&self) -> usize {
-        self.transfer_lock.gc_expired()
+    pub(crate) fn expire_transfer_locks(&self) -> usize {
+        self.transfer_lock.expire()
     }
 
     /// Return `(base_ptr, size)` for each contiguous pinned memory region.

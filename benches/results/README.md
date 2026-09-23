@@ -6,8 +6,9 @@ ignored `runs/` directories or CI artifacts. Preserve output-difference counts
 and limitations in the final report. Historical datasets below retain their
 original recorded values.
 
-The latest results are [ordinary recovery](20260922-recovery-baseline/README.md)
-and [bounded preparation](20260922-preparation/README.md).
+The latest results are [shared-cache serving](20260923-shared-cache/README.md),
+[ordinary recovery](20260922-recovery-baseline/README.md) and
+[bounded preparation](20260922-preparation/README.md).
 
 | Files | Experiment |
 | --- | --- |

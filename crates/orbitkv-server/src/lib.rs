@@ -216,10 +216,13 @@ pub struct Cli {
     #[arg(long, default_value_t = 16, value_parser = parse_hll_bucket_bits)]
     pub metric_hll_bucket_bits: u8,
 
-    /// Transfer lock timeout in seconds. Blocks held for cross-node transfer are
-    /// locked for at most this duration before being force-released (crash recovery).
+    /// Mark source transfers overdue after this many seconds; timeout never releases pins.
     #[arg(long, default_value_t = 120)]
     pub transfer_lock_timeout_secs: u64,
+
+    /// Source transfer allocation budget, including overdue sessions. Defaults to half the pool.
+    #[arg(long, value_parser = parse_memory_size)]
+    pub transfer_budget: Option<usize>,
 
     /// iceoryx2 service name prefix for the inference control path.
     /// Each startup appends a unique incarnation, advertised through UDS.
@@ -613,6 +616,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         enable_numa_affinity: !cli.disable_numa_affinity,
         blockwise_alloc: cli.blockwise_alloc,
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),
+        transfer_budget_bytes: cli.transfer_budget,
         membership: membership_view.clone(),
         inventory_journal_bytes: cli.inventory_journal_bytes,
         pool_shards: cli.pool_shards,
@@ -740,9 +744,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                                 info!("Inflight GC: cleaned {} stale blocks", cleaned);
                             }
 
-                            let expired_locks = engine.gc_expired_transfer_locks();
+                            let expired_locks = engine.expire_transfer_locks();
                             if expired_locks > 0 {
-                                warn!("Transfer lock GC: expired {} stale sessions", expired_locks);
+                                warn!("Retaining source pins for {} overdue transfer sessions", expired_locks);
                             }
                         }
                         _ = shutdown.notified() => {

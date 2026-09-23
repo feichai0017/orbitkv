@@ -1,0 +1,9 @@
+engine,case,input_tokens,source_ttft_ms,ttft_ms,e2e_ms,remote_bytes,h2d_bytes,discovery_rpcs,discovery_rpc_ms,authorization_ms,allocation_ms,read_ms,rebuild_ms,output_match,resources_drained
+vllm,remote_restore,513,112.172,114.440,296.844,75497472,75497472,8,3.101,0.781,0.074,34.855,0.056,True,True
+vllm,remote_restore,1025,146.573,136.621,321.901,150994944,150994944,14,4.086,1.166,0.112,69.246,0.133,True,True
+vllm,catalog_restart,513,,111.079,293.034,75497472,75497472,8,3.185,0.814,0.069,29.947,0.055,True,True
+vllm,source_restart_miss,513,,111.757,,0,0,,,,,,,True,True
+sglang,remote_restore,513,118.157,136.019,212.424,75497472,75497472,6,20.660,1.012,0.084,32.387,0.106,True,True
+sglang,remote_restore,1025,146.370,123.141,202.173,150994944,150994944,16,4.366,1.229,0.164,58.810,0.185,True,True
+sglang,catalog_restart,513,,134.410,210.537,75497472,75497472,6,22.626,1.067,0.111,30.319,0.103,True,True
+sglang,source_restart_miss,513,,118.013,,0,0,,,,,,,True,True

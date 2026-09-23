@@ -36,10 +36,11 @@ Implemented discovery behavior:
   issues no new directory RPC during these retries. Another query can refresh
   missing evidence. Payload-transfer failures stop the prefix without retries.
 - A blocking READ owns its destination buffers and source-release guard until
-  it returns, even if the asynchronous caller is cancelled. This fixes caller
-  cancellation; source timeout reclamation still lacks transport revocation
-  qualification. It does **not** establish safe source failure or partition
-  handling.
+  it returns, even if the asynchronous caller is cancelled. Source expiry now
+  retains its pins and charges whole allocations against `--transfer-budget`
+  (default: half the pool), with at most 1024 sessions. Completion release uses
+  bounded idempotent retries. Reclaiming a permanently orphaned source hold
+  still requires transport revocation; partition handling remains unqualified.
 
 Implemented membership behavior (required on every distributed Manager):
 

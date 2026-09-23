@@ -13,7 +13,10 @@ use tonic::transport::Endpoint;
 use tonic::{Request, Response, Status};
 
 /// Stub engine that only counts ReleaseTransferLock calls.
-struct ReleaseCounter(Arc<AtomicUsize>);
+struct ReleaseCounter {
+    calls: Arc<AtomicUsize>,
+    failures: usize,
+}
 
 #[tonic::async_trait]
 impl Engine for ReleaseCounter {
@@ -21,9 +24,14 @@ impl Engine for ReleaseCounter {
         &self,
         _request: Request<ReleaseTransferLockRequest>,
     ) -> Result<Response<ReleaseTransferLockResponse>, Status> {
-        self.0.fetch_add(1, Ordering::SeqCst);
+        if self.calls.fetch_add(1, Ordering::SeqCst) < self.failures {
+            return Err(Status::unavailable("release acknowledgement lost"));
+        }
         Ok(Response::new(ReleaseTransferLockResponse {
-            status: None,
+            status: Some(orbitkv_proto::proto::engine::ResponseStatus {
+                ok: true,
+                message: String::new(),
+            }),
             released_blocks: 0,
         }))
     }
@@ -44,13 +52,16 @@ impl Engine for ReleaseCounter {
 
 /// Serve a ReleaseCounter on an ephemeral loopback port; return a
 /// connected client and the shared counter.
-async fn start_counter_server() -> (EngineClient<Channel>, Arc<AtomicUsize>) {
+async fn start_counter_server(failures: usize) -> (EngineClient<Channel>, Arc<AtomicUsize>) {
     let counter = Arc::new(AtomicUsize::new(0));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind loopback");
     let addr = listener.local_addr().expect("local addr");
-    let service = EngineServer::new(ReleaseCounter(Arc::clone(&counter)));
+    let service = EngineServer::new(ReleaseCounter {
+        calls: Arc::clone(&counter),
+        failures,
+    });
     tokio::spawn(
         tonic::transport::Server::builder()
             .add_service(service)
@@ -78,7 +89,7 @@ fn guard(client: &EngineClient<Channel>, session: &str) -> TransferLockGuard {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn releases_exactly_once_on_every_exit_path() {
-    let (client, counter) = start_counter_server().await;
+    let (client, counter) = start_counter_server(0).await;
 
     // Explicit release on the coded path.
     guard(&client, "explicit").release();
@@ -110,7 +121,7 @@ async fn releases_exactly_once_on_every_exit_path() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finishes() {
-    let (client, counter) = start_counter_server().await;
+    let (client, counter) = start_counter_server(0).await;
     let buffer = Arc::new(());
     let observed = Arc::downgrade(&buffer);
     let g = guard(&client, "in-flight");
@@ -132,4 +143,15 @@ async fn cancellation_keeps_buffers_and_source_pin_until_blocking_transfer_finis
     finish.send(()).unwrap();
     wait_for_count(&counter, 1).await;
     assert!(observed.upgrade().is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lost_release_replies_have_bounded_idempotent_retries() {
+    for failures in [2, usize::MAX] {
+        let (client, counter) = start_counter_server(failures).await;
+        guard(&client, "completed").release();
+        wait_for_count(&counter, 3).await;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
 }

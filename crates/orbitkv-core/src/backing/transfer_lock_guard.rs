@@ -9,7 +9,7 @@ use tonic::transport::Channel;
 /// Releases a transfer session exactly once, on whichever exit runs first:
 /// `release()` on the coded completion paths, or `Drop` when the fetch task
 /// panics or its future is dropped mid-await. A session that is never
-/// released pins the remote blocks until the holder's GC expires it.
+/// released retains its source reservation, including after its deadline.
 pub(super) struct TransferLockGuard {
     client: EngineClient<Channel>,
     session_id: String,
@@ -67,8 +67,25 @@ impl TransferLockGuard {
             let req = ReleaseTransferLockRequest {
                 transfer_session_id: session_id.clone(),
             };
-            if let Err(e) = client.release_transfer_lock(req).await {
-                warn!("ReleaseTransferLock failed for session {session_id}: {e}");
+            for attempt in 0..3 {
+                match client.release_transfer_lock(req.clone()).await {
+                    Ok(reply)
+                        if reply
+                            .get_ref()
+                            .status
+                            .as_ref()
+                            .is_some_and(|status| status.ok) =>
+                    {
+                        return;
+                    }
+                    Ok(_) => warn!("ReleaseTransferLock rejected for session {session_id}"),
+                    Err(error) => {
+                        warn!("ReleaseTransferLock failed for session {session_id}: {error}");
+                    }
+                }
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100 << attempt)).await;
+                }
             }
         });
     }

@@ -34,5 +34,6 @@ lock, independently of catalog hints. Invalid membership disables remote work
 while local cache operations continue.
 
 The blocking Mooncake READ owns destination memory and its release guard through
-caller cancellation. Source timeout/revocation and cross-host failure qualification
+caller cancellation. Source allocations remain budgeted after timeout and release
+replies have bounded retries. Orphan revocation and cross-host failure qualification
 remain unresolved. See [deployment and failure boundaries](../../../../docs/p2p.md).

@@ -11,6 +11,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
 | `catalog.rs` | Rust directory cleanup microbenchmark, run through Cargo |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
+| `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
 | `launch.py` | Engine/backend commands and matched memory budgets |
 | `runtime.py` | Owned process groups, readiness, teardown, and launch manifest |
 | `workload.py` | Token-exact requests, streaming timings, and pressure traffic |
@@ -23,6 +24,13 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `tests/` | CPU-only checks for measurement and report correctness |
 | `results/` | Reviewed CSV/JSON measurements committed to Git |
 | `results/runs/` | Ignored raw runs: manifests, responses, counters, logs, and failures |
+
+## Shared-cache qualification
+
+For shared replicas, use the [shared-cache qualification guide](../docs/shared-cache-qualification.md).
+Its HTTP driver works with either engine on existing deployments. The model-serving
+restart gate lives in `python/tests/e2e/test_shared_cache.py`; same-host results do
+not qualify physical two-host or RDMA deployment.
 
 ## Single-node comparison
 
