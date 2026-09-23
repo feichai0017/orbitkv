@@ -3,14 +3,16 @@
 Qwen3-8B BF16, one H20 (97,871 MiB), TP=1 independent replicas, same-host
 Mooncake TCP. vLLM 0.29.0 and SGLang 0.5.20 ran separately under Python 3.11.
 Model revision: `b968826d9c46dd6066d109eabc6255188de91218`.
-Source: the commit adding this report, based on `b9a6c625`.
+Runtime and gate: `d9a56ccaf2b5077460358ad10d75b869b1f2a4f3`. This report keeps the final rerun after
+adding retained completion acknowledgements and catalog-host batching.
 
 Each engine passed two fresh-prefix restores (513/1025 input tokens), a restore
 after restarting the sole catalog host, and recomputation after the source
 restarted without payload. Each generated eight tokens. All outputs matched
 their controls. Each engine restored 288 MiB through Mooncake and H2D across
 three requests; the source-restart miss restored zero bytes. Query, inflight,
-source-transfer and I/O gauges drained after every case.
+source-transfer, requester-completion and I/O gauges drained after every case.
+Each engine received 12 source-release acknowledgements across its three restores.
 
 Each replica had its own 2 GiB Manager pool, 1 GiB query budget and default
 1 GiB source-transfer budget. Read batches were limited to 32 MiB. SSD,
@@ -19,7 +21,20 @@ to 4096 GPU tokens. vLLM used eager execution and `VLLM_BATCH_INVARIANT=1`;
 SGLang used `--enable-deterministic-inference`. etcd 3.6.5 ran locally with
 12-second Manager membership leases.
 
-`summary.csv` keeps the final rows and native stage totals. These short serial
+Compared with the [preceding gate](https://github.com/feichai0017/orbitkv/blob/a67610f1d76adc5d86c8da8e9c4ff6f72e712270/benches/results/20260923-shared-cache/summary.csv),
+per-request discovery RPC counts changed as follows:
+
+| Engine | 513 tokens | 1025 tokens |
+| --- | --- | --- |
+| vLLM | 8 → 3 | 14 → 6 |
+| SGLang | 6 → 3 | 16 → 6 |
+
+Shards on one catalog host now share a lookup; separate bounded read batches
+still issue separate discovery requests. Source authorization and inventory
+synchronization RPCs are separate and are not included in these counts.
+
+`summary.csv` keeps the final rows and native stage totals, including release
+acknowledgement counts and latency. These short serial
 controls establish correctness, not throughput, tail-latency or competitor
 superiority. The initial 513-token restore was slower than cold source computation
 on both engines; startup/kernel effects are not isolated. This is not evidence of
