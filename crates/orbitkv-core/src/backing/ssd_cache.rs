@@ -45,6 +45,26 @@ type SinglePrefetchResult = (
 // Configuration
 // ============================================================================
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum SsdWritePolicy {
+    #[default]
+    All,
+    /// Admit demand hits or a repeated publication within bounded history.
+    Reuse,
+}
+
+impl std::str::FromStr for SsdWritePolicy {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "all" => Ok(Self::All),
+            "reuse" => Ok(Self::Reuse),
+            _ => Err("SSD write policy must be all or reuse".into()),
+        }
+    }
+}
+
 /// Configuration for the SSD cache (logical ring).
 ///
 /// Supports one or more cache directories. When multiple paths are provided,
@@ -62,6 +82,7 @@ pub struct SsdCacheConfig {
     pub shards: NonZeroUsize,
     /// Max pending write batches. New sealed blocks are dropped if the queue is full.
     pub write_queue_depth: usize,
+    pub write_policy: SsdWritePolicy,
     /// Max pending prefetch batches (limits read tail latency).
     pub prefetch_queue_depth: usize,
     /// Max concurrent block writes (not critical path, keep low).
@@ -77,6 +98,7 @@ impl Default for SsdCacheConfig {
             capacity_bytes: 512 * 1024 * 1024 * 1024, // 512GB
             shards: NonZeroUsize::new(1).unwrap(),
             write_queue_depth: DEFAULT_SSD_WRITE_QUEUE_DEPTH,
+            write_policy: SsdWritePolicy::All,
             prefetch_queue_depth: DEFAULT_SSD_PREFETCH_QUEUE_DEPTH,
             write_inflight: DEFAULT_SSD_WRITE_INFLIGHT,
             prefetch_inflight: DEFAULT_SSD_PREFETCH_INFLIGHT,
@@ -504,19 +526,9 @@ pub(super) async fn ssd_writer_loop(
                         // Dequeue metric
                         metrics.ssd_write_queue_pending.add(-(b.blocks.len() as i64), &[]);
 
-                        // Upgrade weak refs (per-block, not prefix semantics)
-                        let candidates: Vec<_> = b.blocks
-                            .into_iter()
-                            .filter_map(|(k, w)| w.upgrade().map(|b| (k, b)))
-                            .collect();
-
-                        if candidates.is_empty() {
-                            continue;
-                        }
-
                         // Prepare batch: filter + allocate + insert Writing
                         let Some(s) = store.upgrade() else { continue };
-                        let prepared = s.prepare_batch(candidates);
+                        let prepared = s.prepare_batch(b.blocks);
 
                         if prepared.is_empty() {
                             continue;

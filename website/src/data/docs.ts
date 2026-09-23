@@ -21,6 +21,7 @@ export const docGroups = [
       { slug: "state-planning", title: "Demand & transfer planning" },
       { slug: "queued-warming", title: "Queued-request warming" },
       { slug: "request-preparation", title: "Consumer-owned preparation" },
+      { slug: "cache-policies", title: "Retention & SSD write admission" },
       { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
     ],
   },

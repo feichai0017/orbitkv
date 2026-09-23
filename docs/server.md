@@ -15,6 +15,7 @@ orbitkv-cache-manager
 - `--hint-value-size`: Hint for typical value size to tune cache and allocator (optional, supports: `kb`, `mb`, `gb`, `tb`)
 - `--use-hugepages`: Use huge pages for pinned memory (default: `false`, requires pre-configured `/proc/sys/vm/nr_hugepages`)
 - `--enable-lfu-admission`: Enable TinyLFU cache admission policy (default: plain LRU)
+- `--cache-protected-percent`: Maximum percentage of pinned pool bytes in the demand-protected replacement segment, `0`–`100` (default: `0`, disabled). See [retention and admission](cache-policies.md).
 - `--disable-numa-affinity`: Disable NUMA-aware memory allocation (default: enabled)
 - `--blockwise-alloc`: Allocate each layer/page segment independently in DRAM-only mode (default: `false`). SSD-backed Managers always use this allocation policy so reads and writes share the same reclaimable units; surviving prefix pages do not pin other pages from a batch.
 - `--log-level`: Log level: `trace`, `debug`, `info`, `warn`, `error` (default: `info`)
@@ -40,6 +41,7 @@ orbitkv-cache-manager
 - `--ssd-cache-path`: Enable SSD cache by providing cache file path (optional)
 - `--ssd-cache-capacity`: SSD cache capacity (default: `512gb`, supports: `kb`, `mb`, `gb`, `tb`)
 - `--ssd-write-queue-depth`: SSD write queue depth, max pending write batches (default: `8`)
+- `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
 - `--ssd-prefetch-queue-depth`: SSD prefetch queue depth, max pending prefetch batches (default: `2`)
 - `--ssd-write-inflight`: SSD write inflight, max concurrent block writes (default: `2`)
 - `--ssd-prefetch-inflight`: SSD prefetch inflight, max concurrent block reads (default: `16`)

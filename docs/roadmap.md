@@ -66,8 +66,10 @@ gate, without claiming cross-host tensor parallelism.
    read/write contention. Producer-stream save fences, separate SSD submission
    queues and independent page-segment allocation for SSD reads and saves are implemented. Compute
    batching remains a measured latency/throughput tradeoff, not a shared new
-   default. Continue with completion/admission overlap and separate retention
-   and SSD write-admission experiments. Keep deterministic output and ownership gates.
+   default. Optional Rust [retention and SSD write-admission policies](cache-policies.md)
+   are implemented with independent controls; measure each before recommending
+   it. Continue with completion/admission overlap and keep deterministic output
+   and ownership gates.
 3. **Start real two-host DP qualification.** Ordinary TP=1 demand lifetimes now
    have native and model-serving fault evidence. Use independent same-format
    replicas and Mooncake TE; require positive remote and GPU-copy bytes, source
@@ -86,7 +88,7 @@ Keep these changes separately reviewable. The existing
 defines the retained-page and stopping contracts. If a preparation policy
 increases read amplification without repeatable latency/goodput benefit, leave
 it experimental and continue with DP qualification. Retention and SSD write
-admission get separate experiments after this comparison.
+admission remain optional and get separate matched experiments.
 
 ### Evidence and code ownership
 

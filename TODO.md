@@ -183,6 +183,12 @@ numbers below group work areas rather than imposing a strict serial schedule.
   9 GiB GPU KV and 4 GiB Manager DRAM in both engines. Retain final code and
   prefill-batch controls, allocation failures, write drops and cleanup. No
   overall throughput gain or hardware limit is established (`docs/ssd-performance.md`).
+- [x] Add optional byte-bounded demand protection and bounded-history SSD write
+  admission in Rust; exclude speculative interest, validate resident generations,
+  preserve transfer ownership and measure policy counters (`docs/cache-policies.md`).
+- [ ] Compare retention-only, admission-only and combined policies against the
+  same DRAM/SSD control in both engines; retain final aggregate results and
+  leave defaults unchanged unless repeated measurements support them.
 - [ ] Add per-request deadline/priority hints and long-running serving fault/soak
   runs; qualify multi-rank SGLang TP independently of TP=1 admission tests.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;

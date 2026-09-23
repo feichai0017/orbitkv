@@ -19,6 +19,8 @@ pub(crate) static CACHE_CLASS_RECLAIMABLE: LazyLock<[KeyValue; 1]> =
     LazyLock::new(|| [KeyValue::new("class", "reclaimable")]);
 pub(crate) static CACHE_CLASS_RETAINED: LazyLock<[KeyValue; 1]> =
     LazyLock::new(|| [KeyValue::new("class", "retained")]);
+pub(crate) static CACHE_CLASS_PROBATIONARY: LazyLock<[KeyValue; 1]> =
+    LazyLock::new(|| [KeyValue::new("class", "probationary")]);
 pub(crate) static CACHE_RESIDENCE_REASON_PRESSURE: LazyLock<[KeyValue; 1]> =
     LazyLock::new(|| [KeyValue::new("reason", "pressure")]);
 pub(crate) static CACHE_RESIDENCE_REASON_CLEANUP: LazyLock<[KeyValue; 1]> =
@@ -61,6 +63,9 @@ pub(crate) struct CoreMetrics {
     pub cache_block_admission_rejections: Counter<u64>,
     pub cache_block_evictions: Counter<u64>,
     pub cache_resident_blocks: UpDownCounter<i64>,
+    pub cache_protected_bytes: UpDownCounter<i64>,
+    pub cache_policy_promotions: Counter<u64>,
+    pub cache_policy_demotions: Counter<u64>,
     pub cache_block_evictions_by_class: Counter<u64>,
     pub cache_block_evictions_still_referenced: Counter<u64>,
     pub cache_eviction_reclaimed_bytes: Counter<u64>,
@@ -81,6 +86,7 @@ pub(crate) struct CoreMetrics {
     pub ssd_write_throughput_bytes_per_second: Histogram<f64>,
     pub ssd_write_queue_pending: UpDownCounter<i64>,
     pub ssd_write_queue_full: Counter<u64>,
+    pub ssd_write_admission_skips: Counter<u64>,
     pub ssd_write_inflight: UpDownCounter<i64>,
 
     pub ssd_prefetch_bytes: Counter<u64>,
@@ -336,6 +342,19 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .u64_counter("orbitkv_cache_block_evictions")
                 .with_description("Blocks evicted from cache due to memory pressure")
                 .build(),
+            cache_protected_bytes: meter
+                .i64_up_down_counter("orbitkv_cache_protected_bytes")
+                .with_unit("bytes")
+                .with_description("Resident bytes protected after foreground demand; zero when protection is disabled")
+                .build(),
+            cache_policy_promotions: meter
+                .u64_counter("orbitkv_cache_policy_promotions")
+                .with_description("Demand promotions into the byte-bounded protected segment")
+                .build(),
+            cache_policy_demotions: meter
+                .u64_counter("orbitkv_cache_policy_demotions")
+                .with_description("Protected pages demoted to probation to make room for newer demand")
+                .build(),
             cache_resident_blocks: meter
                 .i64_up_down_counter("orbitkv_cache_resident_blocks")
                 .with_description("Current cache blocks by replacement class")
@@ -416,6 +435,10 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             ssd_write_queue_pending: meter
                 .i64_up_down_counter("orbitkv_ssd_write_queue_pending")
                 .with_description("Current pending blocks in SSD write queue")
+                .build(),
+            ssd_write_admission_skips: meter
+                .u64_counter("orbitkv_ssd_write_admission_skips")
+                .with_description("SSD write candidates skipped by reason: cold, resident, pending, or duplicate")
                 .build(),
             ssd_write_queue_full: meter
                 .u64_counter("orbitkv_ssd_write_queue_full")

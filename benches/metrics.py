@@ -40,6 +40,7 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
                 for key, value in metrics(manager_url).items():
                     if key in (
                         "orbitkv_pool_used_bytes",
+                        "orbitkv_cache_protected_bytes",
                         "orbitkv_warmup_pending_bytes",
                         "orbitkv_query_speculative_reserved_bytes",
                     ) or key.startswith("orbitkv_query_reserved_bytes"):
@@ -125,6 +126,11 @@ def metrics(url: str | None) -> dict[str, float]:
                 for outcome in ("restored", "unused"):
                     if f'outcome="{outcome}"' in series:
                         key = f"{name}_{outcome}"
+                        values[key] = values.get(key, 0) + number
+            if name == "orbitkv_ssd_write_admission_skips_total":
+                for reason in ("cold", "resident", "pending", "duplicate"):
+                    if f'reason="{reason}"' in series:
+                        key = f"{name}_{reason}"
                         values[key] = values.get(key, 0) + number
     return values
 

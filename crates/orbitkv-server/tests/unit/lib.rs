@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn cache_policy_controls_validate_protection_and_admission() {
+    assert!(
+        Cli::try_parse_from(["orbitkv-cache-manager", "--cache-protected-percent", "101"]).is_err()
+    );
+    assert!(
+        Cli::try_parse_from(["orbitkv-cache-manager", "--ssd-write-policy", "unknown"]).is_err()
+    );
+    let cli = Cli::try_parse_from([
+        "orbitkv-cache-manager",
+        "--cache-protected-percent",
+        "80",
+        "--ssd-write-policy",
+        "reuse",
+        "--ssd-cache-path",
+        "/tmp/policy-test",
+    ])
+    .unwrap();
+    assert_eq!(cli.cache_protected_percent, 80);
+    assert_eq!(cli.ssd_write_policy, orbitkv_core::SsdWritePolicy::Reuse);
+}
+
+#[test]
 fn cli_membership_requires_stable_node_identity_and_catalog_placement() {
     let flags = [
         "orbitkv-cache-manager",

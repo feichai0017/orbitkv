@@ -81,6 +81,8 @@ def main() -> None:
                     "ssd_gib": config.get("ssd_gib", 0),
                     "query_budget_gib": config.get("query_budget_gib"),
                     "prefill_tokens": config.get("prefill_tokens", 8192),
+                    "cache_protected_percent": config.get("cache_protected_percent", 0),
+                    "ssd_write_policy": config.get("ssd_write_policy", "all"),
                     "queue_warmup": config.get("queue_warmup"),
                     "prepare_requests": config.get("prepare_requests"),
                     "read_batch_mib": config.get("read_batch_mib"),

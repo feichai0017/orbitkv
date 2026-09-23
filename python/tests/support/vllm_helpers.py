@@ -284,6 +284,7 @@ class CacheManager:
         use_hugepages: bool = False,
         devices: str | None = None,
         server_binary: str | None = None,
+        extra_args: tuple[str, ...] = (),
     ):
         self.cache_port = find_available_port()
         self.http_port = find_available_port()
@@ -292,6 +293,7 @@ class CacheManager:
         self.use_hugepages = use_hugepages
         self.devices = devices
         self.server_binary = server_binary or os.environ.get("ORBITKV_CACHE_MANAGER_BINARY")
+        self.extra_args = extra_args
         self.cargo_features = (
             cargo_features if cargo_features is not None else _detect_orbitkv_cargo_features()
         )
@@ -335,6 +337,7 @@ class CacheManager:
             cmd.extend(["--devices", self.devices])
         if self.log_level is not None:
             cmd.extend(["--log-level", self.log_level])
+        cmd.extend(self.extra_args)
 
         # Cache Manager embeds Python via PyO3 (for CUDA device detection via torch)
         import sys

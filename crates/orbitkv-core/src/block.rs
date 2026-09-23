@@ -253,6 +253,10 @@ pub struct SealedBlock {
     warmup: OnceLock<Warmup>,
 }
 
+#[cfg(test)]
+#[path = "../tests/support/blocks.rs"]
+mod test_blocks;
+
 /// Tracks one physical read's pages through the last owner, including leases.
 struct Warmup {
     bytes: u64,

@@ -182,6 +182,58 @@ fn cleanup_resident_memory(env: &TestEnv) {
     );
 }
 
+#[tokio::test]
+async fn selective_ssd_admission_preserves_demand_and_ignores_warming() {
+    skip_without_io_uring!();
+    for demand_before_eviction in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let env = TestEnvBuilder::new("selective-ssd", "selective-ns")
+            .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
+            .pool_size(POOL_SIZE)
+            .storage(StorageConfig {
+                cache_protected_percent: 80,
+                ssd_cache_config: Some(SsdCacheConfig {
+                    cache_paths: vec![dir.path().join("cache.bin")],
+                    capacity_bytes: SSD_CAPACITY,
+                    write_policy: SsdWritePolicy::Reuse,
+                    ..SsdCacheConfig::default()
+                }),
+                ..StorageConfig::default()
+            })
+            .build();
+        let target = env.hashes(97);
+        env.save_and_wait(&target).await;
+        drop(
+            env.engine
+                .count_prefix_hit_blocks_with_prefetch(
+                    &env.instance_id,
+                    "warming",
+                    &target,
+                    QueryMode::Warmup,
+                )
+                .await
+                .unwrap(),
+        );
+        if demand_before_eviction {
+            drop(env.query(&target).await);
+        }
+        env.engine.flush_all().await;
+        cleanup_resident_memory(&env);
+        if !demand_before_eviction {
+            assert_eq!(env.query(&target).await.missing, NUM_BLOCKS);
+            // The next computation republishes the same identity; bounded
+            // history admits it even though its first host replica is gone.
+            env.save_and_wait(&target).await;
+            env.engine.flush_all().await;
+            cleanup_resident_memory(&env);
+        }
+        let lease = env.assert_all_hit_lease(&target).await;
+        env.data().zero_gpu();
+        env.load_to_gpu(lease, NUM_BLOCKS).await;
+        env.data().assert_gpu_matches_expected();
+    }
+}
+
 /// Save blocks, flush to SSD, verify the cache file contains non-zero bytes.
 #[tokio::test]
 async fn ssd_write_persists_to_file() {

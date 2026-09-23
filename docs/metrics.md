@@ -124,7 +124,7 @@ include warmups and demand; they are not end-user request hit rates.
   - Use case: Monitor eviction frequency, tune pool size
 
 - **orbitkv_cache_block_evictions_by_class_total** (Counter)
-  - Blocks evicted from cache due to memory pressure, labelled by replacement class (`reclaimable` or `retained`)
+  - Blocks evicted from cache due to memory pressure, labelled by replacement class (`reclaimable`, `probationary` or `retained`)
   - Use case: Verify remote-fetched replicas are reclaimed before locally produced blocks
 
 - **orbitkv_cache_block_evictions_still_referenced_total** (Counter)
@@ -136,12 +136,27 @@ include warmups and demand; they are not end-user request hit rates.
   - Use case: Measure effectiveness of eviction under real reference patterns
 
 - **orbitkv_cache_resident_blocks** (Gauge)
-  - Current number of sealed blocks resident in cache, labelled by replacement class (`reclaimable` or `retained`)
+  - Current number of sealed blocks resident in cache, labelled by replacement class (`reclaimable`, `probationary` or `retained`)
   - Use case: Track cache size and source-based replacement pressure in blocks
 
 - **orbitkv_cache_resident_bytes** (Gauge)
   - Current sealed block bytes resident in cache (sum of footprints)
   - Use case: Attribute pinned pool usage to cache residency
+
+- **orbitkv_cache_protected_bytes** (Gauge)
+  - Bytes in the protected segment when `--cache-protected-percent` is enabled;
+    bounded by that percentage of pool capacity. Zero with protection disabled.
+    These bytes are part of residency, not an additional pool reservation.
+
+- **orbitkv_cache_policy_promotions_total**, **orbitkv_cache_policy_demotions_total** (Counters)
+  - Foreground promotions into the protected segment and capacity demotions
+    back to probation. Speculative peeks do not promote. Catalog demotion and
+    cleanup affect protected bytes but are not policy-capacity demotions.
+
+- **orbitkv_ssd_write_admission_skips_total** (Counter)
+  - Pages skipped before the SSD write queue, by `reason`: `cold`, `resident`,
+    `pending` or `duplicate`. Intentional policy decisions, separate from
+    `orbitkv_ssd_write_queue_full_total` pressure drops. See [policies](cache-policies.md).
 
 - **orbitkv_cache_residence_duration_seconds** (Histogram)
   - RAM resident block lifetime from its first successful cache insertion to

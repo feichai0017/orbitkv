@@ -152,6 +152,7 @@ def test_report_counts_window_bytes_once_and_preserves_output_differences(tmp_pa
         "leak",
         "budget",
         "speculative_budget",
+        "protected_budget",
         "timing",
         "nan",
         "prefix",
@@ -168,6 +169,12 @@ def test_incomplete_or_invalid_windows_cannot_be_reported(corruption):
         windows[0]["wall_seconds"] = 0.5
     elif corruption == "leak":
         windows[0]["manager_after"]["orbitkv_query_reserved_bytes"] = 4096
+    elif corruption == "protected_budget":
+        args.update(host_gib=4, cache_protected_percent=80)
+        limit = 4 * 1024**3 * 80 // 100
+        windows[0]["sampled_peak_bytes"]["orbitkv_cache_protected_bytes"] = limit
+        sustained.validate(args, samples, windows)
+        windows[0]["sampled_peak_bytes"]["orbitkv_cache_protected_bytes"] += 1
     elif corruption in ("budget", "speculative_budget"):
         args["query_budget_gib"] = 3
         name, limit = (
