@@ -91,14 +91,9 @@ impl Default for StorageConfig {
     }
 }
 
-pub(crate) struct TransferAuthorization {
-    pub(crate) session_id: String,
-    pub(crate) blocks: Vec<(StateKey, Arc<SealedBlock>)>,
-}
-
 pub(crate) enum TransferAuthorizationError {
     StaleReplica,
-    BudgetExhausted,
+    Lock(transfer_lock::TransferLockError),
 }
 
 pub(crate) struct StorageEngine {
@@ -112,7 +107,7 @@ pub(crate) struct StorageEngine {
     blockwise_alloc: bool,
     catalog_client: Option<Arc<CatalogClient>>,
     membership: Option<Arc<orbitkv_catalog::MembershipView>>,
-    transfer_lock: Arc<transfer_lock::TransferLockManager>,
+    pub(crate) transfer_lock: Arc<transfer_lock::TransferLockManager>,
 }
 
 impl StorageEngine {
@@ -612,12 +607,10 @@ impl StorageEngine {
 
     // ---- Cross-node transfer: serving side ----
 
-    pub(crate) fn authorize_transfer(
+    pub(crate) fn validate_transfer_owner(
         &self,
         owner: uuid::Uuid,
-        requester: &str,
-        records: &[orbitkv_state::InventoryRecord],
-    ) -> Result<TransferAuthorization, TransferAuthorizationError> {
+    ) -> Result<(), TransferAuthorizationError> {
         if self
             .catalog_client
             .as_ref()
@@ -629,31 +622,24 @@ impl StorageEngine {
         {
             return Err(TransferAuthorizationError::StaleReplica);
         }
+        Ok(())
+    }
+
+    pub(crate) fn authorize_transfer(
+        &self,
+        owner: uuid::Uuid,
+        ticket: transfer_lock::TransferTicket,
+        records: &[orbitkv_state::InventoryRecord],
+    ) -> Result<Vec<(StateKey, Arc<SealedBlock>)>, TransferAuthorizationError> {
+        self.validate_transfer_owner(owner)?;
         let found = self
             .read_cache
             .pin_residencies(records)
             .ok_or(TransferAuthorizationError::StaleReplica)?;
-        let session = self
-            .transfer_lock
-            .lock_blocks(requester, found.clone())
-            .ok_or(TransferAuthorizationError::BudgetExhausted)?;
-        Ok(TransferAuthorization {
-            session_id: session,
-            blocks: found,
-        })
-    }
-
-    pub(crate) fn transfer_lock_timeout(&self) -> Duration {
-        self.transfer_lock.lock_timeout()
-    }
-
-    /// Release a transfer lock session. Returns the number of blocks released.
-    pub(crate) fn release_transfer_lock(&self, session_id: &str) -> usize {
-        self.transfer_lock.release(session_id)
-    }
-
-    pub(crate) fn expire_transfer_locks(&self) -> usize {
-        self.transfer_lock.expire()
+        self.transfer_lock
+            .lock_blocks(ticket, found.clone())
+            .map_err(TransferAuthorizationError::Lock)?;
+        Ok(found)
     }
 
     /// Return `(base_ptr, size)` for each contiguous pinned memory region.

@@ -89,24 +89,38 @@ message TransferBlockInfo {
   repeated TransferSlotInfo slots = 2;  // One per TP slot
 }
 
+// Opening a window pins no data. Unknown/evicted windows cannot be recreated
+// by authorization, so a closed ticket stays closed even after metadata eviction.
+message OpenTransferWindowRequest {
+  string owner_incarnation = 1;
+  string requester_incarnation = 2;
+}
+
+message OpenTransferWindowResponse { string window_id = 1; }
+
+message TransferTicket {
+  string window_id = 1;
+  uint32 slot = 2;
+  uint64 generation = 3;
+}
+
 message QueryBlocksForTransferRequest {
   string namespace = 1;
   repeated bytes block_hashes = 2;
-  string requester_id = 3;             // For lock tracking / logging
-  string owner_incarnation = 4;        // Runtime UUID from discovery
-  repeated uint64 residency_sequences = 5; // Parallel to block_hashes; exact insertions
+  string owner_incarnation = 3;        // Runtime UUID from discovery
+  repeated uint64 residency_sequences = 4; // Parallel to block_hashes; exact insertions
+  TransferTicket ticket = 5;           // Known before sending authorization
 }
 
 message QueryBlocksForTransferResponse {
   ResponseStatus status = 1;
   repeated TransferBlockInfo blocks = 2;
-  string transfer_session_id = 3;       // Opaque session ID for ReleaseTransferLock
-  uint32 lock_timeout_secs = 4;         // Source overdue threshold; expiry never releases pins
-  string transfer_endpoint = 5;         // Mooncake segment name (host:port)
+  uint32 lock_timeout_secs = 3;         // Source overdue threshold; expiry never releases pins
+  string transfer_endpoint = 4;        // Mooncake segment name (host:port)
 }
 
 message ReleaseTransferLockRequest {
-  string transfer_session_id = 1;
+  TransferTicket ticket = 1;
 }
 
 message ReleaseTransferLockResponse {
@@ -115,6 +129,8 @@ message ReleaseTransferLockResponse {
 }
 
 service Engine {
+  // Reused across transfers; bounded idle metadata, no source allocation pins.
+  rpc OpenTransferWindow(OpenTransferWindowRequest) returns (OpenTransferWindowResponse);
   // Cross-node transfer: authorize and pin specific blocks (serving side)
   rpc QueryBlocksForTransfer(QueryBlocksForTransferRequest) returns (QueryBlocksForTransferResponse);
   // Cross-node transfer: release block locks after Mooncake transfer completes

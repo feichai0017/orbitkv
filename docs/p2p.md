@@ -56,10 +56,15 @@ sequenceDiagram
         B->>C: Bounded LocateBlocks by catalog host
         C-->>B: Owner UUID and insertion sequences
     end
-    B->>A: Authorize and pin exact replicas
+    opt No cached transfer window for this source incarnation
+        B->>A: OpenTransferWindow (no payload pins)
+        A-->>B: Source-issued window UUID
+    end
+    B->>B: Reserve slot and advance its generation
+    B->>A: Authorize ticket and pin exact replicas
     A-->>B: Mooncake endpoint and pinned ranges
     B->>A: Mooncake READ
-    B->>A: Release completed transfer hold
+    B->>A: Close ticket after READ drains (retry until ACK)
     B->>B: Restore through the existing engine API
 ```
 
@@ -91,18 +96,31 @@ establish cross-engine byte compatibility or hybrid-state completeness.
   retain their allocations; neither timeout nor membership fencing proves a READ
   has stopped. Rust retains completed release records until the source acknowledges
   them, with a three-second RPC timeout and retry backoff capped at five seconds.
-  Capacity is reserved before authorization: 1024 records per requester Manager,
-  at most 64 per source endpoint, including active READs. A full budget skips new
+  Capacity is reserved before window setup: 1024 records per requester Manager,
+  at most 64 per source incarnation, including active READs. A full budget skips new
   remote authorizations; local caching and other peers can still progress.
-- Cancelling the caller during authorization does not discard a successful late
-  reply. Submitted READs keep their source and destination ownership until
-  Mooncake accepts freeing the complete batch, including after partial submission,
-  native timeout or status-query errors. Persistent uncertainty retains resources.
-- Completion records are in memory. A requester Manager crash, or an authorization
-  response lost before its session ID is received, can still leave an orphaned
-  source hold. Restarting a requester or expiring its membership cannot free that
-  hold. Coordinated transport/Manager teardown remains necessary until safe
-  revocation and authorization reconciliation are implemented and qualified.
+- Rust caches a source-issued transfer window per source incarnation. Each window
+  has 64 reusable slots; each use advances that slot's generation. The requester
+  knows the full ticket before authorization, so cancellation, timeout or a lost
+  grant reply can close it without learning anything from the reply. A close that
+  arrives before authorization fences the queued request; old authorizations and
+  old completions cannot affect a newer generation. Authorization is single use,
+  including failed source-budget admission.
+- Window setup is single-flight and pins no payload. Each source keeps at most
+  1024 windows, evicting only idle windows. An evicted UUID cannot be recreated by
+  a delayed authorization; the next attempt opens a fresh window after rejection.
+  Active windows survive churn and timeout. Requester peer connections share this
+  lifecycle owner; idle entries are evicted above 64, while busy entries stay
+  bounded by the 1024-record budget. No per-transfer setup RPC is needed while a
+  window remains cached.
+- Submitted READs keep their source and destination ownership until Mooncake
+  accepts freeing the complete batch, including after partial submission, native
+  timeout or status-query errors. Persistent uncertainty retains resources.
+- Completion records are in memory. A requester Manager crash can still leave an
+  orphaned source hold. Restarting a requester or expiring its membership cannot
+  free that hold. Coordinated transport/Manager teardown remains necessary until
+  safe revocation is implemented and qualified. Windows and tickets are not an
+  authentication mechanism; keep peer endpoints isolated within the cluster.
 
 The etcd connector currently exposes HTTP endpoints; TLS/auth, multi-host clock
 qualification and replica failover remain open. A three-member etcd deployment
