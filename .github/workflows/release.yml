@@ -28,6 +28,7 @@ jobs:
     needs: version
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
         cuda-variant: ['cu12', 'cu13']
@@ -66,7 +67,8 @@ jobs:
       - name: Install protobuf compiler and RDMA headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
+          # Explicitly select glog's headers over the runner's LLVM libunwind variant.
+          sudo apt-get install -y libunwind-dev protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
@@ -98,6 +100,7 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04-arm
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
     steps:
