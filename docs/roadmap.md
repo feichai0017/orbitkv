@@ -67,9 +67,14 @@ gate, without claiming cross-host tensor parallelism.
    queues and independent page-segment allocation for SSD reads and saves are implemented. Compute
    batching remains a measured latency/throughput tradeoff, not a shared new
    default. Optional Rust [retention and SSD write-admission policies](cache-policies.md)
-   are implemented with independent controls; measure each before recommending
-   it. Continue with completion/admission overlap and keep deterministic output
-   and ownership gates.
+   have three matched short-window controls per engine. Protection reduces
+   writes with little throughput change; selective writes trade first-reuse
+   computation against later SSD churn. One extended pair per engine shows
+   throughput gains after continued cold traffic, with much lower write volume.
+   Keep both opt-in and measure the
+   intended workload duration. Continue with completion/admission overlap,
+   engine-use evidence and restorable-bundle retention; keep deterministic
+   output and ownership gates.
 3. **Start real two-host DP qualification.** Ordinary TP=1 demand lifetimes now
    have native and model-serving fault evidence. Use independent same-format
    replicas and Mooncake TE; require positive remote and GPU-copy bytes, source

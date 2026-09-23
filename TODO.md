@@ -186,9 +186,14 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Add optional byte-bounded demand protection and bounded-history SSD write
   admission in Rust; exclude speculative interest, validate resident generations,
   preserve transfer ownership and measure policy counters (`docs/cache-policies.md`).
-- [ ] Compare retention-only, admission-only and combined policies against the
-  same DRAM/SSD control in both engines; retain final aggregate results and
-  leave defaults unchanged unless repeated measurements support them.
+- [x] Compare retention-only, admission-only and combined policies in three
+  matched DRAM/SSD windows per engine. Keep final aggregates and unchanged
+  defaults: short-window selective admission loses throughput; protection
+  reduces writes with little throughput change (`docs/cache-policies.md`).
+- [x] Add one 768-request write-admission pair per engine with multiple SSD
+  turnovers. Selective writes improve throughput by 15.8%/13.7% here while
+  reducing writes; keep this distinct from the short-window regression and
+  require repeated workload-specific evidence before changing defaults.
 - [ ] Add per-request deadline/priority hints and long-running serving fault/soak
   runs; qualify multi-rank SGLang TP independently of TP=1 admission tests.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;
@@ -222,9 +227,9 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Complete three matched preparation pairs per engine, stopping controls and
   DRAM-only recovery. Retain final variation, read bytes, output diagnostics and
   cleanup. Keep preparation off: SGLang throughput improves but P95 regresses.
-- [ ] Compare retention and SSD write-admission policies independently; then
-  calibrate expected use time and priority from page outcomes and engine
-  consumption. Qualify per-device/staging budgets and multi-rank behavior.
+- [ ] Calibrate expected use time and priority from engine HBM hits, prepared
+  consumption and restorable-prefix/bundle coverage. Qualify bounded writer
+  staging, source-expiration accounting and multi-rank behavior.
 - [ ] Calibrate restore-versus-recompute and write admission using
   `docs/state-planning.md` (P4); speculative workflow hints remain optional.
 - [ ] Profile the measured restore latency gap to both built-in CPU caches;
