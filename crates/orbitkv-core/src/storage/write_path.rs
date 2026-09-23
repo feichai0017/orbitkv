@@ -199,12 +199,7 @@ fn process_insert_batch(
     {
         deps.read_cache.batch_insert_refs(&sealed_blocks);
         if let Some(ssd) = &deps.ssd_store {
-            ssd.ingest_batch(
-                sealed_blocks
-                    .iter()
-                    .map(|(key, block)| (key.clone(), Arc::downgrade(block)))
-                    .collect(),
-            );
+            ssd.ingest_batch(sealed_blocks.iter().map(|(key, block)| (key, block)), false);
         }
     }
 

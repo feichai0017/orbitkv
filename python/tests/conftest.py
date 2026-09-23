@@ -118,6 +118,18 @@ def pytest_addoption(parser):
         default="30gb",
         help="OrbitKV server pinned memory pool size for E2E tests",
     )
+    parser.addoption(
+        "--cache-protected-percent",
+        type=int,
+        default=0,
+        help="Manager protected segment percentage for cache correctness gates",
+    )
+    parser.addoption(
+        "--ssd-write-policy",
+        choices=("all", "reuse"),
+        default="all",
+        help="Manager write admission for SSD correctness gates",
+    )
 
 
 @pytest.fixture
@@ -142,6 +154,12 @@ def channel_server(request, tmp_path):
         channel_session_epoch=0x0B17_17C0,
         bootstrap_socket=bootstrap_socket,
         ssd_cache_path=tmp_path / "cache.bin" if mode == "ssd" else None,
+        extra_args=(
+            "--cache-protected-percent",
+            str(request.config.getoption("--cache-protected-percent")),
+            "--ssd-write-policy",
+            request.config.getoption("--ssd-write-policy"),
+        ),
     )
 
     if not server._binary_path:

@@ -180,6 +180,11 @@ sizes and lets eviction reclaim pages without a surviving prefix holding an
 entire batch. Page-first layouts already store a complete page as one segment.
 The DRAM-only path retains its batching option (`--blockwise-alloc` opts out).
 
+Optional [retention and SSD write policies](cache-policies.md) can protect
+reused DRAM pages and skip first-publication SSD writes. They remain disabled
+by default: reducing writes can cost a later SSD hit. Both engines use the
+same Rust policies, configured on the Manager.
+
 Later requests can restore ready matching blocks,
 subject to each adapter's readiness handling. On a cache miss the engine
 computes the state normally. HBM pressure and active-page eviction remain engine

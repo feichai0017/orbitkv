@@ -103,6 +103,10 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub enable_lfu_admission: bool,
 
+    /// Maximum host-cache percent protected after demand reuse (0 disables segmented LRU).
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=100))]
+    pub cache_protected_percent: u8,
+
     /// Disable NUMA-aware memory allocation (use single pool instead of per-node pools)
     #[arg(long, default_value_t = false)]
     pub disable_numa_affinity: bool,
@@ -146,6 +150,10 @@ pub struct Cli {
     /// SSD write queue depth (max pending write batches). Default: 8
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_SSD_WRITE_QUEUE_DEPTH)]
     pub ssd_write_queue_depth: usize,
+
+    /// SSD write admission: all publications, or reuse observed by demand/republication.
+    #[arg(long, default_value = "all")]
+    pub ssd_write_policy: orbitkv_core::SsdWritePolicy,
 
     /// SSD prefetch queue depth (max pending prefetch batches). Default: 2
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_SSD_PREFETCH_QUEUE_DEPTH)]
@@ -575,6 +583,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             capacity_bytes: cli.ssd_cache_capacity as u64,
             shards: cli.ssd_cache_shards,
             write_queue_depth: cli.ssd_write_queue_depth,
+            write_policy: cli.ssd_write_policy,
             prefetch_queue_depth: cli.ssd_prefetch_queue_depth,
             write_inflight: cli.ssd_write_inflight,
             prefetch_inflight: cli.ssd_prefetch_inflight,
@@ -610,6 +619,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         query_budget_bytes: cli.query_budget,
         query_instance_budget_bytes: cli.query_instance_budget,
         enable_lfu_admission: cli.enable_lfu_admission,
+        cache_protected_percent: cli.cache_protected_percent,
         hint_value_size_bytes: cli.hint_value_size,
         ssd_cache_config,
         mooncake_nic_names: cli.nics.clone().unwrap_or_default(),

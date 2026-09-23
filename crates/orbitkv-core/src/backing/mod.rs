@@ -19,7 +19,7 @@ pub(crate) use ssd_cache::SSD_ALIGNMENT;
 )]
 pub use ssd_cache::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig, SsdWritePolicy,
 };
 
 use crate::block::{SealedBlock, StateKey};

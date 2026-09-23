@@ -42,8 +42,11 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
         lambda *a, **kw: SimpleNamespace(
             text=(
                 'unused NaN\ncounter{worker="a"} 10\ncounter{worker="b"} 5\nidle +Inf\n'
-                'orbitkv_query_reserved_bytes 400\n'
-                'orbitkv_query_speculative_reserved_bytes 200\n'
+                "orbitkv_query_reserved_bytes 400\n"
+                "orbitkv_query_speculative_reserved_bytes 200\n"
+                "orbitkv_cache_protected_bytes 300\n"
+                'orbitkv_ssd_write_admission_skips_total{reason="cold"} 2\n'
+                'orbitkv_ssd_write_admission_skips_total{reason="pending"} 3\n'
                 'orbitkv_query_reserved_bytes_by_phase{phase="warming"} 100\n'
                 'orbitkv_query_reserved_bytes_by_phase{phase="ready"} 200\n'
                 'orbitkv_query_reserved_bytes_by_phase{phase="preloading"} 100\n'
@@ -69,6 +72,10 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
         "orbitkv_query_reserved_bytes_by_phase": 460,
         "orbitkv_query_reserved_bytes_warming": 100,
         "orbitkv_query_speculative_reserved_bytes": 200,
+        "orbitkv_cache_protected_bytes": 300,
+        "orbitkv_ssd_write_admission_skips_total": 5,
+        "orbitkv_ssd_write_admission_skips_total_cold": 2,
+        "orbitkv_ssd_write_admission_skips_total_pending": 3,
         "orbitkv_warmup_wait_byte_seconds_total": 340,
         "orbitkv_warmup_wait_byte_seconds_total_restored": 300,
         "orbitkv_warmup_wait_byte_seconds_total_unused": 40,
@@ -76,7 +83,15 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
     json.dumps(observed, allow_nan=False)
 
 
-@pytest.mark.parametrize("flag", [["--queue-warmup", "on"], ["--trace-transfers"]])
+@pytest.mark.parametrize(
+    "flag",
+    [
+        ["--queue-warmup", "on"],
+        ["--trace-transfers"],
+        ["--cache-protected-percent", "80"],
+        ["--ssd-write-policy", "reuse"],
+    ],
+)
 def test_non_orbitkv_runs_reject_inapplicable_controls(monkeypatch, flag):
     from benches.single_node import main
 

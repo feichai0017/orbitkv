@@ -158,6 +158,9 @@ impl PrefetchScheduler {
             .collect();
         let (hit, prefix_blocks) = read_cache.get_prefix_blocks(&keys, warming);
         if hit == keys.len() || (self.remote_fetch.is_none() && self.ssd_store.is_none()) {
+            if !warming && let Some(ssd) = &self.ssd_store {
+                ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
+            }
             record_tier_attribution(keys.len(), hit, 0, None);
             return QueryResult {
                 blocks: prefix_blocks,
@@ -214,7 +217,10 @@ impl PrefetchScheduler {
             })
             .await;
         if !warming {
-            read_cache.retain_warmed(&keys, &result.ready_blocks);
+            read_cache.retain_demand(&keys, &result.ready_blocks);
+            if let Some(ssd) = &self.ssd_store {
+                ssd.ingest_batch(keys.iter().zip(&result.ready_blocks), true);
+            }
         }
         record_tier_attribution(
             keys.len(),

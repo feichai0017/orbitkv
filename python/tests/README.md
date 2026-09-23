@@ -168,6 +168,12 @@ after `/flush_cache`, and an actual Cache Manager GPU load after the SGLang
 process restarts while the Cache Manager remains alive. A separate namespace
 provides a true cold inference control for the restarted process.
 
+Use `--cache-protected-percent 80` to qualify demand protection in either E2E.
+For the SGLang DRAM/SSD gate, add `--ssd-write-policy reuse` to exercise
+selective writes: its foreground restore before engine restart admits the
+SSD replica. The Rust SSD integration gate also covers first-publication
+skips, warming exclusion and recomputation followed by republication.
+
 Requirements:
 - vLLM installed in the active environment
 - local model path, not an implicit network download

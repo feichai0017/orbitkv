@@ -47,6 +47,9 @@ pub struct StorageConfig {
     /// Per-instance query limit, defaulting to the global query limit.
     pub query_instance_budget_bytes: Option<usize>,
     pub enable_lfu_admission: bool,
+    /// Maximum percent of host capacity in demand-promoted cache entries.
+    /// Zero keeps the ordinary LRU classes; positive values enable segmented LRU.
+    pub cache_protected_percent: u8,
     /// Optional hint for expected value size in bytes (tunes cache + allocator granularity).
     pub hint_value_size_bytes: Option<usize>,
     /// Optional SSD cache for sealed blocks (single-node, FIFO).
@@ -78,6 +81,7 @@ impl Default for StorageConfig {
             query_budget_bytes: None,
             query_instance_budget_bytes: None,
             enable_lfu_admission: false,
+            cache_protected_percent: 0,
             hint_value_size_bytes: None,
             ssd_cache_config: None,
             mooncake_nic_names: Vec::new(),
@@ -118,6 +122,9 @@ impl StorageEngine {
         config: StorageConfig,
         numa_nodes: &[NumaNode],
     ) -> Result<Arc<Self>, String> {
+        if config.cache_protected_percent > 100 {
+            return Err("cache protected percent must be between 0 and 100".into());
+        }
         let value_size_hint = config.hint_value_size_bytes.filter(|size| *size > 0);
         let unit_hint = value_size_hint.and_then(|size| NonZeroU64::new(size as u64));
         let ssd_cache_config = config.ssd_cache_config;
@@ -177,6 +184,7 @@ impl StorageEngine {
                 .membership
                 .as_ref()
                 .map(|_| config.inventory_journal_bytes),
+            (capacity_bytes as u128 * config.cache_protected_percent as u128 / 100) as u64,
         ));
 
         let catalog_client = config

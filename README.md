@@ -33,6 +33,9 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 
 - **DRAM and SSD caching.** Reuse prefixes after GPU eviction or an engine
   restart while the Cache Manager remains alive.
+- **Optional reuse policies.** Rust can protect reused pages within a byte cap
+  and admit SSD writes selectively. See the [policy controls](docs/cache-policies.md)
+  and their cold-reuse tradeoff before enabling them.
 - **Direct GPU transfers.** Both engines register GPU buffers through CUDA IPC;
   adapters fence the producing CUDA stream, and Rust handles cache queries,
   reads and transfer completion.

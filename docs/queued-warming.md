@@ -326,7 +326,9 @@ Implement and measure in this order:
    pages at a valid component/checkpoint boundary. Shared-read consumers have
    independent interest: cancelling one must not revoke another's work.
 3. **Tune retention and write admission separately.** Compare the existing
-   replacement classes with a reuse-based protected segment; do not promote
+   replacement classes with the optional Rust
+   [reuse-based protected segment and selective SSD admission](cache-policies.md);
+   do not promote
    speculative peeks as demand hits. Measure SSD write admission independently
    from read prefetch. A retained replica still needs normal pressure eviction;
    a live transfer's references remain protected. Model-specific recovery

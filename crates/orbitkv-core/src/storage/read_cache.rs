@@ -10,8 +10,8 @@ use super::inventory::{Inventory, InventoryReadError};
 use crate::block::{SealedBlock, StateKey};
 use crate::cache::{CacheInsertOutcome, TinyLfuCache};
 use crate::metrics::{
-    CACHE_CLASS_RECLAIMABLE, CACHE_CLASS_RETAINED, CACHE_RESIDENCE_REASON_CLEANUP,
-    CACHE_RESIDENCE_REASON_PRESSURE, core_metrics,
+    CACHE_CLASS_PROBATIONARY, CACHE_CLASS_RECLAIMABLE, CACHE_CLASS_RETAINED,
+    CACHE_RESIDENCE_REASON_CLEANUP, CACHE_RESIDENCE_REASON_PRESSURE, core_metrics,
 };
 
 pub(crate) struct ReadCache {
@@ -22,12 +22,16 @@ struct ReadCacheInner {
     inventory: Option<[Inventory; CATALOG_SHARDS]>,
     cache: TinyLfuCache<StateKey, Arc<SealedBlock>>,
     reclaimable: LruCache<StateKey, ResidentMetadata>,
+    probationary: LruCache<StateKey, ResidentMetadata>,
     retained: LruCache<StateKey, ResidentMetadata>,
+    retained_bytes: u64,
+    protected_limit: u64,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct ResidentMetadata {
     inserted_at: Instant,
+    bytes: u64,
 }
 
 struct RemovedResident {
@@ -40,6 +44,7 @@ struct RemovedResident {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ResidentClass {
     Reclaimable,
+    Probationary,
     Retained,
 }
 
@@ -49,6 +54,7 @@ impl ReadCache {
         enable_lfu_admission: bool,
         value_size_hint: Option<usize>,
         inventory_journal_bytes: Option<usize>,
+        protected_limit: u64,
     ) -> Self {
         let cache =
             TinyLfuCache::new_unbounded(capacity_bytes, enable_lfu_admission, value_size_hint);
@@ -58,7 +64,10 @@ impl ReadCache {
                     .map(|bytes| std::array::from_fn(|_| Inventory::new(bytes / CATALOG_SHARDS))),
                 cache,
                 reclaimable: LruCache::new_unbounded(),
+                probationary: LruCache::new_unbounded(),
                 retained: LruCache::new_unbounded(),
+                retained_bytes: 0,
+                protected_limit,
             }),
         }
     }
@@ -140,7 +149,7 @@ impl ReadCache {
                 };
                 if let Some(block) = block {
                     if !warming {
-                        retain_warmed(&mut inner, key, &block);
+                        retain_demand(&mut inner, key, &block);
                         refresh_recency(&mut inner, key);
                     }
                     hit += 1;
@@ -153,19 +162,15 @@ impl ReadCache {
         (hit, blocks)
     }
 
-    pub(super) fn retain_warmed(&self, keys: &[StateKey], blocks: &[Arc<SealedBlock>]) {
-        if !blocks.iter().any(|block| block.was_warmed()) {
-            return;
-        }
+    pub(super) fn retain_demand(&self, keys: &[StateKey], blocks: &[Arc<SealedBlock>]) {
         let mut inner = self.inner.lock();
         for (key, block) in keys.iter().zip(blocks) {
-            if block.was_warmed()
-                && inner
-                    .cache
-                    .peek(key)
-                    .is_some_and(|resident| Arc::ptr_eq(&resident, block))
+            if inner
+                .cache
+                .peek(key)
+                .is_some_and(|resident| Arc::ptr_eq(&resident, block))
             {
-                retain_warmed(&mut inner, key, block);
+                retain_demand(&mut inner, key, block);
             }
         }
     }
@@ -245,18 +250,14 @@ impl ReadCache {
             let mut inner = self.inner.lock();
             let mut removed = Vec::with_capacity(batch_size);
             let mut removed_bytes = 0;
-            remove_lru_batch_from_class(
-                &mut inner,
+            for class in [
                 ResidentClass::Reclaimable,
-                batch_size,
-                target_bytes,
-                &mut removed,
-                &mut removed_bytes,
-            );
-            if removed.len() < batch_size && removed_bytes < target_bytes {
+                ResidentClass::Probationary,
+                ResidentClass::Retained,
+            ] {
                 remove_lru_batch_from_class(
                     &mut inner,
-                    ResidentClass::Retained,
+                    class,
                     batch_size,
                     target_bytes,
                     &mut removed,
@@ -272,11 +273,13 @@ impl ReadCache {
         let removed = {
             let mut inner = self.inner.lock();
             let reclaimable_blocks = inner.reclaimable.len() as i64;
+            let probationary_blocks = inner.probationary.len() as i64;
             let retained_blocks = inner.retained.len() as i64;
             let mut metadata = HashMap::with_capacity(
-                inner.reclaimable.len().saturating_add(inner.retained.len()),
+                inner.reclaimable.len() + inner.probationary.len() + inner.retained.len(),
             );
             metadata.extend(inner.reclaimable.drain());
+            metadata.extend(inner.probationary.drain());
             metadata.extend(inner.retained.drain());
             let removed = inner
                 .cache
@@ -302,7 +305,7 @@ impl ReadCache {
             }
             debug_assert_eq!(
                 removed.len() as i64,
-                reclaimable_blocks + retained_blocks,
+                reclaimable_blocks + probationary_blocks + retained_blocks,
                 "resident cache and replacement classes diverged"
             );
             debug_assert!(
@@ -315,7 +318,16 @@ impl ReadCache {
                 .add(-reclaimable_blocks, &*CACHE_CLASS_RECLAIMABLE);
             metrics
                 .cache_resident_blocks
+                .add(-probationary_blocks, &*CACHE_CLASS_PROBATIONARY);
+            metrics
+                .cache_resident_blocks
                 .add(-retained_blocks, &*CACHE_CLASS_RETAINED);
+            if inner.protected_limit > 0 {
+                metrics
+                    .cache_protected_bytes
+                    .add(-(inner.retained_bytes as i64), &[]);
+            }
+            inner.retained_bytes = 0;
             removed
         };
         record_residence_durations(removed, &*CACHE_RESIDENCE_REASON_CLEANUP)
@@ -323,23 +335,12 @@ impl ReadCache {
 
     pub(crate) fn mark_reclaimable_records(&self, records: &[InventoryRecord]) {
         let mut inner = self.inner.lock();
-        let mut moved = 0;
         for record in records {
             if inner.inventory.as_ref().is_some_and(|inventory| {
                 inventory[catalog_shard(&record.key)].contains_record(record)
-            }) && mark_reclaimable(&mut inner, &record.key)
-            {
-                moved += 1;
+            }) {
+                mark_reclaimable(&mut inner, &record.key);
             }
-        }
-        if moved > 0 {
-            let metrics = core_metrics();
-            metrics
-                .cache_resident_blocks
-                .add(-moved, &*CACHE_CLASS_RETAINED);
-            metrics
-                .cache_resident_blocks
-                .add(moved, &*CACHE_CLASS_RECLAIMABLE);
         }
     }
 }
@@ -348,6 +349,7 @@ impl ResidentClass {
     fn attributes(self) -> &'static [opentelemetry::KeyValue] {
         match self {
             Self::Reclaimable => &*CACHE_CLASS_RECLAIMABLE,
+            Self::Probationary => &*CACHE_CLASS_PROBATIONARY,
             Self::Retained => &*CACHE_CLASS_RETAINED,
         }
     }
@@ -363,6 +365,11 @@ fn insert_block(
         return CacheInsertOutcome::AlreadyExists;
     }
     let footprint_bytes = block.memory_footprint();
+    let class = if inner.protected_limit > 0 && class == ResidentClass::Retained {
+        ResidentClass::Probationary
+    } else {
+        class
+    };
     let outcome = inner.cache.insert(key.clone(), block);
     match outcome {
         CacheInsertOutcome::InsertedNew => {
@@ -373,12 +380,16 @@ fn insert_block(
                 key,
                 ResidentMetadata {
                     inserted_at: Instant::now(),
+                    bytes: footprint_bytes,
                 },
             );
             let m = core_metrics();
             m.cache_block_insertions.add(1, &[]);
             m.cache_resident_bytes.add(footprint_bytes as i64, &[]);
             m.cache_resident_blocks.add(1, class.attributes());
+            if class == ResidentClass::Retained {
+                inner.retained_bytes += footprint_bytes;
+            }
         }
         CacheInsertOutcome::AlreadyExists => refresh_recency(inner, &key),
         CacheInsertOutcome::Rejected => {
@@ -394,25 +405,85 @@ fn class_lru(
 ) -> &mut LruCache<StateKey, ResidentMetadata> {
     match class {
         ResidentClass::Reclaimable => &mut inner.reclaimable,
+        ResidentClass::Probationary => &mut inner.probationary,
         ResidentClass::Retained => &mut inner.retained,
     }
 }
 
-fn retain_warmed(inner: &mut ReadCacheInner, key: &StateKey, block: &SealedBlock) {
-    if block.was_warmed()
-        && let Some(metadata) = inner.reclaimable.remove(key)
-    {
-        inner.retained.insert(key.clone(), metadata);
-        let metrics = core_metrics();
-        metrics
-            .cache_resident_blocks
-            .add(-1, &*CACHE_CLASS_RECLAIMABLE);
-        metrics.cache_resident_blocks.add(1, &*CACHE_CLASS_RETAINED);
+fn retain_demand(inner: &mut ReadCacheInner, key: &StateKey, block: &SealedBlock) {
+    let from = if inner.probationary.contains_key(key) {
+        ResidentClass::Probationary
+    } else if block.was_warmed() {
+        ResidentClass::Reclaimable
+    } else {
+        return;
+    };
+    if !class_lru(inner, from).contains_key(key) {
+        return;
+    }
+    if inner.protected_limit > 0 {
+        let Some(remaining) = inner.protected_limit.checked_sub(block.memory_footprint()) else {
+            return;
+        };
+        while inner.retained_bytes > remaining {
+            let key = inner
+                .retained
+                .iter()
+                .next()
+                .expect("protected bytes have an owner")
+                .0
+                .clone();
+            move_resident(
+                inner,
+                &key,
+                ResidentClass::Retained,
+                ResidentClass::Probationary,
+            );
+            core_metrics().cache_policy_demotions.add(1, &[]);
+        }
+    }
+    move_resident(inner, key, from, ResidentClass::Retained);
+    if inner.protected_limit > 0 {
+        core_metrics().cache_policy_promotions.add(1, &[]);
     }
 }
 
+fn move_resident(
+    inner: &mut ReadCacheInner,
+    key: &StateKey,
+    from: ResidentClass,
+    to: ResidentClass,
+) -> bool {
+    let Some(metadata) = class_lru(inner, from).remove(key) else {
+        return false;
+    };
+    let metrics = core_metrics();
+    if from == ResidentClass::Retained {
+        inner.retained_bytes -= metadata.bytes;
+        if inner.protected_limit > 0 {
+            metrics
+                .cache_protected_bytes
+                .add(-(metadata.bytes as i64), &[]);
+        }
+    }
+    if to == ResidentClass::Retained {
+        inner.retained_bytes += metadata.bytes;
+        if inner.protected_limit > 0 {
+            metrics
+                .cache_protected_bytes
+                .add(metadata.bytes as i64, &[]);
+        }
+    }
+    class_lru(inner, to).insert(key.clone(), metadata);
+    metrics.cache_resident_blocks.add(-1, from.attributes());
+    metrics.cache_resident_blocks.add(1, to.attributes());
+    true
+}
+
 fn refresh_recency(inner: &mut ReadCacheInner, key: &StateKey) {
-    let classified = inner.reclaimable.get(key).is_some() || inner.retained.get(key).is_some();
+    let classified = inner.reclaimable.get(key).is_some()
+        || inner.probationary.get(key).is_some()
+        || inner.retained.get(key).is_some();
     debug_assert!(
         classified || !inner.cache.contains_key(key),
         "resident block is missing its replacement class"
@@ -423,8 +494,17 @@ fn mark_reclaimable(inner: &mut ReadCacheInner, key: &StateKey) -> bool {
     if !inner.cache.contains_key(key) {
         return false;
     }
-    if let Some(metadata) = inner.retained.remove(key) {
-        inner.reclaimable.insert(key.clone(), metadata);
+    if move_resident(
+        inner,
+        key,
+        ResidentClass::Retained,
+        ResidentClass::Reclaimable,
+    ) || move_resident(
+        inner,
+        key,
+        ResidentClass::Probationary,
+        ResidentClass::Reclaimable,
+    ) {
         true
     } else {
         debug_assert!(
@@ -449,6 +529,14 @@ fn remove_lru(inner: &mut ReadCacheInner, class: ResidentClass) -> Option<Remove
             inventory[catalog_shard(&key)].change(&key, false);
         }
         let metrics = core_metrics();
+        if class == ResidentClass::Retained {
+            inner.retained_bytes -= metadata.bytes;
+            if inner.protected_limit > 0 {
+                metrics
+                    .cache_protected_bytes
+                    .add(-(metadata.bytes as i64), &[]);
+            }
+        }
         metrics.cache_resident_blocks.add(-1, class.attributes());
         metrics
             .cache_block_evictions_by_class

@@ -166,6 +166,7 @@ fn cache(journal: usize) -> Arc<ReadCache> {
         false,
         None,
         Some(journal * CATALOG_SHARDS),
+        0,
     ))
 }
 

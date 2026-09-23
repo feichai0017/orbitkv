@@ -1,7 +1,9 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 
 use bytesize::ByteSize;
+use hashlink::LruCache;
 use log::{debug, info, warn};
 use mea::oneshot;
 use parking_lot::Mutex;
@@ -14,13 +16,41 @@ use crate::pinned_pool::PinnedAllocation;
 use super::SsdCacheConfig;
 use super::ssd_cache::{
     PrefetchBatch, PrefetchRequest, PreparedBatch, SsdRingBuffer, SsdWriteBatch, SsdWriteCommand,
-    ssd_prefetch_loop, ssd_writer_loop,
+    SsdWritePolicy, ssd_prefetch_loop, ssd_writer_loop,
 };
 use super::uring::{UringConfig, UringIoEngine};
 use super::{AllocateFn, PrefetchResult};
 
 struct SsdInner {
     ring: SsdRingBuffer,
+    pending_writes: HashSet<StateKey>,
+    reuse_history: LruCache<StateKey, ()>,
+}
+
+const REUSE_HISTORY_BLOCKS: usize = 16_384;
+
+impl SsdInner {
+    fn admission_skip(
+        &mut self,
+        key: &StateKey,
+        reused: bool,
+        policy: SsdWritePolicy,
+    ) -> Option<&'static str> {
+        if self.ring.get(key).is_some() {
+            return Some("resident");
+        }
+        if self.pending_writes.contains(key) {
+            return Some("pending");
+        }
+        if policy == SsdWritePolicy::Reuse {
+            let seen = self.reuse_history.get(key).is_some();
+            self.reuse_history.insert(key.clone(), ());
+            if !reused && !seen {
+                return Some("cold");
+            }
+        }
+        None
+    }
 }
 
 pub(crate) struct SsdBackingStore {
@@ -28,6 +58,7 @@ pub(crate) struct SsdBackingStore {
     _files: Vec<std::fs::File>,
     io: Arc<UringIoEngine>,
     write_tx: tokio::sync::mpsc::Sender<SsdWriteCommand>,
+    write_policy: SsdWritePolicy,
     prefetch_tx: tokio::sync::mpsc::Sender<PrefetchBatch>,
     inner: Mutex<SsdInner>,
     allocate_fn: AllocateFn,
@@ -80,9 +111,12 @@ impl SsdBackingStore {
             _files: files,
             io: Arc::clone(&io),
             write_tx,
+            write_policy: config.write_policy,
             prefetch_tx,
             inner: Mutex::new(SsdInner {
                 ring: SsdRingBuffer::new_sharded(vec![shard_capacity; total_shards]),
+                pending_writes: HashSet::new(),
+                reuse_history: LruCache::new(REUSE_HISTORY_BLOCKS),
             }),
             allocate_fn,
             is_numa,
@@ -113,13 +147,27 @@ impl SsdBackingStore {
 
     pub(super) fn prepare_batch(
         &self,
-        candidates: Vec<(StateKey, Arc<SealedBlock>)>,
+        blocks: Vec<(StateKey, Weak<SealedBlock>)>,
     ) -> PreparedBatch {
-        self.inner.lock().ring.prepare_batch(candidates)
+        let mut inner = self.inner.lock();
+        let candidates = blocks
+            .into_iter()
+            .filter_map(|(key, weak)| {
+                inner.pending_writes.remove(&key);
+                weak.upgrade().map(|block| (key, block))
+            })
+            .collect();
+        let prepared = inner.ring.prepare_batch(candidates);
+        for write in &prepared.writes {
+            inner.pending_writes.insert(write.key.clone());
+        }
+        prepared
     }
 
     pub(super) fn commit_write(&self, key: &StateKey, success: bool) {
-        self.inner.lock().ring.commit(key, success);
+        let mut inner = self.inner.lock();
+        inner.ring.commit(key, success);
+        inner.pending_writes.remove(key);
     }
 
     pub(super) fn is_numa(&self) -> bool {
@@ -152,23 +200,51 @@ impl SsdBackingStore {
 
     /// Fire-and-forget write.
     ///
-    /// `blocks` holds `Weak` references so the backing store cannot prevent
-    /// cache eviction from freeing the pinned memory before the write completes.
-    pub(crate) fn ingest_batch(&self, blocks: Vec<(StateKey, Weak<SealedBlock>)>) {
-        if blocks.is_empty() {
+    /// Queue weak sources so waiting writes cannot prevent pressure eviction.
+    /// Foreground demand may retry a selectively admitted page; speculative
+    /// warming must not call this with `reused = true`.
+    pub(crate) fn ingest_batch<'a>(
+        &self,
+        blocks: impl IntoIterator<Item = (&'a StateKey, &'a Arc<SealedBlock>)>,
+        reused: bool,
+    ) {
+        if reused && self.write_policy == SsdWritePolicy::All {
             return;
         }
-        let len = blocks.len();
-        let batch = SsdWriteBatch { blocks };
-        if self
-            .write_tx
-            .try_send(SsdWriteCommand::Write(batch))
-            .is_ok()
-        {
-            core_metrics().ssd_write_queue_pending.add(len as i64, &[]);
-        } else {
-            warn!("SSD write queue full, dropping {} blocks", len);
-            core_metrics().ssd_write_queue_full.add(len as u64, &[]);
+        let mut inner = self.inner.lock();
+        let metrics = core_metrics();
+        let mut admitted = Vec::new();
+        let mut seen_batch = HashSet::new();
+        for (key, block) in blocks {
+            let skip = if seen_batch.insert(key) {
+                inner.admission_skip(key, reused, self.write_policy)
+            } else {
+                Some("duplicate")
+            };
+            if let Some(reason) = skip {
+                metrics
+                    .ssd_write_admission_skips
+                    .add(1, &[opentelemetry::KeyValue::new("reason", reason)]);
+            } else {
+                admitted.push((key.clone(), Arc::downgrade(block)));
+            }
+        }
+        if admitted.is_empty() {
+            return;
+        }
+        let len = admitted.len();
+        match self.write_tx.try_reserve() {
+            Ok(permit) => {
+                inner
+                    .pending_writes
+                    .extend(admitted.iter().map(|(key, _)| key.clone()));
+                metrics.ssd_write_queue_pending.add(len as i64, &[]);
+                permit.send(SsdWriteCommand::Write(SsdWriteBatch { blocks: admitted }));
+            }
+            Err(_) => {
+                warn!("SSD write queue full, dropping {len} blocks");
+                metrics.ssd_write_queue_full.add(len as u64, &[]);
+            }
         }
     }
 

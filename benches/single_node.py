@@ -82,6 +82,8 @@ def main() -> None:
         help="OrbitKV SSD capacity; sustained traffic naturally evicts DRAM, other workloads add a forced-eviction phase",
     )
     parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
+    parser.add_argument("--cache-protected-percent", type=int, default=0)
+    parser.add_argument("--ssd-write-policy", choices=["all", "reuse"], default="all")
     parser.add_argument("--queue-warmup", choices=["on", "off"], default="off")
     parser.add_argument("--prepare-requests", choices=["on", "off"], default="off")
     parser.add_argument("--read-batch-mib", type=int, default=0)
@@ -91,6 +93,14 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
     args = parser.parse_args()
+    if not 0 <= args.cache_protected_percent <= 100:
+        parser.error("--cache-protected-percent must be between 0 and 100")
+    if args.backend != "orbitkv" and (
+        args.cache_protected_percent or args.ssd_write_policy != "all"
+    ):
+        parser.error("cache policies require --backend orbitkv")
+    if args.ssd_write_policy != "all" and not args.ssd_gib:
+        parser.error("--ssd-write-policy reuse requires --ssd-gib")
     if min(args.read_batch_mib, args.read_timeout_ms, args.read_max_batches) < 0:
         parser.error("read controls must be nonnegative")
     if args.prepare_requests == "on" and args.queue_warmup == "on":

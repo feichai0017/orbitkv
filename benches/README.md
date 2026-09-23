@@ -22,7 +22,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `serving.sh` | vLLM serving measurements against an already running endpoint |
 | `sharegpt.py` | Multi-turn workload using the pinned vLLM benchmark scripts |
 | `tests/` | CPU-only checks for measurement and report correctness |
-| `results/` | Three maintained final reports; new output is ignored by default |
+| `results/` | Maintained final reports; new output is ignored by default |
 | `results/runs/` | Ignored raw runs: manifests, responses, counters, logs, and failures |
 
 ## Shared-cache qualification
@@ -100,6 +100,15 @@ instrumented operations and are not an additive decomposition of client TTFT.
 ```
 
 ## Sustained mixed traffic
+
+For [retention and SSD admission](../docs/cache-policies.md), compare
+`--cache-protected-percent 0|80` and `--ssd-write-policy all|reuse`
+independently. Both flags configure the Rust Manager; `reuse` requires SSD.
+Keep warming and preparation off for this comparison. The report records
+protected byte peaks, promotions/demotions and admission skip reasons separately
+from full write-queue drops. Use the same capacities and request sequence,
+reverse run order, and repeat before choosing defaults. A lower SSD write count
+alone does not establish faster serving.
 
 For sustained mixed traffic, use `--workload sustained`. Each concurrency level
 prepares an independent working set, then continuously replaces finished client

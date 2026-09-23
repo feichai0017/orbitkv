@@ -38,7 +38,7 @@ pub mod transfer;
 pub use crate::numa::NumaNode;
 pub use backing::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdCacheConfig, SsdWritePolicy,
 };
 pub use block::{BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, SealedBlock, StateKey};
 use instance::GpuRegistration;

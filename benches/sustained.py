@@ -180,6 +180,12 @@ def validate(args: dict, samples: list[dict], windows: list[dict]) -> None:
         if window["manager_after"].get("orbitkv_query_reserved_bytes", 0) != 0:
             raise ValueError("Sustained query reservations did not drain")
         query_limit = args.get("query_budget_gib")
+        protected_peak = window["sampled_peak_bytes"].get("orbitkv_cache_protected_bytes", 0)
+        protected_limit = (
+            args.get("host_gib", 0) * 1024**3 * args.get("cache_protected_percent", 0) // 100
+        )
+        if protected_peak > protected_limit:
+            raise ValueError("Protected cache residency exceeded its byte limit")
         if (
             query_limit is not None
             and window["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes", 0)
@@ -268,6 +274,9 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                 "sampled_peak_pool_bytes": window["sampled_peak_bytes"].get(
                     "orbitkv_pool_used_bytes", 0
                 ),
+                "sampled_peak_protected_bytes": window["sampled_peak_bytes"].get(
+                    "orbitkv_cache_protected_bytes", 0
+                ),
                 "sampled_peak_query_bytes": window["sampled_peak_bytes"].get(
                     "orbitkv_query_reserved_bytes", 0
                 ),
@@ -311,6 +320,12 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                         "orbitkv_pool_alloc_failures_total",
                         "orbitkv_ssd_prefetch_failures_total",
                         "orbitkv_ssd_write_queue_full_total",
+                        "orbitkv_cache_policy_promotions_total",
+                        "orbitkv_cache_policy_demotions_total",
+                        "orbitkv_ssd_write_admission_skips_total_cold",
+                        "orbitkv_ssd_write_admission_skips_total_resident",
+                        "orbitkv_ssd_write_admission_skips_total_pending",
+                        "orbitkv_ssd_write_admission_skips_total_duplicate",
                     )
                 },
             }

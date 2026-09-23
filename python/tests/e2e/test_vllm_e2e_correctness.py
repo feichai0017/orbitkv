@@ -210,6 +210,7 @@ class TestE2ECorrectness:
     @pytest.fixture(scope="class")
     def orbitkv_server(
         self,
+        request,
         log_dir: Path,
         orbitkv_use_hugepages: bool,
         orbitkv_pool_size: str,
@@ -219,6 +220,10 @@ class TestE2ECorrectness:
             log_file=log_dir / "orbitkv-cache-manager.log",
             pool_size=orbitkv_pool_size,
             use_hugepages=orbitkv_use_hugepages,
+            extra_args=(
+                "--cache-protected-percent",
+                str(request.config.getoption("--cache-protected-percent")),
+            ),
         ) as server:
             yield server
 

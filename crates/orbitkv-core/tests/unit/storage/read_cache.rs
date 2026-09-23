@@ -3,11 +3,81 @@ use std::time::Duration;
 use super::*;
 
 fn make_cache() -> ReadCache {
-    ReadCache::new(1 << 20, false, None, None)
+    ReadCache::new(1 << 20, false, None, None, 0)
 }
 
 fn make_block() -> Arc<SealedBlock> {
     Arc::new(SealedBlock::from_slots(Vec::new()))
+}
+
+#[test]
+fn demand_protection_survives_scans_and_demotes_by_bytes() {
+    let cache = ReadCache::new(100, false, None, None, 60);
+    let a = StateKey::new("ns".into(), vec![1]);
+    let b = StateKey::new("ns".into(), vec![2]);
+    let c = StateKey::new("ns".into(), vec![3]);
+    for key in [&a, &b] {
+        cache.batch_insert(vec![(
+            key.clone(),
+            Arc::new(SealedBlock::for_policy_test(40)),
+        )]);
+    }
+    drop(cache.get_prefix_blocks(std::slice::from_ref(&a), false));
+    assert_class(&cache, &a, ResidentClass::Retained);
+    // A speculative lookup and duplicate publication cannot promote b.
+    drop(cache.get_prefix_blocks(std::slice::from_ref(&b), true));
+    cache.batch_insert(vec![(
+        b.clone(),
+        Arc::new(SealedBlock::for_policy_test(40)),
+    )]);
+    assert_class(&cache, &b, ResidentClass::Probationary);
+    assert_eq!(cache.remove_lru_batch(1, 40)[0].0, b);
+    cache.batch_insert(vec![(
+        c.clone(),
+        Arc::new(SealedBlock::for_policy_test(30)),
+    )]);
+    drop(cache.get_prefix_blocks(std::slice::from_ref(&c), false));
+    assert_class(&cache, &a, ResidentClass::Probationary);
+    assert_class(&cache, &c, ResidentClass::Retained);
+    assert_eq!(cache.inner.lock().retained_bytes, 30);
+    // A live consumer still prevents reclaim after policy demotion.
+    let held = cache.get_prefix_blocks(std::slice::from_ref(&a), true).1;
+    assert_eq!(cache.remove_lru_batch(1, 40)[0].0, c);
+    assert_eq!(cache.inner.lock().retained_bytes, 0);
+    drop(held);
+    assert_eq!(cache.remove_lru_batch(1, 40)[0].0, a);
+}
+
+#[test]
+fn protection_revalidates_generations_and_respects_replica_demotion() {
+    let cache = ReadCache::new(100, false, None, Some(16 * 1024), 60);
+    let key = StateKey::new("ns".into(), vec![1]);
+    let old = Arc::new(SealedBlock::for_policy_test(40));
+    cache.batch_insert(vec![(key.clone(), Arc::clone(&old))]);
+    cache.remove_all();
+    let current = Arc::new(SealedBlock::for_policy_test(40));
+    cache.batch_insert(vec![(key.clone(), Arc::clone(&current))]);
+    cache.retain_demand(std::slice::from_ref(&key), &[old]);
+    assert_class(&cache, &key, ResidentClass::Probationary);
+    cache.retain_demand(std::slice::from_ref(&key), &[current]);
+    assert_class(&cache, &key, ResidentClass::Retained);
+    let inventory = cache.inventory_page(catalog_shard(&key), None).unwrap();
+    cache.mark_reclaimable_records(&inventory);
+    assert_class(&cache, &key, ResidentClass::Reclaimable);
+    assert_eq!(cache.inner.lock().retained_bytes, 0);
+    // A page larger than the protected allowance remains usable probation.
+    cache.remove_all();
+    cache.batch_insert(vec![(
+        key.clone(),
+        Arc::new(SealedBlock::for_policy_test(80)),
+    )]);
+    assert_eq!(
+        cache.get_prefix_blocks(std::slice::from_ref(&key), false).0,
+        1
+    );
+    assert_class(&cache, &key, ResidentClass::Probationary);
+    cache.remove_all();
+    assert_eq!(cache.inner.lock().retained_bytes, 0);
 }
 
 fn assert_class(cache: &ReadCache, key: &StateKey, expected: ResidentClass) {
@@ -16,6 +86,10 @@ fn assert_class(cache: &ReadCache, key: &StateKey, expected: ResidentClass) {
     assert_eq!(
         inner.reclaimable.contains_key(key),
         expected == ResidentClass::Reclaimable
+    );
+    assert_eq!(
+        inner.probationary.contains_key(key),
+        expected == ResidentClass::Probationary
     );
     assert_eq!(
         inner.retained.contains_key(key),
@@ -28,6 +102,7 @@ fn resident_metadata(cache: &ReadCache, key: &StateKey) -> Option<ResidentMetada
     inner
         .reclaimable
         .peek(key)
+        .or_else(|| inner.probationary.peek(key))
         .or_else(|| inner.retained.peek(key))
         .copied()
 }
@@ -159,9 +234,9 @@ fn demand_promotes_only_the_matching_warmup_generation() {
     let block = make_block();
     block.mark_warmed();
     cache.batch_insert_reclaimable(vec![(key.clone(), Arc::clone(&block))]);
-    cache.retain_warmed(std::slice::from_ref(&key), &[stale]);
+    cache.retain_demand(std::slice::from_ref(&key), &[stale]);
     assert_class(&cache, &key, ResidentClass::Reclaimable);
-    cache.retain_warmed(std::slice::from_ref(&key), std::slice::from_ref(&block));
+    cache.retain_demand(std::slice::from_ref(&key), std::slice::from_ref(&block));
     assert_class(&cache, &key, ResidentClass::Retained);
     assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
     drop(block);
@@ -277,7 +352,7 @@ fn residence_duration_is_non_negative_and_finite() {
 
 #[test]
 fn inventory_tracks_actual_residency_and_fences_old_reclaim_hints() {
-    let cache = ReadCache::new(1 << 20, false, None, Some(16 * 1024));
+    let cache = ReadCache::new(1 << 20, false, None, Some(16 * 1024), 0);
     let key = StateKey::new("ns".into(), vec![1]);
     cache.batch_insert_refs(&[(key.clone(), make_block())]);
     let shard = catalog_shard(&key);
@@ -337,7 +412,7 @@ fn reclaimable_hash_for_evicted_block_is_noop() {
 
 #[test]
 fn pin_residencies_fences_eviction_and_reinsertion() {
-    let cache = ReadCache::new(1024 * 1024, false, None, Some(4096));
+    let cache = ReadCache::new(1024 * 1024, false, None, Some(4096), 0);
     let key = StateKey::new("ns".into(), vec![1]);
     cache.batch_insert(vec![(key.clone(), make_block())]);
     let shard = catalog_shard(&key);
@@ -386,7 +461,7 @@ fn remove_all_evicts_resident_blocks() {
 
 #[test]
 fn inventory_excludes_lfu_rejections_and_duplicate_restores() {
-    let cache = ReadCache::new(1, true, Some(1), Some(16 * 1024));
+    let cache = ReadCache::new(1, true, Some(1), Some(16 * 1024), 0);
     let hot = StateKey::new("ns".into(), vec![1]);
     let cold = StateKey::new("ns".into(), vec![2]);
     let shard = catalog_shard(&hot);
@@ -416,21 +491,9 @@ impl ReadCache {
         }
 
         let mut inner = self.inner.lock();
-        let mut moved = 0;
         for hash in hashes {
             let key = StateKey::new(namespace.to_string(), hash.clone());
-            if mark_reclaimable(&mut inner, &key) {
-                moved += 1;
-            }
-        }
-        if moved > 0 {
-            let metrics = core_metrics();
-            metrics
-                .cache_resident_blocks
-                .add(-moved, &*CACHE_CLASS_RETAINED);
-            metrics
-                .cache_resident_blocks
-                .add(moved, &*CACHE_CLASS_RECLAIMABLE);
+            mark_reclaimable(&mut inner, &key);
         }
     }
 

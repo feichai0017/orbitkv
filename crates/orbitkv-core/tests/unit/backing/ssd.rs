@@ -2,6 +2,54 @@ use super::*;
 use std::fs;
 
 #[test]
+fn selective_writes_track_republication_without_pinning_payloads() {
+    let mut inner = SsdInner {
+        ring: SsdRingBuffer::new_sharded(vec![4096]),
+        pending_writes: HashSet::new(),
+        reuse_history: LruCache::new(2),
+    };
+    let key = StateKey::new("ns".into(), vec![1]);
+    let other = StateKey::new("other".into(), vec![1]);
+    assert_eq!(
+        inner.admission_skip(&key, false, SsdWritePolicy::Reuse),
+        Some("cold")
+    );
+    assert_eq!(
+        inner.admission_skip(&key, false, SsdWritePolicy::Reuse),
+        None
+    );
+    assert_eq!(
+        inner.admission_skip(&other, false, SsdWritePolicy::Reuse),
+        Some("cold")
+    );
+    let fresh = StateKey::new("ns".into(), vec![2]);
+    assert_eq!(
+        inner.admission_skip(&fresh, true, SsdWritePolicy::Reuse),
+        None
+    );
+    assert_eq!(inner.reuse_history.len(), 2);
+    assert_eq!(
+        inner.admission_skip(&key, false, SsdWritePolicy::Reuse),
+        Some("cold")
+    );
+    inner.pending_writes.insert(key.clone());
+    assert_eq!(
+        inner.admission_skip(&key, true, SsdWritePolicy::Reuse),
+        Some("pending")
+    );
+    // A failed/drained write clears pending ownership and can be retried.
+    inner.pending_writes.remove(&key);
+    assert_eq!(
+        inner.admission_skip(&key, true, SsdWritePolicy::Reuse),
+        None
+    );
+    assert_eq!(
+        inner.admission_skip(&other, false, SsdWritePolicy::All),
+        None
+    );
+}
+
+#[test]
 fn test_open_cache_files_single_path_single_shard() {
     let temp_dir = tempfile::tempdir().unwrap();
     let cache_path = temp_dir.path().join("cache.bin");
