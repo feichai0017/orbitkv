@@ -12,6 +12,8 @@
 
 <p align="center">
   <a href="https://github.com/feichai0017/orbitkv/actions/workflows/ci.yml"><img src="https://github.com/feichai0017/orbitkv/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="docs/releases.md"><img src="https://img.shields.io/badge/Python_package-v0.1.0%20%28unreleased%29-203b30" alt="Python package v0.1.0 — not yet published" /></a>
+  <a href="docs/releases.md#packages"><img src="https://img.shields.io/badge/Python-3.10%E2%80%933.14-203b30" alt="Wheel targets: Python 3.10–3.14" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-203b30" alt="Apache 2.0 license" /></a>
 </p>
 
@@ -42,6 +44,7 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   timelines, and reproduce the published latency and throughput measurements.
 - **Experimental shared cache.** Embedded catalog shards locate peer replicas,
   Mooncake Transfer Engine moves bytes, and etcd tracks cluster membership.
+  Source allocations remain budgeted until transfer completion, including after timeout.
 
 See [supported deployments](docs/deployment.md) and
 [model compatibility](docs/hybrid-recovery.md) before selecting a topology.
@@ -113,6 +116,7 @@ Reports include configurations, final results and reproduction commands:
 | [SSD recovery](docs/ssd-performance.md) | Forced DRAM eviction and restore readiness |
 | [Ordinary recovery](docs/recovery-performance.md) | Qwen3-8B host reads, GPU transfers, notification delays and resource drain |
 | [Request preparation](docs/request-preparation.md) | Repeated preparation controls, DRAM recovery and read stopping policies |
+| [Shared-cache qualification](docs/shared-cache-qualification.md) | Independent replicas, remote GPU restoration, catalog replay and restart gates |
 
 Request preparation remains **off by default**: the current Qwen3-8B controls
 improve throughput in both engines, but SGLang P95 latency regresses. These

@@ -308,6 +308,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     let config_a = StorageConfig {
         membership: Some(membership_a.clone()),
         mooncake_nic_names: mooncake_nics(),
+        transfer_budget_bytes: Some(TOTAL_SIZE),
+        transfer_lock_timeout: Duration::ZERO,
         ..StorageConfig::default()
     };
     let engine_a = Arc::new(
@@ -425,6 +427,15 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .unwrap()
         .into_inner();
     assert_eq!(granted.blocks.len(), NUM_BLOCKS);
+    assert_eq!(engine_a.expire_transfer_locks(), 1);
+    assert_eq!(engine_a.expire_transfer_locks(), 0);
+    assert_eq!(
+        peer.query_blocks_for_transfer(authorization.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::ResourceExhausted
+    );
     peer.release_transfer_lock(ReleaseTransferLockRequest {
         transfer_session_id: granted.transfer_session_id,
     })

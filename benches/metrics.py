@@ -110,6 +110,11 @@ def metrics(url: str | None) -> dict[str, float]:
         number = float(value)
         if math.isfinite(number):
             values[name] = values.get(name, 0) + number
+            if name.startswith("orbitkv_remote_stage_duration_seconds_"):
+                for stage in ("discovery_rpc", "authorization", "allocation", "read", "rebuild"):
+                    if f'stage="{stage}"' in series:
+                        key = f"{name}_{stage}"
+                        values[key] = values.get(key, 0) + number
             if name == "orbitkv_query_reserved_bytes" and 'phase="warming"' in series:
                 key = "orbitkv_query_reserved_bytes_warming"
                 values[key] = values.get(key, 0) + number

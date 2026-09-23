@@ -101,6 +101,9 @@ pub(crate) struct CoreMetrics {
     // Cross-node transfer lock (serving side)
     pub transfer_lock_active: UpDownCounter<i64>,
     pub transfer_lock_timeouts_total: Counter<u64>,
+    pub transfer_reserved_bytes: UpDownCounter<i64>,
+    pub transfer_expired_sessions: UpDownCounter<i64>,
+    pub transfer_lock_rejections: Counter<u64>,
 
     // Mooncake remote fetch (client side)
     #[cfg(feature = "mooncake")]
@@ -111,6 +114,8 @@ pub(crate) struct CoreMetrics {
     pub candidate_lookup_rpcs: Counter<u64>,
     #[cfg(feature = "mooncake")]
     pub remote_fetch_duration_seconds: Histogram<f64>,
+    #[cfg(feature = "mooncake")]
+    pub remote_stage_duration_seconds: Histogram<f64>,
     #[cfg(feature = "mooncake")]
     pub remote_fetch_bytes: Counter<u64>,
     #[cfg(feature = "mooncake")]
@@ -473,7 +478,16 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
             transfer_lock_timeouts_total: meter
                 .u64_counter("orbitkv_transfer_lock_timeouts_total")
-                .with_description("Transfer lock sessions expired by timeout (potential issue)")
+                .with_description("Overdue source sessions; expiry never releases memory")
+                .build(),
+            transfer_reserved_bytes: meter.i64_up_down_counter("orbitkv_transfer_reserved_bytes")
+                .with_description("Source allocations reserved by transfers, including overdue sessions; shared slabs counted once per session")
+                .build(),
+            transfer_expired_sessions: meter.i64_up_down_counter("orbitkv_transfer_expired_sessions")
+                .with_description("Overdue sessions still retaining source memory")
+                .build(),
+            transfer_lock_rejections: meter.u64_counter("orbitkv_transfer_lock_rejections")
+                .with_description("Source authorizations rejected by byte or session limits")
                 .build(),
 
             // Mooncake remote fetch (client side)
@@ -487,6 +501,12 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .f64_histogram("orbitkv_remote_fetch_duration")
                 .with_unit("s")
                 .with_description("End-to-end Mooncake fetch latency (authorization + READ)")
+                .with_boundaries(remote_fetch_duration_boundaries())
+                .build(),
+            #[cfg(feature = "mooncake")]
+            remote_stage_duration_seconds: meter.f64_histogram("orbitkv_remote_stage_duration")
+                .with_unit("s")
+                .with_description("Remote discovery RPC, authorization and completed transfer stages")
                 .with_boundaries(remote_fetch_duration_boundaries())
                 .build(),
             #[cfg(feature = "mooncake")]

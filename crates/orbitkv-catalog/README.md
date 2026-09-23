@@ -101,5 +101,5 @@ bounded accounting. Private units stay under `tests/unit/`; the cleanup workload
 
 Each shard currently has one metadata copy. Replication, weighted/versioned
 handoff, subscriptions and remote SSD discovery remain planned. Recovery rebuilds
-metadata from surviving owners; it does not recover lost payloads or solve source
-transfer timeout/revocation. Single-host tests do not qualify cross-host HA.
+metadata from surviving owners; it does not recover lost payloads or revoke
+orphaned source transfers. Single-host tests do not qualify cross-host HA.

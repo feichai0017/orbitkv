@@ -87,9 +87,11 @@ establish cross-engine byte compatibility or hybrid-state completeness.
 - Placement changes are not supported online. Incompatible joins fail, and an
   observed changed/deleted placement fences existing members. Use a new cluster
   name and a coordinated restart for configuration replacement.
-- Directory recovery does not restore lost KV payloads. Source transfer timeout
-  reclamation still needs transport revocation qualification. Membership fencing
-  alone does not establish safe source failure or partition handling.
+- Directory recovery does not restore lost KV payloads. Overdue source transfers
+  retain their allocations; neither timeout nor membership fencing proves a READ
+  has stopped. Lost release replies receive three bounded, idempotent attempts.
+  Permanently orphaned holds require coordinated Manager teardown until transport
+  revocation is implemented and qualified.
 
 The etcd connector currently exposes HTTP endpoints; TLS/auth, multi-host clock
 qualification and replica failover remain open. A three-member etcd deployment
@@ -110,6 +112,13 @@ See the [catalog protocol](../crates/orbitkv-catalog/README.md) and
 [metrics](metrics.md). No tested cluster-scale capacity recommendation exists yet.
 
 ## Validation
+
+For independent engine replicas, see [shared-cache qualification](shared-cache-qualification.md).
+The source reservation budget is `--transfer-budget` (default: half the pinned
+pool), with a maximum of 1024 active or overdue sessions. It charges entire pinned
+allocations, deduplicated within each session, so a small slice cannot retain an
+unaccounted large slab. Concurrent sessions each reserve their full allocation
+footprint. Exhaustion returns a bounded miss to the requesting cache path.
 
 Run native builds and runtime gates sequentially in a checkout; builds restage
 shared Mooncake libraries. The etcd gate starts isolated temporary processes:

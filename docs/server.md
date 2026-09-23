@@ -33,6 +33,7 @@ orbitkv-cache-manager
 - `GET /instances`: List registered instance IDs.
 - `POST /instances/cleanup[?id=<instance_id>]`: Remove one instance, or all instances when `id` is omitted.
 - `POST /cache/memory/cleanup`: Evict resident in-memory cache blocks while preserving backing-store data. `evicted_bytes` is the cache footprint removed from residency; `reclaimed_bytes` is the pinned-pool memory actually released immediately.
+- `POST /cache/sync`: Wait for already submitted saves and acknowledged catalog residency. Returns 503 on synchronization failure or 504 after 30 seconds; it does not make SSD payloads restart-durable.
 
 ### SSD Cache
 
@@ -87,7 +88,8 @@ See [request preparation](request-preparation.md) for limits and control runs.
 - `--catalog-nodes`: identical set of 1–16 stable catalog host Node IDs on every Manager. Placement is immutable; incompatible joins fail. Missing members do not remap shards.
 - `--catalog-budget`: accounted index and retained retry bytes across this Manager's assigned shards; defaults to 256 MiB. This is not a process RSS cap.
 - `--cluster-name`: etcd namespace, default `orbitkv`. `--membership-ttl-secs` defaults to 30 and accepts 12–3600; remote admission uses half the acknowledged TTL. See [deployment](p2p.md#leased-manager-membership).
-- `--transfer-lock-timeout-secs`: Transfer lock timeout in seconds (default: `120`). Blocks held for a Mooncake transfer are locked for at most this duration before being force-released.
+- `--transfer-lock-timeout-secs`: Mark source transfers overdue after this many seconds (default: `120`). Timeout never releases memory still exposed to a remote READ.
+- `--transfer-budget`: Source allocation reservations, defaulting to half the pinned pool. Entire allocations are charged once per session, including overdue sessions. At most 1024 sessions can be retained. New authorizations fail when either limit is exhausted; permanent requester loss still requires safe transport revocation or coordinated teardown.
 - `--inventory-journal-bytes`: Retained residency-change bytes (default: `16777216`, 16 MiB). Lag beyond this history triggers a paginated inventory resnapshot.
 
 ## Embedded catalog

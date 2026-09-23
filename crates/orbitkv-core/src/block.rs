@@ -320,6 +320,15 @@ impl SealedBlock {
         self.footprint
     }
 
+    pub(crate) fn pinned_allocations(&self) -> impl Iterator<Item = (usize, u64)> + '_ {
+        self.slots.iter().flat_map(|slot| {
+            slot.segments
+                .as_slice()
+                .iter()
+                .map(|segment| (segment.allocation_id(), segment._allocation.size_bytes()))
+        })
+    }
+
     /// Get all slots (for serialization / cross-node transfer)
     pub fn slots(&self) -> &[RawBlock] {
         &self.slots

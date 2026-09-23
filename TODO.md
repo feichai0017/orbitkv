@@ -240,6 +240,12 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 - [x] D1 cancellation: hold destination buffers and source-release guard in the
   blocking transfer until it finishes; caller cancellation cannot drop them.
 - [x] D1: embed fixed catalog shards with per-shard replay and etcd membership/configuration.
+- [x] D1 source ownership: retain overdue source pins, account entire allocations
+  under a byte/session budget, retry completion releases and export native stage timing.
+- [x] D1 same-host serving: both engines pass independent TP=1 replica sharing,
+  catalog replay and source restart gates over TCP (`docs/shared-cache-qualification.md`).
+- [ ] D1 revocation: reclaim orphaned source reservations only after transport
+  termination is established; a timeout or membership expiry cannot free them.
 - [ ] D1: qualify source incarnation checks, transfer completion/revocation,
   cancellation and sender/receiver budgets on two real hosts for both engines.
 - [x] D1: replace the standalone directory with `orbitkv-catalog` and remove

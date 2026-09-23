@@ -278,13 +278,23 @@ This metric intentionally records decisions, not completed service outcomes.
 For backing failure correlation, use:
 
 - `orbitkv_candidate_cache_lookups{result="hit|miss"}` counts key checks before
-  lookup coalescing; `orbitkv_candidate_lookup_rpcs{result="ok|error"}` counts
+  lookup coalescing; `orbitkv_candidate_lookup_rpcs{result="ok|error|timeout"}` counts
   actual batched directory RPCs (an OK RPC can still contain a miss).
 - `orbitkv_remote_fetch_total{status="rejected"}` counts source authorization
   rejection before payload submission; `status="error"` counts other fetch failures.
 - `orbitkv_remote_fetch_plan_segments` includes attempted alternative-source
   segments; `orbitkv_remote_fetch_plan_completed_segments` counts completed ones.
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
+- `orbitkv_remote_stage_duration_seconds{stage,status}` separates `discovery_rpc`,
+  `authorization`, `allocation`, `read` and `rebuild`. The last three describe
+  completed successful transfers; discovery includes timed-out RPC attempts.
+- `orbitkv_transfer_reserved_bytes` counts whole source allocations once per
+  session, including overdue holds. `orbitkv_transfer_expired_sessions` counts
+  overdue sessions still retaining memory; `orbitkv_transfer_lock_timeouts_total`
+  counts the transition once. Timeout is not a release condition.
+- `orbitkv_transfer_lock_rejections_total{reason="bytes|sessions"}` counts bounded
+  source admission failures. Source pins and query reservations must both drain
+  after successful remote restoration.
 
 `orbitkv_cache_block_hits_total` and `orbitkv_cache_block_misses_total` count
 terminal prefix reads. Metadata discovery has separate candidate counters, so a

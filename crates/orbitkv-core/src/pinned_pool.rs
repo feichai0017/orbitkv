@@ -69,6 +69,10 @@ unsafe impl Send for PinnedAllocation {}
 unsafe impl Sync for PinnedAllocation {}
 
 impl PinnedAllocation {
+    pub(crate) fn size_bytes(&self) -> u64 {
+        self.allocation.size_bytes.get()
+    }
+
     /// Get a const pointer to the allocated memory
     pub(crate) fn as_ptr(&self) -> *const u8 {
         self.ptr.as_ptr()

@@ -1,12 +1,13 @@
 # Deployment
 
-For LMCache/Mooncake integration boundaries and OrbitKV's single-node, DP and
+For LMCache/FlexKV/Mooncake integration boundaries and OrbitKV's single-node, DP and
 P/D execution order, see [distributed deployment comparison](distributed-comparison.md).
 
 | Mode | Processes | Status |
 | --- | --- | --- |
-| Single-node vLLM or SGLang cache | Engine + one local Cache Manager | Single-rank DRAM and forced-SSD recovery validated on both; concurrent and multi-rank workloads need separate qualification |
-| Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; fixed directory shards have one metadata copy |
+| Single-node vLLM or SGLang cache | Engine + one local Cache Manager | TP=1 DRAM/SSD recovery and concurrent faults validated on both; multi-rank and long-running fault soak remain open |
+| Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP; [recorded scope](shared-cache-qualification.md#recorded-result) |
+| Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; [shared-cache gates](shared-cache-qualification.md) distinguish same-host TCP from real two-host/RDMA qualification; catalogs have one metadata copy |
 | vLLM P/D through OrbitKV `PdConnector` | Prefill, decode, P/D proxy; Mooncake transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
 

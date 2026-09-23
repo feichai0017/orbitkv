@@ -32,8 +32,7 @@ use crate::metrics::core_metrics;
 /// safety margin falls below this, we use this floor to avoid instant timeouts.
 const MIN_TRANSFER_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Safety margin subtracted from the server's lock timeout. The client must
-/// finish the Mooncake transfer before the server releases the lock.
+/// Stop submitting work before the source marks the session overdue.
 const LOCK_TIMEOUT_MARGIN: Duration = Duration::from_secs(60);
 
 /// Upper bound for a single pinned-pool allocation while staging a Mooncake fetch.
@@ -69,13 +68,21 @@ impl SegmentFetcher for MooncakeFetchStore {
 
         // Query the OrbitKV authority before exposing any physical addresses.
         let query_start = Instant::now();
-        let (client, mut response) = match query_remote_blocks(
+        let authorization = query_remote_blocks(
             &self.grpc_channels,
             segment,
             &self.membership.owner().endpoint,
         )
-        .await
-        {
+        .await;
+        let query_elapsed = query_start.elapsed();
+        core_metrics().remote_stage_duration_seconds.record(
+            query_elapsed.as_secs_f64(),
+            &[
+                KeyValue::new("stage", "authorization"),
+                KeyValue::new("status", if authorization.is_ok() { "ok" } else { "error" }),
+            ],
+        );
+        let (client, mut response) = match authorization {
             Ok(cr) => cr,
             Err(QueryError::Rejected) => {
                 core_metrics()
@@ -100,7 +107,6 @@ impl SegmentFetcher for MooncakeFetchStore {
                 return SegmentOutcome::Failed;
             }
         };
-        let query_elapsed = query_start.elapsed();
 
         // The guard moves into the blocking transfer with the destination buffers.
         // Cancelling this future cannot release either while the READ is running.
@@ -187,6 +193,16 @@ impl SegmentFetcher for MooncakeFetchStore {
         m.remote_fetch_duration_seconds
             .record(elapsed.as_secs_f64(), ok);
         m.remote_fetch_bytes.add(total_bytes, ok);
+        for (stage, duration) in [
+            ("allocation", transfer_timing.build_transfer_tasks),
+            ("read", transfer_timing.mooncake_wait),
+            ("rebuild", transfer_timing.rebuild),
+        ] {
+            m.remote_stage_duration_seconds.record(
+                duration.as_secs_f64(),
+                &[KeyValue::new("stage", stage), KeyValue::new("status", "ok")],
+            );
+        }
         SegmentOutcome::Fetched(result)
     }
 }
@@ -641,8 +657,8 @@ async fn query_remote_blocks(
 
 /// Compute client-side transfer timeout from server's lock timeout.
 /// This is a submission budget, not proof of source lifetime: Mooncake drains
-/// already-submitted work even past the deadline. Source timeout/revocation
-/// qualification is still required before the distributed path is production-ready.
+/// already-submitted work even past the deadline, retaining source reservations.
+/// Orphan revocation and cross-host failure qualification remain open.
 fn transfer_timeout_from_server(lock_timeout_secs: u32) -> Duration {
     let server = Duration::from_secs(lock_timeout_secs as u64);
     server

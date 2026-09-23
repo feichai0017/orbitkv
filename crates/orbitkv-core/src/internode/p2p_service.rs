@@ -5,9 +5,8 @@
 //! `ReleaseTransferLock`. The Cache Manager serves only these peer RPCs plus
 //! `Health`; inference processes use the node-local UDS/iceoryx2 endpoint.
 //!
-//! The embedder remains responsible for periodic GC of expired transfer locks
-//! (`OrbitKVEngine::gc_expired_transfer_locks`), mirroring orbitkv-server's
-//! background GC task — a crashed peer must not pin blocks forever.
+//! Source pins are budgeted and retained after timeout. An overdue session
+//! requires terminal completion or transport revocation before memory reuse.
 
 use std::sync::Arc;
 
@@ -147,7 +146,14 @@ impl Engine for P2pTransferService {
             .engine
             .storage
             .authorize_transfer(owner, &req.requester_id, &records)
-            .ok_or_else(|| Status::failed_precondition("stale owner or residency candidate"))?;
+            .map_err(|error| match error {
+                crate::storage::TransferAuthorizationError::StaleReplica => {
+                    Status::failed_precondition("stale owner or residency candidate")
+                }
+                crate::storage::TransferAuthorizationError::BudgetExhausted => {
+                    Status::resource_exhausted("source transfer reservation budget exhausted")
+                }
+            })?;
 
         let blocks: Vec<TransferBlockInfo> = found_blocks
             .iter()

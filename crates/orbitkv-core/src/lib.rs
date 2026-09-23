@@ -1114,9 +1114,9 @@ impl OrbitKVEngine {
         self.storage.release_transfer_lock(session_id)
     }
 
-    /// GC expired transfer lock sessions.
-    pub fn gc_expired_transfer_locks(&self) -> usize {
-        self.storage.gc_expired_transfer_locks()
+    /// Mark overdue source transfers without releasing their memory.
+    pub fn expire_transfer_locks(&self) -> usize {
+        self.storage.expire_transfer_locks()
     }
 
     /// Return `(base_ptr, size)` for each contiguous pinned memory region.
