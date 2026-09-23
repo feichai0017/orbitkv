@@ -8,7 +8,7 @@ than adding another copy in CSV and JSON.
 
 | Maintained report | Scope |
 | --- | --- |
-| [Ordinary recovery](20260922-recovery-baseline/README.md) | Final DRAM/SSD, concurrent and sustained controls |
+| [Single-node offload](20260923-offload/README.md) | Large working set, concurrent SSD reads/writes and compute-batch controls |
 | [Request preparation](20260922-preparation/README.md) | Repeated preparation controls and DRAM supplement |
 | [Shared-cache serving](20260923-shared-cache/README.md) | Both engines' same-host TCP sharing and restart gates |
 

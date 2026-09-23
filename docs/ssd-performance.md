@@ -1,226 +1,168 @@
-# Qwen3-8B SSD restoration measurements
+# Single-node offload under SSD pressure
 
-The original experiment below records the pre-admission implementation. The
-[query-readiness follow-up](#query-readiness-follow-up) describes the current
-serving path; keep the baseline results when comparing revisions.
-The later [concurrent baseline](concurrent-performance.md) measures versioned
-queries and byte admission with shared and mixed 1/4/8-request bursts.
-
-Measured September 21, 2026 at source commit `45caecfb`, with the same H20,
-Qwen3-8B revision `b968826d9c46dd6066d109eabc6255188de91218`, vLLM 0.29.0,
-SGLang 0.5.20, BF16, TP=1, and 64-token pages as the
-[DRAM experiment](single-node-performance.md). The release Cache Manager has
-16 GiB pinned DRAM and a 32 GiB SSD ring; GPU KV capacity is 16,384 tokens.
-
-The cache file lives on the workspace overlay filesystem. The Manager's open
-file descriptor was verified to use `O_DIRECT`; its SSD backend uses io_uring.
-The host exposes Solidigm NVMe drives, but the container mount information does
-not identify which physical drive backs the overlay. These are application
-path measurements, not bare-device bandwidth or GPUDirect Storage results.
+The September 23, 2026 Qwen3-8B experiment keeps DRAM and SSD enabled together
+and uses a working set larger than their in-memory capacity. It measures
+request latency, transfer stages, bytes and cleanup under natural eviction.
+The H20 development container exposes an `O_DIRECT`/io_uring cache file on an
+overlay mount; these are application measurements, not a physical NVMe or PCIe
+bandwidth limit.
 
 ## Workload and evidence
 
-Each engine served five independent prefixes at 1K, 4K and 8K, with 16 output
-tokens and concurrency one. Each prefix has four measured requests:
+Both engines use the same BF16 model revision, TP=1, 64-token pages, concurrency
+eight and 16 output tokens. Thirty-two alternating 4K/8K prefixes occupy a
+nominal **27 GiB** of KV. The budgets are **9 GiB GPU KV, 4 GiB Manager DRAM,
+64 GiB SSD and 3 GiB query reservations**. A request has a 75% chance of choosing
+one of the prepared prefixes; other requests use fresh tokens. Choosing a
+prefix does not guarantee a cache hit.
 
-1. Cold prefill.
-2. Reuse while HBM is resident.
-3. Reuse after two disjoint 12K requests evict the original GPU pages.
-4. Apply fresh GPU pressure, wait for observed background writes to quiesce,
-   remove Manager DRAM while preserving SSD, and request that prefix again.
+Each fresh service prepares its reference prefixes outside measurement,
+admits requests for 60 seconds, then finishes every admitted request. The
+10,000-request safety cap is not reached. No manual DRAM cleanup runs during
+the window: reads and background writes compete while cold traffic adds new
+state. Warming and owned preparation are off, read batching uses the default,
+and transfer tracing is on. Throughput includes the admitted-request tail but
+excludes initialization, reference preparation and the later resource-drain
+check. It is not an arrival-rate SLO experiment.
 
-Preparation and pressure traffic are excluded from request timings. Phase four
-isolates the backing tier; it is not a natural host-capacity-pressure workload.
-The random generator consumes additional pressure prompts compared with the
-earlier three-phase benchmark, so compare phases within this run. SSD writes
-remain enabled during the DRAM control phase. Services run sequentially, and
-each cache payload file is removed after its Manager stops.
+The [final CSV](../benches/results/20260923-offload/summary.csv) and
+[reproduction instructions](../benches/results/20260923-offload/README.md)
+identify revisions, configuration and counters. Raw samples, manifests,
+process-local timelines and service logs stay in ignored `benches/results/runs/`.
+The baseline uses vLLM 0.29.0 and SGLang 0.5.20 with the same engine releases
+and model for every candidate run.
 
-The 120 request measurements, storage evidence and summaries are in the
-[historical dataset snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
-Full JSONL responses, cleanup responses, counter snapshots,
-and logs are in `benches/results/runs/qwen3-8b-ssd-20260921/` on the measurement
-host. Failed restores or speculative reads are not relabelled as hits.
+## Changes being measured
 
-## Client TTFT
+- vLLM records a CUDA event on the producing stream after the forward launch,
+  outside CUDA graph capture. The save worker waits for its producer events;
+  unrelated later GPU work no longer extends a device-wide synchronization.
+  Source pages remain owned through the native D2H completion.
+- Rust routes SSD reads across the existing read workers and reserves stable
+  queues for writes. A read need not wait for a write's submission queue to
+  drain. Thread count and in-flight I/O limits are unchanged.
+- SSD-backed Managers allocate saved and restored page segments independently
+  on their NUMA node. Read and write allocation sizes agree, and one surviving
+  page cannot retain an unrelated multi-page batch. Page-first layouts already
+  have one full page per stored segment. DRAM-only allocation keeps its existing
+  batching option. The old multi-page staging planner and raw-pointer
+  reconstruction helpers are removed.
+- Total and speculative query reservations use independent counters updated
+  under the admission lock. Phase-labelled samples remain diagnostic and
+  must not be summed to enforce a budget: a scrape can overlap a transition.
 
-Median milliseconds; five requests per cell:
+The allocation change addresses a failure observed in the large-working-set
+control: a 256 MiB allocation could fail with more than that much aggregate
+pool space available. The retained-page GPU test checks both saved and
+SSD-restored pages, with contiguous and split K/V layouts. It keeps one page
+alive, verifies that eviction frees its three sibling pages, then restores the
+held page and compares its exact GPU bytes.
 
-| Engine | Measured path | 1K | 4K | 8K |
-| --- | --- | ---: | ---: | ---: |
-| vLLM | Cold prefill | 118.76 | 474.93 | 1,002.83 |
-| vLLM | DRAM restore, SSD enabled | 23.78 | 37.07 | 57.71 |
-| vLLM | SSD restore after DRAM eviction | 47.27 | 140.36 | 244.88 |
-| SGLang | Cold prefill | 116.80 | 469.86 | 994.16 |
-| SGLang | DRAM restore, SSD enabled | 32.13 | 42.17 | 56.80 |
-| SGLang | After DRAM eviction: recomputation | 116.72 | 469.72 | 994.25 |
+## Final comparison
 
-All 15 vLLM SSD-phase requests loaded the same number of bytes from SSD and
-into the GPU: 144, 576, or 1,152 MiB per request. None had an HBM hit. SSD
-restore was about 2.5x/3.4x/4.1x faster than cold prefill here, while taking
-roughly 2.0x/3.8x/4.2x the DRAM restore time.
+Milliseconds for TTFT; generated tokens per second for throughput.
 
-**SGLang had zero successful SSD restores in this experiment.** All 15 requests
-read SSD data (135, 567, or 1,143 MiB per request) but loaded zero external
-bytes into GPU memory and reported zero cached tokens. Its `lookup` returns an
-empty match on `QueryLoading`, so the scheduler continues with prefill. The
-last 64-token page is not part of SGLang's restore boundary for these prompts.
-The vLLM connector can return an unresolved match to its scheduler and retry;
-the baseline SGLang linker had no equivalent pending-query handling.
+| Engine | Configuration | Requests | TTFT P50 | P95 | P99 | Output tokens/s |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| vllm | Before, 8K | 227 | 1,145.45 | 3,133.77 | 4,014.06 | 59.35 |
+| vllm | Queue/fence control, 8K | 223 | 1,181.32 | 3,233.63 | 4,018.17 | 58.23 |
+| vllm | Current, 8K | 232 | 1,178.52 | 3,157.50 | 3,650.18 | 59.39 |
+| vllm | Current, 4K | 216 | 1,195.28 | 2,674.29 | 3,666.07 | 56.71 |
+| sglang | Before, 8K | 226 | 1,240.44 | 3,432.28 | 4,568.53 | 59.01 |
+| sglang | Queue/fence control, 8K | 224 | 1,487.66 | 3,339.70 | 3,902.59 | 58.18 |
+| sglang | Current, 8K | 226 | 1,615.55 | 3,591.38 | 4,773.39 | 57.83 |
+| sglang | Current, 4K | 217 | 1,450.97 | 3,623.50 | 4,145.95 | 55.44 |
 
-This is an integration readiness gap, not evidence that SSD copies are too
-slow to help SGLang. Never advertise the SGLang recomputation row as an SSD
-cache hit. An early-demand/readiness contract is required before its SSD and
-other asynchronously fetched cache tiers can be considered qualified.
+At the unchanged 8K prefill limit, vLLM throughput is essentially flat
+(59.35 → 59.39); SGLang is 2.0% lower (59.01 → 57.83). SGLang P95 is
+4.6% higher. These observations do not establish an overall throughput gain;
+the retained control rows also show run-to-run tail variation. No speedup
+claim or hardware-limit claim follows from this comparison.
 
-## Where the time goes
+All final configurations recorded zero pool-allocation and SSD-read failures.
+The old vLLM allocation path recorded one failure in the baseline and six
+in the queue/fence control. Independent reclamation has a deterministic GPU
+gate; zero failures in a short workload do not prove that all capacity choices
+can admit every save.
 
-Median instrumented operation time per vLLM SSD-phase request, milliseconds:
+With 8K prefill, vLLM read **107.97 GiB** and wrote **47.21 GiB** through SSD;
+SGLang read **100.76 GiB** and wrote **39.39 GiB**. These are window totals,
+including the final drain. SGLang still dropped **625 blocks** from its SSD
+write queue (baseline: 639), so write admission remains unfinished work.
 
-| Prefix | SSD prefix prefetch | GPU load task | Client TTFT |
-| --- | ---: | ---: | ---: |
-| 1K | 23.54 | 4.66 | 47.27 |
-| 4K | 99.58 | 18.48 | 140.36 |
-| 8K | 182.79 | 36.83 | 244.88 |
+For vLLM, 4K prefill lowers P95 by 15.3% while reducing throughput by 4.5%.
+For SGLang it reduces throughput by 4.1% without improving P95. Keep 8K as the
+benchmark default; a latency-oriented deployment can test vLLM's 4K option
+against its own throughput target. The current 8K runs retain four vLLM
+output differences and zero SGLang differences; 4K retains five and one
+respectively. They remain visible in the CSV and require the separate
+deterministic controls below.
 
-SSD prefetch includes queueing, pinned allocation, reads, and reconstruction.
-GPU load includes task construction, copies and synchronization. The remaining
-client latency includes engine scheduling, remaining computation, and response
-delivery; subtracting medians does not estimate any one of those stages.
-Per-request read bytes divided by prefetch duration has a median of about
-5.6-6.2 GiB/s; the analogous whole GPU-load task is about 30 GiB/s. These are
-effective application-stage rates, not isolated SSD or PCIe bandwidth.
+## Interpreting the stages
 
-SGLang's unused prefetches took 24.26/92.66/186.79 ms. Even when those reads
-finish well before cold prefill would finish, the current request does not
-adopt the completed result. The first optimization is exposing readiness to
-the scheduler, followed by starting reads earlier and overlapping layer loads.
+`demand_prepare_ms` includes queued work, allocation, SSD reads and rebuilding.
+`manager_restore_ms` includes dispatch, the GPU worker queue and synchronized
+H2D work. `completion_delivery_ms` runs from the Manager's completed GPU task
+until it answers the engine's terminal poll. These are overlapping,
+process-local observations; adding their percentiles does not produce TTFT.
+Dense lookup combines candidate discovery and preparation in this workload.
 
-At vLLM's final DRAM eviction, the SSD write counter had reached 112.32 GiB;
-its 15 SSD restores totalled 9.14 GiB. Pressure requests intentionally have
-little reuse, so this is not a production write-amplification estimate. It
-does demonstrate why SSD admission should account for reuse and copy cost.
-No write failures or write-queue drops were recorded at that checkpoint.
+The initial queue/fence comparison, before page-granular staging, left both
+engines near 59 output tokens/s. vLLM's completion-delivery P95 stayed near
+0.94 seconds despite a Manager-restore P95 near 50 ms. The completion signal
+itself took about 0.13 ms. This locates an exposed wait in engine consumption,
+rather than establishing a slow notification transport or PCIe limit.
 
-## Correctness and scope
+A separate 2K prefill diagnostic cut vLLM's delivery P95 to about 234 ms, but
+reduced throughput from 59.2 to 56.0 output tokens/s. Shorter compute quanta
+can improve one stage while adding scheduling/compute overhead. The final
+4K prefill rows are configuration controls; compare only the 8K rows when
+attributing a change to OrbitKV code. Neither engine's default is changed.
 
-All 15 vLLM SSD outputs match their corresponding DRAM outputs. One 4K prefix
-has a different cold output; its HBM, DRAM and SSD outputs all agree with one
-another. All 60 SGLang outputs match their respective cold outputs, including
-the SSD-phase requests that recomputed. The runs did not enable deterministic
-inference; these output observations are not a proof of byte integrity.
+## Correctness and operational limits
 
-The separate GPU integration test exercises SSD write completion, DRAM
-eviction, explicit polling to `QueryReady`, and restoration into poisoned GPU
-destinations for both stored page layouts. Its explicit readiness polling was
-separate from the baseline serving adapter. The subsequent serving gate now
-checks forced-SSD recovery through the plugin admission hook; see the follow-up
-results below.
+Performance runs use ordinary greedy inference and retain every output
+mismatch from the serial prefix references. They do not enable deterministic
+inference, so these counts neither prove cache corruption nor establish exact
+output equivalence. Separate native GPU-byte checks and deterministic serving
+E2E gates cover restoration correctness. Cancellation, lost notification,
+stalled Publish and restart retain their page-lifetime gates.
 
-Five observations do not establish a tail-latency SLO. This experiment does
-not measure concurrent goodput, sustained read/write contention, natural
-host eviction, multi-disk scaling, restart durability, or competitor SSD paths.
-The next experiments and implementation boundaries are in
-[state demand and transfer planning](state-planning.md).
+The final implementation passes 164 Rust unit tests (one ignored), 13 native
+SSD tests, 12 fault-lifetime tests and both engines' GPU-byte gates. Qwen3-8B
+serving passes six vLLM cases and both SGLang DRAM/SSD cases; vLLM's HMA-only
+case is skipped for this dense model. The producer-fence gate verifies exact
+restored bytes while unrelated GPU work is still running.
 
-## Reproduce
+The final candidate checks the independent total-query counter against 3 GiB
+and the speculative counter against one quarter of that limit. Query, copy,
+SSD-read and SSD-write activity must drain after requests finish. The explicit
+drain interval includes a fixed 1.2-second settle; it is not a last-page-release
+latency. Sampling every 25 ms can miss peaks, so ownership tests remain required.
+The baseline's phase-summed peak is retained in a separate CSV column and is
+not used as an exact budget observation.
 
-Build the release wheel as described in [single-node setup](single-node.md).
-From the repository root, run each engine sequentially:
+The CSV also retains allocation failures, SSD read failures and write-queue
+rejections. `orbitkv_ssd_write_queue_full_total` counts dropped **blocks**.
+A completed D2H save confirms a DRAM replica; SSD writes are asynchronous and
+may be dropped under pressure. A failed allocation can make a request
+recompute. Neither outcome should disappear from a performance report.
 
-```bash
-.venv/vllm-release/bin/python -m benches.single_node \
-  --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
-  --ssd-gib 32 --output benches/results/runs/ssd-vllm
-
-.venv/sglang-release/bin/python -m benches.single_node \
-  --engine sglang --backend orbitkv --model /workspace/models/qwen3-8b \
-  --ssd-gib 32 --output benches/results/runs/ssd-sglang
-
-python -m benches.report benches/results/runs/ssd-vllm \
-  benches/results/runs/ssd-sglang --output benches/results/runs/ssd-report
-```
-
-The GPU byte gate runs with the SGLang release environment:
-
-```bash
-cd python
-../.venv/sglang-release/bin/python -m pytest -m integration \
-  tests/integration/test_sglang_direct_transfer.py -k ssd
-```
+This is one short window per final configuration, not a repeated tail-latency
+qualification, a capacity soak or a competitor ranking. It does not show that
+single-node offload has reached its limit. Repeat paired runs with order
+reversal before selecting defaults. The remaining measured work is engine
+completion/admission overlap, retention and SSD write admission under mixed
+traffic, and physical-device scaling with a controlled storage mount. Keep
+those changes separate from multi-host/RDMA qualification.
 
 ## Query-readiness follow-up
 
-The SGLang 0.5.20 plugin now uses `HookRegistry` admission to keep a pending
-request queued and consume its ready lease on a later prefix match. Its
-five-second preparation budget allows recomputation before GPU submission;
-GPU restores still require a confirmed completion.
-
-Both DRAM and forced-SSD serving recovery pass with Qwen3-8B at TP=1 across
-engine restart. The SSD gate checks positive disk-read and H2D byte counters,
-cached tokens, and equal deterministic output against a cold identity. Real
-GPU-buffer tests separately verify cancellation and disconnect during SSD
-reads leave no unconsumed lease, and validate exact restored bytes for both
-stored page layouts. Controlled admission tests cover delayed completion and
-other-request progress; they do not qualify concurrent goodput or multi-rank
-serving. The old 0/15 SGLang measurement remains a baseline, not a description
-of the new serving path.
-
-The repeat experiment on September 21, 2026 used source commit `e3c819a8`,
-with a clean source tree recorded at launch and the same model, engine releases,
-budgets, seed, and four-phase workload described above. Both engines completed
-all 60 requests. Median client TTFT in milliseconds, five requests per cell:
-
-| Engine | Measured path | 1K | 4K | 8K |
-| --- | --- | ---: | ---: | ---: |
-| vLLM | Cold prefill | 118.70 | 476.35 | 1,006.73 |
-| vLLM | DRAM restore, SSD enabled | 23.79 | 36.69 | 56.79 |
-| vLLM | SSD restore after DRAM eviction | 55.24 | 132.05 | 244.47 |
-| SGLang | Cold prefill | 117.90 | 473.41 | 1,000.45 |
-| SGLang | DRAM restore, SSD enabled | 33.07 | 43.16 | 57.97 |
-| SGLang | SSD restore after DRAM eviction | 58.94 | 150.37 | 268.04 |
-
-**Both engines restored from SSD in 15/15 forced-SSD requests.** Each request
-read exactly as many bytes from SSD as it loaded into the GPU. vLLM restored
-144/576/1,152 MiB; SGLang restored 135/567/1,143 MiB and reported
-960/4,032/8,128 cached tokens, respecting its final-page boundary. Neither
-engine reported an HBM hit during this phase. SGLang's SSD TTFT is now about
-2.0x/3.1x/3.7x faster than its cold prefill in this run.
-
-Instrumented median stage times in milliseconds:
-
-| Engine | Stage | 1K | 4K | 8K |
-| --- | --- | ---: | ---: | ---: |
-| vLLM | SSD prefix prefetch | 31.16 | 90.78 | 181.62 |
-| vLLM | GPU load task after SSD read | 4.65 | 18.47 | 36.74 |
-| SGLang | SSD prefix prefetch | 22.79 | 93.78 | 184.33 |
-| SGLang | GPU load task after SSD read | 6.19 | 25.73 | 51.56 |
-
-The vLLM 1K SSD median increased from 47.27 to 55.24 ms; its SSD-prefetch
-median increased from 23.54 to 31.16 ms while its GPU-load and DRAM-control
-medians stayed essentially unchanged. This locates the observed difference
-in the storage stage, but five samples on the shared overlay cannot establish
-whether code changes or storage conditions caused it. The 4K SSD median
-decreased and the 8K median remained close to the baseline. These results do
-not establish a latency improvement for every workload.
-
-SGLang's GPU-load task after SSD reads took longer than its DRAM-control load
-(2.90/12.55/26.46 ms). Allocation, layout reconstruction, and copy behavior need
-separate profiling before attributing this gap or attempting layer overlap.
-Both engines recorded zero SSD read/write failure deltas in measured requests.
-
-All 15 SSD outputs per engine match their respective DRAM outputs. All SGLang
-outputs match cold controls. As in the baseline, one vLLM 4K prefix has a
-different cold output while its HBM, DRAM, and SSD outputs agree. The performance
-run does not enable deterministic inference; exact GPU-buffer tests and the
-separate deterministic serving gates provide the integrity checks.
-
-The [historical readiness dataset](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
-retains these 120 requests, source manifests, storage evidence and summaries
-separately from the baseline. Full responses and service logs
-remain in `benches/results/runs/query-readiness-{vllm,sglang}/` on the measurement
-host; gate logs are in `benches/results/runs/query-readiness-validation/`.
-Use the reproduction commands above with fresh output directories to repeat
-the experiment. This qualifies single-rank full-attention recovery; concurrency,
-multi-rank coordination, natural memory pressure, and tail latency remain
-separate experiments.
+The September 21 SSD-readiness experiment remains a separate historical gate:
+after forced DRAM eviction, both engines restored **15/15** requests from SSD,
+with positive and matching SSD-read/H2D byte counts. At 8K, median TTFT was
+244.47 ms for vLLM and 268.04 ms for SGLang, versus cold prefill near one second.
+The old SGLang integration's 0/15 result predates readiness-aware admission.
+See the [immutable experiment and its controls](https://github.com/feichai0017/orbitkv/blob/4712f780c900120719f178b2ea36c9e0ac7c135f/docs/ssd-performance.md).
+These serial forced-eviction numbers must not be mixed with the concurrent
+natural-pressure measurements above.

@@ -656,8 +656,8 @@ pub(super) async fn ssd_prefetch_loop(
     debug!("SSD prefetch pipeline exiting");
 }
 
-/// Dispatcher: receives batches, allocates per-slot memory grouped by NUMA,
-/// then splits into block-level tasks.
+/// Dispatcher: receives batches, allocates page segments on their NUMA node,
+/// then submits block-level read tasks.
 async fn ssd_prefetch_dispatcher(
     store: Weak<SsdBackingStore>,
     mut batch_rx: tokio::sync::mpsc::Receiver<PrefetchBatch>,

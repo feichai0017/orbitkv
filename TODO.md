@@ -179,6 +179,10 @@ numbers below group work areas rather than imposing a strict serial schedule.
   prefix pages do not hold unrelated evicted pages. Verify real reclamation
   and exact GPU bytes; measure total/speculative reservations independently
   of phase transitions.
+- [x] Measure natural DRAM/SSD contention with a 27 GiB Qwen3-8B prefix set,
+  9 GiB GPU KV and 4 GiB Manager DRAM in both engines. Retain final code and
+  prefill-batch controls, allocation failures, write drops and cleanup. No
+  overall throughput gain or hardware limit is established (`docs/ssd-performance.md`).
 - [ ] Add per-request deadline/priority hints and long-running serving fault/soak
   runs; qualify multi-rank SGLang TP independently of TP=1 admission tests.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;
