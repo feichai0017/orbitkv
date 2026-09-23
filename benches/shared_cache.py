@@ -73,7 +73,7 @@ def verify_restore(before: dict, after: dict, expected: str, actual: dict) -> di
                 "total_ms": changes.get(f"orbitkv_remote_stage_duration_seconds_sum_{stage}", 0)
                 * 1000,
             }
-            for stage in ("discovery_rpc", "authorization", "allocation", "read", "rebuild")
+            for stage in ("discovery_rpc", "authorization", "allocation", "read", "rebuild", "release")
         },
         "output_match": True,
     }

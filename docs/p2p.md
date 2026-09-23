@@ -53,7 +53,7 @@ sequenceDiagram
     A-->>C: Ordered snapshot/deltas
     B->>B: Check DRAM/SSD and candidate index
     opt Missing or expired candidates
-        B->>C: Bounded LocateBlocks by shard
+        B->>C: Bounded LocateBlocks by catalog host
         C-->>B: Owner UUID and insertion sequences
     end
     B->>A: Authorize and pin exact replicas
@@ -114,7 +114,12 @@ protects its own control plane; it does not replicate the embedded catalogs.
 Overflow triggers bounded snapshot repair. `--catalog-budget` defaults to 256 MiB
 of accounted metadata per Manager, divided across its assigned shards. The
 positive candidate cache is 16 MiB with a five-second TTL. Cold lookup batches
-contain at most 128 keys and 64 KiB, with a three-second total RPC budget.
+contain at most 128 keys and 64 KiB of namespace/hash bytes. Missing keys are grouped
+by catalog Manager, so one request can cover all shards assigned to that host.
+Each included shard still carries its placement and runtime checks. At most four
+hosts are queried concurrently over one cached channel per current host incarnation;
+coalescing and all batches share a three-second deadline. Positive hits bypass
+that wait. Upgrade peer Managers together for the batched-route protocol.
 
 The Manager's `:9091/metrics` includes catalog per-shard byte/key/replica gauges,
 inventory progress counters and Mooncake transfer metrics. Repeated snapshot

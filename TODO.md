@@ -247,6 +247,8 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 - [x] D1 completion recovery: reserve bounded per-requester/per-peer release capacity
   before authorization; retain idempotent retries until acknowledged; consume late
   authorization replies after cancellation and drain uncertain native batches.
+- [x] D1 discovery RPC reduction: batch shards by catalog host, share connections,
+  bound host concurrency and include coalescing in the common lookup deadline.
 - [ ] D1 authorization reconciliation: recover source sessions when the grant reply
   itself is lost before the requester learns its ID.
 - [ ] D1 revocation: reclaim orphaned source reservations only after transport

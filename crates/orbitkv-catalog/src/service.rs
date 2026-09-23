@@ -217,18 +217,46 @@ impl Catalog for CatalogService {
             if req.exclude_node.len() > orbitkv_state::DISCOVERY_MAX_ENDPOINT_BYTES {
                 return Err(Status::invalid_argument("requester endpoint too long"));
             }
-            let store = self.store(req.route.as_ref())?;
-            let shard = req.route.as_ref().expect("validated route").shard as usize;
-            if req.block_hashes.iter().any(|hash| {
-                catalog_shard(&StateKey::new(req.namespace.clone(), hash.clone())) != shard
-            }) {
-                return Err(Status::invalid_argument(
-                    "query contains a key from another shard",
-                ));
+            if req.routes.is_empty() || req.routes.len() > CATALOG_SHARDS {
+                return Err(Status::invalid_argument("invalid catalog route count"));
+            }
+            let mut stores = std::array::from_fn::<_, CATALOG_SHARDS, _>(|_| None);
+            for route in &req.routes {
+                let store = self.store(Some(route))?;
+                let slot = &mut stores[route.shard as usize];
+                if slot.replace(store).is_some() {
+                    return Err(Status::invalid_argument("duplicate catalog route"));
+                }
+            }
+            let mut groups: [Vec<usize>; CATALOG_SHARDS] = std::array::from_fn(|_| Vec::new());
+            for (index, hash) in req.block_hashes.iter().enumerate() {
+                let shard = catalog_shard(&StateKey::new(req.namespace.clone(), hash.clone()));
+                if stores[shard].is_none() {
+                    return Err(Status::invalid_argument("missing route for query key"));
+                }
+                groups[shard].push(index);
             }
             let mut blocks = tokio::task::spawn_blocking(move || {
                 let _job = job;
-                store.locate_blocks(&req.namespace, &req.block_hashes, &req.exclude_node)
+                let mut rows = vec![None; req.block_hashes.len()];
+                for (store, indices) in stores.into_iter().zip(groups) {
+                    if indices.is_empty() {
+                        continue;
+                    }
+                    let hashes: Vec<_> = indices
+                        .iter()
+                        .map(|&i| req.block_hashes[i].clone())
+                        .collect();
+                    let candidates = store.expect("validated shard").locate_blocks(
+                        &req.namespace,
+                        &hashes,
+                        &req.exclude_node,
+                    );
+                    for (index, row) in indices.into_iter().zip(candidates) {
+                        rows[index] = Some(row);
+                    }
+                }
+                rows.into_iter().flatten().collect::<Vec<_>>()
             })
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
@@ -245,3 +273,7 @@ impl Catalog for CatalogService {
         result
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/service.rs"]
+mod tests;
