@@ -54,7 +54,7 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   using reusable windows and generation-fenced tickets.
 
 See [supported deployments](docs/deployment.md) and
-[model compatibility](docs/hybrid-recovery.md) before selecting a topology.
+[model qualification](docs/models.md) before selecting a checkpoint and topology.
 Compiled recovery uses engine-declared state requirements; arbitrary model-graph
 analysis and future-token prediction are outside the current implementation.
 

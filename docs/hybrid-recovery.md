@@ -5,6 +5,10 @@ contract for page demand and leased evidence. Every hybrid lookup must supply
 enough state to resume at one legal token boundary. An attention hit alone is
 insufficient.
 
+Checkpoint-specific results and larger hybrid targets live in
+[model qualification](models.md). The gates below distinguish state-layout
+recovery from native pretrained-model serving.
+
 The adapters accept Full + SWA, Full + recurrent/conv, and Full + SWA +
 recurrent/conv layouts. Full attention and MLA keep their single-group path.
 vLLM groups must share a logical block size and Mamba groups must use `align`.

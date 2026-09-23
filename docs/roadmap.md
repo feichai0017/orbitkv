@@ -58,6 +58,9 @@ gate, without claiming cross-host tensor parallelism.
    DRAM/SSD GPU-byte coverage from native model-serving coverage. Keep missing
    components, final-token limits, async save ownership and restart in the gate;
    wider model and multi-rank compatibility need their own evidence.
+   Use [pinned pretrained checkpoints](models.md) for larger Qwen, GLM,
+   DeepSeek and Kimi coverage. GLM-5.3-Flash sparse indexers and DeepSeek-V4
+   compressed/request state need additional contracts before serving claims.
 2. **Qualify real two-host DP.** Use independent matching TP=1 replicas,
    embedded Manager catalogs, etcd membership and Mooncake TE. Require positive
    remote and GPU-copy bytes, output controls, source-incarnation rejection,

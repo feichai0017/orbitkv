@@ -161,6 +161,12 @@ gate verifies that native `long_warm` had a prefix-cache hit, checks OrbitKV
 save/hit/load activity, and requires OrbitKV `long_warm` to load KV bytes after
 that restart.
 
+Add `--vllm-cache-tier ssd` to enable an 8 GiB SSD cache, wait for writes to
+drain and evict Manager DRAM before the engine restart. The same output and
+GPU-load controls then also require new SSD reads. DRAM remains the default.
+See [model qualification](../../docs/models.md) for pinned larger checkpoints
+and the Qwen3.8 FP8 kernel setting used on H20.
+
 This gate is required before merging PRs that change Python test gates, the
 vLLM connector, cache semantics visible to the connector, save/load behavior,
 query planning, or release confidence. The code author runs it before requesting

@@ -17,7 +17,7 @@ from threading import Barrier
 import pytest
 import requests
 
-from tests.support.cache_manager import find_available_port
+from tests.support.cache_manager import evict_dram_after_ssd_writes, find_available_port
 from tests.support.metrics import fetch_orbitkv_metrics
 from tests.support.paths import PYTHON_ROOT
 
@@ -26,7 +26,10 @@ pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 @pytest.mark.parametrize(
     "channel_server",
-    [pytest.param({"tier": tier, "pool_size": "512mb"}, id=tier) for tier in ("dram", "ssd")],
+    [
+        pytest.param({"tier": tier, "pool_size": "512mb", "ssd_cache_capacity": "8gb"}, id=tier)
+        for tier in ("dram", "ssd")
+    ],
     indirect=True,
 )
 def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
@@ -50,6 +53,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         "sglang.launch_server",
         "--model-path",
         model,
+        "--trust-remote-code",
         "--load-format",
         request.config.getoption("--sglang-load-format"),
         "--host",
@@ -74,7 +78,11 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
     ]
     model_config = json.loads((Path(model) / "config.json").read_text())
     text_config = model_config.get("text_config", model_config)
-    if "linear_attention" in text_config.get("layer_types", ()) or text_config.get("use_sconv"):
+    if (
+        "linear_attention" in (text_config.get("layer_types") or ())
+        or (text_config.get("linear_attn_config") or {}).get("kda_layers")
+        or text_config.get("use_sconv")
+    ):
         cmd += [
             "--max-mamba-cache-size",
             "64",
@@ -119,7 +127,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 start_new_session=True,
             )
         try:
-            deadline = time.monotonic() + 180
+            deadline = time.monotonic() + 600
             while time.monotonic() < deadline:
                 if process.poll() is not None:
                     pytest.fail(f"SGLang exited during startup:\n{log_path.read_text()[-8000:]}")
@@ -148,7 +156,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
 
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
     fragment = tokenizer.encode("A CUDA IPC cache correctness test for a long context. ")
     # Keep one uncached token after a sealed recurrent checkpoint. Matching a
     # 512-token prompt excludes its last token and cannot use checkpoint 512.
@@ -188,26 +196,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
 
     # Keep the Cache Manager alive while SGLang's HBM prefix tree disappears.
     if channel_server.ssd_cache_path is not None:
-        deadline = time.monotonic() + 30
-        while True:
-            observed = fetch_orbitkv_metrics(channel_server.http_port)
-            if observed.get("orbitkv_ssd_write_bytes_total", 0) > 0 and not any(
-                observed.get(name, 0)
-                for name in (
-                    "orbitkv_ssd_write_inflight",
-                    "orbitkv_ssd_write_queue_pending",
-                    "orbitkv_inflight_bytes",
-                )
-            ):
-                break
-            assert time.monotonic() < deadline, observed
-            time.sleep(0.1)
-        cleaned = requests.post(
-            f"http://127.0.0.1:{channel_server.http_port}/cache/memory/cleanup", timeout=30
-        )
-        cleaned.raise_for_status()
-        assert cleaned.json()["evicted_blocks"] > 0
-        assert cleaned.json()["still_referenced_blocks"] == 0
+        evict_dram_after_ssd_writes(channel_server.http_port)
     before_restart = fetch_orbitkv_metrics(channel_server.http_port)
     process, base_url = start_server()
     try:
@@ -223,9 +212,14 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
 
         with ThreadPoolExecutor(max_workers=4) as executor:
             restored = list(executor.map(restore, range(4)))
-        assert all(response.json()["meta_info"]["cached_tokens"] >= 512 for response in restored), (
-            [response.json() for response in restored],
-            fetch_orbitkv_metrics(channel_server.http_port),
+        restored_tokens = [response.json()["meta_info"]["cached_tokens"] for response in restored]
+        assert all(tokens >= 512 for tokens in restored_tokens), (
+            restored_tokens,
+            {
+                name: value
+                for name, value in fetch_orbitkv_metrics(channel_server.http_port).items()
+                if name.startswith(("orbitkv_ssd_", "orbitkv_load_", "orbitkv_query_"))
+            },
             channel_server.read_logs()[-8000:],
         )
         after_restart_load = fetch_orbitkv_metrics(channel_server.http_port).get(

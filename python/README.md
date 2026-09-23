@@ -20,7 +20,7 @@ adapters use CUDA IPC for GPU transfers and the same Cache Manager API.
 - Experimental peer cache sharing through Mooncake Transfer Engine.
 
 Validated engine releases: **vLLM 0.29.0** and **SGLang 0.5.20**. See
-[compatibility](https://feichai0017.github.io/orbitkv/docs/hybrid-recovery/)
+[model qualification](https://feichai0017.github.io/orbitkv/docs/models/)
 and [deployment support](https://feichai0017.github.io/orbitkv/docs/deployment/).
 Interfaces may change before 1.0.
 

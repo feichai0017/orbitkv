@@ -13,7 +13,8 @@ No Catalog or peer gRPC listener is needed for this deployment.
 | SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full MHA/MLA, Full + SWA, Full + recurrent/conv, and their combination; ordinary contiguous pools; multi-rank serving remains unqualified |
 
 Start with a single-rank model and one Manager. Check
-[hybrid model compatibility](hybrid-recovery.md) before enabling other layouts.
+[model qualification](models.md) and the
+[hybrid recovery rules](hybrid-recovery.md) before enabling other layouts.
 The first release is being prepared; the commands below build from source.
 
 ## Install and start the common manager

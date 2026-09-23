@@ -39,7 +39,8 @@ implements external caching only.
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 
 This configuration is illustrative and has not passed the multi-host
-qualification gate. It enables MTP and `MultiConnector` on both sides. vLLM's
+qualification gate. It uses dense Qwen3-8B and `MultiConnector` on both sides;
+DSA and draft/MTP recovery need separate state contracts. vLLM's
 NIXL connector handles the P-to-D handoff; OrbitKV uses `read_write` on P and
 `save_only` on D to retain KV for later requests without competing with NIXL
 loads. `MultiConnector` chooses the first connector advertising a load and
@@ -63,15 +64,11 @@ own instance ID.
 PYTHONHASHSEED=42 \
 VLLM_NIXL_SIDE_CHANNEL_HOST=<p_node_ip> \
 VLLM_NIXL_SIDE_CHANNEL_PORT=5600 \
-vllm serve GLM-5.2-FP8 \
-  --served-model-name glm-5.2 \
+vllm serve /path/to/qwen3-8b \
+  --served-model-name qwen3-8b \
   --host 0.0.0.0 \
   --port 8000 \
-  --tensor-parallel-size 8 \
-  --enable-expert-parallel \
-  --kv-cache-dtype fp8 \
-  --speculative-config.method mtp \
-  --speculative-config.num_speculative_tokens 2 \
+  --tensor-parallel-size 1 \
   --enable-prefix-caching \
   --trust-remote-code \
   --kv-transfer-config '{
@@ -88,7 +85,6 @@ vllm serve GLM-5.2-FP8 \
           "kv_role": "kv_both",
           "kv_connector_module_path": "orbitkv.vllm",
           "kv_connector_extra_config": {
-            "orbitkv.host": "http://<p_node_ip>",
             "orbitkv.port": 50055,
             "orbitkv.mode": "read_write"
           }
@@ -104,15 +100,11 @@ vllm serve GLM-5.2-FP8 \
 PYTHONHASHSEED=42 \
 VLLM_NIXL_SIDE_CHANNEL_HOST=<d_node_ip> \
 VLLM_NIXL_SIDE_CHANNEL_PORT=5601 \
-vllm serve GLM-5.2-FP8 \
-  --served-model-name glm-5.2 \
+vllm serve /path/to/qwen3-8b \
+  --served-model-name qwen3-8b \
   --host 0.0.0.0 \
   --port 8001 \
-  --tensor-parallel-size 8 \
-  --enable-expert-parallel \
-  --kv-cache-dtype fp8 \
-  --speculative-config.method mtp \
-  --speculative-config.num_speculative_tokens 2 \
+  --tensor-parallel-size 1 \
   --enable-prefix-caching \
   --trust-remote-code \
   --kv-transfer-config '{
@@ -132,7 +124,6 @@ vllm serve GLM-5.2-FP8 \
           "kv_role": "kv_both",
           "kv_connector_module_path": "orbitkv.vllm",
           "kv_connector_extra_config": {
-            "orbitkv.host": "http://<d_node_ip>",
             "orbitkv.port": 50055,
             "orbitkv.mode": "save_only"
           }

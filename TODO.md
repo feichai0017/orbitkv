@@ -61,6 +61,10 @@ numbers below group work areas rather than imposing a strict serial schedule.
   vLLM compares matched native-cache execution plans and restart loads.
 - [ ] Qualify native model serving with Full + SWA + temporal recurrent state
   in both engines; current combined temporal coverage is exact GPU recovery.
+- [x] Qualify Qwen3.8-27B-FP8 on both engines with DRAM and forced SSD recovery;
+  qualify GLM-4.7-Flash, DeepSeek-V2-Lite and Kimi Linear FP8 with SSD-enabled
+  reuse, native output controls and engine restart. Keep exact artifacts,
+  settings and larger-model blockers in [model qualification](docs/models.md).
 - [ ] Add recovery contracts for DSA, draft-model and further auxiliary state.
 
 ## M2 — common bundle and local IPC

@@ -80,6 +80,15 @@ import { localUrl } from "../data/site";
         This uses engine-declared state requirements; arbitrary graph analysis
         and future-token prediction remain future work.
       </p>
+      <p class="reading-copy">
+        Checkpoint qualification records the exact engine, precision and recovery
+        path. Larger Qwen, GLM, DeepSeek and Kimi targets have separate gates;
+        sparse indexer state and an engine's ability to load a model do not imply
+        a complete OrbitKV restore.
+      </p>
+      <a class="text-link" href={localUrl("/docs/models/")}>
+        Pretrained models and qualification limits <span aria-hidden="true">↗</span>
+      </a>
       <a class="text-link" href={localUrl("/docs/state-identity/")}>
         State identity plan and gates <span aria-hidden="true">↗</span>
       </a>
