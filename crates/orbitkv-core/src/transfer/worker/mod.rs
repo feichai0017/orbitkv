@@ -345,6 +345,7 @@ fn worker_loop(
                 if let Err(ref error) = result {
                     error!("GPU restore failed on {device_id}: {error}");
                     core_metrics().load_failures.add(1, &[]);
+                    drop(runtime.ssd_buffer.take());
                 }
                 drop(layers);
                 drop(reservations);
@@ -371,6 +372,9 @@ fn worker_loop(
                     if !ssd_writes.is_empty() && runtime.ssd_buffer.is_none() {
                         runtime.ssd_buffer = Some(
                             GpuBuffer::new(Arc::clone(&runtime.stream))
+                                .inspect_err(|error| {
+                                    ssd_writes[0].lease.file().gpu_io.failed(error);
+                                })
                                 .map_err(EngineError::Storage)?,
                         );
                     }
@@ -380,12 +384,16 @@ fn worker_loop(
                             .as_ref()
                             .expect("storage buffer initialized")
                             .save(write.lease.file(), &write.batches)
+                            .inspect_err(|error| write.lease.file().gpu_io.failed(error))
                             .map_err(EngineError::Storage)?;
                         write.lease.commit();
                     }
                     Ok(())
                 })
                 .map(|()| layers);
+                if result.is_err() {
+                    drop(runtime.ssd_buffer.take());
+                }
                 let _ = reply.send(result);
             }
         }
@@ -492,7 +500,11 @@ fn process_load_task(
     let disk_reads = ssd::plan(layers)?;
 
     if !disk_reads.is_empty() && ssd_buffer.is_none() {
-        *ssd_buffer = Some(GpuBuffer::new(Arc::clone(stream)).map_err(EngineError::Storage)?);
+        *ssd_buffer = Some(
+            GpuBuffer::new(Arc::clone(stream))
+                .inspect_err(|error| disk_reads[0].0.file().gpu_io.failed(error))
+                .map_err(EngineError::Storage)?,
+        );
     }
 
     let submitted = backend.h2d(&copies, stream);
@@ -502,7 +514,8 @@ fn process_load_task(
             disk_bytes += ssd_buffer
                 .as_ref()
                 .expect("SSD buffer initialized")
-                .restore(source.file(), batches)?;
+                .restore(source.file(), batches)
+                .inspect_err(|error| source.file().gpu_io.failed(error))?;
         }
         Ok(())
     });

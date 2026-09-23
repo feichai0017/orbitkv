@@ -91,9 +91,10 @@ ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
 To enable SSD caching, add
 `--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb` to the
 Manager command. The SSD cache is recreated when the Manager restarts.
-An optional [cuFile SSD backend](docs/gds.md) writes complete GPU state groups
-and restores SSD demand hits through bounded GPU staging. Native GPUDirect Storage requires a qualified storage deployment;
-the default remains io_uring with DRAM staging.
+The default [automatic SSD backend](docs/gds.md) tries native cuFile on supported
+mounts and uses io_uring when unavailable. cuFile writes complete GPU state
+groups and restores SSD demand hits through bounded GPU staging. Hardware
+selection and native GDS performance qualification are separate.
 
 Keep the Manager alive, restart the engine, and repeat a multi-block prompt.
 An increase in `orbitkv_load_bytes_total` confirms an external restore.

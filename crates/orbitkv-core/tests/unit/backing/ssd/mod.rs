@@ -2,6 +2,20 @@ use super::*;
 use std::fs;
 
 #[test]
+fn only_automatic_failures_disable_gpu_admission() {
+    for automatic in [true, false] {
+        let state = GpuIo {
+            automatic,
+            enabled: AtomicBool::new(true),
+        };
+        state.failed("storage buffer registration failed");
+        assert_eq!(state.available(), !automatic);
+        state.failed("another submitted operation also failed");
+        assert_eq!(state.available(), !automatic);
+    }
+}
+
+#[test]
 fn selective_writes_track_republication_without_pinning_payloads() {
     let mut inner = SsdInner {
         ring: SsdRingBuffer::new_sharded(vec![4096], 512),

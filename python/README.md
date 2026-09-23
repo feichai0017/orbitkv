@@ -14,7 +14,8 @@ adapters use CUDA IPC for GPU transfers and the same Cache Manager API.
 ## Features
 
 - DRAM/SSD prefix reuse with engine-owned GPU allocation.
-- Optional Rust cuFile SSD writes and restores for both engines; see the
+- Automatic Rust SSD backend selection for both engines, with native cuFile
+  writes/restores where available and io_uring otherwise; see the
   [GPU storage configuration and qualification gates](../docs/gds.md).
 - Compiled recovery ranges for supported attention, window and checkpoint layouts.
 - Native query ownership, byte budgets and completion fences.

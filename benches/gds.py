@@ -306,7 +306,7 @@ def main() -> None:
                 e2e += ["tests/e2e/test_sglang_direct_e2e.py", "-k", "ssd"]
             run(f"{engine}-correctness", e2e, cwd=ROOT / "python")
             for workload in ("serial", "sustained"):
-                for backend in ("uring", "cufile"):
+                for backend in ("uring", "auto", "cufile"):
                     name = f"{engine}-{workload}-{backend}"
                     command = [
                         interpreter,
@@ -340,7 +340,7 @@ def main() -> None:
                         "1",
                         "4",
                     ]
-                    if backend == "cufile":
+                    if backend != "uring":
                         command += ["--gds-stats", args.gds_tools / "gds_stats"]
                     run(name, command)
                     summary = json.loads((output / name / "summary.json").read_text())
@@ -349,7 +349,7 @@ def main() -> None:
                         if workload == "serial"
                         else (
                             "orbitkv_ssd_cufile_read_bytes_total"
-                            if backend == "cufile"
+                            if backend != "uring"
                             else "orbitkv_ssd_prefetch_bytes_total"
                         )
                     )

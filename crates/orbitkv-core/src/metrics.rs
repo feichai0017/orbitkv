@@ -80,6 +80,7 @@ pub(crate) struct CoreMetrics {
     pub load_failures: Counter<u64>,
 
     // SSD cache
+    pub ssd_backend_fallbacks: Counter<u64>,
     pub ssd_read_pinned_bytes: UpDownCounter<i64>,
     pub ssd_gpu_staging_bytes: UpDownCounter<i64>,
     pub ssd_pinned_write_skips: Counter<u64>,
@@ -420,6 +421,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
 
             // SSD
+            ssd_backend_fallbacks: meter.u64_counter("orbitkv_ssd_backend_fallbacks").with_description("Automatic transitions from cuFile to io_uring; startup or runtime failures").build(),
             ssd_cufile_write_bytes: meter.u64_counter("orbitkv_ssd_cufile_write_bytes").with_description("Bytes written by cuFile including alignment; does not prove native GDS").build(),
             ssd_cufile_write_failures: meter.u64_counter("orbitkv_ssd_cufile_write_failures").with_description("Failed or short cuFile writes").build(),
             ssd_cufile_write_seconds: meter.f64_histogram("orbitkv_ssd_cufile_write_seconds").with_unit("s").with_description("Synchronous cuFile write duration").build(),

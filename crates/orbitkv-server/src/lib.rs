@@ -155,9 +155,9 @@ pub struct Cli {
     #[arg(long, default_value = "all")]
     pub ssd_write_policy: orbitkv_core::SsdWritePolicy,
 
-    /// SSD I/O: uring (DRAM staging) or cufile (bounded GPU staging for complete writes and demand reads).
-    /// cuFile may use CPU compatibility mode; native GDS requires separate qualification.
-    #[arg(long, default_value = "uring", requires = "ssd_cache_path")]
+    /// SSD I/O: auto tries native cuFile and falls back to uring; explicit cufile follows NVIDIA configuration.
+    /// Hardware path selection does not establish a performance advantage; qualify native GDS separately.
+    #[arg(long, default_value = "auto", requires = "ssd_cache_path")]
     pub ssd_backend: orbitkv_core::SsdBackend,
 
     /// SSD prefetch queue depth (max pending prefetch batches). Default: 2

@@ -175,13 +175,14 @@ io_uring workers. Reads rotate across read workers, including when there is only
 one cache file; each file's writes retain a stable queue. This avoids a read
 waiting in the submission queue of an unrelated write. It does not increase the
 configured in-flight read/write limits or remove device-level I/O contention.
-With the default io_uring backend, both saves and restores allocate each stored page/segment
+With the io_uring backend, both saves and restores allocate each stored page/segment
 independently, on its recorded NUMA node. This aligns read and write allocation
 sizes and lets eviction reclaim pages without a surviving prefix holding an
 entire batch. Page-first layouts already store a complete page as one segment.
 The DRAM-only path retains its batching option (`--blockwise-alloc` opts out).
 
-The optional [cuFile backend](gds.md) leases SSD extents and restores selected
+The [automatic SSD backend](gds.md) selects native cuFile when initialization on
+ext4/XFS succeeds and uses io_uring otherwise. cuFile leases SSD extents and restores selected
 state through bounded GPU staging. It shares both engines' existing API and
 ownership checks. Complete-group writes use GPU staging; fragmented saves and
 speculative preparation continue through DRAM;

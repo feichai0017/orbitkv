@@ -8,8 +8,8 @@ use orbitkv_state::group_hash;
 
 use super::{EngineError, OrbitKVEngine};
 use crate::SlotMeta;
+use crate::backing::ssd::SsdBackingStore;
 use crate::backing::ssd::cufile::{CopyRange, plan_writes};
-use crate::backing::ssd::{SsdBackend, SsdBackingStore};
 use crate::block::{LayerSave, RawBlock, Segment, StateKey};
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
@@ -513,7 +513,7 @@ impl OrbitKVEngine {
         // ── Phase 3: Submit all GPU copies as one batch task (single sync) ──
 
         let ssd_writes = match &self.storage.ssd_store {
-            Some(store) if store.backend == SsdBackend::Cufile => prepare_gpu_writes(
+            Some(store) if store.gpu_io.available() => prepare_gpu_writes(
                 store,
                 &namespace,
                 &topology,

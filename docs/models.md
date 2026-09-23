@@ -33,7 +33,7 @@ it does not establish DeepSeek-V4 compatibility. SSD-enabled runs keep DRAM
 available during serving and require SSD recovery after eviction and restart;
 they are not separate DRAM-only qualifications.
 
-The table records the default io_uring SSD backend. Separate
+The table records explicitly selected io_uring SSD runs. Separate
 [cuFile qualification](gds.md#recorded-functional-qualification) covers Qwen3-8B
 and Qwen3.8-27B-FP8 on both engines in CPU compatibility mode; native GDS
 performance is still pending a supported host.

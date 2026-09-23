@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
 use bytesize::ByteSize;
@@ -93,6 +93,25 @@ struct SsdInner {
 
 const REUSE_HISTORY_BLOCKS: usize = 16_384;
 
+/// Shared admission state. Disabling new GPU I/O never revokes existing leases.
+pub(crate) struct GpuIo {
+    automatic: bool,
+    enabled: AtomicBool,
+}
+
+impl GpuIo {
+    pub(crate) fn available(&self) -> bool {
+        self.enabled.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn failed(&self, error: &str) {
+        if self.automatic && self.enabled.swap(false, Ordering::AcqRel) {
+            core_metrics().ssd_backend_fallbacks.add(1, &[]);
+            warn!("SSD auto backend selected uring for new operations: {error}");
+        }
+    }
+}
+
 impl SsdInner {
     fn admission_skip(
         &mut self,
@@ -118,7 +137,7 @@ impl SsdInner {
 }
 
 pub(crate) struct SsdBackingStore {
-    pub(crate) backend: SsdBackend,
+    pub(crate) gpu_io: Arc<GpuIo>,
     /// Keeps file descriptors alive for io_uring operations.
     _files: Vec<std::fs::File>,
     cufile_files: Vec<CufileFile>,
@@ -137,7 +156,7 @@ impl SsdBackingStore {
         key: StateKey,
         slots: Vec<crate::SlotMeta>,
     ) -> Option<GpuWriteLease> {
-        if self.cufile_files.is_empty() {
+        if !self.gpu_io.available() {
             return None;
         }
         let mut inner = self.inner.lock();
@@ -170,7 +189,14 @@ impl SsdBackingStore {
 
         let shards_per_path = config.shards.get();
         let total_shards = config.cache_paths.len() * shards_per_path;
-        let alignment = if config.backend == SsdBackend::Cufile {
+        let try_gpu = config.backend != SsdBackend::Uring
+            && (config.backend == SsdBackend::Cufile
+                || config.capacity_bytes / total_shards.max(1) as u64 >= cufile::ALIGNMENT as u64);
+        let gpu_io = Arc::new(GpuIo {
+            automatic: config.backend == SsdBackend::Auto,
+            enabled: AtomicBool::new(try_gpu),
+        });
+        let alignment = if try_gpu {
             cufile::ALIGNMENT
         } else {
             SSD_ALIGNMENT
@@ -184,13 +210,29 @@ impl SsdBackingStore {
             &mut OpenOptions::new(),
         )?;
         let fds: Vec<_> = files.iter().map(|file| file.as_raw_fd()).collect();
-        let cufile_files = if config.backend == SsdBackend::Cufile {
-            files
+        let cufile_files = if try_gpu {
+            let registered = files
                 .iter()
-                .map(|file| CufileFile::new(file.try_clone()?).map_err(std::io::Error::other))
-                .collect::<std::io::Result<Vec<_>>>()?
+                .map(|file| {
+                    CufileFile::new(file.try_clone()?, Arc::clone(&gpu_io))
+                        .map_err(std::io::Error::other)
+                })
+                .collect::<std::io::Result<Vec<_>>>();
+            match registered {
+                Ok(files) => files,
+                Err(error) if gpu_io.automatic => {
+                    gpu_io.failed(&error.to_string());
+                    Vec::new()
+                }
+                Err(error) => return Err(error),
+            }
         } else {
             Vec::new()
+        };
+        let ring_alignment = if gpu_io.available() {
+            cufile::ALIGNMENT
+        } else {
+            SSD_ALIGNMENT
         };
 
         let io = Arc::new(UringIoEngine::new_multi(fds, UringConfig::default())?);
@@ -214,9 +256,18 @@ impl SsdBackingStore {
             total_shards,
             ByteSize(shard_capacity)
         );
+        info!(
+            "SSD backend requested={:?} selected={}",
+            config.backend,
+            if gpu_io.available() {
+                "cufile"
+            } else {
+                "uring"
+            },
+        );
 
         let store = Arc::new(Self {
-            backend: config.backend,
+            gpu_io,
             _files: files,
             cufile_files,
             io: Arc::clone(&io),
@@ -226,7 +277,7 @@ impl SsdBackingStore {
             inner: Mutex::new(SsdInner {
                 ring: SsdRingBuffer::new_sharded(
                     vec![shard_capacity; total_shards],
-                    alignment as u64,
+                    ring_alignment as u64,
                 ),
                 pending_writes: HashSet::new(),
                 reuse_history: LruCache::new(REUSE_HISTORY_BLOCKS),
@@ -250,7 +301,7 @@ impl SsdBackingStore {
         self: &Arc<Self>,
         keys: &[StateKey],
     ) -> Option<Vec<Arc<SsdReadLease>>> {
-        if self.cufile_files.is_empty() {
+        if !self.gpu_io.available() {
             return None;
         }
         let inner = self.inner.lock();

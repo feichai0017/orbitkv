@@ -19,6 +19,50 @@ fn storage(file: std::path::PathBuf, capacity_bytes: u64) -> StorageConfig {
 
 #[tokio::test]
 #[ignore = "requires CUDA, io_uring and libcufile; run the cuFile qualification gate"]
+async fn automatic_fallback_preserves_host_layout_and_small_block_capacity() {
+    let dir = tempfile::tempdir().unwrap();
+    // A driver initialized by an explicit cuFile owner has not established the
+    // native-only policy required by auto, even on a native-capable mount.
+    let _explicit = TestEnvBuilder::new("explicit-owner", "explicit-owner")
+        .layer("attention", 1, 512)
+        .pool_size(64 * 1024)
+        .storage(storage(dir.path().join("explicit.bin"), 4096))
+        .build();
+    let env = TestEnvBuilder::new("auto-fallback", "auto-fallback")
+        .layer("attention", 4, 512)
+        .pool_size(64 * 1024)
+        .storage(StorageConfig {
+            ssd_cache_config: Some(SsdCacheConfig {
+                cache_paths: vec![dir.path().join("cache.bin")],
+                capacity_bytes: 4096,
+                ..SsdCacheConfig::default()
+            }),
+            ..StorageConfig::default()
+        })
+        .build();
+    let hashes = common::make_block_hashes(4, 71);
+    env.save_all_layers_one_batch(&hashes).await;
+    env.engine.flush_all().await;
+    env.engine.cleanup_memory_cache();
+    env.layers[0].data.zero_gpu();
+    let result = env.query(&hashes).await;
+    assert_eq!(result.blocks.len(), 4);
+    assert!(
+        result
+            .blocks
+            .iter()
+            .all(|source| matches!(source, RestoreSource::Memory(_)))
+    );
+    let lease = env
+        .engine
+        .create_query_lease(&env.instance_id, result.blocks)
+        .unwrap();
+    env.load_to_gpu(lease, 4).await;
+    env.layers[0].data.assert_gpu_matches_expected();
+}
+
+#[tokio::test]
+#[ignore = "requires CUDA, io_uring and libcufile; run the cuFile qualification gate"]
 async fn fragmented_publications_seal_before_ssd_visibility_and_restore_through_cufile() {
     let dir = tempfile::tempdir().unwrap();
     let env = TestEnvBuilder::new("cufile-partial", "gds-partial")

@@ -144,9 +144,9 @@ def pytest_addoption(parser):
     )
     parser.addoption(
         "--ssd-backend",
-        choices=("uring", "cufile"),
-        default="uring",
-        help="SSD restore backend; cuFile requires NVIDIA GDS libraries",
+        choices=("auto", "uring", "cufile"),
+        default="auto",
+        help="SSD backend; auto selects native cuFile when available, otherwise io_uring",
     )
 
 

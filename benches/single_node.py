@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .launch import configure
-from .metrics import summarize
+from .metrics import metrics, summarize
 from .runtime import ROOT, manifest, process_usage, server, storage_manifest
 from .workload import run_workload
 
@@ -86,7 +86,7 @@ def main() -> None:
     parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
     parser.add_argument("--cache-protected-percent", type=int, default=0)
     parser.add_argument("--ssd-write-policy", choices=["all", "reuse"], default="all")
-    parser.add_argument("--ssd-backend", choices=["uring", "cufile"], default="uring")
+    parser.add_argument("--ssd-backend", choices=["auto", "uring", "cufile"], default="uring")
     parser.add_argument(
         "--gds-stats",
         type=Path,
@@ -105,8 +105,8 @@ def main() -> None:
         args.backend != "orbitkv" or not args.ssd_gib
     ):
         parser.error("GPU storage controls require --backend orbitkv and --ssd-gib")
-    if args.gds_stats and args.ssd_backend != "cufile":
-        parser.error("--gds-stats requires --ssd-backend cufile")
+    if args.gds_stats and args.ssd_backend not in ("auto", "cufile"):
+        parser.error("--gds-stats requires --ssd-backend auto or cufile")
     if not 0 <= args.cache_protected_percent <= 100:
         parser.error("--cache-protected-percent must be between 0 and 100")
     if args.backend != "orbitkv" and (
@@ -257,9 +257,13 @@ def main() -> None:
                 )
                 (args.output / "gds-stats.txt").write_text(result.stdout + result.stderr)
                 result.check_returncode()
-                (args.output / "native-io.json").write_text(
-                    json.dumps(native_io_stats(result.stdout), indent=2) + "\n"
+                native = native_io_stats(result.stdout)
+                native["backend_fallbacks"] = metrics(launch.manager_url).get(
+                    "orbitkv_ssd_backend_fallbacks_total", 0
                 )
+                (args.output / "native-io.json").write_text(json.dumps(native, indent=2) + "\n")
+                if native["backend_fallbacks"]:
+                    raise RuntimeError("Native qualification rejected automatic backend fallback")
     except Exception as error:
         (args.output / "failure.json").write_text(
             json.dumps({"type": type(error).__name__, "message": str(error)}, indent=2) + "\n"

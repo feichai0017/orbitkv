@@ -267,6 +267,8 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 
 ### SSD Cache Metrics
 
+- **orbitkv_ssd_backend_fallbacks_total** (Counter) - Automatic fallback to io_uring
+  after cuFile initialization or operation failure. Logs record the reason.
 - **orbitkv_ssd_cufile_write_bytes_total** (Counter) - Physical cuFile write bytes, including padding.
 - **orbitkv_ssd_cufile_write_seconds** (Histogram) - Time in synchronous cuFile writes.
 - **orbitkv_ssd_cufile_write_failures_total** (Counter) - Failed or short GPU-backed writes.

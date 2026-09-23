@@ -69,8 +69,9 @@ Query reservations use the registered group's padded bytes and remain charged
 through preparation, result ownership, and GPU completion. Global and instance
 limits bound retained payloads; identical backing reads can be shared while
 each request keeps its own ticket and lease. See [query budgets](server.md#query-ownership-budgets).
-With the optional [cuFile SSD backend](gds.md), a demand result can own a pinned
-file extent instead of host bytes. A dedicated GPU storage worker reads through
+With [automatic SSD selection](gds.md), the Manager tries native cuFile on
+ext4/XFS and falls back to io_uring when unavailable. On the cuFile path a demand
+result can own a pinned file extent instead of host bytes. A dedicated GPU storage worker reads through
 bounded registered staging and scatters only the selected state. DRAM restores,
 and speculative preparation retain their existing paths. Complete groups can
 be written from GPU staging; fragmented groups seal in DRAM before writeback. Native GDS

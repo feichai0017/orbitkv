@@ -13,6 +13,7 @@ use std::sync::{Arc, OnceLock};
 use cudarc::driver::{CudaStream, result};
 use libloading::Library;
 
+use super::GpuIo;
 use crate::metrics::core_metrics;
 
 pub(crate) const ALIGNMENT: usize = 4096;
@@ -60,6 +61,7 @@ type Read = unsafe extern "C" fn(*mut c_void, *mut c_void, usize, i64, i64) -> i
 
 pub(crate) struct Cufile {
     _library: Library,
+    native_only: bool,
     register_file: RegisterFile,
     deregister_file: DeregisterFile,
     register_buffer: RegisterBuffer,
@@ -69,12 +71,18 @@ pub(crate) struct Cufile {
 }
 
 impl Cufile {
-    pub(crate) fn get() -> Result<Arc<Self>, String> {
+    fn get(native_only: bool) -> Result<Arc<Self>, String> {
         static DRIVER: OnceLock<Result<Arc<Cufile>, String>> = OnceLock::new();
-        DRIVER.get_or_init(|| Self::load().map(Arc::new)).clone()
+        let driver = DRIVER
+            .get_or_init(|| Self::load(native_only).map(Arc::new))
+            .clone()?;
+        if native_only && !driver.native_only {
+            return Err("cuFile was already initialized without native-only configuration".into());
+        }
+        Ok(driver)
     }
 
-    fn load() -> Result<Self, String> {
+    fn load(native_only: bool) -> Result<Self, String> {
         // SAFETY: public cuFile C ABI; the library outlives every copied symbol.
         unsafe {
             let library = Library::new("libcufile.so.0")
@@ -85,7 +93,18 @@ impl Cufile {
             let open = *library
                 .get::<unsafe extern "C" fn() -> Status>(b"cuFileDriverOpen\0")
                 .map_err(|e| e.to_string())?;
+            if native_only {
+                // cuFile parameters are staged before DriverOpen. Avoid mutating
+                // process environment after CUDA/Python worker threads exist.
+                let set = *library
+                    .get::<unsafe extern "C" fn(i32, bool) -> Status>(b"cuFileSetParameterBool\0")
+                    .map_err(|e| format!("cuFile native-only configuration unavailable: {e}"))?;
+                // CUFILE_PARAM_PROPERTIES_ALLOW_COMPAT_MODE / FORCE_COMPAT_MODE.
+                set(1, false).check("disable cuFile compatibility")?;
+                set(2, false).check("disable forced cuFile compatibility")?;
+            }
             let driver = Self {
+                native_only,
                 register_file: *library
                     .get(b"cuFileHandleRegister\0")
                     .map_err(|e| e.to_string())?,
@@ -104,7 +123,7 @@ impl Cufile {
             };
             open().check("cuFileDriverOpen")?;
             log::info!(
-                "SSD cuFile backend loaded; native GDS must be qualified with compatibility disabled"
+                "SSD cuFile backend loaded (native_only={native_only}); qualify the hardware I/O path separately"
             );
             Ok(driver)
         }
@@ -115,6 +134,7 @@ pub(crate) struct CufileFile {
     driver: Arc<Cufile>,
     handle: NonNull<c_void>,
     _file: File,
+    pub(crate) gpu_io: Arc<GpuIo>,
 }
 
 // SAFETY: cuFile's file APIs are thread-safe. The handle and fd stay live until
@@ -123,8 +143,19 @@ unsafe impl Send for CufileFile {}
 unsafe impl Sync for CufileFile {}
 
 impl CufileFile {
-    pub(crate) fn new(file: File) -> Result<Self, String> {
-        let driver = Cufile::get()?;
+    pub(crate) fn new(file: File, gpu_io: Arc<GpuIo>) -> Result<Self, String> {
+        if gpu_io.automatic {
+            let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+            // SAFETY: live descriptor and writable statfs output.
+            if unsafe { libc::fstatfs(file.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            let stat = unsafe { stat.assume_init() };
+            if !matches!(stat.f_type, libc::EXT4_SUPER_MAGIC | libc::XFS_SUPER_MAGIC) {
+                return Err("automatic cuFile selection requires an ext4 or XFS mount".into());
+            }
+        }
+        let driver = Cufile::get(gpu_io.automatic)?;
         // Initialize the complete C descriptor, including unused union bytes.
         let mut descriptor: Descriptor = unsafe { std::mem::zeroed() };
         descriptor.kind = 1;
@@ -138,6 +169,7 @@ impl CufileFile {
             driver,
             handle,
             _file: file,
+            gpu_io,
         })
     }
 }
@@ -268,7 +300,7 @@ pub(crate) struct GpuBuffer {
 
 impl GpuBuffer {
     pub(crate) fn new(stream: Arc<CudaStream>) -> Result<Self, String> {
-        let driver = Cufile::get()?;
+        let driver = Cufile::get(false)?;
         stream
             .context()
             .bind_to_thread()

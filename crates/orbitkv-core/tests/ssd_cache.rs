@@ -54,6 +54,7 @@ fn ssd_env(instance_id: &'static str) -> (TestEnv, std::path::PathBuf, tempfile:
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path.clone()],
                 capacity_bytes: SSD_CAPACITY,
                 ..SsdCacheConfig::default()
@@ -77,6 +78,7 @@ fn ssd_split_env(instance_id: &'static str) -> (TestEnv, tempfile::TempDir) {
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path],
                 capacity_bytes: SSD_CAPACITY,
                 ..SsdCacheConfig::default()
@@ -98,6 +100,7 @@ fn ssd_multi_path_env(
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![path0.clone(), path1.clone()],
                 capacity_bytes: SSD_CAPACITY,
                 shards: NonZeroUsize::new(2).unwrap(),
@@ -117,6 +120,7 @@ fn ssd_sharded_env(instance_id: &'static str) -> (TestEnv, std::path::PathBuf, t
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path.clone()],
                 capacity_bytes: SSD_CAPACITY,
                 shards: NonZeroUsize::new(4).unwrap(),
@@ -139,6 +143,7 @@ fn ssd_custom_capacity_env(
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path],
                 capacity_bytes,
                 ..SsdCacheConfig::default()
@@ -198,6 +203,7 @@ async fn selective_ssd_admission_preserves_demand_and_ignores_warming() {
             .storage(StorageConfig {
                 cache_protected_percent: 80,
                 ssd_cache_config: Some(SsdCacheConfig {
+                    backend: SsdBackend::Uring,
                     cache_paths: vec![dir.path().join("cache.bin")],
                     capacity_bytes: SSD_CAPACITY,
                     write_policy: SsdWritePolicy::Reuse,

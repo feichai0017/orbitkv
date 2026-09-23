@@ -20,6 +20,7 @@ fn cache_policy_controls_validate_protection_and_admission() {
     .unwrap();
     assert_eq!(cli.cache_protected_percent, 80);
     assert_eq!(cli.ssd_write_policy, orbitkv_core::SsdWritePolicy::Reuse);
+    assert_eq!(cli.ssd_backend, orbitkv_core::SsdBackend::Auto);
 }
 
 #[test]

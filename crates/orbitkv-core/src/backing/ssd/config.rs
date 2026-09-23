@@ -30,6 +30,8 @@ pub enum SsdWritePolicy {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum SsdBackend {
     #[default]
+    /// Try native cuFile on supported mounts; use io_uring when unavailable.
+    Auto,
     Uring,
     /// Read/write through bounded GPU staging; fragmented saves seal in DRAM.
     /// Native GDS availability depends on the deployment's cuFile configuration.
@@ -41,9 +43,10 @@ impl std::str::FromStr for SsdBackend {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "auto" => Ok(Self::Auto),
             "uring" => Ok(Self::Uring),
             "cufile" => Ok(Self::Cufile),
-            _ => Err("SSD backend must be uring or cufile".into()),
+            _ => Err("SSD backend must be auto, uring or cufile".into()),
         }
     }
 }
@@ -98,7 +101,7 @@ impl Default for SsdCacheConfig {
             prefetch_queue_depth: DEFAULT_SSD_PREFETCH_QUEUE_DEPTH,
             write_inflight: DEFAULT_SSD_WRITE_INFLIGHT,
             prefetch_inflight: DEFAULT_SSD_PREFETCH_INFLIGHT,
-            backend: SsdBackend::Uring,
+            backend: SsdBackend::Auto,
         }
     }
 }

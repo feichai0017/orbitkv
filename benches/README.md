@@ -72,8 +72,9 @@ it does not establish concurrent goodput or production tail latency.
 
 ## SSD restoration
 
-Choose `--ssd-backend uring` (default) or `cufile` for both engines. The cuFile
-backend performs complete-group GPU writes and demand restores through bounded
+Choose `--ssd-backend uring`, `auto`, or `cufile` for both engines. This benchmark
+keeps `uring` as its reproducible default; the Manager itself defaults to `auto`.
+The cuFile backend performs complete-group GPU writes and demand restores through bounded
 GPU staging; fragmented writes and preparation still use DRAM. See
 [GPU storage](../docs/gds.md) for configuration, ownership and hardware limits.
 `python -m benches.gds --help` describes the complete bare-metal acceptance

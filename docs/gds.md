@@ -1,15 +1,45 @@
 # GPU storage
 
-OrbitKV has an opt-in cuFile SSD backend. Complete state groups can be written
+OrbitKV defaults to automatic SSD backend selection when SSD caching is configured.
+Complete state groups can be written
 from registered engine GPU pages to SSD, and selected SSD state can be restored
 to those pages. Both directions use bounded, registered GPU staging.
 vLLM and SGLang share this Rust implementation and their existing cache API.
-The default remains `--ssd-backend uring`.
+`--ssd-backend auto` tries native cuFile and uses io_uring when unavailable.
 
 Calling cuFile does **not** prove native GPUDirect Storage: its compatibility
-mode performs host staging internally. The H20 container's native-mode probe
-fails at `cuFileDriverOpen` with `CU_FILE_DRIVER_NOT_INITIALIZED` (5001).
-Native GDS throughput remains unqualified.
+mode performs host staging internally. Native-mode probes in this H20 container
+have failed driver initialization (5001) or file registration (5027); automatic
+selection falls back to io_uring. Native GDS throughput remains unqualified.
+
+## Automatic selection
+
+The Manager owns this decision; engine adapters use the same cache API.
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` (default) | Try cuFile on ext4/XFS with sufficient alignment capacity; disable both allow/force compatibility through NVIDIA's parameter API before driver initialization. Missing API/library, driver, mount or file-registration support selects io_uring. |
+| `uring` | Use host staging; never load cuFile. Useful as a reproducible control. |
+| `cufile` | Require cuFile initialization and follow NVIDIA configuration, including explicitly enabled CPU compatibility for functional development. Operation failures remain errors. |
+
+Auto selection is currently cache-wide: every configured shard must register;
+otherwise the whole SSD cache uses io_uring. It requires cuFile's parameter API
+to enforce the native-only initialization policy. An already initialized
+compatibility-capable driver is not accepted as native evidence. Other filesystem
+types need separate qualification and an explicit `cufile` selection.
+
+On a GPU storage buffer or I/O failure in `auto`, the Manager stops admitting
+new cuFile work and switches subsequent operations to io_uring until restart.
+Submitted work retains its file/extent/page ownership and completes or reports
+its error; changing the backend does not revoke DMA or silently replay an
+already submitted restore. The failing operation retains normal error semantics.
+Logs identify the selection and fallback reason; `orbitkv_ssd_backend_fallbacks_total`
+counts the transition. Per-mount/per-device isolation, retries after a cooldown,
+and online latency-based selection remain future work.
+
+This is capability and failure adaptation. Successful initialization does not
+establish that cuFile beats io_uring for a workload, or replace native-path
+statistics. SSD paths/capacity must still be configured explicitly.
 
 ## Data flow and ownership
 
@@ -20,7 +50,7 @@ Native GDS throughput remains unqualified.
 | Speculative prepare/warmup | SSD → pinned DRAM; GPU restore after consumption |
 | Complete state group in one Publish | Engine GPU → registered GPU staging → SSD; also retain a hot DRAM copy |
 | Fragmented/multi-writer Publish | Engine GPU → pinned DRAM; seal complete group → io_uring → SSD |
-| Remote recovery | Mooncake → pinned DRAM → engine GPU pages |
+| Shared-cache remote recovery | Mooncake → pinned DRAM → engine GPU pages |
 
 Candidate discovery remains metadata-only. A selected demand query acquires an
 SSD extent lease instead of allocating and reading a host block. The compiled
@@ -64,13 +94,61 @@ active read or write tries the other shards, then drops the write if none has
 space. It does not block the directory. SSD remains a best-effort cache recreated
 at Manager startup.
 
+## Copy avoidance and remote storage
+
+Optimize request completion time and retained resources alongside copy count.
+The native cuFile path avoids host staging for SSD demand reads. OrbitKV still
+uses a registered GPU staging buffer and D2D scatter/gather to handle engine
+layouts and alignment. Direct I/O into registered engine pages is a separate,
+unimplemented optimization: it needs compatible offsets/sizes, reusable memory
+registration, engine-page lifetime protection and a comparison against coalesced
+staging. Many small direct operations can cost more than a larger staged read.
+
+| Source and destination | Relevant mechanism | OrbitKV status |
+| --- | --- | --- |
+| Local SSD ↔ GPU | GDS/cuFile | Bounded GPU staging implemented; direct engine-page I/O pending |
+| Remote shared-cache memory ↔ GPU | GPUDirect RDMA through a transport such as Mooncake TE | Manager recovery lands in requester DRAM before GPU restore; direct engine destinations are pending |
+| Prefill GPU → decode GPU | Mooncake TE memory transport; GPUDirect RDMA on supported hardware | Experimental vLLM P/D connector writes engine GPU pages; GPU and cross-host qualification pending |
+| Remote storage filesystem or mounted NVMe-oF ↔ GPU | GDS with a supported filesystem/network/storage stack | Separate deployment and qualification; not enabled by the current peer-memory path |
+
+The pinned Mooncake TE includes an NVMe-oF transport that registers buffers with
+cuFile and submits cuFile batch I/O. This is distinct from its RDMA memory
+transport. The OrbitKV Manager registers its pinned DRAM pool and fetches remote
+state into that pool; using Mooncake does not implicitly enable its storage
+transport. Remote GDS requires an accessible storage namespace and a qualified
+filesystem, network and GPU path. See the pinned
+[NVMe-oF implementation](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/src/transport/nvmeof_transport/nvmeof_transport.cpp).
+
+Direct placement in engine HBM can remove an extra GPU staging allocation and
+D2D scatter when source and destination layouts match. The KV state still
+occupies HBM, and destination pages must remain reserved until completion,
+including after cancellation. CUDA IPC only shares access to an allocation;
+sharing a handle does not itself move data. The
+[experimental vLLM P/D connector](pd-mooncake-push.md) already registers engine
+GPU tensors and submits remote writes, but remains outside the qualified shared
+cache path. Direct placement in that shared-cache path is a follow-up to
+qualify before adding remote SSD pools.
+
+GDS does not schedule requests or select reusable model state. Recovery planning
+selects the required ranges; the storage/transfer owners choose a viable data
+path and keep leases until it completes. A future request-level selector should
+measure queue delay, registration cost, I/O count, bytes/alignment amplification,
+GPU scatter cost, source-page hold time and deadline. Use bounded concurrency,
+read priority and hysteresis before changing paths based on latency. Those
+policies require matched native hardware measurements; they are not inferred
+from successful driver loading.
+
+See [NVIDIA's buffering guidance](https://docs.nvidia.com/gpudirect-storage/best-practices-guide/index.html)
+and [Mooncake's transport design](https://github.com/kvcache-ai/Mooncake/blob/main/docs/source/design/transfer-engine/index.md).
+
 ## Enable and qualify
 
 Install NVIDIA's GDS user-space library on the Manager and provide a supported
 storage mount and compatible host driver/kernel configuration. Ordinary io_uring
-deployments do not load cuFile. Library/file registration errors fail startup;
-GPU buffer registration errors fail the operation. There is no silent switch
-to io_uring on a cuFile error.
+deployments do not load cuFile. Explicit `cufile` selection fails startup on
+library/file registration errors; GPU buffer registration errors fail the
+operation. Default `auto` instead logs initialization fallback and disables new
+cuFile admission after an operation failure as described above.
 
 For native qualification, explicitly disallow compatibility mode:
 
@@ -145,20 +223,24 @@ both cuFile environment values to `false` for native-path qualification.
 ## Recorded functional qualification
 
 Final checks on 2026-09-24 used one H20, cuFile 1.16.1, vLLM 0.29.0 and
-SGLang 0.5.20. **CPU compatibility mode was forced** on this container's
-overlay mount. These results establish correctness, not native GDS throughput.
+SGLang 0.5.20. Explicit cuFile runs **forced CPU compatibility mode** on this
+container's overlay mount. Default `auto` runs used its `/tmp` ext4 mount and
+selected io_uring after cuFile file registration failed. These results establish
+correctness, not native GDS throughput.
 
 | Gate | Final result |
 | --- | --- |
-| Rust cuFile GPU layouts, checkpoints, pinning and failure recovery | 5 passed |
+| Rust GPU layouts, checkpoints, pinning, failure recovery and auto fallback | 6 passed |
 | Manager process faults, cancellation and resource ownership | 16 passed |
-| vLLM / Qwen3-8B / SSD | 6 passed; 1 recurrent-only check skipped |
-| SGLang / Qwen3-8B / SSD | Passed |
+| vLLM / Qwen3-8B / SSD | 6 passed; 1 recurrent-only check skipped, with both explicit `cufile` and default `auto` |
+| SGLang / Qwen3-8B / SSD | Passed with both explicit `cufile` and default `auto` |
 | vLLM / Qwen3.8-27B-FP8 / SSD | 7 passed |
 | SGLang / Qwen3.8-27B-FP8 / SSD | Passed |
 
-Both models' serving checks require cuFile writes and new reads after DRAM
-eviction and engine restart. Qwen3.8 also exercises full-attention and GDN
+Both models' explicit cuFile checks require cuFile writes and new reads after
+DRAM eviction and engine restart. Default-auto checks require new SSD reads
+through the selected backend after the same eviction and restart sequence.
+Qwen3.8 also exercises full-attention and GDN
 conv/recurrent state in the same request. Reproduce it with the
 [Qwen3.8 engine settings](models.md#qwen38-on-h20) and `--ssd-backend cufile`.
 
@@ -196,13 +278,13 @@ Set `--gds-tools` to the directory containing NVIDIA's `gdscheck.py`, `gdsio` an
 2. Exact GPU-byte recovery, pinning, fragmented saves and large checkpoints.
 3. Real-process faults including stalled/failed cuFile writes and Manager death.
 4. vLLM and SGLang Qwen3 correctness across engine restart and SSD recovery.
-5. Matched io_uring/cuFile serial and sustained mixed-prefix workloads, with
+5. Matched io_uring/auto/cuFile serial and sustained mixed-prefix workloads, with
    the same seed, capacities and a working set larger than both DRAM and HBM KV.
 
-Every cuFile benchmark captures `gds_stats -p <manager-pid> -l 3` while the
+Every auto/cuFile benchmark captures `gds_stats -p <manager-pid> -l 3` while the
 Manager is alive. Success requires positive reads **and** writes and zero
 POSIX, unaligned, sparse/inline or failed operations. Missing/unknown statistics
-fail the gate. Ordinary io_uring work is not counted as native I/O. The final
+fail the gate, as does any automatic backend fallback. Ordinary io_uring work is not counted as native I/O. The final
 `qualification.json` records all stage exits; per-run summaries retain TTFT,
 throughput, storage counters and whole-workload Manager CPU usage. Linux process
 I/O accounting is recorded separately from cuFile GPU I/O bytes. Raw logs remain
@@ -218,6 +300,7 @@ functional passes do not satisfy it.
   physical bytes, including alignment.
 - `orbitkv_ssd_cufile_read_seconds` / `orbitkv_ssd_cufile_write_seconds`: synchronous I/O duration.
 - `orbitkv_ssd_cufile_read_failures_total` / `orbitkv_ssd_cufile_write_failures_total`: failed or short I/O.
+- `orbitkv_ssd_backend_fallbacks_total`: transitions from automatic cuFile admission to io_uring.
 - `orbitkv_ssd_read_pinned_bytes`: SSD bytes held by restore leases.
 - `orbitkv_ssd_gpu_staging_bytes`: allocated registered GPU staging memory.
 - `orbitkv_ssd_pinned_write_skips_total`: reservations rejected to protect reads
@@ -228,7 +311,7 @@ cuFile demand mode, disk reading occurs during GPU restoration, not query
 preparation; compare end-to-end TTFT and storage counters rather than treating
 preparation time alone as an improvement.
 
-Before changing defaults, compare io_uring and **verified native** GDS on the same
+Before claiming a performance improvement, compare io_uring and **verified native** GDS on the same
 NVMe mount, model and working set larger than DRAM. Measure TTFT, throughput, CPU
 use, physical/read amplification, staging budgets and lease drain. Keep
 speculative preparation off in the first comparison. Automatic cost-based path
