@@ -10,6 +10,8 @@ from contextlib import contextmanager
 
 import requests
 
+REMOTE_STAGES = ("discovery_rpc", "authorization", "allocation", "read", "rebuild", "release")
+
 
 def delta(before: dict, after: dict) -> dict:
     return {
@@ -111,7 +113,7 @@ def metrics(url: str | None) -> dict[str, float]:
         if math.isfinite(number):
             values[name] = values.get(name, 0) + number
             if name.startswith("orbitkv_remote_stage_duration_seconds_"):
-                for stage in ("discovery_rpc", "authorization", "allocation", "read", "rebuild"):
+                for stage in REMOTE_STAGES:
                     if f'stage="{stage}"' in series:
                         key = f"{name}_{stage}"
                         values[key] = values.get(key, 0) + number

@@ -66,7 +66,8 @@ The source must publish new bytes. `POST /cache/sync` waits for already submitte
 saves and acknowledged catalog residency, with a bounded error when synchronization
 cannot finish. Each consumer request must increase both Mooncake READ and GPU
 restore bytes, match the cold source output, and drain query, source-transfer
-and I/O reservations. A response without these counters does not pass as a
+and I/O reservations, including requester completion records awaiting a source
+acknowledgement. A response without these counters does not pass as a
 remote hit. This gate proves recovery, not throughput superiority.
 
 ## Restart and ownership gates

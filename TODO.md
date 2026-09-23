@@ -261,8 +261,10 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   bounded subscriptions; qualify partitions and coordinator/catalog failure.
 - [ ] D3: support source-local SSD staging and measured source selection without
   recursive peer fetches or unbounded staging.
-- [ ] Measure discovery RPCs separately from background synchronization, source
-  authorization and etcd activity; record index bytes and recovery lag.
+- [x] Measure cold discovery RPCs and source authorization, READ and completion
+  stages independently in the shared-cache serving gate.
+- [ ] Measure background synchronization and etcd traffic, index bytes and recovery
+  lag under multi-host load and failure.
 
 ## M3 — routing and replica planning
 

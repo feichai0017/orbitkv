@@ -91,6 +91,7 @@ fn uncertain_transfer_states_drain_all_tasks_before_returning() {
         "deadline",
         "status-error",
         "native-timeout",
+        "native-failure",
         "partial-submit",
     ] {
         let rounds = std::cell::Cell::new(0);
@@ -122,10 +123,10 @@ fn uncertain_transfer_states_drain_all_tasks_before_returning() {
                         });
                     }
                     return Ok(native::TransferStatus {
-                        status: if mode == "native-timeout" {
-                            6
-                        } else {
-                            STATUS_PENDING
+                        status: match mode {
+                            "native-timeout" => 5,
+                            "native-failure" => 6,
+                            _ => STATUS_PENDING,
                         },
                         transferred_bytes: 0,
                     });

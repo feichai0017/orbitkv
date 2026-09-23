@@ -44,7 +44,8 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   timelines, and reproduce the published latency and throughput measurements.
 - **Experimental shared cache.** Embedded catalog shards locate peer replicas,
   Mooncake Transfer Engine moves bytes, and etcd tracks cluster membership.
-  Source allocations remain budgeted through timeout; bounded completion records retry lost release acknowledgements.
+  Source allocations remain budgeted through timeout; bounded completion records
+  retry lost release acknowledgements.
 
 See [supported deployments](docs/deployment.md) and
 [model compatibility](docs/hybrid-recovery.md) before selecting a topology.
