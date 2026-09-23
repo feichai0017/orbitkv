@@ -68,6 +68,12 @@ def main() -> None:
     )
     parser.add_argument("--output-tokens", type=int, default=16)
     parser.add_argument("--gpu-tokens", type=int, default=16384)
+    parser.add_argument(
+        "--prefill-tokens",
+        type=int,
+        default=8192,
+        help="Engine prefill token batch limit; independent of total GPU KV capacity",
+    )
     parser.add_argument("--host-gib", type=int, default=16)
     parser.add_argument(
         "--ssd-gib",
@@ -136,6 +142,8 @@ def main() -> None:
         parser.error(
             "use page-aligned GPU capacity, positive host capacity, and 1–64 output tokens"
         )
+    if args.prefill_tokens < 64 or args.prefill_tokens % 64:
+        parser.error("--prefill-tokens must be a positive multiple of 64")
     if not math.isfinite(args.settle_seconds) or args.settle_seconds < 0:
         parser.error("--settle-seconds must be finite and nonnegative")
     if args.workload == "sustained":

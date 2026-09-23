@@ -107,8 +107,9 @@ ordinary demand, unowned warming, owned preparation and stopping controls in
 separate runs. Record TTFT, throughput, read bytes, speculative/total query
 peaks, useful/unused speculative reads and resource drain. The existing
 `orbitkv_warmup_*` physical-page counters cover both forms of speculation;
-`query_reserved_bytes` distinguishes `preloading` and `prepared` from ordinary
-`preparing`, `ready` and `restoring`. Tracing adds `prepared_read_ms`,
+`orbitkv_query_speculative_reserved_bytes` measures the speculative budget;
+`orbitkv_query_reserved_bytes_by_phase` distinguishes `preloading` and `prepared`
+from ordinary `preparing`, `ready` and `restoring`. Tracing adds `prepared_read_ms`,
 `read_stopped` and `read_deadline` observations. Never interpret a prepared-page
 hit as evidence of causal latency savings. Default activation requires repeated
 paired measurements, including order reversal, with bounded cleanup and no

@@ -128,9 +128,13 @@ impl QueryBudget {
             return QueryAdmission::Busy;
         }
         usage.total += bytes;
+        core_metrics().query_reserved_bytes.add(bytes as i64, &[]);
         *usage.instances.entry(instance.into()).or_default() += bytes;
         let phase = if warming {
             usage.warming += bytes;
+            core_metrics()
+                .query_speculative_reserved_bytes
+                .add(bytes as i64, &[]);
             *usage.warming_instances.entry(instance.into()).or_default() += bytes;
             if mode == QueryMode::Prepare {
                 Phase::Preloading
@@ -152,7 +156,7 @@ impl QueryBudget {
 
 fn account(bytes: i64, phase: Phase) {
     core_metrics()
-        .query_reserved_bytes
+        .query_reserved_bytes_by_phase
         .add(bytes, &[KeyValue::new("phase", phase.label())]);
 }
 
@@ -217,6 +221,9 @@ impl Reservation {
     fn release_bytes(&self, bytes: u64, phase: Phase) {
         let mut usage = self.budget.usage.lock();
         usage.total -= bytes;
+        core_metrics()
+            .query_reserved_bytes
+            .add(-(bytes as i64), &[]);
         if phase.speculative() {
             release_speculative(&mut usage, &self.instance, bytes);
         }
@@ -239,6 +246,9 @@ impl Drop for Reservation {
 
 fn release_speculative(usage: &mut Usage, instance: &str, bytes: u64) {
     usage.warming -= bytes;
+    core_metrics()
+        .query_speculative_reserved_bytes
+        .add(-(bytes as i64), &[]);
     if let Some(used) = usage.warming_instances.get_mut(instance) {
         *used -= bytes;
         if *used == 0 {

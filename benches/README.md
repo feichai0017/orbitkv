@@ -168,6 +168,9 @@ Qwen3-8B BF16 needs about 27 GiB for these prepared prefixes, exceeding the
 9 GiB GPU KV budget plus 4 GiB Manager DRAM. Sustained runs size the engine's
 per-request context limit from the largest prompt plus 64 output tokens;
 total GPU cache capacity can exceed one request's model context limit.
+Use `--prefill-tokens` (default 8192) to compare compute scheduling quanta
+separately from cache changes; it sets vLLM's `--max-num-batched-tokens` and
+SGLang's `--chunked-prefill-size`. Keep it fixed in revision comparisons.
 Keep `--max-requests` high enough to reach the configured duration. Compare
 identical budgets, request seeds and read controls across revisions, and retain
 both read and write counters along with resource-drain evidence.
@@ -191,6 +194,9 @@ TTFT and completion counts, not a measured inter-token arrival distribution.
 Output differences from serial preparation are retained as diagnostics: greedy
 sampling does not establish batch-invariant correctness. Use the engine E2E
 gates and native/deterministic controls to investigate differences.
+Separate cold/reused-prefix TTFT P95 values expose scheduling tradeoffs. A
+reused-prefix choice may still miss the cache; these fields are not per-tier
+hit latencies.
 
 The [sustained report](../docs/sustained-performance.md) records fresh-service
 native/DRAM/SSD controls for both engines and the vLLM admission-stall regression.

@@ -101,7 +101,7 @@ layer wait. Python monotonic timestamps may be compared within one process.
 Manager `elapsed_us` measures its own preparation interval. Wall timestamps
 help inspect logs but are not a cross-host deadline or latency clock.
 
-`orbitkv_query_reserved_bytes{phase="warming"}` separates warmup reservations
+`orbitkv_query_reserved_bytes_by_phase{phase="warming"}` separates warmup reservations
 from preparing/ready/restoring demand. A sampled peak is a lower bound. Existing
 cache-tier query counters include warmup probes; use actual SSD/TE/H2D byte
 counters to establish transfers rather than interpreting probe counts as

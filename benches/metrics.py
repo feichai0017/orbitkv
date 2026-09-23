@@ -41,6 +41,7 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
                     if key in (
                         "orbitkv_pool_used_bytes",
                         "orbitkv_warmup_pending_bytes",
+                        "orbitkv_query_speculative_reserved_bytes",
                     ) or key.startswith("orbitkv_query_reserved_bytes"):
                         peaks[key] = max(value, peaks.get(key, 0))
             except Exception as error:
@@ -117,13 +118,8 @@ def metrics(url: str | None) -> dict[str, float]:
                     if f'stage="{stage}"' in series:
                         key = f"{name}_{stage}"
                         values[key] = values.get(key, 0) + number
-            if name == "orbitkv_query_reserved_bytes" and 'phase="warming"' in series:
+            if name == "orbitkv_query_reserved_bytes_by_phase" and 'phase="warming"' in series:
                 key = "orbitkv_query_reserved_bytes_warming"
-                values[key] = values.get(key, 0) + number
-            if name == "orbitkv_query_reserved_bytes" and any(
-                f'phase="{phase}"' in series for phase in ("warming", "preloading", "prepared")
-            ):
-                key = "orbitkv_query_reserved_bytes_speculative"
                 values[key] = values.get(key, 0) + number
             if name == "orbitkv_warmup_wait_byte_seconds_total":
                 for outcome in ("restored", "unused"):

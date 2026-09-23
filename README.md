@@ -116,7 +116,7 @@ Reports include configurations, final results and reproduction commands:
 | Report | Coverage |
 | --- | --- |
 | [Single-node comparisons](docs/single-node-performance.md) | Native HBM, engine CPU caches, OrbitKV, LMCache and FlexKV compatibility |
-| [SSD recovery](docs/ssd-performance.md) | Forced DRAM eviction and restore readiness |
+| [SSD recovery](docs/ssd-performance.md) | Restore readiness and sustained read/write pressure beyond DRAM capacity |
 | [Ordinary recovery](docs/recovery-performance.md) | Qwen3-8B host reads, GPU transfers, notification delays and resource drain |
 | [Request preparation](docs/request-preparation.md) | Repeated preparation controls, DRAM recovery and read stopping policies |
 | [Shared-cache qualification](docs/shared-cache-qualification.md) | Independent replicas, remote GPU restoration, catalog replay and restart gates |

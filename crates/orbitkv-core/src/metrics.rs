@@ -31,6 +31,8 @@ pub(crate) struct CoreMetrics {
     pub pool_alloc_failures: Counter<u64>,
 
     pub query_reserved_bytes: UpDownCounter<i64>,
+    pub query_reserved_bytes_by_phase: UpDownCounter<i64>,
+    pub query_speculative_reserved_bytes: UpDownCounter<i64>,
     pub query_budget_waits: Counter<u64>,
     pub query_budget_bypasses: Counter<u64>,
     pub query_coalesced_reads: Counter<u64>,
@@ -228,6 +230,16 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
         CoreMetrics {
             query_reserved_bytes: meter
                 .i64_up_down_counter("orbitkv_query_reserved_bytes")
+                .with_unit("bytes")
+                .with_description("Total query-owned bytes, updated under the admission lock; shared pages count per owner")
+                .build(),
+            query_speculative_reserved_bytes: meter
+                .i64_up_down_counter("orbitkv_query_speculative_reserved_bytes")
+                .with_unit("bytes")
+                .with_description("Speculative query-owned bytes, updated under the admission lock")
+                .build(),
+            query_reserved_bytes_by_phase: meter
+                .i64_up_down_counter("orbitkv_query_reserved_bytes_by_phase")
                 .with_unit("bytes")
                 .with_description("Query-owned bytes by warming, preloading, prepared, preparing, ready, or restoring phase; shared pages count per owner")
                 .build(),
