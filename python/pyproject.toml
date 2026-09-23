@@ -31,7 +31,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/feichai0017/orbitkv"
+Homepage = "https://feichai0017.github.io/orbitkv/"
+Documentation = "https://feichai0017.github.io/orbitkv/docs/"
 Repository = "https://github.com/feichai0017/orbitkv"
 Issues = "https://github.com/feichai0017/orbitkv/issues"
 
@@ -63,7 +64,7 @@ python-source = "."
 python-packages = ["orbitkv"]
 exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**"]
 strip = true
-# Automatically include binaries defined in Cargo.toml [[bin]] sections
+# Runtime files staged by scripts/build-wheel.sh.
 include = [
     "orbitkv/orbitkv-cache-manager-py",
     "orbitkv/libtransfer_engine.so",

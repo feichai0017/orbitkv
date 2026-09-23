@@ -218,13 +218,13 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             query_reserved_bytes: meter
                 .i64_up_down_counter("orbitkv_query_reserved_bytes")
                 .with_unit("bytes")
-                .with_description("Query-owned bytes by warming, preparing, ready, or restoring phase; shared pages count per owner")
+                .with_description("Query-owned bytes by warming, preloading, prepared, preparing, ready, or restoring phase; shared pages count per owner")
                 .build(),
             query_budget_waits: meter.u64_counter("orbitkv_query_budget_waits").build(),
             query_budget_bypasses: meter.u64_counter("orbitkv_query_budget_bypasses").build(),
             query_coalesced_reads: meter.u64_counter("orbitkv_query_coalesced_reads").build(),
             warmup_prepared_bytes: meter.u64_counter("orbitkv_warmup_prepared_bytes")
-                .with_description("Unique page footprints read by a warmup initializer; DRAM hits and joined demand reads excluded")
+                .with_description("Unique page footprints read by a speculative initializer; DRAM hits and joined demand reads excluded")
                 .build(),
             warmup_restored_bytes: meter.u64_counter("orbitkv_warmup_restored_bytes")
                 .with_description("Warmup page footprints contributing to at least one successful local H2D, counted once per physical read")

@@ -19,6 +19,7 @@ mod backing;
 mod block;
 mod cache;
 mod gpu_worker;
+pub use gpu_worker::LoadOutcome;
 mod instance;
 mod internode;
 mod layout;
@@ -734,7 +735,7 @@ impl OrbitKVEngine {
         instance_id: &str,
         group_id: u32,
         blocks: usize,
-        warming: bool,
+        mode: QueryMode,
     ) -> Result<QueryAdmission, EngineError> {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
@@ -744,7 +745,7 @@ impl OrbitKVEngine {
             .ok_or_else(|| EngineError::InvalidArgument("query bytes overflow".into()))?;
         Ok(self
             .query_budget
-            .reserve(instance_id, &topology.cache_namespace, bytes, warming))
+            .reserve(instance_id, &topology.cache_namespace, bytes, mode))
     }
 
     /// Move preparation ownership into the result lease and then GPU consumers.
@@ -779,6 +780,11 @@ impl OrbitKVEngine {
     pub fn release_query_session(&self, session: u64) {
         self.query_leases
             .release_owner(|owner| owner.session == session);
+    }
+
+    /// Move a prepared lease into foreground ownership without releasing bytes.
+    pub fn claim_query(&self, lease: &QueryLeaseId) {
+        self.query_leases.claim(lease);
     }
 
     pub fn cancel_query(&self, owner: QueryOwner) {
@@ -840,8 +846,8 @@ impl OrbitKVEngine {
 
     /// In-process variant of [`Self::batch_load_kv_blocks_multi_layer`]: instead
     /// of a caller-managed shared-memory `LoadState`, it returns a oneshot
-    /// receiver that resolves when the GPU worker finishes the load (`Ok`) or it
-    /// fails (`Err`). Poll it with `try_recv` to keep admission non-blocking, or
+    /// receiver carrying the result and terminal GPU-worker timestamp. Poll it
+    /// with `try_recv` to keep admission non-blocking, or
     /// await it. For in-process Rust embedders that register raw device pointers
     /// and have no second process to coordinate a `LoadState` with.
     ///
@@ -854,7 +860,7 @@ impl OrbitKVEngine {
         device_id: i32,
         layer_groups: &[Vec<&str>],
         loads: &[(QueryLeaseId, Vec<Vec<Option<usize>>>)],
-    ) -> Result<oneshot::Receiver<Result<(), EngineError>>, EngineError> {
+    ) -> Result<oneshot::Receiver<LoadOutcome>, EngineError> {
         let (reply, rx) = oneshot::channel();
         self.batch_load_kv_blocks_multi_layer_inner(
             instance_id,

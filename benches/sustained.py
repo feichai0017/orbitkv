@@ -182,10 +182,10 @@ def validate(args: dict, samples: list[dict], windows: list[dict]) -> None:
         query_limit = args.get("query_budget_gib")
         if (
             query_limit is not None
-            and window["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes_warming", 0)
+            and window["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes_speculative", 0)
             > query_limit * 1024**3 / 4
         ):
-            raise ValueError("Warmup reservations exceeded their quarter-budget limit")
+            raise ValueError("Speculative reservations exceeded their quarter-budget limit")
         for row in rows:
             for field in (
                 "ttft_ms",
@@ -261,6 +261,9 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                 "sampled_peak_warmup_bytes": window["sampled_peak_bytes"].get(
                     "orbitkv_query_reserved_bytes_warming", 0
                 ),
+                "sampled_peak_speculative_bytes": window["sampled_peak_bytes"].get(
+                    "orbitkv_query_reserved_bytes_speculative", 0
+                ),
                 "sampled_peak_warmup_pending_bytes": window["sampled_peak_bytes"].get(
                     "orbitkv_warmup_pending_bytes", 0
                 ),
@@ -288,6 +291,8 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                         "orbitkv_warmup_wait_byte_seconds_total_unused",
                         "orbitkv_load_duration_seconds_sum",
                         "orbitkv_load_duration_seconds_count",
+                        "orbitkv_ssd_prefetch_duration_seconds_sum",
+                        "orbitkv_ssd_prefetch_duration_seconds_count",
                         "orbitkv_save_duration_seconds_sum",
                         "orbitkv_save_duration_seconds_count",
                     )

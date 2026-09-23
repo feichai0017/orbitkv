@@ -14,7 +14,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 
-def check_wheel(path: Path, variant: str) -> None:
+def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
     expected_name = "orbitkv-llm-cu13" if variant == "cu13" else "orbitkv-llm"
     required_files = {
         "orbitkv/__init__.py",
@@ -84,6 +84,8 @@ def check_wheel(path: Path, variant: str) -> None:
         metadata = email.message_from_bytes(wheel.read(metadata_files[0]))
         if metadata["Name"] != expected_name:
             raise ValueError(f"expected {expected_name}, got {metadata['Name']}")
+        if version is not None and metadata["Version"] != version:
+            raise ValueError(f"expected version {version}, got {metadata['Version']}")
         extras = set(metadata.get_all("Provides-Extra", []))
         if extras != {"vllm", "sglang"}:
             raise ValueError(f"wheel should expose only engine extras: {extras}")
@@ -167,10 +169,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
     parser.add_argument("--variant", required=True, choices=("cu12", "cu13"))
+    parser.add_argument("--version", help="Expected release version")
     parser.add_argument("--install-smoke", action="store_true")
     args = parser.parse_args()
     try:
-        check_wheel(args.wheel, args.variant)
+        check_wheel(args.wheel, args.variant, args.version)
         if args.install_smoke:
             check_install(args.wheel, args.variant)
     except (OSError, subprocess.CalledProcessError, ValueError) as error:

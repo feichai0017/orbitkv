@@ -10,8 +10,8 @@ DRAM/SSD replicas and transfer leases. SGLang and vLLM hybrid layouts share
 compiled page demand and recovery validation; general lifetime analysis,
 retention and joint placement/routing policy remain future work.
 
-The data plane is derived from PegaFlow 0.24.5. The vLLM connector and SGLang
-direct GPU linker have passed single-node GPU recovery tests.
+The vLLM connector and SGLang direct GPU linker share the same Rust cache client
+and have passed single-node GPU recovery tests.
 
 ## Process topology
 

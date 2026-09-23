@@ -124,6 +124,11 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "backend_configuration": launch.backend_configuration,
         "library_path": launch.env.get("LD_LIBRARY_PATH", ""),
         "python_path": launch.env["PYTHONPATH"],
+        "compiler_cache": {
+            name: launch.env[name]
+            for name in ("VLLM_CACHE_ROOT", "TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR")
+            if name in launch.env
+        },
         "git_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),

@@ -1,6 +1,10 @@
 [files]
 # Captured model text, request IDs and source diffs must remain verbatim.
-extend-exclude = ["benches/results/*.csv", "benches/results/*.json"]
+extend-exclude = [
+  "benches/results/**/*.csv",
+  "benches/results/**/*.json",
+  "benches/results/**/*.jsonl",
+]
 
 [default.extend-words]
 # Rust std library path (std::f64::consts)

@@ -111,6 +111,7 @@ async fn hybrid_groups_load_to_distinct_block_ids() {
     completion
         .await
         .expect("load worker must reply")
+        .result
         .expect("load hybrid groups");
 
     let mut full_expected = vec![0; 4 * 1024];

@@ -1,0 +1,17 @@
+engine,case,concurrency,pattern,phase,n,ttft_p50_ms,ttft_p95_ms,ttft_p99_ms,output_tokens_per_second,decode_ms_per_token_p50,output_mismatches,ssd_mib_per_request,h2d_mib,peak_query_mib,peak_speculative_mib,final_query_bytes
+vllm,dram,1,shared,cold,3,126.192,442.95,471.106,48.002,6.022,0,0.0,0.0,0.0,0.0,0
+vllm,dram,1,shared,after_pressure,3,28.19,41.631,42.826,128.895,6.005,1,0.0,864.0,0.0,0.0,0
+vllm,dram,1,mixed,cold,3,120.852,443.006,471.642,48.282,6.027,0,0.0,0.0,0.0,0.0,0
+vllm,dram,1,mixed,after_pressure,3,25.21,36.17,37.145,133.33,6.007,0,0.0,864.0,0.0,0.0,0
+vllm,dram,4,shared,cold,12,172.077,515.317,515.578,165.616,6.405,0,0.0,0.0,0.0,0.0,0
+vllm,dram,4,shared,after_pressure,12,104.502,184.554,195.703,262.399,6.342,0,0.0,945.0,1728.0,0.0,0
+vllm,dram,4,mixed,cold,12,1046.783,1163.022,1165.362,50.31,14.814,0,0.0,0.0,576.0,0.0,0
+vllm,dram,4,mixed,after_pressure,12,92.885,153.761,159.691,258.411,6.605,0,0.0,4320.0,1296.0,0.0,0
+sglang,dram,1,shared,cold,3,124.769,439.505,467.481,48.627,5.865,0,0.0,0.0,0.0,0.0,0
+sglang,dram,1,shared,after_pressure,3,42.987,46.517,46.831,122.101,5.837,0,0.0,837.0,0.0,0.0,0
+sglang,dram,1,mixed,cold,3,118.843,439.25,467.731,48.895,5.863,0,0.0,0.0,0.0,0.0,0
+sglang,dram,1,mixed,after_pressure,3,35.846,44.646,45.429,125.986,5.823,0,0.0,837.0,0.0,0.0,0
+sglang,dram,4,shared,cold,12,455.988,1427.041,1427.815,72.046,6.732,0,0.0,0.0,135.0,0.0,0
+sglang,dram,4,shared,after_pressure,12,73.755,83.334,83.387,344.924,6.78,0,0.0,837.0,0.0,0.0,0
+sglang,dram,4,mixed,cold,12,1157.069,1165.14,1166.247,50.076,7.836,0,0.0,0.0,135.0,0.0,0
+sglang,dram,4,mixed,after_pressure,12,104.287,106.749,106.993,289.894,7.578,1,0.0,4212.0,702.0,0.0,0

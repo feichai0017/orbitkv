@@ -4,8 +4,8 @@ This file provides guidance for agents working in the OrbitKV repository.
 
 ## Project Overview
 
-OrbitKV is a framework-neutral state cache and physical-planning system for
-LLM inference. The single-node data plane is validated with vLLM `0.29.0`
+OrbitKV is a framework-neutral state cache with compiled recovery requirements
+for LLM inference; general physical planning remains future work. The single-node data plane is validated with vLLM `0.29.0`
 and SGLang `0.5.20`; deeper RadixAttention integration is still planned.
 
 - Single-node KV cache offloading between GPU and host memory
@@ -218,3 +218,4 @@ there is no standalone directory binary. See `docs/p2p.md`.
 - Create a `feat/`, `fix/`, `chore/`, `refactor/`, `style/`, or `ci/` branch first
 - We use Commitizen commit message format
 - Use `cz c` when creating commits interactively
+- Keep PR descriptions concise. Commit final benchmark summaries and reproduction instructions; keep raw traces, test stdout and intermediate results in ignored `benches/results/runs/` or CI artifacts.

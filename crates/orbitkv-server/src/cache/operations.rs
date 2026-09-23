@@ -1,28 +1,22 @@
 use std::sync::{Arc, Mutex};
 
+use super::read::ReadControl;
 use crate::metric::hll::MultiWindowHllTracker;
 use orbitkv_core::QueryLeaseId;
 use orbitkv_core::{
-    EngineError, LayerSave, OrbitKVEngine, QueryMode, QueryOwner, QueryReservation, QueryResult,
+    EngineError, LayerSave, OrbitKVEngine, QueryMode, QueryOwner, QueryReservation,
 };
 use thiserror::Error;
 
 fn trace_query(stage: &str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
-    static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
-        std::env::var("ORBITKV_TRACE_TRANSFERS").is_ok_and(|value| value == "1")
+    crate::metric::timeline::record(stage, || {
+        serde_json::json!({
+            "request_id": input.request_id, "instance_id": input.instance_id,
+            "group_id": input.group_id, "warmup": input.warmup,
+            "prepare": input.prepare,
+            "elapsed_us": elapsed_us, "hit_blocks": hit_blocks,
+        })
     });
-    if *ENABLED {
-        log::info!(
-            "cache_timeline {}",
-            serde_json::json!({
-                "stage": stage, "request_id": input.request_id, "instance_id": input.instance_id,
-                "warmup": input.warmup, "elapsed_us": elapsed_us, "hit_blocks": hit_blocks,
-                "pid": std::process::id(),
-                "at_unix_ns": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default().as_nanos() as u64,
-            })
-        );
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -35,6 +29,8 @@ pub(crate) struct QueryInput {
     pub warmup: bool,
     pub discover: bool,
     pub materialize: bool,
+    pub prepare: bool,
+    pub control: Arc<ReadControl>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,7 +81,7 @@ pub(crate) struct RestoreInput {
 pub(crate) fn execute_restore(
     engine: &OrbitKVEngine,
     input: RestoreInput,
-) -> Result<tokio::sync::oneshot::Receiver<Result<(), EngineError>>, EngineError> {
+) -> Result<tokio::sync::oneshot::Receiver<orbitkv_core::LoadOutcome>, EngineError> {
     if input.device_id < 0 {
         return Err(EngineError::InvalidArgument(format!(
             "device_id {} must be >= 0",
@@ -189,17 +185,31 @@ pub(crate) async fn execute_query(
     reservation: Option<QueryReservation>,
     owner: QueryOwner,
 ) -> Result<QueryOutcome, EngineError> {
+    let started = std::time::Instant::now();
     if input.discover {
         let hit_positions = engine
             .discover_candidates(&input.instance_id, input.group_id, &input.block_hashes)
             .await?;
-        record_prefix_reuse(engine, hll_tracker, &input, hit_positions.len());
+        trace_query(
+            "discovery_ready",
+            &input,
+            started.elapsed().as_micros() as u64,
+            hit_positions.len(),
+        );
+        if input.group_id == 0 {
+            record_prefix_reuse(
+                engine,
+                hll_tracker,
+                &input.instance_id,
+                &input.block_hashes,
+                hit_positions.len(),
+            );
+        }
         return Ok(QueryOutcome::Candidates { hit_positions });
     }
     let reservation = reservation.ok_or_else(|| {
         EngineError::InvalidArgument("payload read requires a reservation".into())
     })?;
-    let started = std::time::Instant::now();
     trace_query("read_start", &input, 0, 0);
     if input.request_id.is_empty() {
         return Err(EngineError::InvalidArgument(
@@ -207,133 +217,127 @@ pub(crate) async fn execute_query(
         ));
     }
 
-    if input.group_id > 0 && input.wait_for_full_prefix {
-        let status = engine
-            .query_group_membership_with_fetch(
-                &input.instance_id,
-                &input.request_id,
-                input.group_id,
-                &input.block_hashes,
-            )
-            .await?;
-        return {
-            let QueryResult { blocks, .. } = status;
-            let complete = blocks.len() == input.block_hashes.len();
-            let hit_positions: Vec<u32> = (0..blocks.len() as u32).collect();
-            let lease = if complete && !blocks.is_empty() {
-                engine
-                    .finish_query(reservation, owner, blocks)?
-                    .to_bytes()
-                    .to_vec()
-            } else {
-                Vec::new()
-            };
-            Ok(QueryOutcome::Ready {
-                num_hit_blocks: hit_positions.len() as u64,
-                lease,
-                hit_positions,
-            })
-        };
-    }
-
-    if input.group_id > 0 {
-        let hits = engine
-            .query_group_membership(
-                &input.instance_id,
-                &input.request_id,
-                input.group_id,
-                &input.block_hashes,
-            )
-            .await?;
-        let mut hit_positions = Vec::new();
-        let mut blocks = Vec::new();
-        for (position, block) in hits.into_iter().enumerate() {
-            if let Some(block) = block {
-                hit_positions.push(position as u32);
-                blocks.push(block);
+    let batch_blocks = if input.wait_for_full_prefix {
+        input.block_hashes.len().max(1)
+    } else {
+        reservation.batch_blocks(input.block_hashes.len(), input.control.batch_bytes)
+    };
+    let mut blocks = Vec::new();
+    let mut hit_positions = Vec::new();
+    let mut complete_evidence = true;
+    for (batch, hashes) in input.block_hashes.chunks(batch_blocks).enumerate() {
+        if !input.control.can_submit(batch) {
+            complete_evidence = false;
+            trace_query(
+                "read_stopped",
+                &input,
+                started.elapsed().as_micros() as u64,
+                blocks.len(),
+            );
+            break;
+        }
+        // The awaited batch owns its buffers even if the receiver, deadline or
+        // selected revision disappears. Only the next submission is stopped.
+        if input.group_id == 0 {
+            let status = engine
+                .count_prefix_hit_blocks_with_prefetch(
+                    &input.instance_id,
+                    &input.request_id,
+                    hashes,
+                    if input.prepare {
+                        QueryMode::Prepare
+                    } else if input.warmup {
+                        QueryMode::Warmup
+                    } else if input.wait_for_full_prefix {
+                        QueryMode::WaitForFullPrefix
+                    } else {
+                        QueryMode::Demand
+                    },
+                )
+                .await?;
+            let complete = status.blocks.len() == hashes.len();
+            blocks.extend(status.blocks);
+            if !complete {
+                break;
+            }
+        } else if input.wait_for_full_prefix {
+            let status = engine
+                .query_group_membership_with_fetch(
+                    &input.instance_id,
+                    &input.request_id,
+                    input.group_id,
+                    hashes,
+                )
+                .await?;
+            hit_positions.extend(0..status.blocks.len() as u32);
+            blocks.extend(status.blocks);
+        } else {
+            let hits = engine
+                .query_group_membership(
+                    &input.instance_id,
+                    &input.request_id,
+                    input.group_id,
+                    hashes,
+                )
+                .await?;
+            for (position, block) in hits.into_iter().enumerate() {
+                if let Some(block) = block {
+                    hit_positions.push((batch * batch_blocks + position) as u32);
+                    blocks.push(block);
+                }
             }
         }
-        let lease = if blocks.is_empty() {
-            Vec::new()
-        } else {
-            engine
-                .finish_query(reservation, owner, blocks)?
-                .to_bytes()
-                .to_vec()
-        };
-        return Ok(QueryOutcome::Ready {
-            num_hit_blocks: hit_positions.len() as u64,
-            lease,
-            hit_positions,
-        });
     }
-
-    let status = engine
-        .count_prefix_hit_blocks_with_prefetch(
-            &input.instance_id,
-            &input.request_id,
-            &input.block_hashes,
-            if input.warmup {
-                QueryMode::Warmup
-            } else if input.wait_for_full_prefix {
-                QueryMode::WaitForFullPrefix
-            } else {
-                QueryMode::Demand
-            },
-        )
-        .await?;
     trace_query(
         "host_ready",
         &input,
         started.elapsed().as_micros() as u64,
-        status.blocks.len(),
+        blocks.len(),
     );
     if input.warmup {
-        // The read cache owns the prepared pages. Queued requests must not hold
-        // a lease or query reservation while waiting for GPU admission.
         return Ok(QueryOutcome::Ready {
             num_hit_blocks: 0,
             lease: Vec::new(),
             hit_positions: Vec::new(),
         });
     }
-    {
-        let QueryResult { blocks, missing } = status;
-        let hit = blocks.len();
-        let miss_count = missing.min(input.block_hashes.len());
-        debug_assert_eq!(hit + miss_count, input.block_hashes.len());
-        record_prefix_reuse(engine, hll_tracker, &input, hit);
-        let lease = if hit == 0 {
-            Vec::new()
-        } else {
-            engine
-                .finish_query(reservation, owner, blocks)?
-                .to_bytes()
-                .to_vec()
-        };
-        Ok(QueryOutcome::Ready {
-            num_hit_blocks: hit as u64,
-            lease,
-            hit_positions: Vec::new(),
-        })
+    let hit = blocks.len();
+    if input.group_id == 0 && !input.materialize && complete_evidence {
+        record_prefix_reuse(
+            engine,
+            hll_tracker,
+            &input.instance_id,
+            &input.block_hashes,
+            hit,
+        );
     }
+    let lease = if hit == 0
+        || (input.group_id > 0 && input.wait_for_full_prefix && hit != input.block_hashes.len())
+    {
+        Vec::new()
+    } else {
+        engine
+            .finish_query(reservation, owner, blocks)?
+            .to_bytes()
+            .to_vec()
+    };
+    Ok(QueryOutcome::Ready {
+        num_hit_blocks: hit as u64,
+        lease,
+        hit_positions,
+    })
 }
 
-fn record_prefix_reuse(
+pub(crate) fn record_prefix_reuse(
     engine: &OrbitKVEngine,
     hll_tracker: &Mutex<MultiWindowHllTracker>,
-    input: &QueryInput,
+    instance_id: &str,
+    hashes: &[Vec<u8>],
     hits: usize,
 ) {
-    if input.group_id == 0
-        && !input.materialize
-        && let Ok(namespace) = engine.instance_namespace(&input.instance_id)
+    if let Ok(namespace) = engine.instance_namespace(instance_id)
         && let Ok(mut tracker) = hll_tracker.lock()
     {
-        tracker.record_namespaced_misses(
-            &namespace,
-            input.block_hashes.len() as u64,
-            &input.block_hashes[hits..],
-        );
+        tracker.record_namespaced_misses(&namespace, hashes.len() as u64, &hashes[hits..]);
     }
 }

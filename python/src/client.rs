@@ -360,6 +360,38 @@ impl PyCacheManagerClient {
         query_response(py, response)
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "native boundary for engine recovery context"
+    )]
+    fn prepare_recovery(
+        &self,
+        py: Python<'_>,
+        instance_id: &str,
+        block_hashes: &PyBlockHashes,
+        req_id: &str,
+        contract: &crate::recovery::PyRecoveryContract,
+        namespace: &str,
+        start: u64,
+        end: u64,
+        group_id: u32,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            self.inner.prepare_recovery(
+                instance_id,
+                &block_hashes.0,
+                req_id,
+                orbitkv_channel::RecoveryRead {
+                    contract: &contract.contract,
+                    namespace,
+                    span: orbitkv_state::TokenRange { start, end },
+                    group: group_id,
+                },
+            )
+        })
+        .map_err(client_error)
+    }
+
     fn warm_prefix(
         &self,
         py: Python<'_>,

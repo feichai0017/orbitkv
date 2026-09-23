@@ -136,6 +136,10 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
                 "orbitkv_query_budget_waits_total",
                 "orbitkv_query_budget_bypasses_total",
                 "orbitkv_query_coalesced_reads_total",
+                "orbitkv_load_duration_seconds_sum",
+                "orbitkv_load_duration_seconds_count",
+                "orbitkv_ssd_prefetch_duration_seconds_sum",
+                "orbitkv_ssd_prefetch_duration_seconds_count",
             )
         }
         result.append(
@@ -165,6 +169,10 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
                 ),
                 "sampled_peak_query_bytes": max(
                     b["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes", 0)
+                    for b in measurements
+                ),
+                "sampled_peak_speculative_bytes": max(
+                    b["sampled_peak_bytes"].get("orbitkv_query_reserved_bytes_speculative", 0)
                     for b in measurements
                 ),
                 **manager,

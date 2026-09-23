@@ -8,12 +8,12 @@ import logging
 import os
 import time
 
-_TRACE_TRANSFERS = os.environ.get("ORBITKV_TRACE_TRANSFERS") == "1"
+TRANSFER_TRACING = os.environ.get("ORBITKV_TRACE_TRANSFERS") == "1"
 
 
 def trace_transfer(stage: str, request_id: str, **fields) -> None:
     """Opt-in, request-correlated observations; never log tokens or cache keys."""
-    if _TRACE_TRANSFERS:
+    if TRANSFER_TRACING:
         get_connector_logger().info(
             "cache_timeline %s",
             json.dumps(
@@ -43,4 +43,4 @@ def get_connector_logger() -> logging.Logger:
     return connector_logger
 
 
-__all__ = ["get_connector_logger", "trace_transfer"]
+__all__ = ["TRANSFER_TRACING", "get_connector_logger", "trace_transfer"]

@@ -32,6 +32,7 @@ fn request_round_trip_preserves_variable_hashes() {
         warmup: false,
         discover: false,
         materialize: false,
+        prepare: false,
     };
     assert_eq!(
         QueryBundleRequest::decode(&request.encode().unwrap()).unwrap(),
@@ -46,6 +47,14 @@ fn request_round_trip_preserves_variable_hashes() {
     for command in [
         QueryCommand::Submit(request.clone()),
         QueryCommand::Poll(request.ticket),
+        QueryCommand::Claim {
+            ticket: request.ticket,
+            count_lookup: true,
+        },
+        QueryCommand::Claim {
+            ticket: request.ticket,
+            count_lookup: false,
+        },
     ] {
         let bytes = command.encode().unwrap();
         assert_eq!(QueryCommand::decode(&bytes).unwrap(), command);

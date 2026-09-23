@@ -35,8 +35,11 @@ OrbitKV exposes the following metrics for monitoring KV cache operations:
 ### Query ownership and preparation
 
 - **orbitkv_query_reserved_bytes** tracks conservative per-owner bytes by
-  `phase`: `warming`, `preparing`, `ready`, or `restoring`. A warmup retains no
-  ready lease; its bytes return to zero after preparation even without polling.
+  `phase`: `warming`, `preloading`, `prepared`, `preparing`, `ready`, or
+  `restoring`. Owned preparation moves from `preloading` to `prepared`, then
+  into foreground ownership on claim without releasing its total reservation.
+  Unowned warming retains no ready lease; its bytes return to zero after
+  preparation even without polling.
   Shared physical pages may be counted for several owners. Use the pool metric
   for actual allocator occupancy.
 - **orbitkv_query_budget_waits_total** and **orbitkv_query_budget_bypasses_total**
@@ -46,15 +49,18 @@ OrbitKV exposes the following metrics for monitoring KV cache operations:
   backing-read plan. It is not a byte-savings counter.
 - **orbitkv_warmup_prepared_bytes_total**, **orbitkv_warmup_restored_bytes_total**,
   **orbitkv_warmup_unused_bytes_total**, and **orbitkv_warmup_pending_bytes**
-  follow each warmup-origin page through successful local H2D or last-owner
+  follow each speculative-origin page through successful local H2D or last-owner
   release. A query hit is not use; restored bytes count unique page footprints,
-  not individual layer copies or exact H2D traffic.
+  not individual layer copies or exact H2D traffic. Both unowned warming and
+  owned preparation use these physical-page counters; compare them in separate runs.
 - **orbitkv_warmup_wait_byte_seconds_total** records byte-weighted time from
   preparation to first successful H2D or unused release, labelled by `outcome`.
   Unresolved live intervals are excluded. See the
   [accounting contract](queued-warming.md#measuring-whether-preparation-was-useful).
-- **orbitkv_warmup_foreground_skips_total** counts hints skipped because
+- **orbitkv_warmup_foreground_skips_total** counts unowned warming hints skipped because
   foreground preparation, leases or GPU transfers already own query bytes.
+  Owned preparation can overlap foreground work within its speculative share
+  and total byte limits. See [request preparation](request-preparation.md).
 
 Optional [request timelines](queued-warming.md#observing-the-path) correlate
 enqueue, preparation, restore and engine consumption. Cache-tier probe counts
@@ -179,8 +185,11 @@ include warmups and demand; they are not end-user request hit rates.
 - **orbitkv_hll_total_requests** (Gauge)
   - Total queried blocks in the same configured sliding window, including ready blocks and duplicates
   - Hybrid recovery records attention-prefix discovery once. Materializing the
-    selected ranges does not count the same lookup again; auxiliary groups and
-    speculative warmup do not enter this denominator.
+  selected ranges does not count the same lookup again; auxiliary groups and
+    speculative preparation do not enter this denominator. A dense prepared
+    claim counts the ordinary lookup once. Queries stopped before finishing
+    their evidence, including finite-batch prepared claims, do not enter this
+    estimate: an unread page is unknown, not a demonstrated miss.
   - Labels: `window` (`15m`, `1h`, `1d` by default)
   - Use case: Denominator for HLL-based reference reuse rate
 

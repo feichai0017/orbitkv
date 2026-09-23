@@ -81,6 +81,19 @@ pub struct Cli {
     #[arg(long, value_parser = parse_memory_size)]
     pub query_instance_budget: Option<usize>,
 
+    /// Maximum bytes in each ordinary read batch (0 keeps the demand baseline).
+    /// Prepared reads always use at most 32 MiB, or one oversized page.
+    #[arg(long, default_value = "0", value_parser = parse_memory_size)]
+    pub query_read_batch: usize,
+
+    /// Stop submitting new ordinary reads after this relative deadline (0 disables).
+    #[arg(long, default_value_t = 0)]
+    pub query_read_timeout_ms: u64,
+
+    /// Maximum read batches per ordinary query (0 unlimited, 1 best effort).
+    #[arg(long, default_value_t = 0)]
+    pub query_read_max_batches: usize,
+
     /// Use huge pages for pinned memory pool (faster allocation).
     /// Requires pre-configured huge pages via /proc/sys/vm/nr_hugepages
     #[arg(long, default_value_t = false)]
@@ -701,6 +714,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             Arc::clone(&hll_tracker),
             Arc::clone(&shutdown),
             lifecycle.clone(),
+            cli.query_read_batch as u64,
+            (cli.query_read_timeout_ms != 0).then(|| Duration::from_millis(cli.query_read_timeout_ms)),
+            if cli.query_read_max_batches == 0 { usize::MAX } else { cli.query_read_max_batches },
         )?;
 
         // Spawn background GC task for stale inflight blocks and expired transfer locks

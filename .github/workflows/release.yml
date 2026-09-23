@@ -6,13 +6,29 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    if: github.event_name == 'push'
+  version:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check package versions and release tag
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: |
+          if [[ -n "$RELEASE_TAG" ]]; then
+            python3 scripts/check-versions.py --tag "$RELEASE_TAG"
+          else
+            python3 scripts/check-versions.py
+          fi
+
+  build:
+    needs: version
+    runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
         cuda-variant: ['cu12', 'cu13']
@@ -51,7 +67,8 @@ jobs:
       - name: Install protobuf compiler and RDMA headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
+          # Explicitly select glog's headers over the runner's LLVM libunwind variant.
+          sudo apt-get install -y libunwind-dev protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
@@ -80,8 +97,10 @@ jobs:
           path: dist/*.whl
 
   build-arm-cu13:
+    needs: version
     runs-on: ubuntu-24.04-arm
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
     steps:
@@ -146,9 +165,33 @@ jobs:
           name: orbitkv-wheel-${{ steps.generate_tag.outputs.artifact_tag }}
           path: dist/*.whl
 
+  verify-artifacts:
+    needs: [build, build-arm-cu13]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: orbitkv-wheel-*
+          merge-multiple: true
+          path: dist
+      - name: Validate complete release artifacts
+        run: |
+          VERSION="$(python3 scripts/check-versions.py)"
+          shopt -s nullglob
+          WHEELS=(dist/*.whl)
+          test "${#WHEELS[@]}" -eq 15
+          for WHEEL in "${WHEELS[@]}"; do
+            VARIANT=cu12
+            if [[ "$WHEEL" == *orbitkv_llm_cu13-* ]]; then
+              VARIANT=cu13
+            fi
+            python3 scripts/check-wheel.py "$WHEEL" --variant "$VARIANT" --version "$VERSION"
+          done
+
   publish-release:
     if: github.event_name == 'push'
-    needs: [build, build-arm-cu13]
+    needs: verify-artifacts
     runs-on: ubuntu-22.04
     permissions:
       contents: write

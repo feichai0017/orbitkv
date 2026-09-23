@@ -42,8 +42,8 @@ def fault_cache(tmp_path, monkeypatch, request):
     server = CacheManagerProcess(
         find_available_port(),
         http_port=find_available_port(),
-        bootstrap_socket=str(tmp_path / "cache.sock"),
         ssd_cache_path=tmp_path / "ssd",
+        extra_args=request.param if isinstance(getattr(request, "param", None), tuple) else (),
         channel_service=f"orbitkv/fault/{tmp_path.name}"
         if getattr(request, "param", None)
         else None,
@@ -143,6 +143,124 @@ def test_ssd_cancellation_revisions_hold_buffers_until_io_drains(fault_cache):
     ready = query(client, ctx, hashes, "fresh")
     assert ready.num_hit_blocks == 2
     client.release(ready.lease)
+    until(
+        lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_query_reserved_bytes", 0) == 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("fault_cache", "stop"),
+    [
+        (("--query-read-batch", "1"), "cancel"),
+        (("--query-read-batch", "1", "--query-read-timeout-ms", "100"), "timeout"),
+        (("--query-read-batch", "1", "--query-read-max-batches", "1"), "best-effort"),
+    ],
+    indirect=["fault_cache"],
+)
+def test_stopping_submits_no_second_ssd_batch_and_drains_the_first(fault_cache, stop):
+    from orbitkv import BlockHashes, QueryLoading
+
+    server, client, ctx, directory = fault_cache
+    hashes = [bytes([i]) * 32 for i in range(1, 5)]
+    publish(client, ctx, hashes)
+    drain_ssd(server)
+    before = fetch_orbitkv_metrics(server.http_port)
+    arm(directory, "ssd")
+    batch = BlockHashes(hashes)
+    assert isinstance(client.query_prefetch(ctx.instance_id, batch, "bounded"), QueryLoading)
+    reached(directory, "ssd")
+    if stop == "cancel":
+        client.cancel_query(ctx.instance_id, "bounded")
+    elif stop == "timeout":
+        time.sleep(0.15)
+        timed_out = query(client, ctx, hashes, "bounded")
+        assert timed_out.num_hit_blocks == 0 and not timed_out.lease
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] > 0
+    assert query(client, ctx, [b"independent"], "other").num_hit_blocks == 0
+    observed_lookups = fetch_orbitkv_metrics(server.http_port).get("orbitkv_hll_total_requests", 0)
+    (directory / "ssd.pause").unlink()
+    if stop == "best-effort":
+        result = query(client, ctx, hashes, "bounded")
+        assert result.num_hit_blocks == 1
+        client.release(result.lease)
+    until(
+        lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_query_reserved_bytes", 0) == 0
+    )
+    after = fetch_orbitkv_metrics(server.http_port)
+    page_bytes = ctx.get_kv_cache().numel() * ctx.get_kv_cache().element_size() // ctx.num_blocks
+    assert (
+        after["orbitkv_ssd_prefetch_bytes_total"]
+        - before.get("orbitkv_ssd_prefetch_bytes_total", 0)
+        == page_bytes
+    )
+    assert after.get("orbitkv_ssd_prefetch_inflight", 0) == 0
+    assert after.get("orbitkv_hll_total_requests", 0) == observed_lookups, (
+        "unread pages are not authoritative cache misses"
+    )
+
+
+@pytest.mark.parametrize("fault_cache", [("--query-read-batch", "1")], indirect=True)
+def test_cancelled_preparation_does_not_stop_another_shared_read_owner(fault_cache):
+    from orbitkv import BlockHashes, QueryLoading, RecoveryContract
+
+    server, client, ctx, directory = fault_cache
+    hashes = [bytes([i]) * 32 for i in range(1, 5)]
+    publish(client, ctx, hashes)
+    drain_ssd(server)
+    arm(directory, "ssd")
+    batch = BlockHashes(hashes)
+    contract = RecoveryContract(ctx.namespace, 16, [(0, "attention", 0)])
+    assert client.prepare_recovery(
+        ctx.instance_id, batch, "forecast", contract, ctx.namespace, 0, 64, 0
+    )
+    reached(directory, "ssd")
+    assert isinstance(client.query_prefetch(ctx.instance_id, batch, "demand"), QueryLoading)
+    client.cancel_query(ctx.instance_id, "forecast")
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] > 0
+    (directory / "ssd.pause").unlink()
+    result = query(client, ctx, hashes, "demand")
+    assert result.num_hit_blocks == 4
+    client.release(result.lease)
+    until(
+        lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_query_reserved_bytes", 0) == 0
+    )
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_coalesced_reads_total"] > 0
+
+
+def test_prepared_result_expires_without_poll_then_claim_holds_bytes_through_restore(fault_cache):
+    import torch
+
+    from orbitkv import BlockHashes, QueryReady, RecoveryContract
+
+    server, client, ctx, _ = fault_cache
+    hashes = [b"prepared" * 4]
+    expected = ctx.get_kv_cache()[:, 0:1].cpu().clone()
+    publish(client, ctx, hashes)
+    contract = RecoveryContract(ctx.namespace, 16, [(0, "attention", 0)])
+    args = (ctx.instance_id, BlockHashes(hashes), "prepared", contract, ctx.namespace, 0, 16, 0)
+    assert client.prepare_recovery(*args)
+    until(
+        lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_query_reserved_bytes", 0) > 0
+    )
+    until(
+        lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_query_reserved_bytes", 0) == 0
+    )
+    assert client.prepare_recovery(*args), "the expired ticket cannot prevent new preparation"
+
+    def claim():
+        result = client.read_recovery(*args)
+        return result if isinstance(result, QueryReady) else None
+
+    ready = until(claim)
+    assert ready.num_hit_blocks == 1 and ready.lease
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] > 0
+    ctx.get_kv_cache()[:, 1:2].zero_()
+    torch.cuda.synchronize()
+    restore = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[1]])]
+    )
+    assert client.wait_restore(restore, timeout=10).success
+    assert torch.equal(ctx.get_kv_cache()[:, 1:2].cpu(), expected)
     until(
         lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_query_reserved_bytes", 0) == 0
     )

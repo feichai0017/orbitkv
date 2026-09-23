@@ -93,7 +93,7 @@ host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
 returns `Loading`. Channel ABI 5 separates query submission from ticket polling.
-Query schema 4 distinguishes metadata-only discovery from leased payload reads
+Query schema 5 distinguishes metadata-only discovery from leased payload reads
 and marks selected recovery reads so HLL counts the logical discovery only once.
 Discovery returns `Candidates`, never a restore lease, and uses bounded query
 operation capacity without reserving payload bytes. `read_recovery` translates
@@ -101,6 +101,12 @@ compiled demand into exact hash views and validates complete leased coverage.
 The query schema also carries an explicit warmup flag: it prepares pages without a
 restore lease, skips on warmup-budget pressure and is retired without polling.
 See [queued warming](queued-warming.md); the previous ABI is not retained.
+Consumer-owned preparation adds an explicit preparation flag and a claim
+command. A claim consumes only its exact live revision; a retired or expired
+preparation returns an unadmitted result, allowing a fresh ordinary query.
+Ordinary-prefix claims count one logical lookup; selected-range recovery claims
+do not count discovery again. Prepared results remain at the Manager until
+claimed or expired, as described in [request preparation](request-preparation.md).
 An operation has a monotonically increasing ID within its authenticated session,
 and a nonzero revision. A newer revision can replace hashes or wait policy while
 keeping its instance, request, and group; old polls and cancels cannot consume or

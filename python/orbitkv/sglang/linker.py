@@ -20,7 +20,7 @@ from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCache
 
 from orbitkv import BlockHashes, CacheManagerClient, QueryCandidates, QueryReady, RecoveryContract
 from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
-from orbitkv.logging_utils import trace_transfer
+from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
 
 from .config import derive_namespace
 from .layout import GpuLayout
@@ -466,6 +466,13 @@ class OrbitKVLinker(UnifiedCacheLinker):
                                     ],
                                 )
                             )
+                            if TRANSFER_TRACING:
+                                trace_transfer(
+                                    "restore_link",
+                                    load.rid,
+                                    engine="sglang",
+                                    restore_key=restores[-1].key,
+                                )
                         for load, restore in zip(
                             pending[offset : offset + self._RESTORE_WINDOW], restores, strict=True
                         ):

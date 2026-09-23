@@ -24,8 +24,10 @@ def request(req_id, tokens=32):
     )
 
 
-def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeypatch):
-    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
+@pytest.mark.parametrize("preparation", [False, True], ids=["warming", "owned"])
+def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeypatch, preparation):
+    setting = "ORBITKV_PREPARE_REQUESTS" if preparation else "ORBITKV_QUEUE_WARMUP"
+    monkeypatch.setenv(setting, "1")
     client = MagicMock()
     scheduler = SchedulerConnector(
         ConnectorContext(
@@ -45,9 +47,14 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
     scheduler.bind_gpu_block_pool(pool)
     req = request("queued", 64)
     scheduler.on_new_request(req)
-    client.warm_prefix.assert_called_once_with(
-        "warm", BlockHashes([b"queued-1", b"queued-2", b"queued-3"]), "queued"
-    )
+    batch = BlockHashes([b"queued-1", b"queued-2", b"queued-3"])
+    if preparation:
+        client.prepare_recovery.assert_called_once_with(
+            "warm", batch, "queued", scheduler._recovery, "warm", 16, 64, 0
+        )
+    else:
+        client.warm_prefix.assert_called_once_with("warm", batch, "queued")
+    submit = client.prepare_recovery if preparation else client.warm_prefix
     client.query_prefetch.assert_not_called()
     assert not scheduler._pending_load_intents
     assert not scheduler._pending_query_probes
@@ -57,19 +64,24 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
     assert not scheduler._queued_at
     pool.reset_mock()
     client.reset_mock()
-    monkeypatch.delenv("ORBITKV_QUEUE_WARMUP")
+    monkeypatch.delenv(setting)
     scheduler.on_new_request(req)
     pool.get_cached_block.assert_not_called()
-    client.warm_prefix.assert_not_called()
+    submit.assert_not_called()
 
-    monkeypatch.setenv("ORBITKV_QUEUE_WARMUP", "1")
+    monkeypatch.setenv(setting, "1")
     pool.get_cached_block.side_effect = None
     pool.get_cached_block.return_value = None
-    client.warm_prefix.side_effect = RuntimeError("manager unavailable")
+    submit.side_effect = RuntimeError("manager unavailable")
     scheduler.on_new_request(req)
-    client.warm_prefix.assert_called_once()
+    submit.assert_called_once()
     assert req.request_id in scheduler._queued_at
     assert not scheduler._pending_load_intents
+    if preparation:
+        client.reset_mock()
+        scheduler._queued_at.update({f"ahead-{i}": 0 for i in range(4)})
+        scheduler.on_new_request(request("distant", 64))
+        submit.assert_not_called()
 
 
 def step(tokens=0):

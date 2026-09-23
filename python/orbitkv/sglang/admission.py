@@ -22,7 +22,10 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     if not isinstance(linker, OrbitKVLinker) or req.positional_embed_overrides is not None:
         return result
     trace_transfer("queued", req.rid, engine="sglang")
-    if os.environ.get("ORBITKV_QUEUE_WARMUP") != "1":
+    prepare = os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1"
+    if not prepare and os.environ.get("ORBITKV_QUEUE_WARMUP") != "1":
+        return result
+    if prepare and len(scheduler.waiting_queue) > 4:
         return result
     # Hybrid demand must own every required component; the optional warming
     # operation currently prepares only attention group zero.
@@ -42,10 +45,24 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
     resident = scheduler.tree_cache.match_prefix(MatchPrefixParams(key=key, cow_mamba=False))
     keys = wrapper._tail_hashes(key, resident, int(resident.device_indices.numel()))
     try:
-        linker.client.warm_prefix(linker.instance_id, BlockHashes(linker._hashes(keys)), req.rid)
+        hashes = BlockHashes(linker._hashes(keys))
+        if prepare:
+            origin = int(resident.device_indices.numel()) // linker.page_size * linker.page_size
+            linker.client.prepare_recovery(
+                linker.instance_id,
+                hashes,
+                req.rid,
+                linker.recovery,
+                linker.namespace,
+                origin,
+                origin + len(keys) * linker.page_size,
+                0,
+            )
+        else:
+            linker.client.warm_prefix(linker.instance_id, hashes, req.rid)
     except (RuntimeError, OSError):
         get_connector_logger().warning(
-            "Queued warmup failed for request %s", req.rid, exc_info=True
+            "Queued preparation failed for request %s", req.rid, exc_info=True
         )
     return result
 

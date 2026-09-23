@@ -445,10 +445,21 @@ fn planned_read_fetches_only_its_window_and_releases_a_stale_partial_lease() {
     .unwrap();
     let released = Arc::new(AtomicBool::new(false));
     let observed = Arc::clone(&released);
+    let preparations = Arc::new(Mutex::new(HashMap::new()));
     let peer = Peer::new(move |command, bytes, _| match command.code {
         CommandCode::QueryBundle => {
-            let QueryCommand::Submit(request) = QueryCommand::decode(bytes).unwrap() else {
-                panic!("unexpected poll")
+            let request = match QueryCommand::decode(bytes).unwrap() {
+                QueryCommand::Submit(request) if request.prepare => {
+                    assert_eq!(request.block_hashes, vec![b"c".to_vec(), b"d".to_vec()]);
+                    preparations.lock().unwrap().insert(request.ticket, request);
+                    return Some(loading());
+                }
+                QueryCommand::Submit(request) => request,
+                QueryCommand::Claim {
+                    ticket,
+                    count_lookup: false,
+                } => preparations.lock().unwrap().remove(&ticket).unwrap(),
+                _ => panic!("unexpected poll or counted recovery"),
             };
             assert!(!request.discover);
             assert!(request.materialize);
@@ -492,4 +503,19 @@ fn planned_read_fetches_only_its_window_and_releases_a_stale_partial_lease() {
     assert_eq!(miss.num_hit_blocks, 0);
     assert!(miss.lease.is_empty());
     assert!(released.load(Ordering::Acquire));
+    assert!(
+        client
+            .prepare_recovery("m", &batch, "prepared", read())
+            .unwrap()
+    );
+    assert!(
+        !client
+            .prepare_recovery("m", &batch, "prepared", read())
+            .unwrap()
+    );
+    let prepared = client
+        .read_recovery("m", &batch, "prepared", read())
+        .unwrap();
+    assert_eq!(prepared.hit_positions, vec![2, 3]);
+    assert_eq!(prepared.lease, vec![7]);
 }

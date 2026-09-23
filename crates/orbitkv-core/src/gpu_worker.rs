@@ -1,4 +1,5 @@
 use std::sync::{Arc, mpsc as std_mpsc};
+use std::time::Instant;
 
 use cudarc::driver::{CudaContext, CudaStream};
 use log::{debug, error, info, warn};
@@ -21,6 +22,12 @@ pub(crate) struct LoadTask {
     pub reservations: Vec<crate::QueryReservation>,
 }
 
+/// Terminal GPU transfer evidence, timestamped before notifying the dispatcher.
+pub struct LoadOutcome {
+    pub result: Result<(), EngineError>,
+    pub completed_at: Instant,
+}
+
 /// How a finished [`LoadTask`] hands its result back to the submitter.
 ///
 /// Loads run on the GPU worker thread, so the outcome has to cross back to
@@ -32,7 +39,7 @@ pub(crate) enum LoadCompletion {
     /// Signal a shared-memory `LoadState` the caller polls (cross-process).
     Shm(String),
     /// Resolve a oneshot the caller awaits or polls (in-process).
-    Channel(oneshot::Sender<Result<(), EngineError>>),
+    Channel(oneshot::Sender<LoadOutcome>),
 }
 
 impl LoadCompletion {
@@ -47,7 +54,10 @@ impl LoadCompletion {
                 Err(e) => error!("Failed to attach to LoadState shm={shm}: {e:?}"),
             },
             LoadCompletion::Channel(reply) => {
-                let _ = reply.send(result);
+                let _ = reply.send(LoadOutcome {
+                    result,
+                    completed_at: Instant::now(),
+                });
             }
         }
     }

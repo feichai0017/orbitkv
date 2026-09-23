@@ -23,8 +23,10 @@ validator with absolute token coverage. This closes the duplicated boundary
 logic. Hybrid demand now discovers metadata, selects a legal boundary and
 reads only its required ranges, then validates actual leases. Deterministic
 [process fault gates](fault-qualification.md) cover SSD delay/cancel, lost
-notifications, Publish fencing and restart. Multi-rank/concurrent serving
-fault stress and page-generation gates remain distinct qualifications.
+notifications, Publish fencing and restart. Deterministic Qwen3-8B TP=1 serving
+also covers cancellation with unrelated requests, lost notification and both
+process restarts in each engine. Multi-rank/long-running fault stress and
+page-generation gates remain distinct qualifications.
 
 The milestone identifiers below name work areas, not a requirement to finish
 every optimization before starting the next area. In particular, page-lifetime
@@ -34,7 +36,7 @@ the later general semantic compiler.
 | Priority | Deliverable | Acceptance boundary |
 | --- | --- | --- |
 | First: reliable ordinary demand | Maintain deterministic cancellation, lost-notification, engine/Manager restart and stuck-Publish gates; extend concurrent model-serving fault stress. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
-| Next: bounded preparation experiment | Prepare a small set of requests close to admission, retain their ready pages within the existing budget, then add explicit stop policies and bounded read submission. | Separate demand-only, current warming, consumer-owned preparation and stopping controls; bounded residency and cleanup under reordering/cancellation; measured exposed wait, TTFT and read amplification. Promote a policy only with repeatable benefit. |
+| Implemented, opt-in: bounded preparation | Small arrival-order lookahead, retained leases, bounded reads and stopping controls. | Three matched pairs per engine completed. Keep off by default because SGLang P95 regresses despite a throughput gain; cutoffs also reduce throughput. |
 | First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TE path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
 | Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; separately integrate and qualify SGLang's native handoff lifecycle. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
 | Before production distributed deployment: catalog HA | Add replicated catalog evidence, versioned placement, handoff/repair and operational failure handling. | Three catalog failure domains, partitions, lease expiry, etcd outage and placement changes; bounded replay, source holds and staging. Replicating etcd alone does not replicate the catalog. |
@@ -49,25 +51,24 @@ gate, without claiming cross-host tensor parallelism.
 
 ### Next reviewable changes
 
-1. **Extend model-serving fault stress.** The deterministic Manager/CUDA gate
-   now checks delayed SSD completion, cancellation, dropped notification,
-   restart with old clients and malformed/stalled Publish acknowledgements.
-   The watchdog reports retained ownership; time alone cannot release DMA
-   pages. Extend this evidence to sustained concurrent engine traffic and
-   multiple ranks. Keep model/format rejection and output controls.
-2. **Prepare only selected consumers.** Use engine scheduling evidence to
-   select a bounded lookahead, and reuse the existing operation/revision and
-   lease lifecycle. Charge in-flight and ready-but-unconsumed residency until
-   handoff, cancellation or expiry; leave headroom for ordinary demand. Retire
-   changed requests and HBM hits, and expire abandoned ownership without
-   further polling. Keep this opt-in until the serving measurements pass.
-3. **Bound submission and stop waiting explicitly.** Add best-effort and
-   relative-timeout policies, with wait-complete as a control subject to
-   lifecycle expiry. Stop new read batches while submitted I/O retains its
-   buffers and drains. Expose only a completed contiguous prefix at a valid
-   engine recovery boundary; cancelling one shared-read owner cannot revoke
-   another. Run the policy comparisons before adding timing prediction or
-   changing retention/write admission.
+1. **Follow up on the preparation tradeoff.** The opt-in
+   [consumer-owned path](request-preparation.md) selects at most four dense
+   arrival-order candidates, keeps prepared leases budgeted, and retires stale
+   interests without another poll. Bounded batches, best-effort completion and
+   a conservative deadline miss are implemented and measured in three matched
+   pairs per engine. Keep preparation off: vLLM improves modestly, while SGLang
+   trades tail latency for throughput. Isolate SGLang admission effects before
+   revising selection; automatic hybrid forecasts and priority prediction remain open.
+2. **Reduce measured exposed waits.** The
+   [ordinary Qwen3 profile](recovery-performance.md) separates host reads,
+   Manager restore and engine completion observation. Investigate read batching
+   and vLLM's completion-observation tail with matching traffic before changing
+   retention or SSD write admission. Keep deterministic output and ownership gates.
+3. **Start real two-host DP qualification.** Ordinary TP=1 demand lifetimes now
+   have native and model-serving fault evidence. Use independent same-format
+   replicas and Mooncake TE; require positive remote and GPU-copy bytes, source
+   incarnation rejection and catalog replay. Local policy tuning can continue
+   alongside it. Multi-rank fault soak remains a separate extension.
 
 Keep these changes separately reviewable. The existing
 [reference-based policy sequence](queued-warming.md#reference-implementations-and-policy-order)

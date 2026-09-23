@@ -4,15 +4,15 @@ This is the repository-wide execution checklist. Completed items must have code
 and a passing gate; design text alone does not close an item.
 
 Follow the [current delivery priorities](docs/roadmap.md#current-delivery-priorities):
-maintain the deterministic demand fault gate, qualify bounded consumer preparation and
-stopping, and start real two-host DP once demand lifetimes are qualified.
+maintain the deterministic demand and model-serving fault gates, measure bounded
+consumer preparation and stopping, and start real two-host DP qualification.
 Warming gains are not a DP prerequisite. P/D with cache reuse follows; replicated
 catalogs are required before production distributed deployment. Milestone
 numbers below group work areas rather than imposing a strict serial schedule.
 
 ## M0 — framework-neutral foundation
 
-- [x] Import and rename the PegaFlow 0.24.5 data plane.
+- [x] Establish the OrbitKV data plane and workspace.
 - [x] Move Rust packages under `crates/`.
 - [x] Keep NUMA topology/affinity in Core and HLL reuse statistics in Server;
   limit `orbitkv-common` to shared process logging and peer-connection defaults.
@@ -164,9 +164,14 @@ numbers below group work areas rather than imposing a strict serial schedule.
   queries progress and reservations drain; fence ambiguous Publish replies
   until peer death and create a fresh channel incarnation on every restart.
   See `docs/fault-qualification.md`.
-- [ ] Add deadline/priority demand hints and expand model-serving fault/soak runs.
-- [ ] Qualify delayed-read cancellation under concurrent serving and multi-rank
-  SGLang TP; controlled admission tests do not replace those workload gates.
+- [x] Qualify Qwen3-8B TP=1 concurrent serving under delayed-read cancellation,
+  dropped notifications and engine/Manager restart in both engines, with ordinary
+  demand and owned preparation. Keep deterministic output and exact-byte gates.
+- [x] Profile ordinary Qwen3-8B cold/shared/mixed recovery with stage timing,
+  TTFT, throughput, read/copy bytes and resource-drain evidence. Record output
+  differences separately (`docs/recovery-performance.md`).
+- [ ] Add per-request deadline/priority hints and long-running serving fault/soak
+  runs; qualify multi-rank SGLang TP independently of TP=1 admission tests.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;
   keep foreground headroom, revalidate demand, and retire warmups without a lease
   or polling. Expose optional request-correlated transfer timeline logs.
@@ -186,12 +191,18 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Review pinned LMCache/SGLang/FlexKV/Dynamo implementations, distinguish
   request-owned prefetch from unlocked warming, and separate open RFC/PR ideas
   from release behavior (`docs/queued-warming.md`).
-- [ ] Qualify bounded preparation for near-admission requests using existing
+- [x] Qualify bounded preparation for near-admission requests using existing
   query/lease ownership; keep prepared residency budgeted through consumer
-  handoff, cancellation or expiry. Ordinary demand remains the control.
-- [ ] Add best-effort/relative-timeout stopping and bounded read submission;
-  drain submitted work and expose only a completed legal prefix. Cover shared
-  reads, queue reordering, cancellation, and expiry without polling (P3).
+  handoff, cancellation or expiry. The automatic TP=1 dense path uses at most
+  four arrival-order candidates; hybrid forecasts and priority prediction remain
+  unqualified. Ordinary demand remains the control (`docs/request-preparation.md`).
+- [x] Add best-effort/relative-timeout stopping and bounded read submission;
+  drain submitted work. Best-effort returns completed dense prefixes; strict
+  recovery rejects incomplete coverage and deadline fallback returns a miss.
+  Cover shared reads, changed ranges, cancellation and expiry without polling.
+- [x] Complete three matched preparation pairs per engine, stopping controls and
+  DRAM-only recovery. Retain final variation, read bytes, output diagnostics and
+  cleanup. Keep preparation off: SGLang throughput improves but P95 regresses.
 - [ ] Compare retention and SSD write-admission policies independently; then
   calibrate expected use time and priority from page outcomes and engine
   consumption. Qualify per-device/staging budgets and multi-rank behavior.

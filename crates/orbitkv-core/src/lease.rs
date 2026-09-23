@@ -106,6 +106,19 @@ impl QueryLeaseManager {
         token
     }
 
+    pub(crate) fn claim(&self, token: &QueryLeaseId) {
+        let leases = self
+            .inner
+            .leases
+            .lock()
+            .expect("query leases lock poisoned");
+        if let Some(lease) = leases.get(token)
+            && let Some((_, reservation)) = &lease.ownership
+        {
+            reservation.claim();
+        }
+    }
+
     pub(crate) fn consume(
         &self,
         instance_id: &str,

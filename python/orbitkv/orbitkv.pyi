@@ -182,6 +182,19 @@ class CacheManagerClient:
         wait_for_full_prefix: bool = False,
         group_id: int = 0,
     ) -> QueryLoading | QueryReady: ...
+    def prepare_recovery(
+        self,
+        instance_id: str,
+        block_hashes: BlockHashes,
+        req_id: str,
+        contract: RecoveryContract,
+        namespace: str,
+        start: int,
+        end: int,
+        group_id: int,
+    ) -> bool:
+        """Keep a bounded, expiring compiled range at the Manager for this consumer."""
+
     def warm_prefix(self, instance_id: str, block_hashes: BlockHashes, req_id: str) -> bool: ...
     def release(self, lease: bytes) -> None: ...
     def cancel_query(self, instance_id: str, req_id: str, group_id: int = 0) -> None: ...

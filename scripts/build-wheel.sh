@@ -7,6 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PYTHON_DIR="$PROJECT_ROOT/python"
+BUILD_PYTHON="$(command -v "${PYO3_PYTHON:-python3}")"
+export PYO3_PYTHON="$BUILD_PYTHON"
+VERSION="$("$BUILD_PYTHON" "$SCRIPT_DIR/check-versions.py")"
 
 # Parse arguments
 RELEASE_ARGS=()
@@ -33,7 +36,7 @@ if [[ "$VARIANT" == "cu13" ]]; then
         mv -f "$MANIFEST_BACKUP" "$PYTHON_DIR/pyproject.toml"
     }
     trap restore_manifest EXIT
-    python3 - "$PYTHON_DIR/pyproject.toml" <<'PY'
+    "$BUILD_PYTHON" - "$PYTHON_DIR/pyproject.toml" <<'PY'
 from pathlib import Path
 import sys
 
@@ -78,9 +81,9 @@ done
 echo "==> Building Python wheel with maturin..."
 cd "$PYTHON_DIR"
 if command -v maturin >/dev/null 2>&1; then
-    maturin build "${RELEASE_ARGS[@]}" "${EXTRA_ARGS[@]}"
+    maturin build --interpreter "$BUILD_PYTHON" "${RELEASE_ARGS[@]}" "${EXTRA_ARGS[@]}"
 else
-    uvx maturin build "${RELEASE_ARGS[@]}" "${EXTRA_ARGS[@]}"
+    uvx maturin build --interpreter "$BUILD_PYTHON" "${RELEASE_ARGS[@]}" "${EXTRA_ARGS[@]}"
 fi
 
 echo ""
@@ -91,7 +94,7 @@ if [[ -z "$WHEEL" ]]; then
     echo "Built wheel was not found under target/wheels" >&2
     exit 1
 fi
-python3 "$SCRIPT_DIR/check-wheel.py" "$WHEEL" --variant "$VARIANT" --install-smoke
+"$BUILD_PYTHON" "$SCRIPT_DIR/check-wheel.py" "$WHEEL" --variant "$VARIANT" --version "$VERSION" --install-smoke
 ls -lh "$WHEEL"
 echo ""
 echo "To install: pip install $WHEEL"

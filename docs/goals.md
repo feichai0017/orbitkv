@@ -1,22 +1,43 @@
-# Goals and boundaries
+# Overview
 
-OrbitKV provides reusable KV replicas outside framework-owned HBM. The
-single-node path prioritizes exact recovery, bounded leases, predictable GPU
-to pinned-DRAM/SSD movement, and observability. The multi-node path should
-offer the same cache API while Mooncake moves remote bytes and a recoverable
-catalog identifies candidate owners. A later KV-aware router may use that
-catalog together with queueing and transfer costs.
+OrbitKV is an external KV cache for vLLM and SGLang. It retains reusable state
+in pinned DRAM and optional SSD so requests can recover prefixes that no longer
+fit in GPU memory. Run one Cache Manager per inference host and enable the
+engine adapter; begin with the [single-node quickstart](single-node.md).
 
-The long-term state planner must validate model, format, component coverage,
-and page generation before claiming that a prefix can resume execution. The
-SGLang path uses `orbitkv-state` to validate registered identity, absolute
-coverage and prefix/window/checkpoint requirements before restoring. vLLM's
-attention + recurrent layouts use the same validator. Page-generation
-enforcement and model-independent planning remain open. See
-[compiled hybrid recovery](hybrid-recovery.md).
+## What you can use today
 
-OrbitKV does not own model execution, GPU allocation, or inference scheduling.
-It is not a general RPC framework, network stack, or replacement for Mooncake
-Transfer Engine. A future router decides where requests run; it does not make
-the Cache Manager an inference server. See [architecture](architecture.md) and
-[roadmap](roadmap.md) for current and planned responsibilities.
+| Capability | Scope |
+| --- | --- |
+| Prefix reuse | DRAM/SSD recovery after GPU eviction or engine restart, with the Manager kept alive |
+| Engine integration | vLLM 0.29.0 and SGLang 0.5.20, direct GPU transfers through CUDA IPC |
+| Hybrid recovery | Compiled prefix/window/checkpoint requirements for [supported layouts](hybrid-recovery.md) |
+| Resource control | Byte budgets for reads, leased results and GPU transfers; cancellation and completion fences |
+| Observability | Prometheus metrics, optional request timelines and reproducible Qwen3-8B workloads |
+| Request preparation | Opt-in dense-layout lookahead; ready pages remain budgeted until consumed, cancelled or expired |
+
+Use OrbitKV for repeated documents, shared system prompts and conversation
+prefixes that extend beyond HBM capacity. A cold workload with little reuse can
+pay extra copy/storage costs; use the [measurements](single-node-performance.md)
+and your own traffic to choose capacities and policies.
+
+## Ownership and compatibility
+
+The inference engine owns HBM allocation and scheduling. OrbitKV owns external
+replicas and retains source/destination holds through transfer completion.
+Cache keys bind model artifacts, computation and byte layout. Compiled recovery
+validates the requirements declared by the adapter; it does not analyze an
+arbitrary model graph or predict future tokens. A shared API does not imply
+that different engines' KV bytes are interchangeable.
+
+## Experimental and planned work
+
+The embedded catalog, etcd membership and Mooncake transfer path support
+experimental remote-cache development. Real two-host serving qualification,
+catalog replication, broader parallelism and P/D with cache reuse have separate
+gates. A future KV-aware router can use cache location and transfer costs without
+moving inference scheduling into the Manager.
+
+General lifetime analysis, page-generation enforcement and joint
+retention/placement planning remain open. See [deployment support](deployment.md),
+[architecture](architecture.md), and [the roadmap](roadmap.md).

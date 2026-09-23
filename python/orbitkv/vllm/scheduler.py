@@ -152,7 +152,10 @@ class SchedulerConnector:
         if self._cache_groups.has_recurrent_state and (pd_tail_save or pd_tail_load):
             raise ValueError("P/D tail-block caching is not supported with HMA")
         self._recovery = None
-        if self._cache_groups.has_recurrent_state:
+        if (
+            self._cache_groups.has_recurrent_state
+            or os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1"
+        ):
             from orbitkv import RecoveryContract
 
             self._recovery = RecoveryContract(
@@ -292,10 +295,20 @@ class SchedulerConnector:
     def on_new_request(self, request: "Request") -> None:
         self._queued_at[request.request_id] = time.monotonic()
         trace_transfer("queued", request.request_id, engine="vllm")
+        prepare = os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1"
         if (
             not self._ctx.read_enabled
             or self._cache_groups.group_count > 1
-            or os.environ.get("ORBITKV_QUEUE_WARMUP") != "1"
+            or (not prepare and os.environ.get("ORBITKV_QUEUE_WARMUP") != "1")
+            or (prepare and len(self._queued_at) > 4)
+            or (
+                prepare
+                and (
+                    self._ctx.wait_for_full_prefix
+                    or self._tail_load_enabled
+                    or self._tail_save_enabled
+                )
+            )
         ):
             return
         # Warm the same whole pages admission will query, including a page
@@ -312,10 +325,24 @@ class SchedulerConnector:
             demand = BlockHashes(hashes[resident:])
             for client in self._clients:
                 try:
-                    client.warm_prefix(self._ctx.instance_id, demand, request.request_id)
+                    if prepare:
+                        client.prepare_recovery(
+                            self._ctx.instance_id,
+                            demand,
+                            request.request_id,
+                            self._recovery,
+                            self._ctx.namespace,
+                            resident * self._ctx.virtual_block_size,
+                            len(hashes) * self._ctx.virtual_block_size,
+                            0,
+                        )
+                    else:
+                        client.warm_prefix(self._ctx.instance_id, demand, request.request_id)
                 except (RuntimeError, OSError):
                     logger.warning(
-                        "Queued warmup failed for request %s", request.request_id, exc_info=True
+                        "Queued preparation failed for request %s",
+                        request.request_id,
+                        exc_info=True,
                     )
 
     def get_num_new_matched_tokens(

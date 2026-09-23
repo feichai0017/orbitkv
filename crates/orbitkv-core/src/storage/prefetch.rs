@@ -150,7 +150,7 @@ impl PrefetchScheduler {
         hashes: &[Vec<u8>],
         mode: QueryMode,
     ) -> QueryResult {
-        let warming = mode == QueryMode::Warmup;
+        let warming = matches!(mode, QueryMode::Warmup | QueryMode::Prepare);
         let wait_for_full_prefix = mode == QueryMode::WaitForFullPrefix;
         let keys: Vec<StateKey> = hashes
             .iter()

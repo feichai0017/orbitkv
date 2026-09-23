@@ -77,6 +77,10 @@ def main() -> None:
                     "engine": config["engine"],
                     "backend": config["backend"],
                     "queue_warmup": config.get("queue_warmup"),
+                    "prepare_requests": config.get("prepare_requests"),
+                    "read_batch_mib": config.get("read_batch_mib"),
+                    "read_timeout_ms": config.get("read_timeout_ms"),
+                    "read_max_batches": config.get("read_max_batches"),
                     **summary,
                     "cache_sources": json.dumps(summary["cache_sources"], sort_keys=True),
                 }

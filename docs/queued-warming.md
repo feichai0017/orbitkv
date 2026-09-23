@@ -288,8 +288,11 @@ OrbitKV's engine releases or workload.
 LMCache's [warm-prefetch entry point](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/multiprocess/warm_prefetch.py)
 explicitly leaves prepared pages unpinned. Thus, "pin every warmup" is not the
 lesson from its request lookup path. OrbitKV already retains demand query
-results through leases and GPU completion; the missing experiment is bounded
-early preparation tied to a selected consumer, without holding an entire queue.
+results through leases and GPU completion. The separate
+[consumer-owned preparation experiment](request-preparation.md) now starts
+selected required-range reads before admission and retains ready leases within
+the query budget until claim, cancellation or expiry. It is opt-in and uses
+the same bounded ownership rather than pinning an entire queue.
 
 Two useful references have a different maturity status:
 

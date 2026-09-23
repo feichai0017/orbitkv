@@ -25,6 +25,13 @@ A released query lease does not count as use, last-owner cleanup settles unused
 bytes, and a fresh read credits its footprint once after successful H2D across
 all layers. These checks cover both stored page layouts.
 
+Consumer-owned preparation uses `ORBITKV_PREPARE_REQUESTS=1` instead. Native
+fault tests cover ready-result expiry without polling, claim-to-GPU ownership,
+shared-read cancellation, bounded batches and deadline fallback. The Qwen3
+serving fault gate below runs both ordinary and prepared paths with the
+corresponding environment setting. Automatic hybrid preparation stays disabled;
+hybrid recovery E2Es continue to qualify ordinary selected-range reads.
+
 ## What To Run
 
 | Change area | Gate | Command | Failure boundary |
@@ -177,9 +184,50 @@ uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py \
 
 This is a targeted single-GPU vLLM scenario for warm-hit pressure. The checked profile uses `/data/models/Qwen3-4B`, `max_model_len=2048`, `gpu_memory_utilization=0.82`, `max_num_seqs=16`, and 12 concurrent repeated prompts; it has been validated on a 16GB GPU. Run it for cache warm-hit, pending lease release, scheduler/cache concurrency, or pressure-profile changes. It is not a default PR gate.
 
+## Model-serving fault stress
+
+The dense Qwen3 serving fault gate runs each engine in its own pinned environment:
+
+```bash
+ORBITKV_FAULT_TESTS=1 ORBITKV_PREPARE_REQUESTS=1 \
+ORBITKV_CACHE_MANAGER_BINARY=/path/to/test-hooks/orbitkv-cache-manager-py \
+../.venv/vllm-release/bin/python -m pytest -m stress \
+  tests/stress/test_recovery_faults.py -k vllm --model /workspace/models/qwen3-8b \
+  --basetemp=/workspace/orbitkv/benches/results/runs/serving-fault-vllm
+```
+
+Use `ORBITKV_PREPARE_REQUESTS=0` for ordinary demand, and the SGLang environment
+with `-k sglang` for the other engine. Build the
+Manager with `orbitkv-server/test-hooks`, retain that binary separately, then
+complete the ordinary native build before starting any GPU processes. Never
+restage Mooncake libraries while a Manager or engine is running. The gate uses
+private barriers, exact generated-output controls, real SSD reads, cancellation,
+lost completion signals and engine/Manager restart. Independent requests must
+progress while a cancelled read retains its buffers; reservations and submitted
+I/O must subsequently drain. Logs are retained separately for every process
+incarnation together with `fault-results.json`. This deterministic fault profile
+is separate from the ordinary performance benchmark.
+
 ## Release Smoke
 
 Release smoke validates the final installed package, not the source checkout. It should use a clean non-editable environment and record Python libdir, `PYTHONHOME`, `PYTHONPATH`, CUDA runtime path, package name/version, GPU, model path, and metrics excerpt.
+
+After installing the candidate wheel in the pinned engine environment, run:
+
+```bash
+.venv/vllm-release/bin/python -m pytest -m release_smoke \
+  python/tests/release/test_installed_wheel.py -k vllm \
+  --model /workspace/models/qwen3-8b \
+  --basetemp=/workspace/orbitkv/benches/results/runs/wheel-smoke-vllm
+```
+
+Run from the repository root; substitute the SGLang environment and `-k sglang`
+for the other adapter, with its own `--basetemp` directory. The test starts
+subprocesses outside the source package, rejects editable/source imports,
+uses installed plugin metadata and the bundled console script, and verifies
+exact output plus positive GPU-load bytes after engine restart. It also checks
+final query/I/O drain. Run the engines sequentially on one GPU. See
+[release preparation](../../docs/releases.md) for the wheel build matrix.
 
 Minimum checks:
 - `orbitkv-cache-manager --help`

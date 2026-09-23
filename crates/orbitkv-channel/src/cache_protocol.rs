@@ -9,7 +9,7 @@ const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
-const QUERY_VERSION: u16 = 4;
+const QUERY_VERSION: u16 = 5;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
@@ -54,17 +54,25 @@ impl QueryTicket {
 pub enum QueryCommand {
     Submit(QueryBundleRequest),
     Poll(QueryTicket),
+    Claim {
+        ticket: QueryTicket,
+        count_lookup: bool,
+    },
 }
 
 impl QueryCommand {
     pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
         match self {
             Self::Submit(request) => request.encode(),
-            Self::Poll(ticket) => {
+            Self::Poll(ticket) | Self::Claim { ticket, .. } => {
                 let mut bytes = Vec::with_capacity(24);
                 push_u32(&mut bytes, QUERY_POLL_MAGIC);
                 push_u16(&mut bytes, QUERY_VERSION);
-                push_u16(&mut bytes, 0);
+                let flags = match self {
+                    Self::Claim { count_lookup, .. } => 1 | (u16::from(*count_lookup) << 1),
+                    _ => 0,
+                };
+                push_u16(&mut bytes, flags);
                 ticket.encode_into(&mut bytes)?;
                 Ok(bytes)
             }
@@ -82,12 +90,19 @@ impl QueryCommand {
         }
         decoder.expect_version()?;
         let flags = decoder.u16()?;
-        if flags != 0 {
+        if flags > 3 || flags == 2 {
             return Err(QueryCodecError::InvalidFlags(flags));
         }
         let ticket = QueryTicket::decode_from(&mut decoder)?;
         decoder.finish()?;
-        Ok(Self::Poll(ticket))
+        Ok(if flags & 1 != 0 {
+            Self::Claim {
+                ticket,
+                count_lookup: flags & 2 != 0,
+            }
+        } else {
+            Self::Poll(ticket)
+        })
     }
 }
 
@@ -507,6 +522,8 @@ pub struct QueryBundleRequest {
     pub discover: bool,
     /// Read a selected recovery range already counted by candidate discovery.
     pub materialize: bool,
+    /// Keep a consumer-owned result at the Manager until its first demand poll.
+    pub prepare: bool,
 }
 
 impl QueryBundleRequest {
@@ -533,7 +550,8 @@ impl QueryBundleRequest {
             u16::from(self.wait_for_full_prefix)
                 | (u16::from(self.warmup) << 1)
                 | (u16::from(self.discover) << 2)
-                | (u16::from(self.materialize) << 3),
+                | (u16::from(self.materialize) << 3)
+                | (u16::from(self.prepare) << 4),
         );
         self.ticket.encode_into(&mut bytes)?;
         push_u32(&mut bytes, self.group_id);
@@ -557,7 +575,7 @@ impl QueryBundleRequest {
         decoder.expect_magic(QUERY_REQUEST_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
-        if flags & !15 != 0 {
+        if flags & !31 != 0 {
             return Err(QueryCodecError::InvalidFlags(flags));
         }
         let ticket = QueryTicket::decode_from(&mut decoder)?;
@@ -589,6 +607,7 @@ impl QueryBundleRequest {
             warmup: flags & 2 != 0,
             discover: flags & 4 != 0,
             materialize: flags & 8 != 0,
+            prepare: flags & 16 != 0,
         })
     }
 }
