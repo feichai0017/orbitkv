@@ -5,15 +5,9 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use hashlink::LinkedHashMap;
 use log::{info, warn};
-use orbitkv_proto::proto::engine::engine_client::EngineClient;
-use orbitkv_proto::proto::engine::{
-    QueryBlocksForTransferRequest, QueryBlocksForTransferResponse, TransferBlockInfo,
-};
+use orbitkv_proto::proto::engine::TransferBlockInfo;
 use orbitkv_transfer::{TransferOp, TransferSlice};
-use parking_lot::Mutex;
-use tonic::transport::{Channel, Endpoint};
 
 use crate::numa::NumaNode;
 
@@ -51,9 +45,6 @@ pub(crate) struct MooncakeFetchStore {
     membership: Arc<orbitkv_catalog::MembershipView>,
     transfer: Arc<MooncakeTransport>,
     allocate_fn: AllocateFn,
-    /// Lazy gRPC channel cache keyed by remote address. Tonic channels multiplex
-    /// requests over a single HTTP/2 connection; cloning is cheap.
-    grpc_channels: Arc<Mutex<LinkedHashMap<String, EngineClient<Channel>>>>,
 }
 
 #[tonic::async_trait]
@@ -69,13 +60,10 @@ impl SegmentFetcher for MooncakeFetchStore {
 
         // Query the OrbitKV authority before exposing any physical addresses.
         let query_start = Instant::now();
-        let authorization = query_remote_blocks(
-            &self.grpc_channels,
-            &self.completions,
-            segment,
-            &self.membership.owner().endpoint,
-        )
-        .await;
+        let authorization = self
+            .completions
+            .authorize(segment, self.membership.owner().incarnation)
+            .await;
         let query_elapsed = query_start.elapsed();
         core_metrics().remote_stage_duration_seconds.record(
             query_elapsed.as_secs_f64(),
@@ -86,7 +74,7 @@ impl SegmentFetcher for MooncakeFetchStore {
         );
         let (lock_guard, response) = match authorization {
             Ok(cr) => cr,
-            Err(QueryError::Rejected) => {
+            Err(error) if error.code() == tonic::Code::FailedPrecondition => {
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "rejected")]);
@@ -101,7 +89,7 @@ impl SegmentFetcher for MooncakeFetchStore {
                 }
                 return SegmentOutcome::Rejected;
             }
-            Err(QueryError::Failed(e)) => {
+            Err(e) => {
                 warn!("Remote query to {remote_addr} failed: {e}");
                 core_metrics()
                     .remote_fetch_total
@@ -220,7 +208,6 @@ impl MooncakeFetchStore {
             membership,
             transfer,
             allocate_fn,
-            grpc_channels: Arc::new(Mutex::new(LinkedHashMap::new())),
         }
     }
 
@@ -584,83 +571,6 @@ struct TransferTiming {
     transfer_desc_count: usize,
     slot_count: usize,
     numa_slab_count: usize,
-}
-
-fn get_or_create_channel(
-    cache: &Mutex<LinkedHashMap<String, EngineClient<Channel>>>,
-    addr: &str,
-) -> Result<EngineClient<Channel>, String> {
-    let mut cache = cache.lock();
-    if let Some(client) = cache.to_back(addr) {
-        return Ok(client.clone());
-    }
-    let url = if addr.starts_with("http://") || addr.starts_with("https://") {
-        addr.to_string()
-    } else {
-        format!("http://{addr}")
-    };
-    let channel = Endpoint::from_shared(url)
-        .map_err(|e| e.to_string())?
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(3))
-        .connect_lazy();
-    const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
-    let client = EngineClient::new(channel)
-        .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
-        .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
-    if cache.len() == 64 {
-        cache.pop_front();
-    }
-    cache.insert(addr.to_string(), client.clone());
-    Ok(client)
-}
-
-enum QueryError {
-    Rejected,
-    Failed(String),
-}
-
-async fn query_remote_blocks(
-    grpc_channels: &Mutex<LinkedHashMap<String, EngineClient<Channel>>>,
-    completions: &Arc<TransferCompletions>,
-    segment: &FetchSegment,
-    advertise_addr: &str,
-) -> Result<(TransferLockGuard, QueryBlocksForTransferResponse), QueryError> {
-    let mut client = get_or_create_channel(grpc_channels, &segment.owner.endpoint)
-        .map_err(QueryError::Failed)?;
-    let mut guard = completions
-        .reserve(client.clone(), &segment.owner.endpoint)
-        .ok_or_else(|| QueryError::Failed("transfer completion budget exhausted".into()))?;
-    let request = QueryBlocksForTransferRequest {
-        namespace: segment.records[0].key.namespace.clone(),
-        block_hashes: segment.records.iter().map(|r| r.key.hash.clone()).collect(),
-        requester_id: advertise_addr.to_string(),
-        owner_incarnation: segment.owner.incarnation.to_string(),
-        residency_sequences: segment.records.iter().map(|r| r.sequence).collect(),
-    };
-    // Detaching this bounded task on cancellation still consumes any successful
-    // authorization reply, so its source hold is released even without a caller.
-    tokio::spawn(async move {
-        let mut response = client
-            .query_blocks_for_transfer(request)
-            .await
-            .map_err(|e| {
-                if e.code() == tonic::Code::FailedPrecondition {
-                    QueryError::Rejected
-                } else {
-                    QueryError::Failed(e.to_string())
-                }
-            })?
-            .into_inner();
-        let authorized = !response.transfer_session_id.is_empty();
-        guard.authorize(std::mem::take(&mut response.transfer_session_id));
-        if !response.status.as_ref().is_some_and(|st| st.ok) || !authorized {
-            return Err(QueryError::Failed("missing transfer authorization".into()));
-        }
-        Ok((guard, response))
-    })
-    .await
-    .map_err(|error| QueryError::Failed(error.to_string()))?
 }
 
 /// Compute client-side transfer timeout from server's lock timeout.

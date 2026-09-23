@@ -17,8 +17,8 @@ use orbitkv_catalog::{BlockHashStore, CatalogService, MembershipView, Placement}
 use orbitkv_core::sync_state::{LOAD_STATE_ERROR, LOAD_STATE_SUCCESS};
 use orbitkv_core::*;
 use orbitkv_proto::proto::engine::{
-    QueryBlocksForTransferRequest, ReleaseTransferLockRequest, catalog_server::CatalogServer,
-    engine_client::EngineClient,
+    OpenTransferWindowRequest, QueryBlocksForTransferRequest, ReleaseTransferLockRequest,
+    TransferTicket, catalog_server::CatalogServer, engine_client::EngineClient,
 };
 use orbitkv_server::proto::engine::engine_server::EngineServer;
 use orbitkv_state::group_hash;
@@ -400,10 +400,24 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     let mut peer = EngineClient::connect(format!("http://127.0.0.1:{port_a}"))
         .await
         .unwrap();
+    let window = peer
+        .open_transfer_window(OpenTransferWindowRequest {
+            owner_incarnation: evidence[0].replicas[0].owner.incarnation.to_string(),
+            requester_incarnation: uuid::Uuid::new_v4().to_string(),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .window_id;
+    let ticket = TransferTicket {
+        window_id: window,
+        slot: 0,
+        generation: 1,
+    };
     let authorization = QueryBlocksForTransferRequest {
         namespace: cache_namespace.clone(),
         block_hashes: stored_hashes.clone(),
-        requester_id: "test-requester".into(),
+        ticket: Some(ticket.clone()),
         owner_incarnation: evidence[0].replicas[0].owner.incarnation.to_string(),
         residency_sequences: evidence.iter().map(|r| r.replicas[0].sequence).collect(),
     };
@@ -434,13 +448,76 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
             .await
             .unwrap_err()
             .code(),
+        tonic::Code::FailedPrecondition
+    );
+    let mut concurrent = authorization.clone();
+    concurrent.ticket = Some(TransferTicket {
+        slot: 1,
+        ..ticket.clone()
+    });
+    assert_eq!(
+        peer.query_blocks_for_transfer(concurrent)
+            .await
+            .unwrap_err()
+            .code(),
         tonic::Code::ResourceExhausted
     );
     peer.release_transfer_lock(ReleaseTransferLockRequest {
-        transfer_session_id: granted.transfer_session_id,
+        ticket: Some(ticket.clone()),
     })
     .await
     .unwrap();
+    // Release-before-authorize must fence a queued RPC without ever pinning data.
+    let cancelled = TransferTicket {
+        generation: 2,
+        ..ticket.clone()
+    };
+    peer.release_transfer_lock(ReleaseTransferLockRequest {
+        ticket: Some(cancelled.clone()),
+    })
+    .await
+    .unwrap();
+    let mut queued = authorization.clone();
+    queued.ticket = Some(cancelled);
+    assert_eq!(
+        peer.query_blocks_for_transfer(queued)
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::FailedPrecondition
+    );
+    for invalid in [
+        None,
+        Some(TransferTicket {
+            slot: 64,
+            ..ticket.clone()
+        }),
+        Some(TransferTicket {
+            generation: 0,
+            ..ticket.clone()
+        }),
+        Some(TransferTicket {
+            window_id: "bad-id".into(),
+            ..ticket.clone()
+        }),
+    ] {
+        let mut query = authorization.clone();
+        query.ticket = invalid.clone();
+        assert_eq!(
+            peer.query_blocks_for_transfer(query)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+        assert_eq!(
+            peer.release_transfer_lock(ReleaseTransferLockRequest { ticket: invalid })
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+    }
 
     // ── 7. Create Engine B (fetcher) ──
     let port_b = get_free_port();
@@ -618,7 +695,10 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     let fresh_authorization = QueryBlocksForTransferRequest {
         namespace: cache_namespace.clone(),
         block_hashes: stored_hashes.clone(),
-        requester_id: "test-requester".into(),
+        ticket: Some(TransferTicket {
+            generation: 3,
+            ..ticket.clone()
+        }),
         owner_incarnation: membership_a.owner().incarnation.to_string(),
         residency_sequences: fresh
             .iter()
@@ -631,8 +711,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
             })
             .collect(),
     };
-    let held = peer
-        .query_blocks_for_transfer(fresh_authorization.clone())
+    peer.query_blocks_for_transfer(fresh_authorization.clone())
         .await
         .unwrap()
         .into_inner();
@@ -646,7 +725,10 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         tonic::Code::FailedPrecondition
     );
     peer.release_transfer_lock(ReleaseTransferLockRequest {
-        transfer_session_id: held.transfer_session_id,
+        ticket: Some(TransferTicket {
+            generation: 3,
+            ..ticket
+        }),
     })
     .await
     .unwrap();

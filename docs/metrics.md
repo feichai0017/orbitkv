@@ -288,14 +288,15 @@ For backing failure correlation, use:
 - `orbitkv_remote_stage_duration_seconds{stage,status}` separates `discovery_rpc`,
   `authorization`, `allocation`, `read`, `rebuild` and `release`. Allocation/read/rebuild
   describe completed successful transfers; discovery includes timed-out attempts.
+  Authorization includes first-use window setup and its bounded single-flight wait.
   Release measures time from native completion/abandonment to acknowledgement,
   including retry delays.
 - `orbitkv_transfer_reserved_bytes` counts whole source allocations once per
   session, including overdue holds. `orbitkv_transfer_expired_sessions` counts
   overdue sessions still retaining memory; `orbitkv_transfer_lock_timeouts_total`
   counts the transition once. Timeout is not a release condition.
-- `orbitkv_transfer_completion_outstanding` counts requester slots from authorization
-  through source release acknowledgement (1024 total, at most 64 per endpoint).
+- `orbitkv_transfer_completion_outstanding` counts requester slots from window setup
+  through source release acknowledgement (1024 total, at most 64 per source incarnation).
   `orbitkv_transfer_completion_retries_total` counts failed release attempts;
   `orbitkv_transfer_completion_rejections_total` counts new authorizations skipped
   at capacity. Outstanding records must drain as well as source pins.

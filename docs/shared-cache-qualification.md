@@ -95,7 +95,10 @@ the final summary and reproduction commands in a PR.
 
 Rust tests separately verify stale owner/residency rejection, source budget
 exhaustion, retained source allocations after timeout, cancellation during a
-blocking transfer and bounded retry of lost release replies. They cannot prove
+blocking transfer, bounded retry of lost release replies, lost authorization
+replies after pinning, close-before-authorize races, stale slot generations and
+idle-window eviction. Connection recovery verifies that an old requester
+completion cannot release a new runtime’s hold. These tests cannot prove
 transport revocation after a permanently lost requester. Such source pins remain
 charged until safe release or coordinated Manager teardown. Real partitions,
 two-host serving, multi-rank replicas and catalog HA remain separate gates.

@@ -1105,18 +1105,9 @@ impl OrbitKVEngine {
     // Cross-node transfer: serving side
     // =========================================================================
 
-    pub fn transfer_lock_timeout(&self) -> std::time::Duration {
-        self.storage.transfer_lock_timeout()
-    }
-
-    /// Release a transfer lock session. Returns the number of blocks released.
-    pub fn release_transfer_lock(&self, session_id: &str) -> usize {
-        self.storage.release_transfer_lock(session_id)
-    }
-
     /// Mark overdue source transfers without releasing their memory.
     pub fn expire_transfer_locks(&self) -> usize {
-        self.storage.expire_transfer_locks()
+        self.storage.transfer_lock.expire()
     }
 
     /// Return `(base_ptr, size)` for each contiguous pinned memory region.

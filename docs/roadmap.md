@@ -229,9 +229,10 @@ Deliver in order:
   exact source runtime/residency checks,
   and buffer/hold ownership through asynchronous cancellation;
 - D1 completion (implemented): bounded requester records retain release retries
-  through control outages, consume late authorization replies after cancellation,
-  and keep memory until Mooncake confirms whole-batch release. Requester-crash
-  revocation and reconciliation of lost authorization replies remain open;
+  through control outages and keep memory until Mooncake confirms whole-batch
+  release. Reusable source-issued windows and generation-fenced tickets reconcile
+  lost authorization replies and cancellation, including close-before-authorize
+  races, with bounded idle metadata. Requester-crash revocation remains open;
 - D1 membership (implemented): transactional Node ID registration, persistent
   epochs, lease deadlines, bounded snapshots and Watch repair; new remote work
   stops when membership evidence or registration validity is unavailable;

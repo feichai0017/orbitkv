@@ -26,20 +26,28 @@ fn shared_slab() -> (Vec<(StateKey, Arc<SealedBlock>)>, Arc<PinnedAllocation>) {
     (blocks, allocation)
 }
 
+fn ticket(manager: &TransferLockManager) -> TransferTicket {
+    TransferTicket {
+        window: manager.open(Uuid::new_v4()).unwrap(),
+        slot: 0,
+        generation: 1,
+    }
+}
+
 #[test]
 fn overdue_transfer_keeps_the_entire_slab_until_completion() {
     let (blocks, allocation) = shared_slab();
     let bytes = allocation.size_bytes();
     let memory = Arc::downgrade(&allocation);
     let manager = TransferLockManager::new(Duration::ZERO, bytes);
-    let session = manager.lock_blocks("reader", blocks.clone()).unwrap();
+    let session = ticket(&manager);
+    manager.lock_blocks(session, blocks.clone()).unwrap();
     assert_eq!(manager.inner.lock().reserved_bytes, bytes);
     assert_eq!(manager.expire(), 1);
     assert_eq!(manager.expire(), 0);
-    assert!(
-        manager
-            .lock_blocks("another-reader", blocks.clone())
-            .is_none()
+    assert_eq!(
+        manager.lock_blocks(ticket(&manager), blocks.clone()),
+        Err(TransferLockError::BudgetExhausted)
     );
     drop(blocks);
     drop(allocation);
@@ -47,10 +55,10 @@ fn overdue_transfer_keeps_the_entire_slab_until_completion() {
         memory.upgrade().is_some(),
         "eviction and timeout must not free a DMA source"
     );
-    assert_eq!(manager.release(&session), 2);
+    assert_eq!(manager.release(session), Ok(2));
     assert!(memory.upgrade().is_none());
     assert_eq!(manager.inner.lock().reserved_bytes, 0);
-    assert_eq!(manager.release(&session), 0);
+    assert_eq!(manager.release(session), Ok(0));
 }
 
 #[test]
@@ -65,8 +73,9 @@ fn concurrent_readers_share_one_admission_budget() {
             let barrier = Arc::clone(&barrier);
             let blocks = blocks.clone();
             std::thread::spawn(move || {
+                let ticket = ticket(&manager);
                 barrier.wait();
-                manager.lock_blocks("reader", blocks)
+                manager.lock_blocks(ticket, blocks).ok().map(|()| ticket)
             })
         })
         .collect();
@@ -76,23 +85,89 @@ fn concurrent_readers_share_one_admission_budget() {
         .collect();
     assert_eq!(sessions.len(), 2);
     assert_eq!(manager.inner.lock().reserved_bytes, 2 * bytes);
-    manager.release(&sessions[0]);
-    let replacement = manager.lock_blocks("replacement", blocks).unwrap();
-    manager.release(&sessions[1]);
-    manager.release(&replacement);
+    manager.release(sessions[0]).unwrap();
+    let replacement = ticket(&manager);
+    manager.lock_blocks(replacement, blocks).unwrap();
+    manager.release(sessions[1]).unwrap();
+    manager.release(replacement).unwrap();
     assert_eq!(manager.inner.lock().reserved_bytes, 0);
 }
 
 #[test]
 fn a_small_slice_cannot_bypass_the_allocation_budget() {
     let (mut blocks, allocation) = shared_slab();
-    let bytes = allocation.size_bytes();
-    let manager = TransferLockManager::new(Duration::ZERO, bytes - 1);
+    let manager = TransferLockManager::new(Duration::ZERO, allocation.size_bytes() - 1);
     blocks.truncate(1);
-    assert!(manager.lock_blocks("reader", blocks).is_none());
-    assert!(manager.lock_blocks("reader", Vec::new()).is_none());
+    let ticket = ticket(&manager);
+    assert_eq!(
+        manager.lock_blocks(ticket, blocks.clone()),
+        Err(TransferLockError::BudgetExhausted)
+    );
+    assert_eq!(
+        manager.lock_blocks(ticket, blocks),
+        Err(TransferLockError::StaleTicket)
+    );
     assert_eq!(manager.inner.lock().reserved_bytes, 0);
-    assert!(manager.inner.lock().sessions.is_empty());
+    assert_eq!(manager.inner.lock().active, 0);
+}
+
+#[test]
+fn closed_generations_cannot_resurrect_or_release_a_different_read() {
+    let (blocks, _) = shared_slab();
+    let manager = TransferLockManager::new(Duration::ZERO, u64::MAX);
+    let first = ticket(&manager);
+    // Completion wins the race against queued authorization.
+    assert_eq!(manager.release(first), Ok(0));
+    assert_eq!(
+        manager.lock_blocks(first, blocks.clone()),
+        Err(TransferLockError::StaleTicket)
+    );
+    let second = TransferTicket {
+        generation: 2,
+        ..first
+    };
+    manager.lock_blocks(second, blocks.clone()).unwrap();
+    assert_eq!(
+        manager.lock_blocks(second, blocks.clone()),
+        Err(TransferLockError::StaleTicket)
+    );
+    assert_eq!(manager.release(first), Ok(0));
+    let future = TransferTicket {
+        generation: 3,
+        ..first
+    };
+    assert_eq!(manager.release(future), Err(TransferLockError::StaleTicket));
+    assert_eq!(
+        manager.lock_blocks(future, blocks.clone()),
+        Err(TransferLockError::StaleTicket)
+    );
+    assert_eq!(manager.inner.lock().active, 1);
+    assert_eq!(manager.release(second), Ok(2));
+    manager.lock_blocks(future, blocks).unwrap();
+    assert_eq!(manager.release(second), Ok(0));
+    assert_eq!(manager.release(future), Ok(2));
+}
+
+#[test]
+fn idle_window_eviction_is_bounded_and_rejects_late_authorization() {
+    let (blocks, _) = shared_slab();
+    let manager = TransferLockManager::new(Duration::ZERO, u64::MAX);
+    let active = ticket(&manager);
+    manager.lock_blocks(active, blocks.clone()).unwrap();
+    let idle = ticket(&manager);
+    manager.release(idle).unwrap();
+    // Simulates lost setup replies and requester churn; none pins payload.
+    for _ in 0..MAX_TRANSFER_WINDOWS * 2 {
+        manager.open(Uuid::new_v4()).unwrap();
+    }
+    assert_eq!(manager.inner.lock().windows.len(), MAX_TRANSFER_WINDOWS);
+    assert_eq!(manager.inner.lock().active, 1);
+    assert_eq!(
+        manager.lock_blocks(idle, blocks),
+        Err(TransferLockError::UnknownWindow)
+    );
+    assert_eq!(manager.release(idle), Ok(0));
+    assert_eq!(manager.release(active), Ok(2));
 }
 
 #[test]
@@ -102,9 +177,22 @@ fn metadata_is_bounded_even_for_zero_byte_blocks() {
         StateKey::new("ns".into(), vec![0]),
         Arc::new(SealedBlock::from_slots(Vec::new())),
     )];
+    let mut first = None;
     for _ in 0..MAX_TRANSFER_SESSIONS {
-        assert!(manager.lock_blocks("reader", blocks.clone()).is_some());
+        let ticket = ticket(&manager);
+        first.get_or_insert(ticket);
+        manager.lock_blocks(ticket, blocks.clone()).unwrap();
     }
     assert_eq!(manager.expire(), MAX_TRANSFER_SESSIONS);
-    assert!(manager.lock_blocks("reader", blocks).is_none());
+    assert!(
+        manager.open(Uuid::new_v4()).is_none(),
+        "busy windows are never evicted"
+    );
+    let first = first.unwrap();
+    assert_eq!(
+        manager.lock_blocks(TransferTicket { slot: 1, ..first }, blocks),
+        Err(TransferLockError::BudgetExhausted)
+    );
+    manager.release(first).unwrap();
+    assert!(manager.open(Uuid::new_v4()).is_some());
 }

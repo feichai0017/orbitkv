@@ -1,8 +1,8 @@
 //! Embeddable P2P transfer gRPC service.
 //!
-//! A node that serves cross-node fetches exposes `QueryBlocksForTransfer`
-//! (authorize and pin blocks, returning Mooncake addresses) and
-//! `ReleaseTransferLock`. The Cache Manager serves only these peer RPCs plus
+//! A node opens reusable transfer windows, authorizes single-use tickets with
+//! `QueryBlocksForTransfer`, and closes them with `ReleaseTransferLock`.
+//! The Cache Manager serves only these peer RPCs plus
 //! `Health`; inference processes use the node-local UDS/iceoryx2 endpoint.
 //!
 //! Source pins are budgeted and retained after timeout. An overdue session
@@ -15,11 +15,14 @@ use tonic::{Request, Response, Status, async_trait};
 
 use orbitkv_proto::proto::engine::engine_server::{Engine, EngineServer};
 use orbitkv_proto::proto::engine::{
-    HealthRequest, HealthResponse, QueryBlocksForTransferRequest, QueryBlocksForTransferResponse,
-    ReleaseTransferLockRequest, ReleaseTransferLockResponse, ResponseStatus, TransferBlockInfo,
-    TransferSlotInfo,
+    HealthRequest, HealthResponse, OpenTransferWindowRequest, OpenTransferWindowResponse,
+    QueryBlocksForTransferRequest, QueryBlocksForTransferResponse, ReleaseTransferLockRequest,
+    ReleaseTransferLockResponse, ResponseStatus, TransferBlockInfo, TransferSlotInfo,
+    TransferTicket as WireTicket,
 };
 
+use crate::storage::TransferAuthorizationError;
+use crate::storage::transfer_lock::{TRANSFER_WINDOW_SLOTS, TransferLockError, TransferTicket};
 use crate::{LayerBlock, OrbitKVEngine};
 
 /// Match orbitkv-server's cap: a `QueryBlocksForTransfer` response carries
@@ -82,6 +85,42 @@ impl P2pTransferService {
             .await
     }
 
+    fn parse_ticket(ticket: Option<WireTicket>) -> Result<TransferTicket, Status> {
+        let ticket = ticket.ok_or_else(|| Status::invalid_argument("missing transfer ticket"))?;
+        let window = ticket
+            .window_id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| Status::invalid_argument("invalid transfer window"))?;
+        if window.is_nil()
+            || ticket.slot as usize >= TRANSFER_WINDOW_SLOTS
+            || ticket.generation == 0
+        {
+            return Err(Status::invalid_argument("invalid transfer ticket"));
+        }
+        Ok(TransferTicket {
+            window,
+            slot: ticket.slot as usize,
+            generation: ticket.generation,
+        })
+    }
+
+    fn authorization_error(error: TransferAuthorizationError) -> Status {
+        match error {
+            TransferAuthorizationError::StaleReplica => {
+                Status::failed_precondition("stale owner or residency candidate")
+            }
+            TransferAuthorizationError::Lock(TransferLockError::UnknownWindow) => {
+                Status::not_found("unknown transfer window")
+            }
+            TransferAuthorizationError::Lock(TransferLockError::StaleTicket) => {
+                Status::failed_precondition("closed or occupied transfer ticket")
+            }
+            TransferAuthorizationError::Lock(TransferLockError::BudgetExhausted) => {
+                Status::resource_exhausted("source transfer reservation budget exhausted")
+            }
+        }
+    }
+
     fn ok_status() -> ResponseStatus {
         ResponseStatus {
             ok: true,
@@ -106,6 +145,42 @@ impl P2pTransferService {
 
 #[async_trait]
 impl Engine for P2pTransferService {
+    async fn open_transfer_window(
+        &self,
+        request: Request<OpenTransferWindowRequest>,
+    ) -> Result<Response<OpenTransferWindowResponse>, Status> {
+        if !self.engine.has_remote_transport() {
+            return Err(Status::failed_precondition(
+                "Mooncake transfer engine is not configured",
+            ));
+        }
+        let req = request.into_inner();
+        let owner = req
+            .owner_incarnation
+            .parse()
+            .map_err(|_| Status::invalid_argument("invalid owner incarnation"))?;
+        let requester = req
+            .requester_incarnation
+            .parse::<uuid::Uuid>()
+            .map_err(|_| Status::invalid_argument("invalid requester incarnation"))?;
+        if requester.is_nil() {
+            return Err(Status::invalid_argument("nil requester incarnation"));
+        }
+        self.engine
+            .storage
+            .validate_transfer_owner(owner)
+            .map_err(Self::authorization_error)?;
+        let window = self
+            .engine
+            .storage
+            .transfer_lock
+            .open(requester)
+            .ok_or_else(|| Status::resource_exhausted("source transfer window budget exhausted"))?;
+        Ok(Response::new(OpenTransferWindowResponse {
+            window_id: window.to_string(),
+        }))
+    }
+
     async fn query_blocks_for_transfer(
         &self,
         request: Request<QueryBlocksForTransferRequest>,
@@ -139,21 +214,12 @@ impl Engine for P2pTransferService {
                 present: true,
             })
             .collect();
-        let crate::storage::TransferAuthorization {
-            session_id,
-            blocks: found_blocks,
-        } = self
+        let ticket = Self::parse_ticket(req.ticket)?;
+        let found_blocks = self
             .engine
             .storage
-            .authorize_transfer(owner, &req.requester_id, &records)
-            .map_err(|error| match error {
-                crate::storage::TransferAuthorizationError::StaleReplica => {
-                    Status::failed_precondition("stale owner or residency candidate")
-                }
-                crate::storage::TransferAuthorizationError::BudgetExhausted => {
-                    Status::resource_exhausted("source transfer reservation budget exhausted")
-                }
-            })?;
+            .authorize_transfer(owner, ticket, &records)
+            .map_err(Self::authorization_error)?;
 
         let blocks: Vec<TransferBlockInfo> = found_blocks
             .iter()
@@ -172,18 +238,16 @@ impl Engine for P2pTransferService {
             .collect();
 
         debug!(
-            "P2P query_blocks_for_transfer: requester={} requested={} found={} session={}",
-            req.requester_id,
+            "P2P query_blocks_for_transfer: requested={} found={} ticket={:?}",
             req.block_hashes.len(),
             blocks.len(),
-            session_id,
+            ticket,
         );
 
         Ok(Response::new(QueryBlocksForTransferResponse {
             status: Some(Self::ok_status()),
             blocks,
-            transfer_session_id: session_id,
-            lock_timeout_secs: self.engine.transfer_lock_timeout().as_secs() as u32,
+            lock_timeout_secs: self.engine.storage.transfer_lock.lock_timeout().as_secs() as u32,
             transfer_endpoint: self
                 .engine
                 .transfer_endpoint()
@@ -198,12 +262,13 @@ impl Engine for P2pTransferService {
         &self,
         request: Request<ReleaseTransferLockRequest>,
     ) -> Result<Response<ReleaseTransferLockResponse>, Status> {
-        let req = request.into_inner();
-        let released = self.engine.release_transfer_lock(&req.transfer_session_id);
-        debug!(
-            "P2P release_transfer_lock: session={} released={released}",
-            req.transfer_session_id
-        );
+        let ticket = Self::parse_ticket(request.into_inner().ticket)?;
+        let released = self
+            .engine
+            .storage
+            .transfer_lock
+            .release(ticket)
+            .map_err(|error| Self::authorization_error(TransferAuthorizationError::Lock(error)))?;
         Ok(Response::new(ReleaseTransferLockResponse {
             status: Some(Self::ok_status()),
             released_blocks: released as u64,
