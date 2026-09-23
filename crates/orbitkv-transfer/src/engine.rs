@@ -188,24 +188,11 @@ impl TransferEngine {
                 native::submit(self.native, batch, &mut requests)
             }),
         };
-        let result = submitted.and_then(|()| self.wait_batch(batch, slices.len(), timeout));
-        let freed = check("freeBatchID", unsafe {
-            native::free_batch(self.native, batch)
-        });
-        match (result, freed) {
-            (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
-            (Ok(bytes), Ok(())) => Ok(bytes),
-        }
-    }
-
-    fn wait_batch(&self, batch: native::BatchId, tasks: usize, timeout: Duration) -> Result<usize> {
-        let deadline = Instant::now() + timeout;
-        let mut total = 0usize;
-        let mut first_failure = None;
-        let mut timed_out = false;
-        for task in 0..tasks {
-            loop {
+        drain_batch(
+            slices.len(),
+            timeout,
+            submitted,
+            |task| {
                 let mut status = native::TransferStatus {
                     status: STATUS_WAITING,
                     transferred_bytes: 0,
@@ -213,34 +200,10 @@ impl TransferEngine {
                 check("getTransferStatus", unsafe {
                     native::transfer_status(self.native, batch, task, &mut status)
                 })?;
-                match status.status {
-                    STATUS_COMPLETED => {
-                        total = total.saturating_add(status.transferred_bytes as usize);
-                        break;
-                    }
-                    STATUS_WAITING | STATUS_PENDING => {
-                        if Instant::now() >= deadline {
-                            timed_out = true;
-                        }
-                        std::thread::yield_now();
-                    }
-                    _ => {
-                        first_failure.get_or_insert(MooncakeError::TransferFailed {
-                            task,
-                            state: status.status,
-                        });
-                        break;
-                    }
-                }
-            }
-        }
-        if let Some(error) = first_failure {
-            Err(error)
-        } else if timed_out {
-            Err(MooncakeError::Timeout)
-        } else {
-            Ok(total)
-        }
+                Ok(status)
+            },
+            || unsafe { native::free_batch(self.native, batch) == 0 },
+        )
     }
 
     pub fn take_notifications(&self) -> Result<Vec<Notification>> {
@@ -383,6 +346,60 @@ impl Drop for TransferEngine {
             }
         }
         unsafe { native::destroy(self.native) };
+    }
+}
+
+/// Native submission can partially succeed. Status errors and TIMEOUT are not
+/// fences; the pinned Mooncake implementation frees a batch only when every
+/// task's `is_finished` is set. Keep descriptors and caller-owned memory alive
+/// until that succeeds, even when the operation will ultimately return an error.
+fn drain_batch(
+    tasks: usize,
+    timeout: Duration,
+    submitted: Result<()>,
+    mut poll: impl FnMut(usize) -> Result<native::TransferStatus>,
+    mut free: impl FnMut() -> bool,
+) -> Result<usize> {
+    let started = Instant::now();
+    let mut completed = vec![false; tasks];
+    let mut total = 0usize;
+    let mut failure = submitted.err();
+    let mut timed_out = false;
+    loop {
+        for (task, done) in completed.iter_mut().enumerate() {
+            if *done {
+                continue;
+            }
+            match poll(task) {
+                Ok(status) if status.status == STATUS_COMPLETED => {
+                    total = total.saturating_add(status.transferred_bytes as usize);
+                    *done = true;
+                }
+                Ok(status) if matches!(status.status, STATUS_WAITING | STATUS_PENDING) => {}
+                Ok(status) => {
+                    failure.get_or_insert(MooncakeError::TransferFailed {
+                        task,
+                        state: status.status,
+                    });
+                }
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        if free() {
+            return match failure {
+                Some(error) => Err(error),
+                None if timed_out => Err(MooncakeError::Timeout),
+                None => Ok(total),
+            };
+        }
+        timed_out |= started.elapsed() >= timeout;
+        if started.elapsed() < Duration::from_millis(1) {
+            std::thread::yield_now();
+        } else {
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 }
 

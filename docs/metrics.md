@@ -286,12 +286,19 @@ For backing failure correlation, use:
   segments; `orbitkv_remote_fetch_plan_completed_segments` counts completed ones.
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
 - `orbitkv_remote_stage_duration_seconds{stage,status}` separates `discovery_rpc`,
-  `authorization`, `allocation`, `read` and `rebuild`. The last three describe
-  completed successful transfers; discovery includes timed-out RPC attempts.
+  `authorization`, `allocation`, `read`, `rebuild` and `release`. Allocation/read/rebuild
+  describe completed successful transfers; discovery includes timed-out attempts.
+  Release measures time from native completion/abandonment to acknowledgement,
+  including retry delays.
 - `orbitkv_transfer_reserved_bytes` counts whole source allocations once per
   session, including overdue holds. `orbitkv_transfer_expired_sessions` counts
   overdue sessions still retaining memory; `orbitkv_transfer_lock_timeouts_total`
   counts the transition once. Timeout is not a release condition.
+- `orbitkv_transfer_completion_outstanding` counts requester slots from authorization
+  through source release acknowledgement (1024 total, at most 64 per endpoint).
+  `orbitkv_transfer_completion_retries_total` counts failed release attempts;
+  `orbitkv_transfer_completion_rejections_total` counts new authorizations skipped
+  at capacity. Outstanding records must drain as well as source pins.
 - `orbitkv_transfer_lock_rejections_total{reason="bytes|sessions"}` counts bounded
   source admission failures. Source pins and query reservations must both drain
   after successful remote restoration.

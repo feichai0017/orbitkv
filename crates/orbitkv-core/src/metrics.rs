@@ -107,6 +107,12 @@ pub(crate) struct CoreMetrics {
 
     // Mooncake remote fetch (client side)
     #[cfg(feature = "mooncake")]
+    pub transfer_completion_outstanding: UpDownCounter<i64>,
+    #[cfg(feature = "mooncake")]
+    pub transfer_completion_retries: Counter<u64>,
+    #[cfg(feature = "mooncake")]
+    pub transfer_completion_rejections: Counter<u64>,
+    #[cfg(feature = "mooncake")]
     pub remote_fetch_total: Counter<u64>,
     #[cfg(feature = "mooncake")]
     pub candidate_cache_lookups: Counter<u64>,
@@ -491,6 +497,18 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
 
             // Mooncake remote fetch (client side)
+            #[cfg(feature = "mooncake")]
+            transfer_completion_outstanding: meter.i64_up_down_counter("orbitkv_transfer_completion_outstanding")
+                .with_description("Reserved requester completion slots, including active authorizations and READs")
+                .build(),
+            #[cfg(feature = "mooncake")]
+            transfer_completion_retries: meter.u64_counter("orbitkv_transfer_completion_retries")
+                .with_description("Unacknowledged release attempts; completion retained for retry")
+                .build(),
+            #[cfg(feature = "mooncake")]
+            transfer_completion_rejections: meter.u64_counter("orbitkv_transfer_completion_rejections")
+                .with_description("Authorizations skipped because requester completion capacity is exhausted")
+                .build(),
             #[cfg(feature = "mooncake")]
             remote_fetch_total: meter
                 .u64_counter("orbitkv_remote_fetch_total")

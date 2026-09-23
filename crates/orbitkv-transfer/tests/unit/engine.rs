@@ -84,3 +84,111 @@ fn engine_creation_restores_the_process_nic_filter() {
         }
     }
 }
+
+#[test]
+fn uncertain_transfer_states_drain_all_tasks_before_returning() {
+    for mode in [
+        "deadline",
+        "status-error",
+        "native-timeout",
+        "partial-submit",
+    ] {
+        let rounds = std::cell::Cell::new(0);
+        let submitted = if mode == "partial-submit" {
+            Err(MooncakeError::Operation {
+                operation: "submitTransfer",
+                status: -1,
+            })
+        } else {
+            Ok(())
+        };
+        let result = drain_batch(
+            2,
+            Duration::ZERO,
+            submitted,
+            |task| {
+                if task == 0 {
+                    return Ok(native::TransferStatus {
+                        status: STATUS_COMPLETED,
+                        transferred_bytes: 11,
+                    });
+                }
+                rounds.set(rounds.get() + 1);
+                if rounds.get() < 4 {
+                    if mode == "status-error" {
+                        return Err(MooncakeError::Operation {
+                            operation: "getTransferStatus",
+                            status: -1,
+                        });
+                    }
+                    return Ok(native::TransferStatus {
+                        status: if mode == "native-timeout" {
+                            6
+                        } else {
+                            STATUS_PENDING
+                        },
+                        transferred_bytes: 0,
+                    });
+                }
+                Ok(native::TransferStatus {
+                    status: STATUS_COMPLETED,
+                    transferred_bytes: 13,
+                })
+            },
+            || rounds.get() == 4,
+        );
+        assert!(result.is_err(), "{mode}");
+        assert_eq!(
+            rounds.get(),
+            4,
+            "{mode} must not return before native free succeeds"
+        );
+    }
+}
+
+#[test]
+fn batch_drain_counts_completed_bytes_once_and_handles_rejected_submission() {
+    let rounds = std::cell::Cell::new(0);
+    let result = drain_batch(
+        2,
+        Duration::from_secs(5),
+        Ok(()),
+        |task| {
+            if task == 1 {
+                rounds.set(rounds.get() + 1);
+            }
+            Ok(native::TransferStatus {
+                status: if task == 0 || rounds.get() == 3 {
+                    STATUS_COMPLETED
+                } else {
+                    STATUS_PENDING
+                },
+                transferred_bytes: 11,
+            })
+        },
+        || rounds.get() == 3,
+    );
+    assert_eq!(result.unwrap(), 22);
+    let result = drain_batch(
+        1,
+        Duration::ZERO,
+        Err(MooncakeError::Operation {
+            operation: "submitTransfer",
+            status: -1,
+        }),
+        |_| {
+            Err(MooncakeError::Operation {
+                operation: "getTransferStatus",
+                status: -2,
+            })
+        },
+        || true,
+    );
+    assert!(matches!(
+        result,
+        Err(MooncakeError::Operation {
+            operation: "submitTransfer",
+            ..
+        })
+    ));
+}

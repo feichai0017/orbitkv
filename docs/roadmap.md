@@ -227,6 +227,10 @@ Deliver in order:
 - D1 discovery (implemented): bounded positive candidate caching, batched and
   coalesced lookup, Manager-side planning, exact source runtime/residency checks,
   and buffer/hold ownership through asynchronous cancellation;
+- D1 completion (implemented): bounded requester records retain release retries
+  through control outages, consume late authorization replies after cancellation,
+  and keep memory until Mooncake confirms whole-batch release. Requester-crash
+  revocation and reconciliation of lost authorization replies remain open;
 - D1 membership (implemented): transactional Node ID registration, persistent
   epochs, lease deadlines, bounded snapshots and Watch repair; new remote work
   stops when membership evidence or registration validity is unavailable;

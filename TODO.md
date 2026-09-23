@@ -244,6 +244,11 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   under a byte/session budget, retry completion releases and export native stage timing.
 - [x] D1 same-host serving: both engines pass independent TP=1 replica sharing,
   catalog replay and source restart gates over TCP (`docs/shared-cache-qualification.md`).
+- [x] D1 completion recovery: reserve bounded per-requester/per-peer release capacity
+  before authorization; retain idempotent retries until acknowledged; consume late
+  authorization replies after cancellation and drain uncertain native batches.
+- [ ] D1 authorization reconciliation: recover source sessions when the grant reply
+  itself is lost before the requester learns its ID.
 - [ ] D1 revocation: reclaim orphaned source reservations only after transport
   termination is established; a timeout or membership expiry cannot free them.
 - [ ] D1: qualify source incarnation checks, transfer completion/revocation,

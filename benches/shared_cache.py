@@ -22,6 +22,7 @@ IDLE_METRICS = (
     "orbitkv_inflight_bytes",
     "orbitkv_transfer_lock_active",
     "orbitkv_transfer_reserved_bytes",
+    "orbitkv_transfer_completion_outstanding",
     "orbitkv_ssd_prefetch_inflight",
     "orbitkv_ssd_write_queue_pending",
     "orbitkv_ssd_write_inflight",

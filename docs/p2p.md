@@ -89,9 +89,20 @@ establish cross-engine byte compatibility or hybrid-state completeness.
   name and a coordinated restart for configuration replacement.
 - Directory recovery does not restore lost KV payloads. Overdue source transfers
   retain their allocations; neither timeout nor membership fencing proves a READ
-  has stopped. Lost release replies receive three bounded, idempotent attempts.
-  Permanently orphaned holds require coordinated Manager teardown until transport
-  revocation is implemented and qualified.
+  has stopped. Rust retains completed release records until the source acknowledges
+  them, with a three-second RPC timeout and retry backoff capped at five seconds.
+  Capacity is reserved before authorization: 1024 records per requester Manager,
+  at most 64 per source endpoint, including active READs. A full budget skips new
+  remote authorizations; local caching and other peers can still progress.
+- Cancelling the caller during authorization does not discard a successful late
+  reply. Submitted READs keep their source and destination ownership until
+  Mooncake accepts freeing the complete batch, including after partial submission,
+  native timeout or status-query errors. Persistent uncertainty retains resources.
+- Completion records are in memory. A requester Manager crash, or an authorization
+  response lost before its session ID is received, can still leave an orphaned
+  source hold. Restarting a requester or expiring its membership cannot free that
+  hold. Coordinated transport/Manager teardown remains necessary until safe
+  revocation and authorization reconciliation are implemented and qualified.
 
 The etcd connector currently exposes HTTP endpoints; TLS/auth, multi-host clock
 qualification and replica failover remain open. A three-member etcd deployment
