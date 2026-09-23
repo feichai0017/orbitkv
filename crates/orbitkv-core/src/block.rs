@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-use crate::numa::NumaNode;
-use crate::pinned_pool::{MappedPinnedPtr, PinnedAllocation};
+use crate::memory::numa::NumaNode;
+use crate::memory::pool::{MappedPinnedPtr, PinnedAllocation};
 
 // ============================================================================
 // StateKey
@@ -33,8 +33,48 @@ pub struct LayerSave {
 /// Terminal prefix result. The query future owns all source blocks until return.
 #[derive(Clone)]
 pub struct QueryResult {
-    pub blocks: Vec<Arc<SealedBlock>>,
+    pub blocks: Vec<RestoreSource>,
     pub missing: usize,
+}
+
+/// Owns either resident bytes or an immutable SSD extent until restore completes.
+#[derive(Clone)]
+pub enum RestoreSource {
+    Memory(Arc<SealedBlock>),
+    Ssd(Arc<crate::backing::ssd::SsdReadLease>),
+}
+
+impl fmt::Debug for RestoreSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(match self {
+            Self::Memory(_) => "Memory",
+            Self::Ssd(_) => "Ssd",
+        })
+        .field("slots", &self.slot_count())
+        .field("bytes", &self.memory_footprint())
+        .finish()
+    }
+}
+
+impl RestoreSource {
+    pub fn memory_footprint(&self) -> u64 {
+        match self {
+            Self::Memory(block) => block.memory_footprint(),
+            Self::Ssd(lease) => lease
+                .entry
+                .slots
+                .iter()
+                .map(crate::SlotMeta::total_size)
+                .sum(),
+        }
+    }
+
+    pub(crate) fn slot_count(&self) -> usize {
+        match self {
+            Self::Memory(block) => block.slots().len(),
+            Self::Ssd(lease) => lease.entry.slots.len(),
+        }
+    }
 }
 
 impl fmt::Debug for QueryResult {

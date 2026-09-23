@@ -252,13 +252,13 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   - Save operation latency distribution
   - Use case: Track save performance (p50, p99)
 
-### Load Metrics (CPU → GPU)
+### Load Metrics (cache → GPU)
 - **orbitkv_load_bytes_total** (Counter)
-  - Total bytes loaded from CPU storage to GPU
+  - Logical bytes restored from DRAM or SSD into engine GPU pages
   - Use case: Monitor load throughput
 
 - **orbitkv_load_duration_seconds** (Histogram)
-  - Load operation latency distribution
+  - GPU restore duration, including cuFile reads when selected
   - Use case: Track load performance (p50, p99)
 
 - **orbitkv_load_failures_total** (Counter)
@@ -266,9 +266,21 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   - Use case: Detect data transfer issues
 
 ### SSD Cache Metrics
+
+- **orbitkv_ssd_cufile_write_bytes_total** (Counter) - Physical cuFile write bytes, including padding.
+- **orbitkv_ssd_cufile_write_seconds** (Histogram) - Time in synchronous cuFile writes.
+- **orbitkv_ssd_cufile_write_failures_total** (Counter) - Failed or short GPU-backed writes.
+- **orbitkv_ssd_cufile_read_bytes_total** (Counter) - Physical cuFile read bytes,
+  including aligned edges. Does not distinguish native GDS from CPU compatibility.
+- **orbitkv_ssd_cufile_read_seconds** (Histogram) - Time in synchronous cuFile reads.
+- **orbitkv_ssd_cufile_read_failures_total** (Counter) - Failed or short cuFile reads.
+- **orbitkv_ssd_read_pinned_bytes** (Gauge) - SSD extents owned by restore leases.
+- **orbitkv_ssd_gpu_staging_bytes** (Gauge) - Registered GPU storage staging memory.
+- **orbitkv_ssd_pinned_write_skips_total** (Counter) - Reservations rejected to
+  protect an active SSD read or write. See [GPU storage recovery](gds.md).
 - **orbitkv_ssd_write_bytes_total** (Counter) - Bytes written to SSD cache
-- **orbitkv_ssd_write_duration_seconds** (Histogram) - Per-block write submission
-  and completion latency. Concurrent block writes overlap; summing these
+- **orbitkv_ssd_write_duration_seconds** (Histogram) - Per-block io_uring write submission
+  and completion latency; cuFile writes use their own duration histogram. Concurrent block writes overlap; summing these
   durations does not measure wall-clock flush time.
 - **orbitkv_ssd_prefetch_bytes_total** (Counter) - Successfully read and
   validated SSD bytes, including reads an engine may not subsequently consume.

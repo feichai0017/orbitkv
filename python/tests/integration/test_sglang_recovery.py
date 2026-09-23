@@ -21,7 +21,9 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
     from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
     from sglang.srt.mem_cache.hybrid_cache.linker_pool_assembler import DevicePoolEntry
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
-    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
+        UnifiedCacheLinkerWrapper,
+    )
 
     from orbitkv.sglang.layout import GpuLayout, GpuPool
     from orbitkv.sglang.linker import OrbitKVLinker

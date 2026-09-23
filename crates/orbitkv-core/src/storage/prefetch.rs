@@ -12,7 +12,7 @@ use crate::QueryMode;
 #[cfg(feature = "mooncake")]
 use crate::backing::MooncakeFetchStore;
 use crate::backing::{PrefetchResult, SsdBackingStore};
-use crate::block::{QueryResult, SealedBlock, StateKey};
+use crate::block::{QueryResult, RestoreSource, SealedBlock, StateKey};
 use crate::metrics::core_metrics;
 
 use super::read_cache::ReadCache;
@@ -163,8 +163,32 @@ impl PrefetchScheduler {
             }
             record_tier_attribution(keys.len(), hit, 0, None);
             return QueryResult {
-                blocks: prefix_blocks,
+                blocks: prefix_blocks
+                    .into_iter()
+                    .map(RestoreSource::Memory)
+                    .collect(),
                 missing: keys.len() - hit,
+            };
+        }
+
+        // Demand leases can own disk extents without materializing host data.
+        // Speculative preparation continues to fill DRAM before GPU pages exist.
+        if !warming
+            && let Some(ssd) = &self.ssd_store
+            && let Some(disk) = ssd.pin_prefix(&keys[hit..])
+            && !disk.is_empty()
+            && (!wait_for_full_prefix || hit + disk.len() == keys.len())
+        {
+            let count = hit + disk.len();
+            ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
+            record_tier_attribution(keys.len(), hit, disk.len(), Some(AttributionSource::Ssd));
+            return QueryResult {
+                blocks: prefix_blocks
+                    .into_iter()
+                    .map(RestoreSource::Memory)
+                    .chain(disk.into_iter().map(RestoreSource::Ssd))
+                    .collect(),
+                missing: keys.len() - count,
             };
         }
 
@@ -229,7 +253,12 @@ impl PrefetchScheduler {
             result.source.map(PrefetchSource::as_attribution),
         );
         QueryResult {
-            blocks: result.ready_blocks.clone(),
+            blocks: result
+                .ready_blocks
+                .iter()
+                .cloned()
+                .map(RestoreSource::Memory)
+                .collect(),
             missing: result.missing,
         }
     }

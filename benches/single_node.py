@@ -10,12 +10,14 @@ import argparse
 import contextlib
 import json
 import math
+import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .launch import configure
 from .metrics import summarize
-from .runtime import ROOT, manifest, server, storage_manifest
+from .runtime import ROOT, manifest, process_usage, server, storage_manifest
 from .workload import run_workload
 
 
@@ -84,6 +86,12 @@ def main() -> None:
     parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
     parser.add_argument("--cache-protected-percent", type=int, default=0)
     parser.add_argument("--ssd-write-policy", choices=["all", "reuse"], default="all")
+    parser.add_argument("--ssd-backend", choices=["uring", "cufile"], default="uring")
+    parser.add_argument(
+        "--gds-stats",
+        type=Path,
+        help="NVIDIA gds_stats executable; require native read/write evidence before stopping the Manager",
+    )
     parser.add_argument("--queue-warmup", choices=["on", "off"], default="off")
     parser.add_argument("--prepare-requests", choices=["on", "off"], default="off")
     parser.add_argument("--read-batch-mib", type=int, default=0)
@@ -93,6 +101,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
     args = parser.parse_args()
+    if (args.ssd_backend != "uring" or args.gds_stats) and (
+        args.backend != "orbitkv" or not args.ssd_gib
+    ):
+        parser.error("GPU storage controls require --backend orbitkv and --ssd-gib")
+    if args.gds_stats and args.ssd_backend != "cufile":
+        parser.error("--gds-stats requires --ssd-backend cufile")
     if not 0 <= args.cache_protected_percent <= 100:
         parser.error("--cache-protected-percent must be between 0 and 100")
     if args.backend != "orbitkv" and (
@@ -198,6 +212,9 @@ def main() -> None:
             stack.enter_context(
                 server(launch.command, launch.env, launch.base_url, args.output / "engine.log")
             )
+            if launch.manager_command:
+                usage_before = process_usage(manager.pid)
+                workload_started = time.monotonic()
             if args.workload in ("concurrent", "sustained"):
                 from . import concurrent, sustained
 
@@ -208,10 +225,41 @@ def main() -> None:
             else:
                 samples = run_workload(args, launch.base_url, launch.manager_url)
                 summary = summarize(samples, args.lengths)
+            if launch.manager_command:
+                usage_after = process_usage(manager.pid)
+                (args.output / "manager-usage.json").write_text(
+                    json.dumps(
+                        {
+                            "workload_seconds": time.monotonic() - workload_started,
+                            "delta": {
+                                key: value - usage_before[key] for key, value in usage_after.items()
+                            },
+                            "scope": "Manager during the whole workload, including warmup/pressure; excludes engine CPU",
+                            "io_note": "Linux process I/O accounting is not a GPU DMA byte counter; use cuFile metrics too",
+                        },
+                        indent=2,
+                    )
+                    + "\n"
+                )
             if args.trace_transfers and args.backend == "orbitkv":
                 from .timeline import collect
 
                 collect(args.output, samples)
+            if args.gds_stats:
+                from .gds import native_io_stats
+
+                result = subprocess.run(
+                    [str(args.gds_stats), "-p", str(manager.pid), "-l", "3"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                (args.output / "gds-stats.txt").write_text(result.stdout + result.stderr)
+                result.check_returncode()
+                (args.output / "native-io.json").write_text(
+                    json.dumps(native_io_stats(result.stdout), indent=2) + "\n"
+                )
     except Exception as error:
         (args.output / "failure.json").write_text(
             json.dumps({"type": type(error).__name__, "message": str(error)}, indent=2) + "\n"

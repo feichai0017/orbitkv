@@ -6,7 +6,7 @@ use std::time::Instant;
 use log::{error, info};
 use orbitkv_transfer::{AUTO_MEMORY_LOCATION, P2P_METADATA, TransferEngine};
 
-use crate::pinned_pool::PinnedAllocator;
+use crate::memory::pool::PinnedAllocator;
 
 /// Mooncake Transfer Engine plus the lifetime of the registered pinned pool.
 pub(crate) struct MooncakeTransport {

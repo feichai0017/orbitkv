@@ -12,6 +12,8 @@ barrier directory. Ordinary completion and model-output gates run separately.
 | One owner cancels a shared preparation read | Another demand owner completes from the shared read; cancellation cannot revoke its buffers. |
 | Prepared result expires without another poll | The Manager releases the undelivered lease; a matching claim before expiry keeps its bytes owned through GPU completion. |
 | Restore completion delayed and eventfd notification dropped | A wait deadline returns no ownership of destination pages. Polling the same handle discovers terminal completion; restored bytes match, and reservations drain. |
+| cuFile worker paused before reading, query cancelled and notification dropped | The SSD extent remains pinned through restore completion. A concurrent DRAM restore completes; polling recovers completion, bytes match and ownership counters drain. |
+| cuFile write paused, completion failed or Manager killed | Unfinished objects stay invisible; GPU pages remain owned; DRAM restores progress; failed reservations can be retried and staging is released on unregister. |
 | Publish delayed beyond the call deadline | The publisher retains source pages while other query sessions progress. Releasing the barrier completes the save. Killing the Manager terminates the wait safely. |
 | Publish acknowledgement malformed | The session is poisoned and the publisher remains fenced until Manager death. Descriptor corruption cannot be mistaken for DMA completion. |
 | Manager restart with old clients, leases and a pending restore | A fresh service incarnation starts behind the same UDS address; old handles/leases are rejected. A newly registered engine can publish and restore. Both default and configured service prefixes are exercised. |
@@ -42,6 +44,11 @@ The test fixture alone sets `ORBITKV_TEST_FAULTS` for its private process. Do no
 ship `test-hooks` binaries. Run the [hybrid recovery gates](hybrid-recovery.md#reproducible-gates)
 with normal builds as well. The H20 container verifies functional SSD I/O on its
 mounted filesystem; it does not measure physical NVMe or RDMA behavior.
+
+The cuFile cases additionally requires `--ssd-backend cufile` and a writable
+`--basetemp` on a cuFile-compatible mount. Use the environment settings in
+[GPU storage recovery](gds.md) and record whether compatibility mode was enabled.
+Without this option, the ordinary fault gate skips the cuFile-only cases.
 
 ## Concurrent Qwen3 serving
 

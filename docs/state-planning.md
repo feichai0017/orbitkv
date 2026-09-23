@@ -485,7 +485,7 @@ events; incrementing an adapter transfer counter does not supply that evidence.
 Qualify full-attention first. Hybrid checkpoints, sliding windows, MLA and
 auxiliary state each require their own complete recovery gate.
 
-P6 adds per-layer-group completion dependencies to `gpu_worker.rs`, the backing
+P6 adds per-layer-group completion dependencies to Core's `transfer/worker/`, the backing
 pipeline, and both adapters. Start with whole-prefix SSD preparation plus
 layer-group H2D/compute overlap; only then pipeline SSD chunks through a bounded
 staging ring. The current serialized full restore remains the reference for

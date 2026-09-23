@@ -132,6 +132,10 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
             key: sum(b["manager_delta"].get(key, 0) for b in measurements)
             for key in (
                 "orbitkv_ssd_prefetch_bytes_total",
+                "orbitkv_ssd_cufile_read_bytes_total",
+                "orbitkv_ssd_cufile_write_bytes_total",
+                "orbitkv_ssd_cufile_read_seconds_sum",
+                "orbitkv_ssd_cufile_write_seconds_sum",
                 "orbitkv_load_bytes_total",
                 "orbitkv_query_budget_waits_total",
                 "orbitkv_query_budget_bypasses_total",

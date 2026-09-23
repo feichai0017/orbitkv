@@ -13,11 +13,21 @@ from tests.support.unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv.orbitkv import BlockHashes, QueryCandidates, QueryLoading, QueryReady  # noqa: E402
+from orbitkv.orbitkv import (  # noqa: E402
+    BlockHashes,
+    QueryCandidates,
+    QueryLoading,
+    QueryReady,
+)
 from orbitkv.vllm.config import ConnectorContext, TpShardTopology  # noqa: E402
 from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
 
-from .test_cache_group_layout import _config, _full_attention, _group, _mamba  # noqa: E402
+from .test_cache_group_layout import (  # noqa: E402
+    _config,
+    _full_attention,
+    _group,
+    _mamba,
+)
 
 
 @pytest.fixture

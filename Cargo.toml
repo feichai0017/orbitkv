@@ -43,7 +43,6 @@ offset-allocator = "0.2.0"
 hashlink = "0.11.0"
 tokio = { version = "1.48.0", features = ["full"] }
 rand = "0.10.1"
-shared_memory = "0.12"
 uuid = { version = "1.22", features = ["v4", "serde"] }
 parking_lot = "0.12"
 clap = { version = "4.5", features = ["derive"] }

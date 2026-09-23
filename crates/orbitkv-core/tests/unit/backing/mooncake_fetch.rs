@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 fn test_allocate_fn(calls: Arc<AtomicUsize>) -> AllocateFn {
-    let allocator = Arc::new(crate::pinned_pool::PinnedAllocator::new_global(
+    let allocator = Arc::new(crate::memory::pool::PinnedAllocator::new_global(
         32 * 1024 * 1024,
         1,
         false,

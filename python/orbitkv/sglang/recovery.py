@@ -12,7 +12,9 @@ from sglang.srt.mem_cache.unified_cache.components import (
     LinkerTransferPhase,
 )
 from sglang.srt.mem_cache.unified_cache.components.mamba import MambaComponent
-from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
+from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
+    UnifiedCacheLinkerWrapper,
+)
 
 
 class RecurrentComponent(MambaComponent):

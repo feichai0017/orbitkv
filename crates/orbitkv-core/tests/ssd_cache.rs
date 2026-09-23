@@ -171,7 +171,12 @@ async fn concurrent_queries_with_the_same_request_id_own_distinct_results() {
     let (a, b) = tokio::join!(env.query(&first[..2]), env.query(&second));
     assert_eq!((a.blocks.len(), a.missing), (2, 0));
     assert_eq!((b.blocks.len(), b.missing), (second.len(), 0));
-    assert!(!std::sync::Arc::ptr_eq(&a.blocks[0], &b.blocks[0]));
+    let (orbitkv_core::RestoreSource::Memory(first), orbitkv_core::RestoreSource::Memory(second)) =
+        (&a.blocks[0], &b.blocks[0])
+    else {
+        panic!("io_uring restores host blocks")
+    };
+    assert!(!std::sync::Arc::ptr_eq(first, second));
 }
 
 fn cleanup_resident_memory(env: &TestEnv) {
@@ -430,7 +435,10 @@ async fn ssd_ring_wrap_evicts_old_entries() {
     let (env, _temp_dir) = ssd_custom_capacity_env("test-ssd-wrap-evicts", SMALL_SSD_CAPACITY);
 
     let old = env.hashes(31);
-    env.save_and_wait(&old).await;
+    env.save_and_wait(&old[..2]).await;
+    env.engine.flush_all().await;
+    let new = env.hashes(32);
+    env.save_and_wait(&new[..2]).await;
     env.engine.flush_all().await;
     cleanup_resident_memory(&env);
 

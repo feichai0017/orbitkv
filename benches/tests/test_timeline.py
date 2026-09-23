@@ -33,7 +33,7 @@ def test_timeline_does_not_pair_distinct_process_clocks_or_count_seed_requests(t
     )
     event = {
         "request_id": "cmpl-abc-0-a1b2c3",
-        "stage": "host_ready",
+        "stage": "source_ready",
         "pid": 3,
         "warmup": True,
         "elapsed_us": 1500,

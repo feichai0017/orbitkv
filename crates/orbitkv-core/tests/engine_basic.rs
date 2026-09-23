@@ -93,7 +93,7 @@ async fn hybrid_groups_load_to_distinct_block_ids() {
     let layer_groups = vec![vec!["full_attention"], vec![], vec!["gdn"]];
     let completion = env
         .engine
-        .batch_load_kv_blocks_multi_layer_inproc(
+        .restore(
             &env.instance_id,
             0,
             0,

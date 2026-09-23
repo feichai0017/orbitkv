@@ -33,6 +33,11 @@ it does not establish DeepSeek-V4 compatibility. SSD-enabled runs keep DRAM
 available during serving and require SSD recovery after eviction and restart;
 they are not separate DRAM-only qualifications.
 
+The table records the default io_uring SSD backend. Separate
+[cuFile qualification](gds.md#recorded-functional-qualification) covers Qwen3-8B
+and Qwen3.8-27B-FP8 on both engines in CPU compatibility mode; native GDS
+performance is still pending a supported host.
+
 The Kimi quantization repository's tokenizer imports a removed Transformers
 interface. The qualification artifact keeps those pinned weights and uses
 `tokenization_kimi.py` from the pinned official Moonshot revision above. The

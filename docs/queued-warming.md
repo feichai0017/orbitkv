@@ -90,7 +90,7 @@ timestamps, without tokens or cache keys:
 | --- | --- |
 | `queued` | Request accepted by the engine queue |
 | `read_start` | Manager begins the admitted preparation operation |
-| `host_ready` | Manager preparation returns; includes hit count, warmup flag and local elapsed microseconds |
+| `source_ready` | Manager preparation returns; includes hit count, warmup flag and local elapsed microseconds |
 | `restore_submit` | Adapter submits H2D for engine-owned destinations |
 | `gpu_ready` | Adapter observes successful transfer completion |
 | `first_use` | vLLM schedules the first compute step; SGLang passes the first-layer wait for a restored batch |

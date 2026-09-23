@@ -142,6 +142,12 @@ def pytest_addoption(parser):
         default="all",
         help="Manager write admission for SSD correctness gates",
     )
+    parser.addoption(
+        "--ssd-backend",
+        choices=("uring", "cufile"),
+        default="uring",
+        help="SSD restore backend; cuFile requires NVIDIA GDS libraries",
+    )
 
 
 @pytest.fixture
@@ -166,6 +172,7 @@ def channel_server(request, tmp_path):
         channel_session_epoch=0x0B17_17C0,
         bootstrap_socket=bootstrap_socket,
         ssd_cache_path=tmp_path / "cache.bin" if mode == "ssd" else None,
+        ssd_backend=request.config.getoption("--ssd-backend"),
         ssd_cache_capacity=(
             configuration.get("ssd_cache_capacity", "256mb")
             if isinstance(configuration, dict)

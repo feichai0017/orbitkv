@@ -13,9 +13,8 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use cudarc::driver::{CudaContext, sys};
-use orbitkv_core::sync_state::{LOAD_STATE_ERROR, LOAD_STATE_SUCCESS};
 use orbitkv_core::{
-    LayerSave, LoadState, OrbitKVEngine, QueryLeaseId, QueryResult, StorageConfig, TransferMode,
+    LayerSave, OrbitKVEngine, QueryLeaseId, QueryResult, StorageConfig, TransferMode,
 };
 use tokio::runtime::Runtime;
 
@@ -209,13 +208,12 @@ impl BenchFixture {
     }
 
     async fn load_and_wait(&self, lease: QueryLeaseId) {
-        let load_state = LoadState::new().expect("create LoadState");
-        self.engine
-            .batch_load_kv_blocks_multi_layer(
+        let receiver = self
+            .engine
+            .restore(
                 INSTANCE_ID,
                 0,
                 DEVICE_ID,
-                load_state.shm_name(),
                 &[vec![LAYER_NAME]],
                 &[(
                     lease,
@@ -223,7 +221,12 @@ impl BenchFixture {
                 )],
             )
             .expect("submit load");
-        wait_for_load(&load_state).await;
+        tokio::time::timeout(LOAD_WAIT_TIMEOUT, receiver)
+            .await
+            .expect("restore timeout")
+            .expect("restore worker disappeared")
+            .result
+            .expect("restore failed");
     }
 
     fn cleanup_cache(&self) {
@@ -799,19 +802,6 @@ fn make_block_hashes(num_blocks: usize, salt: u64) -> Vec<Vec<u8>> {
             hash
         })
         .collect()
-}
-
-async fn wait_for_load(load_state: &LoadState) {
-    let deadline = Instant::now() + LOAD_WAIT_TIMEOUT;
-    loop {
-        let state = load_state.get();
-        if state == LOAD_STATE_SUCCESS {
-            return;
-        }
-        assert!(state != LOAD_STATE_ERROR, "load reported ERROR");
-        assert!(Instant::now() < deadline, "timed out waiting for load");
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
 }
 
 fn fill_test_pattern(host_data: &mut [u8], block_size: usize) {

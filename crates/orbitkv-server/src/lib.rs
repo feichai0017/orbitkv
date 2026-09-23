@@ -155,6 +155,11 @@ pub struct Cli {
     #[arg(long, default_value = "all")]
     pub ssd_write_policy: orbitkv_core::SsdWritePolicy,
 
+    /// SSD I/O: uring (DRAM staging) or cufile (bounded GPU staging for complete writes and demand reads).
+    /// cuFile may use CPU compatibility mode; native GDS requires separate qualification.
+    #[arg(long, default_value = "uring", requires = "ssd_cache_path")]
+    pub ssd_backend: orbitkv_core::SsdBackend,
+
     /// SSD prefetch queue depth (max pending prefetch batches). Default: 2
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_SSD_PREFETCH_QUEUE_DEPTH)]
     pub ssd_prefetch_queue_depth: usize,
@@ -584,6 +589,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             shards: cli.ssd_cache_shards,
             write_queue_depth: cli.ssd_write_queue_depth,
             write_policy: cli.ssd_write_policy,
+            backend: cli.ssd_backend,
             prefetch_queue_depth: cli.ssd_prefetch_queue_depth,
             write_inflight: cli.ssd_write_inflight,
             prefetch_inflight: cli.ssd_prefetch_inflight,

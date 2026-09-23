@@ -463,19 +463,17 @@ impl TestEnv {
         let block_ids: Vec<Option<usize>> = (0..block_count).map(Some).collect();
         let layer_names: Vec<&str> = self.layers.iter().map(|l| l.name.as_str()).collect();
         let layer_groups = vec![layer_names];
-        let load_state = LoadState::new().expect("create LoadState");
-        let shm_name = load_state.shm_name().to_string();
-        self.engine
-            .batch_load_kv_blocks_multi_layer(
+        let receiver = self
+            .engine
+            .restore(
                 &self.instance_id,
                 0,
                 0,
-                &shm_name,
                 &layer_groups,
                 &[(lease, vec![block_ids])],
             )
             .expect("submit load");
-        wait_for_load(&load_state, LOAD_WAIT_TIMEOUT).await;
+        wait_for_load(receiver, LOAD_WAIT_TIMEOUT).await;
     }
 
     /// Submit load and assert it fails synchronously with `expected_msg`.
@@ -483,15 +481,12 @@ impl TestEnv {
         let block_ids: Vec<Option<usize>> = (0..block_count).map(Some).collect();
         let layer_names: Vec<&str> = self.layers.iter().map(|l| l.name.as_str()).collect();
         let layer_groups = vec![layer_names];
-        let load_state = LoadState::new().expect("create LoadState");
-        let shm_name = load_state.shm_name().to_string();
         let err = self
             .engine
-            .batch_load_kv_blocks_multi_layer(
+            .restore(
                 &self.instance_id,
                 0,
                 0,
-                &shm_name,
                 &layer_groups,
                 &[(lease, vec![block_ids])],
             )
@@ -499,10 +494,6 @@ impl TestEnv {
         assert!(
             err.to_string().contains(expected_msg),
             "unexpected error: {err}"
-        );
-        assert!(
-            load_state.get() < 0,
-            "LoadState should be ERROR after pre-submit failure"
         );
     }
 
