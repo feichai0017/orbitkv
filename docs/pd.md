@@ -45,5 +45,4 @@ contract.
 Neither OrbitKV's P/D path nor the current Catalog provides production KV-aware
 request routing. Production qualification still needs real multi-GPU and
 cross-machine correctness, cancellation/restart tests, and throughput/latency
-comparison against the vLLM NIXL baseline. Historical benchmark figures from
-earlier PegaFlow-based experiments are not OrbitKV release results.
+comparison against the vLLM NIXL baseline.

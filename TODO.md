@@ -12,7 +12,7 @@ numbers below group work areas rather than imposing a strict serial schedule.
 
 ## M0 — framework-neutral foundation
 
-- [x] Import and rename the PegaFlow 0.24.5 data plane.
+- [x] Establish the OrbitKV data plane and workspace.
 - [x] Move Rust packages under `crates/`.
 - [x] Keep NUMA topology/affinity in Core and HLL reuse statistics in Server;
   limit `orbitkv-common` to shared process logging and peer-connection defaults.
@@ -200,8 +200,9 @@ numbers below group work areas rather than imposing a strict serial schedule.
   drain submitted work. Best-effort returns completed dense prefixes; strict
   recovery rejects incomplete coverage and deadline fallback returns a miss.
   Cover shared reads, changed ranges, cancellation and expiry without polling.
-- [ ] Complete repeated matched preparation controls and stopping-policy trials;
-  retain per-run variation, read amplification, output diagnostics and cleanup.
+- [x] Complete three matched preparation pairs per engine, stopping controls and
+  DRAM-only recovery. Retain final variation, read bytes, output diagnostics and
+  cleanup. Keep preparation off: SGLang throughput improves but P95 regresses.
 - [ ] Compare retention and SSD write-admission policies independently; then
   calibrate expected use time and priority from page outcomes and engine
   consumption. Qualify per-device/staging budgets and multi-rank behavior.

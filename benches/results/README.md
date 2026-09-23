@@ -1,8 +1,13 @@
 # Recorded measurements
 
-Generated CSV and JSON preserve model output, request IDs and source diffs
-verbatim. They are excluded from prose spellchecking; correct the harness or
-write an explanatory report instead of rewriting recorded evidence.
+Commit final aggregate results, their configuration and reproduction commands.
+Keep raw outputs, per-request traces, test stdout and intermediate attempts in
+ignored `runs/` directories or CI artifacts. Preserve output-difference counts
+and limitations in the final report. Historical datasets below retain their
+original recorded values.
+
+The latest results are [ordinary recovery](20260922-recovery-baseline/README.md)
+and [bounded preparation](20260922-preparation/README.md).
 
 | Files | Experiment |
 | --- | --- |

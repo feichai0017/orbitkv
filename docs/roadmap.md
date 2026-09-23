@@ -36,7 +36,7 @@ the later general semantic compiler.
 | Priority | Deliverable | Acceptance boundary |
 | --- | --- | --- |
 | First: reliable ordinary demand | Maintain deterministic cancellation, lost-notification, engine/Manager restart and stuck-Publish gates; extend concurrent model-serving fault stress. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
-| Next: bounded preparation experiment | Prepare a small set of requests close to admission, retain their ready pages within the existing budget, then add explicit stop policies and bounded read submission. | Separate demand-only, current warming, consumer-owned preparation and stopping controls; bounded residency and cleanup under reordering/cancellation; measured exposed wait, TTFT and read amplification. Promote a policy only with repeatable benefit. |
+| Implemented, opt-in: bounded preparation | Small arrival-order lookahead, retained leases, bounded reads and stopping controls. | Three matched pairs per engine completed. Keep off by default because SGLang P95 regresses despite a throughput gain; cutoffs also reduce throughput. |
 | First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TE path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
 | Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; separately integrate and qualify SGLang's native handoff lifecycle. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
 | Before production distributed deployment: catalog HA | Add replicated catalog evidence, versioned placement, handoff/repair and operational failure handling. | Three catalog failure domains, partitions, lease expiry, etcd outage and placement changes; bounded replay, source holds and staging. Replicating etcd alone does not replicate the catalog. |
@@ -51,12 +51,14 @@ gate, without claiming cross-host tensor parallelism.
 
 ### Next reviewable changes
 
-1. **Measure the implemented preparation policy.** The opt-in
+1. **Follow up on the preparation tradeoff.** The opt-in
    [consumer-owned path](request-preparation.md) selects at most four dense
    arrival-order candidates, keeps prepared leases budgeted, and retires stale
    interests without another poll. Bounded batches, best-effort completion and
-   a conservative deadline miss are implemented. Compare these independently;
-   automatic hybrid forecasts and priority/token-budget prediction remain open.
+   a conservative deadline miss are implemented and measured in three matched
+   pairs per engine. Keep preparation off: vLLM improves modestly, while SGLang
+   trades tail latency for throughput. Isolate SGLang admission effects before
+   revising selection; automatic hybrid forecasts and priority prediction remain open.
 2. **Reduce measured exposed waits.** The
    [ordinary Qwen3 profile](recovery-performance.md) separates host reads,
    Manager restore and engine completion observation. Investigate read batching

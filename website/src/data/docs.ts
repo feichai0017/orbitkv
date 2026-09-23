@@ -1,12 +1,13 @@
 export const docGroups = [
   {
-    title: "Get started",
+    title: "Getting started",
     description: "Install, connect an engine, and verify a cache hit.",
     items: [
+      { slug: "goals", title: "Overview & supported features" },
       { slug: "single-node", title: "Installation & quickstart" },
+      { slug: "adapters", title: "Engine adapter configuration" },
       { slug: "deployment", title: "Deployment patterns" },
       { slug: "server", title: "Manager configuration" },
-      { slug: "goals", title: "Capabilities & boundaries" },
     ],
   },
   {
@@ -38,7 +39,7 @@ export const docGroups = [
     ],
   },
   {
-    title: "Measure & operate",
+    title: "Benchmarks & operations",
     description:
       "Inspect metrics, reproduce measurements, and read their limits.",
     items: [
@@ -58,6 +59,7 @@ export const docGroups = [
     items: [
       { slug: "roadmap", title: "Roadmap & validation gates" },
       { slug: "rust-quality", title: "Rust quality gates" },
+      { slug: "releases", title: "Python releases" },
     ],
   },
 ];

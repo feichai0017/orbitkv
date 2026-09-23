@@ -113,3 +113,70 @@ peaks, useful/unused speculative reads and resource drain. The existing
 hit as evidence of causal latency savings. Default activation requires repeated
 paired measurements, including order reversal, with bounded cleanup and no
 material read amplification.
+
+## Measured results
+
+The 2026-09-23 qualification completed 20 Qwen3-8B runs on one H20:
+18 SSD-backed policy runs and two DRAM-only runs. Source `ffada83e`, vLLM 0.29.0,
+SGLang 0.5.20, BF16, TP=1. See the
+[final CSVs and reproduction script](../benches/results/20260922-preparation/README.md).
+
+Each policy run uses the same 64-request sequence at concurrency four, 75%
+reuse selection, 12 prefixes, 1,024/4,096-token inputs and 16-token outputs.
+GPU capacity is 16,384 tokens; host/SSD/query capacities are 4/16/3 GiB.
+There are three matched 32 MiB demand/preparation pairs per engine; the middle
+pair reverses execution order. Tracing is on and unowned warming is off.
+These short windows finish in 6–15 seconds; they do not replace a long soak.
+
+| Engine / pair | Throughput change | P95 TTFT change | SSD bytes/request change |
+| --- | ---: | ---: | ---: |
+| vLLM / 1 | +1.9% | −3.7% | −17.7% |
+| vLLM / 2 | +2.7% | −11.7% | −19.0% |
+| vLLM / 3 | +2.9% | −14.9% | −20.7% |
+| SGLang / 1 | +2.9% | +13.2% | −16.4% |
+| SGLang / 2 | +8.4% | +11.6% | −17.8% |
+| SGLang / 3 | +5.8% | +7.5% | −17.8% |
+
+**Keep preparation disabled by default.** vLLM improves both measures in these
+controls, but SGLang trades worse tail latency for throughput. Every paired
+prepared page footprint eventually reaches H2D, with no unused or pending
+footprints at the final sample. That proves consumption, not a causal latency
+saving: engine admission and scheduling can still increase exposed waiting.
+
+Stopping policies use preparation with 32 MiB batches. The unbounded control
+uses ordinary demand; it isolates the default behavior rather than pairing
+another policy change with preparation.
+
+| Engine / policy | P95 TTFT (ms) | Output tokens/s |
+| --- | ---: | ---: |
+| vLLM / unbounded demand | 517.4 | 154.8 |
+| vLLM / 100 ms deadline | 771.6 | 94.9 |
+| vLLM / one batch | 934.0 | 74.6 |
+| SGLang / unbounded demand | 583.0 | 142.8 |
+| SGLang / 100 ms deadline | 1517.7 | 84.1 |
+| SGLang / one batch | 1353.3 | 68.8 |
+
+These cutoffs increase recomputation and reduce throughput in this workload.
+Keep ordinary read cutoffs at zero. Submitted reads retain their owners until
+completion even when the engine abandons waiting.
+
+All measured windows drain query reservations and submitted I/O to zero. Sampled
+query peaks are at most 2,304 MiB and speculative peaks at most 720 MiB, within
+the 3 GiB total and 768 MiB speculative limits. Settle-plus-drain takes at most
+1.413 seconds, including the fixed 1.2-second settle; it is not page-release
+latency. Physical prepared footprints can remain as reclaimable cached pages
+after a stopping control. `pending_mib_after` preserves those bytes separately
+from the zero final query reservation.
+
+The DRAM supplement uses an 8 GiB host pool, no SSD and C1/C4. All restored
+phases have positive H2D bytes and zero SSD reads. At C4, shared/mixed post-HBM-
+pressure P95 TTFT is 184.6/153.8 ms for vLLM and 83.3/106.7 ms for SGLang.
+The different capacity means these runs are not a matched DRAM/SSD speed ratio.
+The container's SSD path does not establish physical NVMe performance.
+
+Ordinary greedy runs retain output differences against their cold references:
+48/576 vLLM and 35/576 SGLang policy requests, plus one of 60 requests in each
+DRAM supplement. The CSVs preserve per-run counts. Deterministic serving faults
+and exact GPU-byte recovery gates passed separately; they do not erase these
+diagnostics. Automatic hybrid lookahead, multi-rank serving and priority-based
+selection remain outside this qualification.

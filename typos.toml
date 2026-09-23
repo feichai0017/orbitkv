@@ -4,7 +4,6 @@ extend-exclude = [
   "benches/results/**/*.csv",
   "benches/results/**/*.json",
   "benches/results/**/*.jsonl",
-  "benches/results/**/validation/*.txt",
 ]
 
 [default.extend-words]

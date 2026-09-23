@@ -26,17 +26,17 @@ const capabilities = [
     href: "/docs/server/",
   },
   {
-    title: "Keep lifetimes safe.",
-    label: "Own",
+    title: "Restore complete state.",
+    label: "Model-aware",
     detail:
-      "Bound preparation with byte budgets and retain source pages and destinations through transfer completion.",
-    href: "/docs/architecture/",
+      "Select the required attention pages, windows and checkpoints for supported model layouts, and validate them before recovery.",
+    href: "/docs/hybrid-recovery/",
   },
   {
     title: "Connect both engines.",
     label: "Integrate",
     detail:
-      "vLLM and SGLang share a Rust cache client for queries and transfer lifetimes; their adapters retain GPU allocation and engine callbacks.",
+      "Enable the vLLM connector or SGLang plugin. Both use direct GPU transfers and the same Rust cache client.",
     href: "/integration/",
   },
   {
@@ -50,8 +50,8 @@ const capabilities = [
     title: "Measure the path.",
     label: "Observe",
     detail:
-      "Inspect cache hits, retained bytes and transfers. Reproduce Qwen3-8B measurements and their qualification limits.",
-    href: "/docs/sustained-performance/",
+      "Track cache hits, read bytes and transfers. Compare final Qwen3-8B results and reproduce the workloads.",
+    href: "/docs/recovery-performance/",
   },
 ];
 ---
@@ -68,8 +68,8 @@ const capabilities = [
         <span class="highlight">cache tiers.</span>
       </h1>
       <p class="hero-description">
-        Reuse computed prefixes from DRAM, SSD, and an experimental shared
-        cache.
+        Keep repeated documents, system prompts and conversation prefixes
+        useful beyond GPU memory.
         <br />
         One Cache Manager per host. Your engine keeps control of execution.
       </p>
@@ -127,9 +127,9 @@ const capabilities = [
       </div>
       <div class="proof-note">
         <p>
-          Single-rank recovery is GPU-tested on vLLM 0.29.0 and SGLang 0.5.20.
-          Shared-cache serving and combined P/D are separate qualification
-          steps.
+          Use DRAM and SSD caching with vLLM 0.29.0 or SGLang 0.5.20.
+          Explore shared-cache deployments after validating your single-node
+          workload; multi-node serving remains experimental.
         </p>
         <a class="text-link" href={localUrl("/docs/deployment/")}>
           Choose a deployment <span aria-hidden="true">→</span>
@@ -150,8 +150,8 @@ const capabilities = [
         Run. Reuse.
       </h2>
       <p>
-        Install a matching CUDA wheel, start a manager, then enable your
-        engine's adapter.
+        Build a matching CUDA wheel, start a manager, then enable your
+        engine's adapter. The first Python release is in preparation.
       </p>
       <a class="text-link" href={localUrl("/docs/single-node/#vllm")}>
         vLLM quickstart →
@@ -193,7 +193,7 @@ const capabilities = [
       <a href={localUrl("/docs/metrics/")}>
         Metrics and operation <span>→</span>
       </a>
-      <a href={localUrl("/docs/sustained-performance/")}>
+      <a href={localUrl("/docs/request-preparation/")}>
         Benchmarks and measured limits <span>→</span>
       </a>
       <a href={localUrl("/docs/distributed-cache/")}>

@@ -12,10 +12,15 @@ import { localUrl, sourceUrl } from "../../data/site";
     <span class="highlight">GPU memory.</span>
   </h1>
   <p>
-    Connect vLLM or SGLang to one Cache Manager per host. Reuse KV from pinned
-    DRAM and SSD, inspect transfer behavior, and explore the experimental
-    shared-cache path.
+    OrbitKV stores reusable KV in DRAM and SSD so repeated requests can reuse
+    work after GPU eviction. Start with installation, connect your engine,
+    then use metrics and benchmarks to tune capacity for your workload.
   </p>
+  <ol>
+    <li><a href={localUrl("/docs/single-node/#install-and-start-the-common-manager")}>Install a wheel and start the Cache Manager.</a></li>
+    <li>Enable the adapter in your vLLM or SGLang environment.</li>
+    <li><a href={localUrl("/docs/single-node/#check-behavior-and-capacity")}>Verify an external hit and inspect cache capacity.</a></li>
+  </ol>
   <div class="doc-cards">
     <a class="doc-card" href={localUrl("/docs/single-node/#vllm")}>
       <h2>Start with vLLM →</h2>

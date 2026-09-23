@@ -15,74 +15,54 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-203b30" alt="Apache 2.0 license" /></a>
 </p>
 
-**Reuse KV across requests with vLLM and SGLang.** OrbitKV keeps reusable
-prefixes in pinned DRAM and optional SSD, and restores them into engine-owned
-GPU memory. Run one Cache Manager per host; enable an engine adapter to use it.
-An experimental distributed path extends the same cache API to peer managers.
+## About
 
-## Why OrbitKV?
+**OrbitKV extends the KV cache of vLLM and SGLang beyond GPU memory.** Keep
+reusable prefixes in DRAM and SSD, then restore them when a matching request
+arrives. This helps workloads with repeated documents, shared system prompts,
+and conversations whose prefixes no longer fit in the engine's GPU cache.
 
-- **Extend cache capacity.** Keep prefixes beyond the engine's HBM cache using
-  NUMA-aware host memory and SSD backing.
-- **Use either engine.** vLLM and SGLang register their GPU buffers through
-  CUDA IPC and share the same UDS + iceoryx2 manager API. A Rust client owns
-  query revisions, warming cancellation, publish sessions and restore waits.
-  Immutable hash batches avoid repeated per-page conversion during polling;
-  Python keeps the engine callbacks and GPU allocation handoff.
-- **Keep ownership explicit.** The engine controls HBM allocation and execution.
-  OrbitKV retains external replicas and transfer leases through completion.
-- **Bound preparation.** Byte budgets cover pending reads, ready leases and GPU
-  consumers; identical backing reads can share preparation. Pressure reclaim
-  works in byte-bounded batches and rechecks actual contiguous capacity.
-- **Prepare queued demand (experimental).** Dense-layout adapters can select a
-  small queue lookahead; Rust reads compiled ranges and keeps ready pages
-  budgeted until claim, cancellation or expiry. Optional bounded batches and
-  read deadlines stop new work while submitted I/O drains safely. See
-  [consumer-owned preparation](docs/request-preparation.md). Preparation and
-  [unowned warming](docs/queued-warming.md) remain separate, disabled-by-default
-  experiments; no universal throughput advantage is claimed.
-- **Identify compatible state.** Versioned keys bind immutable model artifacts,
-  computation settings and registered storage geometry. A shared recovery
-  contract compiles declared prefix, window and checkpoint rules into exact
-  page ranges and validates leased evidence with the same requirements.
-  Hybrid lookup discovers metadata first; Rust selects legal boundaries,
-  slices reads to the chosen window/checkpoint, and revalidates actual leases.
-  SGLang synchronizes rank readiness before HBM allocation; vLLM applies its
-  final-token limit before fetching state. See [hybrid recovery](docs/hybrid-recovery.md).
-- **Build toward shared caching.** Embedded catalog shards discover peer
-  replicas, Mooncake Transfer Engine moves bytes, and etcd tracks membership
-  and placement. Multi-node serving is still experimental.
+Run one Cache Manager per host and enable your engine's adapter. The engine
+owns GPU memory and scheduling; OrbitKV manages external replicas and transfers.
+The single-node path is GPU-tested on **vLLM 0.29.0** and **SGLang 0.5.20**.
+Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 
-The [delivery plan](docs/roadmap.md#current-delivery-priorities) prioritizes
-single-node qualification, bounded preparation experiments, then real
-two-host DP and P/D qualification. Catalog HA gates production distributed use.
-Compiled demand describes a known token range from a valid HBM prefix; it does
-not predict future tokens, analyze arbitrary model graphs, authorize reclamation
-or enable automatic hybrid warming. Qualification uses
-[exact GPU-byte gates](docs/hybrid-recovery.md#reproducible-gates) and
-[deterministic fault gates](docs/fault-qualification.md), including Qwen3-8B
-serving with both engines. Ordinary recovery is measured independently from
-the effect of selecting compiled hybrid ranges.
+## Key features
 
-## Get started
+- **DRAM and SSD caching.** Reuse prefixes after GPU eviction or an engine
+  restart while the Cache Manager remains alive.
+- **Direct GPU transfers.** Both engines register GPU buffers through CUDA IPC;
+  Rust handles cache queries, reads and transfer completion.
+- **Model-aware recovery.** Cache identity includes model artifacts, computation
+  settings and storage layout. Compiled recovery rules select the required
+  attention pages, sliding windows and recurrent checkpoints for supported layouts.
+- **Bounded resource use.** Byte budgets cover pending reads, ready pages and
+  active GPU transfers. Cancellation retains submitted I/O until completion.
+- **Observable behavior.** Inspect Prometheus metrics and optional request
+  timelines, and reproduce the published latency and throughput measurements.
+- **Experimental shared cache.** Embedded catalog shards locate peer replicas,
+  Mooncake Transfer Engine moves bytes, and etcd tracks cluster membership.
 
-The validated release targets are **vLLM 0.29.0** and **SGLang 0.5.20**. Use a
-separate environment for each engine. Follow the [installation guide](docs/single-node.md)
-to build and install an OrbitKV wheel matching your Python ABI and CUDA runtime;
-the Cache Manager currently also needs compatible PyTorch packages.
+See [supported deployments](docs/deployment.md) and
+[model compatibility](docs/hybrid-recovery.md) before selecting a topology.
+Compiled recovery uses engine-declared state requirements; arbitrary model-graph
+analysis and future-token prediction are outside the current implementation.
 
-Start a manager in one terminal:
+## Quickstart
+
+Follow the [installation guide](docs/single-node.md) to build and install a
+wheel for your Python and CUDA runtime. Use separate environments for vLLM and
+SGLang. The wheel includes the Cache Manager and Mooncake libraries; the Manager
+also requires compatible PyTorch. The first Python release is being prepared;
+see [release preparation](docs/releases.md) for package names and artifact checks.
+
+Start a Cache Manager:
 
 ```bash
-orbitkv-cache-manager \
-  --addr 127.0.0.1:50055 \
-  --http-addr 127.0.0.1:9091 \
-  --pool-size 8gb
+orbitkv-cache-manager --addr 127.0.0.1:50055 --http-addr 127.0.0.1:9091 --pool-size 8gb
 ```
 
-Then start your chosen engine in another terminal on the same host.
-
-**vLLM**
+In another terminal on the same host, start **vLLM**:
 
 ```bash
 vllm serve /path/to/immutable-model \
@@ -90,7 +70,7 @@ vllm serve /path/to/immutable-model \
   --kv-transfer-config '{"kv_connector":"OrbitKVConnector","kv_role":"kv_both","kv_connector_module_path":"orbitkv.vllm"}'
 ```
 
-**SGLang**
+Or start **SGLang**:
 
 ```bash
 ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
@@ -98,84 +78,57 @@ ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
   --enable-unified-cache-external-linker --radix-cache-backend orbitkv
 ```
 
-To add SSD capacity, pass
+To enable SSD caching, add
 `--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb` to the
-manager. SSD contents are recreated on manager startup. Standalone deployment
-requires neither etcd nor a gRPC listener.
+Manager command. The SSD cache is recreated when the Manager restarts.
 
-Local model artifacts are fingerprinted at startup. Hub models require an
-immutable revision or a verified `ORBITKV_MODEL_FINGERPRINT`. Keep the manager
-alive, restart the engine, and repeat a multi-block prompt to distinguish an
-external restore from a native HBM hit. See the
-[full setup and verification steps](docs/single-node.md).
+Keep the Manager alive, restart the engine, and repeat a multi-block prompt.
+An increase in `orbitkv_load_bytes_total` confirms an external restore.
+See the [complete quickstart](docs/single-node.md) for identity, metrics and
+container setup. Standalone caching requires neither etcd nor a gRPC listener.
 
 ## Architecture
 
-![OrbitKV architecture: compiled page demand, engine-owned HBM and cache tiers; general lifetime and physical planning remain future work](website/public/architecture.svg)
+![OrbitKV architecture: engine-owned GPU memory, compiled page demand, and cache tiers](website/public/architecture.svg)
 
-1. The engine adapter supplies known prefix hashes, a valid HBM origin and
-   declared state requirements.
-2. Hybrid queries discover candidate positions; the Rust contract finds legal
-   recovery boundaries under engine limits and rank agreement.
-3. The manager reads only the selected ranges within byte budgets and validates
-   actual leased coverage. Sources and destinations stay owned through transfer.
-4. The engine resumes computation and publishes completed KV for later reuse.
+The engine adapter identifies missing state and supplies GPU destinations.
+OrbitKV selects compatible cached ranges, reads them from the configured tiers,
+and retains page ownership until the GPU copy finishes. Newly computed KV is
+published for later reuse. The same adapter API serves DRAM, SSD and experimental
+remote fetches; physical placement stays inside the Cache Manager.
 
-The engine always connects to its host's manager. Remote discovery and transfer
-stay inside OrbitKV. Candidate indexes reduce repeated catalog lookups; the
-source manager checks live residency before authorizing a transfer. etcd is
-outside per-block lookup and transfer paths. Catalog shards currently have one
-copy each; replication and online handoff are planned.
+Read the [architecture](docs/architecture.md),
+[hybrid recovery contract](docs/hybrid-recovery.md), and
+[distributed design](docs/distributed-cache.md). Cross-engine byte conversion,
+production catalog HA and KV-aware request routing remain planned work.
 
-Read the [architecture and crate boundaries](docs/architecture.md),
-[transport contracts](docs/transport.md), and
-[distributed design](docs/distributed-cache.md).
+## Performance
 
-## Deployment support
+Performance depends on prefix reuse, cache capacity, storage and engine scheduling.
+Reports include configurations, final results and reproduction commands:
 
-| Scenario | Current scope |
+| Report | Coverage |
 | --- | --- |
-| Single-node DRAM and SSD cache | GPU recovery gates and Qwen3-8B measurements for both pinned engines |
-| SGLang model layouts | Full-attention MHA/MLA, Full + SWA, and Full + recurrent/conv; explicit layout checks and TP=1 recovery gates |
-| Independent replicas / DP cache sharing | Embedded catalogs, etcd membership and Mooncake fetch implemented; cross-host serving qualification is next |
-| Prefill/decode separation | Experimental vLLM Mooncake `PdConnector`; current-request handoff is separate from reusable cache |
-| Cross-host TP/PP, layout conversion | Not qualified; the current vLLM scheduler cannot query remote TP shards through its local endpoint |
-| Catalog HA and KV-aware routing | Planned after distributed-cache recovery gates |
+| [Single-node comparisons](docs/single-node-performance.md) | Native HBM, engine CPU caches, OrbitKV, LMCache and FlexKV compatibility |
+| [SSD recovery](docs/ssd-performance.md) | Forced DRAM eviction and restore readiness |
+| [Ordinary recovery](docs/recovery-performance.md) | Qwen3-8B host reads, GPU transfers, notification delays and resource drain |
+| [Request preparation](docs/request-preparation.md) | Repeated preparation controls, DRAM recovery and read stopping policies |
 
-The [deployment guide](docs/deployment.md) covers each topology and explains
-the role of upstream NIXL. The [LMCache/Mooncake comparison](docs/distributed-comparison.md)
-separates shared caching, engine parallelism and P/D handoff. A common cache API
-does not make vLLM and SGLang KV bytes interchangeable.
+Request preparation remains **off by default**: the current Qwen3-8B controls
+improve throughput in both engines, but SGLang P95 latency regresses. These
+single-H20 measurements do not establish a universal advantage over other caches.
+Benchmark code and final summaries live in [`benches/`](benches/README.md).
 
-## Measurements
+## Documentation and contributing
 
-Results include environment, workload, transfer evidence and limitations:
+- **Get started:** [Installation](docs/single-node.md) · [Adapter configuration](docs/adapters.md) · [Manager options](docs/server.md)
+- **Operate:** [Metrics](docs/metrics.md) · [Fault qualification](docs/fault-qualification.md) · [Deployment patterns](docs/deployment.md)
+- **Develop:** [Contributor guide](AGENTS.md) · [Python package](python/README.md) · [Test gates](python/tests/README.md) · [Releases](docs/releases.md)
+- **Plan:** [Roadmap](docs/roadmap.md) · [Work queue](TODO.md)
 
-| Report | What it measures |
-| --- | --- |
-| [Single-node comparisons](docs/single-node-performance.md) | Native HBM, built-in CPU caches, OrbitKV and LMCache; FlexKV compatibility attempts |
-| [SSD recovery](docs/ssd-performance.md) | Forced DRAM eviction, SSD restoration and engine readiness |
-| [Concurrent bursts](docs/concurrent-performance.md) | Shared and mixed prefixes at concurrency 1/4/8 with byte budgets |
-| [Sustained serving](docs/sustained-performance.md) | Bounded mixed reuse/cold traffic, throughput, tail latency and post-run drain |
-| [Ordinary recovery profile](docs/recovery-performance.md) | Host-read, H2D and completion observations; Qwen3-8B fault controls and resource drain |
+Technical pages in `docs/` are also published on the website. Contributions
+should include the relevant checks and documentation changes.
 
-Workloads, harness tests and recorded results live in [`benches/`](benches/README.md).
-These are scoped measurements, not a claim that every workload is faster.
+## License
 
-## Documentation and development
-
-- [Single-node setup](docs/single-node.md) · [Manager options](docs/server.md) · [Metrics](docs/metrics.md)
-- [Multi-node setup](docs/p2p.md) · [P/D integration](docs/pd.md)
-- [Model and state identity](docs/state-identity.md) · [Transfer planning](docs/state-planning.md)
-- [Python packages and tests](python/README.md) · [Rust checks](docs/rust-quality.md)
-- [Roadmap](docs/roadmap.md) · [Work queue](TODO.md) · [Development guide](AGENTS.md)
-
-The implementation order is single-node stability and performance, independent
-replica sharing, then P/D with cache reuse. Replicated catalogs, broader
-parallelism and routing have separate gates. Before 1.0, interfaces may change.
-Technical documentation lives in `docs/` and is rendered directly on the website;
-behavior and deployment changes must update the affected documentation.
-
-OrbitKV began from PegaFlow 0.24.5. The remote transfer implementation now uses
-pinned upstream Mooncake Transfer Engine. Upstream measurements are not
-presented as OrbitKV results. The workspace is licensed under [Apache-2.0](LICENSE).
+OrbitKV is licensed under [Apache-2.0](LICENSE).

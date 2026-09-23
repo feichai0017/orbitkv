@@ -12,20 +12,9 @@ No Catalog or peer gRPC listener is needed for this deployment.
 | vLLM `OrbitKVConnector` | `0.29.0` | KV connector callbacks, CUDA IPC, UDS/iceoryx2 | Attention + aligned recurrent layouts share compiled page demand and validation; SWA remains unsupported, cross-host TP and further hybrid layouts need separate qualification |
 | SGLang `OrbitKVLinker` | `0.5.20` | RadixCache external linker, CUDA IPC, UDS/iceoryx2 | Full-attention MHA/MLA, Full + SWA, or Full + recurrent/conv; TP=1 DRAM/SSD recovery gates; combined SWA + recurrent unsupported, multi-rank serving unqualified |
 
-These are tested release targets, not an assertion that every model or GPU
-topology is qualified. The local cache has correctness gates, but no current
-end-to-end throughput or tail-latency result proves that it is fully optimized.
-The Publish watchdog reports retained ownership, but a live Manager that never
-finishes still retains its source until completion or confirmed process death.
-
-The [single-node benchmark](single-node-performance.md) separates cold prefill,
-HBM hits, and external restores after GPU cache pressure. The
-[concurrent baseline](concurrent-performance.md) adds shared/mixed 1/4/8-request
-bursts, byte-budget evidence, and output-consistency controls. The
-[sustained report](sustained-performance.md) adds 60-second native/DRAM/SSD controls
-under GPU cache pressure, including a vLLM admission-stall fix. Restore timeouts and
-lost completion acknowledgements stop the affected engine instead of recycling
-GPU destinations that may still be receiving DMA.
+Start with a single-rank model and one Manager. Check
+[hybrid model compatibility](hybrid-recovery.md) before enabling other layouts.
+The first release is being prepared; the commands below build from source.
 
 ## Install and start the common manager
 
@@ -68,34 +57,10 @@ cache budget. To enable an SSD backing cache, add for example
 manager command. The current SSD cache file is truncated on manager startup;
 it is not durable across a manager restart. Both engines have single-rank recovery gates after forced DRAM eviction.
 
-Under DRAM pressure, each reclaim batch stops after selecting the requested
-allocation's footprint (at most 512 pages), then rechecks real contiguous free
-space. This avoids discarding an entire small cache for one small allocation;
-fragmentation or shared slab ownership can require more than one batch.
-SGLang holds a pending request in its scheduler queue until a leased result is
-available, with a five-second preparation budget before recomputation.
-vLLM gives an admitted restore priority until its request reaches the first
-compute step. Other queries may prefetch and retain bounded results, but their
-admission waits: a capacity-blocked lookup must not strand a completed restore
-behind it in vLLM's deferred queue. Transfer completion alone does not open
-this gate. Cancellation does, without releasing any outstanding GPU copy holds.
-See the [SSD measurements](ssd-performance.md) for latency and scope.
-
-For supported dense layouts, both adapters also announce exact queued prefixes
-for bounded early DRAM warming. Hybrid layouts bypass automatic warming;
-compiled recovery demand does not enable it.
-`ORBITKV_PREPARE_REQUESTS=1` selects a separate consumer-owned experiment: a
-small accepted-queue lookahead whose ready results remain budgeted at the
-Manager until claimed or expired. Rust chooses the contract's required ranges;
-automatic hybrid lookahead remains disabled. See
-[request preparation](request-preparation.md) for batch and deadline controls.
-Automatic warming is experimental and disabled by default; set
-`ORBITKV_QUEUE_WARMUP=1` in the engine environment to enable it for dense layouts.
-Warmup owns at most a quarter of global/per-instance query
-budgets and retains no restore lease. It cannot promise a hit at later admission.
-See [queued warming](queued-warming.md) for cancellation, timeline tracing and
-the remaining performance qualification.
-See [manager options](server.md) for the other capacity and queue controls.
+Request preparation and queued warming are optional experiments and are disabled
+by default. Leave them off for the first deployment. See
+[request preparation](request-preparation.md) for measured policy tradeoffs and
+[Manager configuration](server.md) for capacity and queue controls.
 
 The manager, each engine process, and their GPU buffers must be on the same
 host. The Unix socket verifies peer credentials; use the same UID and make the
@@ -141,7 +106,7 @@ The default connector endpoint derives the same socket from
 `orbitkv.port` in `kv_connector_extra_config` or `ORBITKV_PORT` in the vLLM
 environment. Use `orbitkv.bootstrap_socket` for a custom socket path.
 For multiple **same-host** TP shards, see
-[the ordered shard endpoint configuration](../python/README.md#tp-shards-and-host-boundary).
+[the ordered shard endpoint configuration](adapters.md#tp-shards-and-host-boundary).
 Do not configure a scheduler to query TP shards on another host through this
 local connector.
 
@@ -167,23 +132,13 @@ ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
   --radix-cache-backend orbitkv
 ```
 
-The OrbitKV wheel registers the SGLang plugin. Both linker flags are required:
-the external-linker flag makes SGLang schedule GPU restores and process their
-completion events. The plugin also registers a general `HookRegistry` admission
-hook on the pinned release's `PrefillAdder.add_one_req`. Pending queries keep
-only their request queued, and the next prefix match consumes the ready lease.
-Changed keys, request cancellation, and reset cancel pending manager queries;
-submitted GPU loads retain their existing completion fences. SGLang owns the radix tree and HBM pages; OrbitKV saves
-page-aligned KV externally and restores it into SGLang-owned slots. The current
-linker accepts full-attention MHA/MLA, Full + SWA, and Full + recurrent/conv.
-It compiles registered groups into page requirements used both to validate
-absolute token boundaries and select exact restore ranges. Hybrid queries
-discover candidates without payload reads, then acquire only the selected
-attention/window/checkpoint ranges and validate their actual leases.
-Transferred and engine-retained keys must together cover the selected ranges
-exactly. DSA, draft and unsupported auxiliary representations remain rejected.
-See [hybrid recovery](hybrid-recovery.md) for
-the Qwen3.5 and Full + SWA gates and deployment limits.
+The wheel registers the SGLang plugin. Both flags are required to schedule GPU
+restores and handle their completion. SGLang owns the radix tree and HBM pages;
+OrbitKV saves page-aligned KV externally and restores it into engine-owned slots.
+Pending reads keep their request queued until ready or until its waiting budget
+expires, when the engine can recompute. Supported hybrid layouts use compiled
+ranges and validate every selected window/checkpoint before recovery. See
+[hybrid recovery](hybrid-recovery.md) for model limits and GPU test coverage.
 
 Both engines fingerprint local weights, tokenizer and processor artifacts at
 startup, and bind the computation and registered storage layout to the cache

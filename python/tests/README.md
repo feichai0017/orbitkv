@@ -212,6 +212,23 @@ is separate from the ordinary performance benchmark.
 
 Release smoke validates the final installed package, not the source checkout. It should use a clean non-editable environment and record Python libdir, `PYTHONHOME`, `PYTHONPATH`, CUDA runtime path, package name/version, GPU, model path, and metrics excerpt.
 
+After installing the candidate wheel in the pinned engine environment, run:
+
+```bash
+.venv/vllm-release/bin/python -m pytest -m release_smoke \
+  python/tests/release/test_installed_wheel.py -k vllm \
+  --model /workspace/models/qwen3-8b \
+  --basetemp=/workspace/orbitkv/benches/results/runs/wheel-smoke-vllm
+```
+
+Run from the repository root; substitute the SGLang environment and `-k sglang`
+for the other adapter, with its own `--basetemp` directory. The test starts
+subprocesses outside the source package, rejects editable/source imports,
+uses installed plugin metadata and the bundled console script, and verifies
+exact output plus positive GPU-load bytes after engine restart. It also checks
+final query/I/O drain. Run the engines sequentially on one GPU. See
+[release preparation](../../docs/releases.md) for the wheel build matrix.
+
 Minimum checks:
 - `orbitkv-cache-manager --help`
 - minimal installed `orbitkv-cache-manager` startup and `/health` 200

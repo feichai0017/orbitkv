@@ -21,13 +21,11 @@ sustained runs mix 75% reusable-prefix choices with cold requests, use a
 12-prefix working set, and stop admission after 20 seconds or 128 requests per
 concurrency. They contain 356 vLLM and 353 SGLang requests. Outputs have 16 tokens.
 
-[Reviewed results](../benches/results/20260922-recovery-baseline/summary.json)
-include per-run manifests, timeline percentiles, individual latency samples,
-window counters and resource-drain evidence. Output strings and unrelated
-working-tree diffs are omitted from the curated export; raw local runs retain
-them. Seeds and exact commands are in the manifests. A failed SGLang startup
-caused by a missing temporary binary is excluded; its complete replacement uses
-the identical staged build in the workspace.
+[Final results](../benches/results/20260922-recovery-baseline/summary.csv)
+retain aggregate latency, throughput, transfer bytes and output-difference
+counts. [Reproduction commands](../benches/results/20260922-recovery-baseline/README.md)
+record the workload. Raw manifests, samples, timelines and service logs remain
+in ignored `benches/results/runs/` directories on the measurement host.
 
 ## Stage observations
 
@@ -80,7 +78,6 @@ preparation. These observations must remain visible. Deterministic Qwen3 fault
 controls and exact GPU-byte gates are separate correctness evidence, not grounds
 to erase performance-run differences. See [fault qualification](fault-qualification.md).
 
-The next comparisons separate ordinary demand, bounded batches, owned
-preparation and read deadlines. [Request preparation](request-preparation.md)
-stays opt-in until repeated matched controls demonstrate benefit without
-unbounded residency or material read amplification.
+The subsequent [preparation controls](request-preparation.md#measured-results)
+compare bounded demand, owned preparation and stopping policies. Preparation
+stays opt-in because SGLang throughput improves while its P95 latency regresses.
