@@ -27,12 +27,10 @@ scheduler waiting is inside it. The host pool is deliberately cleared, so this
 is not a natural host-pressure workload. Shared cold bursts may reuse another
 request's newly computed HBM pages before the burst finishes.
 
-Each engine completed 234 measured requests in 54 bursts. The
-[request CSV](../benches/results/qwen3-8b-query-budgets.csv),
-[batch counters](../benches/results/qwen3-8b-query-budgets-batches.csv),
-[summary CSV](../benches/results/qwen3-8b-query-budgets-summary.csv), and
-[manifests, storage evidence, and summaries](../benches/results/qwen3-8b-query-budgets-summary.json)
-are retained. Counters belong to a whole burst and are never copied into each
+Each engine completed 234 measured requests in 54 bursts. Request rows, batch
+counters, manifests and storage evidence remain in the
+[historical dataset snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
+Counters belong to a whole burst and are never copied into each
 request as independent evidence. Cached-token reports alone do not establish
 which tier supplied an individual overlapping request.
 
@@ -117,7 +115,7 @@ Ordinary performance runs retain **13 vLLM and 3 SGLang output differences**
 from their cold-phase counterparts. All concern the same 8-concurrent 1K shared
 prefix, alternating between repeated `A` and `and`. Greedy sampling alone does
 not establish batch-invariant output. The additional
-[output controls](../benches/results/qwen3-8b-query-budgets-output-controls.json)
+[archived output controls](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
 retain that exact input and all observed responses.
 
 Both native engines reproduced the same two outputs while varying cold and

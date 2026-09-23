@@ -22,7 +22,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `serving.sh` | vLLM serving measurements against an already running endpoint |
 | `sharegpt.py` | Multi-turn workload using the pinned vLLM benchmark scripts |
 | `tests/` | CPU-only checks for measurement and report correctness |
-| `results/` | Reviewed CSV/JSON measurements committed to Git |
+| `results/` | Three maintained final reports; new output is ignored by default |
 | `results/runs/` | Ignored raw runs: manifests, responses, counters, logs, and failures |
 
 ## Shared-cache qualification
@@ -289,5 +289,5 @@ or production concurrency measurement. Do not run it alongside Cargo builds or
 other GPU workloads.
 
 See the [controlled client measurements](../docs/client-performance.md) for the
-baseline, final path and old-client/new-Manager control. Raw per-batch summaries
-are in `results/client-control-2026-09-22.json`.
+baseline, final path and old-client/new-Manager control, with a link to the
+historical per-batch evidence.

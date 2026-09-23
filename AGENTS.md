@@ -219,4 +219,4 @@ there is no standalone directory binary. See `docs/p2p.md`.
 - Create a `feat/`, `fix/`, `chore/`, `refactor/`, `style/`, or `ci/` branch first
 - We use Commitizen commit message format
 - Use `cz c` when creating commits interactively
-- Keep PR descriptions concise. Commit final benchmark summaries and reproduction instructions; keep raw traces, test stdout and intermediate results in ignored `benches/results/runs/` or CI artifacts.
+- Keep PR descriptions concise. Update maintained final benchmark summaries and reproduction instructions instead of accumulating result files. New `benches/results/` output is ignored by default; keep raw traces, test stdout and intermediate results in `runs/` or CI artifacts. Preserve historical evidence through immutable Git links when retiring old datasets.

@@ -36,10 +36,9 @@ earlier three-phase benchmark, so compare phases within this run. SSD writes
 remain enabled during the DRAM control phase. Services run sequentially, and
 each cache payload file is removed after its Manager stops.
 
-The [120 request measurements](../benches/results/qwen3-8b-ssd.csv),
-[summary CSV](../benches/results/qwen3-8b-ssd-summary.csv), and
-[manifests, storage evidence and summaries](../benches/results/qwen3-8b-ssd-summary.json)
-are checked in. Full JSONL responses, cleanup responses, counter snapshots,
+The 120 request measurements, storage evidence and summaries are in the
+[historical dataset snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
+Full JSONL responses, cleanup responses, counter snapshots,
 and logs are in `benches/results/runs/qwen3-8b-ssd-20260921/` on the measurement
 host. Failed restores or speculative reads are not relabelled as hits.
 
@@ -216,10 +215,9 @@ different cold output while its HBM, DRAM, and SSD outputs agree. The performanc
 run does not enable deterministic inference; exact GPU-buffer tests and the
 separate deterministic serving gates provide the integrity checks.
 
-The [120 request measurements](../benches/results/qwen3-8b-query-readiness.csv),
-[summary CSV](../benches/results/qwen3-8b-query-readiness-summary.csv), and
-[source manifests, storage evidence, and summaries](../benches/results/qwen3-8b-query-readiness-summary.json)
-are checked in separately from the baseline. Full responses and service logs
+The [historical readiness dataset](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
+retains these 120 requests, source manifests, storage evidence and summaries
+separately from the baseline. Full responses and service logs
 remain in `benches/results/runs/query-readiness-{vllm,sglang}/` on the measurement
 host; gate logs are in `benches/results/runs/query-readiness-validation/`.
 Use the reproduction commands above with fresh output directories to repeat
