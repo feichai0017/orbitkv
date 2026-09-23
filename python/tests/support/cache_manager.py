@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+import requests
 
+from .metrics import fetch_orbitkv_metrics
 from .paths import PYTHON_ROOT, REPO_ROOT
 
 if TYPE_CHECKING:
@@ -37,6 +39,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_POOL_SIZE = "100mb"
 SERVER_STARTUP_TIMEOUT = 60  # seconds (increased for slow GPU init)
 SERVER_READY_CHECK_INTERVAL = 1.0  # seconds
+
+
+def evict_dram_after_ssd_writes(http_port: int) -> None:
+    """Force subsequent recovery through SSD after the engine has stopped."""
+    deadline = time.monotonic() + 30
+    while True:
+        observed = fetch_orbitkv_metrics(http_port)
+        if observed.get("orbitkv_ssd_write_bytes_total", 0) > 0 and not any(
+            observed.get(name, 0)
+            for name in (
+                "orbitkv_ssd_write_inflight",
+                "orbitkv_ssd_write_queue_pending",
+                "orbitkv_inflight_bytes",
+            )
+        ):
+            break
+        assert time.monotonic() < deadline, observed
+        time.sleep(0.1)
+    cleaned = requests.post(f"http://127.0.0.1:{http_port}/cache/memory/cleanup", timeout=30)
+    cleaned.raise_for_status()
+    assert cleaned.json()["evicted_blocks"] > 0
+    assert cleaned.json()["still_referenced_blocks"] == 0
 
 
 # =============================================================================
@@ -344,6 +368,7 @@ class CacheManagerProcess:
         channel_session_epoch: int | None = None,
         bootstrap_socket: str | None = None,
         ssd_cache_path: Path | None = None,
+        ssd_cache_capacity: str = "256mb",
         query_budget: str | None = None,
         query_instance_budget: str | None = None,
         extra_args: tuple[str, ...] = (),
@@ -356,6 +381,7 @@ class CacheManagerProcess:
         self.channel_session_epoch = channel_session_epoch
         self.bootstrap_socket = bootstrap_socket or f"/tmp/orbitkv-{port}.sock"
         self.ssd_cache_path = ssd_cache_path
+        self.ssd_cache_capacity = ssd_cache_capacity
         self.query_budget = query_budget
         self.query_instance_budget = query_instance_budget
         self.extra_args = extra_args
@@ -412,7 +438,7 @@ class CacheManagerProcess:
                     "--ssd-cache-path",
                     str(self.ssd_cache_path),
                     "--ssd-cache-capacity",
-                    "256mb",
+                    self.ssd_cache_capacity,
                     "--enable-prometheus",
                 ]
             )

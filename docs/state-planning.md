@@ -98,7 +98,7 @@ model-specific rules; the shared contract checks component coverage and
 compatibility. Generation-qualified HBM references must enter the actual
 transfer path before stale page IDs can be rejected at that boundary.
 The [compiled recovery contract](hybrid-recovery.md) implements SGLang's
-prefix, window and checkpoint cases and vLLM's attention/recurrent recovery.
+prefix, window and checkpoint cases in both engines, including their combination.
 The same normalized rules emit `required_ranges` for a selected boundary;
 SGLang checks transferred plus retained pages and vLLM masks hybrid destinations
 against those ranges. Adapters supply absolute coverage backed by leases and

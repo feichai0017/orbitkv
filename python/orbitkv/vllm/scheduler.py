@@ -15,7 +15,7 @@ from orbitkv.vllm.metadata import (
     LoadIntent,
     OrbitKVConnectorMetadata,
     OrbitKVWorkerMetadata,
-    RecurrentLoadHold,
+    RecoveryLoadHold,
     SaveIntent,
 )
 from orbitkv.vllm.metrics import (
@@ -69,9 +69,9 @@ class _QueryProbe:
     # ``None`` means the backend is still loading.
     hit_blocks: int | None = None
     leases: tuple[bytes, ...] = ()
-    # Hybrid (HMA): pinned recurrent checkpoints from the membership queries,
+    # Hybrid (HMA): pinned windows/checkpoints from the membership queries,
     # set when the shared validator found a complete recovery boundary.
-    recurrent_hold: RecurrentLoadHold | None = None
+    recovery_hold: RecoveryLoadHold | None = None
     # Completed groups stay leased while other groups read from backing tiers.
     # None records a submitted group that must be cancelled on query retirement.
     groups: dict[int, list[tuple[tuple[int, ...], bytes]] | None] = field(default_factory=dict)
@@ -112,10 +112,10 @@ class _QueryProbe:
         self.hit_blocks = hit_blocks
         self.leased_blocks = hit_blocks
         self.leases = ready.leases
-        self.recurrent_hold = ready.recurrent_hold
+        self.recovery_hold = ready.recovery_hold
         self.selected_boundary = ready.boundary
         self.attention_hit_blocks = ready.attention_hit_blocks
-        if ready.recurrent_hold is not None:
+        if ready.recovery_hold is not None:
             self.groups.clear()  # Ownership moved into the scheduler/worker handoff.
 
     def require_hit_blocks(self) -> int:
@@ -149,13 +149,10 @@ class SchedulerConnector:
         self._clients = clients
         self._queued_at: dict[str, float] = {}
         self._cache_groups = CacheGroupLayout.from_config(kv_cache_config)
-        if self._cache_groups.has_recurrent_state and (pd_tail_save or pd_tail_load):
+        if self._cache_groups.group_count > 1 and (pd_tail_save or pd_tail_load):
             raise ValueError("P/D tail-block caching is not supported with HMA")
         self._recovery = None
-        if (
-            self._cache_groups.has_recurrent_state
-            or os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1"
-        ):
+        if self._cache_groups.group_count > 1 or os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1":
             from orbitkv import RecoveryContract
 
             self._recovery = RecoveryContract(
@@ -503,7 +500,7 @@ class SchedulerConnector:
         locally_computed_tokens = computed_blocks * vbs
         hit_tokens = min(hit_tokens, max(0, num_tokens - locally_computed_tokens - 1))
 
-        if probe.recurrent_hold is not None and (
+        if probe.recovery_hold is not None and (
             hit_tokens != hit_blocks * vbs
             or locally_computed_tokens + hit_tokens != probe.selected_boundary
         ):
@@ -613,16 +610,14 @@ class SchedulerConnector:
                 block_ids_by_group=load_block_ids_by_group,
                 leases=pending_probe.leases if pending_probe is not None else (),
                 num_tokens=num_external_tokens,
-                recurrent_hold=(
-                    pending_probe.recurrent_hold if pending_probe is not None else None
-                ),
+                recovery_hold=(pending_probe.recovery_hold if pending_probe is not None else None),
             )
             if pending_probe is not None:
                 query_hashes, tail_tokens = self._build_query(request, num_computed_blocks)
                 if not pending_probe.matches(num_computed_blocks, query_hashes, tail_tokens):
                     self._release_pending_query_probe(req_id)
                     raise RuntimeError(f"req {req_id} query identity changed before external load")
-                if pending_probe.recurrent_hold is not None and (
+                if pending_probe.recovery_hold is not None and (
                     num_external_tokens != pending_probe.require_hit_blocks() * vbs
                     or num_computed_blocks * vbs + num_external_tokens
                     != pending_probe.selected_boundary
@@ -753,10 +748,15 @@ class SchedulerConnector:
 
         save_intents = potential_saves
 
-        # Track requests with pending saves
-        self._pending_saves.update(save_intents.keys())
-
         boundary_save_intents = self._consume_boundary_state_offloads(scheduler_output)
+        if self._cache_groups.window_group_indices:
+            # The engine can retire an SWA page while its request keeps running.
+            # Job ownership, rather than request lifetime, fences every queued copy.
+            for intent in save_intents.values():
+                boundary_save_intents[self._pin_save_intent(intent)] = intent
+            save_intents = {}
+
+        self._pending_saves.update(save_intents.keys())
 
         logger.debug(
             "[OrbitKVConnector] build_connector_meta: %d loads, %d saves, %d boundary saves",
@@ -840,9 +840,7 @@ class SchedulerConnector:
             if not rows:
                 continue
 
-            job_id = self._next_boundary_job_id
-            self._next_boundary_job_id += 1
-            intents[job_id] = SaveIntent(
+            intent = SaveIntent(
                 block_ids_by_group=tuple(
                     tuple(
                         block_id if group_index == group else 0 for group_index, block_id, _ in rows
@@ -851,17 +849,31 @@ class SchedulerConnector:
                 ),
                 block_hashes=tuple(block_hash for _, _, block_hash in rows),
             )
-            pinned = list(dict.fromkeys(block_id for _, block_id, _ in rows))
-            pool.touch([pool.blocks[block_id] for block_id in pinned])
-            self._pinned_boundary_jobs[job_id] = (pinned, self._ctx.world_size)
+            job_id = self._pin_save_intent(intent)
+            intents[job_id] = intent
             logger.debug(
                 "[OrbitKVConnector] req=%s boundary_save job=%d boundaries=%s blocks=%s",
                 req_id,
                 job_id,
                 [(group_index, (hash_index + 1) * vbs) for group_index, hash_index in saved],
-                pinned,
+                self._pinned_boundary_jobs[job_id][0],
             )
         return intents
+
+    def _pin_save_intent(self, intent: SaveIntent) -> int:
+        pool = self._gpu_block_pool
+        if pool is None:
+            raise RuntimeError("GPU block pool must be bound before a hybrid save")
+        pinned = list(
+            dict.fromkeys(
+                block_id for group in intent.block_ids_by_group for block_id in group if block_id
+            )
+        )
+        pool.touch([pool.blocks[block_id] for block_id in pinned])
+        job_id = self._next_boundary_job_id
+        self._next_boundary_job_id += 1
+        self._pinned_boundary_jobs[job_id] = (pinned, self._ctx.world_size)
+        return job_id
 
     def _release_boundary_jobs(self, completed: dict[int, int]) -> None:
         pool = self._gpu_block_pool
@@ -903,8 +915,8 @@ class SchedulerConnector:
 
         `written` = positions with valid KV once this step's schedule runs
         (scheduler-authoritative num_computed_tokens + this step's tokens).
-        Hybrid (HMA) requests skip mid-flight saves; their checkpoint is
-        emitted from `request_finished` instead.
+        Recurrent checkpoints arrive separately through per-step boundary
+        handoffs; full and window pages use the positional save path here.
         """
         regular = self._consume_full_block_saves(req_id)
         tail = self._consume_tail_save(req_id, written)
@@ -1216,7 +1228,7 @@ class SchedulerConnector:
     ) -> ShardedQueryReady | None:
         """Advance one request-owned recovery query without reacquiring ready groups."""
         try:
-            if self._cache_groups.has_recurrent_state:
+            if self._cache_groups.group_count > 1:
                 ready = self._query_hybrid(req_id, probe, limit)
             elif probe.leases:
                 ready = ShardedQueryReady(probe.leased_blocks, probe.leases)
@@ -1328,10 +1340,10 @@ class SchedulerConnector:
             hit_blocks,
             probe.leases,
             attention_hit_blocks=probe.attention_hit_blocks,
-            recurrent_hold=RecurrentLoadHold(
+            recovery_hold=RecoveryLoadHold(
                 leases=tuple(tuple(lease for _, lease in group) for group in groups),
                 hit_positions=tuple(tuple(positions for positions, _ in group) for group in groups),
-                checkpoint=hit_blocks - 1,
+                last_position=hit_blocks - 1,
             ),
             boundary=probe.selected_boundary,
         )
@@ -1399,7 +1411,7 @@ class SchedulerConnector:
                     self._tp_shard_client.release(tuple(lease for _, lease in group), req_id)
                     and released
                 )
-        hold = probe.recurrent_hold
+        hold = probe.recovery_hold
         if hold is not None:
             for group_leases in hold.leases:
                 if not self._tp_shard_client.release(group_leases, req_id):

@@ -4,8 +4,8 @@ This is the repository-wide execution checklist. Completed items must have code
 and a passing gate; design text alone does not close an item.
 
 Follow the [current delivery priorities](docs/roadmap.md#current-delivery-priorities):
-maintain the deterministic demand and model-serving fault gates, measure bounded
-consumer preparation and stopping, and start real two-host DP qualification.
+close the single-node hybrid-layout gates, maintain deterministic demand and
+model-serving fault coverage, and start real two-host DP qualification.
 Warming gains are not a DP prerequisite. P/D with cache reuse follows; replicated
 catalogs are required before production distributed deployment. Milestone
 numbers below group work areas rather than imposing a strict serial schedule.
@@ -51,6 +51,20 @@ numbers below group work areas rather than imposing a strict serial schedule.
   process restart and cold-inference output comparison.
 - [x] Add direct GPU recovery contracts for Full + SWA and Full + recurrent/conv,
   including sparse SSD membership, exact-boundary validation and cancellation.
+- [x] Compose Full + SWA + recurrent/conv in both adapters; give vLLM windows
+  independent storage and GPU save ownership, and register SGLang same-layer
+  convolution state without empty temporal buffers. Verify required GPU bytes
+  and incomplete-state rejection from DRAM and SSD.
+- [x] Qualify native Full + SWA serving in both engines with Mellum and
+  SGLang Full + SWA + convolution with Inkling; retain Qwen3.5 regression gates.
+  SGLang covers DRAM/SSD, concurrent restore, HBM flush and engine restart;
+  vLLM compares matched native-cache execution plans and restart loads.
+- [ ] Qualify native model serving with Full + SWA + temporal recurrent state
+  in both engines; current combined temporal coverage is exact GPU recovery.
+- [x] Qualify Qwen3.8-27B-FP8 on both engines with DRAM and forced SSD recovery;
+  qualify GLM-4.7-Flash, DeepSeek-V2-Lite and Kimi Linear FP8 with SSD-enabled
+  reuse, native output controls and engine restart. Keep exact artifacts,
+  settings and larger-model blockers in [model qualification](docs/models.md).
 - [ ] Add recovery contracts for DSA, draft-model and further auxiliary state.
 
 ## M2 — common bundle and local IPC

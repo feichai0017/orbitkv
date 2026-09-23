@@ -5,6 +5,18 @@ contract for page demand and leased evidence. Every hybrid lookup must supply
 enough state to resume at one legal token boundary. An attention hit alone is
 insufficient.
 
+Checkpoint-specific results and larger hybrid targets live in
+[model qualification](models.md). The gates below distinguish state-layout
+recovery from native pretrained-model serving.
+
+The adapters accept Full + SWA, Full + recurrent/conv, and Full + SWA +
+recurrent/conv layouts. Full attention and MLA keep their single-group path.
+vLLM groups must share a logical block size and Mamba groups must use `align`.
+SGLang requires ordinary contiguous pools; moving unified-memory pools and SWA
+request rings require additional address-lifetime integration. Supporting these
+state combinations does not establish compatibility with every model or pool
+implementation.
+
 ## Rules and runtime ownership
 
 | Registered group | Rule at token boundary t | Physical state |
@@ -39,7 +51,8 @@ With 64-token pages, a valid HBM origin at 128 and a selected boundary at 512:
 | Full attention (group 0) + 100-token SWA (group 1) | `[(0, 128, 512), (1, 384, 512)]` |
 | Full attention (group 0) + recurrent/conv (group 1) | `[(0, 128, 512), (1, 448, 512)]` |
 
-These are separate supported layouts. The window rounds up to two pages; for
+Combining the two auxiliary groups requires all three ranges at the same
+boundary. The window rounds up to two pages; for
 the shorter tail `[128, 192)` it needs only `[128, 192)`. The checkpoint requires
 the page ending at the selected boundary, including all its conv/temporal tensors.
 The output does not assert that any of these pages are cached or leased.
@@ -105,15 +118,18 @@ is no second radix tree or patched engine submodule.
 
 ## vLLM hybrid handoff
 
-`CacheGroupLayout` maps vLLM's attention groups to storage group zero and each
-aligned Mamba group to a checkpoint requirement. The scheduler compiles these
+`CacheGroupLayout` maps vLLM's full-attention groups to storage group zero.
+Each sliding-window or aligned Mamba group gets an independent storage key and
+window/checkpoint requirement. vLLM includes the next query token in its window,
+so a window of W requires W-1 past tokens, rounded to complete pages. Windows
+must include at least one past token. The scheduler compiles these
 requirements once in `RecoveryContract`. Rust computes the legal boundary
 intersection from candidate positions on every shard. Before materialization,
 the scheduler limits selection to the last token boundary usable by vLLM;
 the final prompt token still needs forward computation for logits. This avoids
 fetching a later checkpoint only to discard it during allocation.
 
-The selected attention prefix and each exact checkpoint use `read_recovery`.
+The selected attention prefix, trailing windows and exact checkpoints use `read_recovery`.
 Ready groups remain leased while other groups load; `Loading` defers admission.
 If any actual range is missing, all owned groups are released and the request
 recomputes. The existing five-second preparation limit, request drift, cancel,
@@ -128,8 +144,12 @@ state move into one restore operation, owned through GPU completion. There are
 no surplus attention/checkpoint leases after final-token clamping. HBM
 allocation and inference scheduling stay in vLLM. Dense queries and P/D's
 explicit handoff want-sets retain their separate existing demand behavior;
-hybrid P/D partial tails remain unsupported. This does not add vLLM SWA
-support or cross-engine byte reuse.
+hybrid P/D partial tails and cross-engine byte reuse remain unsupported.
+
+The worker maps window leases by their query-relative page positions, preserving
+null destinations outside the required window. Window pages can retire while
+their request is still executing. Their save jobs pin GPU blocks independently
+of request lifetime and release them only after every worker reports completion.
 
 ## Scope and production-cache lessons
 
@@ -137,7 +157,7 @@ Compilation here turns declared semantic requirements into deterministic page
 demand for a known range. It removes duplicate adapter arithmetic and bounds
 payload reads by the selected recovery boundary. No latency or throughput improvement has
 been measured for this increment. General model-graph analysis, numerical proofs,
-future-token prediction, retention and physical planning remain outside its scope.
+future-token prediction, retention policy and physical planning remain outside its scope.
 A required range grants neither a lease nor permission to reclaim state, and
 does not enable automatic hybrid warming.
 
@@ -145,10 +165,10 @@ The [pinned production-cache source review](queued-warming.md#reference-implemen
 informs this work. OrbitKV applies the usable-boundary lesson to demand that
 includes every required component. LMCache's request reader locks and Dynamo's
 session holders illustrate consumer ownership; existing OrbitKV leases retain
-pages through GPU completion. HiCache's stopping policies inform the future
-bounded-submission work: stop new reads, drain submitted work and return only
-completed legal boundaries. That policy work remains open alongside bounded
-preparation for near-admission consumers. These are established cache lessons,
+pages through GPU completion. HiCache's stopping policies inform
+[bounded preparation](request-preparation.md): stop new reads, drain submitted
+work and return only completed legal boundaries. Automatic hybrid preparation
+remains open. These are established cache lessons,
 not a novelty or performance claim.
 
 ## SGLang deployment and limits
@@ -170,12 +190,15 @@ not reuse a checkpoint at 512: SGLang must compute its last token, so its match
 limit is 511. A 513-token prompt can reuse checkpoint 512. OrbitKV never rounds
 the recovery boundary forward past the requested match limit.
 
-Supported pool combinations are Full MHA/MLA, Full + SWA, and Full +
-recurrent/conv. GPU buffers must be contiguous and page aligned; registered
-layer groups must cover every model layer without overlap. DSA, draft state,
-ReplaySSM, speculative sibling state, int8 checkpoint storage, SWA request rings
-and unknown pool combinations are rejected. Full + SWA + recurrent together is
-not yet supported. Optional queue warming currently prepares attention only and
+Supported pool combinations are Full MHA/MLA, Full + SWA, Full +
+recurrent/conv, and Full + SWA + recurrent/conv. GPU buffers must be contiguous
+and page aligned. Full/SWA groups must cover disjoint attention layers;
+convolution/checkpoint state may accompany attention in the same layer. The
+union must cover all model layers. Empty temporal state in a convolution-only
+checkpoint is not registered as a zero-byte GPU buffer. DSA, draft state,
+ReplaySSM, speculative sibling state, int8 checkpoint storage, SWA request rings,
+moving unified-memory pools and unknown pool combinations are rejected.
+Optional queue warming currently prepares attention only and
 is therefore bypassed for hybrid pools.
 
 This is validation of engine-declared recovery requirements and registered
@@ -184,6 +207,22 @@ Page-generation fencing, live weight changes and cross-engine byte reuse remain
 open. Multi-rank and remote hybrid serving require additional qualification.
 
 ## Reproducible gates
+
+The 2026-09-23 single-GPU qualification used vLLM 0.29.0 and SGLang 0.5.20:
+
+| State layout | vLLM evidence | SGLang evidence |
+| --- | --- | --- |
+| Full + SWA | Mellum native serving/restart; exact DRAM/SSD GPU recovery | Mellum DRAM/SSD serving, concurrent restore and restart |
+| Full + recurrent/conv | Qwen3.5-0.8B native serving/restart; exact DRAM/SSD GPU recovery | Qwen3.5-0.8B DRAM/SSD serving, concurrent restore and restart |
+| Full + SWA + recurrent/conv | Exact DRAM/SSD GPU recovery with real adapter/spec objects; native model serving remains unqualified | Exact DRAM/SSD recovery for temporal and conv-only checkpoints; native Inkling conv-only DRAM/SSD serving, concurrent restore and restart |
+
+Final gates passed: 345 source-only unit cases; 16 native-contract/vLLM recovery
+cases; four combined SGLang GPU cases; seven vLLM Qwen3.5 serving checks;
+six vLLM Mellum checks (one recurrent-only check is inapplicable); and two
+SGLang serving cases for each of Qwen3.5, Mellum and Inkling. The combined
+temporal-state GPU fixtures do not establish native model-serving compatibility
+in either engine. Full-attention/MLA support retains its existing gates.
+Raw logs and generated model files are not stored in the repository.
 
 The compiled-demand increment has passed Rust/Python unit and native/CUDA
 DRAM/SSD exact-byte gates. The SGLang GPU gate checks mixed
@@ -229,20 +268,24 @@ From `python/`:
   tests/integration/test_state_demand.py \
   tests/integration/test_sglang_admission.py \
   tests/integration/test_sglang_direct_transfer.py \
-  tests/integration/test_sglang_recovery.py
+  tests/integration/test_sglang_recovery.py \
+  tests/integration/test_sglang_combined_recovery.py
 
 ../.venv/sglang-release/bin/python -m pytest -m e2e \
   tests/e2e/test_sglang_direct_e2e.py --model /path/to/Qwen3.5-0.8B
 
-../.venv/sglang-release/bin/python -m tests.support.sglang_swa_fixture \
+../.venv/sglang-release/bin/python -m tests.support.attention_fixture \
   --tokenizer-path /path/to/local/qwen-tokenizer --output /tmp/orbitkv-swa-model
+../.venv/vllm-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_vllm_e2e_correctness.py --model /tmp/orbitkv-swa-model \
+  --max-model-len 2048
 ../.venv/sglang-release/bin/python -m pytest -m e2e \
   tests/e2e/test_sglang_direct_e2e.py --model /tmp/orbitkv-swa-model
 ```
 
 The SWA fixture has deterministic random weights, four layers alternating full
-and sliding attention, and a 256-token window. It uses SGLang's native Mellum
-implementation. It validates cache recovery rather than pretrained-model quality
+and sliding attention, a 256-token window, and one sparse MLP layer. It uses
+both engines' native Mellum implementations. It validates recovery rather than pretrained-model quality
 or throughput. Changing `sliding_window` in a Qwen2.5 config does not activate
 this execution path in SGLang and is not an equivalent test.
 
@@ -256,5 +299,25 @@ and match the cold control. Generated-token log probabilities must be finite
 and match the corresponding control within 0.05 absolute log-probability units.
 The random SWA fixture produces different cold and warm outputs even with native
 SGLang, so comparing identical execution paths is essential. CUDA graphs remain
-enabled. These are TP=1 correctness gates,
+enabled for Qwen3.5 and Mellum. These are TP=1 correctness gates,
 not throughput measurements or a claim that all hybrid architectures work.
+
+The combined SGLang serving fixture uses the native Inkling model with full and
+sliding attention plus short-convolution state in every layer:
+
+```bash
+../.venv/sglang-release/bin/python -m tests.support.sglang_combined_fixture \
+  --tokenizer-path /path/to/local/qwen-tokenizer --output /tmp/orbitkv-combined-model
+ORBITKV_MODEL_FINGERPRINT=7777777777777777777777777777777777777777777777777777777777777777 \
+  ../.venv/sglang-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_sglang_direct_e2e.py --model /tmp/orbitkv-combined-model \
+  --sglang-load-format dummy
+```
+
+This fixture declares a fixed test-only identity for seed-42 dummy weights; do
+not use that identity for a deployment or changed configuration. It uses BF16,
+four dense MLP layers, a 256-token window, and a sufficiently large SWA pool for
+the 513-token prefill. The gate disables prefill CUDA graphs because the pinned
+deterministic Triton backend does not capture Inkling EXTEND; decode graphs stay
+enabled. Full + SWA + temporal recurrent state also has exact GPU-byte gates;
+these are separate from the convolution-only model-serving fixture.

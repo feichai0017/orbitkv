@@ -5,11 +5,12 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def test_declared_model_rules_produce_exact_page_demand():
+@pytest.mark.parametrize("checkpoint", ["recurrent", "convolution"])
+def test_declared_model_rules_produce_exact_page_demand(checkpoint):
     from orbitkv import RecoveryContract
 
     contract = RecoveryContract(
-        "weights/layout", 64, [(0, "attention", 0), (1, "window", 256), (2, "recurrent", 0)]
+        "weights/layout", 64, [(0, "attention", 0), (1, "window", 256), (2, checkpoint, 0)]
     )
     assert contract.required_ranges("weights/layout", 1024, 8192) == [
         (0, 1024, 8192),
@@ -22,6 +23,9 @@ def test_declared_model_rules_produce_exact_page_demand():
         (2, [8192]),
     ]
     assert contract.restorable_boundaries("weights/layout", 1024, 8192, groups) == [8192]
+    groups[1] = (1, [8000, 8128, 8192])
+    assert contract.restorable_boundaries("weights/layout", 1024, 8192, groups) == []
+    groups[1] = (1, [8000, 8064, 8128, 8192])
     # A plan names demand even when its final checkpoint is unavailable.
     groups[2] = (2, [])
     assert contract.restorable_boundaries("weights/layout", 1024, 8192, groups) == []

@@ -49,6 +49,13 @@ def _mla(block_size=16, head_size=128):
     return spec
 
 
+def _window(block_size=16, window=33):
+    spec = SlidingWindowSpec()
+    spec.block_size = block_size
+    spec.sliding_window = window
+    return spec
+
+
 class SpecializedFullAttentionSpec(FullAttentionSpec):
     pass
 
@@ -152,7 +159,7 @@ def test_rejects_multiple_full_attention_groups_without_mamba():
         _group("second", _full_attention()),
     )
 
-    with pytest.raises(RuntimeError, match="both FullAttention and Mamba"):
+    with pytest.raises(RuntimeError, match="require window or recurrent"):
         CacheGroupLayout.from_config(config)
 
 
@@ -166,16 +173,23 @@ def test_rejects_mamba_groups_without_full_attention():
         CacheGroupLayout.from_config(config)
 
 
-def test_rejects_full_attention_with_sliding_window():
-    sliding_window = SlidingWindowSpec()
-    sliding_window.block_size = 16
+@pytest.mark.parametrize("recurrent", [False, True])
+def test_window_and_checkpoint_have_independent_storage_and_recovery_rules(recurrent):
     config = _config(
+        _group("sliding_window", _window()),
         _group("attention", _full_attention()),
-        _group("sliding_window", sliding_window),
+        *([_group("recurrent", _mamba())] if recurrent else []),
     )
 
-    with pytest.raises(RuntimeError, match="only FullAttention and Mamba"):
-        CacheGroupLayout.from_config(config)
+    layout = CacheGroupLayout.from_config(config)
+    assert layout.hash_group_index == 1
+    assert layout.storage_group_ids == ((1, 0, 2) if recurrent else (1, 0))
+    assert layout.window_group_indices == frozenset({0})
+    assert layout.recovery_groups == (
+        (0, "attention", 0),
+        (1, "window", 32),
+        *(([(2, "recurrent", 0)]) if recurrent else []),
+    )
 
 
 def test_accepts_mla_with_mamba():

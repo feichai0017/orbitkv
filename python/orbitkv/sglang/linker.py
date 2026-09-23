@@ -541,7 +541,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             keys = list(transfer.keys or ())
             if not keys or transfer.device_indices is None:
                 return False
-            if pool.kind == "recurrent" and len(keys) != 1:
+            if pool.kind in ("recurrent", "convolution") and len(keys) != 1:
                 raise ValueError("Recurrent offload requires exactly one boundary checkpoint")
             full_keys = by_name[PoolName.KV].keys or ()
             if keys != list(full_keys[-len(keys) :]):

@@ -1,4 +1,4 @@
-"""Build a tiny deterministic Full + SWA model using SGLang's native Mellum path.
+"""Build a tiny deterministic Full + SWA model using both engines' Mellum path.
 
 This is a numerical cache-recovery fixture, not a pretrained quality benchmark.
 Generate it with the SGLang release environment; no downloads are required.
@@ -33,7 +33,7 @@ def main() -> None:
         max_position_embeddings=2048,
         num_experts=4,
         num_experts_per_tok=2,
-        mlp_only_layers=[0, 1, 2, 3],
+        mlp_only_layers=[0, 1, 2],
         # SGLang's Mellum loader expects a separate lm_head tensor.
         tie_word_embeddings=False,
     )
@@ -46,7 +46,7 @@ def main() -> None:
     config.update(
         architectures=["MellumForCausalLM"],
         layer_types=["sliding_attention", "full_attention"] * 2,
-        mlp_layer_types=["dense"] * 4,
+        mlp_layer_types=["dense", "dense", "dense", "sparse"],
         sliding_window=256,
         use_sliding_window=True,
         rope_parameters={

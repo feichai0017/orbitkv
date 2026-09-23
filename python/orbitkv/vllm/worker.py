@@ -604,46 +604,40 @@ class WorkerConnector:
                     f"expected {self._ctx.tp_shard_count}"
                 )
             block_ids_by_group = [list(group) for group in load_intent.block_ids_by_group]
-            hold = load_intent.recurrent_hold
-            recurrent_groups = sorted(self._cache_groups.recurrent_group_indices)
+            hold = load_intent.recovery_hold
+            auxiliary_groups = [
+                index for index, group in enumerate(self._cache_groups.storage_group_ids) if group
+            ]
             if hold is not None:
-                # The attention lease pins group-0 (dense prefix) blocks only;
-                # recurrent destinations travel with the membership leases.
-                for group_index in recurrent_groups:
+                # Only full-attention layers consume the prefix lease.
+                for group_index in auxiliary_groups:
                     block_ids_by_group[group_index] = [None] * len(block_ids_by_group[group_index])
             for block_ids in block_ids_by_group:
                 all_block_ids.extend(block_id for block_id in block_ids if block_id is not None)
             loads.append((load_intent.leases[self._ctx.tp_shard_index], block_ids_by_group))
             if hold is not None:
                 shard = self._ctx.tp_shard_index
-                for slot, group_index in enumerate(recurrent_groups):
+                for slot, group_index in enumerate(auxiliary_groups):
                     positions = hold.hit_positions[slot][shard]
-                    if hold.checkpoint not in positions:
+                    if hold.last_position not in positions:
                         raise RuntimeError(
-                            f"req {req_id}: recurrent group {group_index} shard {shard} "
-                            f"lease has no checkpoint at query position {hold.checkpoint}"
+                            f"req {req_id}: state group {group_index} shard {shard} "
+                            f"lease does not reach query position {hold.last_position}"
                         )
-                    destination = next(
-                        (
-                            block_id
-                            for block_id in reversed(load_intent.block_ids_by_group[group_index])
-                            if block_id is not None
-                        ),
-                        None,
-                    )
-                    if destination is None:
+                    destinations = load_intent.block_ids_by_group[group_index]
+                    if any(position >= len(destinations) for position in positions):
                         raise RuntimeError(
-                            f"req {req_id}: no recurrent destination block in group "
-                            f"{group_index} for checkpoint {hold.checkpoint}"
+                            f"req {req_id}: state lease exceeds its GPU destinations"
                         )
-                    # The membership lease pins `[hit_positions]` blocks; only
-                    # the chosen checkpoint has a physical destination.
                     vectors: list[list[int | None]] = [
                         [None] * len(positions) for _ in range(self._cache_groups.group_count)
                     ]
-                    vectors[group_index][positions.index(hold.checkpoint)] = destination
+                    selected = [destinations[position] for position in positions]
+                    if any(block_id is None or block_id == 0 for block_id in selected):
+                        raise RuntimeError(f"req {req_id}: state lease has no live GPU destination")
+                    vectors[group_index] = selected
                     loads.append((hold.leases[slot][shard], vectors))
-                    all_block_ids.append(destination)
+                    all_block_ids.extend(selected)
             request_ids.append(req_id)
 
         if not all_block_ids:
@@ -748,7 +742,7 @@ class WorkerConnector:
             return
         if not metadata.save_intents and not metadata.boundary_save_intents:
             return
-        if metadata.boundary_save_intents and not self._cache_groups.has_recurrent_state:
+        if metadata.boundary_save_intents and self._cache_groups.group_count <= 1:
             raise RuntimeError("boundary-state save intents are only valid for HMA")
 
         # This callback runs after the forward launch (including graph replay

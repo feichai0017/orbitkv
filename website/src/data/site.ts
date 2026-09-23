@@ -59,7 +59,7 @@ export const layers = [
     name: "orbitkv.sglang",
     role: "Link SGLang GPU pages.",
     detail:
-      "Direct GPU recovery for full attention, windows and recurrent/conv checkpoints; metadata discovery precedes selected-range reads and leased-state validation.",
+      "Direct GPU recovery for full attention, windows and recurrent/conv checkpoints, including combined layouts; selected-range reads validate every required group.",
     path: "python/orbitkv/sglang/linker.py",
   },
   {

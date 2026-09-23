@@ -182,7 +182,7 @@ recovery contract:
 | Prefix identity | `Request.block_hashes` | Radix page hashes |
 | Local GPU pages | vLLM block IDs + CUDA IPC | Radix page indices + CUDA IPC on the direct path |
 | Host pages | OrbitKV-owned pinned blocks | OrbitKV-owned pinned blocks |
-| Hybrid state | Attention + aligned recurrent groups; shared demand and validation | Full + SWA or Full + recurrent/conv; shared demand and validation |
+| Hybrid state | Full + SWA + aligned recurrent groups; shared demand and validation | Full + SWA + recurrent/conv; shared demand and validation |
 | Lifecycle | KVConnector callbacks | Radix-cache events |
 
 Adapters do not decide which component set is a legal recovery point. That
@@ -224,8 +224,8 @@ scheduler to submit GPU restores and drain linker completions. It uses
 GPU slots during asynchronous saves and loads, and transfer bytes through the
 same Cache Manager API as vLLM. Each scheduler rank registers its local GPU KV
 buffers through CUDA IPC. A model-, rank-, and layout-scoped namespace prevents
-incompatible byte reuse. Full attention, Full + SWA and Full + recurrent/conv
-have explicit recovery rules. Convolution and recurrent tensors share one
+incompatible byte reuse. Full attention, Full + SWA, Full + recurrent/conv and
+their combined layout have explicit recovery rules. Convolution and recurrent tensors share one
 sealed checkpoint group; SWA has independent page coverage. SGLang retains
 authority over HBM allocation, request-state copy-on-write and prefix-tree nodes.
 Hybrid lookup discovers group positions without reading payloads and preserves

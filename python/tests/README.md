@@ -110,12 +110,16 @@ Runs tests that start or require a local `orbitkv-cache-manager` but do not run 
   published destinations before releasing an aborted request. Run this for
   recovery-rule or hybrid-layout changes.
 - `test_vllm_recovery.py` checks vLLM's absolute-span evidence against the real
-  Rust validator and restores attention/conv/temporal buffers through the real
+  Rust validator and restores full/window/conv/temporal buffers through the real
   scheduler/worker adapters from DRAM and forced SSD. Run this for vLLM hybrid
   query, boundary selection or lease-handoff changes, followed by the vLLM E2E.
+- `test_sglang_combined_recovery.py` registers Full + SWA + checkpoint pools
+  together, including same-layer convolution and an empty temporal tensor.
+  It rejects incomplete windows and verifies exact GPU/SSD bytes.
 
-Hybrid serving changes also require both Qwen3.5 and the native Full + SWA
-fixture through the SGLang E2E. See [the fixture and commands](../../docs/hybrid-recovery.md#reproducible-gates).
+Hybrid serving changes also require Qwen3.5 and the native Full + SWA fixture.
+Use the generated Inkling fixture with `--sglang-load-format dummy` for the
+combined SGLang path. See [the fixtures and commands](../../docs/hybrid-recovery.md#reproducible-gates).
 
 Requirements:
 - built Python extension, for example `uv run maturin develop -r`
@@ -156,6 +160,12 @@ its HBM cache; OrbitKV restarts vLLM between cold saves and warm loads. The
 gate verifies that native `long_warm` had a prefix-cache hit, checks OrbitKV
 save/hit/load activity, and requires OrbitKV `long_warm` to load KV bytes after
 that restart.
+
+Add `--vllm-cache-tier ssd` to enable an 8 GiB SSD cache, wait for writes to
+drain and evict Manager DRAM before the engine restart. The same output and
+GPU-load controls then also require new SSD reads. DRAM remains the default.
+See [model qualification](../../docs/models.md) for pinned larger checkpoints
+and the Qwen3.8 FP8 kernel setting used on H20.
 
 This gate is required before merging PRs that change Python test gates, the
 vLLM connector, cache semantics visible to the connector, save/load behavior,

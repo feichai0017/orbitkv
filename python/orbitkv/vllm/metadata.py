@@ -15,30 +15,30 @@ class LoadIntent:
     block_ids_by_group: tuple[tuple[int | None, ...], ...]
     leases: tuple[bytes, ...]
     num_tokens: int
-    # Hybrid-cache loads carry one membership lease per recurrent storage
-    # group (pinned checkpoints in hit-positions order) on top of the
-    # attention prefix leases. See RecurrentLoadHold.
-    recurrent_hold: "RecurrentLoadHold | None" = None
+    # Hybrid loads carry the exact window/checkpoint leases separately from
+    # the full-attention prefix lease.
+    recovery_hold: "RecoveryLoadHold | None" = None
 
 
 @dataclass(frozen=True)
-class RecurrentLoadHold:
-    """Pinned recurrent checkpoints for one hybrid external load.
+class RecoveryLoadHold:
+    """Pinned auxiliary groups for one hybrid external load.
 
-    Indexed by ``sorted(recurrent_group_indices)`` on the outside and TP
+    Indexed by nonzero storage-group order on the outside and TP
     shard on the inside: ``leases[g][shard]`` is the membership lease over
     group ``g``'s hit blocks; ``hit_positions[g][shard]`` lists each leased
     block's position in the scheduler's query hash list (lease order).
-    ``checkpoint`` is the chosen query position — the mamba state stored
-    there covers all tokens through the end of that block. Its absolute end
-    is ``(computed_blocks + checkpoint + 1) * block_size``; the scheduler
+    ``last_position`` is the last position at the chosen recovery boundary.
+    A window lease contains its trailing pages; recurrent state needs only
+    that final position. Its absolute end
+    is ``(computed_blocks + last_position + 1) * block_size``; the scheduler
     validates that boundary, while the worker addresses the lease by its
-    query-relative position. The externally restored span is ``checkpoint + 1`` blocks.
+    query-relative position. The externally restored span is ``last_position + 1`` blocks.
     """
 
     leases: tuple[tuple[bytes, ...], ...]
     hit_positions: tuple[tuple[tuple[int, ...], ...], ...]
-    checkpoint: int
+    last_position: int
 
 
 @dataclass(frozen=True)

@@ -31,6 +31,10 @@ impl PyRecoveryContract {
                     ],
                     RecoveryRule::Checkpoint,
                 ),
+                "convolution" if window == 0 => (
+                    vec![StateComponent::ConvolutionState],
+                    RecoveryRule::Checkpoint,
+                ),
                 _ => {
                     return Err(PyValueError::new_err(
                         "unsupported recovery group or window",

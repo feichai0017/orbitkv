@@ -59,6 +59,18 @@ def orbitkv_pool_size(request) -> str:
 def pytest_addoption(parser):
     """Add custom command line options for E2E tests."""
     parser.addoption(
+        "--vllm-cache-tier",
+        choices=("dram", "ssd"),
+        default="dram",
+        help="vLLM correctness gate: force SSD recovery after engine restart",
+    )
+    parser.addoption(
+        "--sglang-load-format",
+        choices=("auto", "dummy"),
+        default="auto",
+        help="SGLang model loader; dummy is only for deterministic generated fixtures",
+    )
+    parser.addoption(
         "--model",
         action="store",
         default="Qwen/Qwen3-0.6B",
@@ -154,6 +166,11 @@ def channel_server(request, tmp_path):
         channel_session_epoch=0x0B17_17C0,
         bootstrap_socket=bootstrap_socket,
         ssd_cache_path=tmp_path / "cache.bin" if mode == "ssd" else None,
+        ssd_cache_capacity=(
+            configuration.get("ssd_cache_capacity", "256mb")
+            if isinstance(configuration, dict)
+            else "256mb"
+        ),
         extra_args=(
             "--cache-protected-percent",
             str(request.config.getoption("--cache-protected-percent")),

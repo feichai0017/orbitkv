@@ -20,28 +20,36 @@ from tests.support.paths import PYTHON_ROOT, REPO_ROOT
 DEFAULT_VLLM_SEED = 42
 
 
-def _uses_linear_attention(model: str) -> bool:
+def _linear_attention_kind(model: str) -> str | None:
     config_path = Path(model) / "config.json"
     if not config_path.is_file():
-        return False
+        return None
     try:
         config = json.loads(config_path.read_text())
     except (OSError, json.JSONDecodeError):
-        return False
+        return None
     text_config = config.get("text_config", config)
-    return "linear_attention" in (text_config.get("layer_types") or ())
+    if (text_config.get("linear_attn_config") or {}).get("kda_layers"):
+        return "kda"
+    if "linear_attention" in (text_config.get("layer_types") or ()):
+        return "linear_attention"
+    return None
 
 
 def adapt_prompt_for_hybrid_cache(model: str, prompt: str) -> str:
-    if not _uses_linear_attention(model):
+    kind = _linear_attention_kind(model)
+    if kind is None:
         return prompt
     family = hashlib.sha256(prompt[:80].encode()).hexdigest()[:8]
-    prefix = f"Hybrid cache boundary {family} contains deterministic background context. " * 80
+    repetitions = 160 if kind == "kda" else 80
+    prefix = (
+        f"Hybrid cache boundary {family} contains deterministic background context. " * repetitions
+    )
     return prefix + prompt
 
 
 def e2e_max_tokens(model: str) -> int:
-    return 8 if _uses_linear_attention(model) else 50
+    return 8 if _linear_attention_kind(model) else 50
 
 
 def _detect_orbitkv_cargo_features() -> list[str]:
@@ -122,7 +130,8 @@ class VLLMServer:
         env["PYTHONPATH"] = (
             f"{python_source}:{current_pythonpath}" if current_pythonpath else python_source
         )
-        if _uses_linear_attention(self.model):
+        linear_attention = _linear_attention_kind(self.model)
+        if linear_attention:
             env.pop("VLLM_BATCH_INVARIANT", None)
         else:
             env["VLLM_BATCH_INVARIANT"] = "1"
@@ -138,9 +147,7 @@ class VLLMServer:
         env["PATH"] = venv_bin + ":" + env.get("PATH", "")
 
         prefix_caching = (
-            _uses_linear_attention(self.model)
-            if self.prefix_caching is None
-            else self.prefix_caching
+            linear_attention is not None if self.prefix_caching is None else self.prefix_caching
         )
         cmd = [
             "vllm",
@@ -168,13 +175,13 @@ class VLLMServer:
 
         if self.max_model_len is not None:
             cmd.extend(["--max-model-len", str(self.max_model_len)])
-        if _uses_linear_attention(self.model):
+        if linear_attention:
             cmd.extend(
                 [
                     "--max-num-seqs",
                     "1",
                     "--max-num-batched-tokens",
-                    "1024",
+                    "2048" if linear_attention == "kda" else "1024",
                 ]
             )
 
@@ -458,7 +465,10 @@ def call_openai_api(
     }
 
     response = requests.post(url, json=payload, timeout=120)
-    response.raise_for_status()
+    if not response.ok:
+        raise requests.HTTPError(
+            f"{response.status_code} from {url}: {response.text[:4096]}", response=response
+        )
     data = response.json()
 
     choice = data["choices"][0]

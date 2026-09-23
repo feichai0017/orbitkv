@@ -48,7 +48,7 @@ the registered namespace; the engine remains responsible for declaring all requi
 state and holding the base prefix valid. This is a recovery-contract check, not
 a formal proof of the model's mathematics. See [hybrid recovery](hybrid-recovery.md).
 
-vLLM compiles attention and aligned recurrent groups; its existing SWA and
+vLLM compiles full-attention, sliding-window and aligned recurrent groups;
 hybrid P/D-tail restrictions remain. `StateDescriptor` and `StateFormat`
 remain planning types; their fields are not a new per-page wire
 protocol. Publish still uses raw engine block IDs without generation checks.

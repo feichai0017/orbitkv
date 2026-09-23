@@ -6,6 +6,7 @@ export const docGroups = [
       { slug: "goals", title: "Overview & supported features" },
       { slug: "single-node", title: "Installation & quickstart" },
       { slug: "adapters", title: "Engine adapter configuration" },
+      { slug: "models", title: "Model qualification" },
       { slug: "deployment", title: "Deployment patterns" },
       { slug: "server", title: "Manager configuration" },
     ],

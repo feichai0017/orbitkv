@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.cache_manager import evict_dram_after_ssd_writes
 from tests.support.metrics import (
     fetch_orbitkv_metrics,
     fetch_orbitkv_rpc_failures,
@@ -33,7 +34,7 @@ from tests.support.metrics import (
 from tests.support.vllm_helpers import (
     CacheManager,
     VLLMServer,
-    _uses_linear_attention,
+    _linear_attention_kind,
     adapt_prompt_for_hybrid_cache,
     call_openai_api,
     e2e_max_tokens,
@@ -216,14 +217,24 @@ class TestE2ECorrectness:
         orbitkv_pool_size: str,
     ):
         """Auto-start Cache Manager with prometheus metrics."""
+        extra_args = (
+            "--cache-protected-percent",
+            str(request.config.getoption("--cache-protected-percent")),
+        )
+        if request.config.getoption("--vllm-cache-tier") == "ssd":
+            extra_args += (
+                "--ssd-cache-path",
+                str(log_dir / "cache.bin"),
+                "--ssd-cache-capacity",
+                "8gb",
+                "--ssd-write-policy",
+                request.config.getoption("--ssd-write-policy"),
+            )
         with CacheManager(
             log_file=log_dir / "orbitkv-cache-manager.log",
             pool_size=orbitkv_pool_size,
             use_hugepages=orbitkv_use_hugepages,
-            extra_args=(
-                "--cache-protected-percent",
-                str(request.config.getoption("--cache-protected-percent")),
-            ),
+            extra_args=extra_args,
         ) as server:
             yield server
 
@@ -276,6 +287,7 @@ class TestE2ECorrectness:
     @pytest.fixture(scope="class")
     def orbitkv_results(
         self,
+        request,
         model: str,
         base_port: int,
         orbitkv_server: CacheManager,
@@ -318,6 +330,10 @@ class TestE2ECorrectness:
 
             metrics_same_process = fetch_orbitkv_metrics(metrics_port)
 
+        if request.config.getoption("--vllm-cache-tier") == "ssd":
+            evict_dram_after_ssd_writes(metrics_port)
+        before_restart = fetch_orbitkv_metrics(metrics_port)
+
         with VLLMServer(
             model,
             orbitkv_port,
@@ -350,6 +366,11 @@ class TestE2ECorrectness:
                     ) - before_long_warm.get("orbitkv_load_bytes_total", 0)
 
             metrics_end = fetch_orbitkv_metrics(metrics_port)
+
+        if request.config.getoption("--vllm-cache-tier") == "ssd":
+            assert metrics_end.get("orbitkv_ssd_prefetch_bytes_total", 0) > before_restart.get(
+                "orbitkv_ssd_prefetch_bytes_total", 0
+            ), "engine restart performed no SSD recovery"
 
         print("[Phase 2] Done\n")
         return {
@@ -417,7 +438,7 @@ class TestE2ECorrectness:
 
     def test_same_process_hma_load_uses_orbitkv(self, model: str, orbitkv_results):
         """The warm request in the first vLLM process must load from OrbitKV."""
-        if not _uses_linear_attention(model):
+        if not _linear_attention_kind(model):
             pytest.skip("same-process HMA assertion requires a hybrid linear-attention model")
         m_start = orbitkv_results["metrics_start"]
         m_end = orbitkv_results["metrics_same_process"]
