@@ -29,9 +29,9 @@ The Kimi checkpoint is a third-party quantization of
 not an official Moonshot FP8 release. Its weights occupy about 46.5 GiB; the
 official BF16 weights alone occupy about 91.5 GiB, leaving insufficient room
 for this single-card gate. DeepSeek-V2-Lite is an older MLA regression target;
-it does not establish DeepSeek-V4 compatibility. An SSD-enabled gate covers
-reuse before eviction and forced SSD recovery after restart; it is not a
-separate DRAM-only qualification.
+it does not establish DeepSeek-V4 compatibility. SSD-enabled runs keep DRAM
+available during serving and require SSD recovery after eviction and restart;
+they are not separate DRAM-only qualifications.
 
 The Kimi quantization repository's tokenizer imports a removed Transformers
 interface. The qualification artifact keeps those pinned weights and uses
