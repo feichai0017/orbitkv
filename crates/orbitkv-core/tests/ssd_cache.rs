@@ -238,6 +238,41 @@ async fn ssd_prefetch_roundtrip_after_eviction() {
 }
 
 #[tokio::test]
+async fn ssd_reclaim_frees_pages_independently_of_a_retained_prefix() {
+    skip_without_io_uring!();
+    let (env, _cache_path, _temp_dir) = ssd_env("test-ssd-page-reclaim");
+    let target = env.hashes(93);
+    env.save_and_wait(&target).await;
+    env.engine.flush_all().await;
+    cleanup_resident_memory(&env);
+
+    let QueryResult {
+        mut blocks,
+        missing,
+    } = env.query(&target).await;
+    assert_eq!((blocks.len(), missing), (NUM_BLOCKS, 0));
+    let retained = blocks.remove(0);
+    drop(blocks);
+    let lease = env
+        .engine
+        .create_query_lease(&env.instance_id, vec![retained])
+        .unwrap();
+    let stats = env.engine.cleanup_memory_cache();
+    assert_eq!(stats.still_referenced_blocks, 1);
+    assert_eq!(
+        stats.reclaimed_bytes,
+        ((NUM_BLOCKS - 1) * BLOCK_SIZE) as u64,
+        "one live prefix page must not retain the entire SSD read batch"
+    );
+
+    env.data().zero_gpu();
+    env.load_to_gpu(lease, 1).await;
+    let mut expected = vec![0; NUM_BLOCKS * BLOCK_SIZE];
+    expected[..BLOCK_SIZE].copy_from_slice(&env.data().expected_bytes()[..BLOCK_SIZE]);
+    env.data().assert_gpu_matches(&expected);
+}
+
+#[tokio::test]
 async fn ssd_sharded_prefetch_roundtrip_after_eviction() {
     skip_without_io_uring!();
     let (env, cache_path, _temp_dir) = ssd_sharded_env("test-ssd-sharded");

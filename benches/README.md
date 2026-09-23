@@ -197,6 +197,9 @@ gates and native/deterministic controls to investigate differences.
 Separate cold/reused-prefix TTFT P95 values expose scheduling tradeoffs. A
 reused-prefix choice may still miss the cache; these fields are not per-tier
 hit latencies.
+Reports retain pool-allocation failures, SSD I/O failures and dropped write
+queue submissions. The total and speculative query counters are independent
+of phase diagnostics; sustained validation rejects observed budget overruns.
 
 The [sustained report](../docs/sustained-performance.md) records fresh-service
 native/DRAM/SSD controls for both engines and the vLLM admission-stall regression.

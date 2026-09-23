@@ -35,7 +35,8 @@ pub const DEFAULT_SSD_PREFETCH_INFLIGHT: usize = 16;
 
 /// Upper bound for one pinned-pool allocation while staging an SSD prefetch.
 /// Large contiguous requests can otherwise force disproportionate LRU reclaim
-/// from a fragmented pool.
+/// from a fragmented pool. Allocations never span cache blocks, so a retained
+/// prefix page cannot prevent unrelated pages from returning their memory.
 const SSD_PREFETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Result of a single prefetch I/O.
@@ -747,9 +748,13 @@ fn chunk_slot_refs(refs: &[SlotRef], chunk_bytes: u64) -> Result<Vec<PrefetchChu
     for slot in refs {
         let needs_new_chunk = current.as_ref().is_none_or(|chunk| {
             chunk
-                .size
-                .checked_add(slot.size)
-                .is_none_or(|end| end > chunk.capacity)
+                .slots
+                .last()
+                .is_some_and(|last| last.block_idx != slot.block_idx)
+                || chunk
+                    .size
+                    .checked_add(slot.size)
+                    .is_none_or(|end| end > chunk.capacity)
         });
 
         if needs_new_chunk {

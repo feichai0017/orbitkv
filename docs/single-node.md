@@ -174,6 +174,10 @@ io_uring workers. Reads rotate across read workers, including when there is only
 one cache file; each file's writes retain a stable queue. This avoids a read
 waiting in the submission queue of an unrelated write. It does not increase the
 configured in-flight read/write limits or remove device-level I/O contention.
+SSD staging allocations contain slots from only one cache block on a given
+NUMA node, with a 256 MiB chunk cap (or one oversized slot). A retained prefix
+page therefore keeps only its own allocations alive when other pages are
+evicted; it cannot pin an entire multi-page read batch.
 
 Later requests can restore ready matching blocks,
 subject to each adapter's readiness handling. On a cache miss the engine

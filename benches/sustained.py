@@ -308,6 +308,9 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                         "orbitkv_ssd_prefetch_duration_seconds_count",
                         "orbitkv_save_duration_seconds_sum",
                         "orbitkv_save_duration_seconds_count",
+                        "orbitkv_pool_alloc_failures_total",
+                        "orbitkv_ssd_prefetch_failures_total",
+                        "orbitkv_ssd_write_queue_full_total",
                     )
                 },
             }

@@ -320,7 +320,7 @@ fn test_group_slots_unknown_maps_to_none() {
 }
 
 #[test]
-fn test_k3_style_prefetch_uses_bounded_numa_chunks() {
+fn test_k3_style_prefetch_keeps_each_blocks_numa_allocations_independent() {
     const MIB: u64 = 1024 * 1024;
     let slots = || {
         (0..8)
@@ -338,11 +338,11 @@ fn test_k3_style_prefetch_uses_bounded_numa_chunks() {
         let chunks = chunk_slot_refs(refs, SSD_PREFETCH_CHUNK_BYTES).unwrap();
 
         assert_eq!(whole_batch_bytes, 3584 * MIB);
-        assert_eq!(chunks.len(), 14);
-        assert_eq!(
-            chunks.iter().map(|chunk| chunk.size).max(),
-            Some(SSD_PREFETCH_CHUNK_BYTES)
-        );
+        assert_eq!(chunks.len(), 56);
+        assert_eq!(chunks.iter().map(|chunk| chunk.size).max(), Some(64 * MIB));
+        for (block_idx, chunk) in chunks.iter().enumerate() {
+            assert!(chunk.slots.iter().all(|slot| slot.block_idx == block_idx));
+        }
         assert_eq!(
             chunks.iter().map(|chunk| chunk.slots.len()).sum::<usize>(),
             refs.len()
