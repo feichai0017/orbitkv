@@ -20,7 +20,8 @@ planned configuration replacement. Losing a member leaves its shards unavailable
 until that Node ID returns, without reassigning them to other live members.
 
 Every catalog RPC carries the shard, placement fingerprint and destination
-runtime UUID. The receiver checks its own admission and assignment. Inventory
+runtime UUID. `LocateBlocks` carries one route for every included shard, allowing
+one bounded batch to cover multiple shards hosted by the same Manager. The receiver checks its own admission and assignment. Inventory
 publishers must also match the cached member view, and every record/query key
 must belong to the requested shard. These are consistency checks in a trusted
 cluster, not network authentication. TLS/auth integration remains open.
@@ -62,9 +63,9 @@ not wait for this barrier; remote visibility is asynchronous.
 | Candidate index | 16 MiB; positive entries only; five-second TTL |
 | Catalog index admission | `--catalog-budget`, default 256 MiB, divided across assigned shards |
 | Inventory page/delta | 1,024 records, 512 KiB of accounted record bytes |
-| Cold discovery batch | 128 keys, 64 KiB of namespace/hash bytes, one shard |
+| Cold discovery batch | 128 keys, 64 KiB of namespace/hash bytes, one catalog host |
 | Candidate row | At most four endpoint/incarnation/insertion-sequence hints |
-| Cold query | Three-second total RPC budget after coalescing |
+| Cold query | Three-second deadline including coalescing; at most four hosts queried concurrently |
 | Catalog gRPC message | 4 MiB |
 | Concurrent catalog operations | 16 per Manager |
 
@@ -74,7 +75,9 @@ not a process-RSS cap; allocator overhead and bounded in-flight RPC buffers are
 additional. Metadata exhaustion rejects the operation atomically. Expired owner
 inventories are swept every 30 seconds, with a two-hour retention TTL.
 
-Cold queries group missing keys by shard and preserve position alignment. Positive
+Cold queries group missing keys by catalog host and preserve position alignment.
+A host batch validates every shard route before looking up any keys. Channels are
+shared per current host incarnation and stale entries are removed on cold lookups. Positive
 candidate hits issue no catalog lookup. An unavailable shard produces missing
 hints, not authoritative absence; already-known prefix evidence remains usable.
 Source authorization still checks exact runtime and insertion sequences while

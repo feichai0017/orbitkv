@@ -173,7 +173,8 @@ message SyncInventoryResponse {
 }
 
 message LocateBlocksRequest {
-  CatalogRoute route = 4;
+  // One route per queried shard, all assigned to the receiving Manager.
+  repeated CatalogRoute routes = 4;
   string namespace = 1;
   repeated bytes block_hashes = 2;  // ordered by prefix position
   string exclude_node = 3;          // requester address; never return it as an owner

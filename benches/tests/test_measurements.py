@@ -48,6 +48,9 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
                 'orbitkv_query_reserved_bytes{phase="prepared"} 60\n'
                 'orbitkv_warmup_wait_byte_seconds_total{outcome="restored"} 300\n'
                 'orbitkv_warmup_wait_byte_seconds_total{outcome="unused"} 40\n'
+                'orbitkv_remote_stage_duration_seconds_count{stage="read",status="ok"} 3\n'
+                'orbitkv_remote_stage_duration_seconds_count{stage="release",status="ok"} 3\n'
+                'orbitkv_remote_stage_duration_seconds_sum{stage="release",status="ok"} 0.012\n'
             ),
             raise_for_status=lambda: None,
         ),
@@ -55,6 +58,11 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
     observed = metrics("http://localhost")
     assert observed == {
         "counter": 15,
+        "orbitkv_remote_stage_duration_seconds_count": 6,
+        "orbitkv_remote_stage_duration_seconds_count_read": 3,
+        "orbitkv_remote_stage_duration_seconds_count_release": 3,
+        "orbitkv_remote_stage_duration_seconds_sum": 0.012,
+        "orbitkv_remote_stage_duration_seconds_sum_release": 0.012,
         "orbitkv_query_reserved_bytes": 400,
         "orbitkv_query_reserved_bytes_warming": 100,
         "orbitkv_query_reserved_bytes_speculative": 200,

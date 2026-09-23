@@ -244,6 +244,13 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   under a byte/session budget, retry completion releases and export native stage timing.
 - [x] D1 same-host serving: both engines pass independent TP=1 replica sharing,
   catalog replay and source restart gates over TCP (`docs/shared-cache-qualification.md`).
+- [x] D1 completion recovery: reserve bounded per-requester/per-peer release capacity
+  before authorization; retain idempotent retries until acknowledged; consume late
+  authorization replies after cancellation and drain uncertain native batches.
+- [x] D1 discovery RPC reduction: batch shards by catalog host, share connections,
+  bound host concurrency and include coalescing in the common lookup deadline.
+- [ ] D1 authorization reconciliation: recover source sessions when the grant reply
+  itself is lost before the requester learns its ID.
 - [ ] D1 revocation: reclaim orphaned source reservations only after transport
   termination is established; a timeout or membership expiry cannot free them.
 - [ ] D1: qualify source incarnation checks, transfer completion/revocation,
@@ -254,8 +261,10 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   bounded subscriptions; qualify partitions and coordinator/catalog failure.
 - [ ] D3: support source-local SSD staging and measured source selection without
   recursive peer fetches or unbounded staging.
-- [ ] Measure discovery RPCs separately from background synchronization, source
-  authorization and etcd activity; record index bytes and recovery lag.
+- [x] Measure cold discovery RPCs and source authorization, READ and completion
+  stages independently in the shared-cache serving gate.
+- [ ] Measure background synchronization and etcd traffic, index bytes and recovery
+  lag under multi-host load and failure.
 
 ## M3 — routing and replica planning
 

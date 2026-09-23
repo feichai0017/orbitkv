@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 
-from .metrics import delta, metrics
+from .metrics import REMOTE_STAGES, delta, metrics
 from .workload import generate
 
 IDLE_METRICS = (
@@ -22,6 +22,7 @@ IDLE_METRICS = (
     "orbitkv_inflight_bytes",
     "orbitkv_transfer_lock_active",
     "orbitkv_transfer_reserved_bytes",
+    "orbitkv_transfer_completion_outstanding",
     "orbitkv_ssd_prefetch_inflight",
     "orbitkv_ssd_write_queue_pending",
     "orbitkv_ssd_write_inflight",
@@ -56,6 +57,8 @@ def verify_restore(before: dict, after: dict, expected: str, actual: dict) -> di
     restored = changes.get("orbitkv_load_bytes_total", 0)
     if remote <= 0 or restored <= 0:
         raise AssertionError(f"Expected both Mooncake READ and GPU restore bytes: {changes}")
+    if changes.get("orbitkv_remote_stage_duration_seconds_count_release", 0) <= 0:
+        raise AssertionError("Expected acknowledged transfer completion evidence")
     if actual["text"] != expected:
         raise AssertionError("Shared-cache output differs from the cold source control")
     return {
@@ -72,7 +75,7 @@ def verify_restore(before: dict, after: dict, expected: str, actual: dict) -> di
                 "total_ms": changes.get(f"orbitkv_remote_stage_duration_seconds_sum_{stage}", 0)
                 * 1000,
             }
-            for stage in ("discovery_rpc", "authorization", "allocation", "read", "rebuild")
+            for stage in REMOTE_STAGES
         },
         "output_match": True,
     }

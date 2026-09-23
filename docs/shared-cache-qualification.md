@@ -17,7 +17,10 @@ passed on one H20 with vLLM 0.29.0 and SGLang 0.5.20, tested separately. Each
 engine completed three remote GPU restores, including catalog restart recovery,
 and one correct recomputation after source payload loss. Outputs matched and
 the checked resource counters drained in every case. Each engine transferred
-288 MiB remotely and restored the same amount to HBM.
+288 MiB remotely and restored the same amount to HBM. In the final rerun,
+513/1025-token requests used 3/6 discovery RPCs on each engine, down from
+8/14 on vLLM and 6/16 on SGLang in the preceding gate. All 12 source-release
+acknowledgements per engine were observed, and requester completion slots drained.
 
 This is a same-host TCP correctness result. Short-prompt restoration was not
 consistently faster than recomputation. Physical two-host/RDMA deployment and
@@ -66,7 +69,8 @@ The source must publish new bytes. `POST /cache/sync` waits for already submitte
 saves and acknowledged catalog residency, with a bounded error when synchronization
 cannot finish. Each consumer request must increase both Mooncake READ and GPU
 restore bytes, match the cold source output, and drain query, source-transfer
-and I/O reservations. A response without these counters does not pass as a
+and I/O reservations, including requester completion records awaiting a source
+acknowledgement. A response without these counters does not pass as a
 remote hit. This gate proves recovery, not throughput superiority.
 
 ## Restart and ownership gates

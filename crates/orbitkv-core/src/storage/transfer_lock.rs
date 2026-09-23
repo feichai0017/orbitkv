@@ -136,7 +136,7 @@ impl TransferLockManager {
             );
             count
         } else {
-            warn!("Transfer lock release: session not found: {}", session_id);
+            debug!("Transfer lock release already acknowledged: {}", session_id);
             0
         }
     }

@@ -22,7 +22,7 @@ use opentelemetry::KeyValue;
 use super::fetch_plan::{
     FetchPlan, FetchSegment, SegmentFetcher, SegmentOutcome, execute_fetch_plan,
 };
-use super::transfer_lock_guard::TransferLockGuard;
+use super::transfer_lock_guard::{TransferCompletions, TransferLockGuard};
 use super::{AllocateFn, MooncakeTransport, PrefetchResult};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::internode::CatalogClient;
@@ -47,6 +47,7 @@ const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 /// Mooncake READ to fetch them.
 pub(crate) struct MooncakeFetchStore {
     catalog_client: Arc<CatalogClient>,
+    completions: Arc<TransferCompletions>,
     membership: Arc<orbitkv_catalog::MembershipView>,
     transfer: Arc<MooncakeTransport>,
     allocate_fn: AllocateFn,
@@ -70,6 +71,7 @@ impl SegmentFetcher for MooncakeFetchStore {
         let query_start = Instant::now();
         let authorization = query_remote_blocks(
             &self.grpc_channels,
+            &self.completions,
             segment,
             &self.membership.owner().endpoint,
         )
@@ -82,7 +84,7 @@ impl SegmentFetcher for MooncakeFetchStore {
                 KeyValue::new("status", if authorization.is_ok() { "ok" } else { "error" }),
             ],
         );
-        let (client, mut response) = match authorization {
+        let (lock_guard, response) = match authorization {
             Ok(cr) => cr,
             Err(QueryError::Rejected) => {
                 core_metrics()
@@ -110,12 +112,6 @@ impl SegmentFetcher for MooncakeFetchStore {
 
         // The guard moves into the blocking transfer with the destination buffers.
         // Cancelling this future cannot release either while the READ is running.
-        let lock_guard = TransferLockGuard::new(
-            client,
-            std::mem::take(&mut response.transfer_session_id),
-            remote_addr,
-            req_id,
-        );
         if response.transfer_endpoint.is_empty()
             || response.blocks.len() != block_hashes.len()
             || response
@@ -125,7 +121,7 @@ impl SegmentFetcher for MooncakeFetchStore {
                 .any(|(block, hash)| block.block_hash != *hash)
         {
             warn!("Remote query to {remote_addr} returned invalid transfer authorization");
-            lock_guard.release();
+            drop(lock_guard);
             core_metrics()
                 .remote_fetch_total
                 .add(1, &[KeyValue::new("status", "error")]);
@@ -220,6 +216,7 @@ impl MooncakeFetchStore {
         );
         Self {
             catalog_client,
+            completions: Arc::new(TransferCompletions::default()),
             membership,
             transfer,
             allocate_fn,
@@ -625,11 +622,15 @@ enum QueryError {
 
 async fn query_remote_blocks(
     grpc_channels: &Mutex<LinkedHashMap<String, EngineClient<Channel>>>,
+    completions: &Arc<TransferCompletions>,
     segment: &FetchSegment,
     advertise_addr: &str,
-) -> Result<(EngineClient<Channel>, QueryBlocksForTransferResponse), QueryError> {
+) -> Result<(TransferLockGuard, QueryBlocksForTransferResponse), QueryError> {
     let mut client = get_or_create_channel(grpc_channels, &segment.owner.endpoint)
         .map_err(QueryError::Failed)?;
+    let mut guard = completions
+        .reserve(client.clone(), &segment.owner.endpoint)
+        .ok_or_else(|| QueryError::Failed("transfer completion budget exhausted".into()))?;
     let request = QueryBlocksForTransferRequest {
         namespace: segment.records[0].key.namespace.clone(),
         block_hashes: segment.records.iter().map(|r| r.key.hash.clone()).collect(),
@@ -637,22 +638,29 @@ async fn query_remote_blocks(
         owner_incarnation: segment.owner.incarnation.to_string(),
         residency_sequences: segment.records.iter().map(|r| r.sequence).collect(),
     };
-    let response = client
-        .query_blocks_for_transfer(request)
-        .await
-        .map_err(|e| {
-            if e.code() == tonic::Code::FailedPrecondition {
-                QueryError::Rejected
-            } else {
-                QueryError::Failed(e.to_string())
-            }
-        })?
-        .into_inner();
-    if !response.status.as_ref().is_some_and(|st| st.ok) || response.transfer_session_id.is_empty()
-    {
-        return Err(QueryError::Failed("missing transfer authorization".into()));
-    }
-    Ok((client, response))
+    // Detaching this bounded task on cancellation still consumes any successful
+    // authorization reply, so its source hold is released even without a caller.
+    tokio::spawn(async move {
+        let mut response = client
+            .query_blocks_for_transfer(request)
+            .await
+            .map_err(|e| {
+                if e.code() == tonic::Code::FailedPrecondition {
+                    QueryError::Rejected
+                } else {
+                    QueryError::Failed(e.to_string())
+                }
+            })?
+            .into_inner();
+        let authorized = !response.transfer_session_id.is_empty();
+        guard.authorize(std::mem::take(&mut response.transfer_session_id));
+        if !response.status.as_ref().is_some_and(|st| st.ok) || !authorized {
+            return Err(QueryError::Failed("missing transfer authorization".into()));
+        }
+        Ok((guard, response))
+    })
+    .await
+    .map_err(|error| QueryError::Failed(error.to_string()))?
 }
 
 /// Compute client-side transfer timeout from server's lock timeout.

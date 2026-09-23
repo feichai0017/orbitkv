@@ -24,6 +24,7 @@ struct Catalog {
     lose_reply: Arc<AtomicUsize>,
     begins: Arc<AtomicUsize>,
     locates: Arc<AtomicUsize>,
+    pause_lookup: Arc<AtomicBool>,
     pause_page: Arc<AtomicBool>,
     page_received: Arc<Notify>,
     release_page: Arc<Notify>,
@@ -44,6 +45,7 @@ impl Catalog {
             lose_reply: Arc::new(AtomicUsize::new(0)),
             begins: Arc::new(AtomicUsize::new(0)),
             locates: Arc::new(AtomicUsize::new(0)),
+            pause_lookup: Arc::new(AtomicBool::new(false)),
             pause_page: Arc::new(AtomicBool::new(false)),
             page_received: Arc::new(Notify::new()),
             release_page: Arc::new(Notify::new()),
@@ -88,6 +90,9 @@ impl CatalogRpc for Catalog {
         request: Request<wire::LocateBlocksRequest>,
     ) -> Result<Response<wire::LocateBlocksResponse>, Status> {
         self.locates.fetch_add(1, Ordering::AcqRel);
+        if self.pause_lookup.load(Ordering::Acquire) {
+            std::future::pending::<()>().await;
+        }
         self.service()?.locate_blocks(request).await
     }
     async fn sync_inventory(
@@ -514,7 +519,18 @@ async fn two_embedded_catalogs_partition_inventory_and_repair_restarted_member()
             .iter()
             .map(|catalog| catalog.locates.load(Ordering::Acquire))
             .sum();
-        assert_eq!(calls, CATALOG_SHARDS);
+        let expected: usize = ["a", "b"]
+            .iter()
+            .map(|node| {
+                keys.iter()
+                    .filter(|key| placement.host(catalog_shard(key)) == Some(*node))
+                    .count()
+                    .div_ceil(orbitkv_state::DISCOVERY_MAX_KEYS)
+            })
+            .sum();
+        assert_eq!(calls, expected);
+        assert!(calls < CATALOG_SHARDS);
+        assert_eq!(query.query_clients.lock().len(), 2);
         assert_eq!(query.locate_blocks("ns", &hashes).await.unwrap(), rows);
         assert_eq!(
             catalogs
@@ -523,6 +539,53 @@ async fn two_embedded_catalogs_partition_inventory_and_repair_restarted_member()
                 .sum::<usize>(),
             calls
         );
+        // A stalled host consumes the common deadline, while healthy host
+        // results enter the candidate cache and hits bypass the coalescing gate.
+        *query.candidates.lock() = CandidateIndex::new(CANDIDATE_CACHE_BYTES);
+        catalogs[0].pause_lookup.store(true, Ordering::Release);
+        let started = Instant::now();
+        let slow = query.locate_blocks("ns", &hashes);
+        let healthy_key = keys
+            .iter()
+            .find(|key| placement.host(catalog_shard(key)) == Some("b"))
+            .unwrap();
+        let healthy = async {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    let hit = query
+                        .candidates
+                        .lock()
+                        .get(healthy_key, std::time::Instant::now());
+                    if hit.is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            let hit = tokio::time::timeout(
+                Duration::from_millis(100),
+                query.locate_blocks("ns", std::slice::from_ref(&healthy_key.hash)),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(hit[0].replicas.len(), 1);
+            let waiting = Instant::now();
+            let unknown = query.locate_blocks("ns", &[vec![255; 8]]).await.unwrap();
+            assert!(waiting.elapsed() < Duration::from_secs(4));
+            assert!(unknown[0].replicas.is_empty());
+        };
+        let (partial, _) = tokio::join!(slow, healthy);
+        assert!(started.elapsed() < Duration::from_secs(4));
+        for row in partial.unwrap() {
+            assert_eq!(
+                row.replicas.len(),
+                usize::from(placement.host(catalog_shard(&row.key)) == Some("b"))
+            );
+        }
+        catalogs[0].pause_lookup.store(false, Ordering::Release);
         query.shutdown().await;
     }
     let stores = |catalog: &Catalog| {
@@ -597,4 +660,48 @@ async fn two_embedded_catalogs_partition_inventory_and_repair_restarted_member()
     client.shutdown().await;
     server_a.stop().await;
     server_b.stop().await;
+}
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn one_catalog_batches_all_shards_and_preserves_key_and_byte_limits() {
+    let catalog = Catalog::new();
+    let server = TestServer::start(catalog.clone(), "127.0.0.1:0".parse().unwrap()).await;
+    let source = cache(128 * 1024);
+    let hashes: Vec<_> = (0_u32..128).map(|n| n.to_be_bytes().to_vec()).collect();
+    for hash in &hashes {
+        source.insert_retained_for_test(
+            StateKey::new("ns".into(), hash.clone()),
+            Arc::new(SealedBlock::from_slots(Vec::new())),
+        );
+    }
+    let large = vec![vec![1; 40 * 1024], vec![2; 40 * 1024]];
+    for hash in &large {
+        source.insert_retained_for_test(
+            StateKey::new("ns".into(), hash.clone()),
+            Arc::new(SealedBlock::from_slots(Vec::new())),
+        );
+    }
+    let owner = client(&server, &source);
+    owner
+        .flush_with_timeout(Duration::from_secs(5))
+        .await
+        .unwrap();
+    let empty = cache(4096);
+    let query =
+        CatalogClient::new(test_view(server.addr, "requester"), Arc::downgrade(&empty)).unwrap();
+    let rows = query.locate_blocks("ns", &hashes).await.unwrap();
+    assert!(
+        rows.iter()
+            .zip(&hashes)
+            .all(|(r, h)| r.key.hash == *h && r.replicas.len() == 1)
+    );
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 1);
+    assert_eq!(query.query_clients.lock().len(), 1);
+    let rows = query.locate_blocks("ns", &large).await.unwrap();
+    assert!(rows.iter().all(|r| r.replicas.len() == 1));
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 3);
+    query.shutdown().await;
+    owner.shutdown().await;
+    server.stop().await;
 }
