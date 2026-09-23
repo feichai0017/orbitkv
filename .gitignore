@@ -13,7 +13,8 @@ python/uv.lock
 node_modules/
 dist/
 .astro/
-benches/results/runs/
+# Generated benchmark output; existing reviewed summaries remain tracked.
+/benches/results/
 examples/pd_logs/
 python/tests/**/*.log
 

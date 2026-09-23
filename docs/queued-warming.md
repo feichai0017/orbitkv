@@ -188,9 +188,9 @@ cold computation. This reproduces the difference without OrbitKV and does not
 establish batch-invariant output equality. Exact GPU-byte and engine recovery
 gates remain separate correctness evidence.
 
-See the [summaries and complete window counters](../benches/results/qwen3-8b-queued-warming-summary.json),
-[CSV](../benches/results/qwen3-8b-queued-warming-summary.csv), and
-[native output control, inputs and reproduction script](../benches/results/qwen3-8b-queued-warming-output-control.json).
+The summaries, complete window counters, native output control and its
+reproduction script remain in the
+[historical dataset snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
 Raw samples and logs remain under `benches/results/runs/queued-warming-*` on the
 measurement host. Initial SGLang logs repeat the first-layer wait callback;
 the collector pairs each enqueue with its first callback, and the adapter now
@@ -264,9 +264,9 @@ matches native cold computation. No new native control or batch-invariance
 claim is implied. The exact GPU-byte and both engine recovery gates pass on
 this implementation.
 
-Retained evidence: [summaries and complete before/after window counters](../benches/results/qwen3-8b-warmup-accounting-summary.json),
-[CSV](../benches/results/qwen3-8b-warmup-accounting-summary.csv), and
-[output comparison with the recorded native control](../benches/results/qwen3-8b-warmup-accounting-output-control.json).
+The [historical accounting dataset](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
+retains final summaries, complete window counters and the recorded native
+output comparison.
 Raw samples, prefixes and logs remain under
 `benches/results/runs/warmup-accounting-*` on the measurement host. Use the
 reproduction command above with a fresh output directory and this source revision.

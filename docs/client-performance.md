@@ -19,7 +19,7 @@ extension, with the Manager before the deferred-copy optimization. The final
 client uses immutable Rust `BlockHashes`. A control connects the archived Python
 client to the final Manager, separating client changes from Manager changes.
 All runs use Python 3.11.2, the same H20, a 256-MB pinned pool, and the same
-query budgets. [Per-batch measurements](../benches/results/client-control-2026-09-22.json)
+query budgets. [Archived per-batch measurements](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
 include commands, percentiles and caller thread CPU time.
 
 ## Results

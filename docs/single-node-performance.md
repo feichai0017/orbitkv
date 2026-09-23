@@ -69,8 +69,8 @@ and retains GPU sources until every chunk finishes. The table uses the full
 rerun after this fix. The earlier failed-offload run and an SGLang CLI startup
 failure are preserved separately in the local benchmark directory.
 
-The [270 request measurements](../benches/results/qwen3-8b-h20.csv) and
-[launch manifests and summaries](../benches/results/qwen3-8b-h20.json) are checked in.
+The 270 request measurements, launch manifests and summaries are available in the
+[historical dataset snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
 Complete JSONL responses, counter deltas, and engine/manager logs are retained
 under `/workspace/orbitkv/benches/results/runs/orbitkv-qwen3-8b` on the measurement host.
 LMCache, FlexKV, and Mooncake Store are not included in this initial experiment.
@@ -165,11 +165,10 @@ submissions do not by themselves establish a faster transfer path. This result
 does not rule out the kernel on a different layout, fragmentation pattern,
 GPU, or host topology.
 
-The [360 follow-up request measurements](../benches/results/qwen3-8b-comparisons.csv)
-include the matched controls, LMCache, notification experiment, and kernel
-experiment. The [manifests, summaries, and failed attempts](../benches/results/qwen3-8b-comparisons.json)
-pin launch commands, dependencies, and failure reasons. The original 270
-measurements remain a separate dataset.
+The [historical comparison dataset](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
+contains 360 follow-up requests covering matched controls, LMCache, notification
+and kernel experiments, with launch commands, dependencies and failed attempts.
+The original 270 measurements remain a separate dataset in that snapshot.
 
 The notification change passed 335 source-only Python tests and six real GPU
 integration cases, including failure/timeout ownership and poisoned-page

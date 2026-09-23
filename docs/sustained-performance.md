@@ -92,7 +92,7 @@ prompts, compute completion and cancellation with retained save holds.
 
 The initial failed runs remain on the measurement host as
 `runs/sustained-vllm-smoke/` and `runs/sustained-vllm-diagnose8/`. The
-[regression evidence](../benches/results/qwen3-8b-sustained-regression.json)
+[archived regression evidence](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
 contains the queue snapshot and the fixed C4/C8 follow-up. Those follow-up
 windows reused one service instance and are not mixed into the fresh-service
 comparison above.
@@ -140,10 +140,8 @@ python -m benches.report \
   --output /tmp/orbitkv-sustained-report
 ```
 
-Committed evidence is in
-[per-request CSV](../benches/results/qwen3-8b-sustained.csv),
-[summary CSV](../benches/results/qwen3-8b-sustained-summary.csv) and
-[manifests, windows and summaries](../benches/results/qwen3-8b-sustained-summary.json).
+Request rows, manifests, window counters and summaries remain in the
+[historical dataset snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
 Large raw logs remain in ignored `benches/results/runs/sustained-{engine}-{tier}/`
 on the measurement host.
 
