@@ -15,6 +15,12 @@ from orbitkv.vllm.metadata import OrbitKVConnectorMetadata, SaveIntent  # noqa: 
 from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def producer_events():
+    with patch("torch.cuda.Event"), patch("torch.cuda.current_stream"):
+        yield
+
+
 def make_worker() -> WorkerConnector:
     context = ConnectorContext(
         instance_id="test",
@@ -58,8 +64,36 @@ def complete_next_save(worker: WorkerConnector) -> None:
 
 def process_next_save(worker: WorkerConnector) -> None:
     task = worker._save_queue.get_nowait()
-    with patch("torch.cuda.synchronize"):
-        worker._process_save_batch([task])
+    worker._process_save_batch([task])
+
+
+def test_save_waits_for_each_producer_before_publishing():
+    worker = make_worker()
+    worker._registered_layers = ["layer"]
+    events = [MagicMock(), MagicMock()]
+    stream = object()
+    calls = []
+    with (
+        patch("torch.cuda.Event", side_effect=events),
+        patch("torch.cuda.current_stream", return_value=stream),
+    ):
+        completion = enqueue_save(worker, 1, b"one")
+        enqueue_save(worker, 2, b"two")
+    for index, event in enumerate(events):
+        event.record.assert_called_once_with(stream)
+        event.synchronize.side_effect = lambda i=index: calls.append(i)
+
+    def save(*_args):
+        assert calls == [0, 1], "Publish must follow both producing steps"
+        assert not worker._save_completion_events["request"].is_set()
+        calls.append("publish")
+        return True, ""
+
+    worker._client.save.side_effect = save
+    with patch("torch.cuda.synchronize", side_effect=AssertionError("device-wide wait")):
+        worker._process_save_batch([worker._save_queue.get_nowait() for _ in events])
+    assert completion.is_set()
+    assert calls == [0, 1, "publish"]
 
 
 def test_blocks_are_not_reused_until_every_save_task_completes():
@@ -262,11 +296,15 @@ def test_malformed_save_intent_is_skipped_and_still_completes():
 def test_save_worker_survives_a_failing_batch():
     worker = make_worker()
     worker._registered_layers = ["layer"]
-    completion = enqueue_save(worker)
+    ready = MagicMock()
+    ready.synchronize.side_effect = RuntimeError("device lost")
+    with patch("torch.cuda.Event", return_value=ready):
+        completion = enqueue_save(worker)
     worker._save_queue.put(None)
 
-    with patch("torch.cuda.synchronize", side_effect=RuntimeError("device lost")):
+    with patch.object(worker._client, "save") as save:
         worker._save_worker()
+        save.assert_not_called()
 
     assert completion.is_set()
     finished_sending, _ = worker.get_finished({"request"})

@@ -170,6 +170,11 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Profile ordinary Qwen3-8B cold/shared/mixed recovery with stage timing,
   TTFT, throughput, read/copy bytes and resource-drain evidence. Record output
   differences separately (`docs/recovery-performance.md`).
+- [x] Fence vLLM saves on producer-stream events outside CUDA graph capture;
+  verify exact restored bytes while unrelated GPU work remains in flight.
+- [x] Separate SSD read/write submission queues and distribute single-file
+  reads across existing io_uring workers. Preserve in-flight limits and qualify
+  SSD round trips, cancellation, lost notifications and stalled Publish.
 - [ ] Add per-request deadline/priority hints and long-running serving fault/soak
   runs; qualify multi-rank SGLang TP independently of TP=1 admission tests.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;

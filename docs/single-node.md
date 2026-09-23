@@ -163,7 +163,19 @@ curl --fail http://127.0.0.1:9091/metrics | \
 
 Save completion confirms the GPU-to-DRAM copy. SSD writes proceed
 asynchronously and may be dropped under pressure; a completed save does not
-guarantee an SSD replica. Later requests can restore ready matching blocks,
+guarantee an SSD replica. Both adapters record a CUDA event on the producing
+stream before handing pages to their save worker. vLLM records it after the
+forward launch, outside graph capture; saving waits for those events rather
+than synchronizing the whole device. Request and checkpoint pages remain held
+until the native D2H operation completes.
+
+The SSD backend separates read and write submission queues across its existing
+io_uring workers. Reads rotate across read workers, including when there is only
+one cache file; each file's writes retain a stable queue. This avoids a read
+waiting in the submission queue of an unrelated write. It does not increase the
+configured in-flight read/write limits or remove device-level I/O contention.
+
+Later requests can restore ready matching blocks,
 subject to each adapter's readiness handling. On a cache miss the engine
 computes the state normally. HBM pressure and active-page eviction remain engine
 decisions; OrbitKV's `--pool-size` and SSD options control only external cache

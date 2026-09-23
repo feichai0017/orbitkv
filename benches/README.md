@@ -162,6 +162,16 @@ omit `--ssd-gib` and choose a host budget that fits the working set. Run a separ
 executes the same deterministic request-generation recipe, but duration-based
 closed-loop runs may complete different numbers of requests.
 
+For a larger cache working set, use `--working-set 32 --lengths 4096 8192
+--gpu-tokens 65536 --host-gib 4 --ssd-gib 64 --query-budget-gib 3`.
+Qwen3-8B BF16 needs about 27 GiB for these prepared prefixes, exceeding the
+9 GiB GPU KV budget plus 4 GiB Manager DRAM. Sustained runs size the engine's
+per-request context limit from the largest prompt plus 64 output tokens;
+total GPU cache capacity can exceed one request's model context limit.
+Keep `--max-requests` high enough to reach the configured duration. Compare
+identical budgets, request seeds and read controls across revisions, and retain
+both read and write counters along with resource-drain evidence.
+
 `prefixes.jsonl` retains prepared token inputs and serial reference outputs.
 `samples.jsonl` retains every measured response, client admission/start/finish
 times, cached tokens and reference comparison. Cold requests can be regenerated

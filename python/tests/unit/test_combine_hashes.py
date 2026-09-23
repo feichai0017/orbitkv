@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -351,8 +351,7 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
         }
     )
     try:
-        with patch("torch.cuda.synchronize"):
-            worker._process_save_batch([SaveTask(metadata=meta, request_ids=["r1"])])
+        worker._process_save_batch([SaveTask(metadata=meta, request_ids=["r1"], ready=MagicMock())])
     finally:
         worker._registered_layers = []  # skip mock unregister on shutdown
         worker.shutdown()
@@ -387,8 +386,9 @@ def test_recurrent_save_omits_null_group_target():
     )
 
     try:
-        with patch("torch.cuda.synchronize"):
-            worker._process_save_batch([SaveTask(metadata=metadata, request_ids=["r1"])])
+        worker._process_save_batch(
+            [SaveTask(metadata=metadata, request_ids=["r1"], ready=MagicMock())]
+        )
     finally:
         worker._registered_layers = []
         worker.shutdown()
@@ -423,8 +423,7 @@ def test_page_first_layer_split_saves_own_layers_for_all_blocks():
         }
     )
     try:
-        with patch("torch.cuda.synchronize"):
-            worker._process_save_batch([SaveTask(metadata=meta, request_ids=["r1"])])
+        worker._process_save_batch([SaveTask(metadata=meta, request_ids=["r1"], ready=MagicMock())])
     finally:
         worker._registered_layers = []  # skip mock unregister on shutdown
         worker.shutdown()

@@ -73,7 +73,7 @@ def main() -> None:
         "--ssd-gib",
         type=int,
         default=0,
-        help="OrbitKV SSD capacity; adds a measured phase after evicting manager DRAM",
+        help="OrbitKV SSD capacity; sustained traffic naturally evicts DRAM, other workloads add a forced-eviction phase",
     )
     parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
     parser.add_argument("--queue-warmup", choices=["on", "off"], default="off")

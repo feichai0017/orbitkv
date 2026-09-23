@@ -49,6 +49,7 @@ if _LOAD_TIMEOUT_RAW < _LOAD_TIMEOUT_FLOOR_SECONDS:
 class SaveTask:
     metadata: OrbitKVConnectorMetadata
     request_ids: list[str]
+    ready: torch.cuda.Event
     # HMA boundary-state jobs carried by this task; reported back to the
     # scheduler through OrbitKVWorkerMetadata once the batch is done.
     boundary_job_ids: list[int] = field(default_factory=list)
@@ -745,6 +746,17 @@ class WorkerConnector:
         self._current_metadata = None
         if metadata is None:
             return
+        if not metadata.save_intents and not metadata.boundary_save_intents:
+            return
+        if metadata.boundary_save_intents and not self._cache_groups.has_recurrent_state:
+            raise RuntimeError("boundary-state save intents are only valid for HMA")
+
+        # This callback runs after the forward launch (including graph replay
+        # and boundary-state copies). Fence that producer stream here: recording
+        # from the save thread would miss the producer, while a device-wide wait
+        # would also block on unrelated work submitted by later steps.
+        ready = torch.cuda.Event(blocking=True)
+        ready.record(torch.cuda.current_stream(self._torch_device))
 
         # Both kinds of save read blocks that stay allocated until this worker
         # reports completion: request blocks are held by request_finished /
@@ -752,10 +764,8 @@ class WorkerConnector:
         # scheduler until the job id comes back in OrbitKVWorkerMetadata. So
         # every save can run asynchronously behind the forward pass.
         if metadata.save_intents:
-            self._save_queue.put(self._make_save_task(metadata.save_intents))
+            self._save_queue.put(self._make_save_task(metadata.save_intents, ready))
         if metadata.boundary_save_intents:
-            if not self._cache_groups.has_recurrent_state:
-                raise RuntimeError("boundary-state save intents are only valid for HMA")
             self._save_queue.put(
                 SaveTask(
                     metadata=OrbitKVConnectorMetadata(
@@ -765,6 +775,7 @@ class WorkerConnector:
                         }
                     ),
                     request_ids=[],
+                    ready=ready,
                     boundary_job_ids=list(metadata.boundary_save_intents),
                 )
             )
@@ -779,7 +790,9 @@ class WorkerConnector:
             completed_boundary_jobs=dict.fromkeys(completed, 1),
         )
 
-    def _make_save_task(self, save_intents: dict[str, SaveIntent]) -> SaveTask:
+    def _make_save_task(
+        self, save_intents: dict[str, SaveIntent], ready: torch.cuda.Event
+    ) -> SaveTask:
         request_ids = list(save_intents)
 
         with self._save_completion_lock:
@@ -793,6 +806,7 @@ class WorkerConnector:
         return SaveTask(
             metadata=OrbitKVConnectorMetadata(save_intents=save_intents),
             request_ids=request_ids,
+            ready=ready,
         )
 
     def _save_worker(self) -> None:
@@ -874,9 +888,10 @@ class WorkerConnector:
         if not saves_by_layer:
             return
 
-        # Ensure all GPU kernels have completed before reading KV cache
-        # Otherwise we may copy uninitialized memory (attention kernel is async)
-        torch.cuda.synchronize(self._torch_device)
+        # Pages remain pinned until the native Publish completes its D2H copy.
+        # Each queued task owns the event recorded by its producing step.
+        for task in batch:
+            task.ready.synchronize()
 
         saves_list = [(name, ids, hashes) for name, (ids, hashes) in saves_by_layer.items()]
         total_blocks = sum(len(ids) for _, ids, _ in saves_list)
