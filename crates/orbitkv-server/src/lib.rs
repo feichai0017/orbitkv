@@ -168,8 +168,8 @@ pub struct Cli {
     #[arg(long, default_value_t = 1)]
     pub pool_shards: usize,
 
-    /// Allocate each block separately instead of contiguous batch allocation.
-    /// Reduces memory fragmentation when blocks are freed in different order.
+    /// Allocate each block separately in DRAM-only mode (always enabled with SSD).
+    /// Lets evicted pages return memory independently of surviving batch pages.
     #[arg(long, default_value_t = false)]
     pub blockwise_alloc: bool,
 

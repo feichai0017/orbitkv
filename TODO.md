@@ -175,6 +175,10 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Separate SSD read/write submission queues and distribute single-file
   reads across existing io_uring workers. Preserve in-flight limits and qualify
   SSD round trips, cancellation, lost notifications and stalled Publish.
+- [x] Reclaim SSD save/restore memory per page segment and NUMA node, so retained
+  prefix pages do not hold unrelated evicted pages. Verify real reclamation
+  and exact GPU bytes; measure total/speculative reservations independently
+  of phase transitions.
 - [ ] Add per-request deadline/priority hints and long-running serving fault/soak
   runs; qualify multi-rank SGLang TP independently of TP=1 admission tests.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;

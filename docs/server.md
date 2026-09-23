@@ -16,7 +16,7 @@ orbitkv-cache-manager
 - `--use-hugepages`: Use huge pages for pinned memory (default: `false`, requires pre-configured `/proc/sys/vm/nr_hugepages`)
 - `--enable-lfu-admission`: Enable TinyLFU cache admission policy (default: plain LRU)
 - `--disable-numa-affinity`: Disable NUMA-aware memory allocation (default: enabled)
-- `--blockwise-alloc`: Allocate each block separately instead of contiguous batch allocation. Reduces memory fragmentation when blocks are freed in different order (default: `false`)
+- `--blockwise-alloc`: Allocate each layer/page segment independently in DRAM-only mode (default: `false`). SSD-backed Managers always use this allocation policy so reads and writes share the same reclaimable units; surviving prefix pages do not pin other pages from a batch.
 - `--log-level`: Log level: `trace`, `debug`, `info`, `warn`, `error` (default: `info`)
 
 ### HTTP & Metrics

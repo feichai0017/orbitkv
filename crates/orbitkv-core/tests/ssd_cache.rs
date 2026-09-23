@@ -240,36 +240,54 @@ async fn ssd_prefetch_roundtrip_after_eviction() {
 #[tokio::test]
 async fn ssd_reclaim_frees_pages_independently_of_a_retained_prefix() {
     skip_without_io_uring!();
-    let (env, _cache_path, _temp_dir) = ssd_env("test-ssd-page-reclaim");
-    let target = env.hashes(93);
-    env.save_and_wait(&target).await;
-    env.engine.flush_all().await;
-    cleanup_resident_memory(&env);
+    for split in [false, true] {
+        for from_ssd in [false, true] {
+            let (env, _temp_dir) = if split {
+                ssd_split_env("test-page-reclaim-split")
+            } else {
+                let (env, _, dir) = ssd_env("test-page-reclaim-contiguous");
+                (env, dir)
+            };
+            let target = env.hashes(93);
+            env.save_and_wait(&target).await;
+            env.engine.flush_all().await;
+            if from_ssd {
+                cleanup_resident_memory(&env);
+            }
 
-    let QueryResult {
-        mut blocks,
-        missing,
-    } = env.query(&target).await;
-    assert_eq!((blocks.len(), missing), (NUM_BLOCKS, 0));
-    let retained = blocks.remove(0);
-    drop(blocks);
-    let lease = env
-        .engine
-        .create_query_lease(&env.instance_id, vec![retained])
-        .unwrap();
-    let stats = env.engine.cleanup_memory_cache();
-    assert_eq!(stats.still_referenced_blocks, 1);
-    assert_eq!(
-        stats.reclaimed_bytes,
-        ((NUM_BLOCKS - 1) * BLOCK_SIZE) as u64,
-        "one live prefix page must not retain the entire SSD read batch"
-    );
+            let QueryResult {
+                mut blocks,
+                missing,
+            } = env.query(&target).await;
+            assert_eq!((blocks.len(), missing), (NUM_BLOCKS, 0));
+            let retained = blocks.remove(0);
+            drop(blocks);
+            let lease = env
+                .engine
+                .create_query_lease(&env.instance_id, vec![retained])
+                .unwrap();
+            let stats = env.engine.cleanup_memory_cache();
+            assert_eq!(stats.still_referenced_blocks, 1);
+            assert_eq!(
+                stats.reclaimed_bytes,
+                ((NUM_BLOCKS - 1) * BLOCK_SIZE) as u64,
+                "one live prefix page retained its siblings: split={split}, from_ssd={from_ssd}"
+            );
 
-    env.data().zero_gpu();
-    env.load_to_gpu(lease, 1).await;
-    let mut expected = vec![0; NUM_BLOCKS * BLOCK_SIZE];
-    expected[..BLOCK_SIZE].copy_from_slice(&env.data().expected_bytes()[..BLOCK_SIZE]);
-    env.data().assert_gpu_matches(&expected);
+            env.data().zero_gpu();
+            env.load_to_gpu(lease, 1).await;
+            let mut expected = vec![0; env.data().total_size()];
+            let segment_size = if split { BLOCK_SIZE / 2 } else { BLOCK_SIZE };
+            expected[..segment_size].copy_from_slice(&env.data().expected_bytes()[..segment_size]);
+            if split {
+                let value_offset = BLOCK_SIZE * NUM_BLOCKS;
+                expected[value_offset..value_offset + segment_size].copy_from_slice(
+                    &env.data().expected_bytes()[value_offset..value_offset + segment_size],
+                );
+            }
+            env.data().assert_gpu_matches(&expected);
+        }
+    }
 }
 
 #[tokio::test]
