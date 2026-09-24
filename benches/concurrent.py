@@ -10,7 +10,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .metrics import cached_tokens, measure, percentile
+from .metrics import cached_tokens, codec_summary, measure, percentile
 from .workload import evict_host_cache, generate
 
 PATTERNS = ("shared", "mixed")
@@ -158,6 +158,8 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
                 "requests_per_second": len(rows) / seconds,
                 "output_tokens_per_second": sum(s["usage"]["completion_tokens"] for s in rows)
                 / seconds,
+                "wall_seconds": seconds,
+                "throughput_scope": "closed-loop bursts; excludes pressure and cache drain",
                 "e2e_p50_ms": statistics.median(s["e2e_ms"] for s in rows),
                 "decode_ms_per_token_p50": statistics.median(
                     (s["e2e_ms"] - s["ttft_ms"]) / max(1, s["usage"]["completion_tokens"] - 1)
@@ -180,6 +182,7 @@ def summarize(samples: list[dict], batches: list[dict]) -> list[dict]:
                     for b in measurements
                 ),
                 **manager,
+                **codec_summary(measurements),
             }
         )
     return result

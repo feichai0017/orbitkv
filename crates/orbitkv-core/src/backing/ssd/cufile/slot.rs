@@ -85,6 +85,7 @@ impl GpuSlot {
             self.pending.is_none(),
             "GPU storage slot is still owned by a transfer"
         );
+        batch.validate()?;
         // SAFETY: there is no previous in-flight access to this stable storage.
         unsafe {
             *self.arguments.get() = Arguments {

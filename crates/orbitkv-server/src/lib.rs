@@ -160,6 +160,14 @@ pub struct Cli {
     #[arg(long, default_value = "auto", requires = "ssd_cache_path")]
     pub ssd_backend: orbitkv_core::SsdBackend,
 
+    /// GPU storage representation: none, ans, fp8, turboquant-4 or turboquant-3.
+    #[arg(long, default_value = "none")]
+    pub storage_codec: orbitkv_core::StorageCodec,
+
+    /// Maximum GPU codec scratch per transfer worker (4 KiB to 4 GiB - 1).
+    #[arg(long, default_value = "64mb", value_parser = parse_memory_size)]
+    pub storage_codec_budget: usize,
+
     /// SSD prefetch queue depth (max pending prefetch batches). Default: 2
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_SSD_PREFETCH_QUEUE_DEPTH)]
     pub ssd_prefetch_queue_depth: usize,
@@ -628,6 +636,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         cache_protected_percent: cli.cache_protected_percent,
         hint_value_size_bytes: cli.hint_value_size,
         ssd_cache_config,
+        codec: cli.storage_codec,
+        codec_budget: cli.storage_codec_budget,
         mooncake_nic_names: cli.nics.clone().unwrap_or_default(),
         enable_numa_affinity: !cli.disable_numa_affinity,
         blockwise_alloc: cli.blockwise_alloc,

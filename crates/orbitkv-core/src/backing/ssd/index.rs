@@ -1,11 +1,16 @@
 use crate::SlotMeta;
-use crate::block::{SealedBlock, StateKey};
+use crate::block::StateKey;
 use crate::metrics::core_metrics;
 use log::{debug, warn};
-use smallvec::SmallVec;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Clone)]
+pub(crate) enum Encoding {
+    Raw,
+    Encoded,
+}
 
 /// Metadata for a block stored in SSD cache
 #[derive(Clone)]
@@ -14,13 +19,31 @@ pub(crate) struct SsdIndexEntry {
     pub shard_id: usize,
     /// Logical offset in the ring buffer (monotonically increasing)
     pub begin: u64,
-    /// Aligned physical extent size; slot sizes describe the logical payload
+    /// Aligned physical extent size; slot sizes describe the stored payload
     pub len: u64,
     /// Physical file offset for IO
     pub file_offset: u64,
     /// Per-slot metadata for rebuilding SealedBlock
     pub slots: Vec<SlotMeta>,
+    pub encoding: Encoding,
     pub readers: Arc<AtomicUsize>,
+}
+
+impl SsdIndexEntry {
+    pub(super) fn fits_gpu_decode(&self, budget: usize) -> bool {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.encoding.as_ref())
+            .flatten()
+            .all(|meta| {
+                // Input assembly is 4096-aligned. One segment additionally needs
+                // descriptors, a CRC reduction and the codec arena's base alignment.
+                meta.stored_bytes
+                    .checked_next_multiple_of(super::cufile::ALIGNMENT)
+                    .and_then(|bytes| bytes.checked_add(8192))
+                    .is_some_and(|bytes| bytes <= budget)
+            })
+    }
 }
 
 /// State of an SSD index entry (two-phase commit)
@@ -30,13 +53,16 @@ pub(super) enum SsdEntryState {
     Writing(SsdIndexEntry),
     /// IO completed, readable
     Committed(SsdIndexEntry),
+    /// Corruption hides this generation immediately, but active readers still
+    /// protect its extent until their final GPU completion.
+    Invalid(SsdIndexEntry),
 }
 
 impl SsdEntryState {
     #[inline]
     fn entry(&self) -> &SsdIndexEntry {
         match self {
-            Self::Writing(e) | Self::Committed(e) => e,
+            Self::Writing(e) | Self::Committed(e) | Self::Invalid(e) => e,
         }
     }
 }
@@ -53,7 +79,7 @@ struct SsdShardRing {
 /// Combines head/tail pointers with FIFO index. Maintains insertion order
 /// for O(k) tail pruning while preserving O(1) lookup via HashMap.
 ///
-/// Two-phase commit: prepare_batch inserts Writing state, commit transitions
+/// Two-phase commit: reserve inserts Writing state, commit transitions
 /// to Committed (or removes on failure). Only Committed entries are readable.
 pub(super) struct SsdRingBuffer {
     /// Per-file ring state.
@@ -92,6 +118,30 @@ impl SsdRingBuffer {
         match self.entries.get(key) {
             Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) => Some(e),
             _ => None,
+        }
+    }
+
+    /// Hide exactly the failed generation, retaining its extent while leased.
+    pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) {
+        if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry) | SsdEntryState::Invalid(entry))
+            if entry.shard_id == failed.shard_id && entry.begin == failed.begin
+                && matches!(entry.encoding, Encoding::Encoded))
+        {
+            if failed.readers.load(Ordering::Acquire) == 0 {
+                self.entries.remove(key);
+            } else {
+                self.entries
+                    .insert(key.clone(), SsdEntryState::Invalid(failed.clone()));
+            }
+        }
+    }
+
+    pub(super) fn release_invalid(&mut self, key: &StateKey, released: &SsdIndexEntry) {
+        if matches!(self.entries.get(key), Some(SsdEntryState::Invalid(entry))
+            if entry.shard_id == released.shard_id && entry.begin == released.begin
+                && entry.readers.load(Ordering::Acquire) == 0)
+        {
+            self.entries.remove(key);
         }
     }
 
@@ -185,6 +235,7 @@ impl SsdRingBuffer {
                 warn!("SSD commit: key already committed, ignoring");
                 return true;
             }
+            SsdEntryState::Invalid(_) => return false,
         };
 
         // Check if expired (eviction faster than write)
@@ -212,6 +263,7 @@ impl SsdRingBuffer {
         &mut self,
         key: &StateKey,
         slots: Vec<SlotMeta>,
+        encoding: Encoding,
     ) -> Option<SsdIndexEntry> {
         if self.entries.contains_key(key) {
             return None;
@@ -236,6 +288,7 @@ impl SsdRingBuffer {
             len: size,
             file_offset,
             slots,
+            encoding,
             readers: Arc::new(AtomicUsize::new(0)),
         };
         self.entries
@@ -243,43 +296,12 @@ impl SsdRingBuffer {
         self.shards[shard_id].order.push_back((key.clone(), begin));
         Some(entry)
     }
-
-    pub(super) fn prepare_batch(
-        &mut self,
-        candidates: Vec<(StateKey, Arc<SealedBlock>)>,
-    ) -> Vec<WriteInfo> {
-        candidates
-            .into_iter()
-            .filter_map(|(key, block)| {
-                let slots = block
-                    .slots()
-                    .iter()
-                    .zip(block.slot_numas())
-                    .map(|(slot, numa)| {
-                        let sizes: SmallVec<[u64; 2]> = (0..slot.num_segments())
-                            .map(|index| slot.segment_size(index).unwrap() as u64)
-                            .collect();
-                        SlotMeta::new(sizes, *numa)
-                    })
-                    .collect();
-                let entry = self.reserve(&key, slots)?;
-                Some(WriteInfo { key, block, entry })
-            })
-            .collect()
-    }
 }
 
 impl Default for SsdRingBuffer {
     fn default() -> Self {
         Self::new_sharded(vec![0], 1)
     }
-}
-
-/// Info for a single block write within a batch.
-pub(super) struct WriteInfo {
-    pub key: StateKey,
-    pub block: Arc<SealedBlock>,
-    pub entry: SsdIndexEntry,
 }
 
 #[cfg(test)]

@@ -79,6 +79,17 @@ pub(crate) struct CoreMetrics {
     pub load_duration_seconds: Histogram<f64>,
     pub load_failures: Counter<u64>,
 
+    pub storage_codec_reserved_bytes: UpDownCounter<i64>,
+    pub storage_codec_workspace_bytes: UpDownCounter<i64>,
+    pub storage_codec_workspace_allocations: Counter<u64>,
+    pub storage_codec_batches: Counter<u64>,
+    pub storage_codec_batch_segments: Histogram<u64>,
+    pub storage_codec_bytes: Counter<u64>,
+    pub storage_codec_transfer_bytes: Counter<u64>,
+    pub storage_codec_skips: Counter<u64>,
+    pub storage_codec_decode_failures: Counter<u64>,
+    pub storage_codec_seconds: Histogram<f64>,
+
     // SSD cache
     pub ssd_backend_fallbacks: Counter<u64>,
     pub ssd_read_pinned_bytes: UpDownCounter<i64>,
@@ -423,6 +434,27 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
 
             // SSD
+            storage_codec_reserved_bytes: meter.i64_up_down_counter("orbitkv_storage_codec_reserved_bytes")
+                .with_description("Reserved GPU codec workspace until transfer completion").with_unit("bytes").build(),
+            storage_codec_workspace_bytes: meter.i64_up_down_counter("orbitkv_storage_codec_workspace_bytes")
+                .with_description("Retained reusable GPU codec arenas, including idle workers").with_unit("bytes").build(),
+            storage_codec_workspace_allocations: meter.u64_counter("orbitkv_storage_codec_workspace_allocations")
+                .with_description("GPU codec arena allocations and growth operations").build(),
+            storage_codec_batches: meter.u64_counter("orbitkv_storage_codec_batches")
+                .with_description("GPU codec batches by operation").build(),
+            storage_codec_batch_segments: meter.u64_histogram("orbitkv_storage_codec_batch_segments")
+                .with_description("Segments processed per GPU codec batch")
+                .with_boundaries(vec![1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0]).build(),
+            storage_codec_transfer_bytes: meter.u64_counter("orbitkv_storage_codec_transfer_bytes").with_description("Actual codec-path D2H/H2D payload bytes, including raw/CPU fallbacks").with_unit("bytes").build(),
+            storage_codec_bytes: meter.u64_counter("orbitkv_storage_codec_bytes")
+                .with_description("Encoded publications, logical and aligned resident bytes").with_unit("bytes").build(),
+            storage_codec_skips: meter.u64_counter("orbitkv_storage_codec_skips")
+                .with_description("Encoding declined by representation, value range, ratio or budget").build(),
+            storage_codec_decode_failures: meter.u64_counter("orbitkv_storage_codec_decode_failures")
+                .with_description("Invalid encoded objects and failed codec restores").build(),
+            storage_codec_seconds: meter.f64_histogram("orbitkv_storage_codec_duration")
+                .with_description("GPU codec and memory transfer duration, including CPU fallback").with_unit("s")
+                .with_boundaries(duration_seconds_boundaries()).build(),
             ssd_backend_fallbacks: meter.u64_counter("orbitkv_ssd_backend_fallbacks").with_description("Automatic transitions from cuFile to io_uring; startup or runtime failures").build(),
             ssd_cufile_write_bytes: meter.u64_counter("orbitkv_ssd_cufile_write_bytes").with_description("Bytes written by cuFile including alignment; does not prove native GDS").build(),
             ssd_cufile_write_failures: meter.u64_counter("orbitkv_ssd_cufile_write_failures").with_description("Failed or short cuFile writes").build(),

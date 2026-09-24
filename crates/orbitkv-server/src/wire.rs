@@ -30,6 +30,12 @@ pub(crate) fn registration(request: RegisterContextRequest) -> Registration {
         transfer_mode,
         page_first: request.page_first,
         layer_group_ids: request.layer_group_ids,
+        layer_formats: request.layer_formats,
+        layer_attention: request
+            .layer_attention
+            .into_iter()
+            .map(|a| (a.head_dim, a.role, a.layer_index, a.layer_count))
+            .collect(),
     }
 }
 

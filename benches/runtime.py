@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import hashlib
 import importlib.metadata
 import os
 import secrets
@@ -125,6 +126,18 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
     packages = [args.engine, "torch", "transformers", "numpy", "prometheus_client"]
     if args.backend in ("lmcache", "flexkv"):
         packages.append(args.backend)
+    working_set_tokens = (
+        sum(args.lengths[index % len(args.lengths)] for index in range(args.working_set))
+        if args.workload == "sustained"
+        else None
+    )
+    manager_sha256 = None
+    if args.backend == "orbitkv":
+        digest = hashlib.sha256()
+        with Path(launch.manager_command[0]).open("rb") as binary:
+            for chunk in iter(lambda: binary.read(1024**2), b""):
+                digest.update(chunk)
+        manager_sha256 = digest.hexdigest()
     manifest = {
         "arguments": {
             key: str(value) if isinstance(value, Path) else value
@@ -132,9 +145,21 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         },
         "engine_command": launch.command,
         "manager_command": launch.manager_command,
+        "manager_binary_sha256": manager_sha256,
         "backend_configuration": launch.backend_configuration,
         "library_path": launch.env.get("LD_LIBRARY_PATH", ""),
         "python_path": launch.env["PYTHONPATH"],
+        "storage_environment": {
+            name: launch.env[name]
+            for name in (
+                "ORBITKV_NVCOMP_LIBRARY",
+                "LD_PRELOAD",
+                "CUFILE_ENV_PATH_JSON",
+                "CUFILE_ALLOW_COMPAT_MODE",
+                "CUFILE_FORCE_COMPAT_MODE",
+            )
+            if name in launch.env
+        },
         "compiler_cache": {
             name: launch.env[name]
             for name in ("VLLM_CACHE_ROOT", "TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR")
@@ -155,6 +180,21 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "packages": {name: importlib.metadata.version(name) for name in packages},
         "python": sys.version,
         "kv_bytes_per_token": bytes_per_token,
+        "capacity": {
+            "engine_kv_bytes": args.gpu_tokens * bytes_per_token,
+            "host_pool_bytes": args.host_gib * 1024**3,
+            "ssd_bytes": args.ssd_gib * 1024**3,
+            "codec_scratch_budget_bytes_per_worker": args.storage_codec_budget
+            if args.backend == "orbitkv"
+            else None,
+            "working_set_tokens": working_set_tokens,
+            "working_set_logical_bytes": working_set_tokens * bytes_per_token
+            if working_set_tokens is not None
+            else None,
+            "notes": "Configured budgets, not measured effective capacity. GPU codec scratch and cuFile staging are additional to engine KV. Encoded-publication counters exclude raw-only slots and do not establish whole-cache savings.",
+        },
+        "quality_scope": "Synthetic token prompts; exact generated-text comparisons are diagnostic, not task accuracy or general model quality. Greedy decoding is not guaranteed batch invariant.",
+        "ttft_scope": "Client time to first nonempty streamed text, including HTTP/scheduling; not engine time to first token ID.",
         "model_revision": (args.model / ".revision").read_text().strip()
         if (args.model / ".revision").exists()
         else None,

@@ -258,3 +258,14 @@ and shared rank decisions. `test_sglang_direct_transfer.py -k ssd` checks real
 SSD cancellation/disconnect cleanup and exact GPU restoration. These are
 separate from the serving E2E: neither a fake completion nor test-side polling
 alone qualifies SGLang serving recovery.
+
+## Storage representations
+
+The vLLM correctness and SGLang direct E2E gates accept `--kv-cache-dtype`
+(default `auto`) and `--storage-codec none|ans|fp8|turboquant-4|turboquant-3`. They keep output controls at
+the same KV precision and require actual SSD recovery after eviction/restart.
+The text-equality assertion remains strict with FP8/TurboQuant storage and can fail because
+the codec is lossy. Report those differences as quality evidence, not a passing
+exact-recovery result. Use `--storage-codec none` for the exact regression gate.
+See [format qualification](../../docs/storage-formats.md) for commands, the
+storage-quantization scope and the distinction from native GDS qualification.

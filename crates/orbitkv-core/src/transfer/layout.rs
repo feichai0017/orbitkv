@@ -40,6 +40,7 @@ pub(crate) enum BlockCopies {
 /// shape derived from it.
 #[derive(Debug, Clone)]
 pub(crate) struct KVCacheLayout {
+    pub(crate) storage_format: orbitkv_state::StorageFormat,
     /// GPU memory base pointer for this layer's KV cache.
     data_ptr: u64,
     /// Total size of the registered GPU memory region in bytes.
@@ -113,6 +114,7 @@ impl KVCacheLayout {
         };
 
         let layout = Self {
+            storage_format: Default::default(),
             data_ptr,
             size_bytes,
             num_blocks,

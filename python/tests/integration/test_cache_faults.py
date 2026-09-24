@@ -40,6 +40,8 @@ def until(predicate, timeout=10):
 
 @pytest.fixture
 def fault_cache(tmp_path, monkeypatch, request):
+    import torch
+
     from orbitkv import CacheManagerClient
 
     configuration = request.param if isinstance(getattr(request, "param", None), dict) else {}
@@ -68,7 +70,8 @@ def fault_cache(tmp_path, monkeypatch, request):
         device_id=0,
         num_blocks=configuration.get("num_blocks", 4),
         block_size=configuration.get("block_size", 16),
-        num_layers=1,
+        num_layers=configuration.get("num_layers", 1),
+        dtype=getattr(torch, configuration.get("dtype", "bfloat16")),
     )
     ctx.register_kv_caches()
     try:
@@ -122,6 +125,344 @@ def drain_ssd(server):
     until(drained)
     response = requests.post(f"http://127.0.0.1:{server.http_port}/cache/memory/cleanup", timeout=5)
     response.raise_for_status()
+
+
+@pytest.mark.parametrize(
+    "fault_cache",
+    [
+        {"ssd_backend": backend, "block_size": 64, "extra_args": ("--storage-codec", "fp8")}
+        for backend in ("uring", "cufile")
+    ],
+    indirect=True,
+)
+def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
+    import torch
+
+    from orbitkv import BlockHashes, QueryLoading
+
+    server, client, ctx, directory = fault_cache
+    tensor = ctx.get_kv_cache()
+    tensor[:, 0:1].fill_(1.25)
+    tensor[:, 1:2].view(torch.uint8).random_(0, 256)
+    expected = tensor[:, 0:2].view(torch.uint8).cpu().clone()
+    torch.cuda.synchronize()
+    hashes = [b"compressed", b"raw"]
+    assert publish(client, ctx, hashes)[0]
+    drain_ssd(server)
+    stats = fetch_orbitkv_metrics(server.http_port)
+    assert stats["orbitkv_storage_codec_bytes_total"] > 0
+    assert stats["orbitkv_ssd_write_bytes_total"] < expected.numel()
+
+    if server.ssd_backend == "cufile":
+        # Direct discovery leases the extent without reading a host payload.
+        ready = query(client, ctx, hashes, "canceled-codec")
+        assert ready.num_hit_blocks == 2
+        arm(directory, "cufile_read_completion")
+        handle = client.start_restore(
+            ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2, 3]])]
+        )
+        reached(directory, "cufile_read_completion")
+        client.cancel_query(ctx.instance_id, "canceled-codec")
+        assert not client.poll_restore(handle).done
+        held = fetch_orbitkv_metrics(server.http_port)
+        assert held["orbitkv_ssd_cufile_inflight_batches"] > 0
+        assert held["orbitkv_ssd_read_pinned_bytes"] > 0
+        (directory / "cufile_read_completion.pause").unlink()
+        assert client.wait_restore(handle, timeout=10).success
+        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] == 0)
+    else:
+        arm(directory, "ssd")
+        pending = client.query_prefetch(ctx.instance_id, BlockHashes(hashes), "canceled-codec")
+        assert isinstance(pending, QueryLoading)
+        reached(directory, "ssd")
+        assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_prefetch_inflight"] > 0
+        client.cancel_query(ctx.instance_id, "canceled-codec")
+        # Submitted I/O still owns its pinned encoded pages after cancellation.
+        assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_prefetch_inflight"] > 0
+        (directory / "ssd.pause").unlink()
+        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_prefetch_inflight"] == 0)
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_storage_codec_reserved_bytes"] == 0
+    ready = query(client, ctx, hashes, "mixed-codec")
+    assert ready.num_hit_blocks == 2
+    restore = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2, 3]])]
+    )
+    assert client.wait_restore(restore, timeout=10).success
+    assert torch.equal(tensor[:, 2:4].view(torch.uint8).cpu(), expected)
+    drain_ssd(server)
+
+    # Damage the ephemeral file after all I/O drained. No corrupted block may
+    # enter the cache, including when FP8 can still decode the damaged stream.
+    with Path(server.ssd_cache_path).open("r+b", buffering=0) as stream:
+        stream.write(bytes(int(stats["orbitkv_ssd_write_bytes_total"])))
+    missing = query(client, ctx, [hashes[0]], "corrupt-codec")
+    if server.ssd_backend == "cufile":
+        assert missing.num_hit_blocks == 1
+        handle = client.start_restore(
+            ctx.instance_id, 0, 0, [ctx._layer_names], [(missing.lease, [[2]])]
+        )
+        assert not client.wait_restore(handle, timeout=10).success
+        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] == 0)
+        missing = query(client, ctx, [hashes[0]], "invalidated-codec")
+    assert missing.num_hit_blocks == 0
+    stats = fetch_orbitkv_metrics(server.http_port)
+    assert stats["orbitkv_storage_codec_decode_failures_total"] > 0
+    assert stats["orbitkv_storage_codec_reserved_bytes"] == 0
+    # Recomputing the same key must replace the damaged disk generation.
+    assert publish(client, ctx, [hashes[0]])[0]
+    drain_ssd(server)
+    repaired = query(client, ctx, [hashes[0]], "repaired-codec")
+    assert repaired.num_hit_blocks == 1
+    tensor[:, 2:3].zero_()
+    torch.cuda.synchronize()
+    restore = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(repaired.lease, [[2]])]
+    )
+    assert client.wait_restore(restore, timeout=10).success
+    assert torch.equal(tensor[:, 2:3].view(torch.uint8).cpu(), expected[:, 0:1])
+
+
+@pytest.mark.parametrize(
+    "fault_cache",
+    [
+        {
+            "dtype": dtype,
+            "block_size": block_size,
+            "extra_args": ("--storage-codec", "fp8", "--storage-codec-budget", budget),
+        }
+        for dtype in ("bfloat16", "float16")
+        for budget, block_size in (("64mb", 64), ("4kb", 64), ("12kb", 8))
+    ],
+    indirect=True,
+)
+def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(fault_cache):
+    import torch
+
+    from orbitkv.client.gpu import serialize_gpu_buffer
+
+    server, client, ctx, _ = fault_cache
+    tensor = ctx.get_kv_cache()
+    values = torch.arange(65536, dtype=torch.int32).to(torch.uint16).view(tensor.dtype).float()
+    values = values[torch.isfinite(values) & (values.abs() <= 448)].to(tensor.dtype).cuda()
+    count = tensor[:, 0:1].numel()
+    tensor[:, 0:1] = values.repeat((count + values.numel() - 1) // values.numel())[
+        :count
+    ].reshape_as(tensor[:, 0:1])
+    original = tensor[:, 0:1].clone()
+    expected = original.to(torch.float8_e4m3fn).to(original.dtype)
+    assert torch.any(original != expected)
+    torch.cuda.synchronize()
+    hashes = [b"every-finite-scalar"]
+    assert publish(client, ctx, hashes)[0]
+    drain_ssd(server)
+    stats = fetch_orbitkv_metrics(server.http_port)
+    assert stats["orbitkv_ssd_write_bytes_total"] == original.numel()
+    ready = query(client, ctx, hashes, "quantized")
+    assert ready.num_hit_blocks == 1
+    restore = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+    )
+    assert client.wait_restore(restore, timeout=10).success
+    assert torch.equal(tensor[:, 2:3].view(torch.uint8), expected.view(torch.uint8))
+
+    # The same namespace/hash with exact storage policy must not adopt lossy data.
+    name = "exact-instance"
+    stride = tensor.stride()
+    ok, message = client.register_context_batch(
+        name,
+        ctx.namespace,
+        0,
+        0,
+        1,
+        1,
+        0,
+        ctx._layer_names,
+        [serialize_gpu_buffer(tensor)],
+        [ctx.num_blocks],
+        [stride[1] * tensor.element_size()],
+        [stride[0] * tensor.element_size()],
+        [2],
+        "direct",
+        False,
+        layer_formats=["exact"],
+    )
+    assert ok, message
+    from orbitkv import BlockHashes, QueryReady
+
+    result = client.query_prefetch(name, BlockHashes(hashes), "exact")
+    assert isinstance(result, QueryReady) and result.num_hit_blocks == 0
+    client.unregister_context(name)
+
+
+@pytest.mark.parametrize(
+    "fault_cache",
+    [
+        pytest.param(
+            {
+                "num_layers": 6,
+                "block_size": 64,
+                "ssd_backend": backend,
+                "extra_args": ("--storage-codec", codec),
+            },
+            id=f"{backend}-{codec}",
+        )
+        for backend in ("uring", "cufile")
+        for codec in ("ans", "fp8", "turboquant-4", "turboquant-3")
+    ],
+    indirect=True,
+)
+def test_gpu_codecs_restore_after_registration_and_ssd_eviction(fault_cache, request):
+    import torch
+
+    from tests.support.metrics import fetch_orbitkv_codec_bytes
+
+    server, client, ctx, _ = fault_cache
+    codec = request.node.callspec.params["fault_cache"]["extra_args"][-1]
+    backend = request.node.callspec.params["fault_cache"]["ssd_backend"]
+    originals = [tensor[:, :1].clone() for tensor in ctx.gpu_kv_caches]
+    hashes = [b"gpu-codec-roundtrip"]
+    assert client.save(
+        ctx.instance_id, 0, 0, 0, [(name, [0], hashes) for name in ctx._layer_names]
+    )[0]
+    drain_ssd(server)
+    encoded = fetch_orbitkv_codec_bytes(server.http_port)
+    assert encoded["logical"] > encoded["stored"] > 0
+    client.unregister_context(ctx.instance_id)
+    ctx._registered = False
+    assert (
+        fetch_orbitkv_metrics(server.http_port).get("orbitkv_storage_codec_workspace_bytes", 0) == 0
+    )
+    ctx.register_kv_caches()
+    for tensor in ctx.gpu_kv_caches:
+        tensor[:, 2:3].fill_(-123)
+    torch.cuda.synchronize()
+    ready = query(client, ctx, hashes, "restart-codec")
+    assert ready.num_hit_blocks == 1
+    before_restore = fetch_orbitkv_metrics(server.http_port)
+    restore = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+    )
+    assert client.wait_restore(restore, timeout=10).success
+    after_restore = fetch_orbitkv_metrics(server.http_port)
+    if backend == "cufile":
+        assert after_restore["orbitkv_ssd_cufile_write_bytes_total"] > 0
+        assert after_restore["orbitkv_ssd_cufile_read_bytes_total"] > 0
+        assert after_restore.get("orbitkv_ssd_prefetch_bytes_total", 0) == 0
+        assert after_restore.get("orbitkv_ssd_cufile_inflight_batches", 0) == 0
+    assert after_restore["orbitkv_load_bytes_total"] - before_restore.get(
+        "orbitkv_load_bytes_total", 0
+    ) == sum(original.numel() * original.element_size() for original in originals)
+    for index, (tensor, original) in enumerate(zip(ctx.gpu_kv_caches, originals, strict=True)):
+        actual = tensor[:, 2:3]
+        if codec == "fp8":
+            reference = original.to(torch.float8_e4m3fn).to(original.dtype)
+            assert torch.equal(actual.view(torch.uint8), reference.view(torch.uint8))
+        elif codec == "ans" or index in (0, 1, 4, 5):
+            assert torch.equal(actual.view(torch.uint8), original.view(torch.uint8))
+        else:
+            relative_error = (actual.float() - original.float()).norm() / original.float().norm()
+            assert 0 < relative_error < (0.3 if codec == "turboquant-3" else 0.18)
+            norms = actual[0].float().norm(dim=-1) / original[0].float().norm(dim=-1)
+            assert torch.allclose(norms, torch.ones_like(norms), atol=0.01, rtol=0)
+    assert after_restore["orbitkv_storage_codec_reserved_bytes"] == 0
+    if backend == "cufile":
+        # A cached encoded prefix uses the SSD queue's host-decode arena while
+        # its disk suffix uses the independent GDS decoder arena.
+        assert after_restore.get("orbitkv_cache_resident_bytes", 0) == 0
+        restored = [tensor[:, 2:3].clone() for tensor in ctx.gpu_kv_caches]
+        hot_hash = b"gpu-codec-hot-prefix"
+        assert client.save(
+            ctx.instance_id, 0, 0, 0, [(name, [0], [hot_hash]) for name in ctx._layer_names]
+        )[0]
+        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_cache_resident_bytes"] > 0)
+        for tensor in ctx.gpu_kv_caches:
+            tensor[:, 2:4].fill_(-123)
+        torch.cuda.synchronize()
+        mixed = query(client, ctx, [hot_hash, hashes[0]], "mixed-codec-drain")
+        assert mixed.num_hit_blocks == 2
+        before_mixed = fetch_orbitkv_metrics(server.http_port)
+        assert before_mixed["orbitkv_ssd_read_pinned_bytes"] > 0
+        restore = client.start_restore(
+            ctx.instance_id, 0, 0, [ctx._layer_names], [(mixed.lease, [[2, 3]])]
+        )
+        assert client.wait_restore(restore, timeout=10).success
+        after_mixed = fetch_orbitkv_metrics(server.http_port)
+        assert (
+            after_mixed["orbitkv_ssd_cufile_read_bytes_total"]
+            > before_mixed["orbitkv_ssd_cufile_read_bytes_total"]
+        )
+        assert (
+            after_mixed["orbitkv_storage_codec_workspace_bytes"]
+            > before_mixed["orbitkv_storage_codec_workspace_bytes"]
+        ), "mixed restore must retain the SSD queue's additional host-decode arena"
+        assert after_mixed["orbitkv_storage_codec_reserved_bytes"] == 0
+        for tensor, expected in zip(ctx.gpu_kv_caches, restored, strict=True):
+            for block in (2, 3):
+                assert torch.equal(
+                    tensor[:, block : block + 1].view(torch.uint8), expected.view(torch.uint8)
+                )
+    client.unregister_context(ctx.instance_id)
+    ctx._registered = False
+    assert (
+        fetch_orbitkv_metrics(server.http_port).get("orbitkv_storage_codec_workspace_bytes", 0) == 0
+    )
+
+
+@pytest.mark.parametrize(
+    "fault_cache",
+    [
+        pytest.param(
+            {
+                "ssd_backend": "cufile",
+                "num_layers": 6,
+                "block_size": 64,
+                "extra_args": ("--storage-codec", codec),
+            },
+            id=codec,
+        )
+        for codec in ("ans", "fp8", "turboquant-4")
+    ],
+    indirect=True,
+)
+def test_encoded_cufile_corruption_rejects_gpu_restore_and_allows_republication(fault_cache):
+    server, client, ctx, _ = fault_cache
+    hashes = [b"repair-gpu-encoded"]
+
+    def save():
+        return client.save(
+            ctx.instance_id, 0, 0, 0, [(name, [0], hashes) for name in ctx._layer_names]
+        )[0]
+
+    assert save()
+    drain_ssd(server)
+    stats = fetch_orbitkv_metrics(server.http_port)
+    assert stats["orbitkv_ssd_cufile_write_bytes_total"] > 0
+    with Path(server.ssd_cache_path).open("r+b", buffering=0) as stream:
+        stream.write(bytes(int(stats["orbitkv_ssd_write_bytes_total"])))
+
+    # Discovery reads metadata only. Device CRC validation must reject the
+    # damaged payload before any decompressor consumes that segment.
+    ready = query(client, ctx, hashes, "damaged-gpu-object")
+    assert ready.num_hit_blocks == 1
+    handle = client.start_restore(ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])])
+    assert not client.wait_restore(handle, timeout=10).success
+    until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] == 0)
+    assert (
+        fetch_orbitkv_metrics(server.http_port)["orbitkv_storage_codec_decode_failures_total"] > 0
+    )
+    assert query(client, ctx, hashes, "invalidated-gpu-object").num_hit_blocks == 0
+
+    assert save()
+    drain_ssd(server)
+    repaired = query(client, ctx, hashes, "repaired-gpu-object")
+    assert repaired.num_hit_blocks == 1
+    handle = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(repaired.lease, [[2]])]
+    )
+    assert client.wait_restore(handle, timeout=10).success
+    after = fetch_orbitkv_metrics(server.http_port)
+    assert after.get("orbitkv_ssd_prefetch_bytes_total", 0) == 0
+    assert after.get("orbitkv_ssd_cufile_inflight_batches", 0) == 0
 
 
 def test_ssd_cancellation_revisions_hold_buffers_until_io_drains(fault_cache):
@@ -278,14 +619,38 @@ def test_prepared_result_expires_without_poll_then_claim_holds_bytes_through_res
     )
 
 
-@pytest.mark.parametrize("fault_cache", [{"ssd_backend": "cufile"}], indirect=True)
+@pytest.mark.parametrize(
+    "fault_cache,encoded",
+    [
+        pytest.param({"ssd_backend": "cufile"}, False, id="raw"),
+        *[
+            pytest.param(
+                {
+                    "ssd_backend": "cufile",
+                    "block_size": 64,
+                    "extra_args": ("--storage-codec", codec),
+                },
+                True,
+                id=codec,
+            )
+            for codec in ("ans", "fp8")
+        ],
+    ],
+    indirect=["fault_cache"],
+)
 @pytest.mark.parametrize("outcome", ["complete", "error", "kill"])
-def test_cufile_write_holds_pages_and_publishes_only_completed_objects(fault_cache, outcome):
+def test_cufile_write_holds_pages_and_publishes_only_completed_objects(
+    fault_cache, encoded, outcome
+):
     import torch
 
     server, client, ctx, directory = fault_cache
+    if encoded:
+        ctx.get_kv_cache().fill_(1.0)
     expected = ctx.get_kv_cache()[:, 0:1].cpu().clone()
-    publish(client, ctx, [b"warm"])
+    assert publish(client, ctx, [b"warm"])[0]
+    if encoded:
+        assert fetch_orbitkv_metrics(server.http_port)["orbitkv_storage_codec_bytes_total"] > 0
     warm = query(client, ctx, [b"warm"], "warm")
     arm(directory, "cufile_write")
     pool = ThreadPoolExecutor(1)
@@ -318,6 +683,10 @@ def test_cufile_write_holds_pages_and_publishes_only_completed_objects(fault_cac
                 > 0
             )
             (directory / "cufile_write_error.pause").unlink()
+            failed = fetch_orbitkv_metrics(server.http_port)
+            assert failed["orbitkv_ssd_write_inflight"] == 0
+            assert failed["orbitkv_ssd_cufile_inflight_batches"] == 0
+            assert failed.get("orbitkv_storage_codec_reserved_bytes", 0) == 0
             assert publish(client, ctx, [b"writing"])[0], "an aborted extent must be retryable"
         else:
             assert future.result(timeout=10)[0]
@@ -343,8 +712,20 @@ def test_cufile_write_holds_pages_and_publishes_only_completed_objects(fault_cac
         pool.shutdown(wait=True)
 
 
-@pytest.mark.parametrize("fault_cache", [{"ssd_backend": "cufile"}], indirect=True)
-def test_submitted_cufile_write_allows_ssd_reads_and_delays_unregister(fault_cache):
+@pytest.mark.parametrize(
+    "fault_cache,completion",
+    [
+        ({"ssd_backend": "cufile"}, "cufile_write_completion"),
+        ({"ssd_backend": "cufile"}, "ssd_host_completion"),
+        (
+            {"ssd_backend": "cufile", "block_size": 64, "extra_args": ("--storage-codec", "ans")},
+            "cufile_write_completion",
+        ),
+    ],
+    indirect=["fault_cache"],
+    ids=["raw-disk-completion", "raw-host-completion", "encoded-disk-completion"],
+)
+def test_submitted_cufile_write_allows_ssd_reads_and_delays_unregister(fault_cache, completion):
     import torch
 
     server, client, ctx, directory = fault_cache
@@ -352,15 +733,17 @@ def test_submitted_cufile_write_allows_ssd_reads_and_delays_unregister(fault_cac
     assert publish(client, ctx, [b"on-disk"])[0]
     drain_ssd(server)
     ready = query(client, ctx, [b"on-disk"], "read-during-write")
-    arm(directory, "cufile_write_completion")
+    arm(directory, completion)
     pool = ThreadPoolExecutor(2)
     writing = pool.submit(publish, client, ctx, [b"unconfirmed"])
     try:
-        reached(directory, "cufile_write_completion")
+        reached(directory, completion)
         before = fetch_orbitkv_metrics(server.http_port)
-        assert before["orbitkv_ssd_cufile_inflight_batches"] == 1
+        if completion == "cufile_write_completion":
+            assert before["orbitkv_ssd_cufile_inflight_batches"] == 1
         assert not writing.done()
-        assert query(client, ctx, [b"unconfirmed"], "unpublished").num_hit_blocks == 0
+        if completion == "cufile_write_completion":
+            assert query(client, ctx, [b"unconfirmed"], "unpublished").num_hit_blocks == 0
         restore = client.start_restore(
             ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
         )
@@ -370,12 +753,14 @@ def test_submitted_cufile_write_allows_ssd_reads_and_delays_unregister(fault_cac
         assert after["orbitkv_ssd_cufile_read_bytes_total"] > before.get(
             "orbitkv_ssd_cufile_read_bytes_total", 0
         )
-        assert after["orbitkv_ssd_cufile_inflight_batches"] == 1
+        if completion == "cufile_write_completion":
+            assert after["orbitkv_ssd_cufile_inflight_batches"] == 1
         unregistering = pool.submit(client.unregister_context, ctx.instance_id)
         time.sleep(0.15)
         assert not unregistering.done(), "unregister must retain submitted write ownership"
-        assert after["orbitkv_ssd_write_inflight"] > 0
-        (directory / "cufile_write_completion.pause").unlink()
+        if completion == "cufile_write_completion":
+            assert after["orbitkv_ssd_write_inflight"] > 0
+        (directory / f"{completion}.pause").unlink()
         assert writing.result(timeout=10)[0]
         assert unregistering.result(timeout=10)[0]
         until(
@@ -390,53 +775,83 @@ def test_submitted_cufile_write_allows_ssd_reads_and_delays_unregister(fault_cac
             )
         )
     finally:
-        (directory / "cufile_write_completion.pause").unlink(missing_ok=True)
+        (directory / f"{completion}.pause").unlink(missing_ok=True)
         pool.shutdown(wait=True)
 
 
 @pytest.mark.parametrize(
-    "fault_cache", [{"ssd_backend": "cufile", "num_blocks": 10}], indirect=True
+    "fault_cache,encoded",
+    [
+        pytest.param({"ssd_backend": "cufile", "num_blocks": 10}, False, id="raw"),
+        *[
+            pytest.param(
+                {
+                    "ssd_backend": "cufile",
+                    "num_blocks": 10,
+                    "block_size": 64,
+                    "extra_args": ("--storage-codec", codec),
+                },
+                True,
+                id=codec,
+            )
+            for codec in ("ans", "fp8")
+        ],
+    ],
+    indirect=["fault_cache"],
 )
-def test_full_gpu_write_queue_uses_host_writeback_without_waiting(fault_cache):
+def test_full_gpu_write_queue_uses_host_writeback_without_waiting(fault_cache, encoded):
     import torch
 
     from orbitkv import CacheManagerClient
 
     server, client, ctx, directory = fault_cache
     tensor = ctx.get_kv_cache()
-    expected = tensor[:, 8:9].cpu().clone()
+    if encoded:
+        for index in range(9):
+            tensor[:, index : index + 1].fill_(index + 1)
+    expected = tensor[:, :9].cpu().clone()
     arm(directory, "cufile_write_completion")
 
     # Each Publish descriptor session has one outstanding call. Independent
     # producers are needed to exercise the shared worker's admission limit.
-    producers = [CacheManagerClient(server.bootstrap_socket, timeout_ms=100) for _ in range(8)]
+    producers = [CacheManagerClient(server.bootstrap_socket, timeout_ms=100) for _ in range(9)]
 
     def save_page(producer, index):
         return producer.save(
             ctx.instance_id, 0, 0, 0, [(ctx._layer_names[0], [index], [bytes([index]) * 32])]
         )
 
-    pool = ThreadPoolExecutor(8)
+    pool = ThreadPoolExecutor(9)
     writes = [pool.submit(save_page, producer, i) for i, producer in enumerate(producers)]
     try:
         reached(directory, "cufile_write_completion")
-        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_write_inflight"] == 8)
-        assert all(not write.done() for write in writes)
-        assert save_page(client, 8)[0], "saturated GPU writes must not block host publication"
+        # Encoded extents are reserved only when their worker starts. The one
+        # completed publication proves all eight admission permits are occupied.
+        completed = until(lambda: [index for index, write in enumerate(writes) if write.done()])
+        assert len(completed) == 1, "only the publication beyond the eight permits may finish"
+        fallback = completed[0]
+        assert writes[fallback].result(timeout=10)[0]
+        until(
+            lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_write_inflight"]
+            == (1 if encoded else 8)
+        )
+        assert all(not write.done() for index, write in enumerate(writes) if index != fallback)
         stats = fetch_orbitkv_metrics(server.http_port)
         assert stats["orbitkv_ssd_gpu_write_fallbacks_total"] == 1
         assert stats["orbitkv_ssd_cufile_inflight_batches"] == 1
-        assert stats["orbitkv_ssd_gpu_staging_bytes"] == 8 << 20
+        assert stats["orbitkv_ssd_gpu_staging_bytes"] == (4 if encoded else 8) << 20
+        if encoded:
+            assert stats["orbitkv_storage_codec_bytes_total"] > 0
         (directory / "cufile_write_completion.pause").unlink()
         assert all(write.result(timeout=10)[0] for write in writes)
         drain_ssd(server)
-        ready = query(client, ctx, [bytes([8]) * 32], "fallback-on-disk")
+        ready = query(client, ctx, [bytes([fallback]) * 32], "fallback-on-disk")
         assert ready.num_hit_blocks == 1
         handle = client.start_restore(
             ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[9]])]
         )
         assert client.wait_restore(handle, timeout=10).success
-        assert torch.equal(tensor[:, 9:10].cpu(), expected)
+        assert torch.equal(tensor[:, 9:10].cpu(), expected[:, fallback : fallback + 1])
         assert client.unregister_context(ctx.instance_id)[0]
         until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_gpu_staging_bytes"] == 0)
     finally:
@@ -469,8 +884,9 @@ def test_submitted_cufile_reads_keep_two_slots_and_leases_until_unregister(fault
     try:
         reached(directory, "cufile_read_completion")
         until(
-            lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_cufile_inflight_batches"]
-            == 2
+            lambda: (
+                fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_cufile_inflight_batches"] == 2
+            )
         )
         client.cancel_query(ctx.instance_id, "large-read")
         unregistering = pool.submit(client.unregister_context, ctx.instance_id)
@@ -523,7 +939,12 @@ def test_cufile_batches_keep_all_leases_and_only_read_selected_pages(
     tensor = ctx.get_kv_cache()
     expected = tensor.cpu().clone()
     hashes = [bytes([i]) * 32 for i in range(ctx.num_blocks)]
-    assert publish(client, ctx, hashes)[0]
+    # Establish physical file order explicitly; a multi-page Publish may group
+    # hashes in any order, so logical pages 0/2 need not have a disk gap.
+    for page, block_hash in enumerate(hashes):
+        assert client.save(ctx.instance_id, 0, 0, 0, [(ctx._layer_names[0], [page], [block_hash])])[
+            0
+        ]
     drain_ssd(server)
     ready = query(client, ctx, hashes, "batched")
     assert ready.num_hit_blocks == len(hashes)

@@ -31,6 +31,25 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Bound queued GPU-storage writes and staging so demand reads make progress
   between write batches: two 4 MiB slots, one in-flight write, eight admitted write
   jobs and bounded read bursts; saturation uses host publication/io_uring.
+- [x] Verify event-tracked host copies overlap SSD submission while Publish and
+  unregister retain ownership until both DMA paths complete.
+- [x] Implement GPU ANS, FP8 and 3/4-bit TurboQuant, encoded DRAM/SSD/peer payloads,
+  explicit head/K/V registration, raw fallback and CPU SIMD.
+- [x] Add runtime AVX-512F/AVX2/scalar FP8 CPU encoding and decoding, with
+  exhaustive BF16/FP16 value checks and a reproducible single-core benchmark.
+- [x] Verify optional FP8 storage, bounded scratch, mixed raw/encoded
+  prefixes, cancellation, corruption rejection/repair and raw fallback.
+- [ ] Qualify lossy storage on representative model-quality workloads; Qwen3-8B
+  encoded slots shrink, but vLLM greedy-output checks still fail with TurboQuant.
+- [x] Qualify engine-native FP8 KV on Qwen3-8B in both engines; isolate external
+  SGLang scale artifacts and compare against same-dtype cold controls.
+- [ ] Extend quality and latency qualification of GPU codecs across hybrid models; retain
+  exact recurrent state until model-quality and recovery gates pass.
+- [x] Batch codec segments and reuse GPU scratch to reduce per-segment launches,
+  allocations and synchronization; compare complete-request latency under inference load.
+- [x] Add compressed cuFile reads and complete-group writes with GPU CRC validation,
+  bounded decode workspace, corruption isolation and cancellation ownership.
+  Qualify both engines in cuFile compatibility mode; native GDS remains a separate gate.
 - [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.
 - [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,

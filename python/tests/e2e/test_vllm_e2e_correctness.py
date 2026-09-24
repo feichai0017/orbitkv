@@ -27,6 +27,7 @@ import pytest
 
 from tests.support.cache_manager import evict_dram_after_ssd_writes
 from tests.support.metrics import (
+    fetch_orbitkv_codec_bytes,
     fetch_orbitkv_metrics,
     fetch_orbitkv_rpc_failures,
     fetch_vllm_prefix_cache_hits,
@@ -220,6 +221,8 @@ class TestE2ECorrectness:
         extra_args = (
             "--cache-protected-percent",
             str(request.config.getoption("--cache-protected-percent")),
+            "--storage-codec",
+            request.config.getoption("--storage-codec"),
         )
         if request.config.getoption("--vllm-cache-tier") == "ssd":
             extra_args += (
@@ -243,6 +246,7 @@ class TestE2ECorrectness:
     @pytest.fixture(scope="class")
     def baseline_outputs(
         self,
+        request,
         model: str,
         base_port: int,
         log_dir: Path,
@@ -264,6 +268,7 @@ class TestE2ECorrectness:
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
+            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
                 if label == "long_warm":
@@ -316,6 +321,7 @@ class TestE2ECorrectness:
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
+            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
             transfer_backend=orbitkv_transfer_backend,
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
@@ -345,6 +351,7 @@ class TestE2ECorrectness:
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
+            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
             transfer_backend=orbitkv_transfer_backend,
             server_label="OrbitKV load",
         ):
@@ -385,6 +392,22 @@ class TestE2ECorrectness:
             and request.config.getoption("--vllm-cache-tier") == "ssd"
         ):
             assert metrics_end.get("orbitkv_ssd_cufile_write_bytes_total", 0) > 0
+            assert metrics_end.get("orbitkv_ssd_prefetch_bytes_total", 0) == before_restart.get(
+                "orbitkv_ssd_prefetch_bytes_total", 0
+            ), "cuFile recovery bounced through host SSD prefetch"
+
+        if (
+            request.config.getoption("--storage-codec") != "none"
+            and request.config.getoption("--vllm-cache-tier") == "ssd"
+        ):
+            assert metrics_end.get("orbitkv_storage_codec_duration_seconds_count", 0) > 0
+            assert metrics_end.get("orbitkv_storage_codec_decode_failures_total", 0) == 0
+            encoded = fetch_orbitkv_codec_bytes(metrics_port)
+            print(f"Encoded slot bytes: {encoded}")
+            if request.config.getoption("--kv-cache-dtype") == "auto":
+                assert encoded["logical"] > 0, "no typed KV was quantized"
+                limit = 0.875 if request.config.getoption("--storage-codec") == "ans" else 0.55
+                assert encoded["stored"] <= encoded["logical"] * limit
 
         print("[Phase 2] Done\n")
         return {

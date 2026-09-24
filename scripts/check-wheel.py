@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Check the installable wheel, including files staged outside Cargo's build."""
 
 import argparse
@@ -113,8 +112,11 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
             if entries.get(group, name, fallback=None) != target:
                 raise ValueError(f"missing entry point: {group}/{name} -> {target}")
 
-        if not any(name.endswith(".dist-info/licenses/LICENSE") for name in files):
-            raise ValueError("wheel is missing the Apache-2.0 license file")
+        for license_file in ("LICENSE", "NOTICE"):
+            if not any(
+                name.endswith(f".dist-info/licenses/{license_file}") for name in files
+            ):
+                raise ValueError(f"wheel is missing {license_file}")
 
         for binary in ("orbitkv-cache-manager-py",):
             mode = wheel.getinfo(f"orbitkv/{binary}").external_attr >> 16

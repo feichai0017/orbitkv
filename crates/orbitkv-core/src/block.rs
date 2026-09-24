@@ -99,6 +99,10 @@ pub(crate) struct Segment {
 }
 
 impl Segment {
+    pub(crate) fn host_ptr(&self) -> NonNull<u8> {
+        self.ptr.host()
+    }
+
     pub(crate) fn new(ptr: NonNull<u8>, size: usize, allocation: Arc<PinnedAllocation>) -> Self {
         let ptr = allocation.mapped_ptr_for_host_range(ptr, size);
         Self {
@@ -123,6 +127,8 @@ unsafe impl Sync for Segment {}
 ///
 /// RawBlock automatically derives Send+Sync from Segment.
 pub struct RawBlock {
+    pub(crate) storage_format: orbitkv_state::StorageFormat,
+    pub(crate) encoding: Option<Vec<crate::codec::EncodedSegment>>,
     segments: BlockSegments,
     /// Total size across all segments (for footprint tracking).
     total_size: usize,
@@ -169,6 +175,8 @@ impl RawBlock {
         let total_size = segments.iter().map(|s| s.size).sum();
         Self {
             segments: BlockSegments::from_vec(segments),
+            storage_format: Default::default(),
+            encoding: None,
             total_size,
         }
     }
@@ -177,6 +185,8 @@ impl RawBlock {
         let total_size = segment.size;
         Self {
             segments: BlockSegments::One(segment),
+            storage_format: Default::default(),
+            encoding: None,
             total_size,
         }
     }
@@ -185,8 +195,23 @@ impl RawBlock {
         let total_size = k_segment.size + v_segment.size;
         Self {
             segments: BlockSegments::Two([k_segment, v_segment]),
+            storage_format: Default::default(),
+            encoding: None,
             total_size,
         }
+    }
+
+    pub(crate) fn validate_encoding(&self) -> Result<(), String> {
+        if let Some(metadata) = &self.encoding {
+            if metadata.len() != self.num_segments() {
+                return Err("encoded segment count mismatch".into());
+            }
+            for (meta, (ptr, len)) in metadata.iter().zip(self.segment_iovecs()) {
+                // SAFETY: sealed or freshly read segments are initialized and owned by this block.
+                meta.validate(unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) })?;
+            }
+        }
+        Ok(())
     }
 
     /// Number of segments.

@@ -783,3 +783,151 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         "GPU data mismatch: remote-fetched blocks differ from original"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires CUDA, nvCOMP 5.3 and Mooncake; set MC_FORCE_TCP=1 for same-host TCP"]
+async fn encoded_peer_payloads_restore_the_same_gpu_image() {
+    use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
+    let _cuda = CudaContext::new(0).unwrap();
+    for codec in [
+        StorageCodec::Ans,
+        StorageCodec::Fp8,
+        StorageCodec::TurboQuant4,
+        StorageCodec::TurboQuant3,
+    ] {
+        let port_a = get_free_port();
+        let port_b = get_free_port();
+        let make_view = |port| {
+            Arc::new(MembershipView::new(
+                orbitkv_state::CacheOwner {
+                    endpoint: format!("127.0.0.1:{port}"),
+                    incarnation: uuid::Uuid::new_v4(),
+                },
+                Placement::new(vec!["a".into()]).unwrap(),
+            ))
+        };
+        let view_a = make_view(port_a);
+        let view_b = make_view(port_b);
+        for view in [&view_a, &view_b] {
+            view.replace_members([
+                ("a".into(), view_a.owner().clone()),
+                ("b".into(), view_b.owner().clone()),
+            ]);
+            assert!(view.renew(Instant::now(), Duration::from_secs(120)));
+        }
+        let make_engine = |view| {
+            Arc::new(
+                OrbitKVEngine::new_with_config(
+                    16 << 20,
+                    false,
+                    StorageConfig {
+                        codec,
+                        membership: Some(view),
+                        mooncake_nic_names: mooncake_nics(),
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            )
+        };
+        let source = make_engine(view_a.clone());
+        let target = make_engine(view_b.clone());
+        let stores = spawn_engine_server(source.clone(), port_a, view_a).await;
+        spawn_engine_server(target.clone(), port_b, view_b).await;
+        let gpu_source = GpuBuffer::alloc(8192);
+        let gpu_target = GpuBuffer::alloc(8192);
+        gpu_source.copy_from_host(&[0xa0, 0x3f].repeat(4096));
+        gpu_target.zero();
+        for (engine, gpu, id) in [
+            (&source, &gpu_source, "source"),
+            (&target, &gpu_target, "target"),
+        ] {
+            engine
+                .register_context_layer_batch_strided(
+                    id,
+                    "encoded-peers",
+                    0,
+                    0,
+                    0,
+                    1,
+                    1,
+                    &["layer".into()],
+                    &[gpu.as_u64()],
+                    &[8192],
+                    &[1],
+                    &[8192],
+                    &[0],
+                    &[1],
+                    None,
+                    None,
+                    Some(&[StorageFormat::Attention {
+                        scalar: Scalar16::Bf16,
+                        role: AttentionRole::Key,
+                        head_dim: 128,
+                        layer_index: 2,
+                        layer_count: 8,
+                    }]),
+                    TransferMode::Direct,
+                    false,
+                )
+                .unwrap();
+        }
+        let hashes = vec![b"encoded-page".to_vec()];
+        source
+            .batch_save_kv_blocks_from_ipc(
+                "source",
+                0,
+                0,
+                0,
+                vec![LayerSave {
+                    layer_name: "layer".into(),
+                    block_ids: vec![0],
+                    block_hashes: hashes.clone(),
+                }],
+            )
+            .await
+            .unwrap();
+        wait_for_cache(&source, "source", &hashes, 1, Duration::from_secs(10)).await;
+        source.flush_saves_and_inventory().await.unwrap();
+        let namespace = source.instance_namespace("source").unwrap();
+        wait_for_catalog_registration(
+            &stores,
+            &namespace,
+            &[group_hash(&hashes[0], 0)],
+            1,
+            Duration::from_secs(10),
+        )
+        .await;
+        let mut images = Vec::new();
+        for (engine, gpu, id) in [
+            (&source, &gpu_source, "source"),
+            (&target, &gpu_target, "target"),
+        ] {
+            let result = engine
+                .count_prefix_hit_blocks_with_prefetch(id, "codec", &hashes, QueryMode::Demand)
+                .await
+                .unwrap();
+            assert_eq!(result.blocks.len(), 1);
+            assert!(
+                result.blocks[0].memory_footprint() < 8192,
+                "{codec:?} did not use encoded residency"
+            );
+            let lease = engine.create_query_lease(id, result.blocks).unwrap();
+            gpu.zero();
+            engine
+                .restore(id, 0, 0, &[vec!["layer"]], &[(lease, vec![vec![Some(0)]])])
+                .unwrap()
+                .await
+                .unwrap()
+                .result
+                .unwrap();
+            images.push(gpu.copy_to_host());
+        }
+        assert_eq!(
+            images[0], images[1],
+            "peer codec metadata/payload changed for {codec:?}"
+        );
+        source.unregister_instance_and_wait("source").await.unwrap();
+        target.unregister_instance_and_wait("target").await.unwrap();
+    }
+}

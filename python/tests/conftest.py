@@ -143,6 +143,16 @@ def pytest_addoption(parser):
         help="Manager write admission for SSD correctness gates",
     )
     parser.addoption(
+        "--kv-cache-dtype",
+        default="auto",
+        help="Engine-native KV precision for both recovery and cold control",
+    )
+    parser.addoption(
+        "--storage-codec",
+        choices=("none", "ans", "fp8", "turboquant-4", "turboquant-3"),
+        default="none",
+    )
+    parser.addoption(
         "--ssd-backend",
         choices=("auto", "uring", "cufile"),
         default="auto",
@@ -183,7 +193,8 @@ def channel_server(request, tmp_path):
             str(request.config.getoption("--cache-protected-percent")),
             "--ssd-write-policy",
             request.config.getoption("--ssd-write-policy"),
-        ),
+        )
+        + ("--storage-codec", request.config.getoption("--storage-codec")),
     )
 
     if not server._binary_path:

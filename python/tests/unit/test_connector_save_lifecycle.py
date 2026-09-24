@@ -36,7 +36,9 @@ def make_worker() -> WorkerConnector:
     with patch("orbitkv.vllm.worker.threading.Thread.start"):
         return WorkerConnector(
             context,
-            vllm_config=SimpleNamespace(additional_config={}),
+            vllm_config=SimpleNamespace(
+                model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
+            ),
         )
 
 

@@ -34,6 +34,10 @@ libloading.workspace = true
 rand.workspace = true
 ahash.workspace = true
 io-uring = "0.7"
+half = "2.7"
+serde.workspace = true
+serde_json.workspace = true
+crc32fast = "1.5"
 futures.workspace = true
 parking_lot.workspace = true
 fastrace = { workspace = true, optional = true }
@@ -61,6 +65,11 @@ harness = false
 
 [[bench]]
 name = "cpu_path"
+harness = false
+
+[[bench]]
+name = "cpu_codec"
+path = "../../benches/cpu_codec.rs"
 harness = false
 
 [[bench]]

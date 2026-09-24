@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import time
@@ -9,10 +10,11 @@ from argparse import Namespace
 
 import requests
 
-from .metrics import cache_source, metrics, workload_phases
+from .metrics import cache_source, measure, metrics, workload_phases
 
 
 def generate(url: str, engine: str, model: str, tokens: list[int], output_len: int) -> dict:
+    prompt_sha256 = hashlib.sha256(json.dumps(tokens, separators=(",", ":")).encode()).hexdigest()
     if engine == "vllm":
         endpoint = "/v1/completions"
         payload = {
@@ -76,6 +78,7 @@ def generate(url: str, engine: str, model: str, tokens: list[int], output_len: i
         "e2e_ms": (ended - started) * 1000,
         "text": text,
         "usage": usage,
+        "prompt_sha256": prompt_sha256,
     }
 
 
@@ -96,6 +99,8 @@ def evict_host_cache(manager_url: str) -> dict:
                 "orbitkv_ssd_write_inflight",
                 "orbitkv_ssd_prefetch_inflight",
                 "orbitkv_inflight_bytes",
+                "orbitkv_ssd_cufile_inflight_batches",
+                "orbitkv_storage_codec_reserved_bytes",
             )
         )
         quiet = quiet + 1 if not busy and stamp == previous else 0
@@ -158,33 +163,20 @@ def run_workload(args: Namespace, base_url: str, manager_url: str | None) -> lis
                     time.sleep(args.settle_seconds)
                     if phase == "after_host_eviction":
                         preparation = evict_host_cache(manager_url)
-                    before = metrics(base_url)
-                    manager_before = metrics(manager_url)
-                    result = generate(
-                        base_url,
-                        args.engine,
-                        str(args.model),
-                        tokens,
-                        args.output_tokens,
-                    )
-                    time.sleep(args.settle_seconds)
-                    after = metrics(base_url)
-                    manager_after = metrics(manager_url)
+                    with measure(base_url, manager_url, args.settle_seconds) as measurement:
+                        result = generate(
+                            base_url,
+                            args.engine,
+                            str(args.model),
+                            tokens,
+                            args.output_tokens,
+                        )
                     result.update(
                         length=length,
                         repeat=repeat,
                         phase=phase,
                         preparation=preparation,
-                        metrics_delta={
-                            key: value - before.get(key, 0)
-                            for key, value in after.items()
-                            if value != before.get(key, 0)
-                        },
-                        manager_delta={
-                            key: value - manager_before.get(key, 0)
-                            for key, value in manager_after.items()
-                            if value != manager_before.get(key, 0)
-                        },
+                        **measurement,
                     )
                     texts.append(result["text"])
                     result["cache_source"] = cache_source(args.engine, result)

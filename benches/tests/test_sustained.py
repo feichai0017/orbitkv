@@ -143,6 +143,25 @@ def test_report_counts_window_bytes_once_and_preserves_output_differences(tmp_pa
         collect_run(tmp_path)
 
 
+def test_codec_batch_counters_are_window_totals_not_per_request():
+    _, samples, windows = evidence()
+    windows[0]["manager_delta"].update(
+        {
+            "orbitkv_storage_codec_bytes_total_logical": 8192,
+            "orbitkv_storage_codec_bytes_total_stored": 4096,
+            "orbitkv_storage_codec_batches_total_encode": 3,
+            "orbitkv_storage_codec_batch_segments_sum_encode": 32,
+            "orbitkv_storage_codec_batch_segments_count_encode": 3,
+        }
+    )
+    (row,) = sustained.summarize(samples, windows)
+    assert row["n"] == 2
+    assert row["orbitkv_storage_codec_batches_total_encode"] == 3
+    assert row["orbitkv_storage_codec_batch_segments_sum_encode"] == 32
+    assert row["encoded_publication_stored_fraction"] == 0.5
+    assert row["output_mismatches"] == 1
+
+
 @pytest.mark.parametrize(
     "corruption",
     [

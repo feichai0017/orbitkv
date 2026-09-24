@@ -17,7 +17,7 @@ use crate::metrics::core_metrics;
 use crate::storage::write_path::{RawSaveBatch, RawSaveLayer};
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::worker::ssd::GpuWrite;
-use crate::transfer::worker::{LayerTransferData, TransferBlock, TransferPayload};
+use crate::transfer::worker::{LayerTransferData, SaveGroup, TransferBlock, TransferPayload};
 
 /// Unified per-layer context for the save pipeline.
 /// Combines metadata, filtered blocks, and allocation results.
@@ -127,6 +127,37 @@ fn prepare_gpu_writes(
     Ok(writes)
 }
 
+/// Encoded sizes are known only on the GPU worker. Keep complete groups in
+/// slot order so their SSD reservation can be made before that arena is reused.
+fn prepare_codec_groups(
+    namespace: &str,
+    topology: &crate::engine::instance::LayerTopology,
+    layers: &[LayerContext],
+) -> Result<Vec<SaveGroup>, EngineError> {
+    let mut groups = HashMap::new();
+    for (layer_index, layer) in layers.iter().enumerate() {
+        for (block_position, (_, hash)) in layer.blocks_to_save.iter().enumerate() {
+            groups
+                .entry((layer.group, hash.clone()))
+                .or_insert_with(std::collections::BTreeMap::new)
+                .insert(layer.slot_id, (layer_index, block_position));
+        }
+    }
+    let mut result = Vec::new();
+    for ((group, hash), slots) in groups {
+        let expected = topology.group_total_slots(group)?;
+        if slots.len() == expected && slots.keys().copied().eq(0..expected) {
+            result.push(SaveGroup {
+                key: StateKey::new(namespace.to_owned(), group_hash(&hash, group)),
+                blocks: slots.into_values().collect(),
+            });
+        }
+    }
+    // Preserve the publisher's block order for adjacent-file writes.
+    result.sort_by_key(|group| group.blocks.first().map(|&(layer, block)| (block, layer)));
+    Ok(result)
+}
+
 /// Drop `(group, hash)` candidates whose group-encoded key already exists in
 /// the read cache. Filtering is per group because groups key the same content
 /// hash independently (e.g. attention block vs. recurrent checkpoint).
@@ -223,6 +254,22 @@ impl OrbitKVEngine {
             )));
         }
 
+        let mut padding = Vec::with_capacity(layer_contexts.len());
+        for ctx in layer_contexts {
+            let layer_id = topology.layer_id(&ctx.layer_name)?;
+            let (offset, padded) = topology.page_placement(layer_id).expect("page layout");
+            let BlockCopies::Contiguous(copy) = ctx
+                .layout
+                .block_copies(ctx.blocks_to_save[0].0)
+                .map_err(EngineError::Storage)?
+            else {
+                unreachable!("split rejected above")
+            };
+            if copy.bytes < padded {
+                padding.push((offset + copy.bytes, padded - copy.bytes));
+            }
+        }
+
         // One page per block.
         let page_bytes = NonZeroU64::new(page_size as u64)
             .ok_or_else(|| EngineError::Storage("page size is zero".into()))?;
@@ -233,6 +280,16 @@ impl OrbitKVEngine {
                 .ok_or_else(|| {
                     EngineError::Storage("pinned pool exhausted while allocating page".into())
                 })?;
+            for &(offset, len) in &padding {
+                // SAFETY: these disjoint holes belong to the fresh page; no DMA has started.
+                unsafe {
+                    page.mapped_ptr()
+                        .add(offset)
+                        .host()
+                        .as_ptr()
+                        .write_bytes(0, len);
+                }
+            }
             pages.push(page);
         }
 
@@ -433,10 +490,33 @@ impl OrbitKVEngine {
             for ctx in &mut layer_contexts {
                 let layout = &ctx.layout;
                 let num_blocks = ctx.blocks_to_save.len();
+                if self.storage.codec != crate::StorageCodec::None {
+                    gpu_save_layers.push(LayerTransferData {
+                        layer_name: ctx.layer_name.clone(),
+                        layout: layout.clone(),
+                        blocks: ctx
+                            .blocks_to_save
+                            .iter()
+                            .map(|(block_idx, _)| TransferBlock {
+                                block_idx: *block_idx,
+                                block: TransferPayload::Pending,
+                            })
+                            .collect(),
+                    });
+                    continue;
+                }
 
                 // Blockwise: allocate once per block; Batch: allocate once for all blocks
                 let alloc_count = if blockwise { num_blocks } else { 1 };
                 let blocks_per_alloc = if blockwise { 1 } else { num_blocks };
+
+                let source_bytes = match layout
+                    .block_copies(ctx.blocks_to_save[0].0)
+                    .map_err(EngineError::Storage)?
+                {
+                    BlockCopies::Contiguous(copy) => copy.bytes,
+                    BlockCopies::Split { k, v } => k.bytes + v.bytes,
+                };
 
                 let alloc_pinned = |stride: usize, what: &str| {
                     let alloc_size = (stride as u64)
@@ -454,7 +534,7 @@ impl OrbitKVEngine {
 
                 // Allocate pinned memory and construct the host-side RawBlocks in
                 // save order. Strides are padded (SSD-aligned); GPU copies later
-                // use actual (unpadded) sizes, leaving the padding tail unused.
+                // use actual (unpadded) sizes; initialize padding before codec/SSD reads.
                 let mut raw_blocks: Vec<RawBlock> = Vec::with_capacity(num_blocks);
                 for _ in 0..alloc_count {
                     if layout.is_split() {
@@ -463,6 +543,17 @@ impl OrbitKVEngine {
                         let v_alloc = alloc_pinned(stride, "V segment buffer")?;
                         for i in 0..blocks_per_alloc {
                             let offset = i * stride;
+                            for alloc in [&k_alloc, &v_alloc] {
+                                // SAFETY: only the padding tail of this newly allocated segment.
+                                unsafe {
+                                    alloc
+                                        .mapped_ptr()
+                                        .add(offset + layout.segment_bytes())
+                                        .host()
+                                        .as_ptr()
+                                        .write_bytes(0, stride - layout.segment_bytes());
+                                }
+                            }
                             // Safety: offsets are within the just-made allocations.
                             raw_blocks.push(RawBlock::two_segments(
                                 Segment::new(
@@ -481,6 +572,15 @@ impl OrbitKVEngine {
                         let stride = layout.padded_block_bytes();
                         let alloc = alloc_pinned(stride, "block buffer")?;
                         for i in 0..blocks_per_alloc {
+                            // SAFETY: only the padding tail, before the GPU writes the payload.
+                            unsafe {
+                                alloc
+                                    .mapped_ptr()
+                                    .add(i * stride + source_bytes)
+                                    .host()
+                                    .as_ptr()
+                                    .write_bytes(0, stride - source_bytes);
+                            }
                             // Safety: offset is within the just-made allocation.
                             raw_blocks.push(RawBlock::single_segment(Segment::new(
                                 alloc.mapped_ptr().add(i * stride).host(),
@@ -495,9 +595,12 @@ impl OrbitKVEngine {
                     .blocks_to_save
                     .iter()
                     .zip(raw_blocks)
-                    .map(|((block_idx, _), block)| TransferBlock {
-                        block_idx: *block_idx,
-                        block: TransferPayload::Owned(block),
+                    .map(|((block_idx, _), mut block)| {
+                        block.storage_format = layout.storage_format;
+                        TransferBlock {
+                            block_idx: *block_idx,
+                            block: TransferPayload::Owned(block),
+                        }
                     })
                     .collect();
 
@@ -510,23 +613,41 @@ impl OrbitKVEngine {
         }
         trace_drop!(_s);
 
-        // ── Phase 3: Submit all GPU copies as one batch task (single sync) ──
+        // ── Phase 3: Submit GPU encoding/copies while retaining source ownership ──
 
         let ssd_writes = match &self.storage.ssd_store {
-            Some(store) if store.gpu_io.available() => prepare_gpu_writes(
-                store,
-                &namespace,
-                &topology,
-                &layer_contexts,
-                save_numa_node,
-            )?,
+            Some(store)
+                if store.gpu_io.available() && self.storage.codec == crate::StorageCodec::None =>
+            {
+                prepare_gpu_writes(
+                    store,
+                    &namespace,
+                    &topology,
+                    &layer_contexts,
+                    save_numa_node,
+                )?
+            }
             _ => Vec::new(),
+        };
+        let codec_groups = if self.storage.codec != crate::StorageCodec::None
+            && self
+                .storage
+                .ssd_store
+                .as_ref()
+                .is_some_and(|store| store.gpu_io.available())
+        {
+            prepare_codec_groups(&namespace, &topology, &layer_contexts)?
+        } else {
+            Vec::new()
         };
         let returned_layers = trace_future!(
             "save.gpu_copy",
-            gpu_context
-                .worker_pool()
-                .batch_save(gpu_save_layers, ssd_writes)
+            gpu_context.worker_pool().batch_save(
+                gpu_save_layers,
+                ssd_writes,
+                codec_groups,
+                Some(Arc::clone(&self.storage))
+            )
         )
         .await?;
 
@@ -541,7 +662,9 @@ impl OrbitKVEngine {
                     .into_iter()
                     .map(|transfer_block| match transfer_block.block {
                         TransferPayload::Owned(block) => block,
-                        TransferPayload::Cached { .. } | TransferPayload::Ssd { .. } => {
+                        TransferPayload::Pending
+                        | TransferPayload::Cached { .. }
+                        | TransferPayload::Ssd { .. } => {
                             panic!("save path must return TransferPayload::Owned blocks")
                         }
                     })
@@ -599,11 +722,22 @@ impl OrbitKVEngine {
                 .iter()
                 .map(|(_, hash)| group_hash(hash, 0))
                 .collect();
+            let format = layer_contexts[0].layout.storage_format;
+            let format = if layer_contexts
+                .iter()
+                .all(|ctx| ctx.layout.storage_format == format)
+            {
+                format
+            } else {
+                orbitkv_state::StorageFormat::Exact
+            };
             let blocks: Vec<RawBlock> = pages
                 .into_iter()
                 .map(|page| {
                     let ptr = page.mapped_ptr().host();
-                    RawBlock::single_segment(Segment::new(ptr, page_size, page))
+                    let mut block = RawBlock::single_segment(Segment::new(ptr, page_size, page));
+                    block.storage_format = format;
+                    block
                 })
                 .collect();
             self.storage.send_raw_insert(RawSaveBatch {

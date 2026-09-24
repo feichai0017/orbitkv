@@ -31,7 +31,7 @@ export const layers = [
     name: "orbitkv-core",
     role: "Own the blocks.",
     detail:
-      "Content-addressed KV blocks, leases, admission, eviction, and tier coordination.",
+      "KV blocks, leases, tiers, batched GPU codecs with reusable workspace, CPU SIMD, and encoded cuFile storage.",
     path: "crates/orbitkv-core/src/lib.rs",
   },
   {

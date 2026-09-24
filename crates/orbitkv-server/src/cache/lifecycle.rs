@@ -4,6 +4,7 @@ use std::sync::{Arc, Weak};
 
 use log::{info, warn};
 use orbitkv_core::{EngineError, OrbitKVEngine, TransferMode};
+use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::cache::session::{SessionRegistry, SessionTopology};
@@ -34,6 +35,8 @@ pub(crate) struct Registration {
     pub(crate) transfer_mode: TransferMode,
     pub(crate) page_first: bool,
     pub(crate) layer_group_ids: Vec<u32>,
+    pub(crate) layer_formats: Vec<String>,
+    pub(crate) layer_attention: Vec<(u32, String, u32, u32)>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -199,6 +202,8 @@ impl LifecycleService {
             || req.bytes_per_block.len() != batch_len
             || req.kv_stride_bytes.len() != batch_len
             || req.segments.len() != batch_len
+            || (!req.layer_attention.is_empty() && req.layer_attention.len() != batch_len)
+            || (!req.layer_formats.is_empty() && req.layer_formats.len() != batch_len)
         {
             return Err(ControlError::invalid_argument(format!(
                 "all layer arrays must have the same non-zero length (got layer_names={batch_len})"
@@ -258,7 +263,71 @@ impl LifecycleService {
             size_bytes_list.push(metadata.size_bytes);
         }
 
-        // Call engine batch registration
+        let mut formats = Vec::with_capacity(batch_len);
+        for (index, metadata) in metadatas.iter().enumerate() {
+            let format = req
+                .layer_formats
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or("exact");
+            formats.push(match (format, metadata.dtype.as_str()) {
+                ("exact", _) => StorageFormat::Exact,
+                ("fp8_e4m3", "torch.float8_e4m3fn") => StorageFormat::Fp8Native,
+                ("bf16", "torch.bfloat16") => StorageFormat::Fp8FromBf16,
+                ("fp16", "torch.float16") => StorageFormat::Fp8FromFp16,
+                _ => {
+                    self.registry.drop_context(context_key.clone()).await;
+                    return Err(ControlError::invalid_argument(format!(
+                        "layer {} storage format {format} does not match imported {}",
+                        req.layer_names[index], metadata.dtype
+                    )));
+                }
+            });
+        }
+        for (index, (dim, role, layer_index, layer_count)) in req.layer_attention.iter().enumerate()
+        {
+            if *dim == 0 {
+                continue;
+            }
+            let meta = &metadatas[index];
+            let role = match role.as_str() {
+                "k" if segments_list[index] == 1 => Some(AttentionRole::Key),
+                "v" if segments_list[index] == 1 => Some(AttentionRole::Value),
+                "kv" if segments_list[index] == 2 => Some(AttentionRole::KeyValue),
+                "packed_kv" if segments_list[index] == 1 => Some(AttentionRole::PackedKeyValue),
+                _ => None,
+            };
+            let scalar = match formats[index] {
+                StorageFormat::Fp8FromBf16 => Some(Scalar16::Bf16),
+                StorageFormat::Fp8FromFp16 => Some(Scalar16::Fp16),
+                _ => None,
+            };
+            let width = *dim as usize
+                * if role == Some(AttentionRole::PackedKeyValue) {
+                    2
+                } else {
+                    1
+                };
+            if role.is_none()
+                || scalar.is_none()
+                || *layer_index >= *layer_count
+                || meta.shape.last().copied() != Some(width)
+                || meta.strides.last().copied() != Some(1)
+                || !bytes_per_block_list[index].is_multiple_of(width * 2)
+            {
+                self.registry.drop_context(context_key.clone()).await;
+                return Err(ControlError::invalid_argument(
+                    "attention layout does not match imported contiguous head vectors",
+                ));
+            }
+            formats[index] = StorageFormat::Attention {
+                scalar: scalar.expect("checked"),
+                role: role.expect("checked"),
+                head_dim: *dim,
+                layer_index: *layer_index,
+                layer_count: *layer_count,
+            };
+        }
         let layer_group_ids: Option<&[u32]> = if req.layer_group_ids.is_empty() {
             None
         } else {
@@ -281,6 +350,7 @@ impl LifecycleService {
             &segments_list,
             None,
             layer_group_ids,
+            Some(&formats),
             transfer_mode,
             req.page_first,
         ) {

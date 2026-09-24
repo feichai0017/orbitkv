@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn storage_identity_is_stable_and_isolates_incompatible_slots() {
     let first = StorageSlot {
+        format: crate::StorageFormat::Exact,
         layer: "layer.0".into(),
         group: 0,
         tp_rank: 0,
@@ -14,6 +15,7 @@ fn storage_identity_is_stable_and_isolates_incompatible_slots() {
     let mut second = first.clone();
     second.layer = "layer.1".into();
     let namespace = storage_namespace("model-v1", false, vec![first.clone(), second.clone()]);
+    assert!(namespace.starts_with("orbitkv:v2:"));
     assert_eq!(
         namespace,
         storage_namespace(
@@ -23,6 +25,10 @@ fn storage_identity_is_stable_and_isolates_incompatible_slots() {
         )
     );
     for changed in [
+        StorageSlot {
+            format: crate::StorageFormat::Fp8FromBf16,
+            ..first.clone()
+        },
         StorageSlot {
             group: 1,
             ..first.clone()

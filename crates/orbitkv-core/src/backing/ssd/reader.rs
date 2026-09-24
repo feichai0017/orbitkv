@@ -69,6 +69,7 @@ struct PrefetchTask {
     slots: Vec<RawBlock>,
     /// Shared batch context: per-block callback + completion counter.
     ctx: Arc<BatchContext>,
+    store: Arc<SsdBackingStore>,
 }
 
 /// SSD prefetch entry point. Spawns dispatcher + worker pipeline internally.
@@ -120,7 +121,7 @@ async fn ssd_prefetch_dispatcher(
 /// Read and write allocations use the same page/segment lifetime and sizes;
 /// a surviving prefix cannot pin unrelated pages from a larger batch.
 async fn dispatch_prefetch_batch(
-    store: &SsdBackingStore,
+    store: &Arc<SsdBackingStore>,
     task_tx: &tokio::sync::mpsc::Sender<PrefetchTask>,
     batch: PrefetchBatch,
 ) -> bool {
@@ -146,7 +147,9 @@ async fn dispatch_prefetch_batch(
                     allocation,
                 ));
             }
-            slots.push(RawBlock::new(segments));
+            let mut raw = RawBlock::new(segments);
+            raw.encoding = meta.encoding.clone();
+            slots.push(raw);
         }
         block_slots.push(slots);
     }
@@ -159,6 +162,7 @@ async fn dispatch_prefetch_batch(
             entry: req.entry,
             slots,
             ctx: Arc::clone(&ctx),
+            store: Arc::clone(store),
         };
 
         if let Err(err) = task_tx.send(task).await {
@@ -272,9 +276,9 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
         .sum();
     let ctx = task.ctx;
 
-    // Build iovecs from per-slot allocations
+    let expected_len = block_size as usize;
     let read_result = {
-        let iovecs: Vec<_> = task
+        let iovecs = task
             .slots
             .iter()
             .flat_map(|slot| {
@@ -282,44 +286,43 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
                     .map(|(ptr, size)| (ptr.as_ptr(), size))
             })
             .collect();
-
         io.readv_at_async(task.entry.shard_id, iovecs, task.entry.file_offset)
     };
 
     #[cfg(feature = "test-hooks")]
     crate::test_faults::pause("ssd").await;
 
-    // Await IO result and rebuild block
-    let expected_len = block_size as usize;
-    let block = match read_result {
-        Ok(rx) => match rx.await {
-            Ok(Ok(bytes_read)) if bytes_read == expected_len => {
-                Some(Arc::new(SealedBlock::from_slots(
-                    task.slots
-                        .into_iter()
-                        .zip(&task.entry.slots)
-                        .map(|(slot, meta)| (slot, meta.numa_node))
-                        .collect(),
-                )))
-            }
-            Ok(Ok(n)) => {
-                warn!("SSD prefetch: short read {} of {} bytes", n, expected_len);
-                None
-            }
-            Ok(Err(e)) => {
-                warn!("SSD prefetch: read error: {}", e);
-                None
-            }
-            Err(_) => {
-                warn!("SSD prefetch: read channel closed");
-                None
-            }
-        },
-        Err(e) => {
-            warn!("SSD prefetch: failed to submit read: {}", e);
-            None
-        }
+    let read_ok = match read_result {
+        Ok(rx) => matches!(rx.await, Ok(Ok(bytes)) if bytes == expected_len),
+        Err(_) => false,
     };
-
+    let slots = if !read_ok {
+        warn!("SSD prefetch: failed or short read for {key:?}");
+        None
+    } else if task
+        .slots
+        .iter()
+        .any(|slot| slot.validate_encoding().is_err())
+    {
+        core_metrics().storage_codec_decode_failures.add(1, &[]);
+        task.store
+            .inner
+            .lock()
+            .ring
+            .invalidate_encoded(&key, &task.entry);
+        warn!("SSD prefetch: corrupt encoded object {key:?}");
+        None
+    } else {
+        Some(task.slots)
+    };
+    let block = slots.map(|slots| {
+        Arc::new(SealedBlock::from_slots(
+            slots
+                .into_iter()
+                .zip(&task.entry.slots)
+                .map(|(slot, meta)| (slot, meta.numa_node))
+                .collect(),
+        ))
+    });
     (key, task.entry, block, duration_secs(), block_size, ctx)
 }

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Weak};
 
 use bytesize::ByteSize;
 use hashlink::LruCache;
@@ -28,7 +28,7 @@ pub use config::{
     DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdWritePolicy,
 };
 use cufile::CufileFile;
-use index::{SsdIndexEntry, SsdRingBuffer, WriteInfo};
+use index::{SsdIndexEntry, SsdRingBuffer};
 use reader::{PrefetchBatch, PrefetchRequest, ssd_prefetch_loop};
 use uring::{UringConfig, UringIoEngine};
 use writer::{SsdWriteBatch, SsdWriteCommand, ssd_writer_loop};
@@ -36,6 +36,7 @@ use writer::{SsdWriteBatch, SsdWriteCommand, ssd_writer_loop};
 /// Owns an immutable SSD source until the last query/GPU consumer releases it.
 pub struct SsdReadLease {
     pub(crate) entry: SsdIndexEntry,
+    key: StateKey,
     store: Arc<SsdBackingStore>,
 }
 
@@ -43,11 +44,25 @@ impl SsdReadLease {
     pub(crate) fn file(&self) -> &Arc<CufileFile> {
         &self.store.cufile_files[self.entry.shard_id]
     }
+
+    pub(crate) fn invalidate_encoded(&self) {
+        self.store
+            .inner
+            .lock()
+            .ring
+            .invalidate_encoded(&self.key, &self.entry);
+    }
 }
 
 impl Drop for SsdReadLease {
     fn drop(&mut self) {
-        self.entry.readers.fetch_sub(1, Ordering::Release);
+        if self.entry.readers.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.store
+                .inner
+                .lock()
+                .ring
+                .release_invalid(&self.key, &self.entry);
+        }
         core_metrics()
             .ssd_read_pinned_bytes
             .add(-(self.entry.len as i64), &[]);
@@ -169,7 +184,12 @@ impl SsdBackingStore {
         {
             return None;
         }
-        let entry = inner.ring.reserve(&key, slots)?;
+        let encoding = if slots.iter().any(|slot| slot.encoding.is_some()) {
+            index::Encoding::Encoded
+        } else {
+            index::Encoding::Raw
+        };
+        let entry = inner.ring.reserve(&key, slots, encoding)?;
         inner.pending_writes.insert(key.clone());
         core_metrics().ssd_write_inflight.add(1, &[]);
         Some(GpuWriteLease {
@@ -304,11 +324,21 @@ impl SsdBackingStore {
     pub(crate) fn pin_prefix(
         self: &Arc<Self>,
         keys: &[StateKey],
+        codec_budget: usize,
     ) -> Option<Vec<Arc<SsdReadLease>>> {
         if !self.gpu_io.available() {
             return None;
         }
         let inner = self.inner.lock();
+        // A tiny-budget CPU codec can persist a valid representation that
+        // cannot fit GPU staging. Preserve the complete prefix via io_uring.
+        if keys
+            .iter()
+            .map_while(|key| inner.ring.get(key))
+            .any(|entry| !entry.fits_gpu_decode(codec_budget))
+        {
+            return None;
+        }
         Some(
             keys.iter()
                 .map_while(|key| {
@@ -319,6 +349,7 @@ impl SsdBackingStore {
                         .add(entry.len as i64, &[]);
                     Some(Arc::new(SsdReadLease {
                         entry,
+                        key: key.clone(),
                         store: Arc::clone(self),
                     }))
                 })
@@ -336,22 +367,6 @@ impl SsdBackingStore {
         numa_node: Option<NumaNode>,
     ) -> Option<Arc<PinnedAllocation>> {
         (self.allocate_fn)(size, numa_node)
-    }
-
-    fn prepare_batch(&self, blocks: Vec<(StateKey, Weak<SealedBlock>)>) -> Vec<WriteInfo> {
-        let mut inner = self.inner.lock();
-        let candidates = blocks
-            .into_iter()
-            .filter_map(|(key, weak)| {
-                inner.pending_writes.remove(&key);
-                weak.upgrade().map(|block| (key, block))
-            })
-            .collect();
-        let prepared = inner.ring.prepare_batch(candidates);
-        for write in &prepared {
-            inner.pending_writes.insert(write.key.clone());
-        }
-        prepared
     }
 
     pub(super) fn commit_write(&self, key: &StateKey, success: bool) {

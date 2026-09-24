@@ -246,6 +246,7 @@ impl OrbitKVEngine {
             segments_list,
             None,
             None,
+            None,
             transfer_mode,
             page_first,
         )
@@ -281,12 +282,18 @@ impl OrbitKVEngine {
         segments_list: &[usize],
         block_stride_bytes_list: Option<&[usize]>,
         layer_group_ids: Option<&[u32]>,
+        storage_formats: Option<&[orbitkv_state::StorageFormat]>,
         transfer_mode: TransferMode,
         page_first: bool,
     ) -> Result<(), EngineError> {
         // Build all registrations
         let ssd_enabled = self.storage.is_ssd_enabled();
         let batch_size = layer_names.len();
+        if storage_formats.is_some_and(|formats| formats.len() != batch_size) {
+            return Err(EngineError::InvalidArgument(
+                "storage format count differs from layers".into(),
+            ));
+        }
         if data_ptrs.len() != batch_size
             || size_bytes_list.len() != batch_size
             || num_blocks_list.len() != batch_size
@@ -334,6 +341,11 @@ impl OrbitKVEngine {
             )
             .map_err(|e| EngineError::InvalidArgument(format!("layer {layer_name}: {e}")))?;
 
+            layout.storage_format = self
+                .storage
+                .codec
+                .format(storage_formats.map_or(Default::default(), |formats| formats[i]));
+
             if let Some(strides) = block_stride_bytes_list {
                 layout = layout.with_block_stride(strides[i]).map_err(|e| {
                     EngineError::InvalidArgument(format!("layer {layer_name}: {e}"))
@@ -368,6 +380,7 @@ impl OrbitKVEngine {
         };
 
         // Get or create instance
+        let page_first = page_first && self.storage.codec == crate::StorageCodec::None;
         let instance =
             self.get_or_create_instance(instance_id, namespace, tp_size, world_size, page_first)?;
 

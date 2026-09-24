@@ -98,3 +98,10 @@ def test_missing_additional_config_defaults_to_no_split():
     cfg = _make_vllm_config(pp_size=4)
     cfg.additional_config = None
     assert derive_namespace(cfg, tp_size=8) == _ns(pp_size=4, mla_layer_split=False)
+
+
+def test_engine_kv_precision_is_independent_of_weight_quantization():
+    cfg = _make_vllm_config()
+    original = derive_namespace(cfg, tp_size=1)
+    cfg.cache_config.cache_dtype = "auto"
+    assert derive_namespace(cfg, tp_size=1) != original

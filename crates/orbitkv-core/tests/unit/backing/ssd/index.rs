@@ -1,6 +1,74 @@
 use super::*;
 
 #[test]
+fn failed_decode_hides_pinned_generation_until_drain_and_preserves_replacements() {
+    let mut ring = SsdRingBuffer::new_sharded(vec![16384, 16384], 512);
+    let key = make_key(1);
+    let encoding = || Encoding::Encoded;
+    let slots = || {
+        vec![SlotMeta::new(
+            smallvec::smallvec![512],
+            crate::NumaNode::UNKNOWN,
+        )]
+    };
+    let first = ring.reserve(&key, slots(), encoding()).unwrap();
+    assert!(ring.commit(&key, true));
+    ring.invalidate_encoded(&key, &first);
+    assert!(ring.get(&key).is_none());
+    let repaired = ring.reserve(&key, slots(), encoding()).unwrap();
+    assert!(ring.commit(&key, true));
+    ring.invalidate_encoded(&key, &first);
+    assert!(ring.get(&key).is_some());
+    repaired.readers.store(2, Ordering::Release);
+    ring.invalidate_encoded(&key, &repaired);
+    assert!(ring.get(&key).is_none());
+    assert!(ring.reserve(&key, slots(), encoding()).is_none());
+    assert!(matches!(
+        ring.entries.get(&key),
+        Some(SsdEntryState::Invalid(_))
+    ));
+    repaired.readers.store(1, Ordering::Release);
+    ring.release_invalid(&key, &repaired);
+    assert!(ring.entries.contains_key(&key));
+    repaired.readers.store(0, Ordering::Release);
+    ring.release_invalid(&key, &repaired);
+    assert!(ring.get(&key).is_none());
+    let next = ring.reserve(&key, slots(), encoding()).unwrap();
+    assert!(ring.commit(&key, true));
+    assert_eq!(next.shard_id, first.shard_id);
+    ring.invalidate_encoded(&key, &first);
+    ring.release_invalid(&key, &repaired);
+    assert!(ring.get(&key).is_some());
+}
+
+#[test]
+fn invalidated_extent_cannot_be_overwritten_until_gpu_leases_drain() {
+    let mut ring = SsdRingBuffer::new_sharded(vec![4096], 4096);
+    let slots = || {
+        vec![SlotMeta::new(
+            smallvec::smallvec![512],
+            crate::NumaNode::UNKNOWN,
+        )]
+    };
+    let key = make_key(1);
+    let entry = ring.reserve(&key, slots(), Encoding::Encoded).unwrap();
+    ring.commit(&key, true);
+    entry.readers.store(1, Ordering::Release);
+    ring.invalidate_encoded(&key, &entry);
+    assert!(ring.get(&key).is_none());
+    assert!(ring.reserve(&make_key(2), slots(), Encoding::Raw).is_none());
+    assert_eq!((ring.shards[0].head, ring.shards[0].tail), (4096, 0));
+    entry.readers.store(0, Ordering::Release);
+    ring.release_invalid(&key, &entry);
+    let repaired = ring.reserve(&key, slots(), Encoding::Encoded).unwrap();
+    ring.commit(&key, true);
+    assert_ne!(repaired.begin, entry.begin);
+    ring.invalidate_encoded(&key, &entry);
+    ring.release_invalid(&key, &entry);
+    assert!(ring.get(&key).is_some());
+}
+
+#[test]
 fn failed_write_retry_does_not_hide_or_evict_another_generation() {
     let mut ring = SsdRingBuffer::new_sharded(vec![16384, 16384], 4096);
     let slots = || {
@@ -10,13 +78,13 @@ fn failed_write_retry_does_not_hide_or_evict_another_generation() {
         )]
     };
     let key = make_key(1);
-    let first = ring.reserve(&key, slots()).unwrap();
+    let first = ring.reserve(&key, slots(), Encoding::Raw).unwrap();
     assert_eq!(first.len, 4096);
     assert_eq!(first.slots[0].total_size(), 512);
     assert!(ring.get(&key).is_none());
-    assert!(ring.reserve(&key, slots()).is_none());
+    assert!(ring.reserve(&key, slots(), Encoding::Raw).is_none());
     assert!(!ring.commit(&key, false));
-    let retry = ring.reserve(&key, slots()).unwrap();
+    let retry = ring.reserve(&key, slots(), Encoding::Raw).unwrap();
     assert_ne!(first.shard_id, retry.shard_id);
     assert!(ring.commit(&key, true));
     ring.advance_tail(first.shard_id, 4096);
@@ -26,6 +94,35 @@ fn failed_write_retry_does_not_hide_or_evict_another_generation() {
 
 fn make_key(n: u8) -> StateKey {
     StateKey::new("test".to_string(), vec![n])
+}
+
+#[test]
+fn gpu_prefix_budget_falls_back_for_valid_encoded_segments_without_truncating_raw_hits() {
+    let ring = SsdRingBuffer::new(4096);
+    let mut entry = ring.test_entry(0, 0, 4096);
+    entry.slots.push(SlotMeta::new(
+        smallvec::smallvec![4096],
+        crate::NumaNode::UNKNOWN,
+    ));
+    assert!(
+        entry.fits_gpu_decode(4096),
+        "raw reads require no codec workspace"
+    );
+    entry.slots[0].encoding = Some(vec![crate::codec::EncodedSegment {
+        version: 1,
+        format: orbitkv_state::StorageFormat::Fp8FromBf16,
+        logical_bytes: 8192,
+        stored_bytes: 4096,
+        checksum: 0,
+    }]);
+    assert!(
+        !entry.fits_gpu_decode(4096),
+        "valid CPU fallback must use the host reader"
+    );
+    assert!(!entry.fits_gpu_decode(4096 + 8192 - 1));
+    assert!(entry.fits_gpu_decode(4096 + 8192));
+    entry.slots[0].encoding.as_mut().unwrap()[0].stored_bytes = usize::MAX;
+    assert!(!entry.fits_gpu_decode(usize::MAX));
 }
 
 impl SsdRingBuffer {
@@ -40,6 +137,7 @@ impl SsdRingBuffer {
             len,
             file_offset: begin % self.shards[shard_id].capacity.max(1),
             slots: vec![],
+            encoding: Encoding::Raw,
             readers: Arc::new(AtomicUsize::new(0)),
         }
     }

@@ -1,4 +1,4 @@
-use super::{SsdBackingStore, index::SsdIndexEntry, uring::UringIoEngine};
+use super::{SsdBackingStore, index::Encoding, uring::UringIoEngine};
 use crate::block::{SealedBlock, StateKey};
 use crate::metrics::core_metrics;
 use futures::stream::{FuturesOrdered, StreamExt};
@@ -21,10 +21,9 @@ pub(super) enum SsdWriteCommand {
 struct WriteTask {
     key: StateKey,
     block: Arc<SealedBlock>,
-    entry: SsdIndexEntry,
 }
 
-/// Result of a single write operation: (key, success, duration_secs, block_size)
+/// Result: key, success, elapsed seconds, physical bytes (zero for unreserved skips).
 type WriteResult = (StateKey, bool, f64, u64);
 
 // ============================================================================
@@ -75,7 +74,7 @@ pub(super) async fn ssd_writer_loop(
                     metrics.ssd_write_bytes.add(block_size, &[]);
                     let throughput = block_size as f64 / duration_secs;
                     metrics.ssd_write_throughput_bytes_per_second.record(throughput, &[]);
-                } else {
+                } else if block_size != 0 {
                     metrics.ssd_write_failures.add(1, &[]);
                     warn!("SSD cache write failed for {:?}", key);
                 }
@@ -85,7 +84,7 @@ pub(super) async fn ssd_writer_loop(
             _ = std::future::ready(()), if inflight.len() < max_inflight && !pending.is_empty() => {
                 let task = pending.pop_front().unwrap();
                 metrics.ssd_write_inflight.add(1, &[]);
-                inflight.push_back(Box::pin(execute_write(task, io.clone())));
+                inflight.push_back(Box::pin(execute_write(task, store.clone(), io.clone())));
             }
 
             // Priority 3: Receive new command
@@ -95,21 +94,13 @@ pub(super) async fn ssd_writer_loop(
                         // Dequeue metric
                         metrics.ssd_write_queue_pending.add(-(b.blocks.len() as i64), &[]);
 
-                        // Prepare batch: filter + allocate + insert Writing
                         let Some(s) = store.upgrade() else { continue };
-                        let prepared = s.prepare_batch(b.blocks);
-
-                        if prepared.is_empty() {
-                            continue;
-                        }
-
-                        // Convert to WriteTask
-                        for w in prepared {
-                            pending.push_back(WriteTask {
-                                key: w.key,
-                                block: w.block,
-                                entry: w.entry,
-                            });
+                        for (key, weak) in b.blocks {
+                            if let Some(block) = weak.upgrade() {
+                                pending.push_back(WriteTask { key, block });
+                            } else {
+                                s.inner.lock().pending_writes.remove(&key);
+                            }
                         }
                     }
                     Some(SsdWriteCommand::Flush(tx)) => {
@@ -152,60 +143,68 @@ async fn drain_inflight(
             metrics
                 .ssd_write_throughput_bytes_per_second
                 .record(throughput, &[]);
-        } else {
+        } else if block_size != 0 {
             metrics.ssd_write_failures.add(1, &[]);
             warn!("SSD cache write failed for {:?}", key);
         }
     }
 }
 
-/// Execute a single block write to SSD.
-async fn execute_write(task: WriteTask, io: Arc<UringIoEngine>) -> WriteResult {
+/// Reserve extents at the stored size; retain sealed buffers through I/O completion.
+async fn execute_write(
+    task: WriteTask,
+    store: Weak<SsdBackingStore>,
+    io: Arc<UringIoEngine>,
+) -> WriteResult {
     let start = Instant::now();
     let key = task.key;
-    let block_size = task.block.memory_footprint();
-
-    let result = write_block_to_ssd(
-        &io,
-        task.entry.shard_id,
-        task.entry.file_offset,
-        &task.block,
-    )
-    .await;
-
-    let duration_secs = start.elapsed().as_secs_f64();
-    core_metrics()
-        .ssd_write_duration_seconds
-        .record(duration_secs, &[]);
-    (key, result.is_ok(), duration_secs, block_size)
-}
-
-/// Write a sealed block to SSD file using writev.
-///
-/// Uses vectorized I/O to write all slots in a single syscall, reducing overhead
-/// compared to writing each slot separately.
-async fn write_block_to_ssd(
-    io: &UringIoEngine,
-    shard_id: usize,
-    offset: u64,
-    block: &SealedBlock,
-) -> std::io::Result<()> {
-    // Build iovecs from RawBlock segments (layout-agnostic)
+    let Some(store) = store.upgrade() else {
+        return (key, false, 0.0, 0);
+    };
+    let encoded = task.block.slots().iter().any(|s| s.encoding.is_some());
+    let slots = task
+        .block
+        .slots()
+        .iter()
+        .zip(task.block.slot_numas())
+        .map(|(slot, numa)| {
+            let mut meta = crate::SlotMeta::new(
+                slot.segment_iovecs().map(|(_, size)| size as u64).collect(),
+                *numa,
+            );
+            meta.encoding = slot.encoding.clone();
+            meta
+        })
+        .collect();
+    let encoding = if encoded {
+        Encoding::Encoded
+    } else {
+        Encoding::Raw
+    };
+    let entry = store.inner.lock().ring.reserve(&key, slots, encoding);
+    let Some(entry) = entry else {
+        return (key, false, start.elapsed().as_secs_f64(), 0);
+    };
+    let bytes = task.block.memory_footprint();
     let rx = {
-        let iovecs: Vec<_> = block
+        let iovecs = task
+            .block
             .slots()
             .iter()
             .flat_map(|slot| {
                 slot.segment_iovecs()
-                    .map(|(ptr, size)| (ptr.as_ptr() as *const u8, size))
+                    .map(|(ptr, len)| (ptr.as_ptr() as *const u8, len))
             })
             .collect();
-
-        io.writev_at_async(shard_id, iovecs, offset)?
+        io.writev_at_async(entry.shard_id, iovecs, entry.file_offset)
     };
-
-    rx.await
-        .map_err(|_| std::io::Error::other("writev recv failed"))??;
-
-    Ok(())
+    let success = match rx {
+        Ok(rx) => matches!(rx.await, Ok(Ok(written)) if written as u64 == bytes),
+        Err(_) => false,
+    };
+    let duration = start.elapsed().as_secs_f64();
+    core_metrics()
+        .ssd_write_duration_seconds
+        .record(duration, &[]);
+    (key, success, duration, bytes)
 }

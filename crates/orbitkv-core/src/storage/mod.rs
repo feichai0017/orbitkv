@@ -55,6 +55,9 @@ pub struct StorageConfig {
     pub hint_value_size_bytes: Option<usize>,
     /// Optional SSD cache for sealed blocks (single-node, FIFO).
     pub ssd_cache_config: Option<SsdCacheConfig>,
+    pub codec: crate::StorageCodec,
+    /// GPU scratch per transfer worker.
+    pub codec_budget: usize,
     /// Optional Mooncake RDMA rail filter. Empty means that Mooncake selects
     /// the available transport, including TCP fallback.
     pub mooncake_nic_names: Vec<String>,
@@ -85,6 +88,8 @@ impl Default for StorageConfig {
             cache_protected_percent: 0,
             hint_value_size_bytes: None,
             ssd_cache_config: None,
+            codec: crate::StorageCodec::None,
+            codec_budget: 64 * 1024 * 1024,
             mooncake_nic_names: Vec::new(),
             enable_numa_affinity: true,
             blockwise_alloc: false,
@@ -104,6 +109,8 @@ pub(crate) enum TransferAuthorizationError {
 
 pub(crate) struct StorageEngine {
     allocator: Arc<PinnedAllocator>,
+    pub(crate) codec: crate::StorageCodec,
+    pub(crate) codec_budget: usize,
     read_cache: Arc<ReadCache>,
     prefetch: PrefetchScheduler,
     write_pipeline: Arc<WritePipeline>,
@@ -123,6 +130,12 @@ impl StorageEngine {
         config: StorageConfig,
         numa_nodes: &[NumaNode],
     ) -> Result<Arc<Self>, String> {
+        if config.codec_budget < 4096 || config.codec_budget > u32::MAX as usize {
+            return Err("codec budget must be between 4 KiB and 4 GiB - 1".into());
+        }
+        if config.codec == crate::StorageCodec::Ans {
+            crate::codec::ans::Library::load()?;
+        }
         if config.cache_protected_percent > 100 {
             return Err("cache protected percent must be between 0 and 100".into());
         }
@@ -148,7 +161,7 @@ impl StorageEngine {
             info!("Blockwise allocation enabled for batch_save");
         }
 
-        let ssd_enabled = ssd_cache_config.is_some();
+        let cpu_readable = ssd_cache_config.is_some() || config.codec != crate::StorageCodec::None;
         let pool_shards = config.pool_shards;
 
         // Create unified allocator based on NUMA configuration
@@ -162,7 +175,7 @@ impl StorageEngine {
                 numa_nodes,
                 pool_shards,
                 use_hugepages,
-                ssd_enabled,
+                cpu_readable,
                 unit_hint,
             ))
         } else {
@@ -171,7 +184,7 @@ impl StorageEngine {
                 capacity_bytes,
                 pool_shards,
                 use_hugepages,
-                ssd_enabled,
+                cpu_readable,
                 unit_hint,
             ))
         };
@@ -250,7 +263,8 @@ impl StorageEngine {
             #[cfg(not(feature = "mooncake"))]
             let remote_fetch = None;
 
-            let prefetch = PrefetchScheduler::new(ssd_store.clone(), remote_fetch);
+            let prefetch =
+                PrefetchScheduler::new(ssd_store.clone(), remote_fetch, config.codec_budget);
 
             let transfer_lock = Arc::new(transfer_lock::TransferLockManager::new(
                 transfer_lock_timeout,
@@ -259,6 +273,8 @@ impl StorageEngine {
 
             Self {
                 allocator,
+                codec: config.codec,
+                codec_budget: config.codec_budget,
                 read_cache: read_cache.clone(),
                 prefetch,
                 write_pipeline: write_pipeline.clone(),

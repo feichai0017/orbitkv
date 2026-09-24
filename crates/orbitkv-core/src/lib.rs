@@ -6,6 +6,8 @@ pub mod test_faults;
 
 #[macro_use]
 mod trace;
+mod codec;
+pub use codec::StorageCodec;
 mod backing;
 mod block;
 mod engine;

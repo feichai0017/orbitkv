@@ -210,6 +210,7 @@ impl OrbitKVEngine {
             layers,
             completion,
             reservations,
+            codec_budget: self.storage.codec_budget,
         })?;
         Ok(receiver)
     }

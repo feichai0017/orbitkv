@@ -270,7 +270,10 @@ def test_use_page_first_detection(case: str, kwargs: dict, additional_config: di
     ctx = _make_ctx(**kwargs)
     worker = WorkerConnector(
         ctx,
-        vllm_config=SimpleNamespace(additional_config=additional_config),
+        vllm_config=SimpleNamespace(
+            model_config=SimpleNamespace(get_head_size=lambda: 128),
+            additional_config=additional_config,
+        ),
     )
     try:
         assert worker._use_page_first() is expected, case
@@ -294,7 +297,9 @@ def test_hma_disables_page_first_registration():
     )
     worker = WorkerConnector(
         _make_ctx(is_mla=True),
-        vllm_config=SimpleNamespace(additional_config={}),
+        vllm_config=SimpleNamespace(
+            model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
+        ),
         kv_cache_config=kv_cache_config,
     )
     try:
@@ -317,7 +322,12 @@ def test_page_first_block_shard_is_a_partition():
     seen: list[int] = []
     for tp_rank in range(tp_size):
         ctx = _make_ctx(is_mla=True, tp_rank=tp_rank, tp_size=tp_size)
-        worker = WorkerConnector(ctx, vllm_config=SimpleNamespace(additional_config={}))
+        worker = WorkerConnector(
+            ctx,
+            vllm_config=SimpleNamespace(
+                model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
+            ),
+        )
         try:
             ids, hashes = worker._block_shard(intent.block_ids_by_group[0], intent.block_hashes)
         finally:
@@ -336,7 +346,12 @@ def test_page_first_saves_all_layers_for_this_ranks_block_stripe():
     from orbitkv.vllm.worker import SaveTask, WorkerConnector
 
     ctx = _make_ctx(is_mla=True, tp_rank=1, tp_size=2, device_id=1)
-    worker = WorkerConnector(ctx, vllm_config=SimpleNamespace(additional_config={}))
+    worker = WorkerConnector(
+        ctx,
+        vllm_config=SimpleNamespace(
+            model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
+        ),
+    )
     worker._registered_layers = ["a", "b", "c"]
     worker._page_first = True
     worker._torch_device = None
@@ -370,7 +385,12 @@ def test_recurrent_save_omits_null_group_target():
     from orbitkv.vllm.worker import SaveTask, WorkerConnector
 
     ctx = _make_ctx()
-    worker = WorkerConnector(ctx, vllm_config=SimpleNamespace(additional_config={}))
+    worker = WorkerConnector(
+        ctx,
+        vllm_config=SimpleNamespace(
+            model_config=SimpleNamespace(get_head_size=lambda: 128), additional_config={}
+        ),
+    )
     worker._cache_groups = SimpleNamespace(has_recurrent_state=True)
     worker._registered_layers = ["attention", "recurrent"]
     worker._layer_to_group = {"attention": 0, "recurrent": 1}
@@ -405,7 +425,10 @@ def test_page_first_layer_split_saves_own_layers_for_all_blocks():
     ctx = _make_ctx(is_mla=True, tp_rank=1, tp_size=2, device_id=1)
     worker = WorkerConnector(
         ctx,
-        vllm_config=SimpleNamespace(additional_config={"mla_layer_split_kv_cache": True}),
+        vllm_config=SimpleNamespace(
+            model_config=SimpleNamespace(get_head_size=lambda: 128),
+            additional_config={"mla_layer_split_kv_cache": True},
+        ),
     )
     assert worker._use_mla_layer_split_registration
     # This rank's shard is layers {b, d}; the other rank holds the rest.

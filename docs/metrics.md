@@ -32,6 +32,28 @@ Cache Manager → OpenTelemetry Collector → Prometheus → Grafana
 
 OrbitKV exposes the following metrics for monitoring KV cache operations:
 
+### Storage encoding
+
+See [codec qualification](storage-formats.md#qualification). `orbitkv_storage_codec_bytes_total`
+labels `logical` and `stored` count encoded publications; stored includes per-segment
+alignment and mixed raw segments. `orbitkv_storage_codec_transfer_bytes_total`
+labels `d2h`/`h2d` count actual codec-path payload transfers, including CPU fallback.
+`orbitkv_storage_codec_reserved_bytes` holds active codec operation reservations
+through completion. `orbitkv_storage_codec_workspace_bytes` measures retained
+GPU arenas, including idle workers and SSD decoder inputs; they are released at
+worker teardown. `orbitkv_storage_codec_workspace_allocations_total` counts arena
+allocations and growth, while `orbitkv_storage_codec_batches_total` and the
+`orbitkv_storage_codec_batch_segments` histogram report actual batch sizes.
+Budgets apply per worker, not across the whole Manager. Duration and decode-failure metrics
+track complete codec transfers, corrupt objects rejected before admission and
+failed GPU codec restores.
+SSD prefetch byte counters now count stored physical segment bytes, including
+encoded payloads and padding. GPU load counters count reconstructed logical bytes.
+Codec transfer counters cover saves through the codec worker and restores of
+encoded slots, including their raw sibling segments; raw-only restores use the
+ordinary copy backend and are excluded from the codec counter.
+GDS counters apply only to cuFile operations and do not prove native GDS.
+
 ### Query ownership and preparation
 
 - **orbitkv_query_reserved_bytes** tracks total conservative per-owner bytes.
@@ -245,7 +267,7 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 
 ### Save Metrics (GPU → CPU)
 - **orbitkv_save_bytes_total** (Counter)
-  - Total bytes saved from GPU to CPU storage
+  - Logical bytes published from GPU pages, before storage encoding
   - Use case: Monitor save throughput
 
 - **orbitkv_save_duration_seconds** (Histogram)

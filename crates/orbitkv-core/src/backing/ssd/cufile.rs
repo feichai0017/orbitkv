@@ -221,6 +221,36 @@ pub(crate) struct IoBatch {
     pub copies: Vec<CopyRange>,
 }
 
+impl IoBatch {
+    fn validate(&self) -> Result<(), String> {
+        let end = self
+            .file_offset
+            .checked_add(self.bytes as u64)
+            .filter(|&end| i64::try_from(end).is_ok())
+            .ok_or("SSD batch offset overflow")?;
+        if self.bytes == 0
+            || self.bytes > STAGING_BYTES
+            || !self.bytes.is_multiple_of(ALIGNMENT)
+            || !self.file_offset.is_multiple_of(ALIGNMENT as u64)
+        {
+            return Err("SSD batch exceeds aligned GPU staging".into());
+        }
+        for copy in &self.copies {
+            if copy.device == 0
+                || copy.file_offset < self.file_offset
+                || copy
+                    .file_offset
+                    .checked_add(copy.bytes as u64)
+                    .is_none_or(|limit| limit > end)
+                || copy.device.checked_add(copy.bytes as u64).is_none()
+            {
+                return Err("SSD batch copy exceeds its owned ranges".into());
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Merge adjacent aligned intervals, splitting large state checkpoints to keep
 /// staging bounded. Read amplification is restricted to the aligned edges.
 pub(crate) fn plan_reads(mut copies: Vec<CopyRange>) -> Result<Vec<IoBatch>, String> {

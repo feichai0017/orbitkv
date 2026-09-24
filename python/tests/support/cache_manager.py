@@ -309,6 +309,16 @@ class ClientContext:
             segments_list,
             "direct",
             False,
+            layer_attention=[
+                (self.head_size, "kv", index, self.num_layers)
+                if str(t.dtype) in {"torch.bfloat16", "torch.float16"}
+                else (0, "", 0, 0)
+                for index, t in enumerate(kv_caches.values())
+            ],
+            layer_formats=[
+                {"torch.bfloat16": "bf16", "torch.float16": "fp16"}.get(str(t.dtype), "exact")
+                for t in kv_caches.values()
+            ],
         )
 
         if not ok:

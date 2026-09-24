@@ -6,6 +6,9 @@ use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone)]
 pub struct TensorMetadata {
+    pub dtype: String,
+    pub shape: Vec<usize>,
+    pub strides: Vec<usize>,
     pub data_ptr: u64,
     pub size_bytes: usize,
     pub device_id: i32,
@@ -201,11 +204,17 @@ impl CudaTensorRegistry {
                     )
                 })?;
 
+            let shape = tensor.getattr("shape")?.extract()?;
+            let strides = tensor.call_method0("stride")?.extract()?;
             let tensor_owned = tensor.unbind();
+            let dtype = tensor_owned.bind(py).getattr("dtype")?.str()?.to_string();
 
             Ok(LayerTensor {
                 tensor: tensor_owned,
                 metadata: TensorMetadata {
+                    dtype,
+                    shape,
+                    strides,
                     data_ptr,
                     size_bytes,
                     device_id: resolved_device,

@@ -529,26 +529,31 @@ impl InstanceContext {
         // The third tuple element (padded_block_bytes) is the per-layer page
         // footprint; it must also agree across devices because the page-first
         // layout concatenates layers by this size.
-        let mut geometry_by_name: HashMap<&str, (usize, bool, usize)> = HashMap::new();
+        let mut geometry_by_name: HashMap<
+            &str,
+            (usize, bool, usize, orbitkv_state::StorageFormat),
+        > = HashMap::new();
         for gpu in gpus() {
             for (name, layout) in &gpu.kv_caches {
                 let geometry = (
                     layout.segment_bytes(),
                     layout.is_split(),
                     layout.padded_block_bytes(),
+                    layout.storage_format,
                 );
                 match geometry_by_name.insert(name, geometry) {
                     None => {}
                     Some(existing) if existing == geometry => {}
-                    Some((existing_bytes, existing_split, existing_padded)) => {
+                    Some((existing_bytes, existing_split, existing_padded, existing_format)) => {
                         return Err(EngineError::InvalidArgument(format!(
                             "layer {name} registered with inconsistent geometry: \
                              segment_bytes={existing_bytes} split={existing_split} \
-                             padded_block_bytes={existing_padded} vs \
-                             segment_bytes={} split={} padded_block_bytes={} on device {}",
+                             padded_block_bytes={existing_padded} format={existing_format:?} vs \
+                             segment_bytes={} split={} padded_block_bytes={} format={:?} on device {}",
                             layout.segment_bytes(),
                             layout.is_split(),
                             layout.padded_block_bytes(),
+                            layout.storage_format,
                             gpu.device_id(),
                         )));
                     }
@@ -699,6 +704,7 @@ impl InstanceContext {
                 gpus()
                     .flat_map(|gpu| {
                         gpu.kv_caches.iter().map(|(name, layout)| StorageSlot {
+                            format: layout.storage_format,
                             layer: name.clone(),
                             group: gpu.group_of_layer(name),
                             tp_rank: gpu.tp_rank,

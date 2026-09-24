@@ -211,6 +211,7 @@ class WorkerConnector:
     ):
         self._ctx = context
         self._client = context.client
+        self._head_dim = vllm_config.model_config.get_head_size() if vllm_config else 0
         self._kv_cache_config = kv_cache_config
         self._cache_groups = CacheGroupLayout.from_config(kv_cache_config)
         self._layer_to_group = self._cache_groups.layer_to_group()
@@ -335,6 +336,9 @@ class WorkerConnector:
         layer_bytes_per_block = []
         layer_kv_stride_bytes = []
         layer_segments = []
+        layer_formats = []
+        layer_attention = []
+        attention_positions = None
         split_layer_count = 0
         split_blocks_per_logical = 1
         split_logical_blocks = 0
@@ -375,6 +379,56 @@ class WorkerConnector:
             layer_bytes_per_block.append(registration.bytes_per_block)
             layer_kv_stride_bytes.append(registration.kv_stride_bytes)
             layer_segments.append(registration.segments)
+            layer_formats.append(
+                "exact"
+                if is_recurrent_state
+                else {
+                    "torch.bfloat16": "bf16",
+                    "torch.float16": "fp16",
+                    "torch.float8_e4m3fn": "fp8_e4m3",
+                }.get(str(registration_tensor.dtype), "exact")
+            )
+
+            head_dim = getattr(self, "_head_dim", 0)
+            attention_role = ""
+            if (
+                not is_recurrent_state
+                and not self._ctx.is_mla
+                and layer_formats[-1] in {"bf16", "fp16"}
+                and registration_tensor.stride(-1) == 1
+            ):
+                if registration.segments == 2 and registration_tensor.shape[-1] == head_dim:
+                    attention_role = "kv"
+                elif (
+                    registration.segments == 1
+                    and len(registration_tensor.shape) == 4
+                    and registration_tensor.shape[-1] == 2 * head_dim
+                ):
+                    attention_role = "packed_kv"
+                width = registration_tensor.shape[-1]
+                if any(stride % width for stride in registration_tensor.stride()[:-1]):
+                    attention_role = ""
+            typed_heads = bool(attention_role)
+            if typed_heads and attention_positions is None:
+                from vllm.model_executor.models.utils import extract_layer_index
+
+                model_indices = {}
+                for name in kv_caches:
+                    try:
+                        model_indices[name] = extract_layer_index(name)
+                    except (ValueError, AssertionError):
+                        continue
+                order = {
+                    index: position
+                    for position, index in enumerate(sorted(set(model_indices.values())))
+                }
+                attention_positions = {
+                    name: (order[index], len(order)) for name, index in model_indices.items()
+                }
+            position = (attention_positions or {}).get(layer_name) if typed_heads else None
+            layer_attention.append(
+                (head_dim, attention_role, *position) if position is not None else (0, "", 0, 0)
+            )
 
             if registration.physical_blocks_per_logical_block > 1:
                 split_layer_count += 1
@@ -411,6 +465,8 @@ class WorkerConnector:
             self._ctx.transfer_backend,
             self._page_first,
             layer_group_ids=layer_group_ids,
+            layer_formats=layer_formats,
+            layer_attention=layer_attention,
         )
 
         if not ok:

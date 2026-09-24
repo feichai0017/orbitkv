@@ -4,6 +4,10 @@ Use the same inference engine to compare cache backends. Comparing a vLLM run
 directly against an SGLang run also measures their attention kernels, scheduler,
 and frontend; it does not isolate the cache implementation.
 
+For GPU batching, encoded DRAM/SSD and CPU AVX-512 measurements, see
+[storage codec qualification](storage-formats.md#qualification). Those pressure
+workloads are separate from the ordinary restore measurements below.
+
 The first reference backends are vLLM's `OffloadingConnector` with pinned CPU
 memory and SGLang's HiCache with a CPU pool. Native HBM-only prefix caching is
 the control for each engine. Independent LMCache and FlexKV comparisons must

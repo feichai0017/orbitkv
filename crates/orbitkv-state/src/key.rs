@@ -9,6 +9,7 @@ pub type Digest = [u8; 32];
 /// One stored slot's geometry, independent of GPU address and pool capacity.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct StorageSlot {
+    pub format: crate::StorageFormat,
     pub layer: String,
     pub group: u32,
     pub tp_rank: usize,
@@ -24,10 +25,11 @@ pub fn storage_namespace(identity: &str, page_first: bool, mut slots: Vec<Storag
     slots.sort_unstable();
     slots.dedup();
     let mut digest = Sha256::new();
-    digest.update(b"orbitkv.storage-identity.v1\0");
+    // v2 requires peers to preserve encoded-residency metadata.
+    digest.update(b"orbitkv.storage-identity.v2\0");
     // Only strings, booleans and integers are serialized; serialization cannot fail.
     digest.update(serde_json::to_vec(&(identity, page_first, slots)).expect("storage identity"));
-    format!("orbitkv:v1:{:x}", digest.finalize())
+    format!("orbitkv:v2:{:x}", digest.finalize())
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

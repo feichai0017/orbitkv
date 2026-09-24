@@ -18,6 +18,8 @@ adapters use CUDA IPC for GPU transfers and the same Cache Manager API.
   writes/restores where available and io_uring otherwise; see the
   [GPU storage configuration and qualification gates](../docs/gds.md).
 - Compiled recovery ranges for supported attention, window and checkpoint layouts.
+- Optional GPU ANS lossless compression and experimental FP8/3-bit/4-bit
+  TurboQuant storage in DRAM, SSD and peer transfers; see [storage formats](../docs/storage-formats.md).
 - Native query ownership, byte budgets and completion fences.
 - Prometheus metrics and optional request timelines.
 - Experimental peer cache sharing through Mooncake Transfer Engine.
