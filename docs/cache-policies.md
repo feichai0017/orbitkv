@@ -55,8 +55,10 @@ consumed the page. Pure HBM hits and prepared-lease handoff do not provide an
 additional reuse signal. The first reuse after DRAM eviction may need
 recomputation under `reuse`, because no SSD replica was written on the first
 publication. Selective writes can therefore reduce write traffic while making
-latency or throughput worse. Save completion still confirms only GPU-to-DRAM
-copy completion, not an SSD replica or restart durability.
+latency or throughput worse. With io_uring, save completion confirms GPU-to-DRAM
+copy completion, not an SSD replica. Complete-group cuFile writes also hold
+Publish until their SSD writes complete. Neither path provides durability
+across Manager restart; see [GPU storage ownership](gds.md#data-flow-and-ownership).
 
 ## Configure and measure
 

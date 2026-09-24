@@ -183,7 +183,9 @@ The DRAM-only path retains its batching option (`--blockwise-alloc` opts out).
 
 The [automatic SSD backend](gds.md) selects native cuFile when initialization on
 ext4/XFS succeeds and uses io_uring otherwise. cuFile leases SSD extents and restores selected
-state through bounded GPU staging. It shares both engines' existing API and
+state through bounded GPU staging, merging adjacent ranges across source leases
+within each file. It reserves physical SSD capacity before serving; space/quota
+errors fail startup. It shares both engines' existing API and
 ownership checks. Complete-group writes use GPU staging; fragmented saves and
 speculative preparation continue through DRAM;
 native GDS hardware/performance qualification remains separate.

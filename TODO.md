@@ -16,17 +16,20 @@ numbers below group work areas rather than imposing a strict serial schedule.
   leases, bounded GPU staging, split/page-first layouts, oversized checkpoints,
   cancellation, failed writes and short reads; keep both engines on the existing cache API.
 - [ ] Qualify native GDS on a supported NVMe mount with CPU fallback disabled;
-  compare io_uring using matched working sets, TTFT, throughput, CPU use and bytes.
+  distinguish first writes from overwrites and compare io_uring using matched
+  working sets, TTFT, throughput, CPU use and bytes.
 - [x] Provide a bare-metal acceptance script with fallback rejection and matched
   io_uring/auto/cuFile workloads for both engines (`python -m benches.gds`).
 - [x] Default to automatic native cuFile initialization with io_uring fallback;
   stop new GPU I/O after an operation failure without revoking in-flight ownership.
-- [ ] Reserve physical GPU-storage file space and qualify first writes versus
-  overwrites; logical shard length and successful registration are not native-I/O evidence.
+- [x] Reserve physical GPU-storage file space before admission; report allocation
+  failures and release partial startup reservations. Keep file ownership in `backing/ssd/files.rs`.
 - [ ] Implement bounded Rust asynchronous cuFile submissions with reusable staging
   slots, stream/event completion, per-operation byte/error checks and cancellation drain.
-- [ ] Coalesce reads by file across leased sources without broadening required ranges;
-  bound queued writes and GPU staging so demand reads make progress.
+- [x] Coalesce reads by file across leased sources without broadening required ranges;
+  verify call counts, separate files, unrequested gaps and cancellation ownership.
+- [ ] Bound queued GPU-storage writes and staging so demand reads make progress
+  between write batches.
 - [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.
 - [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,
@@ -35,6 +38,8 @@ numbers below group work areas rather than imposing a strict serial schedule.
 
 See [GPU storage recovery](docs/gds.md) for deployment and reproduction, and the
 [LMCache v0.5.5 review](docs/gds.md#review-against-lmcache) for optimization evidence and gates.
+The [upstream design mapping](docs/architecture.md#upstream-designs-and-orbitkv-owners)
+records LMCache, FlexKV and Mooncake mechanisms, owners and implementation status.
 
 ## M0 — framework-neutral foundation
 

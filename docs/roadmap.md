@@ -35,7 +35,7 @@ the later general semantic compiler.
 
 | Priority | Deliverable | Acceptance boundary |
 | --- | --- | --- |
-| Automatic SSD selection | Native cuFile initialization with io_uring fallback, restore leases, complete-group GPU writes and bounded staging. | Capability selection is the default. Next: physical file allocation, bounded Rust async I/O, cross-lease batching and read progress, then placement/source-page hold tuning; see the [LMCache review](gds.md#review-against-lmcache). Native performance requires matched measurements. Direct engine-page I/O and multi-writer GPU assembly remain future work. |
+| Automatic SSD selection | Native cuFile initialization with io_uring fallback, physical capacity reservation, restore leases, per-file read coalescing, complete-group GPU writes and bounded staging. | Capability selection is the default. Next: bounded Rust async I/O and read progress, then placement/source-page hold tuning; see the [LMCache review](gds.md#review-against-lmcache). Native performance requires matched first-write/overwrite measurements. Direct engine-page I/O and multi-writer GPU assembly remain future work. |
 | First: reliable ordinary demand | Maintain deterministic cancellation, lost-notification, engine/Manager restart and stuck-Publish gates; extend concurrent model-serving fault stress. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
 | First: complete state-layout coverage | Full/MLA, Full + SWA, Full + recurrent/conv, and their combination in both adapters. | Exact DRAM/SSD bytes, missing-component rejection, legal recovery boundaries and GPU source ownership. Report native model-serving coverage separately from constructed GPU layouts. |
 | Implemented, opt-in: bounded preparation | Small arrival-order lookahead, retained leases, bounded reads and stopping controls. | Three matched pairs per engine completed. Keep off by default because SGLang P95 regresses despite a throughput gain; cutoffs also reduce throughput. |
@@ -96,6 +96,13 @@ it experimental and continue with DP qualification. Retention and SSD write
 admission remain optional and get separate matched experiments.
 
 ### Evidence and code ownership
+
+Use the [upstream design mapping](architecture.md#upstream-designs-and-orbitkv-owners)
+to adopt LMCache, FlexKV and Mooncake mechanisms in existing Rust owners. Pin
+each reference, distinguish released implementations from proposals, and require
+ownership and workload evidence before changing policy defaults. The immediate
+GDS sequence is bounded async submission, read/write fairness, then measured
+placement; it does not delay the DP, P/D and catalog-HA gates above.
 
 Use Qwen3-8B and the pinned engine releases for continuity. Compare native
 engine behavior and ordinary OrbitKV demand before adding compatible LMCache

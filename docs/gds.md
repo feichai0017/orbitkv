@@ -41,6 +41,22 @@ This is capability and failure adaptation. Successful initialization does not
 establish that cuFile beats io_uring for a workload, or replace native-path
 statistics. SSD paths/capacity must still be configured explicitly.
 
+## File capacity
+
+After every cuFile shard registers, the Manager reserves its configured physical
+space with Linux `fallocate` before starting workers. This applies to both
+`auto` selecting cuFile and explicit `cufile`. Insufficient space, quota errors
+or unsupported allocation fail startup with the shard and requested size;
+already reserved startup files are truncated to release space, with cleanup
+errors logged. Capacity failures do not silently select a sparse io_uring cache.
+Choose a capacity that fits the available storage. Explicit io_uring and
+capability fallback retain logical file sizing without upfront reservation.
+
+Preallocation does not prove native GDS. First writes into unwritten extents
+can still need filesystem metadata work; qualify first writes and overwrites
+separately with compatibility disabled and cuFile path statistics. See NVIDIA's
+[write-allocation guidance](https://docs.nvidia.com/gpudirect-storage/o-direct-guide/#block-allocation-for-writes).
+
 ## Data flow and ownership
 
 | Operation | Path |
@@ -60,8 +76,11 @@ released. Cancellation, expiry and session teardown release unconsumed interests
 submitted restores keep their interests until completion.
 
 Rust validates source segment sizes, slot offsets and GPU destinations before
-issuing I/O. Adjacent ranges are merged into reads of at most **8 MiB** with
-**4 KiB** aligned boundaries. Existing 512-byte storage segments can cause edge
+issuing I/O. Adjacent ranges from different source leases in the same file are
+merged into reads of at most **8 MiB** with **4 KiB** aligned boundaries. Different
+files and unrequested aligned gaps stay separate. The plan borrows the entire
+restore task, keeping every source lease alive until GPU completion; it never
+uses one representative lease to protect other extents. Existing 512-byte storage segments can cause edge
 overread; only actual component bytes are scattered into engine pages. Large
 recurrent checkpoints are split across the bounded staging buffer.
 
@@ -160,9 +179,9 @@ uses `cuFileStreamRegister`, `cuFileReadAsync` and `cuFileWriteAsync`.
 | Concern | LMCache MP reference | Current OrbitKV |
 | --- | --- | --- |
 | GPU registration | Reusable staging, registered in regions of at most 16 MiB | One reusable registered 8 MiB buffer per instance/device |
-| File allocation | Preallocates its slab with `posix_fallocate` | Sets logical shard lengths; physical space is not reserved |
+| File allocation | Preallocates its slab with `posix_fallocate` | Native `fallocate` reserves all GPU-storage shards before admission; allocation errors fail startup and release partial reservations |
 | Submission/completion | Stream-ordered asynchronous I/O; event-scoped submission lifetime | Synchronous cuFile calls and a scatter/gather stream drain for every batch |
-| Batching | GPU context provides four chunk slots | One staging slot; read ranges merge within each source lease, not across adjacent leases |
+| Batching | GPU context provides four chunk slots | One staging slot; adjacent ranges merge by file across source leases without reading unrequested aligned gaps |
 | Tier policy | GDS L1 replaces pinned-DRAM L1 in that configuration | Complete-group GPU writeback also creates a DRAM copy; Publish waits for SSD completion |
 
 The four-slot geometry comes from LMCache's
@@ -173,31 +192,24 @@ establishes an optimum for another model or storage device.
 
 The next implementation gates, in order, are:
 
-1. **Physical allocation and native evidence.** Reserve GPU-storage file space
-   and handle capacity exhaustion explicitly. Qualify first writes and overwrites
-   separately: even preallocated but unwritten extents can require filesystem
-   metadata work. `set_len`, `O_DIRECT`, or successful registration alone cannot
-   prove a native path. See NVIDIA's
-   [write-allocation guidance](https://docs.nvidia.com/gpudirect-storage/o-direct-guide/#block-allocation-for-writes).
-2. **Bounded asynchronous I/O in Rust.** Start with a small registered slot pool
+1. **Bounded asynchronous I/O in Rust.** Start with a small registered slot pool
    and stream/event ownership. Keep each operation's argument storage, result
    storage, file, extent leases and GPU pages alive through completion. Check
    actual byte counts/errors before accepting a restore or publishing a write.
    Cancellation stops admission; submitted work still drains. Compare stream
    APIs with batch I/O for small scattered ranges rather than assuming one API
    wins at every size.
-3. **Batching and read progress.** Merge compatible ranges by file across source
-   leases, retaining every owner and respecting compiled required ranges.
-   Bound bytes, operations and queued writes; let demand reads progress between
+2. **Read progress.** Build on the implemented per-file coalescing and retained
+   source leases. Bound bytes, operations and queued writes; let demand reads progress between
    write batches. Extra buffers must remain charged to a GPU budget.
-4. **Placement and source-page hold time.** Measure the cost of producing both
+3. **Placement and source-page hold time.** Measure the cost of producing both
    DRAM and SSD copies. Evaluate selective hot-DRAM admission and releasing engine
    pages after their final copy into owned staging; the staging and SSD reservation
    must survive until disk completion. Large objects still need bounded chunking.
    Publish visibility must never precede complete successful writes.
 
-These are planned changes. The current implementation provides registration,
-alignment and ownership foundations, but has no measured native-GDS performance
+These remaining changes are planned. Physical allocation and cross-lease read
+coalescing are implemented; neither establishes a measured native-GDS performance
 advantage. Preserve those guarantees while adding concurrency; benchmark both
 engines with matched DRAM/SSD capacities, HBM budgets, working sets and native-I/O
 statistics. Shared-cache direct engine-page I/O remains a separate later step.
@@ -208,8 +220,9 @@ Install NVIDIA's GDS user-space library on the Manager and provide a supported
 storage mount and compatible host driver/kernel configuration. Ordinary io_uring
 deployments do not load cuFile. Explicit `cufile` selection fails startup on
 library/file registration errors; GPU buffer registration errors fail the
-operation. Default `auto` instead logs initialization fallback and disables new
-cuFile admission after an operation failure as described above.
+operation. Default `auto` instead logs capability fallback and disables new
+cuFile admission after an operation failure as described above. GPU-storage
+capacity reservation errors fail startup in both modes.
 
 For native qualification, explicitly disallow compatibility mode:
 
@@ -247,6 +260,10 @@ The gate covers split/page-first layouts, unaligned components, checkpoints
 larger than staging, ring pinning, cross-shard progress, cancellation and
 short-read failure recovery. It also covers fragmented publication sealing
 and restoring its io_uring-written payload through cuFile.
+The Manager process gate additionally checks actual cuFile call counts, exact
+selected bytes and lease retention during canceled coalesced reads, including
+separate files and unrequested gaps. Rust file tests verify physical allocation
+and rollback after a later shard fails.
 
 The development serving gates use **cuFile 1.16.1 from CUDA 13.1**. Their Torch
 2.13/cu130 environments preload cuFile 1.15.1.6, which fails to register this
@@ -292,11 +309,15 @@ correctness, not native GDS throughput.
 | Gate | Final result |
 | --- | --- |
 | Rust GPU layouts, checkpoints, pinning, failure recovery and auto fallback | 6 passed |
-| Manager process faults, cancellation and resource ownership | 16 passed |
+| Manager process faults, allocation, coalescing and cancellation ownership | 19 passed |
 | vLLM / Qwen3-8B / SSD | 6 passed; 1 recurrent-only check skipped, with both explicit `cufile` and default `auto` |
 | SGLang / Qwen3-8B / SSD | Passed with both explicit `cufile` and default `auto` |
 | vLLM / Qwen3.8-27B-FP8 / SSD | 7 passed |
 | SGLang / Qwen3.8-27B-FP8 / SSD | Passed |
+
+The allocation/coalescing update reran the Rust GPU gate, all 19 Manager tests
+and both Qwen3-8B engines with explicit cuFile compatibility. Default-auto and
+Qwen3.8 serving results are retained from the [GDS baseline](https://github.com/feichai0017/orbitkv/pull/176).
 
 Both models' explicit cuFile checks require cuFile writes and new reads after
 DRAM eviction and engine restart. Default-auto checks require new SSD reads
@@ -304,6 +325,12 @@ through the selected backend after the same eviction and restart sequence.
 Qwen3.8 also exercises full-attention and GDN
 conv/recurrent state in the same request. Reproduce it with the
 [Qwen3.8 engine settings](models.md#qwen38-on-h20) and `--ssd-backend cufile`.
+
+The Manager gate verifies four adjacent 64 KiB pages restore with one 256 KiB
+cuFile read. Splitting them across two files requires two reads; selecting only
+alternating pages reads 128 KiB in two operations. It checks actual GPU bytes,
+physical file allocation, per-operation metrics and cancellation ownership.
+These are transfer-shape and correctness results, not native throughput claims.
 
 ## Bare-metal acceptance script
 

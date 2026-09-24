@@ -424,13 +424,13 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             ssd_backend_fallbacks: meter.u64_counter("orbitkv_ssd_backend_fallbacks").with_description("Automatic transitions from cuFile to io_uring; startup or runtime failures").build(),
             ssd_cufile_write_bytes: meter.u64_counter("orbitkv_ssd_cufile_write_bytes").with_description("Bytes written by cuFile including alignment; does not prove native GDS").build(),
             ssd_cufile_write_failures: meter.u64_counter("orbitkv_ssd_cufile_write_failures").with_description("Failed or short cuFile writes").build(),
-            ssd_cufile_write_seconds: meter.f64_histogram("orbitkv_ssd_cufile_write_seconds").with_unit("s").with_description("Synchronous cuFile write duration").build(),
+            ssd_cufile_write_seconds: meter.f64_histogram("orbitkv_ssd_cufile_write").with_unit("s").with_description("Synchronous cuFile write duration").build(),
             ssd_read_pinned_bytes: meter.i64_up_down_counter("orbitkv_ssd_read_pinned_bytes").with_description("SSD bytes pinned by restore source leases").build(),
             ssd_gpu_staging_bytes: meter.i64_up_down_counter("orbitkv_ssd_gpu_staging_bytes").with_description("Registered GPU staging bytes owned by cuFile workers").build(),
             ssd_pinned_write_skips: meter.u64_counter("orbitkv_ssd_pinned_write_skips").with_description("SSD reservations rejected to protect readers or in-flight writes").build(),
             ssd_cufile_read_bytes: meter.u64_counter("orbitkv_ssd_cufile_read_bytes").with_description("Bytes read by cuFile including alignment; does not prove native GDS").build(),
             ssd_cufile_read_failures: meter.u64_counter("orbitkv_ssd_cufile_read_failures").with_description("Failed or short cuFile reads").build(),
-            ssd_cufile_read_seconds: meter.f64_histogram("orbitkv_ssd_cufile_read_seconds").with_unit("s").with_description("Synchronous cuFile read duration").build(),
+            ssd_cufile_read_seconds: meter.f64_histogram("orbitkv_ssd_cufile_read").with_unit("s").with_description("Synchronous cuFile read duration").build(),
             ssd_write_bytes: meter
                 .u64_counter("orbitkv_ssd_write_bytes")
                 .with_unit("bytes")
