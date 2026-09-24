@@ -12,6 +12,13 @@ three results separate: same-host TCP, two-host TCP and two-host RDMA.
 
 ## Recorded result
 
+The [2026-09-25 demand/candidate recheck](implementation-plan.md#demandcandidate-final-evidence)
+passed the same serving gate on native source `cfb4418a` with a matching query-body-v6
+client and prebuilt Manager. Both engines completed three remote GPU restores,
+catalog restart replay and correct recomputation after source payload loss.
+Each engine transferred and restored 288 MiB; outputs matched and checked
+resource counters drained. This remains single-H20, same-host TCP evidence.
+
 The [2026-09-23 Qwen3-8B gate](../benches/results/20260923-shared-cache/README.md)
 passed on one H20 with vLLM 0.29.0 and SGLang 0.5.20, tested separately. Each
 engine completed three remote GPU restores, including catalog restart recovery,

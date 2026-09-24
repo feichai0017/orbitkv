@@ -420,7 +420,7 @@ on failure. TP/PP add rank/stage completion dependencies. These dimensions can
 compose within a deployment; roles belong to engine instances and operations,
 not a single global Manager mode. HBM allocation stays with each engine.
 
-Reuse Dynamo's worker selector for request placement. Dynamo v1.4.2 provides
+Reuse Dynamo's worker selector for request placement. Dynamo v1.5.0 provides
 an independent Rust router crate and a selection service; its runtime is an
 optional dependency of the crate. The selected Cache Manager then revalidates
 replicas and constructs the leased physical plan: source, restore or recompute

@@ -620,7 +620,7 @@ Raw logs, frozen artifacts and machine-readable summaries remain in ignored
 
 ## Recovery demand and residency candidates
 
-The next slice connects existing execution owners without introducing a backend
+This slice connects existing execution owners without introducing a backend
 trait, a second cache service or new configuration:
 
 - `orbitkv-state` compiles `RecoveryDemand` for one selected boundary; the
@@ -657,6 +657,43 @@ routes still determine execution. Engine HBM allocation and rank coordination
 stay with the engine. Remote SSD, general peer HBM, destination page generations,
 joint multi-group admission and calibrated cross-tier choice are not implemented
 by this slice.
+
+### Demand/candidate final evidence
+
+Native source `cfb4418a` was validated on the single H20 in this container with CUDA 13,
+vLLM 0.29.0, SGLang 0.5.20 and Qwen3-8B. Native builds completed before runtime
+tests. The normal Manager SHA-256 is
+`514a0a5ffe63b48879b9d0c4091dc7ce8d449a804d69e3477e78052c84904b33`;
+the separately frozen test-hooks Manager is
+`5de2fb1b164bd5b0b1554aa1e9ddd3393a9b2307baaa5bbe91c36065abbe3d15`.
+Both use the matching query-body-v6 client extension.
+
+| Gate | Final result |
+| --- | --- |
+| CUDA 13 workspace Clippy, Rust formatting | Passed |
+| Rust workspace debug tests | 393 passed, including bounded/coalesced discovery, stale SSD generations and complete-demand revisions |
+| Explicit GPU/cuFile/peer tests | 14 passed: Manager demand admission/partial-prefix claim, copy equality, same-generation raw/ANS SSD routes, cuFile CPU compatibility and same-host TCP |
+| Source-only Python; Ruff and formatting | 364 passed, 1 skipped; 134 Python/benchmark files checked |
+| GPU recovery integration | vLLM 14 passed; SGLang 8 passed, covering prefix/window/checkpoint and combined state through DRAM/SSD |
+| Preparation, cancellation and read-lifetime faults | 8 passed with the frozen test-hooks Manager |
+| vLLM Qwen3-8B serving | DRAM with preparation enabled and cuFile-backed SSD with explicit io_uring/ANS: 6 passed, 1 recurrent-model-only skip per configuration |
+| SGLang Qwen3-8B serving | 2 passed: DRAM and io_uring SSD, actual GPU restore after restart and cold-control output equality |
+| Shared-cache serving | vLLM and SGLang each passed: three remote GPU restores, catalog replay after restart, source-loss recomputation, matching outputs and drained resource counters; 288 MiB transferred and restored per engine |
+| Benchmark fixture tests; website/documentation | 42 passed; website checks, build and link tests passed |
+
+These are source-artifact correctness and lifecycle results. The new candidate
+metadata overhead was not requalified under matched pressure workloads; earlier
+observation and fixed-backend measurements retain their original artifact scope.
+No measured-selection default changes follow from this gate. cuFile uses forced
+CPU compatibility and peers use same-host TCP; native GDS, physical two-host/RDMA,
+multi-rank serving and installed-container qualification remain open.
+
+Frozen artifacts, commands and raw logs are in ignored
+`benches/results/runs/20260925-recovery-demand/`. Use the existing
+[GPU recovery gates](../python/tests/README.md) and
+[shared-cache serving commands](shared-cache-qualification.md#restart-and-ownership-gates)
+with the matching prebuilt Manager/client; do not run Cargo while those processes
+have Mooncake libraries mapped.
 
 ## Session startup and working constraints
 
