@@ -1,3 +1,4 @@
+use orbitkv_state::{RecoveryDemand, TokenRange};
 use thiserror::Error;
 
 const QUERY_REQUEST_MAGIC: u32 = 0x4f52_5151; // ORQQ
@@ -9,7 +10,7 @@ const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
-const QUERY_VERSION: u16 = 5;
+const QUERY_VERSION: u16 = 6;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
@@ -524,12 +525,21 @@ pub struct QueryBundleRequest {
     pub materialize: bool,
     /// Keep a consumer-owned result at the Manager until its first demand poll.
     pub prepare: bool,
+    /// Every group's compiled range at the selected boundary, scoped by this
+    /// request's registered instance. Present exactly for materialized recovery.
+    pub demand: Option<RecoveryDemand>,
 }
 
 impl QueryBundleRequest {
     pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
         if self.request_id.is_empty() {
             return Err(QueryCodecError::EmptyRequestId);
+        }
+        if self.materialize != self.demand.is_some() {
+            return Err(QueryCodecError::InvalidRecoveryDemand);
+        }
+        if let Some(demand) = &self.demand {
+            demand.validate(self.group_id, self.block_hashes.len())?;
         }
         let instance = self.instance_id.as_bytes();
         let request = self.request_id.as_bytes();
@@ -567,6 +577,20 @@ impl QueryBundleRequest {
             push_u32(&mut bytes, checked_u32(hash.len(), "block_hash")?);
             bytes.extend_from_slice(hash);
         }
+        if let Some(demand) = &self.demand {
+            push_u64(&mut bytes, demand.page_tokens);
+            push_u64(&mut bytes, demand.span.start);
+            push_u64(&mut bytes, demand.span.end);
+            push_u32(
+                &mut bytes,
+                checked_u32(demand.groups.len(), "recovery_groups")?,
+            );
+            for &(group, range) in &demand.groups {
+                push_u32(&mut bytes, group);
+                push_u64(&mut bytes, range.start);
+                push_u64(&mut bytes, range.end);
+            }
+        }
         Ok(bytes)
     }
 
@@ -596,6 +620,36 @@ impl QueryBundleRequest {
             let len = decoder.usize_u32()?;
             block_hashes.push(decoder.bytes(len)?.to_vec());
         }
+        let demand = if flags & 8 != 0 {
+            let page_tokens = decoder.u64()?;
+            let span = TokenRange {
+                start: decoder.u64()?,
+                end: decoder.u64()?,
+            };
+            let count = decoder.usize_u32()?;
+            if count > decoder.remaining() / 20 {
+                return Err(QueryCodecError::Truncated);
+            }
+            let mut groups = Vec::with_capacity(count);
+            for _ in 0..count {
+                groups.push((
+                    decoder.u32()?,
+                    TokenRange {
+                        start: decoder.u64()?,
+                        end: decoder.u64()?,
+                    },
+                ));
+            }
+            let demand = RecoveryDemand {
+                page_tokens,
+                span,
+                groups,
+            };
+            demand.validate(group_id, hash_count)?;
+            Some(demand)
+        } else {
+            None
+        };
         decoder.finish()?;
         Ok(Self {
             ticket,
@@ -608,6 +662,7 @@ impl QueryBundleRequest {
             discover: flags & 4 != 0,
             materialize: flags & 8 != 0,
             prepare: flags & 16 != 0,
+            demand,
         })
     }
 }
@@ -713,6 +768,10 @@ impl QueryBundleResponse {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum QueryCodecError {
+    #[error("only selected recovery reads must carry complete compiled demand")]
+    InvalidRecoveryDemand,
+    #[error(transparent)]
+    Recovery(#[from] orbitkv_state::RecoveryError),
     #[error("candidate hints must be ordered, unique and unleased")]
     InvalidCandidates,
     #[error("query operation and revision must be nonzero")]

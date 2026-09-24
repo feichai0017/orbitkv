@@ -181,7 +181,7 @@ impl PrefetchScheduler {
             && let Some(ssd) = &self.ssd_store
             && (ssd.read_path.is_some() || ssd.gpu_io.available())
         {
-            let disk = ssd.pin_prefix(&keys[hit..]);
+            let disk = ssd.discover_prefix(&keys[hit..]);
             let cufile = disk
                 .iter()
                 .all(|lease| lease.cufile_eligible(self.codec_budget));
@@ -194,20 +194,36 @@ impl PrefetchScheduler {
                 && !disk.is_empty()
                 && (!wait_for_full_prefix || hit + disk.len() == keys.len())
             {
-                let count = hit + disk.len();
-                ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
-                record_tier_attribution(keys.len(), hit, disk.len(), Some(AttributionSource::Ssd));
-                return QueryResult {
-                    blocks: prefix_blocks
-                        .into_iter()
-                        .map(RestoreSource::Memory)
-                        .chain(
-                            disk.into_iter()
-                                .map(|lease| RestoreSource::Ssd { lease, path }),
-                        )
-                        .collect(),
-                    missing: keys.len() - count,
-                };
+                let disk: Vec<_> = disk.iter().map_while(|candidate| candidate.pin()).collect();
+                // Discovery did not pin or read payloads. Revalidate the exact
+                // selected generations and path before transferring ownership.
+                if !disk.is_empty()
+                    && (!wait_for_full_prefix || hit + disk.len() == keys.len())
+                    && (path != crate::SsdReadPath::Cufile
+                        || disk
+                            .iter()
+                            .all(|lease| lease.cufile_eligible(self.codec_budget)))
+                {
+                    let count = hit + disk.len();
+                    ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
+                    record_tier_attribution(
+                        keys.len(),
+                        hit,
+                        disk.len(),
+                        Some(AttributionSource::Ssd),
+                    );
+                    return QueryResult {
+                        blocks: prefix_blocks
+                            .into_iter()
+                            .map(RestoreSource::Memory)
+                            .chain(
+                                disk.into_iter()
+                                    .map(|lease| RestoreSource::Ssd { lease, path }),
+                            )
+                            .collect(),
+                        missing: keys.len() - count,
+                    };
+                }
             }
         }
 

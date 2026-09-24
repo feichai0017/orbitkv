@@ -210,13 +210,13 @@ impl PendingQueries {
             }
             QueryCommand::Submit(request) => {
                 if request.prepare
-                    && (!request.materialize
+                    && ((!request.materialize && request.group_id != 0)
                         || request.warmup
                         || request.discover
                         || request.wait_for_full_prefix)
                 {
                     return Err(invalid(
-                        "preparation requires a selected, non-waiting recovery read",
+                        "preparation requires a non-waiting attention prefix or selected recovery read",
                     ));
                 }
                 if request.materialize
@@ -231,6 +231,19 @@ impl PendingQueries {
                 }
                 if request.warmup && (request.group_id != 0 || request.wait_for_full_prefix) {
                     return Err(invalid("warmup requires a non-waiting attention prefix"));
+                }
+                if request.materialize != request.demand.is_some() {
+                    return Err(invalid(
+                        "selected recovery reads require complete compiled demand",
+                    ));
+                }
+                if let Some(demand) = &request.demand {
+                    engine.validate_recovery_demand(
+                        &request.instance_id,
+                        demand,
+                        request.group_id,
+                        request.block_hashes.len(),
+                    )?;
                 }
                 let ticket = request.ticket;
                 let key = (token, ticket.operation_id);
@@ -421,6 +434,7 @@ impl PendingQueries {
             discover: request.discover,
             materialize: request.materialize,
             prepare: request.prepare,
+            demand: request.demand,
             control: Arc::clone(&task.control),
         };
         let engine = Arc::clone(engine);

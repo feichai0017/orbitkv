@@ -16,6 +16,7 @@ fn request(operation_id: u64, revision: u64) -> QueryBundleRequest {
         discover: false,
         materialize: false,
         prepare: false,
+        demand: None,
     }
 }
 
@@ -28,6 +29,325 @@ fn tracker() -> Arc<Mutex<MultiWindowHllTracker>> {
         vec![("test".into(), Duration::from_secs(60))],
         4,
     )))
+}
+
+#[test]
+fn malformed_selected_demand_is_rejected_before_query_admission() {
+    use orbitkv_state::{RecoveryDemand, TokenRange};
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let engine = engine();
+    let hll = tracker();
+    let mut queries = PendingQueries::default();
+    let _held = Arc::clone(&queries.capacity)
+        .try_acquire_many_owned(MAX_ACTIVE_QUERIES as u32)
+        .unwrap();
+    let span = TokenRange { start: 0, end: 16 };
+    let demand = RecoveryDemand {
+        page_tokens: 16,
+        span,
+        groups: vec![(0, span)],
+    };
+    let mut missing = request(1, 1);
+    missing.materialize = true;
+    let mut unselected = request(2, 1);
+    unselected.demand = Some(demand.clone());
+    let mut malformed = request(3, 1);
+    malformed.materialize = true;
+    malformed.demand = Some(RecoveryDemand {
+        page_tokens: 0,
+        ..demand.clone()
+    });
+    let mut wrong_count = request(4, 1);
+    wrong_count.materialize = true;
+    wrong_count.block_hashes.push(vec![2]);
+    wrong_count.demand = Some(demand);
+    let mut auxiliary_prefix = request(5, 1);
+    auxiliary_prefix.prepare = true;
+    auxiliary_prefix.group_id = 1;
+    let mut waiting_prefix = request(6, 1);
+    waiting_prefix.prepare = true;
+    waiting_prefix.wait_for_full_prefix = true;
+    for request in [
+        missing,
+        unselected,
+        malformed,
+        wrong_count,
+        auxiliary_prefix,
+        waiting_prefix,
+    ] {
+        let error = queries
+            .execute(
+                1,
+                QueryCommand::Submit(request),
+                &engine,
+                runtime.handle(),
+                &hll,
+            )
+            .err()
+            .expect("invalid demand must fail before waiting for capacity");
+        assert!(matches!(error, EngineError::InvalidArgument(_)), "{error}");
+        assert!(queries.pending.is_empty());
+        assert!(queries.sessions.is_empty());
+    }
+}
+
+#[test]
+#[ignore = "requires CUDA registration and real GPU-to-host publication"]
+fn manager_validates_complete_demand_and_never_leases_a_partial_selected_group() {
+    use cudarc::driver::{CudaContext, DevicePtr};
+    use orbitkv_core::{LayerSave, TransferMode};
+    use orbitkv_state::{RecoveryDemand, TokenRange};
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let engine = engine();
+    let hll = tracker();
+    let context = CudaContext::new(0).unwrap();
+    let stream = context.default_stream();
+    let attention = stream.alloc_zeros::<u8>(2048).unwrap();
+    let checkpoint = stream.alloc_zeros::<u8>(2048).unwrap();
+    stream.synchronize().unwrap();
+    let layers = vec!["attention".to_string(), "window".to_string()];
+    engine
+        .register_context_layer_batch_strided(
+            "model",
+            "registered-shard-identity",
+            0,
+            0,
+            0,
+            1,
+            1,
+            &layers,
+            &[
+                attention.device_ptr(&stream).0,
+                checkpoint.device_ptr(&stream).0,
+            ],
+            &[2048, 2048],
+            &[2, 2],
+            &[1024, 1024],
+            &[0, 0],
+            &[1, 1],
+            None,
+            Some(&[0, 1]),
+            None,
+            TransferMode::Direct,
+            false,
+        )
+        .unwrap();
+    let present = vec![7; 32];
+    runtime.block_on(async {
+        engine
+            .batch_save_kv_blocks_from_ipc(
+                "model",
+                0,
+                0,
+                0,
+                layers
+                    .iter()
+                    .map(|layer| LayerSave {
+                        layer_name: layer.clone(),
+                        block_ids: vec![0],
+                        block_hashes: vec![present.clone()],
+                    })
+                    .collect(),
+            )
+            .await
+            .unwrap();
+        engine.flush_saves().await;
+    });
+    let span = TokenRange { start: 64, end: 96 };
+    let demand = RecoveryDemand {
+        page_tokens: 16,
+        span,
+        groups: vec![(0, span), (1, span)],
+    };
+    let mut queries = PendingQueries::default();
+    // Even with capacity exhausted, missing registered groups are rejected
+    // before allocating a ticket owner, budget or source read.
+    let held = Arc::clone(&queries.capacity)
+        .try_acquire_many_owned(MAX_ACTIVE_QUERIES as u32)
+        .unwrap();
+    for groups in [vec![(0, span)], vec![(0, span), (2, span)]] {
+        let mut bad = request(1, 1);
+        bad.materialize = true;
+        bad.block_hashes = vec![present.clone(), vec![8; 32]];
+        bad.demand = Some(RecoveryDemand {
+            groups,
+            ..demand.clone()
+        });
+        let error = queries
+            .execute(
+                1,
+                QueryCommand::Submit(bad),
+                &engine,
+                runtime.handle(),
+                &hll,
+            )
+            .err()
+            .expect("all registered groups are required");
+        assert!(
+            error.to_string().contains("every registered storage group"),
+            "{error}"
+        );
+        assert!(queries.pending.is_empty());
+        assert!(queries.sessions.is_empty());
+    }
+    drop(held);
+    let mut operation = 1;
+    for group in [0, 1] {
+        for (selected, complete) in [(false, false), (true, false), (true, true)] {
+            let mut query = request(operation, 1);
+            operation += 1;
+            query.group_id = group;
+            query.block_hashes = vec![present.clone()];
+            if !complete {
+                query.block_hashes.push(vec![8; 32]);
+            }
+            query.materialize = selected;
+            query.demand = selected.then(|| {
+                if complete {
+                    let span = TokenRange { start: 64, end: 80 };
+                    RecoveryDemand {
+                        page_tokens: 16,
+                        span,
+                        groups: vec![(0, span), (1, span)],
+                    }
+                } else {
+                    demand.clone()
+                }
+            });
+            let ticket = query.ticket;
+            let mut reply = queries
+                .execute(
+                    1,
+                    QueryCommand::Submit(query),
+                    &engine,
+                    runtime.handle(),
+                    &hll,
+                )
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while reply.is_none() {
+                assert!(Instant::now() < deadline, "query did not complete");
+                runtime.block_on(tokio::task::yield_now());
+                reply = queries
+                    .execute(
+                        1,
+                        QueryCommand::Poll(ticket),
+                        &engine,
+                        runtime.handle(),
+                        &hll,
+                    )
+                    .unwrap();
+            }
+            let reply = reply.unwrap();
+            let QueryOutcome::Ready {
+                num_hit_blocks,
+                lease,
+                ..
+            } = reply.outcome.as_ref().unwrap()
+            else {
+                panic!("terminal query must be ready");
+            };
+            if selected && !complete {
+                assert_eq!(*num_hit_blocks, 0);
+                assert!(
+                    lease.is_empty(),
+                    "partial demanded group must never get a lease"
+                );
+            } else {
+                assert_eq!(*num_hit_blocks, 1);
+                assert!(!lease.is_empty());
+            }
+            drop(reply); // Retire the test consumer through the real reply owner.
+            assert!(queries.pending.is_empty());
+        }
+    }
+    let before = hll.lock().unwrap().metrics()[0].1.total_requests;
+    let mut prefix = request(operation, 1);
+    prefix.prepare = true;
+    prefix.block_hashes = vec![present, vec![8; 32]];
+    let ticket = prefix.ticket;
+    assert!(
+        queries
+            .execute(
+                1,
+                QueryCommand::Submit(prefix),
+                &engine,
+                runtime.handle(),
+                &hll
+            )
+            .unwrap()
+            .is_none()
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while queries.pending[&(1, ticket.operation_id)]
+        .receiver
+        .as_ref()
+        .unwrap()
+        .is_empty()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "prefix preparation did not finish"
+        );
+        runtime.block_on(tokio::task::yield_now());
+    }
+    assert_eq!(
+        hll.lock().unwrap().metrics()[0].1.total_requests,
+        before,
+        "preparation must not count a foreground lookup"
+    );
+    let reply = queries
+        .execute(
+            1,
+            QueryCommand::Claim {
+                ticket,
+                count_lookup: true,
+            },
+            &engine,
+            runtime.handle(),
+            &hll,
+        )
+        .unwrap()
+        .unwrap();
+    let QueryOutcome::Ready {
+        num_hit_blocks,
+        lease,
+        ..
+    } = reply.outcome.as_ref().unwrap()
+    else {
+        panic!("prepared prefix must be ready");
+    };
+    assert_eq!(*num_hit_blocks, 1);
+    assert!(
+        !lease.is_empty(),
+        "ordinary prefix preparation preserves partial hits"
+    );
+    assert_eq!(
+        hll.lock().unwrap().metrics()[0].1.total_requests,
+        before + 2
+    );
+    drop(reply);
+    assert!(
+        queries
+            .execute(
+                1,
+                QueryCommand::Poll(ticket),
+                &engine,
+                runtime.handle(),
+                &hll
+            )
+            .is_err()
+    );
+    assert_eq!(
+        hll.lock().unwrap().metrics()[0].1.total_requests,
+        before + 2,
+        "retired claims cannot count again"
+    );
+    assert_eq!(queries.capacity.available_permits(), MAX_ACTIVE_QUERIES);
+    runtime
+        .block_on(engine.unregister_instance_and_wait("model"))
+        .unwrap();
 }
 
 #[test]
@@ -249,6 +569,12 @@ fn prepared_results_remain_owned_until_claim_or_expiry_without_further_polling()
         let mut request = request(id, 1);
         request.prepare = true;
         request.materialize = true;
+        let span = orbitkv_state::TokenRange { start: 0, end: 16 };
+        request.demand = Some(orbitkv_state::RecoveryDemand {
+            page_tokens: 16,
+            span,
+            groups: vec![(0, span)],
+        });
         queries.insert(1, request);
         let result_engine = Arc::clone(&engine);
         let permit = Arc::clone(&queries.capacity).try_acquire_owned().unwrap();

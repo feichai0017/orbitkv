@@ -9,7 +9,7 @@ from tests.support.unit_stubs import install_connector_unit_stubs
 
 install_connector_unit_stubs()
 
-from orbitkv import BlockHashes  # noqa: E402
+from orbitkv import BlockHashes, QueryReady  # noqa: E402
 from orbitkv.vllm.config import ConnectorContext  # noqa: E402
 from orbitkv.vllm.scheduler import SchedulerConnector  # noqa: E402
 from orbitkv.vllm.tp_shards import ShardedQueryReady  # noqa: E402
@@ -49,12 +49,11 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
     scheduler.on_new_request(req)
     batch = BlockHashes([b"queued-1", b"queued-2", b"queued-3"])
     if preparation:
-        client.prepare_recovery.assert_called_once_with(
-            "warm", batch, "queued", scheduler._recovery, "warm", 16, 64, 0
-        )
+        client.prepare_prefix.assert_called_once_with("warm", batch, "queued")
+        assert scheduler._recovery is None
     else:
         client.warm_prefix.assert_called_once_with("warm", batch, "queued")
-    submit = client.prepare_recovery if preparation else client.warm_prefix
+    submit = client.prepare_prefix if preparation else client.warm_prefix
     client.query_prefetch.assert_not_called()
     assert not scheduler._pending_load_intents
     assert not scheduler._pending_query_probes
@@ -82,6 +81,48 @@ def test_enqueue_warms_only_legal_missing_prefix_without_creating_a_load(monkeyp
         scheduler._queued_at.update({f"ahead-{i}": 0 for i in range(4)})
         scheduler.on_new_request(request("distant", 64))
         submit.assert_not_called()
+
+
+@pytest.mark.parametrize("hits", [1, 4], ids=["partial-prefix", "full-prefix"])
+def test_owned_prefix_preparation_keeps_ordinary_lookup_and_page_lifetime(monkeypatch, hits):
+    monkeypatch.setenv("ORBITKV_PREPARE_REQUESTS", "1")
+    client = MagicMock()
+    client.prepare_prefix.return_value = True
+    client.query_prefetch.return_value = QueryReady(hits, b"prepared", [])
+    scheduler = SchedulerConnector(
+        ConnectorContext(
+            instance_id="prepared",
+            namespace="prepared",
+            block_size=16,
+            tp_size=1,
+            world_size=1,
+            tp_rank=0,
+            device_id=0,
+            client=client,
+            state_manager=MagicMock(),
+        )
+    )
+    req = request("queued", 64)
+    scheduler.on_new_request(req)
+    batch = BlockHashes(req.block_hashes)
+    client.prepare_prefix.assert_called_once_with("prepared", batch, "queued")
+    assert scheduler._recovery is None
+    assert not scheduler._pending_load_intents
+    expected = (min(hits * 16, 63), True)
+    assert scheduler.get_num_new_matched_tokens(req, 0) == expected
+    assert scheduler.get_num_new_matched_tokens(req, 0) == expected
+    client.query_prefetch.assert_called_once_with(
+        "prepared",
+        batch,
+        req_id="queued",
+        wait_for_full_prefix=False,
+    )
+    client.prepare_recovery.assert_not_called()
+    client.read_recovery.assert_not_called()
+    client.release.assert_not_called()
+    scheduler.request_finished(req, ())
+    client.release.assert_called_once_with(b"prepared")
+    scheduler.shutdown()
 
 
 def step(tokens=0):

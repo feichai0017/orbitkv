@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 
 use bytesize::ByteSize;
 use hashlink::LruCache;
@@ -41,11 +41,45 @@ pub struct SsdReadLease {
     store: Arc<SsdBackingStore>,
 }
 
+/// An index snapshot does not reserve disk space or keep payload readers alive.
+/// The readers allocation identifies the generation even if a ring offset wraps.
+pub(crate) struct SsdReadCandidate {
+    pub(crate) entry: SsdIndexEntry,
+    key: StateKey,
+    store: Weak<SsdBackingStore>,
+}
+
+impl SsdReadCandidate {
+    pub(crate) fn cufile_eligible(&self, codec_budget: usize) -> bool {
+        self.store
+            .upgrade()
+            .is_some_and(|store| store.cufile_eligible(&self.entry, codec_budget))
+    }
+
+    pub(crate) fn pin(&self) -> Option<Arc<SsdReadLease>> {
+        let store = self.store.upgrade()?;
+        let inner = store.inner.lock();
+        let current = inner.ring.get(&self.key)?;
+        if !Arc::ptr_eq(&current.readers, &self.entry.readers) {
+            return None;
+        }
+        current.readers.fetch_add(1, Ordering::Relaxed);
+        core_metrics()
+            .ssd_read_pinned_bytes
+            .add(current.len as i64, &[]);
+        let entry = current.clone();
+        drop(inner);
+        Some(Arc::new(SsdReadLease {
+            entry,
+            key: self.key.clone(),
+            store,
+        }))
+    }
+}
+
 impl SsdReadLease {
     pub(crate) fn cufile_eligible(&self, codec_budget: usize) -> bool {
-        self.store.gpu_io.available()
-            && self.store.cufile_files.get(self.entry.shard_id).is_some()
-            && self.entry.fits_gpu_decode(codec_budget)
+        self.store.cufile_eligible(&self.entry, codec_budget)
     }
 
     pub(crate) fn file(&self) -> Result<&Arc<CufileFile>, crate::EngineError> {
@@ -221,6 +255,11 @@ pub(crate) struct SsdBackingStore {
 }
 
 impl SsdBackingStore {
+    fn cufile_eligible(&self, entry: &SsdIndexEntry, codec_budget: usize) -> bool {
+        self.gpu_io.available()
+            && self.cufile_files.get(entry.shard_id).is_some()
+            && entry.fits_gpu_decode(codec_budget)
+    }
     pub(crate) fn reserve_gpu(
         self: &Arc<Self>,
         key: StateKey,
@@ -377,20 +416,30 @@ impl SsdBackingStore {
         Ok(store)
     }
 
-    pub(crate) fn pin_prefix(self: &Arc<Self>, keys: &[StateKey]) -> Vec<Arc<SsdReadLease>> {
+    pub(crate) fn discover(self: &Arc<Self>, keys: &[StateKey]) -> Vec<Option<SsdReadCandidate>> {
+        let inner = self.inner.lock();
+        keys.iter()
+            .map(|key| {
+                let entry = inner.ring.get(key)?.clone();
+                Some(SsdReadCandidate {
+                    entry,
+                    key: key.clone(),
+                    store: Arc::downgrade(self),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn discover_prefix(self: &Arc<Self>, keys: &[StateKey]) -> Vec<SsdReadCandidate> {
         let inner = self.inner.lock();
         keys.iter()
             .map_while(|key| {
                 let entry = inner.ring.get(key)?.clone();
-                entry.readers.fetch_add(1, Ordering::Relaxed);
-                core_metrics()
-                    .ssd_read_pinned_bytes
-                    .add(entry.len as i64, &[]);
-                Some(Arc::new(SsdReadLease {
+                Some(SsdReadCandidate {
                     entry,
                     key: key.clone(),
-                    store: Arc::clone(self),
-                }))
+                    store: Arc::downgrade(self),
+                })
             })
             .collect()
     }
@@ -543,13 +592,6 @@ impl SsdBackingStore {
         if self.write_tx.send(SsdWriteCommand::Flush(tx)).await.is_ok() {
             let _ = rx.await;
         }
-    }
-
-    pub(crate) fn contains_keys(&self, keys: &[StateKey]) -> Vec<bool> {
-        let inner = self.inner.lock();
-        keys.iter()
-            .map(|key| inner.ring.get(key).is_some())
-            .collect()
     }
 
     /// Count consecutive SSD-resident keys from the start of `keys`.

@@ -208,7 +208,11 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
     drop(payload);
     assert_eq!(storage.cleanup_memory_cache().evicted_blocks, 0);
 
-    let sources = store.pin_prefix(std::slice::from_ref(&key));
+    let sources = store
+        .discover(std::slice::from_ref(&key))
+        .into_iter()
+        .map_while(|candidate| candidate?.pin())
+        .collect::<Vec<_>>();
     assert_eq!(sources.len(), 1);
     let source = Arc::clone(&sources[0]);
     drop(sources);
@@ -270,7 +274,11 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         assert_eq!(stream.clone_dtoh(&target).unwrap(), expected, "{path:?}");
         assert!(store.gpu_io.available());
         assert!(source.cufile_eligible(CODEC_BUDGET));
-        let current = store.pin_prefix(std::slice::from_ref(&key));
+        let current = store
+            .discover(std::slice::from_ref(&key))
+            .into_iter()
+            .map_while(|candidate| candidate?.pin())
+            .collect::<Vec<_>>();
         assert_eq!(current.len(), 1);
         assert_eq!(
             (

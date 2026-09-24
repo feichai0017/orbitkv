@@ -407,6 +407,20 @@ impl PyCacheManagerClient {
         .map_err(client_error)
     }
 
+    fn prepare_prefix(
+        &self,
+        py: Python<'_>,
+        instance_id: &str,
+        block_hashes: &PyBlockHashes,
+        req_id: &str,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            self.inner
+                .prepare_prefix(instance_id, &block_hashes.0, req_id)
+        })
+        .map_err(client_error)
+    }
+
     fn warm_prefix(
         &self,
         py: Python<'_>,

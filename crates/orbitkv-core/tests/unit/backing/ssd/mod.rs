@@ -127,7 +127,13 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
         store.flush().await;
         drop(block);
 
-        let lease = store.pin_prefix(std::slice::from_ref(&key)).pop().unwrap();
+        let lease = store
+            .discover(std::slice::from_ref(&key))
+            .into_iter()
+            .map_while(|candidate| candidate?.pin())
+            .collect::<Vec<_>>()
+            .pop()
+            .unwrap();
         assert!(!lease.cufile_eligible(0));
         assert!(lease.file().is_err());
         assert_eq!(lease.cost_resource(), store.io.cost_resource);
@@ -238,10 +244,68 @@ pub(super) fn queued_read_store() -> (
 }
 
 #[tokio::test]
+async fn candidates_do_not_pin_and_cannot_authorize_a_replaced_generation() {
+    let (store, queued) = queued_read_store();
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let mut candidates = store.discover(&[key.clone(), StateKey::new("ns".into(), vec![1])]);
+    assert!(candidates.pop().unwrap().is_none());
+    let candidate = candidates.pop().unwrap().unwrap();
+    assert_eq!(candidate.entry.len, SSD_ALIGNMENT as u64);
+    assert_eq!(candidate.entry.slots[0].total_size(), SSD_ALIGNMENT as u64);
+    assert_eq!(candidate.entry.readers.load(Ordering::Acquire), 0);
+    assert!(!candidate.cufile_eligible(64 * 1024));
+    assert_eq!(queued.len(), 0, "discovery must not enqueue payload reads");
+    let missing = StateKey::new("queued-lease".into(), vec![1]);
+    let prefix = store.discover_prefix(&[key.clone(), missing.clone(), key.clone()]);
+    assert_eq!(prefix.len(), 1);
+    assert_eq!(prefix[0].entry.readers.load(Ordering::Acquire), 0);
+    assert!(store.discover_prefix(&[missing, key.clone()]).is_empty());
+    let lease = candidate.pin().unwrap();
+    assert!(Arc::ptr_eq(&lease.entry.readers, &candidate.entry.readers));
+    assert_eq!(candidate.entry.readers.load(Ordering::Acquire), 1);
+    drop(lease);
+
+    // A replacement may reuse the same key and physical offset. The old
+    // snapshot must neither pin that generation nor prevent its allocation.
+    let mut inner = store.inner.lock();
+    let replacement = StateKey::new("queued-lease".into(), vec![2]);
+    for next in [&replacement, &key] {
+        assert!(
+            inner
+                .ring
+                .reserve(next, candidate.entry.slots.clone(), index::Encoding::Raw)
+                .is_some()
+        );
+        assert!(inner.ring.commit(next, true));
+    }
+    assert_eq!(
+        inner.ring.get(&key).unwrap().file_offset,
+        candidate.entry.file_offset
+    );
+    drop(inner);
+    assert!(candidate.pin().is_none());
+    assert_eq!(candidate.entry.readers.load(Ordering::Acquire), 0);
+    let fresh = store
+        .discover(std::slice::from_ref(&key))
+        .pop()
+        .unwrap()
+        .unwrap();
+    assert!(fresh.pin().is_some());
+    drop(store);
+    assert!(fresh.pin().is_none());
+}
+
+#[tokio::test]
 async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
     let (store, mut queued) = queued_read_store();
     let key = StateKey::new("queued-lease".into(), vec![0]);
-    let lease = store.pin_prefix(std::slice::from_ref(&key)).pop().unwrap();
+    let lease = store
+        .discover(std::slice::from_ref(&key))
+        .into_iter()
+        .map_while(|candidate| candidate?.pin())
+        .collect::<Vec<_>>()
+        .pop()
+        .unwrap();
     let readers = Arc::clone(&lease.entry.readers);
     let source = Arc::downgrade(&lease);
     let mut read = Box::pin(lease.read_host());
@@ -263,7 +327,13 @@ async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
     assert!(source.upgrade().is_none());
 
     queued.close();
-    let lease = store.pin_prefix(std::slice::from_ref(&key)).pop().unwrap();
+    let lease = store
+        .discover(std::slice::from_ref(&key))
+        .into_iter()
+        .map_while(|candidate| candidate?.pin())
+        .collect::<Vec<_>>()
+        .pop()
+        .unwrap();
     assert!(lease.read_host().await.is_err());
     assert_eq!(readers.load(Ordering::Acquire), 1);
     drop(lease);

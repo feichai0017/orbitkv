@@ -62,25 +62,28 @@ impl OrbitKVEngine {
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
         topology.group_total_slots(group_id)?;
-        let encoded: Vec<_> = hashes
-            .iter()
-            .map(|hash| group_hash(hash, group_id))
-            .collect();
-        let hits = self
-            .storage
-            .discover(&topology.cache_namespace, &encoded)
-            .await;
-        let limit = if group_id == 0 {
-            hits.iter().take_while(|&&hit| hit).count()
-        } else {
-            hits.len()
-        };
-        let positions: Vec<_> = hits
-            .into_iter()
-            .take(limit)
-            .enumerate()
-            .filter_map(|(i, hit)| hit.then_some(i as u32))
-            .collect();
+        let mut positions = Vec::new();
+        let deadline = tokio::time::Instant::now() + crate::storage::DISCOVERY_TIMEOUT;
+        'discovery: for (batch, hashes) in
+            hashes.chunks(orbitkv_state::DISCOVERY_MAX_KEYS).enumerate()
+        {
+            let encoded: Vec<_> = hashes
+                .iter()
+                .map(|hash| group_hash(hash, group_id))
+                .collect();
+            let candidates = self
+                .storage
+                .discover(&topology.cache_namespace, &encoded, deadline)
+                .await;
+            for (position, candidate) in candidates.into_iter().enumerate() {
+                debug_assert_eq!(candidate.key.hash, encoded[position]);
+                if candidate.is_available() {
+                    positions.push((batch * orbitkv_state::DISCOVERY_MAX_KEYS + position) as u32);
+                } else if group_id == 0 {
+                    break 'discovery;
+                }
+            }
+        }
         let metrics = core_metrics();
         metrics
             .cache_candidate_hits
@@ -190,6 +193,33 @@ impl OrbitKVEngine {
         Ok(self
             .query_leases
             .create(instance_id, blocks, instance.world_size(), None))
+    }
+
+    /// Check the complete declared boundary before admitting any selected group.
+    /// Storage identity comes from this instance's sealed registration.
+    pub fn validate_recovery_demand(
+        &self,
+        instance_id: &str,
+        demand: &orbitkv_state::RecoveryDemand,
+        group_id: u32,
+        hashes: usize,
+    ) -> Result<(), EngineError> {
+        demand
+            .validate(group_id, hashes)
+            .map_err(|error| EngineError::InvalidArgument(error.to_string()))?;
+        let instance = self.get_instance(instance_id)?;
+        let topology = instance.sealed_topology()?;
+        if !demand
+            .groups
+            .iter()
+            .map(|(group, _)| *group as usize)
+            .eq(0..topology.num_groups())
+        {
+            return Err(EngineError::InvalidArgument(
+                "recovery demand must include every registered storage group exactly once".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Reserve registered group bytes before a process query retains any pages.

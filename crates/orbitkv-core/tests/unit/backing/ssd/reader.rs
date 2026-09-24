@@ -33,7 +33,13 @@ fn cancelled_batch_releases_results_and_finishes_after_every_reader() {
 async fn cancelled_batch_retains_extent_until_the_last_reader_releases_its_context() {
     let (store, _queued) = super::super::tests::queued_read_store();
     let key = StateKey::new("queued-lease".into(), vec![0]);
-    let lease = store.pin_prefix(std::slice::from_ref(&key)).pop().unwrap();
+    let lease = store
+        .discover(std::slice::from_ref(&key))
+        .into_iter()
+        .map_while(|candidate| candidate?.pin())
+        .collect::<Vec<_>>()
+        .pop()
+        .unwrap();
     let readers = Arc::clone(&lease.entry.readers);
     let (done_tx, done_rx) = oneshot::channel();
     let context = Arc::new(BatchContext::new(

@@ -137,10 +137,22 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
 
 #[test]
 fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
+    use std::num::NonZeroU64;
+
+    use crate::block::Segment;
     use crate::codec::EncodedSegment;
+    use crate::memory::pool::PinnedAllocator;
     use orbitkv_state::StorageFormat;
 
-    let mut encoded = RawBlock::new(vec![]);
+    let pool = PinnedAllocator::new_global(4096, 1, false, false, None);
+    let block = |bytes: usize| {
+        let allocation = pool
+            .allocate(NonZeroU64::new(bytes as u64).unwrap(), NumaNode::UNKNOWN)
+            .unwrap();
+        RawBlock::single_segment(Segment::new(allocation.as_non_null(), bytes, allocation))
+    };
+    let mut encoded = block(512);
+    encoded.storage_format = StorageFormat::Ans;
     encoded.encoding = Some(vec![EncodedSegment {
         version: 1,
         format: StorageFormat::Ans,
@@ -160,7 +172,7 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
             },
             TransferBlock {
                 block_idx: 1,
-                block: TransferPayload::Owned(RawBlock::new(vec![])),
+                block: TransferPayload::Owned(block(1024)),
             },
         ],
     }];

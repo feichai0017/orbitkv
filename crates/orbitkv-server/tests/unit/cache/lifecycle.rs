@@ -78,6 +78,7 @@ async fn process_channel_lifecycle_and_cache_control_need_no_grpc() {
                         discover: false,
                         materialize: false,
                         prepare: false,
+                        demand: None,
                         group_id: 0,
                     })
                 )

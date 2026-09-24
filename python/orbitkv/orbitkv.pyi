@@ -184,6 +184,9 @@ class CacheManagerClient:
         wait_for_full_prefix: bool = False,
         group_id: int = 0,
     ) -> QueryLoading | QueryReady: ...
+    def prepare_prefix(self, instance_id: str, block_hashes: BlockHashes, req_id: str) -> bool:
+        """Prepare a partial attention prefix for a later counted query_prefetch claim."""
+
     def prepare_recovery(
         self,
         instance_id: str,

@@ -91,6 +91,9 @@ qualification remain open. See the
   use a separate host-restore lane and preserve terminal ownership.
 - [x] Add explicit demand-route controls and shadow full-restore estimates for
   both eligible SSD routes. Keep default selection and DRAM preparation unchanged.
+- [x] Separate metadata residency candidates from acquisition: preserve local
+  DRAM/SSD and cached peer DRAM evidence, and revalidate the exact SSD generation
+  before pinning. Discovery does not read or reserve payloads.
 - [x] Complete [current route correctness and lifecycle validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence)
   across both engines, same-generation raw/ANS recovery, cancellation and remote
   misses. The previous 36-run observation matrix does not qualify these executor changes' overhead.
@@ -122,8 +125,8 @@ qualification remain open. See the
 - [x] Keep NUMA topology/affinity in Core and HLL reuse statistics in Server;
   limit `orbitkv-common` to shared process logging and peer-connection defaults.
 - [x] Remove the unused repository-root `src/main.rs`.
-- [x] Add `orbitkv-state` with state identity, format, page generation, and
-  recovery-bundle types.
+- [x] Add `orbitkv-state` with state identity, format and recovery-bundle types.
+  Remove unused page-generation types until an actual execution contract owns them.
 - [x] Name the bundle's current component-presence check honestly; it is not
   yet a restorable-state proof.
 - [x] Move the canonical vLLM package to `orbitkv.vllm`.
@@ -201,6 +204,11 @@ qualification remain open. See the
   additional discovery rounds are not claimed as a TTFT improvement.
 - [x] Move hybrid-boundary validation out of `orbitkv.vllm`; retain engine-owned
   allocation and checkpoint handoff, and apply the token limit before reading.
+- [x] Send complete selected-boundary `RecoveryDemand` to the Manager with each
+  group read. Validate registered groups before admission, include all ranges
+  in query revisions and reject incomplete selected-group leases.
+- [ ] Add joint multi-group physical planning and admission; retain engine-owned
+  rank agreement, HBM allocation and legal recovery boundaries.
 - [x] Handle asynchronous vLLM checkpoint queries from SSD, retain completed
   groups during preparation, and retire pending groups on cancel/drift/expiry.
   Verify native validation and exact DRAM/SSD GPU restoration in
@@ -390,6 +398,9 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   uncertain native batches.
 - [x] D1 discovery RPC reduction: batch shards by catalog host, share connections,
   bound host concurrency and include coalescing in the common lookup deadline.
+- [x] Coalesce matching directory batches without serializing unrelated queries.
+  Bound pending metadata and per-owner/global RPC concurrency; cancellation and
+  membership changes cannot leave stale evidence or detached lookup owners.
 - [x] D1 authorization reconciliation: source-issued windows and generation-fenced
   slots identify holds before authorization; reconcile lost grant replies and
   cancellation, reject delayed authorizations, and bound idle replay metadata.

@@ -49,12 +49,12 @@ are recorded below; dynamic execution selection remains planned.
 | Area | Implemented or recorded | Open boundary |
 | --- | --- | --- |
 | Engine integration | vLLM 0.29.0 and SGLang 0.5.20; shared Rust client and direct GPU-page restoration | Qualify release upgrades separately from policy comparisons |
-| Recovery semantics | Model/storage identity, compiled prefix/window/checkpoint requirements, candidate discovery followed by selected `required_ranges` and lease validation | General allocation-generation evidence, further auxiliary state and wider native hybrid serving remain separate work |
+| Recovery semantics | Model/storage identity, compiled prefix/window/checkpoint requirements, complete selected-boundary demand sent to Manager, validated group reads | Joint multi-group physical planning, allocation-generation evidence, further auxiliary state and wider native hybrid serving remain separate work |
 | Local storage | Pinned DRAM, neutral SSD extent leases, independently executable io_uring/cuFile demand reads, reusable GPU staging and encoded recovery | New route validation recorded separately below; native GDS performance and direct engine-page I/O unqualified |
 | Codecs | Batched GPU ANS/FP8/TurboQuant, reusable workspace, CRC; CPU FP8 scalar/AVX2/AVX-512 | General lossy quality qualification and adaptive representation selection |
 | Lifecycle | Query budgets, shared reads, cancellation, completion ownership, restart and process-fault gates | Multi-rank and sustained fault soak; no timeout-only DMA reclamation |
 | Policies | Optional preparation, protected retention, reuse-based SSD admission and opt-in bounded cost/shadow observations | Calibration under shared-device contention, first-use prediction and dynamic path/boundary selection |
-| Peer cache | Embedded catalogs, etcd Watch, cached/coalesced discovery, source authorization, bounded TE transfers and release recovery | Recorded serving evidence is same-host TCP; two-host TCP/RDMA, catalog replication and orphan revocation remain open |
+| Peer cache | Embedded catalogs, etcd Watch, bounded per-query coalescing and per-owner discovery concurrency, source authorization, bounded TE transfers and release recovery | Recorded serving evidence is same-host TCP; two-host TCP/RDMA, catalog replication and orphan revocation remain open |
 | Packaging | Source-buildable CUDA wheels and installed-artifact checks | First Python release, qualified container images, shared-instance deployment and Kubernetes installation |
 
 Use the maintained [storage-format results](storage-formats.md#qualification),
@@ -618,6 +618,46 @@ earlier SGLang ANS SSD observation-overhead gate remain open.
 Raw logs, frozen artifacts and machine-readable summaries remain in ignored
 `benches/results/runs/20260925-p42-dma/`; paired results are under `paired/final/`.
 
+## Recovery demand and residency candidates
+
+The next slice connects existing execution owners without introducing a backend
+trait, a second cache service or new configuration:
+
+- `orbitkv-state` compiles `RecoveryDemand` for one selected boundary; the
+  existing channel carries every group range with the selected group's hashes.
+  The Manager checks the complete registered group set before admission and
+  refuses incomplete selected-group leases. Full demand participates in query
+  revisions and preparation claims. The registered instance/session binds the
+  physical namespace; the adapter's logical namespace is not a second authority.
+- Core discovery retains local DRAM, local SSD and known peer DRAM evidence
+  together. Weak DRAM references and SSD index snapshots do not pin payloads;
+  an SSD candidate acquires a lease only after generation revalidation under
+  the index lock. SSD prefix discovery stops at the first missing entry.
+  Engine-facing discovery still projects positions, and reads reacquire
+  evidence; joint source ranking and an owned multi-group plan remain open.
+- Directory coalescing uses owner incarnation, placement and the exact query
+  batch. Pending metadata is bounded; each owner admits one RPC before the
+  shared four-response budget. Unrelated peers progress independently. Last
+  waiter cancellation cleans the shared entry, while another waiter may take
+  over initialization. Bounded discovery batches share one absolute deadline,
+  preserving later local/cache hits after directory time expires.
+- Native prefix preparation preserves ordinary partial-prefix admission and
+  foreground lookup accounting. Selected-boundary preparation remains strict.
+  Query-body version 6 requires a matching native client and Manager update.
+- Remove unused `LocalPageRef`/`RegionId` types rather than implying generation
+  validation in the current block-ID restore protocol. The experimental P/D
+  sender does bind queued tasks to request generations; request release and
+  cancellation drain admitted writes before retiring authorization, including
+  after an error. Its test
+  port now lives under Python tests; descriptor construction remains Python.
+
+These changes keep the existing defaults: observations/shadow and speculative
+preparation remain off; registered DMA/kernel and capability/configured SSD
+routes still determine execution. Engine HBM allocation and rank coordination
+stay with the engine. Remote SSD, general peer HBM, destination page generations,
+joint multi-group admission and calibrated cross-tier choice are not implemented
+by this slice.
+
 ## Session startup and working constraints
 
 Read [AGENTS.md](../AGENTS.md), this plan, the affected owners and the relevant
@@ -660,8 +700,10 @@ npm run build
 npm test
 ```
 
-Continue from the SSD-route and DMA/kernel evidence above. Before per-batch
-selection, establish shared admission across registrations on the same GPU,
+Continue from the demand/candidate boundary above. Retain candidates in an owned
+request plan, attach current resource evidence, and compare complete paths to
+the same engine-visible state. Before per-batch selection, establish shared
+admission across registrations on the same GPU,
 prepare both legal backends outside request execution, and require fresh matched
 estimates with gains exceeding measured error and a declared switching margin.
 The admission permit must survive caller cancellation through the existing

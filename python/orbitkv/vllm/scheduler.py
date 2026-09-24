@@ -152,7 +152,7 @@ class SchedulerConnector:
         if self._cache_groups.group_count > 1 and (pd_tail_save or pd_tail_load):
             raise ValueError("P/D tail-block caching is not supported with HMA")
         self._recovery = None
-        if self._cache_groups.group_count > 1 or os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1":
+        if self._cache_groups.group_count > 1:
             from orbitkv import RecoveryContract
 
             self._recovery = RecoveryContract(
@@ -323,16 +323,7 @@ class SchedulerConnector:
             for client in self._clients:
                 try:
                     if prepare:
-                        client.prepare_recovery(
-                            self._ctx.instance_id,
-                            demand,
-                            request.request_id,
-                            self._recovery,
-                            self._ctx.namespace,
-                            resident * self._ctx.virtual_block_size,
-                            len(hashes) * self._ctx.virtual_block_size,
-                            0,
-                        )
+                        client.prepare_prefix(self._ctx.instance_id, demand, request.request_id)
                     else:
                         client.warm_prefix(self._ctx.instance_id, demand, request.request_id)
                 except (RuntimeError, OSError):

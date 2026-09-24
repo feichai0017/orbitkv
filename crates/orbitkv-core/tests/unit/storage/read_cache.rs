@@ -11,6 +11,26 @@ fn make_block() -> Arc<SealedBlock> {
 }
 
 #[test]
+fn discovery_preserves_image_identity_without_holding_or_promoting_residency() {
+    let cache = ReadCache::new(100, false, None, None, 60);
+    let key = StateKey::new("ns".into(), vec![1]);
+    let block = Arc::new(SealedBlock::for_policy_test(40));
+    cache.batch_insert(vec![(key.clone(), Arc::clone(&block))]);
+    let candidate = cache
+        .discover(std::slice::from_ref(&key))
+        .pop()
+        .unwrap()
+        .unwrap();
+    assert!(Weak::ptr_eq(&candidate, &Arc::downgrade(&block)));
+    assert_eq!(candidate.upgrade().unwrap().memory_footprint(), 40);
+    assert_eq!(Arc::strong_count(&block), 2);
+    assert_class(&cache, &key, ResidentClass::Probationary);
+    drop(block);
+    drop(cache.remove_all());
+    assert!(candidate.upgrade().is_none());
+}
+
+#[test]
 fn demand_protection_survives_scans_and_demotes_by_bytes() {
     let cache = ReadCache::new(100, false, None, None, 60);
     let a = StateKey::new("ns".into(), vec![1]);

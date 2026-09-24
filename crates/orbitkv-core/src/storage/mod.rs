@@ -1,3 +1,4 @@
+mod candidates;
 pub(crate) mod inventory;
 pub(crate) mod metadata;
 mod prefetch;
@@ -23,6 +24,7 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
 
+use candidates::ResidencyCandidates;
 use prefetch::PrefetchScheduler;
 #[cfg(feature = "mooncake")]
 use prefetch::RemoteFetch;
@@ -30,6 +32,8 @@ pub(crate) use read_cache::ReadCache;
 use write_path::{InsertDeps, WritePipeline};
 
 const RECLAIM_BATCH_SIZE: usize = 512;
+// One catalog budget across every bounded batch in a candidate discovery.
+pub(crate) const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryCacheCleanupStats {
@@ -411,37 +415,76 @@ impl StorageEngine {
 
     /// Availability hints; concurrent eviction can invalidate them immediately.
     /// Only a subsequent payload read and lease establishes recoverability.
-    pub(crate) async fn discover(&self, namespace: &str, hashes: &[Vec<u8>]) -> Vec<bool> {
+    pub(crate) async fn discover(
+        &self,
+        namespace: &str,
+        hashes: &[Vec<u8>],
+        deadline: tokio::time::Instant,
+    ) -> Vec<ResidencyCandidates> {
+        #[cfg(not(feature = "mooncake"))]
+        let _ = deadline;
         let keys: Vec<_> = hashes
             .iter()
             .map(|hash| StateKey::new(namespace.to_owned(), hash.clone()))
             .collect();
-        let mut present = self.read_cache.contains_keys(&keys);
+        let mut candidates: Vec<_> = keys
+            .iter()
+            .cloned()
+            .zip(self.read_cache.discover(&keys))
+            .map(|(key, dram)| ResidencyCandidates {
+                key,
+                dram,
+                ssd: None,
+                peer_dram: Vec::new(),
+            })
+            .collect();
         if let Some(ssd) = &self.ssd_store {
-            for (hit, backing) in present.iter_mut().zip(ssd.contains_keys(&keys)) {
-                *hit |= backing;
+            for (candidate, backing) in candidates.iter_mut().zip(ssd.discover(&keys)) {
+                candidate.ssd = backing;
             }
         }
         #[cfg(feature = "mooncake")]
         if let Some(catalog) = &self.catalog_client {
-            let missing: Vec<_> = present
+            for (candidate, cached) in candidates.iter_mut().zip(catalog.cached_blocks(&keys)) {
+                if let Some(cached) = cached {
+                    candidate.peer_dram = cached.replicas;
+                }
+            }
+            let missing: Vec<_> = candidates
                 .iter()
                 .enumerate()
-                .filter_map(|(i, hit)| (!hit).then_some(i))
+                .filter_map(|(i, candidate)| (!candidate.is_available()).then_some(i))
                 .collect();
             let hashes: Vec<_> = missing.iter().map(|&i| hashes[i].clone()).collect();
-            if !hashes.is_empty() {
-                match catalog.locate_blocks(namespace, &hashes).await {
-                    Ok(candidates) => {
-                        for (i, candidate) in missing.into_iter().zip(candidates) {
-                            present[i] = !candidate.replicas.is_empty();
-                        }
+            if !hashes.is_empty() && tokio::time::Instant::now() < deadline {
+                let remote = match tokio::time::timeout_at(
+                    deadline,
+                    catalog.locate_blocks(namespace, &hashes),
+                )
+                .await
+                {
+                    Ok(Ok(remote)) => remote.into_iter().map(Some).collect(),
+                    Ok(Err(error)) => {
+                        log::warn!("candidate discovery failed: {error}");
+                        Vec::new()
                     }
-                    Err(error) => log::warn!("candidate discovery failed: {error}"),
+                    Err(_) => {
+                        // Healthy peers may have published evidence before a
+                        // different peer exhausted this discovery's deadline.
+                        let keys: Vec<_> = missing.iter().map(|&i| keys[i].clone()).collect();
+                        catalog.cached_blocks(&keys)
+                    }
+                };
+                for (i, candidate) in missing.into_iter().zip(remote) {
+                    if let Some(candidate) = candidate
+                        && candidates[i].key == candidate.key
+                    {
+                        candidates[i].peer_dram = candidate.replicas;
+                    }
                 }
             }
         }
-        present
+        candidates
     }
 
     /// Position-aligned membership across resident and backing tiers: entry

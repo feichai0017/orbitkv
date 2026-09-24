@@ -33,8 +33,8 @@ pub use internode::P2pTransferService;
 pub use memory::numa::NumaNode;
 pub use memory::pool::PinnedAllocation;
 pub use orbitkv_state::{
-    BundleComponent, LocalPageRef, RecoveryContract, StateBundle, StateComponent, StateDescriptor,
-    StateFormat, TokenRange,
+    BundleComponent, RecoveryContract, StateBundle, StateComponent, StateDescriptor, StateFormat,
+    TokenRange,
 };
 pub use query::lease::QueryLeaseId;
 pub use query::{QueryAdmission, QueryMode, QueryOwner, QueryReservation};

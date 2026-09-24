@@ -206,9 +206,8 @@ are:
 - `StateFormat`: model/implementation digest, dtype, layout, and parallel shape;
 - `StateComponent`: attention KV, MLA, recurrent, convolution, SWA, draft, and
   indexer state;
-- `LocalPageRef`: generation-qualified CUDA IPC or shared-host page reference;
-- `StateBundle` and `RecoveryContract`: the components needed to claim that a
-  logical boundary is restorable.
+- `StateBundle`, `RecoveryContract` and `RecoveryDemand`: recovery evidence,
+  compiled rules and the complete selected boundary's required group ranges.
 
 `RecoveryContract::compile` normalizes declared prefix/window/checkpoint rules
 once at registration. `required_ranges(namespace, start, end)` exposes
@@ -337,10 +336,10 @@ evidence; it does not by itself prove semantic death.
 
 The descriptor arena validates its slot generation and Cache Manager session epoch,
 and vLLM pins save-source blocks until Publish returns. These checks do not
-yet validate a framework HBM page's reuse generation. `LocalPageRef` defines
-the future contract, but current Publish still carries raw block IDs;
-generation enforcement requires page-lifecycle information from the adapter
-before a stale ID can be rejected at the Cache Manager boundary.
+yet validate a framework HBM page's reuse generation. Publish and Restore still
+carry block IDs; unused page-reference types are not exposed as guarantees.
+Generation enforcement requires page-lifecycle information from the adapter
+and destination ownership through terminal DMA completion.
 
 ## Multi-node cache path and deployment
 

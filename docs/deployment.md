@@ -57,6 +57,10 @@ Install the same OrbitKV build in the Manager and engine environments using the
 for GPU registration, but does not load model weights or run inference. It can
 run from a separate environment with those dependencies.
 
+Recovery-demand queries use query-body protocol version 6. Upgrade the native
+client extension and Manager together; mixed query-body versions are rejected.
+The engine still owns HBM allocation and page lifetimes.
+
 Start a DRAM cache:
 
 ```bash

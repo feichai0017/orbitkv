@@ -33,6 +33,7 @@ fn request_round_trip_preserves_variable_hashes() {
         discover: false,
         materialize: false,
         prepare: false,
+        demand: None,
     };
     assert_eq!(
         QueryBundleRequest::decode(&request.encode().unwrap()).unwrap(),
@@ -77,6 +78,94 @@ fn request_round_trip_preserves_variable_hashes() {
             Err(QueryCodecError::InvalidQueryTicket)
         );
     }
+}
+
+#[test]
+fn selected_recovery_round_trip_preserves_all_group_ranges_and_rejects_bad_frames() {
+    let span = TokenRange {
+        start: 64,
+        end: 128,
+    };
+    let request = QueryBundleRequest {
+        ticket: QueryTicket {
+            operation_id: 9,
+            revision: 2,
+        },
+        instance_id: "registered-shard".into(),
+        request_id: "recovery".into(),
+        block_hashes: vec![vec![1; 32], vec![2; 32]],
+        group_id: 1,
+        wait_for_full_prefix: false,
+        warmup: false,
+        discover: false,
+        materialize: true,
+        prepare: true,
+        demand: Some(RecoveryDemand {
+            page_tokens: 16,
+            span,
+            groups: vec![
+                (0, span),
+                (
+                    1,
+                    TokenRange {
+                        start: 96,
+                        end: 128,
+                    },
+                ),
+                (
+                    2,
+                    TokenRange {
+                        start: 112,
+                        end: 128,
+                    },
+                ),
+            ],
+        }),
+    };
+    let bytes = request.encode().unwrap();
+    assert_eq!(QueryBundleRequest::decode(&bytes).unwrap(), request);
+    for end in 0..bytes.len() {
+        assert!(QueryBundleRequest::decode(&bytes[..end]).is_err());
+    }
+    let mut oversized = bytes.clone();
+    let group_count_offset = bytes.len() - 3 * 20 - 4;
+    oversized[group_count_offset..group_count_offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(
+        QueryBundleRequest::decode(&oversized),
+        Err(QueryCodecError::Truncated)
+    );
+    let mut duplicate = bytes.clone();
+    let last_group_offset = bytes.len() - 20;
+    duplicate[last_group_offset..last_group_offset + 4].copy_from_slice(&1u32.to_le_bytes());
+    assert!(matches!(
+        QueryBundleRequest::decode(&duplicate),
+        Err(QueryCodecError::Recovery(_))
+    ));
+    let mut invalid_range = bytes.clone();
+    invalid_range[last_group_offset + 4..last_group_offset + 12]
+        .copy_from_slice(&129u64.to_le_bytes());
+    assert!(matches!(
+        QueryBundleRequest::decode(&invalid_range),
+        Err(QueryCodecError::Recovery(_))
+    ));
+    let mut missing = request.clone();
+    missing.demand = None;
+    assert_eq!(
+        missing.encode(),
+        Err(QueryCodecError::InvalidRecoveryDemand)
+    );
+    let mut unselected = request.clone();
+    unselected.materialize = false;
+    assert_eq!(
+        unselected.encode(),
+        Err(QueryCodecError::InvalidRecoveryDemand)
+    );
+    let mut wrong_count = request;
+    wrong_count.block_hashes.pop();
+    assert!(matches!(
+        wrong_count.encode(),
+        Err(QueryCodecError::Recovery(_))
+    ));
 }
 
 #[test]

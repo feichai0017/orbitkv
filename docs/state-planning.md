@@ -163,6 +163,17 @@ source, resident state, and state ready for GPU consumption. A directory hint
 alone cannot authorize skipping computation. Speculative warming uses a
 bounded budget and does not pin engine pages before admission.
 
+Selected-boundary reads now send `RecoveryDemand` through the existing Rust
+channel: page size, engine-declared valid-prefix token origin, selected token end and every required
+group range. The registered instance/session supplies the physical namespace.
+The Manager validates the complete group set and selected group's hash count
+before query admission or byte reservation. Changed boundaries or other-group
+ranges revise the operation even when the selected group's hashes are unchanged.
+An incomplete selected group returns no lease. Groups still execute separately;
+the engine coordinates rank agreement and complete model recovery. Priority,
+first-use estimates, joint multi-group admission and destination generations
+are not part of this implementation.
+
 ## Recovery semantics before placement
 
 The existing model fingerprint establishes computation and storage identity.
@@ -239,6 +250,19 @@ Represent a candidate by location, representation and valid generation, rather
 than a tier name alone. A block may have several replicas. Only discover
 metadata while enumerating alternatives; reserve and revalidate the selected
 sources before reading. Estimates never prove source availability or readiness.
+
+Core discovery now retains concrete local DRAM, local SSD and known peer DRAM
+evidence together instead of collapsing each key immediately to a Boolean.
+DRAM evidence is a weak reference to its stored image; SSD evidence includes
+the indexed representation, bytes and immutable generation token. Neither
+pins payloads. SSD admission checks eligibility and then pins that exact
+generation under the index lock; replacement makes the candidate stale even
+when its key and file offset match. Peer evidence contains owner incarnation
+and residency sequence; absent byte/format information remains unknown.
+Discovery uses bounded batches and one directory deadline, while local hits
+can reuse cached peer evidence without another RPC. The current engine API
+still receives positions, and reads reacquire source evidence. This preserves
+alternatives inside discovery; it does not yet rank them by complete cost.
 
 ```mermaid
 flowchart LR

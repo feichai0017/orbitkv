@@ -269,6 +269,88 @@ fn planned_ranges_skip_unused_windows_and_old_checkpoints() {
 }
 
 #[test]
+fn selected_demand_preserves_all_ranges_and_validates_each_group_read() {
+    let plan = contract(vec![
+        requirement(1, RecoveryRule::Window { tokens: 17 }),
+        requirement(2, RecoveryRule::Checkpoint),
+    ]);
+    for span in [
+        TokenRange {
+            start: 64,
+            end: 144,
+        },
+        TokenRange { start: 64, end: 64 },
+    ] {
+        let demand = plan.demand("model/layout/rank", span).unwrap();
+        assert_eq!(demand.page_tokens, 16);
+        assert_eq!(demand.span, span);
+        assert_eq!(
+            demand.groups,
+            plan.required_ranges("model/layout/rank", span).unwrap()
+        );
+        for &(group, range) in &demand.groups {
+            let pages = (range.len() / 16) as usize;
+            assert_eq!(demand.validate(group, pages), Ok(()));
+            assert!(demand.validate(group, pages + 1).is_err());
+        }
+        assert!(demand.validate(3, 1).is_err());
+    }
+    assert_eq!(
+        plan.demand(
+            "other",
+            TokenRange {
+                start: 64,
+                end: 144
+            }
+        ),
+        Err(RecoveryError::IncompatibleNamespace)
+    );
+}
+
+#[test]
+fn selected_demand_rejects_ambiguous_or_impossible_ranges() {
+    let demand = contract(vec![requirement(1, RecoveryRule::Checkpoint)])
+        .demand("model/layout/rank", TokenRange { start: 64, end: 96 })
+        .unwrap();
+    let mut invalid = Vec::new();
+    let mut changed = demand.clone();
+    changed.page_tokens = 0;
+    invalid.push(changed);
+    let mut changed = demand.clone();
+    changed.span.start = 65;
+    invalid.push(changed);
+    let mut changed = demand.clone();
+    changed.span.end = 48;
+    invalid.push(changed);
+    let mut changed = demand.clone();
+    changed.groups.remove(0);
+    invalid.push(changed);
+    let mut changed = demand.clone();
+    changed.groups.push(changed.groups[1]);
+    invalid.push(changed);
+    let mut changed = demand.clone();
+    changed.groups.swap(0, 1);
+    invalid.push(changed);
+    for range in [
+        TokenRange { start: 48, end: 96 },
+        TokenRange { start: 81, end: 96 },
+        TokenRange { start: 96, end: 96 },
+        TokenRange { start: 96, end: 80 },
+        TokenRange {
+            start: 80,
+            end: 112,
+        },
+    ] {
+        let mut changed = demand.clone();
+        changed.groups[1].1 = range;
+        invalid.push(changed);
+    }
+    for changed in invalid {
+        assert!(changed.validate(0, 2).is_err(), "{changed:?}");
+    }
+}
+
+#[test]
 fn native_candidate_intersection_preserves_sparse_rank_boundaries() {
     let plan = contract(vec![requirement(1, RecoveryRule::Checkpoint)]);
     let span = TokenRange {
