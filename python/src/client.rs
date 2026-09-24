@@ -189,7 +189,7 @@ impl PyCacheManagerClient {
         clippy::too_many_arguments,
         reason = "matches framework registration metadata"
     )]
-    #[pyo3(signature = (instance_id, namespace, tp_rank, pp_rank, tp_size, world_size, device_id, layer_names, wrapper_bytes_list, num_blocks_list, bytes_per_block_list, kv_stride_bytes_list, segments_list, transfer_backend, page_first, layer_group_ids=None))]
+    #[pyo3(signature = (instance_id, namespace, tp_rank, pp_rank, tp_size, world_size, device_id, layer_names, wrapper_bytes_list, num_blocks_list, bytes_per_block_list, kv_stride_bytes_list, segments_list, transfer_backend, page_first, layer_group_ids=None, layer_formats=None))]
     fn register_context_batch(
         &self,
         py: Python<'_>,
@@ -209,6 +209,7 @@ impl PyCacheManagerClient {
         transfer_backend: &str,
         page_first: bool,
         layer_group_ids: Option<Vec<u32>>,
+        layer_formats: Option<Vec<String>>,
     ) -> PyResult<(bool, String)> {
         let transfer_mode = match transfer_backend {
             "direct" => TransferMode::Direct,
@@ -237,6 +238,7 @@ impl PyCacheManagerClient {
             transfer_mode: transfer_mode as i32,
             page_first,
             layer_group_ids: layer_group_ids.unwrap_or_default(),
+            layer_formats: layer_formats.unwrap_or_default(),
         };
         self.lifecycle_call(py, LifecycleCommand::Register, request.encode_to_vec())?;
         Ok((true, String::new()))

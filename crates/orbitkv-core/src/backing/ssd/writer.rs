@@ -171,11 +171,17 @@ async fn execute_write(
             let segments: Vec<_> = block
                 .slots()
                 .iter()
-                .flat_map(|slot| slot.segment_iovecs())
-                .map(|(ptr, len)| {
+                .flat_map(|slot| {
+                    slot.segment_iovecs()
+                        .map(move |(ptr, len)| (ptr, len, slot.storage_format))
+                })
+                .map(|(ptr, len, format)| {
                     // SAFETY: sealed host segments have completed DMA, initialized padding,
                     // and remain immutable under this block's ownership.
-                    unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) }
+                    (
+                        unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) },
+                        format,
+                    )
                 })
                 .collect();
             codec.encode(&segments, alignment)

@@ -53,6 +53,9 @@ message RegisterContextRequest {
   // slot space, so a sparse (checkpoint-only) group can seal without
   // attention's per-block cadence. Page-first stays single-group.
   repeated uint32 layer_group_ids = 19;
+  // Typed attention regions eligible for storage quantization: bf16, fp16,
+  // or exact for checkpoints/opaque layouts. Validated against imported tensors.
+  repeated string layer_formats = 20;
 }
 
 message UnregisterRequest {

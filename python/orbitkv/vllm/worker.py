@@ -335,6 +335,7 @@ class WorkerConnector:
         layer_bytes_per_block = []
         layer_kv_stride_bytes = []
         layer_segments = []
+        layer_formats = []
         split_layer_count = 0
         split_blocks_per_logical = 1
         split_logical_blocks = 0
@@ -375,6 +376,13 @@ class WorkerConnector:
             layer_bytes_per_block.append(registration.bytes_per_block)
             layer_kv_stride_bytes.append(registration.kv_stride_bytes)
             layer_segments.append(registration.segments)
+            layer_formats.append(
+                "exact"
+                if is_recurrent_state
+                else {"torch.bfloat16": "bf16", "torch.float16": "fp16"}.get(
+                    str(registration_tensor.dtype), "exact"
+                )
+            )
 
             if registration.physical_blocks_per_logical_block > 1:
                 split_layer_count += 1
@@ -411,6 +419,7 @@ class WorkerConnector:
             self._ctx.transfer_backend,
             self._page_first,
             layer_group_ids=layer_group_ids,
+            layer_formats=layer_formats,
         )
 
         if not ok:

@@ -60,7 +60,7 @@ service to deploy. See [deployment examples](deployment.md#configure-capacity-th
   fixed GPU limits are separate from the io_uring queue/inflight flags below.
   The process channel admits up to 64 client ports; each cache client uses a
   control port and, after its first save, a separate Publish port.
-- `--ssd-compression`: `none` (default) or lossless Rust `lz4`. Compression uses host
+- `--ssd-codec`: `none` (default) or lossy Rust `fp8` for typed attention. Quantization uses host
   writes; raw fallback objects retain cuFile read eligibility. See [storage formats](storage-formats.md).
 - `--ssd-codec-budget`: temporary encoded host buffers, separate from pinned pool capacity
   (default `64mb`, range 4 KiB to 4 GiB minus one). Buffers stay charged through I/O and decode.

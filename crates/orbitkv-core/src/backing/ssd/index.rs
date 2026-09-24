@@ -101,7 +101,7 @@ impl SsdRingBuffer {
     pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) {
         if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry))
             if entry.shard_id == failed.shard_id && entry.begin == failed.begin
-                && matches!(entry.encoding, Encoding::Lz4V1(_))
+                && matches!(entry.encoding, Encoding::Fp8V1(_))
                 && entry.readers.load(Ordering::Acquire) == 0)
         {
             self.entries.remove(key);
@@ -234,7 +234,7 @@ impl SsdRingBuffer {
             Encoding::Raw => slots
                 .iter()
                 .try_fold(0u64, |sum, slot| sum.checked_add(slot.total_size()))?,
-            Encoding::Lz4V1(segments) => segments
+            Encoding::Fp8V1(segments) => segments
                 .iter()
                 .try_fold(0u64, |sum, segment| sum.checked_add(segment.bytes as u64))?,
         };

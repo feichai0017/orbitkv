@@ -549,9 +549,12 @@ impl OrbitKVEngine {
                     .blocks_to_save
                     .iter()
                     .zip(raw_blocks)
-                    .map(|((block_idx, _), block)| TransferBlock {
-                        block_idx: *block_idx,
-                        block: TransferPayload::Owned(block),
+                    .map(|((block_idx, _), mut block)| {
+                        block.storage_format = layout.storage_format;
+                        TransferBlock {
+                            block_idx: *block_idx,
+                            block: TransferPayload::Owned(block),
+                        }
                     })
                     .collect();
 
@@ -653,11 +656,22 @@ impl OrbitKVEngine {
                 .iter()
                 .map(|(_, hash)| group_hash(hash, 0))
                 .collect();
+            let format = layer_contexts[0].layout.storage_format;
+            let format = if layer_contexts
+                .iter()
+                .all(|ctx| ctx.layout.storage_format == format)
+            {
+                format
+            } else {
+                orbitkv_state::StorageFormat::Exact
+            };
             let blocks: Vec<RawBlock> = pages
                 .into_iter()
                 .map(|page| {
                     let ptr = page.mapped_ptr().host();
-                    RawBlock::single_segment(Segment::new(ptr, page_size, page))
+                    let mut block = RawBlock::single_segment(Segment::new(ptr, page_size, page));
+                    block.storage_format = format;
+                    block
                 })
                 .collect();
             self.storage.send_raw_insert(RawSaveBatch {

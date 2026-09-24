@@ -18,7 +18,7 @@ import pytest
 import requests
 
 from tests.support.cache_manager import evict_dram_after_ssd_writes, find_available_port
-from tests.support.metrics import fetch_orbitkv_metrics
+from tests.support.metrics import fetch_orbitkv_codec_bytes, fetch_orbitkv_metrics
 from tests.support.paths import PYTHON_ROOT
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
@@ -231,7 +231,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             "Cache Manager did not restore GPU KV"
         )
         if channel_server.ssd_cache_path is not None:
-            compression = request.config.getoption("--ssd-compression") != "none"
+            compression = request.config.getoption("--ssd-codec") != "none"
             if channel_server.ssd_backend == "cufile" and not compression:
                 assert (
                     fetch_orbitkv_metrics(channel_server.http_port).get(
@@ -248,6 +248,11 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             if compression:
                 assert recovered.get("orbitkv_ssd_codec_duration_seconds_count", 0) > 0
                 assert recovered.get("orbitkv_ssd_codec_decode_failures_total", 0) == 0
+                encoded = fetch_orbitkv_codec_bytes(channel_server.http_port)
+                print(f"SSD storage bytes: {encoded}")
+                if request.config.getoption("--kv-cache-dtype") == "auto":
+                    assert encoded["logical"] > 0, "no typed KV was quantized"
+                    assert encoded["stored"] <= encoded["logical"] * 0.55
             assert (
                 sum(recovered.get(key, 0) - before_restart.get(key, 0) for key in read_metrics) > 0
             )

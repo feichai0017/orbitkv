@@ -62,6 +62,20 @@ def fetch_orbitkv_rpc_failures(metrics_port: int, method: str | None = None) -> 
     return failures
 
 
+def fetch_orbitkv_codec_bytes(metrics_port: int) -> dict[str, float]:
+    """Physical and logical bytes of successfully encoded SSD objects."""
+    response = requests.get(f"http://localhost:{metrics_port}/metrics", timeout=5)
+    response.raise_for_status()
+    totals = {"logical": 0.0, "stored": 0.0}
+    for line in response.text.splitlines():
+        if not line.startswith("orbitkv_ssd_codec_bytes_total{"):
+            continue
+        match = re.search(r'representation="(logical|stored)"', line)
+        if match:
+            totals[match.group(1)] += float(line.rsplit(" ", 1)[1])
+    return totals
+
+
 def fetch_vllm_prefix_cache_hits(port: int) -> float:
     """Read vLLM's native (not external-connector) prefix-hit token counter."""
     response = requests.get(f"http://localhost:{port}/metrics", timeout=5)

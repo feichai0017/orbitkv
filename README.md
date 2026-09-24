@@ -104,10 +104,12 @@ and coalesces adjacent reads across cached blocks within each file. Rust submits
 asynchronous I/O through two 4 MiB slots, keeping demand reads progressing
 alongside bounded GPU writeback and event-tracked host copies.
 
-Optional [lossless SSD compression](docs/storage-formats.md) uses Rust LZ4 with
-bounded scratch memory, checksum validation and raw fallback. Enable it with
-`--ssd-compression lz4`; engine-native KV precision remains an independent
-engine setting. Compression is opt-in and uses the host SSD path.
+Experimental [FP8 SSD storage](docs/storage-formats.md) quantizes registered BF16/FP16
+attention in Rust and reconstructs the original dtype on restore. Enable it with
+`--ssd-codec fp8`; this is lossy and independent of engine-native KV precision.
+Checkpoints and unsupported formats remain exact. Quantization is opt-in and
+uses the host SSD path. Qwen3-8B measurements show half-size encoded payloads
+and some changed generated text; qualify model quality before enabling it.
 
 Keep the Manager alive, restart the engine, and repeat a multi-block prompt.
 An increase in `orbitkv_load_bytes_total` confirms an external restore.

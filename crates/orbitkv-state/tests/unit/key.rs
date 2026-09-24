@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn storage_identity_is_stable_and_isolates_incompatible_slots() {
     let first = StorageSlot {
+        format: crate::StorageFormat::Exact,
         layer: "layer.0".into(),
         group: 0,
         tp_rank: 0,
@@ -23,6 +24,10 @@ fn storage_identity_is_stable_and_isolates_incompatible_slots() {
         )
     );
     for changed in [
+        StorageSlot {
+            format: crate::StorageFormat::Fp8FromBf16,
+            ..first.clone()
+        },
         StorageSlot {
             group: 1,
             ..first.clone()

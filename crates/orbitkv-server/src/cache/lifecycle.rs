@@ -4,6 +4,7 @@ use std::sync::{Arc, Weak};
 
 use log::{info, warn};
 use orbitkv_core::{EngineError, OrbitKVEngine, TransferMode};
+use orbitkv_state::StorageFormat;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::cache::session::{SessionRegistry, SessionTopology};
@@ -34,6 +35,7 @@ pub(crate) struct Registration {
     pub(crate) transfer_mode: TransferMode,
     pub(crate) page_first: bool,
     pub(crate) layer_group_ids: Vec<u32>,
+    pub(crate) layer_formats: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -199,6 +201,7 @@ impl LifecycleService {
             || req.bytes_per_block.len() != batch_len
             || req.kv_stride_bytes.len() != batch_len
             || req.segments.len() != batch_len
+            || (!req.layer_formats.is_empty() && req.layer_formats.len() != batch_len)
         {
             return Err(ControlError::invalid_argument(format!(
                 "all layer arrays must have the same non-zero length (got layer_names={batch_len})"
@@ -258,7 +261,26 @@ impl LifecycleService {
             size_bytes_list.push(metadata.size_bytes);
         }
 
-        // Call engine batch registration
+        let mut formats = Vec::with_capacity(batch_len);
+        for (index, metadata) in metadatas.iter().enumerate() {
+            let format = req
+                .layer_formats
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or("exact");
+            formats.push(match (format, metadata.dtype.as_str()) {
+                ("exact", _) => StorageFormat::Exact,
+                ("bf16", "torch.bfloat16") => StorageFormat::Fp8FromBf16,
+                ("fp16", "torch.float16") => StorageFormat::Fp8FromFp16,
+                _ => {
+                    self.registry.drop_context(context_key.clone()).await;
+                    return Err(ControlError::invalid_argument(format!(
+                        "layer {} storage format {format} does not match imported {}",
+                        req.layer_names[index], metadata.dtype
+                    )));
+                }
+            });
+        }
         let layer_group_ids: Option<&[u32]> = if req.layer_group_ids.is_empty() {
             None
         } else {
@@ -281,6 +303,7 @@ impl LifecycleService {
             &segments_list,
             None,
             layer_group_ids,
+            Some(&formats),
             transfer_mode,
             req.page_first,
         ) {

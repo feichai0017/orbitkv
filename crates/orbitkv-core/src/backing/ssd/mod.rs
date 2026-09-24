@@ -6,6 +6,7 @@ use bytesize::ByteSize;
 use hashlink::LruCache;
 use log::{debug, info, warn};
 use mea::oneshot;
+use orbitkv_state::StorageFormat;
 use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
@@ -26,7 +27,7 @@ use super::{AllocateFn, PrefetchResult};
 pub(crate) use config::SSD_ALIGNMENT;
 pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdCompression, SsdWritePolicy,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdCodec, SsdWritePolicy,
 };
 use cufile::CufileFile;
 use index::{SsdIndexEntry, SsdRingBuffer};
@@ -154,6 +155,14 @@ pub(crate) struct SsdBackingStore {
 }
 
 impl SsdBackingStore {
+    pub(crate) fn storage_format(&self, requested: StorageFormat) -> StorageFormat {
+        if self.codec.is_some() {
+            requested
+        } else {
+            StorageFormat::Exact
+        }
+    }
+
     pub(crate) fn reserve_gpu(
         self: &Arc<Self>,
         key: StateKey,
@@ -190,7 +199,7 @@ impl SsdBackingStore {
         use std::fs::OpenOptions;
         use std::os::unix::io::AsRawFd;
 
-        let codec = if config.compression == SsdCompression::Lz4 {
+        let codec = if config.codec == SsdCodec::Fp8 {
             Some(Arc::new(codec::Codec::new(config.codec_budget)?))
         } else {
             None

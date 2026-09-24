@@ -123,6 +123,7 @@ unsafe impl Sync for Segment {}
 ///
 /// RawBlock automatically derives Send+Sync from Segment.
 pub struct RawBlock {
+    pub(crate) storage_format: orbitkv_state::StorageFormat,
     segments: BlockSegments,
     /// Total size across all segments (for footprint tracking).
     total_size: usize,
@@ -169,6 +170,7 @@ impl RawBlock {
         let total_size = segments.iter().map(|s| s.size).sum();
         Self {
             segments: BlockSegments::from_vec(segments),
+            storage_format: Default::default(),
             total_size,
         }
     }
@@ -177,6 +179,7 @@ impl RawBlock {
         let total_size = segment.size;
         Self {
             segments: BlockSegments::One(segment),
+            storage_format: Default::default(),
             total_size,
         }
     }
@@ -185,6 +188,7 @@ impl RawBlock {
         let total_size = k_segment.size + v_segment.size;
         Self {
             segments: BlockSegments::Two([k_segment, v_segment]),
+            storage_format: Default::default(),
             total_size,
         }
     }

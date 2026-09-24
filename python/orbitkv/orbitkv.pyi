@@ -147,6 +147,7 @@ class CacheManagerClient:
         transfer_backend: str,
         page_first: bool,
         layer_group_ids: list[int] | None = None,
+        layer_formats: list[str] | None = None,
     ) -> tuple[bool, str]: ...
     @property
     def transport(self) -> str: ...

@@ -123,7 +123,7 @@ Direct writes require all slots of a storage group in the same Publish.
 Fragmented layers and multi-writer TP/PP groups assemble in DRAM and keep
 io_uring writeback. Both forms can subsequently restore through cuFile.
 The existing `all`/`reuse` admission policy still applies. Optional
-[SSD LZ4 compression](storage-formats.md) routes writes through host encoding;
+[FP8 SSD storage](storage-formats.md) routes writes through host encoding;
 encoded objects restore through io_uring/decode, while raw prefixes retain
 cuFile eligibility. Compression is disabled by default.
 
@@ -333,7 +333,7 @@ correctness, not native GDS throughput.
 | Gate | Final result |
 | --- | --- |
 | Rust GPU layouts, checkpoints, pinning, failure recovery and auto fallback | 6 passed |
-| Manager process faults, coalescing, concurrent GPU I/O, LZ4 and cancellation ownership | 25 passed |
+| Manager process faults, coalescing, concurrent GPU I/O, FP8 storage and cancellation ownership | 27 passed |
 | vLLM / Qwen3-8B / SSD | 6 passed; 1 recurrent-only check skipped, with both explicit `cufile` and default `auto` |
 | SGLang / Qwen3-8B / SSD | Passed with both explicit `cufile` and default `auto` |
 | vLLM / Qwen3.8-27B-FP8 / SSD | 7 passed |
@@ -341,12 +341,17 @@ correctness, not native GDS throughput.
 
 The asynchronous submission baseline ran all six Rust GPU checks, 22 Manager
 faults and both Qwen3-8B engines with explicit cuFile compatibility. The subsequent
-host-copy/LZ4 update passed all six GPU checks and 25 Manager faults. It adds gates for SSD reads during a held write completion,
+host-copy/storage-codec update passed all six GPU checks and 27 Manager faults. It adds gates for SSD reads during a held write completion,
 GPU write admission saturation with host fallback, cancellation/unregister
-with both read slots occupied, held host-copy completion, and compressed
-reads with cancellation or corrupted storage. Each checks actual GPU bytes and final resource
+with both read slots occupied, held host-copy completion, and FP8
+reads with cancellation or corrupted storage. The FP8 gate also checks scalar
+conversion against Torch and storage-policy isolation. Each checks actual GPU bytes and final resource
 release. Default-auto and Qwen3.8 serving results are retained from the
 [GDS baseline](https://github.com/feichai0017/orbitkv/pull/176).
+
+The serving results above use exact storage. Experimental FP8 SSD storage uses
+host conversion; its capacity measurements and output differences are recorded
+separately in [storage-format qualification](storage-formats.md#qualification-and-measurement).
 
 Both models' explicit cuFile checks require cuFile writes and new reads after
 DRAM eviction and engine restart. Default-auto checks require new SSD reads

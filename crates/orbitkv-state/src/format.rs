@@ -2,6 +2,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::Digest;
 
+/// Allowed storage transform and original scalar representation. Checkpoints
+/// and opaque layouts remain exact.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum StorageFormat {
+    #[default]
+    Exact,
+    Fp8FromBf16,
+    Fp8FromFp16,
+}
+
 /// Physical scalar representation of a state component.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

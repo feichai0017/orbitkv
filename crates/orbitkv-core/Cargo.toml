@@ -34,7 +34,7 @@ libloading.workspace = true
 rand.workspace = true
 ahash.workspace = true
 io-uring = "0.7"
-lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode", "checked-decode"] }
+half = "2.7"
 crc32fast = "1.5"
 futures.workspace = true
 parking_lot.workspace = true

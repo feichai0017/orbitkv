@@ -5,9 +5,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use opentelemetry::KeyValue;
+use orbitkv_state::StorageFormat;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::metrics::core_metrics;
+
+mod fp8;
 
 const ALIGNMENT: usize = 4096;
 
@@ -15,11 +18,12 @@ const ALIGNMENT: usize = 4096;
 #[derive(Clone)]
 pub(crate) enum Encoding {
     Raw,
-    Lz4V1(Vec<EncodedSegment>),
+    Fp8V1(Vec<EncodedSegment>),
 }
 
 #[derive(Clone)]
 pub(crate) struct EncodedSegment {
+    pub format: StorageFormat,
     pub bytes: usize,
     pub checksum: u32,
 }
@@ -91,7 +95,7 @@ impl Codec {
     /// Best-effort encoding never waits behind demand reads for scratch memory.
     pub(super) fn encode(
         &self,
-        segments: &[&[u8]],
+        segments: &[(&[u8], StorageFormat)],
         alignment: usize,
     ) -> Option<(Encoding, Buffer)> {
         let start = Instant::now();
@@ -103,19 +107,44 @@ impl Codec {
         result
     }
 
-    fn encode_block(&self, segments: &[&[u8]], alignment: usize) -> Option<(Encoding, Buffer)> {
-        let capacity = segments
-            .iter()
-            .try_fold(0usize, |sum, segment| {
-                sum.checked_add(lz4_flex::block::get_maximum_output_size(segment.len()))
-            })?
-            .checked_next_multiple_of(ALIGNMENT)?;
+    fn encode_block(
+        &self,
+        segments: &[(&[u8], StorageFormat)],
+        alignment: usize,
+    ) -> Option<(Encoding, Buffer)> {
         let skip = |reason: &'static str| {
             core_metrics()
                 .ssd_codec_skips
                 .add(1, &[KeyValue::new("reason", reason)]);
             None
         };
+        if !segments
+            .iter()
+            .any(|(_, format)| *format != StorageFormat::Exact)
+        {
+            return skip("format");
+        }
+        let mut encoded_sizes = Vec::with_capacity(segments.len());
+        let mut raw = 0usize;
+        let mut stored = 0usize;
+        for (input, format) in segments {
+            let bytes = if *format == StorageFormat::Exact {
+                input.len()
+            } else if input.len().is_multiple_of(2) {
+                input.len() / 2
+            } else {
+                return skip("layout");
+            };
+            encoded_sizes.push(bytes);
+            raw = raw.checked_add(input.len())?;
+            stored = stored.checked_add(bytes)?;
+        }
+        let stored = stored.checked_next_multiple_of(alignment)?;
+        let raw = raw.checked_next_multiple_of(alignment)?;
+        if stored > raw - raw / 8 {
+            return skip("ratio");
+        }
+        let capacity = stored.checked_next_multiple_of(ALIGNMENT)?;
         if capacity == 0 || capacity > self.capacity {
             return skip("oversized");
         }
@@ -127,30 +156,23 @@ impl Codec {
         };
         let mut metadata = Vec::with_capacity(segments.len());
         let mut end = 0;
-        for input in segments {
-            let Ok(bytes) =
-                lz4_flex::block::compress_into(input, &mut buffer.as_mut_slice()[end..])
-            else {
-                return skip("encode");
-            };
+        for ((input, format), bytes) in segments.iter().zip(encoded_sizes) {
+            let output = &mut buffer.as_mut_slice()[end..end + bytes];
+            if *format == StorageFormat::Exact {
+                output.copy_from_slice(input);
+            } else if !fp8::encode(*format, input, output) {
+                return skip("nonfinite_or_range");
+            }
             metadata.push(EncodedSegment {
+                format: *format,
                 bytes,
-                checksum: crc32fast::hash(input),
+                checksum: crc32fast::hash(output),
             });
             end += bytes;
         }
-        let stored = end.checked_next_multiple_of(alignment)?;
-        let raw = segments
-            .iter()
-            .try_fold(0usize, |sum, segment| sum.checked_add(segment.len()))?
-            .checked_next_multiple_of(alignment)?;
-        // Save at least 12.5% after direct-I/O alignment, or retain raw GDS-readable bytes.
-        if stored > raw - raw / 8 {
-            return skip("ratio");
-        }
         buffer.as_mut_slice()[end..stored].fill(0);
         buffer.len = stored;
-        Some((Encoding::Lz4V1(metadata), buffer))
+        Some((Encoding::Fp8V1(metadata), buffer))
     }
 
     pub(super) async fn read_buffer(&self, len: usize) -> io::Result<Buffer> {
@@ -175,7 +197,7 @@ pub(super) fn decode(
     segments: &mut [&mut [u8]],
 ) -> io::Result<()> {
     let start = Instant::now();
-    let Encoding::Lz4V1(metadata) = encoding else {
+    let Encoding::Fp8V1(metadata) = encoding else {
         return Err(io::Error::other("unexpected raw SSD decode"));
     };
     let result = (|| {
@@ -188,11 +210,23 @@ pub(super) fn decode(
                 .checked_add(meta.bytes)
                 .filter(|end| *end <= input.len)
                 .ok_or_else(|| io::Error::other("SSD codec segment exceeds extent"))?;
-            let decoded =
-                lz4_flex::block::decompress_into(&input.as_mut_slice()[offset..end], output)
-                    .map_err(io::Error::other)?;
-            if decoded != output.len() || crc32fast::hash(output) != meta.checksum {
-                return Err(io::Error::other("SSD codec length/checksum mismatch"));
+            let input = &input.as_mut_slice()[offset..end];
+            if crc32fast::hash(input) != meta.checksum {
+                return Err(io::Error::other("SSD codec checksum mismatch"));
+            }
+            let valid = match meta.format {
+                StorageFormat::Exact => {
+                    if input.len() == output.len() {
+                        output.copy_from_slice(input);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                format => fp8::decode(format, input, output),
+            };
+            if !valid {
+                return Err(io::Error::other("SSD codec decoded length mismatch"));
             }
             offset = end;
         }

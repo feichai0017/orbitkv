@@ -33,11 +33,13 @@ numbers below group work areas rather than imposing a strict serial schedule.
   jobs and bounded read bursts; saturation uses host publication/io_uring.
 - [x] Verify event-tracked host copies overlap SSD submission while Publish and
   unregister retain ownership until both DMA paths complete.
-- [x] Qualify optional Rust LZ4 SSD storage, bounded scratch, mixed raw/encoded
+- [x] Verify optional Rust FP8 SSD storage, bounded scratch, mixed raw/encoded
   prefixes, cancellation, corruption rejection/repair and raw fallback.
+- [ ] Qualify lossy storage on representative model-quality workloads; Qwen3-8B
+  halves encoded payloads but does not preserve every greedy output.
 - [x] Qualify engine-native FP8 KV on Qwen3-8B in both engines; isolate external
   SGLang scale artifacts and compare against same-dtype cold controls.
-- [ ] Add measured GPU lossless codecs and optional lossy storage formats; retain
+- [ ] Add measured GPU lossless codecs and lower-bit storage formats; retain
   exact recurrent state until model-quality and recovery gates pass.
 - [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.

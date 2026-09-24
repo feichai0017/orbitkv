@@ -152,6 +152,15 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 "direct",
                 False,
                 layer_group_ids=[pool.group_id for pool in pools for _ in pool.layer_names],
+                layer_formats=[
+                    {"torch.bfloat16": "bf16", "torch.float16": "fp16"}.get(
+                        str(tensor.dtype), "exact"
+                    )
+                    if pool.kind in {"attention", "window", "mla"}
+                    else "exact"
+                    for pool in pools
+                    for tensor in pool.entry.kv_buffer
+                ],
             )
             if not ok:
                 raise RuntimeError(f"OrbitKV GPU registration failed: {message}")

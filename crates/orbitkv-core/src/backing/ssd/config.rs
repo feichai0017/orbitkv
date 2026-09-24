@@ -63,21 +63,21 @@ impl std::str::FromStr for SsdWritePolicy {
     }
 }
 
-/// Lossless SSD representation; engine KV quantization is independent.
+/// SSD storage representation; engine-native KV precision is independent.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum SsdCompression {
+pub enum SsdCodec {
     #[default]
     None,
-    Lz4,
+    Fp8,
 }
 
-impl std::str::FromStr for SsdCompression {
+impl std::str::FromStr for SsdCodec {
     type Err = String;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "none" => Ok(Self::None),
-            "lz4" => Ok(Self::Lz4),
-            _ => Err("SSD compression must be none or lz4".into()),
+            "fp8" => Ok(Self::Fp8),
+            _ => Err("SSD codec must be none or fp8".into()),
         }
     }
 }
@@ -107,7 +107,7 @@ pub struct SsdCacheConfig {
     /// Max concurrent block prefetches.
     pub prefetch_inflight: usize,
     pub backend: SsdBackend,
-    pub compression: SsdCompression,
+    pub codec: SsdCodec,
     /// Temporary encoded buffers, independent of the pinned cache pool.
     pub codec_budget: usize,
 }
@@ -124,7 +124,7 @@ impl Default for SsdCacheConfig {
             write_inflight: DEFAULT_SSD_WRITE_INFLIGHT,
             prefetch_inflight: DEFAULT_SSD_PREFETCH_INFLIGHT,
             backend: SsdBackend::Auto,
-            compression: SsdCompression::None,
+            codec: SsdCodec::None,
             codec_budget: 64 * 1024 * 1024,
         }
     }

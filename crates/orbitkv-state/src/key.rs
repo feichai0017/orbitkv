@@ -9,6 +9,7 @@ pub type Digest = [u8; 32];
 /// One stored slot's geometry, independent of GPU address and pool capacity.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct StorageSlot {
+    pub format: crate::StorageFormat,
     pub layer: String,
     pub group: u32,
     pub tp_rank: usize,

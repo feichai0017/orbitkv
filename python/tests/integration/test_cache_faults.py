@@ -40,6 +40,8 @@ def until(predicate, timeout=10):
 
 @pytest.fixture
 def fault_cache(tmp_path, monkeypatch, request):
+    import torch
+
     from orbitkv import CacheManagerClient
 
     configuration = request.param if isinstance(getattr(request, "param", None), dict) else {}
@@ -69,6 +71,7 @@ def fault_cache(tmp_path, monkeypatch, request):
         num_blocks=configuration.get("num_blocks", 4),
         block_size=configuration.get("block_size", 16),
         num_layers=1,
+        dtype=getattr(torch, configuration.get("dtype", "bfloat16")),
     )
     ctx.register_kv_caches()
     try:
@@ -127,7 +130,7 @@ def drain_ssd(server):
 @pytest.mark.parametrize(
     "fault_cache",
     [
-        {"ssd_backend": backend, "block_size": 64, "extra_args": ("--ssd-compression", "lz4")}
+        {"ssd_backend": backend, "block_size": 64, "extra_args": ("--ssd-codec", "fp8")}
         for backend in ("uring", "cufile")
     ],
     indirect=True,
@@ -171,7 +174,7 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
     drain_ssd(server)
 
     # Damage the ephemeral file after all I/O drained. No corrupted block may
-    # enter the cache, including when LZ4 can still decode the damaged stream.
+    # enter the cache, including when FP8 can still decode the damaged stream.
     with Path(server.ssd_cache_path).open("r+b", buffering=0) as stream:
         stream.write(bytes(int(stats["orbitkv_ssd_write_bytes_total"])))
     missing = query(client, ctx, [hashes[0]], "corrupt-codec")
@@ -191,6 +194,73 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
     )
     assert client.wait_restore(restore, timeout=10).success
     assert torch.equal(tensor[:, 2:3].view(torch.uint8).cpu(), expected[:, 0:1])
+
+
+@pytest.mark.parametrize(
+    "fault_cache",
+    [
+        {"dtype": dtype, "block_size": 64, "extra_args": ("--ssd-codec", "fp8")}
+        for dtype in ("bfloat16", "float16")
+    ],
+    indirect=True,
+)
+def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(fault_cache):
+    import torch
+
+    from orbitkv.client.gpu import serialize_gpu_buffer
+
+    server, client, ctx, _ = fault_cache
+    tensor = ctx.get_kv_cache()
+    values = torch.arange(65536, dtype=torch.int32).to(torch.uint16).view(tensor.dtype).float()
+    values = values[torch.isfinite(values) & (values.abs() <= 448)].to(tensor.dtype).cuda()
+    count = tensor[:, 0:1].numel()
+    tensor[:, 0:1] = values.repeat((count + values.numel() - 1) // values.numel())[
+        :count
+    ].reshape_as(tensor[:, 0:1])
+    original = tensor[:, 0:1].clone()
+    expected = original.to(torch.float8_e4m3fn).to(original.dtype)
+    assert torch.any(original != expected)
+    torch.cuda.synchronize()
+    hashes = [b"every-finite-scalar"]
+    assert publish(client, ctx, hashes)[0]
+    drain_ssd(server)
+    stats = fetch_orbitkv_metrics(server.http_port)
+    assert stats["orbitkv_ssd_write_bytes_total"] == original.numel()
+    ready = query(client, ctx, hashes, "quantized")
+    assert ready.num_hit_blocks == 1
+    restore = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+    )
+    assert client.wait_restore(restore, timeout=10).success
+    assert torch.equal(tensor[:, 2:3].view(torch.uint8), expected.view(torch.uint8))
+
+    # The same namespace/hash with exact storage policy must not adopt lossy data.
+    name = "exact-instance"
+    stride = tensor.stride()
+    ok, message = client.register_context_batch(
+        name,
+        ctx.namespace,
+        0,
+        0,
+        1,
+        1,
+        0,
+        ctx._layer_names,
+        [serialize_gpu_buffer(tensor)],
+        [ctx.num_blocks],
+        [stride[1] * tensor.element_size()],
+        [stride[0] * tensor.element_size()],
+        [2],
+        "direct",
+        False,
+        layer_formats=["exact"],
+    )
+    assert ok, message
+    from orbitkv import BlockHashes, QueryReady
+
+    result = client.query_prefetch(name, BlockHashes(hashes), "exact")
+    assert isinstance(result, QueryReady) and result.num_hit_blocks == 0
+    client.unregister_context(name)
 
 
 def test_ssd_cancellation_revisions_hold_buffers_until_io_drains(fault_cache):

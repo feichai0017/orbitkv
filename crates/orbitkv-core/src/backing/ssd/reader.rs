@@ -281,7 +281,7 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
 
     let mut encoded = match &task.entry.encoding {
         Encoding::Raw => None,
-        Encoding::Lz4V1(_) => {
+        Encoding::Fp8V1(_) => {
             let buffer = match &task.store.codec {
                 Some(codec) => codec.read_buffer(task.entry.len as usize).await.ok(),
                 None => None,

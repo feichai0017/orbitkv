@@ -5,7 +5,8 @@ fn failed_decode_cannot_invalidate_a_repaired_or_pinned_generation() {
     let mut ring = SsdRingBuffer::new_sharded(vec![16384, 16384], 512);
     let key = make_key(1);
     let encoding = || {
-        Encoding::Lz4V1(vec![super::super::codec::EncodedSegment {
+        Encoding::Fp8V1(vec![super::super::codec::EncodedSegment {
+            format: orbitkv_state::StorageFormat::Exact,
             bytes: 100,
             checksum: 0,
         }])

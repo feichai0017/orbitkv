@@ -68,6 +68,7 @@ pub fn register_layers(
             &segments,
             None,
             Some(&group_ids),
+            None,
             transfer_mode,
             page_first,
         )

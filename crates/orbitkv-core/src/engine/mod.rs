@@ -246,6 +246,7 @@ impl OrbitKVEngine {
             segments_list,
             None,
             None,
+            None,
             transfer_mode,
             page_first,
         )
@@ -281,12 +282,18 @@ impl OrbitKVEngine {
         segments_list: &[usize],
         block_stride_bytes_list: Option<&[usize]>,
         layer_group_ids: Option<&[u32]>,
+        storage_formats: Option<&[orbitkv_state::StorageFormat]>,
         transfer_mode: TransferMode,
         page_first: bool,
     ) -> Result<(), EngineError> {
         // Build all registrations
         let ssd_enabled = self.storage.is_ssd_enabled();
         let batch_size = layer_names.len();
+        if storage_formats.is_some_and(|formats| formats.len() != batch_size) {
+            return Err(EngineError::InvalidArgument(
+                "storage format count differs from layers".into(),
+            ));
+        }
         if data_ptrs.len() != batch_size
             || size_bytes_list.len() != batch_size
             || num_blocks_list.len() != batch_size
@@ -333,6 +340,19 @@ impl OrbitKVEngine {
                 segments_list[i],
             )
             .map_err(|e| EngineError::InvalidArgument(format!("layer {layer_name}: {e}")))?;
+
+            if let Some(store) = &self.storage.ssd_store {
+                layout.storage_format = store.storage_format(
+                    storage_formats.map_or(Default::default(), |formats| formats[i]),
+                );
+                if layout.storage_format != orbitkv_state::StorageFormat::Exact
+                    && !bytes_per_block_list[i].is_multiple_of(2)
+                {
+                    return Err(EngineError::InvalidArgument(format!(
+                        "layer {layer_name} has a partial 16-bit element"
+                    )));
+                }
+            }
 
             if let Some(strides) = block_stride_bytes_list {
                 layout = layout.with_block_stride(strides[i]).map_err(|e| {

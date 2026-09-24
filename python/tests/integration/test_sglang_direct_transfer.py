@@ -120,7 +120,7 @@ def test_restore_window_never_acknowledges_a_partially_completed_batch():
     indirect=["channel_server"],
 )
 def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
-    channel_server, layer_count, page_count, page_first
+    channel_server, layer_count, page_count, page_first, request
 ):
     from orbitkv import BlockHashes
 
@@ -141,8 +141,13 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         values = torch.arange(page_size * page_count * 2 * 128, device="cuda").reshape(
             page_size * page_count, 2, 128
         )
-        tensor[page_size : page_size * (page_count + 1)] = (values + layer * 13).to(torch.bfloat16)
-        expected.append(tensor[page_size : page_size * (page_count + 1)].clone())
+        tensor[page_size : page_size * (page_count + 1)] = (
+            (values + layer * 13) % 4096 / 256 - 8
+        ).to(torch.bfloat16)
+        original = tensor[page_size : page_size * (page_count + 1)].clone()
+        if channel_server.ssd_cache_path and request.config.getoption("--ssd-codec") == "fp8":
+            original = original.to(torch.float8_e4m3fn).to(original.dtype)
+        expected.append(original)
     torch.cuda.synchronize()
 
     names = [f"kv:{layer}" for layer in range(layer_count)]
@@ -170,6 +175,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             [1] * layer_count,
             "direct",
             page_first,
+            layer_formats=["bf16"] * layer_count,
         )
         assert ok, message
 

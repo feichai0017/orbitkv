@@ -30,6 +30,7 @@ pub(crate) fn registration(request: RegisterContextRequest) -> Registration {
         transfer_mode,
         page_first: request.page_first,
         layer_group_ids: request.layer_group_ids,
+        layer_formats: request.layer_formats,
     }
 }
 
