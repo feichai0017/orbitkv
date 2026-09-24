@@ -24,6 +24,7 @@ class _LayerPushTask:
     req_id: str
     layer_idx: int
     block_slices: list[LayerBlockSlices]
+    request_generation: int
     event: Any = None
 
 
@@ -31,6 +32,7 @@ class _LayerPushTask:
 class _PreparedTargetPush:
     physical_req_id: str
     block_slices: list[LayerBlockSlices]
+    request_generation: int
 
 
 @dataclass(frozen=True)

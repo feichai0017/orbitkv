@@ -4,6 +4,7 @@ from __future__ import annotations
 import queue
 import threading
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,7 @@ from orbitkv.vllm.pd.layout import (  # noqa: E402
     BlockRegionSlice,
     FlashAttnHndLayout,
     LayerBlockSlices,
+    block_slices_bytes,
     unique_blocks_from_slot_mapping,
 )
 from orbitkv.vllm.pd.metadata import (  # noqa: E402
@@ -54,7 +56,6 @@ from orbitkv.vllm.pd.metadata import (  # noqa: E402
     handshakes_from_dicts,
 )
 from orbitkv.vllm.pd.mooncake import (  # noqa: E402
-    MockMooncakePort,
     RealMooncakePort,
     _layer_blocks_to_native,
 )
@@ -79,6 +80,98 @@ from orbitkv.vllm.pd.worker import (  # noqa: E402
     PdDecodeWorkerConnector,
     PdPrefillWorkerConnector,
 )
+
+
+class MockMooncakePort:
+    """A test double that records transfer calls without loading Mooncake."""
+
+    def __init__(self) -> None:
+        self.local_layers: tuple[LayerRemoteLayout, ...] = ()
+        self.registered: set[str] = set()
+        self.peer_handshakes: dict[str, PdHandshake | None] = {}
+        self.pushed_layers: dict[str, list[tuple[int, list[LayerBlockSlices]]]] = {}
+        self._finished_sending: set[str] = set()
+        self._finished_recving: set[str] = set()
+        self._request_generations: dict[str, int] = {}
+        self._next_request_generation = 0
+
+    def register_local_layers(
+        self, layers: tuple[LayerRemoteLayout, ...]
+    ) -> tuple[LayerRemoteLayout, ...]:
+        self.local_layers = layers
+        return layers
+
+    def open_request(self, req_id: str, handshake: PdHandshake) -> int:
+        self._next_request_generation += 1
+        self._request_generations[req_id] = self._next_request_generation
+        self.registered.add(req_id)
+        self.peer_handshakes[req_id] = handshake
+        return self._next_request_generation
+
+    def endpoint(self) -> str:
+        return "127.0.0.1:15290"
+
+    def push_layer(
+        self,
+        req_id: str,
+        layer_idx: int,
+        blocks: list[LayerBlockSlices],
+        *,
+        request_generation: int,
+    ) -> None:
+        if self._request_generations.get(req_id) != request_generation:
+            raise RuntimeError(f"stale Mooncake push generation for request {req_id}")
+        self.pushed_layers.setdefault(req_id, [])
+        self.pushed_layers[req_id].append((layer_idx, blocks))
+
+    def wait_for_pushes(self, req_id: str) -> None:
+        return None
+
+    def push_done(self, req_id: str) -> None:
+        self._finished_sending.add(req_id)
+
+    def write_stats(self, req_id: str) -> dict[str, Any]:
+        bytes_total = sum(
+            block_slices_bytes(blocks) for _, blocks in self.pushed_layers.get(req_id, [])
+        )
+        return {
+            "submitted": len(self.pushed_layers.get(req_id, [])),
+            "completed": len(self.pushed_layers.get(req_id, [])),
+            "errors": 0,
+            "bytes": bytes_total,
+            "has_submit": bytes_total > 0,
+            "has_complete": bytes_total > 0,
+        }
+
+    def fail_request(self, req_id: str) -> None:
+        return None
+
+    def abort_request(self, req_id: str) -> None:
+        self._finished_recving.add(req_id)
+
+    def aggregated_link_speed(self) -> int:
+        return 400_000_000_000
+
+    def wait_done(self, req_id: str) -> None:
+        return None
+
+    def pop_finished_sending(self) -> set[str]:
+        finished = self._finished_sending
+        self._finished_sending = set()
+        return finished
+
+    def pop_finished_recving(self) -> set[str]:
+        finished = self._finished_recving
+        self._finished_recving = set()
+        return finished
+
+    def close_request(self, req_id: str) -> None:
+        self.registered.discard(req_id)
+        self.peer_handshakes.pop(req_id, None)
+        self._request_generations.pop(req_id, None)
+        self.pushed_layers.pop(req_id, None)
+        self._finished_sending.discard(req_id)
+        self._finished_recving.discard(req_id)
 
 
 class FakeTensor:
