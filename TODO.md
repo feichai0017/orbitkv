@@ -21,11 +21,20 @@ numbers below group work areas rather than imposing a strict serial schedule.
   io_uring/auto/cuFile workloads for both engines (`python -m benches.gds`).
 - [x] Default to automatic native cuFile initialization with io_uring fallback;
   stop new GPU I/O after an operation failure without revoking in-flight ownership.
+- [ ] Reserve physical GPU-storage file space and qualify first writes versus
+  overwrites; logical shard length and successful registration are not native-I/O evidence.
+- [ ] Implement bounded Rust asynchronous cuFile submissions with reusable staging
+  slots, stream/event completion, per-operation byte/error checks and cancellation drain.
+- [ ] Coalesce reads by file across leased sources without broadening required ranges;
+  bound queued writes and GPU staging so demand reads make progress.
+- [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
+  retained staging and unpublished SSD reservations must survive disk completion.
 - [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,
-  read priority and workload-based path selection. Include registration cost,
+  and workload-based path selection. Include registration cost,
   engine-page hold times, I/O fragmentation and additional HBM in the decision.
 
-See [GPU storage recovery](docs/gds.md) for deployment and reproduction.
+See [GPU storage recovery](docs/gds.md) for deployment and reproduction, and the
+[LMCache v0.5.5 review](docs/gds.md#review-against-lmcache) for optimization evidence and gates.
 
 ## M0 — framework-neutral foundation
 

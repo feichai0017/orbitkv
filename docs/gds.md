@@ -141,6 +141,67 @@ from successful driver loading.
 See [NVIDIA's buffering guidance](https://docs.nvidia.com/gpudirect-storage/best-practices-guide/index.html)
 and [Mooncake's transport design](https://github.com/kvcache-ai/Mooncake/blob/main/docs/source/design/transfer-engine/index.md).
 
+## Review against LMCache
+
+Reviewed on 2026-09-24 against LMCache **v0.5.5**, commit
+`05a013b29da78cf2321b9b46ec5039dde2fb0bb0`. Its
+[legacy GDS backend documentation](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/kv_cache/storage_backends/gds.rst)
+marks in-process mode deprecated and recommends MP mode. The MP implementation
+is the relevant reference for the Manager architecture.
+
+LMCache MP also registers GPU staging; GDS does not imply direct I/O into every
+engine page. Its
+[GDS context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/gds_context.py)
+keeps file/buffer registrations, splits transfers at registered-region boundaries,
+and retains asynchronous submissions behind per-stream GPU events. Its
+[cuFile binding](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/_cufile_async.py)
+uses `cuFileStreamRegister`, `cuFileReadAsync` and `cuFileWriteAsync`.
+
+| Concern | LMCache MP reference | Current OrbitKV |
+| --- | --- | --- |
+| GPU registration | Reusable staging, registered in regions of at most 16 MiB | One reusable registered 8 MiB buffer per instance/device |
+| File allocation | Preallocates its slab with `posix_fallocate` | Sets logical shard lengths; physical space is not reserved |
+| Submission/completion | Stream-ordered asynchronous I/O; event-scoped submission lifetime | Synchronous cuFile calls and a scatter/gather stream drain for every batch |
+| Batching | GPU context provides four chunk slots | One staging slot; read ranges merge within each source lease, not across adjacent leases |
+| Tier policy | GDS L1 replaces pinned-DRAM L1 in that configuration | Complete-group GPU writeback also creates a DRAM copy; Publish waits for SSD completion |
+
+The four-slot geometry comes from LMCache's
+[CUDA cache context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/platform/cuda/cache_context.py);
+its [MP configuration](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/docs/source/mp/configuration.rst)
+describes the L1 medium switch. Neither its slot count nor OrbitKV's 8 MiB size
+establishes an optimum for another model or storage device.
+
+The next implementation gates, in order, are:
+
+1. **Physical allocation and native evidence.** Reserve GPU-storage file space
+   and handle capacity exhaustion explicitly. Qualify first writes and overwrites
+   separately: even preallocated but unwritten extents can require filesystem
+   metadata work. `set_len`, `O_DIRECT`, or successful registration alone cannot
+   prove a native path. See NVIDIA's
+   [write-allocation guidance](https://docs.nvidia.com/gpudirect-storage/o-direct-guide/#block-allocation-for-writes).
+2. **Bounded asynchronous I/O in Rust.** Start with a small registered slot pool
+   and stream/event ownership. Keep each operation's argument storage, result
+   storage, file, extent leases and GPU pages alive through completion. Check
+   actual byte counts/errors before accepting a restore or publishing a write.
+   Cancellation stops admission; submitted work still drains. Compare stream
+   APIs with batch I/O for small scattered ranges rather than assuming one API
+   wins at every size.
+3. **Batching and read progress.** Merge compatible ranges by file across source
+   leases, retaining every owner and respecting compiled required ranges.
+   Bound bytes, operations and queued writes; let demand reads progress between
+   write batches. Extra buffers must remain charged to a GPU budget.
+4. **Placement and source-page hold time.** Measure the cost of producing both
+   DRAM and SSD copies. Evaluate selective hot-DRAM admission and releasing engine
+   pages after their final copy into owned staging; the staging and SSD reservation
+   must survive until disk completion. Large objects still need bounded chunking.
+   Publish visibility must never precede complete successful writes.
+
+These are planned changes. The current implementation provides registration,
+alignment and ownership foundations, but has no measured native-GDS performance
+advantage. Preserve those guarantees while adding concurrency; benchmark both
+engines with matched DRAM/SSD capacities, HBM budgets, working sets and native-I/O
+statistics. Shared-cache direct engine-page I/O remains a separate later step.
+
 ## Enable and qualify
 
 Install NVIDIA's GDS user-space library on the Manager and provide a supported
