@@ -1,6 +1,6 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Weak};
 
 use bytesize::ByteSize;
 use hashlink::LruCache;
@@ -13,6 +13,7 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
 
+mod codec;
 mod config;
 pub(crate) mod cufile;
 mod files;
@@ -25,10 +26,10 @@ use super::{AllocateFn, PrefetchResult};
 pub(crate) use config::SSD_ALIGNMENT;
 pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdWritePolicy,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdCompression, SsdWritePolicy,
 };
 use cufile::CufileFile;
-use index::{SsdIndexEntry, SsdRingBuffer, WriteInfo};
+use index::{SsdIndexEntry, SsdRingBuffer};
 use reader::{PrefetchBatch, PrefetchRequest, ssd_prefetch_loop};
 use uring::{UringConfig, UringIoEngine};
 use writer::{SsdWriteBatch, SsdWriteCommand, ssd_writer_loop};
@@ -142,6 +143,8 @@ pub(crate) struct SsdBackingStore {
     _files: Vec<std::fs::File>,
     cufile_files: Vec<Arc<CufileFile>>,
     io: Arc<UringIoEngine>,
+    codec: Option<Arc<codec::Codec>>,
+    alignment: usize,
     write_tx: tokio::sync::mpsc::Sender<SsdWriteCommand>,
     write_policy: SsdWritePolicy,
     prefetch_tx: tokio::sync::mpsc::Sender<PrefetchBatch>,
@@ -156,7 +159,7 @@ impl SsdBackingStore {
         key: StateKey,
         slots: Vec<crate::SlotMeta>,
     ) -> Option<GpuWriteLease> {
-        if !self.gpu_io.available() {
+        if !self.gpu_io.available() || self.codec.is_some() {
             return None;
         }
         let mut inner = self.inner.lock();
@@ -169,7 +172,7 @@ impl SsdBackingStore {
         {
             return None;
         }
-        let entry = inner.ring.reserve(&key, slots)?;
+        let entry = inner.ring.reserve(&key, slots, codec::Encoding::Raw)?;
         inner.pending_writes.insert(key.clone());
         core_metrics().ssd_write_inflight.add(1, &[]);
         Some(GpuWriteLease {
@@ -187,6 +190,11 @@ impl SsdBackingStore {
         use std::fs::OpenOptions;
         use std::os::unix::io::AsRawFd;
 
+        let codec = if config.compression == SsdCompression::Lz4 {
+            Some(Arc::new(codec::Codec::new(config.codec_budget)?))
+        } else {
+            None
+        };
         let shards_per_path = config.shards.get();
         let total_shards = config.cache_paths.len() * shards_per_path;
         let try_gpu = config.backend != SsdBackend::Uring
@@ -272,6 +280,8 @@ impl SsdBackingStore {
 
         let store = Arc::new(Self {
             gpu_io,
+            codec,
+            alignment: ring_alignment,
             _files: files,
             cufile_files,
             io: Arc::clone(&io),
@@ -309,6 +319,15 @@ impl SsdBackingStore {
             return None;
         }
         let inner = self.inner.lock();
+        // A mixed prefix must continue through the host reader, not truncate at
+        // its first encoded object and hide the remaining recoverable boundary.
+        if keys
+            .iter()
+            .map_while(|key| inner.ring.get(key))
+            .any(|entry| !matches!(entry.encoding, codec::Encoding::Raw))
+        {
+            return None;
+        }
         Some(
             keys.iter()
                 .map_while(|key| {
@@ -336,22 +355,6 @@ impl SsdBackingStore {
         numa_node: Option<NumaNode>,
     ) -> Option<Arc<PinnedAllocation>> {
         (self.allocate_fn)(size, numa_node)
-    }
-
-    fn prepare_batch(&self, blocks: Vec<(StateKey, Weak<SealedBlock>)>) -> Vec<WriteInfo> {
-        let mut inner = self.inner.lock();
-        let candidates = blocks
-            .into_iter()
-            .filter_map(|(key, weak)| {
-                inner.pending_writes.remove(&key);
-                weak.upgrade().map(|block| (key, block))
-            })
-            .collect();
-        let prepared = inner.ring.prepare_batch(candidates);
-        for write in &prepared {
-            inner.pending_writes.insert(write.key.clone());
-        }
-        prepared
     }
 
     pub(super) fn commit_write(&self, key: &StateKey, success: bool) {

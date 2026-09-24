@@ -79,6 +79,12 @@ pub(crate) struct CoreMetrics {
     pub load_duration_seconds: Histogram<f64>,
     pub load_failures: Counter<u64>,
 
+    pub ssd_codec_scratch_bytes: UpDownCounter<i64>,
+    pub ssd_codec_bytes: Counter<u64>,
+    pub ssd_codec_skips: Counter<u64>,
+    pub ssd_codec_decode_failures: Counter<u64>,
+    pub ssd_codec_seconds: Histogram<f64>,
+
     // SSD cache
     pub ssd_backend_fallbacks: Counter<u64>,
     pub ssd_read_pinned_bytes: UpDownCounter<i64>,
@@ -423,6 +429,17 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
 
             // SSD
+            ssd_codec_scratch_bytes: meter.i64_up_down_counter("orbitkv_ssd_codec_scratch_bytes")
+                .with_description("Live bounded codec host buffers including pending I/O").with_unit("bytes").build(),
+            ssd_codec_bytes: meter.u64_counter("orbitkv_ssd_codec_bytes")
+                .with_description("Successfully written compressed objects, logical and stored bytes").with_unit("bytes").build(),
+            ssd_codec_skips: meter.u64_counter("orbitkv_ssd_codec_skips")
+                .with_description("Encoding skipped by reason: ratio, budget, oversized, allocation, encode").build(),
+            ssd_codec_decode_failures: meter.u64_counter("orbitkv_ssd_codec_decode_failures")
+                .with_description("Encoded objects rejected before cache admission").build(),
+            ssd_codec_seconds: meter.f64_histogram("orbitkv_ssd_codec_duration")
+                .with_description("CPU encode/decode time excluding I/O and budget waits").with_unit("s")
+                .with_boundaries(duration_seconds_boundaries()).build(),
             ssd_backend_fallbacks: meter.u64_counter("orbitkv_ssd_backend_fallbacks").with_description("Automatic transitions from cuFile to io_uring; startup or runtime failures").build(),
             ssd_cufile_write_bytes: meter.u64_counter("orbitkv_ssd_cufile_write_bytes").with_description("Bytes written by cuFile including alignment; does not prove native GDS").build(),
             ssd_cufile_write_failures: meter.u64_counter("orbitkv_ssd_cufile_write_failures").with_description("Failed or short cuFile writes").build(),

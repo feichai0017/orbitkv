@@ -46,6 +46,54 @@ macro_rules! skip_without_io_uring {
     };
 }
 
+#[tokio::test]
+async fn compressed_padded_layouts_fit_below_their_logical_size_and_restore_exactly() {
+    skip_without_io_uring!();
+    for page_first in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let builder = TestEnvBuilder::new("compressed-padding", "compressed-padding").layer(
+            "attention",
+            2,
+            700,
+        );
+        let builder = if page_first {
+            builder.page_first().layer("state", 2, 900)
+        } else {
+            builder.split_layer("state", 2, 700, 1400)
+        };
+        let env = builder
+            .storage(StorageConfig {
+                ssd_cache_config: Some(SsdCacheConfig {
+                    cache_paths: vec![dir.path().join("cache.bin")],
+                    // Neither logical object fits: both must actually compress.
+                    capacity_bytes: 1024,
+                    backend: SsdBackend::Uring,
+                    compression: SsdCompression::Lz4,
+                    ..SsdCacheConfig::default()
+                }),
+                ..StorageConfig::default()
+            })
+            .build();
+        let hashes = make_block_hashes(2, 41);
+        env.save_all_layers_one_batch(&hashes).await;
+        env.engine.flush_all().await;
+        assert_eq!(env.engine.cleanup_memory_cache().evicted_blocks, 2);
+        for layer in &env.layers {
+            layer.data.zero_gpu();
+        }
+        let result = env.query(&hashes).await;
+        assert_eq!(result.blocks.len(), 2);
+        let lease = env
+            .engine
+            .create_query_lease(&env.instance_id, result.blocks)
+            .unwrap();
+        env.load_to_gpu(lease, 2).await;
+        for layer in &env.layers {
+            layer.data.assert_gpu_matches_expected();
+        }
+    }
+}
+
 fn ssd_env(instance_id: &'static str) -> (TestEnv, std::path::PathBuf, tempfile::TempDir) {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let cache_path = temp_dir.path().join("cache.bin");

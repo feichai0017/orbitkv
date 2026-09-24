@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn failed_decode_cannot_invalidate_a_repaired_or_pinned_generation() {
+    let mut ring = SsdRingBuffer::new_sharded(vec![16384, 16384], 512);
+    let key = make_key(1);
+    let encoding = || {
+        Encoding::Lz4V1(vec![super::super::codec::EncodedSegment {
+            bytes: 100,
+            checksum: 0,
+        }])
+    };
+    let first = ring.reserve(&key, vec![], encoding()).unwrap();
+    assert!(ring.commit(&key, true));
+    ring.invalidate_encoded(&key, &first);
+    assert!(ring.get(&key).is_none());
+    let repaired = ring.reserve(&key, vec![], encoding()).unwrap();
+    assert!(ring.commit(&key, true));
+    ring.invalidate_encoded(&key, &first);
+    assert!(ring.get(&key).is_some());
+    repaired.readers.store(1, Ordering::Release);
+    ring.invalidate_encoded(&key, &repaired);
+    assert!(ring.get(&key).is_some());
+    repaired.readers.store(0, Ordering::Release);
+    ring.invalidate_encoded(&key, &repaired);
+    assert!(ring.get(&key).is_none());
+    let next = ring.reserve(&key, vec![], encoding()).unwrap();
+    assert!(ring.commit(&key, true));
+    assert_eq!(next.shard_id, first.shard_id);
+    ring.invalidate_encoded(&key, &first);
+    assert!(ring.get(&key).is_some());
+}
+
+#[test]
 fn failed_write_retry_does_not_hide_or_evict_another_generation() {
     let mut ring = SsdRingBuffer::new_sharded(vec![16384, 16384], 4096);
     let slots = || {
@@ -10,13 +41,13 @@ fn failed_write_retry_does_not_hide_or_evict_another_generation() {
         )]
     };
     let key = make_key(1);
-    let first = ring.reserve(&key, slots()).unwrap();
+    let first = ring.reserve(&key, slots(), Encoding::Raw).unwrap();
     assert_eq!(first.len, 4096);
     assert_eq!(first.slots[0].total_size(), 512);
     assert!(ring.get(&key).is_none());
-    assert!(ring.reserve(&key, slots()).is_none());
+    assert!(ring.reserve(&key, slots(), Encoding::Raw).is_none());
     assert!(!ring.commit(&key, false));
-    let retry = ring.reserve(&key, slots()).unwrap();
+    let retry = ring.reserve(&key, slots(), Encoding::Raw).unwrap();
     assert_ne!(first.shard_id, retry.shard_id);
     assert!(ring.commit(&key, true));
     ring.advance_tail(first.shard_id, 4096);
@@ -40,6 +71,7 @@ impl SsdRingBuffer {
             len,
             file_offset: begin % self.shards[shard_id].capacity.max(1),
             slots: vec![],
+            encoding: Encoding::Raw,
             readers: Arc::new(AtomicUsize::new(0)),
         }
     }

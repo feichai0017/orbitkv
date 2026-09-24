@@ -54,6 +54,8 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         "--model-path",
         model,
         "--trust-remote-code",
+        "--kv-cache-dtype",
+        request.config.getoption("--kv-cache-dtype"),
         "--load-format",
         request.config.getoption("--sglang-load-format"),
         "--host",
@@ -229,7 +231,8 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             "Cache Manager did not restore GPU KV"
         )
         if channel_server.ssd_cache_path is not None:
-            if channel_server.ssd_backend == "cufile":
+            compression = request.config.getoption("--ssd-compression") != "none"
+            if channel_server.ssd_backend == "cufile" and not compression:
                 assert (
                     fetch_orbitkv_metrics(channel_server.http_port).get(
                         "orbitkv_ssd_cufile_write_bytes_total", 0
@@ -240,8 +243,11 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 "uring": ("orbitkv_ssd_prefetch_bytes_total",),
                 "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
                 "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
-            }[channel_server.ssd_backend]
+            }["auto" if compression else channel_server.ssd_backend]
             recovered = fetch_orbitkv_metrics(channel_server.http_port)
+            if compression:
+                assert recovered.get("orbitkv_ssd_codec_duration_seconds_count", 0) > 0
+                assert recovered.get("orbitkv_ssd_codec_decode_failures_total", 0) == 0
             assert (
                 sum(recovered.get(key, 0) - before_restart.get(key, 0) for key in read_metrics) > 0
             )

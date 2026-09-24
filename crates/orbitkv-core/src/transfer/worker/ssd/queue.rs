@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use cudarc::driver::{CudaEvent, result, sys};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::EngineError;
@@ -11,7 +12,6 @@ use crate::transfer::finish_gpu_transfer;
 
 use super::super::{
     LoadTask, SaveTask, WorkerCommand, WorkerRuntime, build_copy_descs, finish_load,
-    process_save_task,
 };
 
 pub(in crate::transfer::worker) const MAX_WRITES: usize = 8;
@@ -47,6 +47,7 @@ struct Job {
     inflight: usize,
     error: Option<String>,
     prepared: bool,
+    host_completion: Option<CudaEvent>,
     started: Instant,
     bytes: usize,
 }
@@ -66,6 +67,7 @@ impl Job {
             inflight: 0,
             error: None,
             prepared: false,
+            host_completion: None,
             started: Instant::now(),
             bytes: 0,
         };
@@ -115,27 +117,60 @@ impl Job {
         if self.prepared {
             return Ok(());
         }
-        // Do host transfers only when this job is selected, so admitting queued
-        // writes cannot force every D2H copy ahead of a demand read.
-        match &self.task {
-            Task::Load(task) => {
-                let (copies, bytes) = build_copy_descs(&task.layers)?;
-                finish_gpu_transfer(
-                    &runtime.stream,
-                    runtime.backend.h2d(&copies, &runtime.stream),
-                )?;
-                self.bytes += bytes;
+        let layers = match &self.task {
+            Task::Load(task) => &task.layers,
+            Task::Save(task) => &task.layers,
+        };
+        let (copies, bytes) = build_copy_descs(layers)?;
+        if !copies.is_empty() {
+            let event = runtime
+                .stream
+                .context()
+                .new_event(None)
+                .map_err(|error| EngineError::Storage(error.to_string()))?;
+            let submitted = if self.is_write() {
+                runtime.backend.d2h(&copies, &runtime.stream)
+            } else {
+                runtime.backend.h2d(&copies, &runtime.stream)
+            };
+            if let Err(error) = submitted.and_then(|()| {
+                event
+                    .record(&runtime.stream)
+                    .map_err(|error| error.to_string())
+            }) {
+                // Partial submission still owns the job's host and GPU pages.
+                return finish_gpu_transfer(&runtime.stream, Err(error));
             }
-            Task::Save(task) => process_save_task(
-                &task.layers,
-                &runtime.stream,
-                runtime.backend.as_ref(),
-                #[cfg(feature = "tracing")]
-                task.trace_ctx,
-            )?,
+            self.host_completion = Some(event);
+        }
+        if !self.is_write() {
+            self.bytes += bytes;
         }
         self.prepared = true;
         Ok(())
+    }
+
+    fn poll_host(&mut self, runtime: &WorkerRuntime) {
+        let Some(event) = &self.host_completion else {
+            return;
+        };
+        // This event covers only this job. A later copy on the shared stream
+        // must not delay its completion or block cuFile submission/polling.
+        match unsafe { result::event::query(event.cu_event()) } {
+            Ok(()) => {
+                #[cfg(feature = "test-hooks")]
+                if crate::test_faults::active("ssd_host_completion") {
+                    return;
+                }
+                self.host_completion = None;
+            }
+            Err(error) if error.0 == sys::CUresult::CUDA_ERROR_NOT_READY => {}
+            Err(error) => {
+                let _ = finish_gpu_transfer(&runtime.stream, Ok(()));
+                self.host_completion = None;
+                self.fail(error.to_string());
+            }
+        }
     }
 
     fn is_write(&self) -> bool {
@@ -177,6 +212,10 @@ impl Job {
 
     fn finish(self) {
         assert_eq!(self.inflight, 0, "submitted I/O still owns this job");
+        assert!(
+            self.host_completion.is_none(),
+            "host copy still owns this job"
+        );
         // Drop unpublished extents before telling the caller it can reuse pages.
         drop(self.writes);
         let result = self
@@ -233,6 +272,7 @@ pub(in crate::transfer::worker) fn run(
             }
         }
         for job in &mut jobs {
+            job.poll_host(&runtime);
             job.cancel_abandoned();
         }
         for (slot, owner) in &mut slots {
@@ -253,7 +293,10 @@ pub(in crate::transfer::worker) fn run(
         }
         let mut index = 0;
         while index < jobs.len() {
-            if jobs[index].inflight == 0 && jobs[index].work.is_empty() {
+            if jobs[index].inflight == 0
+                && jobs[index].work.is_empty()
+                && jobs[index].host_completion.is_none()
+            {
                 jobs.remove(index).expect("completed job exists").finish();
             } else {
                 index += 1;

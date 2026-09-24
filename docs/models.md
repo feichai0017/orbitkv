@@ -9,6 +9,10 @@ own GPU allocation; OrbitKV restores registered attention pages and sealed
 checkpoints through the [compiled recovery contract](hybrid-recovery.md).
 See [deployment patterns](deployment.md) for topology limits.
 
+Engine-native FP8 KV is qualified separately from FP8 weights. See
+[KV precision and SSD compression](storage-formats.md) for format boundaries,
+scale identity and reproduction commands.
+
 ## Pretrained checkpoints
 
 The larger-model qualification uses one H20 with approximately 96 GiB of

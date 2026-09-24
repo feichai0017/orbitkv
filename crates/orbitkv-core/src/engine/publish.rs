@@ -223,6 +223,22 @@ impl OrbitKVEngine {
             )));
         }
 
+        let mut padding = Vec::with_capacity(layer_contexts.len());
+        for ctx in layer_contexts {
+            let layer_id = topology.layer_id(&ctx.layer_name)?;
+            let (offset, padded) = topology.page_placement(layer_id).expect("page layout");
+            let BlockCopies::Contiguous(copy) = ctx
+                .layout
+                .block_copies(ctx.blocks_to_save[0].0)
+                .map_err(EngineError::Storage)?
+            else {
+                unreachable!("split rejected above")
+            };
+            if copy.bytes < padded {
+                padding.push((offset + copy.bytes, padded - copy.bytes));
+            }
+        }
+
         // One page per block.
         let page_bytes = NonZeroU64::new(page_size as u64)
             .ok_or_else(|| EngineError::Storage("page size is zero".into()))?;
@@ -233,6 +249,16 @@ impl OrbitKVEngine {
                 .ok_or_else(|| {
                     EngineError::Storage("pinned pool exhausted while allocating page".into())
                 })?;
+            for &(offset, len) in &padding {
+                // SAFETY: these disjoint holes belong to the fresh page; no DMA has started.
+                unsafe {
+                    page.mapped_ptr()
+                        .add(offset)
+                        .host()
+                        .as_ptr()
+                        .write_bytes(0, len);
+                }
+            }
             pages.push(page);
         }
 
@@ -438,6 +464,14 @@ impl OrbitKVEngine {
                 let alloc_count = if blockwise { num_blocks } else { 1 };
                 let blocks_per_alloc = if blockwise { 1 } else { num_blocks };
 
+                let source_bytes = match layout
+                    .block_copies(ctx.blocks_to_save[0].0)
+                    .map_err(EngineError::Storage)?
+                {
+                    BlockCopies::Contiguous(copy) => copy.bytes,
+                    BlockCopies::Split { k, v } => k.bytes + v.bytes,
+                };
+
                 let alloc_pinned = |stride: usize, what: &str| {
                     let alloc_size = (stride as u64)
                         .checked_mul(blocks_per_alloc as u64)
@@ -454,7 +488,7 @@ impl OrbitKVEngine {
 
                 // Allocate pinned memory and construct the host-side RawBlocks in
                 // save order. Strides are padded (SSD-aligned); GPU copies later
-                // use actual (unpadded) sizes, leaving the padding tail unused.
+                // use actual (unpadded) sizes; initialize padding before codec/SSD reads.
                 let mut raw_blocks: Vec<RawBlock> = Vec::with_capacity(num_blocks);
                 for _ in 0..alloc_count {
                     if layout.is_split() {
@@ -463,6 +497,17 @@ impl OrbitKVEngine {
                         let v_alloc = alloc_pinned(stride, "V segment buffer")?;
                         for i in 0..blocks_per_alloc {
                             let offset = i * stride;
+                            for alloc in [&k_alloc, &v_alloc] {
+                                // SAFETY: only the padding tail of this newly allocated segment.
+                                unsafe {
+                                    alloc
+                                        .mapped_ptr()
+                                        .add(offset + layout.segment_bytes())
+                                        .host()
+                                        .as_ptr()
+                                        .write_bytes(0, stride - layout.segment_bytes());
+                                }
+                            }
                             // Safety: offsets are within the just-made allocations.
                             raw_blocks.push(RawBlock::two_segments(
                                 Segment::new(
@@ -481,6 +526,15 @@ impl OrbitKVEngine {
                         let stride = layout.padded_block_bytes();
                         let alloc = alloc_pinned(stride, "block buffer")?;
                         for i in 0..blocks_per_alloc {
+                            // SAFETY: only the padding tail, before the GPU writes the payload.
+                            unsafe {
+                                alloc
+                                    .mapped_ptr()
+                                    .add(i * stride + source_bytes)
+                                    .host()
+                                    .as_ptr()
+                                    .write_bytes(0, stride - source_bytes);
+                            }
                             // Safety: offset is within the just-made allocation.
                             raw_blocks.push(RawBlock::single_segment(Segment::new(
                                 alloc.mapped_ptr().add(i * stride).host(),

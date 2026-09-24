@@ -1,4 +1,9 @@
-use super::{SsdBackingStore, index::SsdIndexEntry, uring::UringIoEngine};
+use super::{
+    SsdBackingStore,
+    codec::{self, Encoding},
+    index::SsdIndexEntry,
+    uring::UringIoEngine,
+};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::metrics::core_metrics;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -69,6 +74,7 @@ struct PrefetchTask {
     slots: Vec<RawBlock>,
     /// Shared batch context: per-block callback + completion counter.
     ctx: Arc<BatchContext>,
+    store: Arc<SsdBackingStore>,
 }
 
 /// SSD prefetch entry point. Spawns dispatcher + worker pipeline internally.
@@ -120,7 +126,7 @@ async fn ssd_prefetch_dispatcher(
 /// Read and write allocations use the same page/segment lifetime and sizes;
 /// a surviving prefix cannot pin unrelated pages from a larger batch.
 async fn dispatch_prefetch_batch(
-    store: &SsdBackingStore,
+    store: &Arc<SsdBackingStore>,
     task_tx: &tokio::sync::mpsc::Sender<PrefetchTask>,
     batch: PrefetchBatch,
 ) -> bool {
@@ -159,6 +165,7 @@ async fn dispatch_prefetch_batch(
             entry: req.entry,
             slots,
             ctx: Arc::clone(&ctx),
+            store: Arc::clone(store),
         };
 
         if let Err(err) = task_tx.send(task).await {
@@ -272,54 +279,90 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
         .sum();
     let ctx = task.ctx;
 
-    // Build iovecs from per-slot allocations
+    let mut encoded = match &task.entry.encoding {
+        Encoding::Raw => None,
+        Encoding::Lz4V1(_) => {
+            let buffer = match &task.store.codec {
+                Some(codec) => codec.read_buffer(task.entry.len as usize).await.ok(),
+                None => None,
+            };
+            let Some(buffer) = buffer else {
+                return (key, task.entry, None, duration_secs(), block_size, ctx);
+            };
+            Some(buffer)
+        }
+    };
+    let expected_len = encoded
+        .as_ref()
+        .map_or(block_size as usize, |buffer| buffer.len);
     let read_result = {
-        let iovecs: Vec<_> = task
-            .slots
-            .iter()
-            .flat_map(|slot| {
-                slot.segment_iovecs()
-                    .map(|(ptr, size)| (ptr.as_ptr(), size))
-            })
-            .collect();
-
+        let iovecs = match &encoded {
+            Some(buffer) => vec![(buffer.ptr(), buffer.len)],
+            None => task
+                .slots
+                .iter()
+                .flat_map(|slot| {
+                    slot.segment_iovecs()
+                        .map(|(ptr, size)| (ptr.as_ptr(), size))
+                })
+                .collect(),
+        };
         io.readv_at_async(task.entry.shard_id, iovecs, task.entry.file_offset)
     };
 
     #[cfg(feature = "test-hooks")]
     crate::test_faults::pause("ssd").await;
 
-    // Await IO result and rebuild block
-    let expected_len = block_size as usize;
-    let block = match read_result {
-        Ok(rx) => match rx.await {
-            Ok(Ok(bytes_read)) if bytes_read == expected_len => {
-                Some(Arc::new(SealedBlock::from_slots(
-                    task.slots
-                        .into_iter()
-                        .zip(&task.entry.slots)
-                        .map(|(slot, meta)| (slot, meta.numa_node))
-                        .collect(),
-                )))
-            }
-            Ok(Ok(n)) => {
-                warn!("SSD prefetch: short read {} of {} bytes", n, expected_len);
-                None
-            }
-            Ok(Err(e)) => {
-                warn!("SSD prefetch: read error: {}", e);
-                None
-            }
-            Err(_) => {
-                warn!("SSD prefetch: read channel closed");
-                None
-            }
-        },
-        Err(e) => {
-            warn!("SSD prefetch: failed to submit read: {}", e);
-            None
-        }
+    let read_ok = match read_result {
+        Ok(rx) => matches!(rx.await, Ok(Ok(bytes)) if bytes == expected_len),
+        Err(_) => false,
     };
-
+    let slots = if !read_ok {
+        warn!("SSD prefetch: failed or short read for {key:?}");
+        None
+    } else if let Some(mut buffer) = encoded.take() {
+        let encoding = task.entry.encoding.clone();
+        let slots = task.slots;
+        let decoded = tokio::task::spawn_blocking(move || {
+            let mut segments: Vec<_> = slots
+                .iter()
+                .flat_map(|slot| slot.segment_iovecs())
+                .map(|(ptr, len)| {
+                    // SAFETY: fresh, disjoint allocations belong only to this job.
+                    unsafe {
+                        ptr.as_ptr().write_bytes(0, len);
+                        std::slice::from_raw_parts_mut(ptr.as_ptr(), len)
+                    }
+                })
+                .collect();
+            codec::decode(&encoding, &mut buffer, &mut segments)?;
+            Ok::<_, std::io::Error>(slots)
+        })
+        .await;
+        match decoded {
+            Ok(Ok(slots)) => Some(slots),
+            Ok(Err(error)) => {
+                task.store
+                    .inner
+                    .lock()
+                    .ring
+                    .invalidate_encoded(&key, &task.entry);
+                warn!("SSD prefetch: invalid encoded object {key:?}: {error}");
+                None
+            }
+            Err(_) => None,
+        }
+    } else {
+        Some(task.slots)
+    };
+    let block = slots.map(|slots| {
+        Arc::new(SealedBlock::from_slots(
+            slots
+                .into_iter()
+                .zip(&task.entry.slots)
+                .map(|(slot, meta)| (slot, meta.numa_node))
+                .collect(),
+        ))
+    });
     (key, task.entry, block, duration_secs(), block_size, ctx)
 }

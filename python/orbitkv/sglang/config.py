@@ -1,11 +1,14 @@
 """Bind SGLang model computation and GPU representation to a cache identity."""
 
+from __future__ import annotations
+
 from importlib.metadata import version
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from orbitkv.identity import model_identity, state_namespace
+from orbitkv.identity import artifact_identity, model_identity, state_namespace
 
-from .layout import GpuLayout
+if TYPE_CHECKING:
+    from .layout import GpuLayout
 
 
 def derive_namespace(server_args: Any, params: Any, layout: GpuLayout) -> str:
@@ -39,7 +42,9 @@ def derive_namespace(server_args: Any, params: Any, layout: GpuLayout) -> str:
             )
         },
     }
+    scale_path = getattr(server_args, "quantization_param_path", None)
     representation = {
+        "kv_scale_artifact": artifact_identity(scale_path) if scale_path else None,
         "kv_cache_dtype": getattr(server_args, "kv_cache_dtype", None),
         "tp": [tp_rank, tp_size],
         "pp": [params.pp_rank, params.pp_size],

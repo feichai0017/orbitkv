@@ -63,6 +63,25 @@ impl std::str::FromStr for SsdWritePolicy {
     }
 }
 
+/// Lossless SSD representation; engine KV quantization is independent.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum SsdCompression {
+    #[default]
+    None,
+    Lz4,
+}
+
+impl std::str::FromStr for SsdCompression {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "none" => Ok(Self::None),
+            "lz4" => Ok(Self::Lz4),
+            _ => Err("SSD compression must be none or lz4".into()),
+        }
+    }
+}
+
 /// Configuration for the SSD cache (logical ring).
 ///
 /// Supports one or more cache directories. When multiple paths are provided,
@@ -88,6 +107,9 @@ pub struct SsdCacheConfig {
     /// Max concurrent block prefetches.
     pub prefetch_inflight: usize,
     pub backend: SsdBackend,
+    pub compression: SsdCompression,
+    /// Temporary encoded buffers, independent of the pinned cache pool.
+    pub codec_budget: usize,
 }
 
 impl Default for SsdCacheConfig {
@@ -102,6 +124,8 @@ impl Default for SsdCacheConfig {
             write_inflight: DEFAULT_SSD_WRITE_INFLIGHT,
             prefetch_inflight: DEFAULT_SSD_PREFETCH_INFLIGHT,
             backend: SsdBackend::Auto,
+            compression: SsdCompression::None,
+            codec_budget: 64 * 1024 * 1024,
         }
     }
 }

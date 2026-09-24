@@ -160,6 +160,14 @@ pub struct Cli {
     #[arg(long, default_value = "auto", requires = "ssd_cache_path")]
     pub ssd_backend: orbitkv_core::SsdBackend,
 
+    /// Lossless host SSD compression; incompressible objects retain raw storage.
+    #[arg(long, default_value = "none", requires = "ssd_cache_path")]
+    pub ssd_compression: orbitkv_core::SsdCompression,
+
+    /// Temporary codec buffers, separate from the pinned pool (4 KiB to 4 GiB - 1).
+    #[arg(long, default_value = "64mb", value_parser = parse_memory_size, requires = "ssd_cache_path")]
+    pub ssd_codec_budget: usize,
+
     /// SSD prefetch queue depth (max pending prefetch batches). Default: 2
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_SSD_PREFETCH_QUEUE_DEPTH)]
     pub ssd_prefetch_queue_depth: usize,
@@ -590,6 +598,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             write_queue_depth: cli.ssd_write_queue_depth,
             write_policy: cli.ssd_write_policy,
             backend: cli.ssd_backend,
+            compression: cli.ssd_compression,
+            codec_budget: cli.ssd_codec_budget,
             prefetch_queue_depth: cli.ssd_prefetch_queue_depth,
             write_inflight: cli.ssd_write_inflight,
             prefetch_inflight: cli.ssd_prefetch_inflight,

@@ -1,8 +1,8 @@
+use super::codec::Encoding;
 use crate::SlotMeta;
-use crate::block::{SealedBlock, StateKey};
+use crate::block::StateKey;
 use crate::metrics::core_metrics;
 use log::{debug, warn};
-use smallvec::SmallVec;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -20,6 +20,7 @@ pub(crate) struct SsdIndexEntry {
     pub file_offset: u64,
     /// Per-slot metadata for rebuilding SealedBlock
     pub slots: Vec<SlotMeta>,
+    pub encoding: Encoding,
     pub readers: Arc<AtomicUsize>,
 }
 
@@ -53,7 +54,7 @@ struct SsdShardRing {
 /// Combines head/tail pointers with FIFO index. Maintains insertion order
 /// for O(k) tail pruning while preserving O(1) lookup via HashMap.
 ///
-/// Two-phase commit: prepare_batch inserts Writing state, commit transitions
+/// Two-phase commit: reserve inserts Writing state, commit transitions
 /// to Committed (or removes on failure). Only Committed entries are readable.
 pub(super) struct SsdRingBuffer {
     /// Per-file ring state.
@@ -92,6 +93,18 @@ impl SsdRingBuffer {
         match self.entries.get(key) {
             Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) => Some(e),
             _ => None,
+        }
+    }
+
+    /// A failed decode must permit recomputation to repair this object. Never
+    /// erase a replacement generation or metadata protecting an active GPU lease.
+    pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) {
+        if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry))
+            if entry.shard_id == failed.shard_id && entry.begin == failed.begin
+                && matches!(entry.encoding, Encoding::Lz4V1(_))
+                && entry.readers.load(Ordering::Acquire) == 0)
+        {
+            self.entries.remove(key);
         }
     }
 
@@ -212,13 +225,19 @@ impl SsdRingBuffer {
         &mut self,
         key: &StateKey,
         slots: Vec<SlotMeta>,
+        encoding: Encoding,
     ) -> Option<SsdIndexEntry> {
         if self.entries.contains_key(key) {
             return None;
         }
-        let payload = slots
-            .iter()
-            .try_fold(0u64, |sum, slot| sum.checked_add(slot.total_size()))?;
+        let payload = match &encoding {
+            Encoding::Raw => slots
+                .iter()
+                .try_fold(0u64, |sum, slot| sum.checked_add(slot.total_size()))?,
+            Encoding::Lz4V1(segments) => segments
+                .iter()
+                .try_fold(0u64, |sum, segment| sum.checked_add(segment.bytes as u64))?,
+        };
         let size = payload.checked_next_multiple_of(self.alignment)?;
         let available = (0..self.shards.len()).find_map(|offset| {
             let shard_id = (self.next_shard + offset) % self.shards.len();
@@ -236,6 +255,7 @@ impl SsdRingBuffer {
             len: size,
             file_offset,
             slots,
+            encoding,
             readers: Arc::new(AtomicUsize::new(0)),
         };
         self.entries
@@ -243,43 +263,12 @@ impl SsdRingBuffer {
         self.shards[shard_id].order.push_back((key.clone(), begin));
         Some(entry)
     }
-
-    pub(super) fn prepare_batch(
-        &mut self,
-        candidates: Vec<(StateKey, Arc<SealedBlock>)>,
-    ) -> Vec<WriteInfo> {
-        candidates
-            .into_iter()
-            .filter_map(|(key, block)| {
-                let slots = block
-                    .slots()
-                    .iter()
-                    .zip(block.slot_numas())
-                    .map(|(slot, numa)| {
-                        let sizes: SmallVec<[u64; 2]> = (0..slot.num_segments())
-                            .map(|index| slot.segment_size(index).unwrap() as u64)
-                            .collect();
-                        SlotMeta::new(sizes, *numa)
-                    })
-                    .collect();
-                let entry = self.reserve(&key, slots)?;
-                Some(WriteInfo { key, block, entry })
-            })
-            .collect()
-    }
 }
 
 impl Default for SsdRingBuffer {
     fn default() -> Self {
         Self::new_sharded(vec![0], 1)
     }
-}
-
-/// Info for a single block write within a batch.
-pub(super) struct WriteInfo {
-    pub key: StateKey,
-    pub block: Arc<SealedBlock>,
-    pub entry: SsdIndexEntry,
 }
 
 #[cfg(test)]

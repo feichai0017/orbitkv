@@ -105,8 +105,11 @@ budgets; there is no additional read-job count limit.
 At most **eight GPU write jobs** can be queued or active per instance/device.
 Admission exhaustion rolls back unsubmitted GPU extents and uses ordinary D2H
 publication with bounded io_uring writeback. A permit stays owned until the
-GPU job terminates. Mixed-load H2D and hot-copy D2H preparation still drain once
-when a job is first selected; they are not yet pipelined with storage submission.
+GPU job terminates. Mixed-load H2D and hot-copy D2H preparation enqueue on the
+worker's stream and retain a per-job CUDA event. SSD submission and completion
+polling continue while those copies run. Each job keeps its pages until both
+its host-copy event and storage work complete; a later job's copy does not extend
+an earlier job's completion fence.
 
 Before GPU writeback, Rust reserves an unpublished, 4 KiB aligned SSD extent.
 Each chunk gathers only valid source bytes and zeroes padding, then completes
@@ -119,7 +122,10 @@ time versus asynchronous DRAM writeback.
 Direct writes require all slots of a storage group in the same Publish.
 Fragmented layers and multi-writer TP/PP groups assemble in DRAM and keep
 io_uring writeback. Both forms can subsequently restore through cuFile.
-The existing `all`/`reuse` admission policy still applies.
+The existing `all`/`reuse` admission policy still applies. Optional
+[SSD LZ4 compression](storage-formats.md) routes writes through host encoding;
+encoded objects restore through io_uring/decode, while raw prefixes retain
+cuFile eligibility. Compression is disabled by default.
 
 Each slot retains address-stable size/offset/result storage and a registered
 file reference until its completion event. Submission success alone never
@@ -327,16 +333,18 @@ correctness, not native GDS throughput.
 | Gate | Final result |
 | --- | --- |
 | Rust GPU layouts, checkpoints, pinning, failure recovery and auto fallback | 6 passed |
-| Manager process faults, coalescing, concurrent GPU I/O and cancellation ownership | 22 passed |
+| Manager process faults, coalescing, concurrent GPU I/O, LZ4 and cancellation ownership | 25 passed |
 | vLLM / Qwen3-8B / SSD | 6 passed; 1 recurrent-only check skipped, with both explicit `cufile` and default `auto` |
 | SGLang / Qwen3-8B / SSD | Passed with both explicit `cufile` and default `auto` |
 | vLLM / Qwen3.8-27B-FP8 / SSD | 7 passed |
 | SGLang / Qwen3.8-27B-FP8 / SSD | Passed |
 
-The asynchronous update reran all six Rust GPU checks, 22 Manager faults and
-both Qwen3-8B engines with explicit cuFile compatibility. It adds gates for SSD reads during a held write completion,
-GPU write admission saturation with host fallback, and cancellation/unregister
-with both read slots occupied. Each checks actual GPU bytes and final resource
+The asynchronous submission baseline ran all six Rust GPU checks, 22 Manager
+faults and both Qwen3-8B engines with explicit cuFile compatibility. The subsequent
+host-copy/LZ4 update passed all six GPU checks and 25 Manager faults. It adds gates for SSD reads during a held write completion,
+GPU write admission saturation with host fallback, cancellation/unregister
+with both read slots occupied, held host-copy completion, and compressed
+reads with cancellation or corrupted storage. Each checks actual GPU bytes and final resource
 release. Default-auto and Qwen3.8 serving results are retained from the
 [GDS baseline](https://github.com/feichai0017/orbitkv/pull/176).
 

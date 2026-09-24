@@ -31,6 +31,14 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Bound queued GPU-storage writes and staging so demand reads make progress
   between write batches: two 4 MiB slots, one in-flight write, eight admitted write
   jobs and bounded read bursts; saturation uses host publication/io_uring.
+- [x] Verify event-tracked host copies overlap SSD submission while Publish and
+  unregister retain ownership until both DMA paths complete.
+- [x] Qualify optional Rust LZ4 SSD storage, bounded scratch, mixed raw/encoded
+  prefixes, cancellation, corruption rejection/repair and raw fallback.
+- [x] Qualify engine-native FP8 KV on Qwen3-8B in both engines; isolate external
+  SGLang scale artifacts and compare against same-dtype cold controls.
+- [ ] Add measured GPU lossless codecs and optional lossy storage formats; retain
+  exact recurrent state until model-quality and recovery gates pass.
 - [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.
 - [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,

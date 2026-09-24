@@ -102,7 +102,12 @@ selection and native GDS performance qualification are separate. When cuFile
 is selected, the Manager reserves the configured disk capacity before serving
 and coalesces adjacent reads across cached blocks within each file. Rust submits
 asynchronous I/O through two 4 MiB slots, keeping demand reads progressing
-alongside bounded GPU writeback.
+alongside bounded GPU writeback and event-tracked host copies.
+
+Optional [lossless SSD compression](docs/storage-formats.md) uses Rust LZ4 with
+bounded scratch memory, checksum validation and raw fallback. Enable it with
+`--ssd-compression lz4`; engine-native KV precision remains an independent
+engine setting. Compression is opt-in and uses the host SSD path.
 
 Keep the Manager alive, restart the engine, and repeat a multi-block prompt.
 An increase in `orbitkv_load_bytes_total` confirms an external restore.

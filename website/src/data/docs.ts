@@ -24,6 +24,7 @@ export const docGroups = [
       { slug: "request-preparation", title: "Consumer-owned preparation" },
       { slug: "cache-policies", title: "Retention & SSD write admission" },
       { slug: "gds", title: "GPU storage" },
+      { slug: "storage-formats", title: "KV precision & SSD compression" },
       { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
     ],
   },

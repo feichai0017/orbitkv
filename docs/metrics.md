@@ -32,6 +32,14 @@ Cache Manager → OpenTelemetry Collector → Prometheus → Grafana
 
 OrbitKV exposes the following metrics for monitoring KV cache operations:
 
+### SSD compression
+
+See [storage-format metrics](storage-formats.md#measure-before-enabling-by-default)
+for compressed logical/stored write bytes, fallback reasons, live scratch,
+codec time and decode failures. SSD prefetch bytes remain **decoded logical bytes**;
+they are not physical compressed-read volume. GDS counters apply only to cuFile
+operations, and do not establish that CPU compatibility was disabled.
+
 ### Query ownership and preparation
 
 - **orbitkv_query_reserved_bytes** tracks total conservative per-owner bytes.

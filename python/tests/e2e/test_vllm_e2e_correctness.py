@@ -231,6 +231,8 @@ class TestE2ECorrectness:
                 request.config.getoption("--ssd-write-policy"),
                 "--ssd-backend",
                 request.config.getoption("--ssd-backend"),
+                "--ssd-compression",
+                request.config.getoption("--ssd-compression"),
             )
         with CacheManager(
             log_file=log_dir / "orbitkv-cache-manager.log",
@@ -243,6 +245,7 @@ class TestE2ECorrectness:
     @pytest.fixture(scope="class")
     def baseline_outputs(
         self,
+        request,
         model: str,
         base_port: int,
         log_dir: Path,
@@ -264,6 +267,7 @@ class TestE2ECorrectness:
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
+            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
                 if label == "long_warm":
@@ -316,6 +320,7 @@ class TestE2ECorrectness:
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
+            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
             transfer_backend=orbitkv_transfer_backend,
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
@@ -345,6 +350,7 @@ class TestE2ECorrectness:
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
+            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
             transfer_backend=orbitkv_transfer_backend,
             server_label="OrbitKV load",
         ):
@@ -374,7 +380,11 @@ class TestE2ECorrectness:
                 "uring": ("orbitkv_ssd_prefetch_bytes_total",),
                 "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
                 "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
-            }[request.config.getoption("--ssd-backend")]
+            }[
+                "auto"
+                if request.config.getoption("--ssd-compression") != "none"
+                else request.config.getoption("--ssd-backend")
+            ]
             assert (
                 sum(metrics_end.get(key, 0) - before_restart.get(key, 0) for key in read_metrics)
                 > 0
@@ -383,8 +393,16 @@ class TestE2ECorrectness:
         if (
             request.config.getoption("--ssd-backend") == "cufile"
             and request.config.getoption("--vllm-cache-tier") == "ssd"
+            and request.config.getoption("--ssd-compression") == "none"
         ):
             assert metrics_end.get("orbitkv_ssd_cufile_write_bytes_total", 0) > 0
+
+        if (
+            request.config.getoption("--ssd-compression") == "lz4"
+            and request.config.getoption("--vllm-cache-tier") == "ssd"
+        ):
+            assert metrics_end.get("orbitkv_ssd_codec_duration_seconds_count", 0) > 0
+            assert metrics_end.get("orbitkv_ssd_codec_decode_failures_total", 0) == 0
 
         print("[Phase 2] Done\n")
         return {

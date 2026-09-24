@@ -186,7 +186,10 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 observed = fetch_orbitkv_metrics(channel_server.http_port)
-                if observed.get("orbitkv_ssd_write_bytes_total", 0) == saved_bytes:
+                if 0 < observed.get("orbitkv_ssd_write_bytes_total", 0) <= saved_bytes and not any(
+                    observed.get(name, 0)
+                    for name in ("orbitkv_ssd_write_inflight", "orbitkv_ssd_write_queue_pending")
+                ):
                     break
                 time.sleep(0.01)
             else:
