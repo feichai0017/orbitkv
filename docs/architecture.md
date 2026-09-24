@@ -69,12 +69,19 @@ Query reservations use the registered group's padded bytes and remain charged
 through preparation, result ownership, and GPU completion. Global and instance
 limits bound retained payloads; identical backing reads can be shared while
 each request keeps its own ticket and lease. See [query budgets](server.md#query-ownership-budgets).
+With [automatic SSD selection](gds.md), the Manager tries native cuFile on
+ext4/XFS and falls back to io_uring when unavailable. On the cuFile path a demand
+result can own a pinned file extent instead of host bytes. A dedicated GPU storage worker reads through
+bounded registered staging and scatters only the selected state. DRAM restores,
+and speculative preparation retain their existing paths. Complete groups can
+be written from GPU staging; fragmented groups seal in DRAM before writeback. Native GDS
+qualification is separate from compatibility-mode correctness.
 Publish holds its
-iceoryx2 reply until D2H finishes, so the caller does not release source HBM
+iceoryx2 reply until D2H and any GPU-backed SSD writes finish, so the caller does not release source HBM
 pages early while the dispatcher remains free. The Rust cache client opens a
 separate descriptor session for Publish on its first save, so an in-flight
 save does not serialize the worker's Query/Restore calls behind that reply.
-Instance cleanup serializes against registration, drains GPU load/save queues,
+Instance cleanup serializes against registration, drains GPU load/save/storage queues,
 and only then releases imported CUDA mappings. Superseded
 sessions cannot clean up a replacement session. Both vLLM and the SGLang
 direct linker register CUDA IPC pages and use iceoryx2 descriptors on the hot
@@ -91,7 +98,7 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | State contract | `orbitkv-state` | State identity, format compatibility, compiled page demand, recovery validation, page-reference types |
 | Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
 | Process utilities | `orbitkv-common` | Shared logging setup and peer connection defaults |
-| Hardware locality | `orbitkv-core/src/numa.rs` | NUMA topology and allocation/worker affinity |
+| Hardware locality | `orbitkv-core/src/memory/numa.rs` | NUMA topology and allocation/worker affinity |
 | Cache statistics | `orbitkv-server/src/metric/hll.rs` | Namespaced miss cardinality and windowed reuse estimates |
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
 | Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
@@ -104,6 +111,23 @@ framework adapters use placement-neutral names and results. Moving a cache hit
 from DRAM to SSD or another node should not change `query_prefetch`, `save`,
 `start_restore`, or `release` for the caller. The process channel implements
 the current iceoryx2/UDS connection without defining a separate cache API.
+
+## Core module ownership
+
+| Module | Responsibility |
+| --- | --- |
+| `engine/` | Instance registration, Publish planning, query orchestration and restore validation |
+| `memory/` | NUMA placement, pinned allocations, pools and resident-cache policy |
+| `query/` | Admission budgets, phases and query leases |
+| `storage/` | Sealing, resident lookup, read coalescing, metadata and inventory |
+| `backing/ssd/` | SSD index/reservations, io_uring workers, cuFile registration and bounded GPU staging |
+| `backing/`, `internode/` | Remote retrieval, catalog client and peer control |
+| `transfer/` | Registered layouts, CUDA copies and drained memory/storage workers |
+
+`lib.rs` defines the public API. Tests mirror these modules under
+`crates/orbitkv-core/tests/unit/`; GPU integration gates stay in `tests/`.
+Restore returns one completion receiver after all submitted DMA drains. The old
+shared-memory completion state and its second load API have been removed.
 
 ## Layering
 

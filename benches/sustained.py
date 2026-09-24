@@ -299,6 +299,10 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                     key: counters.get(key, 0)
                     for key in (
                         "orbitkv_ssd_prefetch_bytes_total",
+                        "orbitkv_ssd_cufile_read_bytes_total",
+                        "orbitkv_ssd_cufile_write_bytes_total",
+                        "orbitkv_ssd_cufile_read_seconds_sum",
+                        "orbitkv_ssd_cufile_write_seconds_sum",
                         "orbitkv_ssd_write_bytes_total",
                         "orbitkv_load_bytes_total",
                         "orbitkv_save_bytes_total",

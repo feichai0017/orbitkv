@@ -110,6 +110,17 @@ def storage_manifest(pid: int, cache_path: Path) -> dict:
     }
 
 
+def process_usage(pid: int) -> dict:
+    """Process CPU and I/O counters, excluding child inference processes."""
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    io = dict(line.split(": ", 1) for line in Path(f"/proc/{pid}/io").read_text().splitlines())
+    return {
+        "cpu_seconds": (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK"),
+        "read_bytes": int(io["read_bytes"]),
+        "write_bytes": int(io["write_bytes"]),
+    }
+
+
 def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
     packages = [args.engine, "torch", "transformers", "numpy", "prometheus_client"]
     if args.backend in ("lmcache", "flexkv"):

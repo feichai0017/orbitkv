@@ -8,7 +8,7 @@ use tokio::sync::Notify;
 use super::inventory::{Inventory, InventoryReadError};
 
 use crate::block::{SealedBlock, StateKey};
-use crate::cache::{CacheInsertOutcome, TinyLfuCache};
+use crate::memory::cache::{CacheInsertOutcome, TinyLfuCache};
 use crate::metrics::{
     CACHE_CLASS_PROBATIONARY, CACHE_CLASS_RECLAIMABLE, CACHE_CLASS_RETAINED,
     CACHE_RESIDENCE_REASON_CLEANUP, CACHE_RESIDENCE_REASON_PRESSURE, core_metrics,

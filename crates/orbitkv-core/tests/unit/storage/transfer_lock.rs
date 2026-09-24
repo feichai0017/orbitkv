@@ -3,8 +3,8 @@ use std::ptr::NonNull;
 
 use super::*;
 use crate::block::{RawBlock, Segment};
-use crate::numa::NumaNode;
-use crate::pinned_pool::{PinnedAllocation, PinnedAllocator};
+use crate::memory::numa::NumaNode;
+use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 
 fn shared_slab() -> (Vec<(StateKey, Arc<SealedBlock>)>, Arc<PinnedAllocation>) {
     let pool = PinnedAllocator::new_global(1024 * 1024, 1, false, false, None);

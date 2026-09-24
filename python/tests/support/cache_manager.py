@@ -369,6 +369,7 @@ class CacheManagerProcess:
         bootstrap_socket: str | None = None,
         ssd_cache_path: Path | None = None,
         ssd_cache_capacity: str = "256mb",
+        ssd_backend: str = "uring",
         query_budget: str | None = None,
         query_instance_budget: str | None = None,
         extra_args: tuple[str, ...] = (),
@@ -382,6 +383,7 @@ class CacheManagerProcess:
         self.bootstrap_socket = bootstrap_socket or f"/tmp/orbitkv-{port}.sock"
         self.ssd_cache_path = ssd_cache_path
         self.ssd_cache_capacity = ssd_cache_capacity
+        self.ssd_backend = ssd_backend
         self.query_budget = query_budget
         self.query_instance_budget = query_instance_budget
         self.extra_args = extra_args
@@ -439,6 +441,8 @@ class CacheManagerProcess:
                     str(self.ssd_cache_path),
                     "--ssd-cache-capacity",
                     self.ssd_cache_capacity,
+                    "--ssd-backend",
+                    self.ssd_backend,
                     "--enable-prometheus",
                 ]
             )

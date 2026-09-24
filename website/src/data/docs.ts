@@ -23,6 +23,7 @@ export const docGroups = [
       { slug: "queued-warming", title: "Queued-request warming" },
       { slug: "request-preparation", title: "Consumer-owned preparation" },
       { slug: "cache-policies", title: "Retention & SSD write admission" },
+      { slug: "gds", title: "GPU storage" },
       { slug: "vllm-request-state-machine", title: "vLLM request lifecycle" },
     ],
   },

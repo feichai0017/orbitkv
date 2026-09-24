@@ -72,6 +72,14 @@ it does not establish concurrent goodput or production tail latency.
 
 ## SSD restoration
 
+Choose `--ssd-backend uring`, `auto`, or `cufile` for both engines. This benchmark
+keeps `uring` as its reproducible default; the Manager itself defaults to `auto`.
+The cuFile backend performs complete-group GPU writes and demand restores through bounded
+GPU staging; fragmented writes and preparation still use DRAM. See
+[GPU storage](../docs/gds.md) for configuration, ownership and hardware limits.
+`python -m benches.gds --help` describes the complete bare-metal acceptance
+sequence, including native-path statistics and matched pressure workloads.
+
 Add `--ssd-gib 32` with `--backend orbitkv` for either engine. This creates a
 dedicated cache file inside the empty result directory, verifies `O_DIRECT` on
 the Manager's open descriptor, and records the filesystem and device inventory
@@ -92,6 +100,11 @@ a late prefetch followed by recomputation stays visible. `ssd_prefetch_p50_ms`
 includes allocation, queueing, reads and reconstruction; `load_task_p50_ms`
 includes H2D task construction and synchronization. Histogram sums describe
 instrumented operations and are not an additive decomposition of client TTFT.
+For cuFile restores, load duration also includes SSD reads and GPU scatter.
+Reports count both io_uring and cuFile read bytes; sustained/burst results retain
+the individual counters. `manager-usage.json` records process CPU seconds and
+Linux I/O accounting for the complete workload, including warmup and pressure.
+Linux process I/O accounting is not a measurement of GPU DMA bytes.
 
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \

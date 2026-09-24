@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 use cudarc::driver::CudaContext;
 use cudarc::driver::sys;
 use orbitkv_catalog::{BlockHashStore, CatalogService, MembershipView, Placement};
-use orbitkv_core::sync_state::{LOAD_STATE_ERROR, LOAD_STATE_SUCCESS};
 use orbitkv_core::*;
 use orbitkv_proto::proto::engine::{
     OpenTransferWindowRequest, QueryBlocksForTransferRequest, ReleaseTransferLockRequest,
@@ -759,30 +758,23 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         remote.blocks.is_empty(),
         "fenced requester must not fetch remote-only blocks"
     );
-    let load_state = LoadState::new().expect("create LoadState");
-    let shm_name = load_state.shm_name().to_string();
 
-    engine_b
-        .batch_load_kv_blocks_multi_layer(
+    let receiver = engine_b
+        .restore(
             "inst-b",
             0,
             DEVICE_ID,
-            &shm_name,
             &[vec![LAYER]],
             &[(lease, vec![block_ids.iter().copied().map(Some).collect()])],
         )
         .expect("batch_load on engine B");
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let state = load_state.get();
-        if state == LOAD_STATE_SUCCESS {
-            break;
-        }
-        assert!(state != LOAD_STATE_ERROR, "load reported ERROR");
-        assert!(Instant::now() < deadline, "timed out waiting for load");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    tokio::time::timeout(Duration::from_secs(5), receiver)
+        .await
+        .expect("restore timeout")
+        .expect("restore worker disappeared")
+        .result
+        .expect("restore failed");
 
     // ── 11. Verify data integrity ──
     let loaded = gpu_b.copy_to_host();

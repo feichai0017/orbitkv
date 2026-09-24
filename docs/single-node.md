@@ -175,11 +175,18 @@ io_uring workers. Reads rotate across read workers, including when there is only
 one cache file; each file's writes retain a stable queue. This avoids a read
 waiting in the submission queue of an unrelated write. It does not increase the
 configured in-flight read/write limits or remove device-level I/O contention.
-With SSD enabled, both saves and restores allocate each stored page/segment
+With the io_uring backend, both saves and restores allocate each stored page/segment
 independently, on its recorded NUMA node. This aligns read and write allocation
 sizes and lets eviction reclaim pages without a surviving prefix holding an
 entire batch. Page-first layouts already store a complete page as one segment.
 The DRAM-only path retains its batching option (`--blockwise-alloc` opts out).
+
+The [automatic SSD backend](gds.md) selects native cuFile when initialization on
+ext4/XFS succeeds and uses io_uring otherwise. cuFile leases SSD extents and restores selected
+state through bounded GPU staging. It shares both engines' existing API and
+ownership checks. Complete-group writes use GPU staging; fragmented saves and
+speculative preparation continue through DRAM;
+native GDS hardware/performance qualification remains separate.
 
 Optional [retention and SSD write policies](cache-policies.md) can protect
 reused DRAM pages and skip first-publication SSD writes. They remain disabled

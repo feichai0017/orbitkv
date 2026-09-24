@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use orbitkv_core::sync_state::{LOAD_STATE_ERROR, LOAD_STATE_SUCCESS};
 use orbitkv_core::*;
 
 pub const LOAD_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -99,16 +98,15 @@ pub fn make_block_hashes(num_blocks: usize, salt: u8) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// Poll `LoadState::get()` until success or timeout.
-pub async fn wait_for_load(load_state: &LoadState, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let state = load_state.get();
-        if state == LOAD_STATE_SUCCESS {
-            return;
-        }
-        assert!(state != LOAD_STATE_ERROR, "load reported ERROR");
-        assert!(Instant::now() < deadline, "timed out waiting for load");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+/// Await terminal transfer evidence within the test deadline.
+pub async fn wait_for_load(
+    receiver: tokio::sync::oneshot::Receiver<orbitkv_core::LoadOutcome>,
+    timeout: Duration,
+) {
+    tokio::time::timeout(timeout, receiver)
+        .await
+        .expect("restore timeout")
+        .expect("restore worker disappeared")
+        .result
+        .expect("restore failed");
 }

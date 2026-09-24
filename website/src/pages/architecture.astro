@@ -46,6 +46,9 @@ import { layers, localUrl } from "../data/site";
             Run one manager beside an engine. DRAM and optional SSD extend its
             cache capacity. Standalone deployment needs neither etcd nor peer
             gRPC.
+            Automatic SSD selection tries native cuFile and falls back to io_uring.
+            cuFile writes complete state groups and restores SSD state through bounded GPU
+            staging; native GDS performance qualification remains separate.
           </p>
         </article>
         <article class="layer">

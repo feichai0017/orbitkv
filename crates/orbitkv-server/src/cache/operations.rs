@@ -115,7 +115,7 @@ pub(crate) fn execute_restore(
         .iter()
         .map(|group| group.iter().map(String::as_str).collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    engine.batch_load_kv_blocks_multi_layer_inproc(
+    engine.restore(
         &input.instance_id,
         tp_rank,
         input.device_id,
@@ -278,6 +278,13 @@ pub(crate) async fn execute_query(
                     &input.request_id,
                     input.group_id,
                     hashes,
+                    if input.prepare {
+                        QueryMode::Prepare
+                    } else if input.warmup {
+                        QueryMode::Warmup
+                    } else {
+                        QueryMode::Demand
+                    },
                 )
                 .await?;
             for (position, block) in hits.into_iter().enumerate() {
@@ -289,7 +296,7 @@ pub(crate) async fn execute_query(
         }
     }
     trace_query(
-        "host_ready",
+        "source_ready",
         &input,
         started.elapsed().as_micros() as u64,
         blocks.len(),

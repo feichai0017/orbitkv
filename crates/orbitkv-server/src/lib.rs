@@ -155,6 +155,11 @@ pub struct Cli {
     #[arg(long, default_value = "all")]
     pub ssd_write_policy: orbitkv_core::SsdWritePolicy,
 
+    /// SSD I/O: auto tries native cuFile and falls back to uring; explicit cufile follows NVIDIA configuration.
+    /// Hardware path selection does not establish a performance advantage; qualify native GDS separately.
+    #[arg(long, default_value = "auto", requires = "ssd_cache_path")]
+    pub ssd_backend: orbitkv_core::SsdBackend,
+
     /// SSD prefetch queue depth (max pending prefetch batches). Default: 2
     #[arg(long, default_value_t = orbitkv_core::DEFAULT_SSD_PREFETCH_QUEUE_DEPTH)]
     pub ssd_prefetch_queue_depth: usize,
@@ -584,6 +589,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             shards: cli.ssd_cache_shards,
             write_queue_depth: cli.ssd_write_queue_depth,
             write_policy: cli.ssd_write_policy,
+            backend: cli.ssd_backend,
             prefetch_queue_depth: cli.ssd_prefetch_queue_depth,
             write_inflight: cli.ssd_write_inflight,
             prefetch_inflight: cli.ssd_prefetch_inflight,

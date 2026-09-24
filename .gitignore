@@ -17,6 +17,7 @@ dist/
 /benches/results/
 examples/pd_logs/
 python/tests/**/*.log
+cufile.log
 
 # Built binaries staged into the Python wheel.
 python/orbitkv/orbitkv-cache-manager-py

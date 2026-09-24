@@ -42,10 +42,18 @@ orbitkv-cache-manager
 - `--ssd-cache-capacity`: SSD cache capacity (default: `512gb`, supports: `kb`, `mb`, `gb`, `tb`)
 - `--ssd-write-queue-depth`: SSD write queue depth, max pending write batches (default: `8`)
 - `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
+- `--ssd-backend`: `auto` (default) tries native cuFile on ext4/XFS and falls back
+  to io_uring if initialization fails; a cuFile operation failure switches new
+  operations to io_uring until Manager restart. `uring` uses pinned DRAM;
+  `cufile` writes complete GPU state groups and restores leased SSD sources
+  through 8 MiB GPU staging per instance/device and follows NVIDIA's compatibility
+  configuration without automatic backend fallback. Native GDS must be [qualified separately](gds.md).
+  Fragmented/multi-writer saves and speculative preparation retain io_uring.
+  GPU-direct writes hold Publish pages until storage completion.
 - `--ssd-prefetch-queue-depth`: SSD prefetch queue depth, max pending prefetch batches (default: `2`)
 - `--ssd-write-inflight`: SSD write inflight, max concurrent block writes (default: `2`)
 - `--ssd-prefetch-inflight`: SSD prefetch inflight, max concurrent block reads (default: `16`)
-- Full read queues wait for capacity while retaining the query's byte reservation.
+- Full io_uring read queues wait for capacity while retaining the query's byte reservation.
   Concurrent queries for an identical prefix and storage identity can share a read.
 
 ### Query ownership budgets

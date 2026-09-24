@@ -229,6 +229,8 @@ class TestE2ECorrectness:
                 "8gb",
                 "--ssd-write-policy",
                 request.config.getoption("--ssd-write-policy"),
+                "--ssd-backend",
+                request.config.getoption("--ssd-backend"),
             )
         with CacheManager(
             log_file=log_dir / "orbitkv-cache-manager.log",
@@ -368,9 +370,21 @@ class TestE2ECorrectness:
             metrics_end = fetch_orbitkv_metrics(metrics_port)
 
         if request.config.getoption("--vllm-cache-tier") == "ssd":
-            assert metrics_end.get("orbitkv_ssd_prefetch_bytes_total", 0) > before_restart.get(
-                "orbitkv_ssd_prefetch_bytes_total", 0
+            read_metrics = {
+                "uring": ("orbitkv_ssd_prefetch_bytes_total",),
+                "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
+                "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
+            }[request.config.getoption("--ssd-backend")]
+            assert (
+                sum(metrics_end.get(key, 0) - before_restart.get(key, 0) for key in read_metrics)
+                > 0
             ), "engine restart performed no SSD recovery"
+
+        if (
+            request.config.getoption("--ssd-backend") == "cufile"
+            and request.config.getoption("--vllm-cache-tier") == "ssd"
+        ):
+            assert metrics_end.get("orbitkv_ssd_cufile_write_bytes_total", 0) > 0
 
         print("[Phase 2] Done\n")
         return {

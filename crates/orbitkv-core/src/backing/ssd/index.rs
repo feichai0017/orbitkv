@@ -1,0 +1,287 @@
+use crate::SlotMeta;
+use crate::block::{SealedBlock, StateKey};
+use crate::metrics::core_metrics;
+use log::{debug, warn};
+use smallvec::SmallVec;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Metadata for a block stored in SSD cache
+#[derive(Clone)]
+pub(crate) struct SsdIndexEntry {
+    /// Cache file shard containing this entry.
+    pub shard_id: usize,
+    /// Logical offset in the ring buffer (monotonically increasing)
+    pub begin: u64,
+    /// Aligned physical extent size; slot sizes describe the logical payload
+    pub len: u64,
+    /// Physical file offset for IO
+    pub file_offset: u64,
+    /// Per-slot metadata for rebuilding SealedBlock
+    pub slots: Vec<SlotMeta>,
+    pub readers: Arc<AtomicUsize>,
+}
+
+/// State of an SSD index entry (two-phase commit)
+#[derive(Clone)]
+pub(super) enum SsdEntryState {
+    /// IO in progress, not yet readable
+    Writing(SsdIndexEntry),
+    /// IO completed, readable
+    Committed(SsdIndexEntry),
+}
+
+impl SsdEntryState {
+    #[inline]
+    fn entry(&self) -> &SsdIndexEntry {
+        match self {
+            Self::Writing(e) | Self::Committed(e) => e,
+        }
+    }
+}
+
+struct SsdShardRing {
+    capacity: u64,
+    head: u64,
+    tail: u64,
+    order: VecDeque<(StateKey, u64)>,
+}
+
+/// SSD ring buffer: unified state for space allocation + block index.
+///
+/// Combines head/tail pointers with FIFO index. Maintains insertion order
+/// for O(k) tail pruning while preserving O(1) lookup via HashMap.
+///
+/// Two-phase commit: prepare_batch inserts Writing state, commit transitions
+/// to Committed (or removes on failure). Only Committed entries are readable.
+pub(super) struct SsdRingBuffer {
+    /// Per-file ring state.
+    shards: Vec<SsdShardRing>,
+    /// Round-robin cursor for selecting the next write shard.
+    next_shard: usize,
+    alignment: u64,
+    /// Fast lookup: key -> state (Writing or Committed)
+    entries: HashMap<StateKey, SsdEntryState>,
+}
+
+impl SsdRingBuffer {
+    pub(super) fn new_sharded(shard_capacities: Vec<u64>, alignment: u64) -> Self {
+        assert!(
+            !shard_capacities.is_empty(),
+            "SSD cache needs at least one shard"
+        );
+        Self {
+            shards: shard_capacities
+                .into_iter()
+                .map(|capacity| SsdShardRing {
+                    capacity,
+                    head: 0,
+                    tail: 0,
+                    order: VecDeque::new(),
+                })
+                .collect(),
+            next_shard: 0,
+            alignment,
+            entries: HashMap::new(),
+        }
+    }
+
+    /// Lookup a Committed entry by key, returning None if Writing or expired.
+    pub(super) fn get(&self, key: &StateKey) -> Option<&SsdIndexEntry> {
+        match self.entries.get(key) {
+            Some(SsdEntryState::Committed(e)) if self.is_offset_valid(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Check if a logical offset is still valid (not yet overwritten).
+    #[inline]
+    pub(super) fn is_offset_valid(&self, entry: &SsdIndexEntry) -> bool {
+        self.shards
+            .get(entry.shard_id)
+            .is_some_and(|shard| entry.begin >= shard.tail)
+    }
+
+    /// Allocate contiguous space for a batch and advance tail.
+    /// Returns (begin, file_offset). Skips wrap-around gap if needed.
+    fn allocate_contiguous(&mut self, shard_id: usize, size: u64) -> Option<(u64, u64)> {
+        let shard = &self.shards[shard_id];
+        if size == 0 || size > shard.capacity {
+            return None;
+        }
+        let phys = shard.head % shard.capacity;
+        let space_until_end = shard.capacity - phys;
+        let begin = if size > space_until_end {
+            shard.head.checked_add(space_until_end)?
+        } else {
+            shard.head
+        };
+        let head = begin.checked_add(size)?;
+        let new_tail = head.saturating_sub(shard.capacity);
+        // A query owns these extents through GPU completion. Do not move the
+        // ring, evict their identity, or overwrite even part of a pinned block.
+        for (key, generation) in &shard.order {
+            if let Some(state) = self.entries.get(key)
+                && state.entry().shard_id == shard_id
+                && state.entry().begin == *generation
+            {
+                let entry = state.entry();
+                if entry.begin >= new_tail {
+                    break;
+                }
+                if matches!(state, SsdEntryState::Writing(_))
+                    || entry.readers.load(Ordering::Acquire) != 0
+                {
+                    core_metrics().ssd_pinned_write_skips.add(1, &[]);
+                    return None;
+                }
+            }
+        }
+        let capacity = shard.capacity;
+        self.shards[shard_id].head = head;
+        self.advance_tail(shard_id, new_tail);
+
+        Some((begin, begin % capacity))
+    }
+
+    /// Advance tail and prune expired entries (FIFO order).
+    /// Handles both Writing and Committed states uniformly.
+    fn advance_tail(&mut self, shard_id: usize, new_tail: u64) {
+        if new_tail <= self.shards[shard_id].tail {
+            return;
+        }
+        self.shards[shard_id].tail = new_tail;
+
+        while let Some((key, generation)) = self.shards[shard_id].order.front() {
+            let current = self.entries.get(key).is_some_and(|state| {
+                state.entry().shard_id == shard_id && state.entry().begin == *generation
+            });
+            if current && *generation >= new_tail {
+                break;
+            }
+            let (key, _) = self.shards[shard_id]
+                .order
+                .pop_front()
+                .expect("front exists");
+            if current {
+                self.entries.remove(&key);
+            }
+        }
+    }
+
+    /// Commit a write: success=true transitions Writing→Committed, success=false removes.
+    /// Returns false if entry was already expired or missing.
+    pub(super) fn commit(&mut self, key: &StateKey, success: bool) -> bool {
+        let Some(state) = self.entries.get(key) else {
+            // Already removed by advance_tail or previous abort
+            return false;
+        };
+
+        // Only process Writing state
+        let entry = match state {
+            SsdEntryState::Writing(e) => e,
+            SsdEntryState::Committed(_) => {
+                warn!("SSD commit: key already committed, ignoring");
+                return true;
+            }
+        };
+
+        // Check if expired (eviction faster than write)
+        if !self.is_offset_valid(entry) {
+            warn!("SSD commit: entry expired before IO completed");
+            self.entries.remove(key);
+            return false;
+        }
+
+        if success {
+            // Writing → Committed
+            let entry = entry.clone();
+            self.entries
+                .insert(key.clone(), SsdEntryState::Committed(entry));
+            true
+        } else {
+            // Write failed, remove entry (order will be cleaned by advance_tail)
+            self.entries.remove(key);
+            false
+        }
+    }
+
+    /// Reserve an unpublished object. Active writes and pinned readers cannot be overwritten.
+    pub(super) fn reserve(
+        &mut self,
+        key: &StateKey,
+        slots: Vec<SlotMeta>,
+    ) -> Option<SsdIndexEntry> {
+        if self.entries.contains_key(key) {
+            return None;
+        }
+        let payload = slots
+            .iter()
+            .try_fold(0u64, |sum, slot| sum.checked_add(slot.total_size()))?;
+        let size = payload.checked_next_multiple_of(self.alignment)?;
+        let available = (0..self.shards.len()).find_map(|offset| {
+            let shard_id = (self.next_shard + offset) % self.shards.len();
+            self.allocate_contiguous(shard_id, size)
+                .map(|(begin, file_offset)| (shard_id, begin, file_offset))
+        });
+        let Some((shard_id, begin, file_offset)) = available else {
+            debug!("SSD cache: cannot reserve block {key:?}, size {size} (oversized or pinned)");
+            return None;
+        };
+        self.next_shard = (shard_id + 1) % self.shards.len();
+        let entry = SsdIndexEntry {
+            shard_id,
+            begin,
+            len: size,
+            file_offset,
+            slots,
+            readers: Arc::new(AtomicUsize::new(0)),
+        };
+        self.entries
+            .insert(key.clone(), SsdEntryState::Writing(entry.clone()));
+        self.shards[shard_id].order.push_back((key.clone(), begin));
+        Some(entry)
+    }
+
+    pub(super) fn prepare_batch(
+        &mut self,
+        candidates: Vec<(StateKey, Arc<SealedBlock>)>,
+    ) -> Vec<WriteInfo> {
+        candidates
+            .into_iter()
+            .filter_map(|(key, block)| {
+                let slots = block
+                    .slots()
+                    .iter()
+                    .zip(block.slot_numas())
+                    .map(|(slot, numa)| {
+                        let sizes: SmallVec<[u64; 2]> = (0..slot.num_segments())
+                            .map(|index| slot.segment_size(index).unwrap() as u64)
+                            .collect();
+                        SlotMeta::new(sizes, *numa)
+                    })
+                    .collect();
+                let entry = self.reserve(&key, slots)?;
+                Some(WriteInfo { key, block, entry })
+            })
+            .collect()
+    }
+}
+
+impl Default for SsdRingBuffer {
+    fn default() -> Self {
+        Self::new_sharded(vec![0], 1)
+    }
+}
+
+/// Info for a single block write within a batch.
+pub(super) struct WriteInfo {
+    pub key: StateKey,
+    pub block: Arc<SealedBlock>,
+    pub entry: SsdIndexEntry,
+}
+
+#[cfg(test)]
+#[path = "../../../tests/unit/backing/ssd/index.rs"]
+mod tests;

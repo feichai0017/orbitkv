@@ -229,9 +229,22 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             "Cache Manager did not restore GPU KV"
         )
         if channel_server.ssd_cache_path is not None:
-            assert fetch_orbitkv_metrics(channel_server.http_port).get(
-                "orbitkv_ssd_prefetch_bytes_total", 0
-            ) > before_restart.get("orbitkv_ssd_prefetch_bytes_total", 0)
+            if channel_server.ssd_backend == "cufile":
+                assert (
+                    fetch_orbitkv_metrics(channel_server.http_port).get(
+                        "orbitkv_ssd_cufile_write_bytes_total", 0
+                    )
+                    > 0
+                )
+            read_metrics = {
+                "uring": ("orbitkv_ssd_prefetch_bytes_total",),
+                "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
+                "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
+            }[channel_server.ssd_backend]
+            recovered = fetch_orbitkv_metrics(channel_server.http_port)
+            assert (
+                sum(recovered.get(key, 0) - before_restart.get(key, 0) for key in read_metrics) > 0
+            )
     finally:
         stop_server(process)
 

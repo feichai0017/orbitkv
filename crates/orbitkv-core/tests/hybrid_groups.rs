@@ -80,7 +80,13 @@ async fn recurrent_group_seals_final_block_save() {
     // Membership is per group: group 0 holds all three prefix blocks...
     let attn_hits = env
         .engine
-        .query_group_membership(&env.instance_id, "membership", 0, &prefix_hashes)
+        .query_group_membership(
+            &env.instance_id,
+            "membership",
+            0,
+            &prefix_hashes,
+            orbitkv_core::QueryMode::Demand,
+        )
         .await
         .expect("query group 0 membership");
     assert_eq!(
@@ -92,7 +98,13 @@ async fn recurrent_group_seals_final_block_save() {
     // identical hash bytes for blocks 0/1 exist in group 0 (isolation).
     let recur_hits = env
         .engine
-        .query_group_membership(&env.instance_id, "membership", 1, &prefix_hashes)
+        .query_group_membership(
+            &env.instance_id,
+            "membership",
+            1,
+            &prefix_hashes,
+            orbitkv_core::QueryMode::Demand,
+        )
         .await
         .expect("query group 1 membership");
     assert_eq!(
@@ -139,14 +151,12 @@ async fn recurrent_group_seals_final_block_save() {
     // prefix; the recurrent group has exactly one physical target (the
     // request's live state slot, block 7) and None elsewhere.
     let layer_groups: Vec<Vec<&str>> = vec![vec!["attn_0", "attn_1"], vec!["recurrent_state"]];
-    let load_state = LoadState::new().expect("create LoadState");
-    let shm_name = load_state.shm_name().to_string();
-    env.engine
-        .batch_load_kv_blocks_multi_layer(
+    let receiver = env
+        .engine
+        .restore(
             &env.instance_id,
             0,
             0,
-            &shm_name,
             &layer_groups,
             &[
                 (
@@ -157,7 +167,7 @@ async fn recurrent_group_seals_final_block_save() {
             ],
         )
         .expect("submit hybrid load");
-    wait_for_load(&load_state, LOAD_WAIT_TIMEOUT).await;
+    wait_for_load(receiver, LOAD_WAIT_TIMEOUT).await;
 
     // Attention blocks 0..2 restored, the rest still zero.
     for (layer_idx, expected) in attn_expected.iter().enumerate() {
@@ -192,7 +202,13 @@ async fn single_group_instances_are_unaffected() {
 
     let hits = env
         .engine
-        .query_group_membership(&env.instance_id, "membership", 0, &hashes[0..4])
+        .query_group_membership(
+            &env.instance_id,
+            "membership",
+            0,
+            &hashes[0..4],
+            orbitkv_core::QueryMode::Demand,
+        )
         .await
         .expect("membership");
     assert_eq!(
@@ -204,7 +220,13 @@ async fn single_group_instances_are_unaffected() {
     // all-miss answer.
     assert!(
         env.engine
-            .query_group_membership(&env.instance_id, "membership", 7, &hashes[0..1])
+            .query_group_membership(
+                &env.instance_id,
+                "membership",
+                7,
+                &hashes[0..1],
+                orbitkv_core::QueryMode::Demand
+            )
             .await
             .is_err()
     );

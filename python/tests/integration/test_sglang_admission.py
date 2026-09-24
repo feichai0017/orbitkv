@@ -60,7 +60,9 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
     monkeypatch.setenv(setting, "1")
     import torch
     from sglang.srt.mem_cache.radix_cache import RadixKey
-    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinkerWrapper
+    from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
+        UnifiedCacheLinkerWrapper,
+    )
     from sglang.srt.mem_cache.utils import get_storage_hash_str
 
     from orbitkv.sglang.admission import abort_request, enqueue_request
@@ -198,7 +200,13 @@ def test_pending_query_defers_only_its_request_and_preserves_ready_lease(linker)
 def test_hybrid_discovery_preserves_earlier_boundaries_before_reading(linker, kind):
     from sglang.srt.mem_cache.hicache_storage import PoolName
 
-    from orbitkv import BlockHashes, QueryCandidates, QueryLoading, QueryReady, RecoveryContract
+    from orbitkv import (
+        BlockHashes,
+        QueryCandidates,
+        QueryLoading,
+        QueryReady,
+        RecoveryContract,
+    )
 
     auxiliary = PoolName.MAMBA if kind == "recurrent" else PoolName.SWA
     linker.layout.pools[auxiliary] = SimpleNamespace(

@@ -9,7 +9,7 @@ use log::{info, warn};
 use orbitkv_proto::proto::engine::TransferBlockInfo;
 use orbitkv_transfer::{TransferOp, TransferSlice};
 
-use crate::numa::NumaNode;
+use crate::memory::numa::NumaNode;
 
 use opentelemetry::KeyValue;
 
@@ -481,7 +481,7 @@ impl<'a> ChunkedSlabs<'a> {
         numa: NumaNode,
         len: usize,
         segment_kind: &str,
-    ) -> Result<(NonNull<u8>, Arc<crate::pinned_pool::PinnedAllocation>), String> {
+    ) -> Result<(NonNull<u8>, Arc<crate::memory::pool::PinnedAllocation>), String> {
         if let Some(slab) = self.current.get_mut(&numa)
             && let Ok(seg) = slab.allocate(len, segment_kind)
         {
@@ -526,7 +526,7 @@ impl<'a> ChunkedSlabs<'a> {
 }
 
 struct NumaSlab {
-    allocation: Arc<crate::pinned_pool::PinnedAllocation>,
+    allocation: Arc<crate::memory::pool::PinnedAllocation>,
     next_offset: usize,
     capacity: usize,
 }
@@ -536,7 +536,7 @@ impl NumaSlab {
         &mut self,
         len: usize,
         segment_kind: &str,
-    ) -> Result<(NonNull<u8>, Arc<crate::pinned_pool::PinnedAllocation>), String> {
+    ) -> Result<(NonNull<u8>, Arc<crate::memory::pool::PinnedAllocation>), String> {
         let end = self.next_offset.checked_add(len).ok_or_else(|| {
             format!(
                 "slab offset overflow while allocating {segment_kind}: offset={} len={len} capacity={}",
@@ -559,7 +559,7 @@ impl NumaSlab {
 
 struct SegmentAlloc {
     ptr_addr: u64,
-    alloc: Arc<crate::pinned_pool::PinnedAllocation>,
+    alloc: Arc<crate::memory::pool::PinnedAllocation>,
     size: usize,
 }
 

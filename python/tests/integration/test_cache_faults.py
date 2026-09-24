@@ -14,7 +14,11 @@ from pathlib import Path
 import pytest
 import requests
 
-from tests.support.cache_manager import CacheManagerProcess, ClientContext, find_available_port
+from tests.support.cache_manager import (
+    CacheManagerProcess,
+    ClientContext,
+    find_available_port,
+)
 from tests.support.metrics import fetch_orbitkv_metrics
 
 pytestmark = [
@@ -38,11 +42,16 @@ def until(predicate, timeout=10):
 def fault_cache(tmp_path, monkeypatch, request):
     from orbitkv import CacheManagerClient
 
+    configuration = request.param if isinstance(getattr(request, "param", None), dict) else {}
+    backend = configuration.get("ssd_backend", "uring")
+    if backend == "cufile" and request.config.getoption("--ssd-backend") != "cufile":
+        pytest.skip("pass --ssd-backend cufile for GPU storage qualification")
     monkeypatch.setenv("ORBITKV_TEST_FAULTS", str(tmp_path))
     server = CacheManagerProcess(
         find_available_port(),
         http_port=find_available_port(),
         ssd_cache_path=tmp_path / "ssd",
+        ssd_backend=backend,
         extra_args=request.param if isinstance(getattr(request, "param", None), tuple) else (),
         channel_service=f"orbitkv/fault/{tmp_path.name}"
         if getattr(request, "param", None)
@@ -264,6 +273,115 @@ def test_prepared_result_expires_without_poll_then_claim_holds_bytes_through_res
     until(
         lambda: fetch_orbitkv_metrics(server.http_port).get("orbitkv_query_reserved_bytes", 0) == 0
     )
+
+
+@pytest.mark.parametrize("fault_cache", [{"ssd_backend": "cufile"}], indirect=True)
+@pytest.mark.parametrize("outcome", ["complete", "error", "kill"])
+def test_cufile_write_holds_pages_and_publishes_only_completed_objects(fault_cache, outcome):
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    expected = ctx.get_kv_cache()[:, 0:1].cpu().clone()
+    publish(client, ctx, [b"warm"])
+    warm = query(client, ctx, [b"warm"], "warm")
+    arm(directory, "cufile_write")
+    pool = ThreadPoolExecutor(1)
+    future = pool.submit(publish, client, ctx, [b"writing"])
+    try:
+        reached(directory, "cufile_write")
+        time.sleep(0.15)
+        assert not future.done(), "GPU sources must remain owned throughout cuFileWrite"
+        assert query(client, ctx, [b"writing"], "uncommitted").num_hit_blocks == 0
+        assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_write_inflight"] > 0
+        handle = client.start_restore(
+            ctx.instance_id, 0, 0, [ctx._layer_names], [(warm.lease, [[3]])]
+        )
+        assert client.wait_restore(handle, timeout=5).success
+        assert torch.equal(ctx.get_kv_cache()[:, 3:4].cpu(), expected)
+        if outcome == "kill":
+            server.stop()
+            with pytest.raises(Exception, match="exited|reconnect"):
+                future.result(timeout=10)
+            return
+        if outcome == "error":
+            arm(directory, "cufile_write_error")
+        (directory / "cufile_write.pause").unlink()
+        if outcome == "error":
+            with pytest.raises(Exception, match="Internal"):
+                future.result(timeout=10)
+            assert query(client, ctx, [b"writing"], "failed").num_hit_blocks == 0
+            assert (
+                fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_cufile_write_failures_total"]
+                > 0
+            )
+            (directory / "cufile_write_error.pause").unlink()
+            assert publish(client, ctx, [b"writing"])[0], "an aborted extent must be retryable"
+        else:
+            assert future.result(timeout=10)[0]
+        drain_ssd(server)
+        ready = query(client, ctx, [b"writing"], "committed")
+        assert ready.num_hit_blocks == 1
+        handle = client.start_restore(
+            ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+        )
+        assert client.wait_restore(handle, timeout=10).success
+        assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), expected)
+        stats = fetch_orbitkv_metrics(server.http_port)
+        assert stats["orbitkv_ssd_cufile_write_bytes_total"] > 0
+        assert stats["orbitkv_ssd_cufile_read_bytes_total"] > 0
+        assert stats["orbitkv_ssd_write_inflight"] == 0
+        assert client.unregister_context(ctx.instance_id)[0]
+        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_gpu_staging_bytes"] == 0)
+    finally:
+        (directory / "cufile_write.pause").unlink(missing_ok=True)
+        (directory / "cufile_write_error.pause").unlink(missing_ok=True)
+        if not future.done():
+            server.stop()
+        pool.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("fault_cache", [{"ssd_backend": "cufile"}], indirect=True)
+def test_cufile_delay_keeps_sources_and_allows_dram_restores(fault_cache):
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    hashes = [b"disk-restore"]
+    expected = ctx.get_kv_cache()[:, 0:1].cpu().clone()
+    publish(client, ctx, hashes)
+    drain_ssd(server)
+    warm_hashes = [b"dram-restore"]
+    publish(client, ctx, warm_hashes)
+    ready = query(client, ctx, hashes, "disk")
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] > 0
+    arm(directory, "cufile")
+    handle = client.start_restore(ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])])
+    reached(directory, "cufile")
+    client.cancel_query(ctx.instance_id, "disk")
+    with pytest.raises(TimeoutError):
+        client.wait_restore(handle, timeout=0.02)
+    assert not client.poll_restore(handle).done
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] > 0
+
+    # A real DRAM restore, not just a miss, must complete while storage is paused.
+    warm = query(client, ctx, warm_hashes, "dram")
+    other = client.start_restore(ctx.instance_id, 0, 0, [ctx._layer_names], [(warm.lease, [[3]])])
+    assert client.wait_restore(other, timeout=5).success
+    assert torch.equal(ctx.get_kv_cache()[:, 3:4].cpu(), expected)
+    arm(directory, "notification")
+    (directory / "cufile.pause").unlink()
+    assert client.wait_restore(handle, timeout=10).success
+    reached(directory, "notification")
+    assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), expected)
+    until(
+        lambda: all(
+            fetch_orbitkv_metrics(server.http_port).get(name, 0) == 0
+            for name in ("orbitkv_query_reserved_bytes", "orbitkv_ssd_read_pinned_bytes")
+        )
+    )
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_gpu_staging_bytes"] == 8 << 20
+    ok, message = client.unregister_context(ctx.instance_id)
+    assert ok, message
+    until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_gpu_staging_bytes"] == 0)
 
 
 def test_restore_timeout_and_lost_notification_preserve_destinations(fault_cache):

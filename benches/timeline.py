@@ -61,7 +61,7 @@ def collect(directory: Path, samples: list[dict]) -> dict:
                 elif event["stage"] == end and pid in starts:
                     intervals[label].append((now - starts.pop(pid)) / 1e6)
     for event in events:
-        if event["stage"] == "host_ready":
+        if event["stage"] == "source_ready":
             label = (
                 "prepared_read_ms"
                 if event.get("prepare")

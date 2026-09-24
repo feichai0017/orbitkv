@@ -6,7 +6,6 @@
 mod common;
 
 use common::*;
-use orbitkv_core::LoadState;
 
 /// vLLM worker must not load after the scheduler releases the query lease.
 #[tokio::test]
@@ -54,14 +53,12 @@ async fn query_then_load_consumes_reservation_budget() {
     let block_ids: Vec<Option<usize>> = (0..hashes.len()).map(Some).collect();
     let layer_names: Vec<&str> = env.layers.iter().map(|l| l.name.as_str()).collect();
     let layer_groups = vec![layer_names];
-    let load_state = LoadState::new().expect("create LoadState");
     let err = env
         .engine
-        .batch_load_kv_blocks_multi_layer(
+        .restore(
             &env.instance_id,
             0,
             0,
-            load_state.shm_name(),
             &layer_groups,
             &[(lease, vec![block_ids])],
         )

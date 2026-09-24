@@ -43,6 +43,8 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
                         "orbitkv_cache_protected_bytes",
                         "orbitkv_warmup_pending_bytes",
                         "orbitkv_query_speculative_reserved_bytes",
+                        "orbitkv_ssd_read_pinned_bytes",
+                        "orbitkv_ssd_gpu_staging_bytes",
                     ) or key.startswith("orbitkv_query_reserved_bytes"):
                         peaks[key] = max(value, peaks.get(key, 0))
             except Exception as error:
@@ -70,6 +72,7 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
                     "orbitkv_ssd_write_queue_pending",
                     "orbitkv_ssd_write_inflight",
                     "orbitkv_ssd_prefetch_inflight",
+                    "orbitkv_ssd_read_pinned_bytes",
                 )
             )
             quiet = 0 if busy else quiet + 1
@@ -195,10 +198,15 @@ def summarize(samples: list[dict], lengths: list[int]) -> list[dict]:
                     ),
                     "orbitkv_ssd_read_bytes": sum(
                         sample["manager_delta"].get("orbitkv_ssd_prefetch_bytes_total", 0)
+                        + sample["manager_delta"].get("orbitkv_ssd_cufile_read_bytes_total", 0)
                         for sample in group
                     ),
                     "ssd_reads_without_gpu_restore": sum(
-                        sample["manager_delta"].get("orbitkv_ssd_prefetch_bytes_total", 0) > 0
+                        (
+                            sample["manager_delta"].get("orbitkv_ssd_prefetch_bytes_total", 0)
+                            + sample["manager_delta"].get("orbitkv_ssd_cufile_read_bytes_total", 0)
+                        )
+                        > 0
                         and sample["manager_delta"].get("orbitkv_load_bytes_total", 0) == 0
                         for sample in group
                     ),

@@ -16,7 +16,9 @@
 //! so a caller can batch many layers and synchronize exactly once.
 
 mod kernel;
+pub(crate) mod layout;
 mod memcpy;
+pub(crate) mod worker;
 
 pub use kernel::KernelBackend;
 pub use memcpy::MemcpyBackend;
@@ -74,3 +76,21 @@ pub enum TransferMode {
     /// launch latency on the direct path dominates.
     Kernel,
 }
+
+pub(crate) fn finish_gpu_transfer(
+    stream: &Arc<CudaStream>,
+    submitted: Result<(), String>,
+) -> Result<(), crate::EngineError> {
+    // A backend can fail after enqueueing part of a batch. Keep both host
+    // allocations and GPU mappings alive until even that partial work drains.
+    if let Err(error) = stream.synchronize() {
+        log::error!("Cannot establish GPU transfer completion: {error}; terminating Cache Manager");
+        // Returning an error would let clients recycle pages still used by DMA.
+        std::process::abort();
+    }
+    submitted.map_err(crate::EngineError::Storage)
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/transfer/mod.rs"]
+mod tests;

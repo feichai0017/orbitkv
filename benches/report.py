@@ -79,6 +79,7 @@ def main() -> None:
                     "gpu_tokens": config["gpu_tokens"],
                     "host_gib": config["host_gib"],
                     "ssd_gib": config.get("ssd_gib", 0),
+                    "ssd_backend": config.get("ssd_backend", "uring"),
                     "query_budget_gib": config.get("query_budget_gib"),
                     "prefill_tokens": config.get("prefill_tokens", 8192),
                     "cache_protected_percent": config.get("cache_protected_percent", 0),

@@ -10,6 +10,23 @@ Warming gains are not a DP prerequisite. P/D with cache reuse follows; replicate
 catalogs are required before production distributed deployment. Milestone
 numbers below group work areas rather than imposing a strict serial schedule.
 
+## GPU storage
+
+- [x] Implement Rust cuFile demand reads and complete-group GPU writes with SSD extent
+  leases, bounded GPU staging, split/page-first layouts, oversized checkpoints,
+  cancellation, failed writes and short reads; keep both engines on the existing cache API.
+- [ ] Qualify native GDS on a supported NVMe mount with CPU fallback disabled;
+  compare io_uring using matched working sets, TTFT, throughput, CPU use and bytes.
+- [x] Provide a bare-metal acceptance script with fallback rejection and matched
+  io_uring/auto/cuFile workloads for both engines (`python -m benches.gds`).
+- [x] Default to automatic native cuFile initialization with io_uring fallback;
+  stop new GPU I/O after an operation failure without revoking in-flight ownership.
+- [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,
+  read priority and workload-based path selection. Include registration cost,
+  engine-page hold times, I/O fragmentation and additional HBM in the decision.
+
+See [GPU storage recovery](docs/gds.md) for deployment and reproduction.
+
 ## M0 — framework-neutral foundation
 
 - [x] Establish the OrbitKV data plane and workspace.

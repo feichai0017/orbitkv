@@ -1,9 +1,10 @@
 pub(crate) mod inventory;
+pub(crate) mod metadata;
 mod prefetch;
 mod read_cache;
 mod tier_attribution;
 pub(crate) mod transfer_lock;
-mod write_path;
+pub(crate) mod write_path;
 
 use bytesize::ByteSize;
 use futures::{StreamExt, stream};
@@ -18,9 +19,9 @@ use crate::backing::{AllocateFn, SsdBackingStore, SsdCacheConfig};
 use crate::backing::{MooncakeFetchStore, MooncakeTransport};
 use crate::block::{QueryResult, SealedBlock, StateKey};
 use crate::internode::CatalogClient;
+use crate::memory::numa::NumaNode;
+use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
-use crate::numa::NumaNode;
-use crate::pinned_pool::{PinnedAllocation, PinnedAllocator};
 
 use prefetch::PrefetchScheduler;
 #[cfg(feature = "mooncake")]
@@ -106,7 +107,7 @@ pub(crate) struct StorageEngine {
     read_cache: Arc<ReadCache>,
     prefetch: PrefetchScheduler,
     write_pipeline: Arc<WritePipeline>,
-    ssd_store: Option<Arc<SsdBackingStore>>,
+    pub(crate) ssd_store: Option<Arc<SsdBackingStore>>,
     #[cfg(feature = "mooncake")]
     mooncake_transport: Option<Arc<MooncakeTransport>>,
     blockwise_alloc: bool,
@@ -345,7 +346,7 @@ impl StorageEngine {
         None
     }
 
-    pub(crate) fn send_raw_insert(&self, batch: crate::offload::RawSaveBatch) {
+    pub(crate) fn send_raw_insert(&self, batch: write_path::RawSaveBatch) {
         self.write_pipeline.send_raw_insert(batch);
     }
 
@@ -435,7 +436,8 @@ impl StorageEngine {
         req_id: &str,
         namespace: &str,
         hashes: &[Vec<u8>],
-    ) -> Vec<Option<Arc<crate::block::SealedBlock>>> {
+        mode: crate::QueryMode,
+    ) -> Vec<Option<crate::RestoreSource>> {
         let keys: Vec<StateKey> = hashes
             .iter()
             .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
@@ -451,7 +453,7 @@ impl StorageEngine {
                 .zip(resident)
                 .map(|(hash, block)| async move {
                     if block.is_some() {
-                        return block;
+                        return block.map(crate::RestoreSource::Memory);
                     }
                     self.prefetch
                         .check_and_prefetch(
@@ -459,7 +461,7 @@ impl StorageEngine {
                             req_id,
                             namespace,
                             std::slice::from_ref(&hash),
-                            crate::QueryMode::Demand,
+                            mode,
                         )
                         .await
                         .blocks

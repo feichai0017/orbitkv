@@ -44,7 +44,7 @@ orbitkv/
 | State identity and recovery contracts | `crates/orbitkv-state/` |
 | Inference-to-Cache-Manager process channel | `crates/orbitkv-channel/` |
 | Process logging and peer-connection defaults | `crates/orbitkv-common/` |
-| NUMA topology and affinity | `crates/orbitkv-core/src/numa.rs` |
+| NUMA topology and affinity | `crates/orbitkv-core/src/memory/numa.rs` |
 | Cache reuse statistics | `crates/orbitkv-server/src/metric/hll.rs` |
 | Core engine and storage path | `crates/orbitkv-core/` |
 | gRPC protocol changes | `crates/orbitkv-proto/` |
@@ -64,7 +64,11 @@ orbitkv/
 
 - `crates/orbitkv-state/src/lib.rs`: shared state and recovery contract
 - `crates/orbitkv-channel/src/lib.rs`: versioned iceoryx2 process channel API
-- `crates/orbitkv-core/src/lib.rs`: main Rust engine entry
+- `crates/orbitkv-core/src/lib.rs`: public Rust API
+- `crates/orbitkv-core/src/engine/`: registration, query, Publish and restore orchestration
+- `crates/orbitkv-core/src/memory/`: NUMA, allocations and pools
+- `crates/orbitkv-core/src/transfer/`: GPU layouts, copy backends and worker ownership
+- `crates/orbitkv-core/src/backing/ssd/`: SSD index, io_uring and optional cuFile read/write
 - `crates/orbitkv-core/src/storage/mod.rs`: storage pipeline
 - `crates/orbitkv-core/src/backing/`: SSD and Mooncake-backed remote tiers
 - `crates/orbitkv-core/src/internode/`: cross-node coordination

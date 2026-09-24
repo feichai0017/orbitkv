@@ -1,20 +1,117 @@
 use std::collections::{HashMap, hash_map::Entry};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Weak};
 
 use log::{debug, error, info, warn};
-use std::sync::mpsc::{Receiver, Sender};
 use tokio::sync::oneshot;
 
 use crate::backing::SsdBackingStore;
-use crate::block::{InflightBlock, SealedBlock, SlotInsertResult, StateKey};
+use crate::block::{InflightBlock, RawBlock, SealedBlock, SlotInsertResult, StateKey};
+use crate::memory::numa::NumaNode;
 use crate::metrics::core_metrics;
-use crate::numa::NumaNode;
-use crate::offload::InsertEntries;
 
 use super::read_cache::ReadCache;
 
+type InsertEntries = Vec<(StateKey, Vec<(usize, RawBlock)>)>;
+
+/// One layer's saved blocks, ready for cache insertion.
+///
+/// The `RawBlock`s are constructed at allocation time (Phase 2) and shared
+/// with the GPU copy task; their segments own the pinned allocations, so no
+/// separate allocation bookkeeping is needed.
+pub(crate) struct RawSaveLayer {
+    pub slot_id: usize,
+    /// Padded block size (SSD-aligned). Becomes `RawBlock.total_size` → `SlotMeta.total_size()`.
+    pub padded_block_size: usize,
+    /// Saved blocks, parallel to `block_hashes`.
+    pub blocks: Vec<RawBlock>,
+    /// Block hashes in save order.
+    pub block_hashes: Vec<Vec<u8>>,
+}
+
+/// Deferred save batch: sent to insert worker after GPU copy completes.
+pub(crate) struct RawSaveBatch {
+    pub namespace: String,
+    pub total_slots: usize,
+    pub numa_node: NumaNode,
+    pub layers: Vec<RawSaveLayer>,
+}
+
+/// Build insert entries from a raw batch (called by the insert worker).
+///
+/// Returns `(entries, total_bytes, total_blocks)` where entries is grouped
+/// by hash: `Vec<(StateKey, Vec<(slot_id, RawBlock)>)>`.
+fn build_insert_entries(batch: RawSaveBatch) -> (InsertEntries, u64, usize) {
+    let mut total_bytes: u64 = 0;
+    let mut total_blocks: usize = 0;
+    for layer in &batch.layers {
+        let layer_blocks = layer.block_hashes.len();
+        total_blocks += layer_blocks;
+        total_bytes += (layer.padded_block_size as u64).saturating_mul(layer_blocks as u64);
+    }
+
+    let entries = if can_use_ordered_fast_path(&batch.layers) {
+        build_ordered_insert_entries(batch.namespace, batch.layers)
+    } else {
+        build_hashed_insert_entries(batch.namespace, batch.layers)
+    };
+    (entries, total_bytes, total_blocks)
+}
+
+fn can_use_ordered_fast_path(layers: &[RawSaveLayer]) -> bool {
+    let Some(first_layer) = layers.first() else {
+        return false;
+    };
+    layers
+        .iter()
+        .all(|layer| layer.block_hashes == first_layer.block_hashes)
+}
+
+/// Fast path: all layers share one hash order, so entries can be built
+/// block-by-block without a hash map.
+fn build_ordered_insert_entries(namespace: String, layers: Vec<RawSaveLayer>) -> InsertEntries {
+    let hashes = layers
+        .first()
+        .map(|layer| layer.block_hashes.clone())
+        .unwrap_or_default();
+    let num_blocks = hashes.len();
+    let mut per_block_slots: Vec<Vec<(usize, RawBlock)>> =
+        (0..num_blocks).map(|_| Vec::new()).collect();
+
+    for layer in layers {
+        let slot_id = layer.slot_id;
+        for (block_idx, block) in layer.blocks.into_iter().enumerate() {
+            per_block_slots[block_idx].push((slot_id, block));
+        }
+    }
+
+    hashes
+        .into_iter()
+        .zip(per_block_slots)
+        .map(|(hash, slots)| (StateKey::new(namespace.clone(), hash), slots))
+        .collect()
+}
+
+/// Fallback for heterogeneous per-layer hash sets: group via a hash map.
+fn build_hashed_insert_entries(namespace: String, layers: Vec<RawSaveLayer>) -> InsertEntries {
+    let mut hash_entries: HashMap<Vec<u8>, Vec<(usize, RawBlock)>> = HashMap::new();
+    for layer in layers {
+        for (block, hash) in layer.blocks.into_iter().zip(layer.block_hashes) {
+            hash_entries
+                .entry(hash)
+                .or_default()
+                .push((layer.slot_id, block));
+        }
+    }
+
+    hash_entries
+        .into_iter()
+        .map(|(hash, slots)| (StateKey::new(namespace.clone(), hash), slots))
+        .collect()
+}
+
 pub(super) enum InsertWorkerCommand {
-    RawInsert(crate::offload::RawSaveBatch),
+    RawInsert(RawSaveBatch),
     Flush(oneshot::Sender<()>),
     Gc {
         max_age: std::time::Duration,
@@ -32,7 +129,7 @@ impl WritePipeline {
         (Self { insert_tx }, insert_rx)
     }
 
-    pub(super) fn send_raw_insert(&self, batch: crate::offload::RawSaveBatch) {
+    pub(super) fn send_raw_insert(&self, batch: RawSaveBatch) {
         let _ = self.insert_tx.send(InsertWorkerCommand::RawInsert(batch));
     }
 
@@ -103,14 +200,14 @@ pub(super) fn insert_worker_loop(rx: Receiver<InsertWorkerCommand>, deps: Weak<I
 fn process_raw_save_batch(
     inflight: &mut HashMap<StateKey, InflightBlock>,
     deps: &Weak<InsertDeps>,
-    batch: crate::offload::RawSaveBatch,
+    batch: RawSaveBatch,
 ) {
     let start = std::time::Instant::now();
     let namespace = batch.namespace.clone();
     let numa_node = batch.numa_node;
     let total_slots = batch.total_slots;
 
-    let (entries, total_bytes, total_blocks) = crate::offload::build_insert_entries(batch);
+    let (entries, total_bytes, total_blocks) = build_insert_entries(batch);
 
     process_insert_batch(inflight, deps, entries, total_slots, numa_node, &namespace);
 

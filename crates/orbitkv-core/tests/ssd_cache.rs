@@ -54,6 +54,7 @@ fn ssd_env(instance_id: &'static str) -> (TestEnv, std::path::PathBuf, tempfile:
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path.clone()],
                 capacity_bytes: SSD_CAPACITY,
                 ..SsdCacheConfig::default()
@@ -77,6 +78,7 @@ fn ssd_split_env(instance_id: &'static str) -> (TestEnv, tempfile::TempDir) {
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path],
                 capacity_bytes: SSD_CAPACITY,
                 ..SsdCacheConfig::default()
@@ -98,6 +100,7 @@ fn ssd_multi_path_env(
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![path0.clone(), path1.clone()],
                 capacity_bytes: SSD_CAPACITY,
                 shards: NonZeroUsize::new(2).unwrap(),
@@ -117,6 +120,7 @@ fn ssd_sharded_env(instance_id: &'static str) -> (TestEnv, std::path::PathBuf, t
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path.clone()],
                 capacity_bytes: SSD_CAPACITY,
                 shards: NonZeroUsize::new(4).unwrap(),
@@ -139,6 +143,7 @@ fn ssd_custom_capacity_env(
         .pool_size(POOL_SIZE)
         .storage(StorageConfig {
             ssd_cache_config: Some(SsdCacheConfig {
+                backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path],
                 capacity_bytes,
                 ..SsdCacheConfig::default()
@@ -171,7 +176,12 @@ async fn concurrent_queries_with_the_same_request_id_own_distinct_results() {
     let (a, b) = tokio::join!(env.query(&first[..2]), env.query(&second));
     assert_eq!((a.blocks.len(), a.missing), (2, 0));
     assert_eq!((b.blocks.len(), b.missing), (second.len(), 0));
-    assert!(!std::sync::Arc::ptr_eq(&a.blocks[0], &b.blocks[0]));
+    let (orbitkv_core::RestoreSource::Memory(first), orbitkv_core::RestoreSource::Memory(second)) =
+        (&a.blocks[0], &b.blocks[0])
+    else {
+        panic!("io_uring restores host blocks")
+    };
+    assert!(!std::sync::Arc::ptr_eq(first, second));
 }
 
 fn cleanup_resident_memory(env: &TestEnv) {
@@ -193,6 +203,7 @@ async fn selective_ssd_admission_preserves_demand_and_ignores_warming() {
             .storage(StorageConfig {
                 cache_protected_percent: 80,
                 ssd_cache_config: Some(SsdCacheConfig {
+                    backend: SsdBackend::Uring,
                     cache_paths: vec![dir.path().join("cache.bin")],
                     capacity_bytes: SSD_CAPACITY,
                     write_policy: SsdWritePolicy::Reuse,
@@ -430,7 +441,10 @@ async fn ssd_ring_wrap_evicts_old_entries() {
     let (env, _temp_dir) = ssd_custom_capacity_env("test-ssd-wrap-evicts", SMALL_SSD_CAPACITY);
 
     let old = env.hashes(31);
-    env.save_and_wait(&old).await;
+    env.save_and_wait(&old[..2]).await;
+    env.engine.flush_all().await;
+    let new = env.hashes(32);
+    env.save_and_wait(&new[..2]).await;
     env.engine.flush_all().await;
     cleanup_resident_memory(&env);
 
