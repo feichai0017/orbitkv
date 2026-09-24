@@ -238,16 +238,23 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                     )
                     > 0
                 )
+            read_path = channel_server.ssd_read_path or channel_server.ssd_backend
             read_metrics = {
                 "uring": ("orbitkv_ssd_prefetch_bytes_total",),
                 "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
                 "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
-            }[channel_server.ssd_backend]
+            }[read_path]
             recovered = fetch_orbitkv_metrics(channel_server.http_port)
-            if channel_server.ssd_backend == "cufile":
+            if read_path == "cufile":
                 assert recovered.get("orbitkv_ssd_prefetch_bytes_total", 0) == before_restart.get(
                     "orbitkv_ssd_prefetch_bytes_total", 0
                 ), "cuFile recovery bounced through host SSD prefetch"
+            elif read_path == "uring":
+                assert recovered.get(
+                    "orbitkv_ssd_cufile_read_bytes_total", 0
+                ) == before_restart.get("orbitkv_ssd_cufile_read_bytes_total", 0), (
+                    "io_uring recovery unexpectedly used cuFile reads"
+                )
             if compression:
                 assert recovered.get("orbitkv_storage_codec_duration_seconds_count", 0) > 0
                 assert recovered.get("orbitkv_storage_codec_decode_failures_total", 0) == 0

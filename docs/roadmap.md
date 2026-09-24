@@ -7,6 +7,9 @@ TP/PP and KV-aware routing have later gates. See the
 [deployment comparison and priority rationale](distributed-comparison.md).
 Milestones describe intended gates, not deployed capabilities. The
 detailed work queue lives in [TODO.md](../TODO.md).
+The [implementation plan and agent handoff](implementation-plan.md) records
+pinned upstream mechanisms, LMCache-style deployment profiles, code owners and
+the P4.1 implementation contract and evidence. It is the starting point for continuing this work.
 
 ## Current delivery priorities
 
@@ -37,6 +40,7 @@ the later general semantic compiler.
 | --- | --- | --- |
 | Automatic SSD selection | Native cuFile initialization with io_uring fallback, physical capacity reservation, restore leases, per-file read coalescing and complete-group GPU writes. Rust uses two asynchronous slots, bounded write admission, read/write scheduling and per-job host-copy events. | Capability selection is the default. Next: native measurements and placement/source-page hold tuning; see the [LMCache review](gds.md#review-against-lmcache). Direct engine-page I/O and multi-writer GPU assembly remain future work. |
 | Storage representations | Batched GPU ANS lossless, FP8 and 3/4-bit TurboQuant with reusable workspace, encoded DRAM/SSD/peer payloads, GPU-validated cuFile recovery and bounded direct encoded writes. Storage precision and SGLang external scale files enter cache identity. | Keep lossy modes opt-in; qualify model quality, native GDS and representative serving workloads before enablement. See [storage formats](storage-formats.md). |
+| Measured transfer planning | The first SSD source/path separation, neutral extent leases and independently executable io_uring/cuFile demand routes are implemented. Bounded Rust observations, raw-copy shadow and full SSD-restore shadow remain opt-in; dynamic path/boundary selection and retention/write admission remain next. | Five of six earlier observation overhead cells pass; SGLang ANS SSD TTFT p50 remains above budget. The route changes have [separate validation](implementation-plan.md#ssd-sourcepath-separation-final-evidence); native GDS and peer comparisons require their own evidence. |
 | Single-node deployment packaging | Independent per-node Manager shared by engine processes; capacity-only SSD setup with automatic backend selection. | Publish qualified Manager/engine images, verify shared GPU/PID/IPC resources and concurrent serving before shipping a DaemonSet/Deployment installation. See [deployment](deployment.md#containers-and-kubernetes). |
 | First: reliable ordinary demand | Maintain deterministic cancellation, lost-notification, engine/Manager restart and stuck-Publish gates; extend concurrent model-serving fault stress. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
 | First: complete state-layout coverage | Full/MLA, Full + SWA, Full + recurrent/conv, and their combination in both adapters. | Exact DRAM/SSD bytes, missing-component rejection, legal recovery boundaries and GPU source ownership. Report native model-serving coverage separately from constructed GPU layouts. |
@@ -44,7 +48,7 @@ the later general semantic compiler.
 | First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TE path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
 | Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; separately integrate and qualify SGLang's native handoff lifecycle. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
 | Before production distributed deployment: catalog HA | Add replicated catalog evidence, versioned placement, handoff/repair and operational failure handling. | Three catalog failure domains, partitions, lease expiry, etcd outage and placement changes; bounded replay, source holds and staging. Replicating etcd alone does not replicate the catalog. |
-| Later expansion | Remote SSD staging, measured source/cost selection, broader model recovery, copy/compute overlap and optional Dynamo routing. | Each has its own recovery, resource and performance gate; cross-host TP/PP, resharding and cross-engine format conversion are separate capabilities. |
+| Later expansion | Remote SSD staging, peer source selection using shared cost observations, broader model recovery, copy/compute overlap and optional Dynamo routing. | Each has its own recovery, resource and performance gate; cross-host TP/PP, resharding and cross-engine format conversion are separate capabilities. |
 
 Start the two-host DP harness once the ordinary-demand lifetime gate passes;
 local preparation and retention tuning can continue alongside it. A warming
@@ -55,7 +59,15 @@ gate, without claiming cross-host tensor parallelism.
 
 ### Next reviewable changes
 
-1. **Close the single-node state-layout matrix.** Both adapters now compose
+1. **Qualify local path selection using Rust cost observations.** The bounded
+   estimator, raw-copy shadow and full SSD-route shadow are implemented as an opt-in.
+   Use explicit demand-read controls over one SSD store for route ablations;
+   default execution and DRAM preparation remain unchanged. Close
+   the SGLang ANS SSD overhead gate before default enablement. Begin with
+   DMA/kernel ablations before native io_uring/GDS comparisons. Then compare
+   legal recovery boundaries and engine-owned recomputation. This local work
+   proceeds alongside two-host DP, using the [same planning contracts](state-planning.md#policies-by-deployment-mode).
+2. **Continue closing the single-node state-layout matrix.** Both adapters now compose
    Full + SWA + recurrent/conv through the shared Rust recovery contract.
    The [hybrid gates](hybrid-recovery.md#reproducible-gates) distinguish exact
    DRAM/SSD GPU-byte coverage from native model-serving coverage. Keep missing
@@ -64,13 +76,13 @@ gate, without claiming cross-host tensor parallelism.
    Use [pinned pretrained checkpoints](models.md) for larger Qwen, GLM,
    DeepSeek and Kimi coverage. GLM-5.3-Flash sparse indexers and DeepSeek-V4
    compressed/request state need additional contracts before serving claims.
-2. **Qualify real two-host DP.** Use independent matching TP=1 replicas,
+3. **Qualify real two-host DP.** Use independent matching TP=1 replicas,
    embedded Manager catalogs, etcd membership and Mooncake TE. Require positive
    remote and GPU-copy bytes, output controls, source-incarnation rejection,
    catalog replay and bounded failed transfers. Start with full attention,
    then carry the same complete-state contract into hybrid remote recovery.
    Qualify vLLM and SGLang separately; cross-engine byte reuse is not implied.
-3. **Qualify P/D with cache reuse, then catalog HA.** Verify that a P-side
+4. **Qualify P/D with cache reuse, then catalog HA.** Verify that a P-side
    external-cache hit still produces a complete D-side handoff, and that later
    requests can reuse completed state. Catalog replication, repair and placement
    changes precede production distributed deployment. KV-aware request routing

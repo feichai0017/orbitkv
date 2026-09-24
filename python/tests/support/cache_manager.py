@@ -380,6 +380,7 @@ class CacheManagerProcess:
         ssd_cache_path: Path | None = None,
         ssd_cache_capacity: str = "256mb",
         ssd_backend: str = "uring",
+        ssd_read_path: str | None = None,
         query_budget: str | None = None,
         query_instance_budget: str | None = None,
         extra_args: tuple[str, ...] = (),
@@ -394,6 +395,7 @@ class CacheManagerProcess:
         self.ssd_cache_path = ssd_cache_path
         self.ssd_cache_capacity = ssd_cache_capacity
         self.ssd_backend = ssd_backend
+        self.ssd_read_path = ssd_read_path
         self.query_budget = query_budget
         self.query_instance_budget = query_instance_budget
         self.extra_args = extra_args
@@ -456,6 +458,8 @@ class CacheManagerProcess:
                     "--enable-prometheus",
                 ]
             )
+            if self.ssd_read_path is not None:
+                cmd.extend(["--ssd-read-path", self.ssd_read_path])
         if self.channel_service is not None:
             cmd.extend(["--channel-service", self.channel_service])
         if self.channel_session_epoch is not None:

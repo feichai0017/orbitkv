@@ -61,3 +61,211 @@ fn selective_writes_track_republication_without_pinning_payloads() {
         None
     );
 }
+
+#[tokio::test]
+async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
+    use std::num::NonZeroU64;
+
+    use crate::block::{RawBlock, Segment};
+    use crate::memory::pool::PinnedAllocator;
+
+    let allocator = Arc::new(PinnedAllocator::new_global(
+        16 * 1024,
+        1,
+        false,
+        true,
+        NonZeroU64::new(SSD_ALIGNMENT as u64),
+    ));
+    for encoded in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = Arc::clone(&allocator);
+        let store = SsdBackingStore::new(
+            SsdCacheConfig {
+                cache_paths: vec![directory.path().join("cache.bin")],
+                capacity_bytes: SSD_ALIGNMENT as u64,
+                backend: SsdBackend::Uring,
+                ..Default::default()
+            },
+            Arc::new(move |bytes, node| {
+                pool.allocate(NonZeroU64::new(bytes)?, node.unwrap_or(NumaNode::UNKNOWN))
+            }),
+            false,
+        )
+        .unwrap();
+        let data = [if encoded { 0x71 } else { 0x32 }; SSD_ALIGNMENT];
+        let allocation = allocator
+            .allocate(
+                NonZeroU64::new(SSD_ALIGNMENT as u64).unwrap(),
+                NumaNode::UNKNOWN,
+            )
+            .unwrap();
+        // SAFETY: this unshared allocation owns the complete target range.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                allocation.mapped_ptr().host().as_ptr(),
+                data.len(),
+            );
+        }
+        let mut raw = RawBlock::single_segment(Segment::new(
+            allocation.mapped_ptr().host(),
+            data.len(),
+            allocation,
+        ));
+        if encoded {
+            raw.encoding = Some(vec![crate::codec::EncodedSegment {
+                version: 1,
+                format: orbitkv_state::StorageFormat::Exact,
+                logical_bytes: data.len(),
+                stored_bytes: data.len(),
+                checksum: crc32fast::hash(&data),
+            }]);
+        }
+        let block = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
+        let key = StateKey::new("lease-uring".into(), vec![u8::from(encoded)]);
+        store.ingest_batch(std::iter::once((&key, &block)), false);
+        store.flush().await;
+        drop(block);
+
+        let lease = store.pin_prefix(std::slice::from_ref(&key)).pop().unwrap();
+        assert!(!lease.cufile_eligible(0));
+        assert!(lease.file().is_err());
+        assert_eq!(lease.cost_resource(), store.io.cost_resource);
+        if encoded {
+            assert!(!lease.entry.fits_gpu_decode(0));
+        }
+        let generation = lease.entry.begin;
+        let readers = Arc::clone(&lease.entry.readers);
+        let restored = lease.read_host().await.unwrap();
+        let slot = restored.get_slot(0).unwrap();
+        // SAFETY: the successful read initialized the owned segment above.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(slot.segment_ptr(0).unwrap().as_ptr(), data.len())
+        };
+        assert_eq!(bytes, data);
+        assert_eq!(slot.encoding.is_some(), encoded);
+
+        let replacement = StateKey::new("lease-uring".into(), vec![2]);
+        let slots = || {
+            vec![crate::SlotMeta::new(
+                smallvec::smallvec![SSD_ALIGNMENT as u64],
+                NumaNode::UNKNOWN,
+            )]
+        };
+        assert!(
+            store
+                .inner
+                .lock()
+                .ring
+                .reserve(&replacement, slots(), index::Encoding::Raw)
+                .is_none(),
+            "the selected generation must remain pinned after host materialization"
+        );
+        drop(lease);
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while readers.load(Ordering::Acquire) != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("completed host reader released its generation");
+        let next = store
+            .inner
+            .lock()
+            .ring
+            .reserve(&replacement, slots(), index::Encoding::Raw)
+            .unwrap();
+        assert_ne!(next.begin, generation);
+    }
+}
+
+pub(super) fn queued_read_store() -> (
+    Arc<SsdBackingStore>,
+    tokio::sync::mpsc::Receiver<PrefetchBatch>,
+) {
+    use std::os::fd::AsRawFd;
+
+    let file = tempfile::tempfile().unwrap();
+    file.set_len(SSD_ALIGNMENT as u64).unwrap();
+    let io = Arc::new(
+        UringIoEngine::new_multi(
+            vec![file.as_raw_fd()],
+            UringConfig {
+                threads: 2,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let (write_tx, _) = tokio::sync::mpsc::channel(1);
+    let (prefetch_tx, prefetch_rx) = tokio::sync::mpsc::channel(1);
+    let store = Arc::new(SsdBackingStore {
+        gpu_io: Arc::new(GpuIo {
+            automatic: false,
+            enabled: AtomicBool::new(false),
+        }),
+        read_path: None,
+        _files: vec![file],
+        cufile_files: Vec::new(),
+        io,
+        write_tx,
+        write_policy: SsdWritePolicy::All,
+        prefetch_tx,
+        inner: Mutex::new(SsdInner {
+            ring: SsdRingBuffer::new_sharded(vec![SSD_ALIGNMENT as u64], SSD_ALIGNMENT as u64),
+            pending_writes: HashSet::new(),
+            reuse_history: LruCache::new(1),
+        }),
+        allocate_fn: Arc::new(|_, _| None),
+        is_numa: false,
+    });
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let mut inner = store.inner.lock();
+    inner
+        .ring
+        .reserve(
+            &key,
+            vec![crate::SlotMeta::new(
+                smallvec::smallvec![SSD_ALIGNMENT as u64],
+                NumaNode::UNKNOWN,
+            )],
+            index::Encoding::Raw,
+        )
+        .unwrap();
+    assert!(inner.ring.commit(&key, true));
+    drop(inner);
+    (store, prefetch_rx)
+}
+
+#[tokio::test]
+async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
+    let (store, mut queued) = queued_read_store();
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let lease = store.pin_prefix(std::slice::from_ref(&key)).pop().unwrap();
+    let readers = Arc::clone(&lease.entry.readers);
+    let source = Arc::downgrade(&lease);
+    let mut read = Box::pin(lease.read_host());
+    assert!(futures::poll!(read.as_mut()).is_pending());
+    drop(read);
+    drop(lease);
+
+    let batch = queued.recv().await.unwrap();
+    assert!(batch.done_tx.is_closed());
+    assert_eq!(readers.load(Ordering::Acquire), 1);
+    let request = &batch.requests[0];
+    assert!(Arc::ptr_eq(&request.entry.readers, &readers));
+    assert!(Arc::ptr_eq(
+        request.lease.as_ref().unwrap(),
+        &source.upgrade().unwrap()
+    ));
+    drop(batch);
+    assert_eq!(readers.load(Ordering::Acquire), 0);
+    assert!(source.upgrade().is_none());
+
+    queued.close();
+    let lease = store.pin_prefix(std::slice::from_ref(&key)).pop().unwrap();
+    assert!(lease.read_host().await.is_err());
+    assert_eq!(readers.load(Ordering::Acquire), 1);
+    drop(lease);
+    assert_eq!(readers.load(Ordering::Acquire), 0);
+}

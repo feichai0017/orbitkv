@@ -160,6 +160,11 @@ pub struct Cli {
     #[arg(long, default_value = "auto", requires = "ssd_cache_path")]
     pub ssd_backend: orbitkv_core::SsdBackend,
 
+    /// Pin SSD demand data and use this read route independently of write/backend selection.
+    /// An unavailable explicit route returns a cache miss; it never silently switches routes.
+    #[arg(long, requires = "ssd_cache_path")]
+    pub ssd_read_path: Option<orbitkv_core::SsdReadPath>,
+
     /// GPU storage representation: none, ans, fp8, turboquant-4 or turboquant-3.
     #[arg(long, default_value = "none")]
     pub storage_codec: orbitkv_core::StorageCodec,
@@ -598,6 +603,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             write_queue_depth: cli.ssd_write_queue_depth,
             write_policy: cli.ssd_write_policy,
             backend: cli.ssd_backend,
+            read_path: cli.ssd_read_path,
             prefetch_queue_depth: cli.ssd_prefetch_queue_depth,
             write_inflight: cli.ssd_write_inflight,
             prefetch_inflight: cli.ssd_prefetch_inflight,

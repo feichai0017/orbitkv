@@ -3,7 +3,7 @@
 OrbitKV defaults to automatic SSD backend selection when SSD caching is configured.
 Complete state groups can be written
 from registered engine GPU pages to SSD, and selected SSD state can be restored
-to those pages. Both directions use bounded, registered GPU staging.
+to those pages. The cuFile routes use bounded, registered GPU staging in both directions.
 vLLM and SGLang share this Rust implementation and their existing cache API.
 Normal deployment only configures the SSD path and budget; leave
 `--ssd-backend` unset. Its default `auto` tries native cuFile and uses io_uring
@@ -32,7 +32,8 @@ compatibility-capable driver is not accepted as native evidence. Other filesyste
 types need separate qualification and an explicit `cufile` selection.
 
 On a GPU storage buffer or I/O failure in `auto`, the Manager stops admitting
-new cuFile work and switches subsequent operations to io_uring until restart.
+new cuFile work. With no read-route override, subsequent operations use io_uring
+until restart; an explicit cuFile read route does not silently switch routes.
 Submitted work retains its file/extent/page ownership and completes or reports
 its error; changing the backend does not revoke DMA or silently replay an
 already submitted restore. The failing operation retains normal error semantics.
@@ -44,6 +45,35 @@ This is capability and failure adaptation. Successful initialization does not
 establish that cuFile beats io_uring for a workload, or replace native-path
 statistics. An SSD path is required to enable disk caching. Capacity defaults
 to `512gb`; set an explicit budget that fits the storage filesystem.
+
+## Independent demand read routes
+
+Immutable SSD extent leasing is now separate from GPU-route eligibility.
+io_uring and cuFile are independently executable routes over the same stored
+representation and source generation. The store keeps its io_uring engine even
+when cuFile is healthy. `--ssd-backend auto|uring|cufile` controls capability
+initialization and existing write behavior; it is not a measured route ranking.
+
+For controlled demand-read comparisons, use `--ssd-read-path uring` or
+`--ssd-read-path cufile`. With a cuFile-capable backend, the former still uses
+io_uring and pinned DRAM; the latter uses registered GPU staging. The override
+does not change write policy or prepare/warmup, which still targets DRAM.
+Omitting it preserves existing source priority and capability-based behavior.
+If the explicit SSD route is unavailable, it is not replaced by a host-prefetch
+route; a compatible peer source can still satisfy ordinary remote recovery.
+
+The explicit io_uring route carries the same extent lease through the bounded
+host-reader queue. A separate SSD host-restore lane waits for these reads, then
+uses existing copy/codec completion before releasing engine destinations. It
+does not block the ordinary DRAM worker or reacquire a potentially different
+generation by key. Both routes share the SSD store and extent ownership;
+separate queues do not imply separate hardware bandwidth.
+
+Opt-in cost observations compare enqueue-to-GPU-terminal route totals in shadow,
+including host allocation/read/H2D or GPU staging/scatter/decode. They do not
+select execution or probe an alternative. Dynamic selection and common
+device-pressure scheduling remain future work. See the
+[candidate route contract](state-planning.md#candidate-routes-and-eligibility).
 
 ## File capacity
 
@@ -66,21 +96,23 @@ separately with compatibility disabled and cuFile path statistics. See NVIDIA's
 | Operation | Path |
 | --- | --- |
 | DRAM hit | Pinned DRAM → engine GPU pages |
-| SSD demand hit with `cufile` | SSD → registered GPU staging → engine GPU pages |
+| SSD demand with cuFile read route | SSD → registered GPU staging → engine GPU pages |
+| SSD demand with explicit io_uring read route | Same leased SSD generation → pinned DRAM → engine GPU pages |
 | Speculative prepare/warmup | SSD → pinned DRAM; GPU restore after consumption |
 | Complete state group in one Publish | Engine GPU → registered GPU staging → SSD; also retain a hot DRAM copy |
 | Fragmented/multi-writer Publish | Engine GPU → pinned DRAM; seal complete group → io_uring → SSD |
 | Shared-cache remote recovery | Mooncake → pinned DRAM → engine GPU pages |
 
-Candidate discovery remains metadata-only. A selected demand query acquires an
-SSD extent lease instead of allocating and reading a host block. The compiled
+Candidate discovery remains metadata-only. A selected demand using cuFile or an
+explicit SSD read route acquires an extent lease before reading bytes. Default
+io_uring queries retain their existing host-prefetch behavior. The compiled
 recovery requirements still select the necessary windows and checkpoints. The
 lease pins the source against ring overwrite until all query/GPU interests are
 released. Cancellation, expiry and session teardown release unconsumed interests;
 submitted restores keep their interests until completion.
 
 Rust validates source segment sizes, slot offsets and GPU destinations before
-issuing I/O. Adjacent ranges from different source leases in the same file are
+issuing I/O. On the cuFile route, adjacent ranges from different source leases in the same file are
 merged into reads of at most **4 MiB** with **4 KiB** aligned boundaries. Different
 files and unrequested aligned gaps stay separate. The worker retains the entire
 restore task, keeping every source lease alive until GPU completion; it never
@@ -445,10 +477,18 @@ functional passes do not satisfy it.
 - `orbitkv_ssd_pinned_write_skips_total`: reservations rejected to protect reads
   or in-flight writes.
 
-The timeline's `source_ready` event now means the source lease is ready. In
-cuFile demand mode, disk reading occurs during GPU restoration, not query
+For cuFile or explicit io_uring demand routes, the timeline's `source_ready`
+event means the source lease is ready. Disk reading occurs during GPU restoration, not query
 preparation; compare end-to-end TTFT and storage counters rather than treating
 preparation time alone as an improvement.
+
+With `ORBITKV_COST_OBSERVATIONS=1`, the `ssd_uring_restore` and
+`ssd_cufile_restore` cost paths measure complete restore totals. Child
+`ssd_prefetch`, `ssd_read` and cuFile/copy/codec observations overlap these totals;
+do not add them or count their physical bytes twice. Observations remain off by
+default while the earlier SGLang ANS overhead gate is open. The route changes have
+[separate validation](implementation-plan.md#ssd-sourcepath-separation-final-evidence);
+the earlier serving and observation matrices are not reruns of this implementation.
 
 Before claiming a performance improvement, compare io_uring and **verified native** GDS on the same
 NVMe mount, model and working set larger than DRAM. Measure TTFT, throughput, CPU

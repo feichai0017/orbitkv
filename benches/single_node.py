@@ -103,6 +103,11 @@ def main() -> None:
     parser.add_argument("--ssd-write-policy", choices=["all", "reuse"], default="all")
     parser.add_argument("--ssd-backend", choices=["auto", "uring", "cufile"], default="uring")
     parser.add_argument(
+        "--ssd-read-path",
+        choices=["uring", "cufile"],
+        help="Override SSD restores independently of backend initialization and writes",
+    )
+    parser.add_argument(
         "--gds-stats",
         type=Path,
         help="NVIDIA gds_stats executable; require native read/write evidence before stopping the Manager",
@@ -120,12 +125,23 @@ def main() -> None:
         args.storage_codec != "none" or args.storage_codec_budget != 64 * 1024**2 or args.ssd_dir
     ):
         parser.error("storage codec and SSD directory controls require --backend orbitkv")
-    if (args.ssd_backend != "uring" or args.gds_stats) and (
+    if (args.ssd_backend != "uring" or args.ssd_read_path or args.gds_stats) and (
         args.backend != "orbitkv" or not args.ssd_gib
     ):
         parser.error("GPU storage controls require --backend orbitkv and --ssd-gib")
     if args.gds_stats and args.ssd_backend not in ("auto", "cufile"):
         parser.error("--gds-stats requires --ssd-backend auto or cufile")
+    if args.ssd_read_path == "cufile" and args.ssd_backend == "uring":
+        parser.error("--ssd-read-path cufile requires --ssd-backend auto or cufile")
+    if args.gds_stats and args.ssd_read_path == "uring":
+        parser.error("--gds-stats requires native reads; --ssd-read-path uring is a host control")
+    if args.ssd_read_path is not None and (
+        args.queue_warmup == "on" or args.prepare_requests == "on"
+    ):
+        parser.error(
+            "explicit --ssd-read-path measurement requires --queue-warmup off and "
+            "--prepare-requests off; aggregate counters cannot separate demand and preparation reads"
+        )
     if not 0 <= args.cache_protected_percent <= 100:
         parser.error("--cache-protected-percent must be between 0 and 100")
     if args.backend != "orbitkv" and (

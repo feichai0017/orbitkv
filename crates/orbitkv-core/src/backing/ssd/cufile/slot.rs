@@ -6,6 +6,7 @@ use std::time::Instant;
 use cudarc::driver::{CudaContext, CudaEvent, CudaStream, result, sys};
 
 use super::{Cufile, CufileFile, IoBatch, STAGING_BYTES};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation};
 use crate::metrics::core_metrics;
 use crate::transfer::finish_gpu_transfer;
 
@@ -22,6 +23,7 @@ struct Pending {
     write: bool,
     scattering: bool,
     started: Instant,
+    observation: Observation,
 }
 
 /// A reusable stream, registered buffer and stable host arguments. The worker
@@ -59,7 +61,7 @@ impl GpuSlot {
                 size: 0,
                 file_offset: 0,
                 buffer_offset: 0,
-                transferred: 0,
+                transferred: isize::MIN,
             })),
             pending: None,
         };
@@ -92,15 +94,34 @@ impl GpuSlot {
                 size: batch.bytes,
                 file_offset: batch.file_offset as i64,
                 buffer_offset: 0,
-                transferred: 0,
+                transferred: isize::MIN,
             }
         };
+        let mut observation = Observation::new(
+            CostKey::new(
+                if write {
+                    CostPath::SsdCufileWrite
+                } else {
+                    CostPath::SsdCufileRead
+                },
+                file.cost_resource,
+                Representation::Unknown,
+                batch.bytes as u64,
+                batch.copies.len(),
+            ),
+            // GPU ranges may contain encoded payload, padding or duplicate
+            // scatter consumers. Only the restore owner knows logical bytes.
+            None,
+        );
+        observation.admitted();
+        observation.submitted();
         self.pending = Some(Pending {
             file,
             batch,
             write,
             scattering: false,
             started: Instant::now(),
+            observation,
         });
         core_metrics().ssd_cufile_inflight_batches.add(1, &[]);
         let submitted = (|| {
@@ -159,7 +180,7 @@ impl GpuSlot {
             // A failed submission can still have queued GPU work. Never return
             // ownership of its arguments, file, staging or pages before drain.
             let _ = finish_gpu_transfer(&self.stream, Ok(()));
-            self.finish(Err(error.clone()));
+            self.finish(Err(error.clone()), Outcome::Failed);
             return Err(error);
         }
         Ok(())
@@ -174,7 +195,7 @@ impl GpuSlot {
             Err(error) => {
                 let _ = finish_gpu_transfer(&self.stream, Ok(()));
                 let error = error.to_string();
-                self.finish(Err(error.clone()));
+                self.finish(Err(error.clone()), Outcome::Failed);
                 return Some(Err(error));
             }
         }
@@ -203,7 +224,7 @@ impl GpuSlot {
                     pending.batch.bytes,
                     pending.batch.file_offset
                 );
-                self.finish(Err(error.clone()));
+                self.finish(Err(error.clone()), Outcome::Failed);
                 return Some(Err(error));
             }
             if !pending.write {
@@ -225,7 +246,7 @@ impl GpuSlot {
                 })();
                 if let Err(error) = submitted {
                     let _ = finish_gpu_transfer(&self.stream, Ok(()));
-                    self.finish(Err(error.clone()));
+                    self.finish(Err(error.clone()), Outcome::Failed);
                     return Some(Err(error));
                 }
                 self.pending
@@ -235,12 +256,18 @@ impl GpuSlot {
                 return None;
             }
         }
-        self.finish(Ok(()));
+        self.finish(Ok(()), Outcome::Completed);
         Some(Ok(()))
     }
 
-    fn finish(&mut self, result: Result<(), String>) {
+    fn finish(&mut self, result: Result<(), String>, outcome: Outcome) {
         let pending = self.pending.take().expect("pending transfer exists");
+        // Every caller has observed the event or drained the existing stream.
+        // This is host-observed gather/I/O/scatter time, not native-GDS proof.
+        let transferred = unsafe { (*self.arguments.get()).transferred };
+        pending
+            .observation
+            .finish(outcome, (transferred >= 0).then_some(transferred as u64));
         let metrics = core_metrics();
         let (seconds, bytes, failures) = if pending.write {
             (
@@ -271,7 +298,10 @@ impl Drop for GpuSlot {
     fn drop(&mut self) {
         let _ = finish_gpu_transfer(&self.stream, Ok(()));
         if self.pending.is_some() {
-            self.finish(Err("GPU storage slot drained during teardown".into()));
+            self.finish(
+                Err("GPU storage slot drained during teardown".into()),
+                Outcome::Cancelled,
+            );
         }
         // SAFETY: all I/O, gather/scatter and argument access has drained.
         let cleanup = (|| {

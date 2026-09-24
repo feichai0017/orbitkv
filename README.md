@@ -104,6 +104,13 @@ and coalesces adjacent reads across cached blocks within each file. Rust submits
 asynchronous I/O through two 4 MiB slots, keeping demand reads progressing
 alongside bounded GPU writeback and event-tracked host copies.
 
+SSD extent ownership is independent of its read route. For controlled comparisons,
+`--ssd-read-path uring|cufile` selects demand restoration through pinned DRAM or
+GPU staging over the same stored representation. `--ssd-backend` still controls
+cuFile initialization and existing write behavior; leave both overrides unset for
+the existing default policy. Prepare/warmup continues to target DRAM. See the
+[read-route contract](docs/gds.md#independent-demand-read-routes).
+
 [GPU storage encoding](docs/storage-formats.md) supports nvCOMP ANS lossless
 compression, FP8 and 3/4-bit TurboQuant with bounded batches and reusable GPU
 workspace. Encoded pages stay compact in DRAM, SSD and peer transfers; cuFile can
@@ -127,6 +134,19 @@ OrbitKV selects compatible cached ranges, reads them from the configured tiers,
 and retains page ownership until the GPU copy finishes. Newly computed KV is
 published for later reuse. The same adapter API serves DRAM, SSD and experimental
 remote fetches; physical placement stays inside the Cache Manager.
+
+The [implementation plan](docs/implementation-plan.md) maps pinned LMCache,
+FlexKV and Mooncake mechanisms to deployment and validation work. The next milestone
+uses measured path costs and resource budgets across local tiers and Mooncake
+TE transfers. Independent replicas, P/D handoff and TP/PP have separate
+completion and recovery contracts. Bounded Rust cost observations, raw-copy
+shadow predictions and independent SSD read routes are implemented. SSD route
+shadow compares complete restoration to GPU readiness without changing execution.
+This is the first source/path separation, not a completed planner across all tiers.
+Dynamic cost selection remains planned, and observations remain off by default:
+the [earlier overhead qualification](docs/implementation-plan.md#p41-final-evidence)
+has one open SGLang ANS SSD latency gate. The route changes require their own
+[validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence).
 
 Read the [architecture](docs/architecture.md),
 [hybrid recovery contract](docs/hybrid-recovery.md), and

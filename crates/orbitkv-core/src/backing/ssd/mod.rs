@@ -9,6 +9,7 @@ use mea::oneshot;
 use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation};
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
@@ -25,7 +26,7 @@ use super::{AllocateFn, PrefetchResult};
 pub(crate) use config::SSD_ALIGNMENT;
 pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdWritePolicy,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdReadPath, SsdWritePolicy,
 };
 use cufile::CufileFile;
 use index::{SsdIndexEntry, SsdRingBuffer};
@@ -41,8 +42,61 @@ pub struct SsdReadLease {
 }
 
 impl SsdReadLease {
-    pub(crate) fn file(&self) -> &Arc<CufileFile> {
-        &self.store.cufile_files[self.entry.shard_id]
+    pub(crate) fn cufile_eligible(&self, codec_budget: usize) -> bool {
+        self.store.gpu_io.available()
+            && self.store.cufile_files.get(self.entry.shard_id).is_some()
+            && self.entry.fits_gpu_decode(codec_budget)
+    }
+
+    pub(crate) fn file(&self) -> Result<&Arc<CufileFile>, crate::EngineError> {
+        self.store
+            .cufile_files
+            .get(self.entry.shard_id)
+            .ok_or_else(|| {
+                crate::EngineError::Storage("SSD source has no cuFile registration".into())
+            })
+    }
+
+    pub(crate) fn cost_resource(&self) -> u64 {
+        self.store.io.cost_resource
+    }
+
+    /// Materialize this immutable generation through the existing host reader.
+    /// The queued batch retains the lease even if its consumer is cancelled.
+    pub(crate) async fn read_host(
+        self: &Arc<Self>,
+    ) -> Result<Arc<SealedBlock>, crate::EngineError> {
+        let started = std::time::Instant::now();
+        let (done_tx, done_rx) = oneshot::channel();
+        let batch = PrefetchBatch::new(
+            vec![PrefetchRequest {
+                key: self.key.clone(),
+                entry: self.entry.clone(),
+                lease: Some(Arc::clone(self)),
+            }],
+            done_tx,
+            self.cost_resource(),
+        );
+        if let Err(error) = self.store.prefetch_tx.send(batch).await {
+            core_metrics().ssd_prefetch_queue_closed.add(1, &[]);
+            error.0.observation.finish(Outcome::Failed, None);
+            return Err(crate::EngineError::Storage(
+                "SSD host reader is closed".into(),
+            ));
+        }
+        let result = done_rx
+            .await
+            .map_err(|_| crate::EngineError::Storage("SSD host reader lost completion".into()))
+            .and_then(|mut blocks| {
+                if blocks.len() != 1 || blocks[0].0 != self.key {
+                    return Err(crate::EngineError::Storage("SSD source read failed".into()));
+                }
+                Ok(blocks.remove(0).1)
+            });
+        core_metrics()
+            .ssd_prefetch_duration_seconds
+            .record(started.elapsed().as_secs_f64(), &[]);
+        result
     }
 
     pub(crate) fn invalidate_encoded(&self) {
@@ -153,6 +207,7 @@ impl SsdInner {
 
 pub(crate) struct SsdBackingStore {
     pub(crate) gpu_io: Arc<GpuIo>,
+    pub(crate) read_path: Option<SsdReadPath>,
     /// Keeps file descriptors alive for io_uring operations.
     _files: Vec<std::fs::File>,
     cufile_files: Vec<Arc<CufileFile>>,
@@ -292,6 +347,7 @@ impl SsdBackingStore {
 
         let store = Arc::new(Self {
             gpu_io,
+            read_path: config.read_path,
             _files: files,
             cufile_files,
             io: Arc::clone(&io),
@@ -321,40 +377,22 @@ impl SsdBackingStore {
         Ok(store)
     }
 
-    pub(crate) fn pin_prefix(
-        self: &Arc<Self>,
-        keys: &[StateKey],
-        codec_budget: usize,
-    ) -> Option<Vec<Arc<SsdReadLease>>> {
-        if !self.gpu_io.available() {
-            return None;
-        }
+    pub(crate) fn pin_prefix(self: &Arc<Self>, keys: &[StateKey]) -> Vec<Arc<SsdReadLease>> {
         let inner = self.inner.lock();
-        // A tiny-budget CPU codec can persist a valid representation that
-        // cannot fit GPU staging. Preserve the complete prefix via io_uring.
-        if keys
-            .iter()
-            .map_while(|key| inner.ring.get(key))
-            .any(|entry| !entry.fits_gpu_decode(codec_budget))
-        {
-            return None;
-        }
-        Some(
-            keys.iter()
-                .map_while(|key| {
-                    let entry = inner.ring.get(key)?.clone();
-                    entry.readers.fetch_add(1, Ordering::Relaxed);
-                    core_metrics()
-                        .ssd_read_pinned_bytes
-                        .add(entry.len as i64, &[]);
-                    Some(Arc::new(SsdReadLease {
-                        entry,
-                        key: key.clone(),
-                        store: Arc::clone(self),
-                    }))
-                })
-                .collect(),
-        )
+        keys.iter()
+            .map_while(|key| {
+                let entry = inner.ring.get(key)?.clone();
+                entry.readers.fetch_add(1, Ordering::Relaxed);
+                core_metrics()
+                    .ssd_read_pinned_bytes
+                    .add(entry.len as i64, &[]);
+                Some(Arc::new(SsdReadLease {
+                    entry,
+                    key: key.clone(),
+                    store: Arc::clone(self),
+                }))
+            })
+            .collect()
     }
 
     pub(super) fn is_offset_valid(&self, entry: &SsdIndexEntry) -> bool {
@@ -420,6 +458,11 @@ impl SsdBackingStore {
         let metrics = core_metrics();
         let mut admitted = Vec::new();
         let mut seen_batch = HashSet::new();
+        let observe = crate::cost::enabled();
+        let mut logical_bytes = Some(0u64);
+        let mut stored_bytes = 0u64;
+        let mut fragments = 0;
+        let mut representation = None;
         for (key, block) in blocks {
             let skip = if seen_batch.insert(key) {
                 inner.admission_skip(key, reused, self.write_policy)
@@ -431,6 +474,33 @@ impl SsdBackingStore {
                     .ssd_write_admission_skips
                     .add(1, &[opentelemetry::KeyValue::new("reason", reason)]);
             } else {
+                if observe {
+                    for slot in block.slots() {
+                        fragments += slot.num_segments();
+                        stored_bytes = stored_bytes.saturating_add(slot.memory_footprint());
+                        if let Some(metadata) = &slot.encoding {
+                            if metadata.len() != slot.num_segments() {
+                                logical_bytes = None;
+                            }
+                            for meta in metadata {
+                                logical_bytes = logical_bytes
+                                    .and_then(|bytes| bytes.checked_add(meta.logical_bytes as u64));
+                                let next = Representation::from(meta.format);
+                                representation = Some(match representation {
+                                    None => next,
+                                    Some(previous) if previous == next => previous,
+                                    Some(_) => Representation::Mixed,
+                                });
+                            }
+                        } else {
+                            logical_bytes = None;
+                            representation = Some(match representation {
+                                None | Some(Representation::Raw) => Representation::Raw,
+                                Some(_) => Representation::Mixed,
+                            });
+                        }
+                    }
+                }
                 admitted.push((key.clone(), Arc::downgrade(block)));
             }
         }
@@ -438,17 +508,31 @@ impl SsdBackingStore {
             return;
         }
         let len = admitted.len();
+        let observation = Observation::new(
+            CostKey::new(
+                CostPath::SsdWriteBatch,
+                self.io.cost_resource,
+                representation.unwrap_or(Representation::Unknown),
+                logical_bytes.unwrap_or(stored_bytes),
+                fragments,
+            ),
+            logical_bytes,
+        );
         match self.write_tx.try_reserve() {
             Ok(permit) => {
                 inner
                     .pending_writes
                     .extend(admitted.iter().map(|(key, _)| key.clone()));
                 metrics.ssd_write_queue_pending.add(len as i64, &[]);
-                permit.send(SsdWriteCommand::Write(SsdWriteBatch { blocks: admitted }));
+                permit.send(SsdWriteCommand::Write(SsdWriteBatch {
+                    blocks: admitted,
+                    observation,
+                }));
             }
             Err(_) => {
                 warn!("SSD write queue full, dropping {len} blocks");
                 metrics.ssd_write_queue_full.add(len as u64, &[]);
+                observation.finish(Outcome::Cancelled, None);
             }
         }
     }
@@ -491,7 +575,11 @@ impl SsdBackingStore {
             keys.into_iter()
                 .map_while(|key| {
                     let entry = inner.ring.get(&key)?.clone();
-                    Some(PrefetchRequest { key, entry })
+                    Some(PrefetchRequest {
+                        key,
+                        entry,
+                        lease: None,
+                    })
                 })
                 .collect()
         };
@@ -502,7 +590,7 @@ impl SsdBackingStore {
             return (0, done_rx);
         }
 
-        let batch = PrefetchBatch { requests, done_tx };
+        let batch = PrefetchBatch::new(requests, done_tx, self.io.cost_resource);
 
         if let Err(e) = self.prefetch_tx.send(batch).await {
             let batch = e.0;
@@ -511,6 +599,7 @@ impl SsdBackingStore {
             core_metrics()
                 .ssd_prefetch_queue_closed
                 .add(count as u64, &[]);
+            batch.observation.finish(crate::cost::Outcome::Failed, None);
             let _ = batch.done_tx.send(Vec::new());
         }
 

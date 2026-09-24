@@ -11,16 +11,8 @@ from benches.metrics import codec_summary, delta, measure, metrics
 from benches.report import compare_outputs
 
 
-@pytest.mark.parametrize("engine", ["vllm", "sglang"])
-@pytest.mark.parametrize("codec", STORAGE_CODECS)
-@pytest.mark.parametrize("ssd_gib", [0, 4])
-def test_codec_launch_uses_same_engine_capacity_and_explicit_manager_policy(
-    tmp_path, monkeypatch, engine, codec, ssd_gib
-):
-    monkeypatch.setattr("benches.launch.free_port", lambda: 23456)
-    monkeypatch.setenv("ORBITKV_CACHE_MANAGER_BINARY", "/prebuilt/manager")
-    monkeypatch.setenv("ORBITKV_NVCOMP_LIBRARY", "/runtime/libnvcomp.so.5")
-    args = Namespace(
+def launch_arguments(tmp_path, engine="vllm", codec="none", ssd_gib=4):
+    return Namespace(
         engine=engine,
         backend="orbitkv",
         model=tmp_path / "model",
@@ -29,6 +21,7 @@ def test_codec_launch_uses_same_engine_capacity_and_explicit_manager_policy(
         ssd_gib=ssd_gib,
         ssd_path=tmp_path / "private/cache.bin",
         ssd_backend="uring",
+        ssd_read_path=None,
         ssd_write_policy="all",
         storage_codec=codec,
         storage_codec_budget=64 * 1024**2,
@@ -46,6 +39,18 @@ def test_codec_launch_uses_same_engine_capacity_and_explicit_manager_policy(
         prefill_tokens=8192,
         orbitkv_transfer_backend=None,
     )
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+@pytest.mark.parametrize("codec", STORAGE_CODECS)
+@pytest.mark.parametrize("ssd_gib", [0, 4])
+def test_codec_launch_uses_same_engine_capacity_and_explicit_manager_policy(
+    tmp_path, monkeypatch, engine, codec, ssd_gib
+):
+    monkeypatch.setattr("benches.launch.free_port", lambda: 23456)
+    monkeypatch.setenv("ORBITKV_CACHE_MANAGER_BINARY", "/prebuilt/manager")
+    monkeypatch.setenv("ORBITKV_NVCOMP_LIBRARY", "/runtime/libnvcomp.so.5")
+    args = launch_arguments(tmp_path, engine, codec, ssd_gib)
     launch = configure(args, 147456)
     command = launch.manager_command
     assert command[0] == "/prebuilt/manager"
@@ -56,9 +61,33 @@ def test_codec_launch_uses_same_engine_capacity_and_explicit_manager_policy(
     assert ("--ssd-cache-path" in command) == bool(ssd_gib)
     if ssd_gib:
         assert command[command.index("--ssd-cache-path") + 1] == str(args.ssd_path)
+        assert launch.backend_configuration["ssd_backend"] == "uring"
+        assert launch.backend_configuration["ssd_read_path"] is None
+    assert "--ssd-read-path" not in command
     capacity_flag = "--kv-cache-memory-bytes" if engine == "vllm" else "--max-total-tokens"
     capacity = 147456 * 8192 if engine == "vllm" else 8192
     assert launch.command[launch.command.index(capacity_flag) + 1] == str(capacity)
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+@pytest.mark.parametrize("read_path", [None, "uring", "cufile"])
+def test_ssd_read_path_is_separate_from_cufile_initialization_and_writes(
+    tmp_path, monkeypatch, engine, read_path
+):
+    monkeypatch.setattr("benches.launch.free_port", lambda: 23456)
+    args = launch_arguments(tmp_path, engine)
+    args.ssd_backend = "cufile"
+    args.ssd_read_path = read_path
+    launch = configure(args, 147456)
+    command = launch.manager_command
+    assert command[command.index("--ssd-backend") + 1] == "cufile"
+    assert ("--ssd-read-path" in command) == (read_path is not None)
+    if read_path is not None:
+        assert command[command.index("--ssd-read-path") + 1] == read_path
+    assert launch.backend_configuration["io"] == "O_DIRECT"
+    assert launch.backend_configuration["ssd_backend"] == "cufile"
+    assert launch.backend_configuration["ssd_read_path"] == read_path
+    assert "--ssd-read-path" not in launch.command
 
 
 def test_codec_budget_accepts_binary_units_and_rejects_out_of_range():

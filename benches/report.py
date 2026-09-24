@@ -192,6 +192,7 @@ def main() -> None:
                     "host_gib": config["host_gib"],
                     "ssd_gib": config.get("ssd_gib", 0),
                     "ssd_backend": config.get("ssd_backend", "uring"),
+                    "ssd_read_path": config.get("ssd_read_path"),
                     "storage_codec": config.get("storage_codec", "none"),
                     "storage_codec_budget_bytes_per_worker": config.get("storage_codec_budget"),
                     "engine_kv_bytes": run["manifest"].get("capacity", {}).get("engine_kv_bytes"),

@@ -155,23 +155,32 @@ def benchmark_commands(args, output: Path):
 
 def qualify_benchmark(run: dict, manager_usage: dict) -> dict:
     args = run["manifest"]["arguments"]
+    if args.get("ssd_read_path") is not None and (
+        args.get("queue_warmup") == "on" or args.get("prepare_requests") == "on"
+    ):
+        raise ValueError(
+            "Explicit --ssd-read-path qualification requires --queue-warmup off and "
+            "--prepare-requests off; aggregate counters cannot separate demand and preparation reads"
+        )
     summary = run["summary"]
     serial = args["workload"] == "serial"
     load_key = "orbitkv_load_bytes" if serial else "orbitkv_load_bytes_total"
+    read_path = args.get("ssd_read_path") or args["ssd_backend"]
     read_key = (
-        "orbitkv_ssd_read_bytes"
-        if serial
-        else (
-            "orbitkv_ssd_prefetch_bytes_total"
-            if args["ssd_backend"] == "uring"
-            else "orbitkv_ssd_cufile_read_bytes_total"
-        )
+        "orbitkv_ssd_prefetch_bytes_total"
+        if read_path == "uring"
+        else "orbitkv_ssd_cufile_read_bytes_total"
     )
     evidence = {
         "measured_gpu_load_bytes": sum(row.get(load_key, 0) for row in summary),
         "measured_ssd_read_bytes": sum(row.get(read_key, 0) for row in summary),
+        "ssd_read_path_requested": args.get("ssd_read_path"),
+        "ssd_read_counter": read_key if args["ssd_gib"] else None,
+        "native_read_qualified": False,
     }
-    if args["ssd_gib"] and not all(evidence.values()):
+    if args["ssd_gib"] and not all(
+        evidence[key] > 0 for key in ("measured_gpu_load_bytes", "measured_ssd_read_bytes")
+    ):
         raise ValueError("Measured workload lacks SSD read/GPU restore evidence")
     counters = manager_usage.get("manager_delta", {})
     if args["storage_codec"] != "none":
@@ -181,7 +190,23 @@ def qualify_benchmark(run: dict, manager_usage: dict) -> dict:
             raise ValueError("Codec run lacks encoded-publication evidence")
         if counters.get("orbitkv_storage_codec_decode_failures_total", 0):
             raise ValueError("Codec run reported decode failures")
-    if args["ssd_gib"] and args["ssd_backend"] != "uring":
+    if args["ssd_gib"] and args.get("ssd_read_path") is not None:
+        other_key = (
+            "orbitkv_ssd_cufile_read_bytes_total"
+            if read_path == "uring"
+            else "orbitkv_ssd_prefetch_bytes_total"
+        )
+        if any(row.get(other_key, 0) for row in summary):
+            raise ValueError("Measured reads used a different path from --ssd-read-path")
+    if args["ssd_gib"] and args["ssd_backend"] == "cufile" and read_path == "uring":
+        if counters.get("orbitkv_ssd_cufile_write_bytes_total", 0) <= 0:
+            raise ValueError("cuFile backend with host reads lacks cuFile write evidence")
+        evidence["native_io_scope"] = (
+            "io_uring host-read control; native GDS reads are not qualified"
+        )
+    if args["ssd_gib"] and read_path != "uring":
+        if args["ssd_backend"] == "uring":
+            raise ValueError("cuFile read qualification requires a cuFile-capable backend")
         native = json.loads((Path(run["directory"]) / "native-io.json").read_text())
         if (
             not all(native["operations"][key] > 0 for key in ("read", "write"))
@@ -190,6 +215,7 @@ def qualify_benchmark(run: dict, manager_usage: dict) -> dict:
         ):
             raise ValueError("Missing native reads/writes or fallback observed")
         evidence["native_io"] = native
+        evidence["native_read_qualified"] = True
         evidence["native_io_scope"] = (
             "Per-process native I/O evidence; aggregate cuFile counters do not attribute bytes to individual storage representations"
         )

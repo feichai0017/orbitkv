@@ -785,16 +785,19 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 }
 
 #[tokio::test]
-#[ignore = "requires CUDA, nvCOMP 5.3 and Mooncake; set MC_FORCE_TCP=1 for same-host TCP"]
+#[ignore = "requires CUDA, io_uring, nvCOMP 5.3 and Mooncake; set MC_FORCE_TCP=1 for same-host TCP"]
 async fn encoded_peer_payloads_restore_the_same_gpu_image() {
     use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
     let _cuda = CudaContext::new(0).unwrap();
-    for codec in [
+    for (index, codec) in [
         StorageCodec::Ans,
         StorageCodec::Fp8,
         StorageCodec::TurboQuant4,
         StorageCodec::TurboQuant3,
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let port_a = get_free_port();
         let port_b = get_free_port();
         let make_view = |port| {
@@ -815,13 +818,14 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
             ]);
             assert!(view.renew(Instant::now(), Duration::from_secs(120)));
         }
-        let make_engine = |view| {
+        let make_engine = |view, ssd_cache_config| {
             Arc::new(
                 OrbitKVEngine::new_with_config(
                     16 << 20,
                     false,
                     StorageConfig {
                         codec,
+                        ssd_cache_config,
                         membership: Some(view),
                         mooncake_nic_names: mooncake_nics(),
                         ..Default::default()
@@ -830,8 +834,23 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                 .unwrap(),
             )
         };
-        let source = make_engine(view_a.clone());
-        let target = make_engine(view_b.clone());
+        let source = make_engine(view_a.clone(), None);
+        let target_disk = tempfile::tempdir().unwrap();
+        let read_path = if index % 2 == 0 {
+            SsdReadPath::Uring
+        } else {
+            SsdReadPath::Cufile
+        };
+        let target = make_engine(
+            view_b.clone(),
+            Some(SsdCacheConfig {
+                cache_paths: vec![target_disk.path().join("peer-target.bin")],
+                capacity_bytes: 4 << 20,
+                backend: SsdBackend::Uring,
+                read_path: Some(read_path),
+                ..SsdCacheConfig::default()
+            }),
+        );
         let stores = spawn_engine_server(source.clone(), port_a, view_a).await;
         spawn_engine_server(target.clone(), port_b, view_b).await;
         let gpu_source = GpuBuffer::alloc(8192);
@@ -908,6 +927,12 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                 .await
                 .unwrap();
             assert_eq!(result.blocks.len(), 1);
+            if id == "target" {
+                assert!(
+                    matches!(&result.blocks[0], RestoreSource::Memory(_)),
+                    "{codec:?}: {read_path:?} must preserve remote DRAM recovery on a local SSD miss"
+                );
+            }
             assert!(
                 result.blocks[0].memory_footprint() < 8192,
                 "{codec:?} did not use encoded residency"

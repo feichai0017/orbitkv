@@ -10,6 +10,9 @@ This follows the service topology of
 (v0.5.5): an independent cache service shared by engines on the same node.
 OrbitKV's adapters use UDS/iceoryx2 and CUDA IPC; adding SSD or remote caching
 does not change their connection or expose storage backend selection to them.
+The [implementation plan](implementation-plan.md#deployment-profiles) defines
+the service profiles and qualification order; an upstream deployment example
+does not establish OrbitKV compatibility.
 
 ## Choose a topology
 
@@ -38,6 +41,14 @@ make vLLM and SGLang cache bytes interchangeable: model, computation and storage
 identities must match, and cross-engine layout conversion is not implemented.
 For integration boundaries and execution priorities, see
 [distributed deployment comparison](distributed-comparison.md).
+
+The planned [transfer policies](state-planning.md#policies-by-deployment-mode)
+share Rust cost observations and budgets across local and Mooncake TE paths.
+They distinguish ordinary cache recovery, current-request P/D handoff and
+TP/PP completion dependencies. These deployment dimensions can compose; one
+Manager may serve instances with different roles. Dynamic cost selection and
+the additional topology gates remain future work, not extra supported modes
+in the table above.
 
 ## Configure capacity, then connect engines
 
@@ -154,6 +165,14 @@ multi-engine serving remain deployment acceptance work. OrbitKV does not yet
 ship a qualified DaemonSet/Helm installation or an isolated-IPC mode. The current
 serving gates run separate processes inside one environment; they do not
 establish parity with LMCache's container deployment support.
+
+The next deployment work packages the current explicit shared-resource profile,
+then qualifies isolated allocation registration and completion in Rust. Following
+LMCache's raw CUDA allocation/timeline-event design also requires handling
+OrbitKV's UDS/iceoryx2 resources, stable GPU identity and process-death evidence.
+It is not enough to remove the Torch wrapper or copy `hostIPC: false` into a
+manifest. See [container engineering](implementation-plan.md#container-and-service-engineering)
+for source references, allocator limits and the image/cluster acceptance gates.
 
 ## Add peer caching
 

@@ -85,3 +85,66 @@ fn chunked_slabs_chunk_clamped_to_batch_remaining() {
     assert_eq!(*sizes.lock().unwrap(), vec![4096]);
     assert_eq!(slabs.chunk_count, 1);
 }
+
+#[test]
+fn transfer_shape_separates_logical_encoded_bytes_from_padded_payload() {
+    use crate::codec::EncodedSegment;
+    use orbitkv_state::StorageFormat;
+
+    let allocate = test_allocate_fn(Arc::new(AtomicUsize::new(0)));
+    let allocation = allocate(1536, Some(NumaNode(0))).unwrap();
+    let address = allocation.as_non_null().as_ptr() as u64;
+    let mut blocks = vec![(
+        vec![1],
+        vec![(
+            vec![SegmentAlloc {
+                ptr_addr: address,
+                alloc: Arc::clone(&allocation),
+                size: 512,
+            }],
+            NumaNode(0),
+            Some(vec![EncodedSegment {
+                version: 1,
+                format: StorageFormat::Ans,
+                logical_bytes: 2048,
+                stored_bytes: 123,
+                checksum: 0,
+            }]),
+        )],
+    )];
+    assert_eq!(transfer_shape(&blocks), (Some(2048), Representation::Ans));
+
+    blocks[0].1.push((
+        vec![SegmentAlloc {
+            ptr_addr: address + 512,
+            alloc: allocation,
+            size: 1024,
+        }],
+        NumaNode(0),
+        None,
+    ));
+    assert_eq!(transfer_shape(&blocks), (None, Representation::Mixed));
+}
+
+#[test]
+fn raw_payload_alignment_does_not_imply_logical_bytes() {
+    let allocate = test_allocate_fn(Arc::new(AtomicUsize::new(0)));
+    // A raw 300-byte state can occupy a 512-byte aligned segment. A payload
+    // length alone cannot prove the engine's original logical length.
+    for stored_bytes in [300, 512] {
+        let allocation = allocate(512, Some(NumaNode(0))).unwrap();
+        let blocks = vec![(
+            vec![1],
+            vec![(
+                vec![SegmentAlloc {
+                    ptr_addr: allocation.as_non_null().as_ptr() as u64,
+                    alloc: allocation,
+                    size: stored_bytes,
+                }],
+                NumaNode(0),
+                None,
+            )],
+        )];
+        assert_eq!(transfer_shape(&blocks), (None, Representation::Raw));
+    }
+}

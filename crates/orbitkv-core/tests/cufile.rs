@@ -89,7 +89,7 @@ async fn fragmented_publications_seal_before_ssd_visibility_and_restore_through_
         result
             .blocks
             .iter()
-            .all(|b| matches!(b, RestoreSource::Ssd(_)))
+            .all(|b| matches!(b, RestoreSource::Ssd { .. }))
     );
     let lease = env
         .engine
@@ -135,7 +135,7 @@ async fn ssd_sources_restore_split_and_page_first_layouts_without_host_materiali
             result
                 .blocks
                 .iter()
-                .all(|block| matches!(block, RestoreSource::Ssd(_)))
+                .all(|block| matches!(block, RestoreSource::Ssd { .. }))
         );
         assert_eq!(
             env.engine.cleanup_memory_cache().evicted_blocks,
@@ -158,7 +158,7 @@ async fn ssd_sources_restore_split_and_page_first_layouts_without_host_materiali
         assert!(
             mixed.blocks[1..]
                 .iter()
-                .all(|block| matches!(block, RestoreSource::Ssd(_)))
+                .all(|block| matches!(block, RestoreSource::Ssd { .. }))
         );
         let lease = env
             .engine
@@ -212,7 +212,10 @@ async fn canceled_disk_lease_releases_ring_capacity_and_large_checkpoint_restore
     env.engine.flush_all().await;
     env.engine.cleanup_memory_cache();
     let pinned = env.query(&original).await;
-    assert!(matches!(pinned.blocks.as_slice(), [RestoreSource::Ssd(_)]));
+    assert!(matches!(
+        pinned.blocks.as_slice(),
+        [RestoreSource::Ssd { .. }]
+    ));
     let lease = env
         .engine
         .create_query_lease(&env.instance_id, pinned.blocks)
@@ -436,7 +439,7 @@ impl EncodedFixture {
             query
                 .blocks
                 .iter()
-                .all(|source| matches!(source, RestoreSource::Ssd(_)))
+                .all(|source| matches!(source, RestoreSource::Ssd { .. }))
         );
         self.engine
             .create_query_lease("encoded-gds", query.blocks)
@@ -481,7 +484,7 @@ async fn encoded_gds_restores_mixed_prefix_split_siblings_and_segments_larger_th
             query
                 .blocks
                 .iter()
-                .all(|source| matches!(source, RestoreSource::Ssd(_)))
+                .all(|source| matches!(source, RestoreSource::Ssd { .. }))
         );
         assert!(
             query.blocks[1].memory_footprint() < query.blocks[0].memory_footprint(),

@@ -94,3 +94,200 @@ fn invalid_slot_sizes_and_offset_overflow_are_rejected_before_gpu_io() {
     assert!(validate_slot(&slot).is_err());
     assert!(segment_offset(&slot, 1, 1, 0, 1).is_err());
 }
+
+#[tokio::test]
+#[ignore = "requires CUDA, io_uring and libcufile; run the cuFile qualification gate"]
+async fn one_raw_extent_restores_through_independent_uring_and_cufile_paths() {
+    restore_one_extent_through_both_paths(StorageFormat::Exact).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CUDA, io_uring, libcufile and nvCOMP; run the cuFile qualification gate"]
+async fn one_ans_extent_restores_through_independent_uring_and_cufile_paths() {
+    restore_one_extent_through_both_paths(StorageFormat::Ans).await;
+}
+
+async fn restore_one_extent_through_both_paths(format: StorageFormat) {
+    use std::num::NonZeroU64;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use cudarc::driver::{CudaContext, DevicePtr, result};
+    use tokio::sync::oneshot;
+
+    use crate::backing::ssd::SsdReadPath;
+    use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
+    use crate::codec::gpu::{EncodeInput, GpuCodec};
+    use crate::storage::StorageEngine;
+    use crate::transfer::layout::KVCacheLayout;
+    use crate::transfer::worker::{GpuWorkerPool, LoadTask, TransferBlock};
+    use crate::{NumaNode, SsdBackend, SsdCacheConfig, StorageCodec, StorageConfig, TransferMode};
+
+    const BYTES: usize = 65_536;
+    const CODEC_BUDGET: usize = 64 * 1024 * 1024;
+    let ctx = CudaContext::new(0).unwrap();
+    let stream = ctx.new_stream().unwrap();
+    let expected: Vec<u8> = (0..BYTES)
+        .map(|i| if i % 7 == 0 { (i % 251) as u8 } else { 0 })
+        .collect();
+    let (payload, encoding) = if format == StorageFormat::Ans {
+        let input = stream.clone_htod(&expected).unwrap();
+        let mut codec = GpuCodec::new(&ctx).unwrap();
+        let inputs = [EncodeInput {
+            source: input.device_ptr(&stream).0,
+            bytes: BYTES,
+            format,
+        }];
+        // The input and borrowed codec output remain alive through the copy.
+        let batch = unsafe { codec.encode_batch(&stream, &inputs, CODEC_BUDGET) }.unwrap();
+        assert_eq!(batch.processed, 1);
+        let output = batch.outputs[0].as_ref().expect("real ANS encoding");
+        assert_eq!(output.meta.format, StorageFormat::Ans);
+        assert!(output.meta.stored_bytes < BYTES);
+        let snapshot = stream.alloc_zeros::<u8>(output.meta.stored_bytes).unwrap();
+        let copied = unsafe {
+            result::memcpy_dtod_async(
+                snapshot.device_ptr(&stream).0,
+                output.device,
+                output.meta.stored_bytes,
+                stream.cu_stream(),
+            )
+        };
+        stream.synchronize().unwrap();
+        copied.unwrap();
+        let payload = stream.clone_dtoh(&snapshot).unwrap();
+        output.meta.validate(&payload).unwrap();
+        (payload, Some(vec![output.meta.clone()]))
+    } else {
+        (expected.clone(), None)
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let storage = StorageEngine::new_with_config(
+        8 * 1024 * 1024,
+        false,
+        StorageConfig {
+            ssd_cache_config: Some(SsdCacheConfig {
+                cache_paths: vec![directory.path().join("shared-extent.bin")],
+                capacity_bytes: 2 * 1024 * 1024,
+                backend: SsdBackend::Cufile,
+                ..SsdCacheConfig::default()
+            }),
+            codec: if format == StorageFormat::Ans {
+                StorageCodec::Ans
+            } else {
+                StorageCodec::None
+            },
+            codec_budget: CODEC_BUDGET,
+            ..StorageConfig::default()
+        },
+        &[],
+    )
+    .unwrap();
+    let store = storage.ssd_store.as_ref().unwrap();
+    assert!(store.gpu_io.available());
+    let padded = payload.len().next_multiple_of(512);
+    let allocation = storage
+        .allocate(NonZeroU64::new(padded as u64).unwrap(), None)
+        .unwrap();
+    // This allocation is exclusively owned until its sealed block is ingested.
+    unsafe {
+        let target = std::slice::from_raw_parts_mut(allocation.as_non_null().as_ptr(), padded);
+        target.fill(0);
+        target[..payload.len()].copy_from_slice(&payload);
+    }
+    let mut raw =
+        RawBlock::single_segment(Segment::new(allocation.as_non_null(), padded, allocation));
+    raw.storage_format = format;
+    raw.encoding = encoding;
+    let sealed = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
+    let key = StateKey::new("independent-ssd-paths".into(), vec![1]);
+    store.ingest_batch([(&key, &sealed)], false);
+    store.flush().await;
+    drop(sealed);
+    drop(payload);
+    assert_eq!(storage.cleanup_memory_cache().evicted_blocks, 0);
+
+    let sources = store.pin_prefix(std::slice::from_ref(&key));
+    assert_eq!(sources.len(), 1);
+    let source = Arc::clone(&sources[0]);
+    drop(sources);
+    let generation = (
+        source.entry.shard_id,
+        source.entry.begin,
+        source.entry.file_offset,
+        source.entry.len,
+    );
+    let mut target = stream.alloc_zeros::<u8>(BYTES).unwrap();
+    let mut layout =
+        KVCacheLayout::new(target.device_ptr(&stream).0, BYTES, 1, BYTES, 0, 1).unwrap();
+    layout.storage_format = format;
+    let worker = GpuWorkerPool::new(0, NumaNode::UNKNOWN, TransferMode::Direct).unwrap();
+    // Host staging works before any cuFile operation and again after its success.
+    for (index, path) in [SsdReadPath::Uring, SsdReadPath::Cufile, SsdReadPath::Uring]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(store.gpu_io.available());
+        assert!(source.cufile_eligible(CODEC_BUDGET));
+        stream
+            .memcpy_htod(&vec![0xa5u8; BYTES], &mut target)
+            .unwrap();
+        stream.synchronize().unwrap();
+        let (completion, result) = oneshot::channel();
+        worker
+            .submit_load(LoadTask {
+                layers: vec![LayerTransferData {
+                    layer_name: "attention".into(),
+                    layout: layout.clone(),
+                    blocks: vec![TransferBlock {
+                        block_idx: 0,
+                        block: TransferPayload::Ssd {
+                            source: Arc::clone(&source),
+                            path,
+                            slot_id: 0,
+                            offset: 0,
+                        },
+                    }],
+                }],
+                completion,
+                reservations: vec![],
+                codec_budget: CODEC_BUDGET,
+            })
+            .unwrap();
+        let completed = tokio::time::timeout(Duration::from_secs(30), result).await;
+        if completed.is_err() {
+            // A test timeout must not free the target of submitted GPU work.
+            worker.drain().await.unwrap();
+        }
+        completed
+            .expect("SSD restore must terminate")
+            .unwrap()
+            .result
+            .unwrap();
+        assert!(worker.ssd_host_tx.lock().is_some());
+        assert_eq!(worker.ssd_tx.lock().is_some(), index != 0);
+        assert_eq!(stream.clone_dtoh(&target).unwrap(), expected, "{path:?}");
+        assert!(store.gpu_io.available());
+        assert!(source.cufile_eligible(CODEC_BUDGET));
+        let current = store.pin_prefix(std::slice::from_ref(&key));
+        assert_eq!(current.len(), 1);
+        assert_eq!(
+            (
+                current[0].entry.shard_id,
+                current[0].entry.begin,
+                current[0].entry.file_offset,
+                current[0].entry.len,
+            ),
+            generation
+        );
+        assert!(Arc::ptr_eq(
+            &current[0].entry.readers,
+            &source.entry.readers
+        ));
+        assert_eq!(storage.cleanup_memory_cache().evicted_blocks, 0);
+    }
+    worker.drain().await.unwrap();
+    assert_eq!(source.entry.readers.load(Ordering::Acquire), 1);
+    assert_eq!(Arc::strong_count(&source), 1);
+}

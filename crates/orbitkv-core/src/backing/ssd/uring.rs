@@ -18,14 +18,16 @@ use io_uring::{IoUring, opcode, types::Fd};
 use log::{info, warn};
 use std::io;
 use std::os::unix::io::RawFd;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use tokio::sync::oneshot;
 
 use super::SSD_ALIGNMENT;
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, resource_id};
 
 const DEFAULT_URING_THREADS: usize = 16;
+static NEXT_ENGINE: AtomicU64 = AtomicU64::new(1);
 
 /// Configuration for io_uring engine.
 #[derive(Debug, Clone)]
@@ -62,6 +64,22 @@ struct IoCtx {
     offset: u64,
     complete: oneshot::Sender<io::Result<usize>>,
     iovecs: Option<Box<[libc::iovec]>>,
+    requested_bytes: u64,
+    observation: Observation,
+}
+
+impl IoCtx {
+    fn complete(self, result: io::Result<usize>) {
+        let (outcome, actual) = match &result {
+            Ok(bytes) if *bytes as u64 == self.requested_bytes => {
+                (Outcome::Completed, Some(*bytes as u64))
+            }
+            Ok(bytes) => (Outcome::Failed, Some(*bytes as u64)),
+            Err(_) => (Outcome::Failed, None),
+        };
+        self.observation.finish(outcome, actual);
+        let _ = self.complete.send(result);
+    }
 }
 
 // SAFETY: IoCtx is created on one thread and sent to the io_uring shard thread
@@ -103,10 +121,11 @@ impl UringShard {
                         Err(mpsc::TryRecvError::Empty) => None,
                     }
                 };
-                let ctx = match next {
+                let mut ctx = match next {
                     Some(ctx) => ctx,
                     None => break,
                 };
+                ctx.observation.admitted();
 
                 let fd = Fd(ctx.fd);
                 let sqe = match ctx.io_type {
@@ -133,6 +152,9 @@ impl UringShard {
                     }
                 };
 
+                // This measures host submission through observed CQE, including
+                // SQ batching; it is not an isolated device service timer.
+                ctx.observation.submitted();
                 let data = Box::into_raw(Box::new(ctx)) as u64;
                 let sqe = sqe.user_data(data);
                 // SAFETY: The Box<IoCtx> is leaked via into_raw and recovered in the
@@ -143,6 +165,7 @@ impl UringShard {
                 if push_result.is_err() {
                     // Recover the leaked IoCtx to avoid memory leak.
                     let ctx = unsafe { Box::from_raw(data as *mut IoCtx) };
+                    ctx.observation.finish(Outcome::Failed, Some(0));
                     let _ = ctx
                         .complete
                         .send(Err(io::Error::other("submission queue full")));
@@ -170,7 +193,7 @@ impl UringShard {
                     if data != 0 {
                         // Safety: data was produced from Box::into_raw.
                         let ctx = unsafe { Box::from_raw(data as *mut IoCtx) };
-                        let _ = ctx.complete.send(Err(io::Error::other(format!(
+                        ctx.complete(Err(io::Error::other(format!(
                             "io_uring submit failed: {e}"
                         ))));
                     }
@@ -194,7 +217,7 @@ impl UringShard {
                 } else {
                     Ok(res as usize)
                 };
-                let _ = ctx.complete.send(send_res);
+                ctx.complete(send_res);
             }
             inflight = inflight.saturating_sub(completed);
         }
@@ -204,6 +227,8 @@ impl UringShard {
 /// io_uring based engine for read/write against one or more cache files.
 pub(super) struct UringIoEngine {
     fds: Vec<RawFd>,
+    resources: Vec<u64>,
+    pub(super) cost_resource: u64,
     txs: Vec<mpsc::SyncSender<IoCtx>>,
     write_shards: usize,
     next_read: AtomicUsize,
@@ -228,6 +253,23 @@ impl UringIoEngine {
                 "at least one fd is required",
             ));
         }
+
+        let incarnation = NEXT_ENGINE.fetch_add(1, Ordering::Relaxed);
+        let resources = fds
+            .iter()
+            .map(|&fd| {
+                if !crate::cost::enabled() {
+                    return 0;
+                }
+                let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+                // SAFETY: fds remain owned by SsdBackingStore through engine drain.
+                if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } != 0 {
+                    return resource_id(&(incarnation, fd));
+                }
+                let stat = unsafe { stat.assume_init() };
+                resource_id(&(incarnation, stat.st_dev, stat.st_ino))
+            })
+            .collect::<Vec<_>>();
 
         let mut txs = Vec::with_capacity(cfg.threads);
         let mut handles = Vec::with_capacity(cfg.threads);
@@ -256,8 +298,11 @@ impl UringIoEngine {
         // worker idle for a single cache file, and submit_and_wait can strand
         // a newly queued read behind an unrelated write already in flight.
         let write_shards = fds.len().min((cfg.threads / 2).max(1));
+        let cost_resource = resource_id(&resources);
         Ok(Self {
             fds,
+            resources,
+            cost_resource,
             txs,
             write_shards,
             next_read: AtomicUsize::new(0),
@@ -345,23 +390,38 @@ impl UringIoEngine {
             .collect();
 
         let iovec_count = iovecs_libc.len();
+        let requested_bytes = if crate::cost::enabled() {
+            iovecs.iter().map(|(_, len)| *len as u64).sum()
+        } else {
+            0
+        };
+        let fd = self.fd(shard_id)?;
         let (tx, rx) = oneshot::channel();
         let ctx = IoCtx {
             io_type: IoType::Readv,
-            fd: self.fd(shard_id)?,
+            fd,
             len: iovec_count,
             offset,
             complete: tx,
             iovecs: Some(iovecs_libc),
+            requested_bytes,
+            observation: Observation::new(
+                CostKey::new(
+                    CostPath::SsdRead,
+                    self.resources[shard_id],
+                    Representation::Unknown,
+                    requested_bytes,
+                    iovec_count,
+                ),
+                None,
+            ),
         };
 
         self.pick_tx(shard_id, IoType::Readv)
             .send(ctx)
             .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("io_uring readv send failed: {e}"),
-                )
+                e.0.observation.finish(Outcome::Failed, Some(0));
+                io::Error::new(io::ErrorKind::BrokenPipe, "io_uring readv queue closed")
             })?;
         Ok(rx)
     }
@@ -401,23 +461,38 @@ impl UringIoEngine {
             .collect();
 
         let iovec_count = iovecs_libc.len();
+        let requested_bytes = if crate::cost::enabled() {
+            iovecs.iter().map(|(_, len)| *len as u64).sum()
+        } else {
+            0
+        };
+        let fd = self.fd(shard_id)?;
         let (tx, rx) = oneshot::channel();
         let ctx = IoCtx {
             io_type: IoType::Writev,
-            fd: self.fd(shard_id)?,
+            fd,
             len: iovec_count, // number of iovecs
             offset,
             complete: tx,
             iovecs: Some(iovecs_libc),
+            requested_bytes,
+            observation: Observation::new(
+                CostKey::new(
+                    CostPath::SsdWrite,
+                    self.resources[shard_id],
+                    Representation::Unknown,
+                    requested_bytes,
+                    iovec_count,
+                ),
+                None,
+            ),
         };
 
         self.pick_tx(shard_id, IoType::Writev)
             .send(ctx)
             .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("io_uring writev send failed: {e}"),
-                )
+                e.0.observation.finish(Outcome::Failed, Some(0));
+                io::Error::new(io::ErrorKind::BrokenPipe, "io_uring writev queue closed")
             })?;
         Ok(rx)
     }

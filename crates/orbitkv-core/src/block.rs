@@ -41,14 +41,17 @@ pub struct QueryResult {
 #[derive(Clone)]
 pub enum RestoreSource {
     Memory(Arc<SealedBlock>),
-    Ssd(Arc<crate::backing::ssd::SsdReadLease>),
+    Ssd {
+        lease: Arc<crate::backing::ssd::SsdReadLease>,
+        path: crate::SsdReadPath,
+    },
 }
 
 impl fmt::Debug for RestoreSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(match self {
             Self::Memory(_) => "Memory",
-            Self::Ssd(_) => "Ssd",
+            Self::Ssd { .. } => "Ssd",
         })
         .field("slots", &self.slot_count())
         .field("bytes", &self.memory_footprint())
@@ -60,7 +63,7 @@ impl RestoreSource {
     pub fn memory_footprint(&self) -> u64 {
         match self {
             Self::Memory(block) => block.memory_footprint(),
-            Self::Ssd(lease) => lease
+            Self::Ssd { lease, .. } => lease
                 .entry
                 .slots
                 .iter()
@@ -72,7 +75,7 @@ impl RestoreSource {
     pub(crate) fn slot_count(&self) -> usize {
         match self {
             Self::Memory(block) => block.slots().len(),
-            Self::Ssd(lease) => lease.entry.slots.len(),
+            Self::Ssd { lease, .. } => lease.entry.slots.len(),
         }
     }
 }

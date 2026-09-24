@@ -60,3 +60,70 @@ fn ready_result_stops_at_first_missing_prefetch_key() {
     assert_eq!(result.missing, 2);
     assert_eq!(result.cache_inserts.len(), 2);
 }
+
+#[tokio::test]
+async fn shared_reads_require_the_same_ssd_prefetch_permission() {
+    use crate::{SsdBackend, SsdCacheConfig, SsdReadPath};
+
+    for (read_path, mode, existing_permission, share) in [
+        (None, QueryMode::Demand, true, true),
+        (None, QueryMode::Prepare, true, true),
+        (Some(SsdReadPath::Cufile), QueryMode::Demand, true, false),
+        (Some(SsdReadPath::Cufile), QueryMode::Prepare, false, false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::backing::new_ssd(
+            SsdCacheConfig {
+                cache_paths: vec![directory.path().join("cache.bin")],
+                capacity_bytes: 4096,
+                backend: SsdBackend::Uring,
+                read_path,
+                ..Default::default()
+            },
+            Arc::new(|_, _| None),
+            false,
+        );
+        let scheduler = PrefetchScheduler::new(Some(store), None, 0);
+        let cache = ReadCache::new(4096, false, None, None, 0);
+        let shared = Arc::new(SharedRead::new());
+        scheduler.reads.lock().insert(
+            FetchKey {
+                keys: vec![key(1)],
+                hit: 0,
+                wait_for_full_prefix: false,
+                allow_ssd_prefetch: existing_permission,
+            },
+            Arc::downgrade(&shared),
+        );
+        let (release, hold) = tokio::sync::oneshot::channel();
+        let mut initializing = Box::pin(shared.get_or_init(|| async {
+            hold.await.unwrap();
+            PrefetchTaskResult {
+                source: Some(PrefetchSource::Ssd),
+                cache_inserts: Vec::new(),
+                ready_blocks: vec![block()],
+                missing: 0,
+            }
+        }));
+        assert!(futures::poll!(initializing.as_mut()).is_pending());
+        let hashes = [vec![1]];
+        let mut read = Box::pin(scheduler.check_and_prefetch(&cache, "query", "ns", &hashes, mode));
+        if share {
+            assert!(futures::poll!(read.as_mut()).is_pending());
+            release.send(()).unwrap();
+            initializing.await;
+            let result = read.await;
+            assert_eq!(result.blocks.len(), 1);
+            assert_eq!(result.missing, 0);
+        } else {
+            let result = match futures::poll!(read.as_mut()) {
+                std::task::Poll::Ready(result) => result,
+                std::task::Poll::Pending => {
+                    panic!("different SSD permission shared a pending read: {mode:?}")
+                }
+            };
+            assert!(result.blocks.is_empty());
+            assert_eq!(result.missing, 1);
+        }
+    }
+}

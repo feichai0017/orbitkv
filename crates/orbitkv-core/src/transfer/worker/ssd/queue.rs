@@ -9,6 +9,7 @@ use crate::EngineError;
 use crate::backing::ssd::GpuWriteLease;
 use crate::backing::ssd::cufile::{CufileFile, GpuSlot, IoBatch, STAGING_SLOTS};
 use crate::codec::gpu::{DecodeError, MAX_BATCH_SEGMENTS};
+use crate::cost::{Observation, Outcome};
 use crate::metrics::core_metrics;
 
 use super::decode::{DecodeCommand, DecodeRange, DecodeReply};
@@ -58,13 +59,15 @@ struct Job {
     host_completion: Option<CudaEvent>,
     started: Instant,
     bytes: usize,
+    observation: Observation,
+    outcome: Outcome,
 }
 
 impl Job {
     fn new(id: u64, command: WorkerCommand) -> Self {
-        let task = match command {
-            WorkerCommand::Load(task) => Task::Load(task),
-            WorkerCommand::Save(task) => Task::Save(task),
+        let (task, observation) = match command {
+            WorkerCommand::Load(task, observation) => (Task::Load(task), observation),
+            WorkerCommand::Save(task, observation) => (Task::Save(task), observation),
             WorkerCommand::Drain(_) => unreachable!("drain is handled by the queue"),
         };
         let mut job = Self {
@@ -80,6 +83,8 @@ impl Job {
             host_completion: None,
             started: Instant::now(),
             bytes: 0,
+            observation,
+            outcome: Outcome::Completed,
         };
         let planned = (|| {
             match &mut job.task {
@@ -130,9 +135,18 @@ impl Job {
         if self.prepared {
             return Ok(());
         }
+        self.observation.admitted();
+        // The route estimate starts before staging/codec work and ends only
+        // at engine-visible completion, just like the io_uring host route.
+        self.observation.submitted();
         if let Task::Load(task) = &self.task {
-            self.bytes += super::super::codec::restore(runtime, &task.layers, task.codec_budget)
-                .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
+            self.bytes += super::super::codec::restore(
+                runtime,
+                &task.layers,
+                task.codec_budget,
+                &mut self.observation,
+            )
+            .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
         }
         let layers = match &self.task {
             Task::Load(task) => &task.layers,
@@ -145,6 +159,7 @@ impl Job {
                 .context()
                 .new_event(None)
                 .map_err(|error| EngineError::Storage(error.to_string()))?;
+            self.observation.submitted();
             let submitted = if self.is_write() {
                 runtime.backend.d2h(&copies, &runtime.stream)
             } else {
@@ -195,6 +210,7 @@ impl Job {
     }
 
     fn fail(&mut self, error: String) {
+        self.outcome = Outcome::Failed;
         self.error.get_or_insert(error);
         self.work.clear();
         self.encoded.clear();
@@ -206,7 +222,12 @@ impl Job {
             Task::Save(task) => task.reply.is_closed(),
         };
         if closed {
-            self.fail("GPU transfer consumer closed".into());
+            if self.error.is_none() {
+                self.outcome = Outcome::Cancelled;
+                self.error = Some("GPU transfer consumer closed".into());
+            }
+            self.work.clear();
+            self.encoded.clear();
         }
     }
 
@@ -244,6 +265,17 @@ impl Job {
             self.host_completion.is_none(),
             "host copy still owns this job"
         );
+        let consumer_closed = match &self.task {
+            Task::Load(task) => task.completion.is_closed(),
+            Task::Save(task) => task.reply.is_closed(),
+        };
+        let outcome = if self.outcome == Outcome::Completed && consumer_closed {
+            Outcome::Cancelled
+        } else {
+            self.outcome
+        };
+        // Physical cuFile bytes belong to GpuSlot; this is an inclusive job span.
+        self.observation.finish(outcome, None);
         // Drop unpublished extents before telling the caller it can reuse pages.
         drop(self.writes);
         let result = self
@@ -402,7 +434,7 @@ impl Decode {
         self.remaining = batches.len();
         for batch in batches {
             job.work.push_back(Work {
-                file: Arc::clone(self.reads[0].source.file()),
+                file: Arc::clone(self.reads[0].source.file().map_err(|e| e.to_string())?),
                 batch,
                 write: None,
                 encoded: true,
@@ -424,12 +456,11 @@ fn poll_decode(decoder: &Decoder, active: &mut Option<Decode>, jobs: &mut VecDeq
     if decode.phase != DecodePhase::Reading {
         match decoder.replies.try_recv() {
             Ok(DecodeReply::Prepared(result)) => {
-                match result.and_then(|base| {
-                    if job.error.is_some() {
-                        return Err("SSD decode canceled before submission".into());
-                    }
-                    decode.prepared(job, base)
-                }) {
+                if result.is_ok() && job.error.is_some() {
+                    job.decoding = false;
+                    return;
+                }
+                match result.and_then(|base| decode.prepared(job, base)) {
                     Ok(()) => {}
                     Err(error) => {
                         job.fail(error);
@@ -598,7 +629,9 @@ pub(in crate::transfer::worker) fn run(
                             work.file.gpu_io.failed(&error);
                         }
                         for read in &job.encoded {
-                            read.source.file().gpu_io.failed(&error);
+                            if let Ok(file) = read.source.file() {
+                                file.gpu_io.failed(&error);
+                            }
                         }
                         job.fail(error.clone());
                     }
@@ -680,6 +713,7 @@ pub(in crate::transfer::worker) fn run(
                 write: work.write,
                 encoded: work.encoded,
             };
+            job.observation.submitted();
             match slots[index].0.submit(work.file, work.batch, !reading) {
                 Ok(()) => {
                     job.inflight += 1;

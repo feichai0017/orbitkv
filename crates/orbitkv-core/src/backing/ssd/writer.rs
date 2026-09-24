@@ -1,14 +1,44 @@
 use super::{SsdBackingStore, index::Encoding, uring::UringIoEngine};
 use crate::block::{SealedBlock, StateKey};
+use crate::cost::{Observation, Outcome};
 use crate::metrics::core_metrics;
 use futures::stream::{FuturesOrdered, StreamExt};
 use log::{debug, warn};
+use std::collections::VecDeque;
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 /// Batch of sealed blocks to write to SSD
 pub(super) struct SsdWriteBatch {
     pub blocks: Vec<(StateKey, Weak<SealedBlock>)>,
+    pub observation: Observation,
+}
+
+struct WriteBatchObservation {
+    remaining: usize,
+    outcome: Outcome,
+    observation: Observation,
+}
+
+fn complete_write_batch(batches: &mut VecDeque<WriteBatchObservation>, success: bool, bytes: u64) {
+    let Some(batch) = batches.front_mut() else {
+        return;
+    };
+    batch.remaining -= 1;
+    if !success {
+        if bytes != 0 {
+            batch.outcome = Outcome::Failed;
+        } else if batch.outcome == Outcome::Completed {
+            batch.outcome = Outcome::Cancelled;
+        }
+    }
+    if batch.remaining == 0
+        && let Some(batch) = batches.pop_front()
+    {
+        // FuturesOrdered returns writes in submission order. Completion follows
+        // every ring commit; the physical io_uring owner counts actual bytes.
+        batch.observation.finish(batch.outcome, None);
+    }
 }
 
 /// Commands sent to the SSD writer task.
@@ -37,7 +67,6 @@ pub(super) async fn ssd_writer_loop(
     io: Arc<UringIoEngine>,
     write_inflight: usize,
 ) {
-    use std::collections::VecDeque;
     use std::future::Future;
     use std::pin::Pin;
 
@@ -48,6 +77,7 @@ pub(super) async fn ssd_writer_loop(
 
     let mut pending: VecDeque<WriteTask> = VecDeque::new();
     let mut inflight: FuturesOrdered<WriteFuture> = FuturesOrdered::new();
+    let mut batches: VecDeque<WriteBatchObservation> = VecDeque::new();
     let mut flush_waiters: Vec<tokio::sync::oneshot::Sender<()>> = Vec::new();
 
     loop {
@@ -78,11 +108,18 @@ pub(super) async fn ssd_writer_loop(
                     metrics.ssd_write_failures.add(1, &[]);
                     warn!("SSD cache write failed for {:?}", key);
                 }
+                complete_write_batch(&mut batches, success, block_size);
             }
 
             // Priority 2: Submit pending writes if inflight has room
             _ = std::future::ready(()), if inflight.len() < max_inflight && !pending.is_empty() => {
                 let task = pending.pop_front().unwrap();
+                // Only the newest dequeued batch can still have pending tasks.
+                // This composite starts service at worker admission; low-level
+                // submission and CQE service are measured separately by uring.
+                if let Some(batch) = batches.back_mut() {
+                    batch.observation.submitted();
+                }
                 metrics.ssd_write_inflight.add(1, &[]);
                 inflight.push_back(Box::pin(execute_write(task, store.clone(), io.clone())));
             }
@@ -90,17 +127,32 @@ pub(super) async fn ssd_writer_loop(
             // Priority 3: Receive new command
             cmd = rx.recv(), if pending.is_empty() && flush_waiters.is_empty() => {
                 match cmd {
-                    Some(SsdWriteCommand::Write(b)) => {
+                    Some(SsdWriteCommand::Write(mut b)) => {
                         // Dequeue metric
                         metrics.ssd_write_queue_pending.add(-(b.blocks.len() as i64), &[]);
+                        b.observation.admitted();
 
-                        let Some(s) = store.upgrade() else { continue };
+                        let Some(s) = store.upgrade() else {
+                            b.observation.finish(Outcome::Cancelled, None);
+                            continue;
+                        };
+                        let mut outcome = Outcome::Completed;
                         for (key, weak) in b.blocks {
                             if let Some(block) = weak.upgrade() {
                                 pending.push_back(WriteTask { key, block });
                             } else {
                                 s.inner.lock().pending_writes.remove(&key);
+                                outcome = Outcome::Cancelled;
                             }
+                        }
+                        if pending.is_empty() {
+                            b.observation.finish(Outcome::Cancelled, None);
+                        } else if crate::cost::enabled() {
+                            batches.push_back(WriteBatchObservation {
+                                remaining: pending.len(),
+                                outcome,
+                                observation: b.observation,
+                            });
                         }
                     }
                     Some(SsdWriteCommand::Flush(tx)) => {
@@ -113,7 +165,7 @@ pub(super) async fn ssd_writer_loop(
     }
 
     // Drain remaining inflight writes
-    drain_inflight(&store, metrics, &mut inflight).await;
+    drain_inflight(&store, metrics, &mut inflight, &mut batches).await;
 
     // Fire any remaining flush waiters
     for tx in flush_waiters.drain(..) {
@@ -129,6 +181,7 @@ async fn drain_inflight(
     inflight: &mut FuturesOrdered<
         std::pin::Pin<Box<dyn std::future::Future<Output = WriteResult> + Send>>,
     >,
+    batches: &mut VecDeque<WriteBatchObservation>,
 ) {
     while let Some((key, success, duration_secs, block_size)) = inflight.next().await {
         metrics.ssd_write_inflight.add(-1, &[]);
@@ -147,6 +200,7 @@ async fn drain_inflight(
             metrics.ssd_write_failures.add(1, &[]);
             warn!("SSD cache write failed for {:?}", key);
         }
+        complete_write_batch(batches, success, block_size);
     }
 }
 
@@ -208,3 +262,7 @@ async fn execute_write(
         .record(duration, &[]);
     (key, success, duration, bytes)
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/backing/ssd/writer.rs"]
+mod tests;

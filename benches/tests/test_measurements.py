@@ -9,6 +9,40 @@ from benches.metrics import cache_source, metrics, summarize
 from benches.report import collect_run
 
 
+@pytest.mark.parametrize(
+    ("configured", "expected"), [(None, "0"), ("0", "0"), ("1", "1"), ("invalid", "0")]
+)
+def test_manifest_records_effective_cost_observations_switch(
+    tmp_path, monkeypatch, configured, expected
+):
+    from benches.runtime import manifest
+
+    monkeypatch.setattr("benches.runtime.subprocess.check_output", lambda *a, **kw: "fixture")
+    monkeypatch.setattr("benches.runtime.importlib.metadata.version", lambda name: "fixture")
+    manager = tmp_path / "manager"
+    manager.write_bytes(b"fixed-manager-artifact")
+    env = {"PYTHONPATH": "python"}
+    if configured is not None:
+        env["ORBITKV_COST_OBSERVATIONS"] = configured
+    args = SimpleNamespace(
+        engine="vllm",
+        backend="orbitkv",
+        workload="serial",
+        model=tmp_path,
+        gpu_tokens=8192,
+        host_gib=1,
+        ssd_gib=0,
+        storage_codec_budget=64 * 1024**2,
+    )
+    launch = SimpleNamespace(
+        command=["vllm"],
+        manager_command=[str(manager)],
+        env=env,
+        backend_configuration={},
+    )
+    assert manifest(args, launch, 147456)["cost_observations"] == expected
+
+
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
 @pytest.mark.parametrize(
     ("device", "external", "bytes_loaded", "expected"),
@@ -90,6 +124,7 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
         ["--trace-transfers"],
         ["--cache-protected-percent", "80"],
         ["--ssd-write-policy", "reuse"],
+        ["--ssd-read-path", "uring"],
     ],
 )
 def test_non_orbitkv_runs_reject_inapplicable_controls(monkeypatch, flag):
@@ -105,11 +140,14 @@ def test_non_orbitkv_runs_reject_inapplicable_controls(monkeypatch, flag):
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
-def test_disk_prefetch_without_gpu_load_is_not_a_cache_hit(engine):
+@pytest.mark.parametrize(
+    "read_counter", ["orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"]
+)
+def test_disk_prefetch_without_gpu_load_is_not_a_cache_hit(engine, read_counter):
     sample = {
         "usage": {},
         "metrics_delta": {},
-        "manager_delta": {"orbitkv_ssd_prefetch_bytes_total": 1024},
+        "manager_delta": {read_counter: 1024},
         "length": 64,
         "phase": "after_host_eviction",
         "ttft_ms": 10,
@@ -121,6 +159,75 @@ def test_disk_prefetch_without_gpu_load_is_not_a_cache_hit(engine):
     assert result["cache_sources"] == {"miss": 1}
     assert result["ssd_reads_without_gpu_restore"] == 1
     assert result["orbitkv_ssd_read_bytes"] == 1024
+    assert result[read_counter] == 1024
+    assert (
+        result["orbitkv_ssd_prefetch_bytes_total"] + result["orbitkv_ssd_cufile_read_bytes_total"]
+        == 1024
+    )
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--ssd-read-path", "uring"],
+        ["--ssd-gib", "4", "--ssd-read-path", "cufile"],
+        [
+            "--ssd-gib",
+            "4",
+            "--ssd-backend",
+            "cufile",
+            "--ssd-read-path",
+            "uring",
+            "--gds-stats",
+            "/gds_stats",
+        ],
+    ],
+)
+def test_read_path_rejects_missing_ssd_capability_and_native_claims_for_host_reads(
+    monkeypatch, flags
+):
+    from benches.single_node import main
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["bench", "--engine", "vllm", "--backend", "orbitkv", "--model", "/missing", *flags],
+    )
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("read_path", ["uring", "cufile"])
+@pytest.mark.parametrize("preparation", ["--queue-warmup", "--prepare-requests"])
+def test_explicit_read_path_rejects_preparation_before_model_or_runtime_access(
+    monkeypatch, capsys, read_path, preparation
+):
+    from benches.single_node import main
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "bench",
+            "--engine",
+            "vllm",
+            "--backend",
+            "orbitkv",
+            "--model",
+            "/missing",
+            "--ssd-gib",
+            "4",
+            "--ssd-backend",
+            "cufile",
+            "--ssd-read-path",
+            read_path,
+            preparation,
+            "on",
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert "cannot separate demand and preparation reads" in capsys.readouterr().err
 
 
 def test_report_keeps_output_mismatches_and_rejects_partial_runs(tmp_path):

@@ -177,7 +177,7 @@ The protocol needs distinct identifiers with distinct lifetimes:
 | Node ID and runtime epoch | Identifies one registered Manager incarnation, independently of its IP |
 | Placement generation | Identifies one committed logical-shard assignment |
 | Owner stream sequence | Orders residency changes from one incarnation for one logical shard |
-| Replica generation | Distinguishes successive residency episodes for a key and tier |
+| Replica generation | Distinguishes successive residency episodes for a key and residence |
 | Transfer operation/token | Identifies pinned source data and one transfer lifetime |
 
 A candidate records StateKey, owner incarnation, tier, replica generation,
@@ -187,10 +187,57 @@ SSD evidence only after the write has completed successfully. Preparing data is
 not ready data. Candidates contain no reusable raw memory address.
 
 The owner stream is ordered per `(runtime incarnation, logical shard)`.
-Within it, the latest sequence wins for `(StateKey, tier)`; generations change
+Within it, the latest sequence wins for `(StateKey, residence)`; generations change
 on removal and recreation. Equal-version conflicting records are errors, not
 ties resolved by arrival order. Retired runtime evidence cannot supersede a new
 incarnation merely because it arrived late.
+
+### Residency, proximity and access paths
+
+The target model uses three independent dimensions: physical medium
+(`HBM`, `DRAM`, `SSD`), owner/resource location, and an executable access path.
+Local or peer proximity is derived relative to the consumer and its device.
+Remote is not a fourth medium with a fixed priority after local SSD. GDS,
+io_uring and Mooncake TE describe movement; GPU/host staging is temporary
+workspace unless explicitly admitted as a retained cache replica.
+
+| Residence | Owner and discovery contract | Access to a local consumer |
+| --- | --- | --- |
+| Engine HBM | Engine owns pages and export lifetimes; advertise only committed, exportable state with bounded metadata traffic | Existing local state or, later, authorized peer GPU transfer |
+| Manager DRAM | Manager owns sealed retained objects and registered export memory | Local CUDA copy or peer TE transfer, followed by any decode/restore |
+| Manager SSD | Manager publishes only complete writes and keeps extent generations independent of DRAM residency | Local io_uring/cuFile; peer owner prepares its own bytes before TE export |
+| Shared/mounted storage, later | Storage authority and durability need a separate deployment contract | Qualified filesystem/NVMe-oF path; not automatically a peer Manager replica |
+
+Each discoverable replica needs a residence identity within its owner, identifying
+the medium and storage/engine resource where needed. Carry compatible state and
+representation evidence, byte size and a residency generation. HBM evidence
+also needs the exporting engine instance/rank and lifetime checks. Keep raw
+addresses and transfer grants out of long-lived directory records. Current
+`ReplicaLocation` contains only owner and insertion sequence; the residence
+fields and corresponding inventory/wire changes are planned, not implemented.
+Keep the existing representation-bound StateKey until a separately qualified
+logical-to-physical format mapping exists.
+
+A key may reside in B's DRAM and SSD at the same time. Evicting its DRAM copy
+must remove only that residence, leaving the SSD candidate discoverable. Source
+SSD residency does not imply an immediately readable TE memory range: authorize
+and lease the extent, acquire bounded staging credit, prepare locally, then
+export the prepared memory. Return pending, backpressure or missing explicitly.
+Use existing transfer lifetime owners; do not add a recursively fetching
+remote cache or a second copy of the SSD storage index.
+
+Restoring a peer replica creates destination state; retaining it in destination
+DRAM or SSD is a separate admission decision. Copies may coexist and expire
+independently, with no mandatory demotion chain or implied minimum replica count.
+Prepared query buffers and P/D destinations do not become shared cache entries
+merely because a transfer finished. HBM remains engine-managed; a future
+dedicated GPU cache pool would require its own explicit capacity reservation.
+
+Discover bounded candidates, then compare local DRAM, local SSD and available
+peer residences by the cost of reaching the same required state. Use cached
+evidence first, so considering peers does not require a full-cluster lookup or
+payload read. Follow the [route eligibility contract](state-planning.md#candidate-routes-and-eligibility);
+each additional residence/path needs its own capability and qualification gate.
 
 ## Membership and shard placement
 
@@ -336,12 +383,33 @@ retry while holding destination HBM. Start with remote DRAM before this path.
 
 ## Planning and useful replication
 
+The [decision owner is the Cache Manager below the engine](state-planning.md#cache-manager-decisions-below-the-engine).
+Catalog evidence and bounded peer resource summaries give it a cluster view
+without a required request router or a full inventory copy on every node.
+The destination Manager chooses the plan; each source admits its own resources.
+Optional Dynamo integration consumes summaries later and does not own cache
+discovery or grant transfer authority.
+
+Use the same [cost observations and deployment contracts](state-planning.md#policies-by-deployment-mode)
+as local storage planning. Shared-cache DP, P/D handoff and TP/PP consumption
+have different completion targets; do not assign one policy to every operation
+on a physical node. This is a target design: today's source planner uses
+coverage and ownership checks, not calibrated latency selection.
+
 Represent a request as demand for a legal recovery boundary, with known bytes,
 query ownership and later engine-supplied priority/first-use hints. Estimate
-finish time from observed source preparation, transfer queueing, network and H2D
+finish time from observed discovery, authorization, source preparation,
+transfer queueing, Mooncake TE service and destination decode/H2D
 cost. Compare legal restore/recompute options using critical-path accounting;
 local SSD is not always cheaper than peer DRAM. The engine retains execution
 admission and HBM allocation decisions.
+
+Source-release acknowledgement and retained source byte-seconds affect resource
+availability without necessarily delaying engine readiness. Bound sender and
+receiver reservations together; never turn a wait timeout or a stale cost hint
+into permission to reuse an in-flight buffer. Measurements carry peer
+incarnation and transport context. Cached discovery does not replace source
+authorization, and etcd is not on the per-read decision path.
 
 Demand-driven remote reads may create local replicas. Admission uses reuse,
 saved recomputation/transfer work and memory pressure; one remote hit need not

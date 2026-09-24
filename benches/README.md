@@ -11,6 +11,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
 | `catalog.rs` | Rust directory cleanup microbenchmark, run through Cargo |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
+| `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
 | `shared_cache.py` | Independent-replica serving requests with remote-byte, GPU-copy, output and reservation-drain evidence |
 | `launch.py` | Engine/backend commands and matched memory budgets |
@@ -142,7 +143,9 @@ a late prefetch followed by recomputation stays visible. `ssd_prefetch_p50_ms`
 includes allocation, queueing, reads and reconstruction; `load_task_p50_ms`
 includes H2D task construction and synchronization. Histogram sums describe
 instrumented operations and are not an additive decomposition of client TTFT.
-For cuFile restores, load duration also includes SSD reads and GPU scatter.
+For cuFile restores, load duration also includes SSD reads and GPU scatter;
+the explicitly selected io_uring host lane includes SSD reads and host
+materialization before H2D or decoding. These timers overlap the SSD read timers.
 Reports count both io_uring and cuFile read bytes; sustained/burst results retain
 the individual counters. `manager-usage.json` records process CPU seconds and
 Linux I/O accounting for the complete workload, including warmup and pressure.
@@ -153,6 +156,29 @@ Linux process I/O accounting is not a measurement of GPU DMA bytes.
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
   --ssd-gib 32 --output benches/results/runs/qwen3-8b-ssd-vllm
 ```
+
+For an independent read-path control, keep cuFile initialized and direct GPU
+writes enabled while restoring through io_uring host staging:
+
+```bash
+.venv/vllm-release/bin/python -m benches.single_node \
+  --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
+  --ssd-gib 16 --host-gib 1 --gpu-tokens 8192 --prefill-tokens 4096 \
+  --lengths 1024 4096 --ssd-backend cufile --ssd-read-path uring \
+  --output benches/results/runs/vllm-cufile-uring-reads
+```
+
+Use the SGLang environment and `--engine sglang` for its matching control.
+`--ssd-read-path` defaults to unset; `uring` and `cufile` override only restores.
+Explicit-path measurements require `--queue-warmup off --prepare-requests off`,
+because aggregate read counters cannot separate demand from preparation reads.
+The manifest records `ssd_backend` and `ssd_read_path` separately from the
+`O_DIRECT` file flag. Verify positive cuFile write bytes and io_uring read bytes
+alongside GPU restores; cuFile initialization does not prove the read route.
+Use the [documented compatibility environment](../docs/gds.md#enable-and-qualify)
+for this container. A forced io_uring read is not native GDS read qualification
+and cannot use `--gds-stats`. These are reproduction commands, not new performance
+results; the existing qualification matrix is unchanged.
 
 ## Storage codec comparisons
 
@@ -490,3 +516,49 @@ other GPU workloads.
 See the [controlled client measurements](../docs/client-performance.md) for the
 baseline, final path and old-client/new-Manager control, with a link to the
 historical per-batch evidence.
+
+## Cost observation overhead
+
+Build and test native artifacts before running any serving process. The harness
+never invokes Cargo and refuses to start alongside a build or another Manager.
+It runs three off/on pairs for vLLM and SGLang in DRAM-only and pressured
+io_uring-SSD modes, plus an ANS SSD control. Every second pair reverses order;
+request seed, trace, capacity, engine release and Manager binary remain matched.
+The process startup switch is `ORBITKV_COST_OBSERVATIONS=0|1`; observations are
+off by default, and neither setting changes backend or recovery decisions.
+The default cohort has 128 requests, concurrency
+four and 1024/4096-token prefixes. DRAM capacity is 16 GiB, SSD-mode DRAM 1 GiB,
+SSD capacity 16 GiB and engine KV capacity 8192 tokens.
+
+```bash
+export ORBITKV_NVCOMP_LIBRARY=/path/to/libnvcomp.so.5
+.venv/vllm-release/bin/python -m benches.cost_observations \
+  --model /path/to/qwen3-8b \
+  --manager /absolute/path/to/prebuilt/orbitkv-cache-manager \
+  --ssd-dir /path/to/ssd-test-directory \
+  --output benches/results/runs/cost-observations
+```
+
+Predeclared budgets are 3% throughput loss, 3% TTFT p50 growth and 5% TTFT
+p95/p99 growth, assessed as medians of paired ratios. TTFT p95 must be at most
+2000 ms and response-average decode p95 at most 100 ms/token. Engine-reported
+ITL histograms also require at least 95% of samples within the exact 100 ms
+bucket boundary. Their p50/p95/p99 are bucket-interpolated estimates with bounds:
+vLLM measures engine-core token intervals; SGLang measures tokenizer receipt
+intervals, averaged over and weighted by newly received tokens. Neither uses
+HTTP chunk spacing as token timing. Aggregate ITL cannot be associated with
+individual requests, so request goodput uses TTFT and response-average decode.
+A missing GPU restore, O_DIRECT SSD read/write, required encoded work, executed
+prediction sample or raw-copy shadow sample fails the evidence gate. Exact
+concurrent output differences are reported; independent correctness gates are
+required because engine batching can affect generated text.
+
+The output directory contains the predeclared `plan.json`, raw traces under
+`runs/`, and only final aggregate JSON/CSV under `final/`. Use `--report-only`
+with identical arguments to regenerate the summary. Keep raw data untracked.
+The existing sampler scrapes Manager metrics every 25 ms. The paired delta
+includes the additional cost-series export and sampling at that frequency;
+it does not isolate observer hot-path cost. These finite cohorts measure
+instrumentation overhead on the recorded host; they do not establish a throughput ceiling, dynamic-path benefit, native GDS
+performance or distributed-cache qualification. See the final evidence in the
+[implementation handoff](../docs/implementation-plan.md#p41-final-evidence).

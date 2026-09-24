@@ -146,6 +146,7 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         "engine_command": launch.command,
         "manager_command": launch.manager_command,
         "manager_binary_sha256": manager_sha256,
+        "cost_observations": "1" if launch.env.get("ORBITKV_COST_OBSERVATIONS") == "1" else "0",
         "backend_configuration": launch.backend_configuration,
         "library_path": launch.env.get("LD_LIBRARY_PATH", ""),
         "python_path": launch.env["PYTHONPATH"],

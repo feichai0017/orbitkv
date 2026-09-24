@@ -19,6 +19,7 @@ use super::fetch_plan::{
 use super::transfer_lock_guard::{TransferCompletions, TransferLockGuard};
 use super::{AllocateFn, MooncakeTransport, PrefetchResult};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, resource_id};
 use crate::internode::CatalogClient;
 use crate::metrics::core_metrics;
 
@@ -60,10 +61,36 @@ impl SegmentFetcher for MooncakeFetchStore {
 
         // Query the OrbitKV authority before exposing any physical addresses.
         let query_start = Instant::now();
+        let resource = if crate::cost::enabled() {
+            resource_id(&segment.owner)
+        } else {
+            0
+        };
+        let mut authorization_observation = Observation::new(
+            CostKey::new(
+                CostPath::RemoteAuthorization,
+                resource,
+                Representation::Unknown,
+                0,
+                segment.records.len(),
+            ),
+            None,
+        );
+        authorization_observation.admitted();
+        authorization_observation.submitted();
         let authorization = self
             .completions
             .authorize(segment, self.membership.owner().incarnation)
             .await;
+        authorization_observation.finish(
+            match &authorization {
+                Ok(_) => Outcome::Completed,
+                Err(error) if error.code() == tonic::Code::DeadlineExceeded => Outcome::TimedOut,
+                Err(error) if error.code() == tonic::Code::Cancelled => Outcome::Cancelled,
+                Err(_) => Outcome::Failed,
+            },
+            None,
+        );
         let query_elapsed = query_start.elapsed();
         core_metrics().remote_stage_duration_seconds.record(
             query_elapsed.as_secs_f64(),
@@ -132,6 +159,7 @@ impl SegmentFetcher for MooncakeFetchStore {
             &blocks,
             transfer_timeout,
             lock_guard,
+            resource,
         )
         .await
         {
@@ -275,6 +303,10 @@ type StagedSlot = (
 type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
 
 /// Allocate local memory, execute one Mooncake READ batch, and rebuild blocks.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the peer incarnation scopes cost evidence"
+)]
 async fn fetch_blocks_via_mooncake(
     transfer: &Arc<MooncakeTransport>,
     allocate_fn: &AllocateFn,
@@ -283,6 +315,7 @@ async fn fetch_blocks_via_mooncake(
     blocks: &[TransferBlockInfo],
     transfer_timeout: Duration,
     lock_guard: TransferLockGuard,
+    resource: u64,
 ) -> Result<(PrefetchResult, TransferTiming), String> {
     if blocks.is_empty() {
         return Ok((Vec::new(), TransferTiming::default()));
@@ -388,16 +421,50 @@ async fn fetch_blocks_via_mooncake(
     };
 
     let wait_start = Instant::now();
+    let (stored_bytes, logical_bytes, representation) = if crate::cost::enabled() {
+        let (logical_bytes, representation) = transfer_shape(&block_allocs);
+        (
+            all_descs.iter().map(|slice| slice.length as u64).sum(),
+            logical_bytes,
+            representation,
+        )
+    } else {
+        (0, None, Representation::Unknown)
+    };
+    let mut observation = Observation::new(
+        CostKey::new(
+            CostPath::RemoteRead,
+            resource,
+            representation,
+            logical_bytes.unwrap_or(stored_bytes),
+            all_descs.len(),
+        ),
+        logical_bytes,
+    );
     let transfer = Arc::clone(transfer);
     let transfer_endpoint = transfer_endpoint.to_string();
     let (block_allocs, transferred) = lock_guard
         .run_with_buffers(block_allocs, move || {
-            transfer.engine().submit_and_wait(
+            observation.admitted();
+            observation.submitted();
+            let result = transfer.engine().submit_and_wait(
                 TransferOp::Read,
                 &transfer_endpoint,
                 &all_descs,
                 transfer_timeout,
-            )
+            );
+            let (outcome, actual_bytes) = match &result {
+                Ok(bytes) if *bytes as u64 == stored_bytes => {
+                    (Outcome::Completed, Some(*bytes as u64))
+                }
+                Ok(bytes) => (Outcome::Failed, Some(*bytes as u64)),
+                Err(orbitkv_transfer::TransferError::Timeout) => (Outcome::TimedOut, None),
+                Err(_) => (Outcome::Failed, None),
+            };
+            // The blocking owner outlives a cancelled caller. A timeout is only
+            // recorded after native drain and never trains completed service.
+            observation.finish(outcome, actual_bytes);
+            result
         })
         .await
         .map_err(|error| format!("Mooncake READ task failed: {error}"))?;
@@ -435,6 +502,43 @@ async fn fetch_blocks_via_mooncake(
     timing.rebuild = rebuild_start.elapsed();
 
     Ok((result, timing))
+}
+
+fn transfer_shape(blocks: &[StagedBlock]) -> (Option<u64>, Representation) {
+    let mut logical_bytes = Some(0u64);
+    let mut representation = None;
+    for (_, slots) in blocks {
+        for (segments, _, encoding) in slots {
+            match encoding {
+                Some(metadata) => {
+                    if metadata.len() != segments.len() {
+                        logical_bytes = None;
+                    }
+                    for meta in metadata {
+                        logical_bytes = logical_bytes
+                            .and_then(|bytes| bytes.checked_add(meta.logical_bytes as u64));
+                        let next = Representation::from(meta.format);
+                        representation = Some(match representation {
+                            None => next,
+                            Some(previous) if previous == next => previous,
+                            Some(_) => Representation::Mixed,
+                        });
+                    }
+                }
+                None => {
+                    logical_bytes = None;
+                    representation = Some(match representation {
+                        None | Some(Representation::Raw) => Representation::Raw,
+                        Some(_) => Representation::Mixed,
+                    });
+                }
+            }
+        }
+    }
+    (
+        logical_bytes,
+        representation.unwrap_or(Representation::Unknown),
+    )
 }
 
 /// Total staged bytes per NUMA node for one fetch batch. Used to right-size

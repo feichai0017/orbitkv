@@ -97,13 +97,20 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
                 "--ssd-cache-capacity",
                 f"{args.ssd_gib}gb",
             ]
-            backend_configuration.update(ssd_gib=args.ssd_gib, io=f"O_DIRECT/{args.ssd_backend}")
+            backend_configuration.update(
+                ssd_gib=args.ssd_gib,
+                io="O_DIRECT",
+                ssd_backend=args.ssd_backend,
+                ssd_read_path=args.ssd_read_path,
+            )
             manager_command += [
                 "--ssd-write-policy",
                 args.ssd_write_policy,
                 "--ssd-backend",
                 args.ssd_backend,
             ]
+            if args.ssd_read_path is not None:
+                manager_command += ["--ssd-read-path", args.ssd_read_path]
         manager_command += ["--cache-protected-percent", str(args.cache_protected_percent)]
         backend_configuration["cache_protected_percent"] = args.cache_protected_percent
         backend_configuration["ssd_write_policy"] = args.ssd_write_policy
