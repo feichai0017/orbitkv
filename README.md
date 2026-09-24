@@ -104,12 +104,11 @@ and coalesces adjacent reads across cached blocks within each file. Rust submits
 asynchronous I/O through two 4 MiB slots, keeping demand reads progressing
 alongside bounded GPU writeback and event-tracked host copies.
 
-Experimental [FP8 SSD storage](docs/storage-formats.md) quantizes registered BF16/FP16
-attention in Rust and reconstructs the original dtype on restore. Enable it with
-`--ssd-codec fp8`; this is lossy and independent of engine-native KV precision.
-Checkpoints and unsupported formats remain exact. Quantization is opt-in and
-uses the host SSD path. Qwen3-8B measurements show half-size encoded payloads
-and some changed generated text; qualify model quality before enabling it.
+[GPU storage encoding](docs/storage-formats.md) supports nvCOMP ANS lossless
+compression, FP8 and 3/4-bit TurboQuant. Encoded pages stay compact in DRAM,
+SSD and peer transfers; GPU restore reconstructs the engine layout. Set
+`--storage-codec ans|fp8|turboquant-4|turboquant-3` on the Manager. The default
+is exact storage; lossy modes require model-quality qualification.
 
 Keep the Manager alive, restart the engine, and repeat a multi-block prompt.
 An increase in `orbitkv_load_bytes_total` confirms an external restore.

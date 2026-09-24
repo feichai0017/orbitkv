@@ -23,7 +23,7 @@ pub use discovery::{
     BlockCandidates, CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_ENDPOINT_BYTES,
     DISCOVERY_MAX_KEYS, DISCOVERY_MAX_REPLICAS, ReplicaLocation, validate_discovery_query,
 };
-pub use format::{StateDType, StateFormat, StateLayout, StorageFormat};
+pub use format::{AttentionRole, Scalar16, StateDType, StateFormat, StateLayout, StorageFormat};
 pub use inventory::{
     CATALOG_SHARDS, INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryOperation,
     InventoryRecord, InventoryStatus, catalog_shard,

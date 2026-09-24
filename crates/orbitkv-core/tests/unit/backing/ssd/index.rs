@@ -4,18 +4,18 @@ use super::*;
 fn failed_decode_cannot_invalidate_a_repaired_or_pinned_generation() {
     let mut ring = SsdRingBuffer::new_sharded(vec![16384, 16384], 512);
     let key = make_key(1);
-    let encoding = || {
-        Encoding::Fp8V1(vec![super::super::codec::EncodedSegment {
-            format: orbitkv_state::StorageFormat::Exact,
-            bytes: 100,
-            checksum: 0,
-        }])
+    let encoding = || Encoding::Encoded;
+    let slots = || {
+        vec![SlotMeta::new(
+            smallvec::smallvec![512],
+            crate::NumaNode::UNKNOWN,
+        )]
     };
-    let first = ring.reserve(&key, vec![], encoding()).unwrap();
+    let first = ring.reserve(&key, slots(), encoding()).unwrap();
     assert!(ring.commit(&key, true));
     ring.invalidate_encoded(&key, &first);
     assert!(ring.get(&key).is_none());
-    let repaired = ring.reserve(&key, vec![], encoding()).unwrap();
+    let repaired = ring.reserve(&key, slots(), encoding()).unwrap();
     assert!(ring.commit(&key, true));
     ring.invalidate_encoded(&key, &first);
     assert!(ring.get(&key).is_some());
@@ -25,7 +25,7 @@ fn failed_decode_cannot_invalidate_a_repaired_or_pinned_generation() {
     repaired.readers.store(0, Ordering::Release);
     ring.invalidate_encoded(&key, &repaired);
     assert!(ring.get(&key).is_none());
-    let next = ring.reserve(&key, vec![], encoding()).unwrap();
+    let next = ring.reserve(&key, slots(), encoding()).unwrap();
     assert!(ring.commit(&key, true));
     assert_eq!(next.shard_id, first.shard_id);
     ring.invalidate_encoded(&key, &first);

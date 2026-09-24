@@ -1,4 +1,4 @@
-use super::{SsdBackingStore, codec::Encoding, uring::UringIoEngine};
+use super::{SsdBackingStore, index::Encoding, uring::UringIoEngine};
 use crate::block::{SealedBlock, StateKey};
 use crate::metrics::core_metrics;
 use futures::stream::{FuturesOrdered, StreamExt};
@@ -150,8 +150,7 @@ async fn drain_inflight(
     }
 }
 
-/// Encoding runs outside the ring lock and Tokio's I/O executor. Extents are
-/// reserved at their physical size, and all buffers survive I/O completion.
+/// Reserve extents at the stored size; retain sealed buffers through I/O completion.
 async fn execute_write(
     task: WriteTask,
     store: Weak<SsdBackingStore>,
@@ -162,88 +161,47 @@ async fn execute_write(
     let Some(store) = store.upgrade() else {
         return (key, false, 0.0, 0);
     };
-    let logical = task.block.memory_footprint();
-    let encoded = if let Some(codec) = &store.codec {
-        let codec = Arc::clone(codec);
-        let block = Arc::clone(&task.block);
-        let alignment = store.alignment;
-        tokio::task::spawn_blocking(move || {
-            let segments: Vec<_> = block
-                .slots()
-                .iter()
-                .flat_map(|slot| {
-                    slot.segment_iovecs()
-                        .map(move |(ptr, len)| (ptr, len, slot.storage_format))
-                })
-                .map(|(ptr, len, format)| {
-                    // SAFETY: sealed host segments have completed DMA, initialized padding,
-                    // and remain immutable under this block's ownership.
-                    (
-                        unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) },
-                        format,
-                    )
-                })
-                .collect();
-            codec.encode(&segments, alignment)
-        })
-        .await
-        .ok()
-        .flatten()
-    } else {
-        None
-    };
+    let encoded = task.block.slots().iter().any(|s| s.encoding.is_some());
     let slots = task
         .block
         .slots()
         .iter()
         .zip(task.block.slot_numas())
         .map(|(slot, numa)| {
-            crate::SlotMeta::new(
+            let mut meta = crate::SlotMeta::new(
                 slot.segment_iovecs().map(|(_, size)| size as u64).collect(),
                 *numa,
-            )
+            );
+            meta.encoding = slot.encoding.clone();
+            meta
         })
         .collect();
-    let encoding = encoded
-        .as_ref()
-        .map_or(Encoding::Raw, |(encoding, _)| encoding.clone());
+    let encoding = if encoded {
+        Encoding::Encoded
+    } else {
+        Encoding::Raw
+    };
     let entry = store.inner.lock().ring.reserve(&key, slots, encoding);
     let Some(entry) = entry else {
         return (key, false, start.elapsed().as_secs_f64(), 0);
     };
-    let bytes = encoded
-        .as_ref()
-        .map_or(logical, |(_, buffer)| buffer.len as u64);
+    let bytes = task.block.memory_footprint();
     let rx = {
-        let iovecs = match &encoded {
-            Some((_, buffer)) => vec![(buffer.ptr() as *const u8, buffer.len)],
-            None => task
-                .block
-                .slots()
-                .iter()
-                .flat_map(|slot| {
-                    slot.segment_iovecs()
-                        .map(|(ptr, len)| (ptr.as_ptr() as *const u8, len))
-                })
-                .collect(),
-        };
+        let iovecs = task
+            .block
+            .slots()
+            .iter()
+            .flat_map(|slot| {
+                slot.segment_iovecs()
+                    .map(|(ptr, len)| (ptr.as_ptr() as *const u8, len))
+            })
+            .collect();
         io.writev_at_async(entry.shard_id, iovecs, entry.file_offset)
     };
     let success = match rx {
         Ok(rx) => matches!(rx.await, Ok(Ok(written)) if written as u64 == bytes),
         Err(_) => false,
     };
-    if success && encoded.is_some() {
-        let metrics = core_metrics();
-        metrics.ssd_codec_bytes.add(
-            logical,
-            &[opentelemetry::KeyValue::new("representation", "logical")],
-        );
-        metrics.ssd_codec_bytes.add(
-            bytes,
-            &[opentelemetry::KeyValue::new("representation", "stored")],
-        );
-    }
     let duration = start.elapsed().as_secs_f64();
     core_metrics()
         .ssd_write_duration_seconds

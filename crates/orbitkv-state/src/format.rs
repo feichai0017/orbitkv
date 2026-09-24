@@ -10,6 +10,42 @@ pub enum StorageFormat {
     Exact,
     Fp8FromBf16,
     Fp8FromFp16,
+    /// Registration describes contiguous head vectors, not a storage encoding.
+    Attention {
+        scalar: Scalar16,
+        role: AttentionRole,
+        head_dim: u32,
+        layer_index: u32,
+        layer_count: u32,
+    },
+    Ans,
+    Ans16,
+    AnsFp8,
+    /// Engine-native FP8 is only transformed by a lossless policy.
+    Fp8Native,
+    TurboQuant {
+        scalar: Scalar16,
+        role: AttentionRole,
+        head_dim: u32,
+        seed: u32,
+        bits: u8,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Scalar16 {
+    Bf16,
+    Fp16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum AttentionRole {
+    Key,
+    Value,
+    /// Separate K and V segments in one registered layer.
+    KeyValue,
+    /// Contiguous [K head, V head] pairs within a single segment.
+    PackedKeyValue,
 }
 
 /// Physical scalar representation of a state component.

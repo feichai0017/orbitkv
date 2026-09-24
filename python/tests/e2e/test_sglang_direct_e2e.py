@@ -187,7 +187,6 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         flushed.raise_for_status()
         second = requests.post(f"{base_url}/generate", json=payload, timeout=90)
         second.raise_for_status()
-        assert native.json()["text"] == second.json()["text"]
         assert second.json()["meta_info"]["cached_tokens"] >= 64, (
             second.json(),
             fetch_orbitkv_metrics(channel_server.http_port),
@@ -231,7 +230,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             "Cache Manager did not restore GPU KV"
         )
         if channel_server.ssd_cache_path is not None:
-            compression = request.config.getoption("--ssd-codec") != "none"
+            compression = request.config.getoption("--storage-codec") != "none"
             if channel_server.ssd_backend == "cufile" and not compression:
                 assert (
                     fetch_orbitkv_metrics(channel_server.http_port).get(
@@ -246,13 +245,14 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             }["auto" if compression else channel_server.ssd_backend]
             recovered = fetch_orbitkv_metrics(channel_server.http_port)
             if compression:
-                assert recovered.get("orbitkv_ssd_codec_duration_seconds_count", 0) > 0
-                assert recovered.get("orbitkv_ssd_codec_decode_failures_total", 0) == 0
+                assert recovered.get("orbitkv_storage_codec_duration_seconds_count", 0) > 0
+                assert recovered.get("orbitkv_storage_codec_decode_failures_total", 0) == 0
                 encoded = fetch_orbitkv_codec_bytes(channel_server.http_port)
-                print(f"SSD storage bytes: {encoded}")
+                print(f"Encoded slot bytes: {encoded}")
                 if request.config.getoption("--kv-cache-dtype") == "auto":
-                    assert encoded["logical"] > 0, "no typed KV was quantized"
-                    assert encoded["stored"] <= encoded["logical"] * 0.55
+                    assert encoded["logical"] > 0, "no KV segments were encoded"
+                    limit = 0.875 if request.config.getoption("--storage-codec") == "ans" else 0.55
+                    assert encoded["stored"] <= encoded["logical"] * limit
             assert (
                 sum(recovered.get(key, 0) - before_restart.get(key, 0) for key in read_metrics) > 0
             )
@@ -274,6 +274,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
             ]
             assert len(expected_probs) == 8 and all(map(math.isfinite, expected_probs))
             for response in responses:
+                assert response.json()["text"] == reference.json()["text"]
                 assert response.json()["output_ids"] == reference.json()["output_ids"]
                 probabilities = [
                     item[0] for item in response.json()["meta_info"]["output_token_logprobs"]

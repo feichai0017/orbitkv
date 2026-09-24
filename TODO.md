@@ -33,14 +33,19 @@ numbers below group work areas rather than imposing a strict serial schedule.
   jobs and bounded read bursts; saturation uses host publication/io_uring.
 - [x] Verify event-tracked host copies overlap SSD submission while Publish and
   unregister retain ownership until both DMA paths complete.
-- [x] Verify optional Rust FP8 SSD storage, bounded scratch, mixed raw/encoded
+- [x] Implement GPU ANS, FP8 and 3/4-bit TurboQuant, encoded DRAM/SSD/peer payloads,
+  explicit head/K/V registration, raw fallback and CPU SIMD.
+- [x] Verify optional FP8 storage, bounded scratch, mixed raw/encoded
   prefixes, cancellation, corruption rejection/repair and raw fallback.
 - [ ] Qualify lossy storage on representative model-quality workloads; Qwen3-8B
-  halves encoded payloads but does not preserve every greedy output.
+  encoded slots shrink, but vLLM greedy-output checks still fail with TurboQuant.
 - [x] Qualify engine-native FP8 KV on Qwen3-8B in both engines; isolate external
   SGLang scale artifacts and compare against same-dtype cold controls.
-- [ ] Add measured GPU lossless codecs and lower-bit storage formats; retain
+- [ ] Extend quality and latency qualification of GPU codecs across hybrid models; retain
   exact recurrent state until model-quality and recovery gates pass.
+- [ ] Batch codec segments and reuse GPU scratch to reduce per-segment launches,
+  allocations and synchronization; compare complete-request latency under inference load.
+- [ ] Add compressed cuFile I/O; current encoded SSD objects use io_uring.
 - [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.
 - [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,

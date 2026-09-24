@@ -70,7 +70,7 @@ def fault_cache(tmp_path, monkeypatch, request):
         device_id=0,
         num_blocks=configuration.get("num_blocks", 4),
         block_size=configuration.get("block_size", 16),
-        num_layers=1,
+        num_layers=configuration.get("num_layers", 1),
         dtype=getattr(torch, configuration.get("dtype", "bfloat16")),
     )
     ctx.register_kv_caches()
@@ -130,7 +130,7 @@ def drain_ssd(server):
 @pytest.mark.parametrize(
     "fault_cache",
     [
-        {"ssd_backend": backend, "block_size": 64, "extra_args": ("--ssd-codec", "fp8")}
+        {"ssd_backend": backend, "block_size": 64, "extra_args": ("--storage-codec", "fp8")}
         for backend in ("uring", "cufile")
     ],
     indirect=True,
@@ -150,20 +150,20 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
     assert publish(client, ctx, hashes)[0]
     drain_ssd(server)
     stats = fetch_orbitkv_metrics(server.http_port)
-    assert stats["orbitkv_ssd_codec_bytes_total"] > 0
+    assert stats["orbitkv_storage_codec_bytes_total"] > 0
     assert stats["orbitkv_ssd_write_bytes_total"] < expected.numel()
 
     arm(directory, "ssd")
     pending = client.query_prefetch(ctx.instance_id, BlockHashes(hashes), "canceled-codec")
     assert isinstance(pending, QueryLoading)
     reached(directory, "ssd")
-    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_codec_scratch_bytes"] > 0
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_prefetch_inflight"] > 0
     client.cancel_query(ctx.instance_id, "canceled-codec")
-    # Canceling demand must not release scratch owned by submitted I/O.
-    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_codec_scratch_bytes"] > 0
+    # Canceling demand must not release pinned encoded pages owned by submitted I/O.
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_prefetch_inflight"] > 0
     (directory / "ssd.pause").unlink()
     until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_prefetch_inflight"] == 0)
-    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_codec_scratch_bytes"] == 0
+    assert fetch_orbitkv_metrics(server.http_port)["orbitkv_storage_codec_reserved_bytes"] == 0
     ready = query(client, ctx, hashes, "mixed-codec")
     assert ready.num_hit_blocks == 2
     restore = client.start_restore(
@@ -180,8 +180,8 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
     missing = query(client, ctx, [hashes[0]], "corrupt-codec")
     assert missing.num_hit_blocks == 0
     stats = fetch_orbitkv_metrics(server.http_port)
-    assert stats["orbitkv_ssd_codec_decode_failures_total"] > 0
-    assert stats["orbitkv_ssd_codec_scratch_bytes"] == 0
+    assert stats["orbitkv_storage_codec_decode_failures_total"] > 0
+    assert stats["orbitkv_storage_codec_reserved_bytes"] == 0
     # Recomputing the same key must replace the damaged disk generation.
     assert publish(client, ctx, [hashes[0]])[0]
     drain_ssd(server)
@@ -199,8 +199,13 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
 @pytest.mark.parametrize(
     "fault_cache",
     [
-        {"dtype": dtype, "block_size": 64, "extra_args": ("--ssd-codec", "fp8")}
+        {
+            "dtype": dtype,
+            "block_size": 64,
+            "extra_args": ("--storage-codec", "fp8", "--storage-codec-budget", budget),
+        }
         for dtype in ("bfloat16", "float16")
+        for budget in ("64mb", "4kb")
     ],
     indirect=True,
 )
@@ -261,6 +266,58 @@ def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(f
     result = client.query_prefetch(name, BlockHashes(hashes), "exact")
     assert isinstance(result, QueryReady) and result.num_hit_blocks == 0
     client.unregister_context(name)
+
+
+@pytest.mark.parametrize(
+    "fault_cache",
+    [
+        {"num_layers": 6, "block_size": 64, "extra_args": ("--storage-codec", codec)}
+        for codec in ("ans", "turboquant-4", "turboquant-3")
+    ],
+    indirect=True,
+)
+def test_gpu_codecs_restore_after_registration_and_ssd_eviction(fault_cache, request):
+    import torch
+
+    from tests.support.metrics import fetch_orbitkv_codec_bytes
+
+    server, client, ctx, _ = fault_cache
+    codec = request.node.callspec.params["fault_cache"]["extra_args"][-1]
+    originals = [tensor[:, :1].clone() for tensor in ctx.gpu_kv_caches]
+    hashes = [b"gpu-codec-roundtrip"]
+    assert client.save(
+        ctx.instance_id, 0, 0, 0, [(name, [0], hashes) for name in ctx._layer_names]
+    )[0]
+    drain_ssd(server)
+    encoded = fetch_orbitkv_codec_bytes(server.http_port)
+    assert encoded["logical"] > encoded["stored"] > 0
+    client.unregister_context(ctx.instance_id)
+    ctx._registered = False
+    ctx.register_kv_caches()
+    for tensor in ctx.gpu_kv_caches:
+        tensor[:, 2:3].fill_(-123)
+    torch.cuda.synchronize()
+    ready = query(client, ctx, hashes, "restart-codec")
+    assert ready.num_hit_blocks == 1
+    before_restore = fetch_orbitkv_metrics(server.http_port)
+    restore = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+    )
+    assert client.wait_restore(restore, timeout=10).success
+    after_restore = fetch_orbitkv_metrics(server.http_port)
+    assert after_restore["orbitkv_load_bytes_total"] - before_restore.get(
+        "orbitkv_load_bytes_total", 0
+    ) == sum(original.numel() * original.element_size() for original in originals)
+    for index, (tensor, original) in enumerate(zip(ctx.gpu_kv_caches, originals, strict=True)):
+        actual = tensor[:, 2:3]
+        if codec == "ans" or index in (0, 1, 4, 5):
+            assert torch.equal(actual.view(torch.uint8), original.view(torch.uint8))
+        else:
+            relative_error = (actual.float() - original.float()).norm() / original.float().norm()
+            assert 0 < relative_error < (0.3 if codec == "turboquant-3" else 0.18)
+            norms = actual[0].float().norm(dim=-1) / original[0].float().norm(dim=-1)
+            assert torch.allclose(norms, torch.ones_like(norms), atol=0.01, rtol=0)
+    assert after_restore["orbitkv_storage_codec_reserved_bytes"] == 0
 
 
 def test_ssd_cancellation_revisions_hold_buffers_until_io_drains(fault_cache):
@@ -613,8 +670,9 @@ def test_submitted_cufile_reads_keep_two_slots_and_leases_until_unregister(fault
     try:
         reached(directory, "cufile_read_completion")
         until(
-            lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_cufile_inflight_batches"]
-            == 2
+            lambda: (
+                fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_cufile_inflight_batches"] == 2
+            )
         )
         client.cancel_query(ctx.instance_id, "large-read")
         unregistering = pool.submit(client.unregister_context, ctx.instance_id)

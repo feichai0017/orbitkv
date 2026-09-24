@@ -21,6 +21,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         layers: vec![],
         completion: reply,
         reservations: vec![],
+        codec_budget: 64 * 1024 * 1024,
     })
     .unwrap();
     let draining = Arc::clone(&pool);
@@ -41,10 +42,11 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
             layers: vec![],
             completion: reply,
             reservations: vec![],
+            codec_budget: 64 * 1024 * 1024,
         })
         .is_err()
     );
-    assert!(pool.batch_save(vec![], vec![]).await.is_err());
+    assert!(pool.batch_save(vec![], vec![], None).await.is_err());
     load_ack.send(Ok(())).unwrap();
     tokio::task::yield_now().await;
     assert!(

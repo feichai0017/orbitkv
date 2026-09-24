@@ -18,9 +18,15 @@ that every engine/GPU combination works on every Python version; serving
 qualification currently uses Python 3.11 on H20.
 
 The wheel contains the PyO3 extension, Manager executable, Mooncake libraries,
-engine plugins, type stubs and Apache-2.0 license. The host supplies its NVIDIA
+engine plugins, type stubs, Apache-2.0 license and third-party attribution in
+`NOTICE`. The host supplies its NVIDIA
 driver and compatible PyTorch/CUDA environment. Tests, benchmarks and build
 caches are excluded from the package.
+
+GPU ANS encoding additionally needs the separately installed nvCOMP 5.3 runtime;
+it is not bundled in the wheel. FP8 and TurboQuant kernels are compiled by NVRTC
+in the Manager. All storage codecs are opt-in; see [storage formats](storage-formats.md)
+for dependencies, model-quality results and GPU workspace limits.
 
 ## Build a candidate
 

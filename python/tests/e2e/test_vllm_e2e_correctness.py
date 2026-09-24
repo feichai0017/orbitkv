@@ -221,6 +221,8 @@ class TestE2ECorrectness:
         extra_args = (
             "--cache-protected-percent",
             str(request.config.getoption("--cache-protected-percent")),
+            "--storage-codec",
+            request.config.getoption("--storage-codec"),
         )
         if request.config.getoption("--vllm-cache-tier") == "ssd":
             extra_args += (
@@ -232,8 +234,6 @@ class TestE2ECorrectness:
                 request.config.getoption("--ssd-write-policy"),
                 "--ssd-backend",
                 request.config.getoption("--ssd-backend"),
-                "--ssd-codec",
-                request.config.getoption("--ssd-codec"),
             )
         with CacheManager(
             log_file=log_dir / "orbitkv-cache-manager.log",
@@ -383,7 +383,7 @@ class TestE2ECorrectness:
                 "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
             }[
                 "auto"
-                if request.config.getoption("--ssd-codec") != "none"
+                if request.config.getoption("--storage-codec") != "none"
                 else request.config.getoption("--ssd-backend")
             ]
             assert (
@@ -394,21 +394,22 @@ class TestE2ECorrectness:
         if (
             request.config.getoption("--ssd-backend") == "cufile"
             and request.config.getoption("--vllm-cache-tier") == "ssd"
-            and request.config.getoption("--ssd-codec") == "none"
+            and request.config.getoption("--storage-codec") == "none"
         ):
             assert metrics_end.get("orbitkv_ssd_cufile_write_bytes_total", 0) > 0
 
         if (
-            request.config.getoption("--ssd-codec") == "fp8"
+            request.config.getoption("--storage-codec") != "none"
             and request.config.getoption("--vllm-cache-tier") == "ssd"
         ):
-            assert metrics_end.get("orbitkv_ssd_codec_duration_seconds_count", 0) > 0
-            assert metrics_end.get("orbitkv_ssd_codec_decode_failures_total", 0) == 0
+            assert metrics_end.get("orbitkv_storage_codec_duration_seconds_count", 0) > 0
+            assert metrics_end.get("orbitkv_storage_codec_decode_failures_total", 0) == 0
             encoded = fetch_orbitkv_codec_bytes(metrics_port)
-            print(f"SSD storage bytes: {encoded}")
+            print(f"Encoded slot bytes: {encoded}")
             if request.config.getoption("--kv-cache-dtype") == "auto":
                 assert encoded["logical"] > 0, "no typed KV was quantized"
-                assert encoded["stored"] <= encoded["logical"] * 0.55
+                limit = 0.875 if request.config.getoption("--storage-codec") == "ans" else 0.55
+                assert encoded["stored"] <= encoded["logical"] * limit
 
         print("[Phase 2] Done\n")
         return {

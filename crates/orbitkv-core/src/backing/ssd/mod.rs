@@ -6,7 +6,6 @@ use bytesize::ByteSize;
 use hashlink::LruCache;
 use log::{debug, info, warn};
 use mea::oneshot;
-use orbitkv_state::StorageFormat;
 use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
@@ -14,7 +13,6 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
 
-mod codec;
 mod config;
 pub(crate) mod cufile;
 mod files;
@@ -27,7 +25,7 @@ use super::{AllocateFn, PrefetchResult};
 pub(crate) use config::SSD_ALIGNMENT;
 pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdCodec, SsdWritePolicy,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdWritePolicy,
 };
 use cufile::CufileFile;
 use index::{SsdIndexEntry, SsdRingBuffer};
@@ -144,8 +142,6 @@ pub(crate) struct SsdBackingStore {
     _files: Vec<std::fs::File>,
     cufile_files: Vec<Arc<CufileFile>>,
     io: Arc<UringIoEngine>,
-    codec: Option<Arc<codec::Codec>>,
-    alignment: usize,
     write_tx: tokio::sync::mpsc::Sender<SsdWriteCommand>,
     write_policy: SsdWritePolicy,
     prefetch_tx: tokio::sync::mpsc::Sender<PrefetchBatch>,
@@ -155,20 +151,12 @@ pub(crate) struct SsdBackingStore {
 }
 
 impl SsdBackingStore {
-    pub(crate) fn storage_format(&self, requested: StorageFormat) -> StorageFormat {
-        if self.codec.is_some() {
-            requested
-        } else {
-            StorageFormat::Exact
-        }
-    }
-
     pub(crate) fn reserve_gpu(
         self: &Arc<Self>,
         key: StateKey,
         slots: Vec<crate::SlotMeta>,
     ) -> Option<GpuWriteLease> {
-        if !self.gpu_io.available() || self.codec.is_some() {
+        if !self.gpu_io.available() {
             return None;
         }
         let mut inner = self.inner.lock();
@@ -181,7 +169,7 @@ impl SsdBackingStore {
         {
             return None;
         }
-        let entry = inner.ring.reserve(&key, slots, codec::Encoding::Raw)?;
+        let entry = inner.ring.reserve(&key, slots, index::Encoding::Raw)?;
         inner.pending_writes.insert(key.clone());
         core_metrics().ssd_write_inflight.add(1, &[]);
         Some(GpuWriteLease {
@@ -199,11 +187,6 @@ impl SsdBackingStore {
         use std::fs::OpenOptions;
         use std::os::unix::io::AsRawFd;
 
-        let codec = if config.codec == SsdCodec::Fp8 {
-            Some(Arc::new(codec::Codec::new(config.codec_budget)?))
-        } else {
-            None
-        };
         let shards_per_path = config.shards.get();
         let total_shards = config.cache_paths.len() * shards_per_path;
         let try_gpu = config.backend != SsdBackend::Uring
@@ -289,8 +272,6 @@ impl SsdBackingStore {
 
         let store = Arc::new(Self {
             gpu_io,
-            codec,
-            alignment: ring_alignment,
             _files: files,
             cufile_files,
             io: Arc::clone(&io),
@@ -333,7 +314,7 @@ impl SsdBackingStore {
         if keys
             .iter()
             .map_while(|key| inner.ring.get(key))
-            .any(|entry| !matches!(entry.encoding, codec::Encoding::Raw))
+            .any(|entry| !matches!(entry.encoding, index::Encoding::Raw))
         {
             return None;
         }

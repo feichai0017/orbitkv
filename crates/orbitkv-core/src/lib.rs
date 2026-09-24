@@ -6,6 +6,8 @@ pub mod test_faults;
 
 #[macro_use]
 mod trace;
+mod codec;
+pub use codec::StorageCodec;
 mod backing;
 mod block;
 mod engine;
@@ -19,7 +21,7 @@ pub mod transfer;
 pub use backing::ssd::SsdReadLease;
 pub use backing::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
-    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdCodec, SsdWritePolicy,
+    DEFAULT_SSD_WRITE_QUEUE_DEPTH, SsdBackend, SsdCacheConfig, SsdWritePolicy,
 };
 pub use block::{
     BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, RestoreSource, SealedBlock, StateKey,

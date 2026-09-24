@@ -145,7 +145,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             (values + layer * 13) % 4096 / 256 - 8
         ).to(torch.bfloat16)
         original = tensor[page_size : page_size * (page_count + 1)].clone()
-        if channel_server.ssd_cache_path and request.config.getoption("--ssd-codec") == "fp8":
+        if channel_server.ssd_cache_path and request.config.getoption("--storage-codec") == "fp8":
             original = original.to(torch.float8_e4m3fn).to(original.dtype)
         expected.append(original)
     torch.cuda.synchronize()

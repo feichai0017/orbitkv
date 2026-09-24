@@ -56,6 +56,7 @@ message RegisterContextRequest {
   // Typed attention regions eligible for storage quantization: bf16, fp16,
   // or exact for checkpoints/opaque layouts. Validated against imported tensors.
   repeated string layer_formats = 20;
+  repeated AttentionStorageLayout layer_attention = 21;
 }
 
 message UnregisterRequest {
@@ -77,12 +78,21 @@ message SessionRequest {
   uint32 world_size  = 4;
 }
 
+// Contiguous scalar head vectors; head_dim=0 means opaque/unavailable.
+message AttentionStorageLayout {
+  uint32 head_dim = 1;
+  string role = 2; // k, v, kv (separate segments), or packed_kv (contiguous head pairs)
+  uint32 layer_index = 3;
+  uint32 layer_count = 4;
+}
+
 // Cross-node transfer: authorized Mooncake-visible ranges.
 message TransferSlotInfo {
   uint64 k_ptr = 1;      // Mooncake target address for K segment
   uint64 k_size = 2;     // Size of the K segment in bytes (per-segment, not total slot size)
   uint64 v_ptr = 3;      // Mooncake target address for V segment (0 if contiguous)
   uint64 v_size = 4;     // Size of the V segment in bytes (0 if contiguous)
+  bytes encoding = 6; // Versioned storage representation, empty for raw slots
   uint32 numa_node = 5;  // NUMA node where this slot's memory resides (for RDMA NIC affinity)
 }
 

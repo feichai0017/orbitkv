@@ -2099,6 +2099,8 @@ dependencies = [
  "orbitkv-transfer",
  "parking_lot",
  "rand 0.10.3",
+ "serde",
+ "serde_json",
  "smallvec",
  "tempfile",
  "tokio",

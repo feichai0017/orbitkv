@@ -459,6 +459,21 @@ impl OrbitKVEngine {
             for ctx in &mut layer_contexts {
                 let layout = &ctx.layout;
                 let num_blocks = ctx.blocks_to_save.len();
+                if self.storage.codec != crate::StorageCodec::None {
+                    gpu_save_layers.push(LayerTransferData {
+                        layer_name: ctx.layer_name.clone(),
+                        layout: layout.clone(),
+                        blocks: ctx
+                            .blocks_to_save
+                            .iter()
+                            .map(|(block_idx, _)| TransferBlock {
+                                block_idx: *block_idx,
+                                block: TransferPayload::Pending,
+                            })
+                            .collect(),
+                    });
+                    continue;
+                }
 
                 // Blockwise: allocate once per block; Batch: allocate once for all blocks
                 let alloc_count = if blockwise { num_blocks } else { 1 };
@@ -567,23 +582,29 @@ impl OrbitKVEngine {
         }
         trace_drop!(_s);
 
-        // ── Phase 3: Submit all GPU copies as one batch task (single sync) ──
+        // ── Phase 3: Submit GPU encoding/copies while retaining source ownership ──
 
         let ssd_writes = match &self.storage.ssd_store {
-            Some(store) if store.gpu_io.available() => prepare_gpu_writes(
-                store,
-                &namespace,
-                &topology,
-                &layer_contexts,
-                save_numa_node,
-            )?,
+            Some(store)
+                if store.gpu_io.available() && self.storage.codec == crate::StorageCodec::None =>
+            {
+                prepare_gpu_writes(
+                    store,
+                    &namespace,
+                    &topology,
+                    &layer_contexts,
+                    save_numa_node,
+                )?
+            }
             _ => Vec::new(),
         };
         let returned_layers = trace_future!(
             "save.gpu_copy",
-            gpu_context
-                .worker_pool()
-                .batch_save(gpu_save_layers, ssd_writes)
+            gpu_context.worker_pool().batch_save(
+                gpu_save_layers,
+                ssd_writes,
+                Some(Arc::clone(&self.storage))
+            )
         )
         .await?;
 
@@ -598,7 +619,9 @@ impl OrbitKVEngine {
                     .into_iter()
                     .map(|transfer_block| match transfer_block.block {
                         TransferPayload::Owned(block) => block,
-                        TransferPayload::Cached { .. } | TransferPayload::Ssd { .. } => {
+                        TransferPayload::Pending
+                        | TransferPayload::Cached { .. }
+                        | TransferPayload::Ssd { .. } => {
                             panic!("save path must return TransferPayload::Owned blocks")
                         }
                     })

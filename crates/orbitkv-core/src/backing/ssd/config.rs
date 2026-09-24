@@ -63,25 +63,6 @@ impl std::str::FromStr for SsdWritePolicy {
     }
 }
 
-/// SSD storage representation; engine-native KV precision is independent.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum SsdCodec {
-    #[default]
-    None,
-    Fp8,
-}
-
-impl std::str::FromStr for SsdCodec {
-    type Err = String;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "none" => Ok(Self::None),
-            "fp8" => Ok(Self::Fp8),
-            _ => Err("SSD codec must be none or fp8".into()),
-        }
-    }
-}
-
 /// Configuration for the SSD cache (logical ring).
 ///
 /// Supports one or more cache directories. When multiple paths are provided,
@@ -107,9 +88,6 @@ pub struct SsdCacheConfig {
     /// Max concurrent block prefetches.
     pub prefetch_inflight: usize,
     pub backend: SsdBackend,
-    pub codec: SsdCodec,
-    /// Temporary encoded buffers, independent of the pinned cache pool.
-    pub codec_budget: usize,
 }
 
 impl Default for SsdCacheConfig {
@@ -124,8 +102,6 @@ impl Default for SsdCacheConfig {
             write_inflight: DEFAULT_SSD_WRITE_INFLIGHT,
             prefetch_inflight: DEFAULT_SSD_PREFETCH_INFLIGHT,
             backend: SsdBackend::Auto,
-            codec: SsdCodec::None,
-            codec_budget: 64 * 1024 * 1024,
         }
     }
 }

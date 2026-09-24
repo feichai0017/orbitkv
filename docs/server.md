@@ -60,10 +60,11 @@ service to deploy. See [deployment examples](deployment.md#configure-capacity-th
   fixed GPU limits are separate from the io_uring queue/inflight flags below.
   The process channel admits up to 64 client ports; each cache client uses a
   control port and, after its first save, a separate Publish port.
-- `--ssd-codec`: `none` (default) or lossy Rust `fp8` for typed attention. Quantization uses host
-  writes; raw fallback objects retain cuFile read eligibility. See [storage formats](storage-formats.md).
-- `--ssd-codec-budget`: temporary encoded host buffers, separate from pinned pool capacity
-  (default `64mb`, range 4 KiB to 4 GiB minus one). Buffers stay charged through I/O and decode.
+- `--storage-codec`: `none` (default), GPU `ans`, lossy `fp8`, `turboquant-4` or
+  `turboquant-3`. Applies to DRAM, SSD and peer payloads; see [storage formats](storage-formats.md).
+- `--storage-codec-budget`: GPU workspace per active transfer worker (default 64 MB),
+  separate from encoded pinned residency. ANS needs nvCOMP 5.3; FP8 has an AVX2 CPU fallback.
+
 - `--ssd-prefetch-queue-depth`: SSD prefetch queue depth, max pending prefetch batches (default: `2`)
 - `--ssd-write-inflight`: SSD write inflight, max concurrent block writes (default: `2`)
 - `--ssd-prefetch-inflight`: SSD prefetch inflight, max concurrent block reads (default: `16`)

@@ -1,4 +1,3 @@
-use super::codec::Encoding;
 use crate::SlotMeta;
 use crate::block::StateKey;
 use crate::metrics::core_metrics;
@@ -7,6 +6,12 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[derive(Clone)]
+pub(crate) enum Encoding {
+    Raw,
+    Encoded,
+}
+
 /// Metadata for a block stored in SSD cache
 #[derive(Clone)]
 pub(crate) struct SsdIndexEntry {
@@ -14,7 +19,7 @@ pub(crate) struct SsdIndexEntry {
     pub shard_id: usize,
     /// Logical offset in the ring buffer (monotonically increasing)
     pub begin: u64,
-    /// Aligned physical extent size; slot sizes describe the logical payload
+    /// Aligned physical extent size; slot sizes describe the stored payload
     pub len: u64,
     /// Physical file offset for IO
     pub file_offset: u64,
@@ -101,7 +106,7 @@ impl SsdRingBuffer {
     pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) {
         if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry))
             if entry.shard_id == failed.shard_id && entry.begin == failed.begin
-                && matches!(entry.encoding, Encoding::Fp8V1(_))
+                && matches!(entry.encoding, Encoding::Encoded)
                 && entry.readers.load(Ordering::Acquire) == 0)
         {
             self.entries.remove(key);
@@ -230,14 +235,9 @@ impl SsdRingBuffer {
         if self.entries.contains_key(key) {
             return None;
         }
-        let payload = match &encoding {
-            Encoding::Raw => slots
-                .iter()
-                .try_fold(0u64, |sum, slot| sum.checked_add(slot.total_size()))?,
-            Encoding::Fp8V1(segments) => segments
-                .iter()
-                .try_fold(0u64, |sum, segment| sum.checked_add(segment.bytes as u64))?,
-        };
+        let payload = slots
+            .iter()
+            .try_fold(0u64, |sum, slot| sum.checked_add(slot.total_size()))?;
         let size = payload.checked_next_multiple_of(self.alignment)?;
         let available = (0..self.shards.len()).find_map(|offset| {
             let shard_id = (self.next_shard + offset) % self.shards.len();

@@ -1,0 +1,14 @@
+OrbitKV GPU TurboQuant implementation
+
+The TurboQuant kernels and codebook construction in
+crates/orbitkv-core/src/codec/ are adapted from the Apache-2.0 LMCache
+TurboQuant serde at commit 05a013b29da78cf2321b9b46ec5039dde2fb0bb0:
+https://github.com/LMCache/LMCache/tree/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/serde/turboquant
+
+Copyright contributors to the vLLM project.
+
+OrbitKV changes include CUDA kernels controlled from Rust, its own versioned
+random-sign generator and wire layout, per-segment validation, and integration
+with leased DRAM, SSD and peer cache storage. The Apache-2.0 license is provided
+in LICENSE. NVIDIA nvCOMP is an optional separately installed dependency;
+its headers and binaries are not redistributed in this package.

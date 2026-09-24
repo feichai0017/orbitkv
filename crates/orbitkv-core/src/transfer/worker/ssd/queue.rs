@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::EngineError;
 use crate::backing::ssd::GpuWriteLease;
 use crate::backing::ssd::cufile::{CufileFile, GpuSlot, IoBatch, STAGING_SLOTS};
+use crate::metrics::core_metrics;
 use crate::transfer::finish_gpu_transfer;
 
 use super::super::{
@@ -116,6 +117,10 @@ impl Job {
     fn prepare(&mut self, runtime: &WorkerRuntime) -> Result<(), EngineError> {
         if self.prepared {
             return Ok(());
+        }
+        if let Task::Load(task) = &self.task {
+            self.bytes += super::super::codec::restore(runtime, &task.layers, task.codec_budget)
+                .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
         }
         let layers = match &self.task {
             Task::Load(task) => &task.layers,

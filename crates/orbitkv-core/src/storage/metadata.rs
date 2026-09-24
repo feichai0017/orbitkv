@@ -20,6 +20,7 @@ pub struct SlotMeta {
     pub total_size: u64,
     /// NUMA node affinity for this slot's GPU.
     pub numa_node: NumaNode,
+    pub(crate) encoding: Option<Vec<crate::codec::EncodedSegment>>,
 }
 
 impl SlotMeta {
@@ -30,6 +31,7 @@ impl SlotMeta {
             segment_sizes,
             total_size,
             numa_node,
+            encoding: None,
         }
     }
 

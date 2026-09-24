@@ -15,6 +15,7 @@ use crate::metrics::core_metrics;
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
 
+mod codec;
 pub(crate) mod ssd;
 use ssd::GpuWrite;
 
@@ -23,6 +24,7 @@ pub(crate) struct LoadTask {
     pub layers: Vec<LayerTransferData>,
     pub completion: oneshot::Sender<LoadOutcome>,
     pub reservations: Vec<crate::QueryReservation>,
+    pub codec_budget: usize,
 }
 
 /// Terminal GPU transfer evidence, timestamped before notifying the dispatcher.
@@ -44,6 +46,8 @@ pub(crate) struct LayerTransferData {
 pub(crate) enum TransferPayload {
     /// Save path: uniquely owned, moved through the GPU worker and returned.
     Owned(RawBlock),
+    /// Codec saves allocate host residency after the GPU reports its encoded size.
+    Pending,
     Ssd {
         source: Arc<crate::SsdReadLease>,
         slot_id: usize,
@@ -63,6 +67,7 @@ pub(crate) enum TransferPayload {
 impl TransferPayload {
     pub(crate) fn raw(&self) -> &RawBlock {
         match self {
+            Self::Pending => unreachable!("unallocated save"),
             Self::Ssd { .. } => unreachable!("SSD sources do not own host memory"),
             Self::Owned(block) => block,
             Self::Cached {
@@ -77,7 +82,7 @@ impl TransferPayload {
     fn host_offset(&self) -> usize {
         match self {
             Self::Ssd { offset, .. } => *offset,
-            Self::Owned(_) => 0,
+            Self::Owned(_) | Self::Pending => 0,
             Self::Cached { offset, .. } => *offset,
         }
     }
@@ -91,12 +96,14 @@ pub(crate) struct TransferBlock {
 }
 
 /// A task to save KV blocks from GPU to CPU for multiple layers.
-/// Caller pre-allocates the host blocks, worker does the GPU->CPU copy.
-/// All layers are copied on the same CUDA stream with a single synchronization.
+/// Raw saves own preallocated buffers; encoded saves allocate after GPU encoding.
+/// The worker retains source mappings and destinations through transfer completion.
 pub(crate) struct SaveTask {
     pub layers: Vec<LayerTransferData>,
     pub reply: oneshot::Sender<Result<Vec<LayerTransferData>, EngineError>>,
     pub ssd_writes: Vec<GpuWrite>,
+    pub storage: Option<Arc<crate::storage::StorageEngine>>,
+    pub numa: NumaNode,
     pub ssd_admission: Option<OwnedSemaphorePermit>,
     #[cfg(feature = "tracing")]
     pub trace_ctx: Option<::fastrace::prelude::SpanContext>,
@@ -187,6 +194,7 @@ impl GpuWorkerPool {
         &self,
         layers: Vec<LayerTransferData>,
         mut ssd_writes: Vec<GpuWrite>,
+        storage: Option<Arc<crate::storage::StorageEngine>>,
     ) -> Result<Vec<LayerTransferData>, EngineError> {
         let (reply, receiver) = oneshot::channel();
         let ssd_admission = if ssd_writes.is_empty() {
@@ -210,6 +218,8 @@ impl GpuWorkerPool {
                 reply,
                 ssd_writes,
                 ssd_admission,
+                storage,
+                numa: self.numa_node,
                 #[cfg(feature = "tracing")]
                 trace_ctx: ::fastrace::prelude::SpanContext::current_local_parent(),
             }),
@@ -294,6 +304,7 @@ fn spawn_worker(
 struct WorkerRuntime {
     stream: Arc<CudaStream>,
     backend: Box<dyn TransferBackend>,
+    codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
 }
 
 fn build_backend(
@@ -329,7 +340,11 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
         backend.name()
     );
 
-    Ok(WorkerRuntime { stream, backend })
+    Ok(WorkerRuntime {
+        stream,
+        backend,
+        codec: Default::default(),
+    })
 }
 
 fn worker_loop(
@@ -350,32 +365,47 @@ fn worker_loop(
             WorkerCommand::Load(task) => {
                 let started = Instant::now();
                 let result = (|| {
+                    let decoded_bytes = codec::restore(&runtime, &task.layers, task.codec_budget)
+                        .inspect_err(|_| {
+                        core_metrics().storage_codec_decode_failures.add(1, &[]);
+                    })?;
                     let (copies, bytes) = build_copy_descs(&task.layers)?;
                     finish_gpu_transfer(
                         &runtime.stream,
                         runtime.backend.h2d(&copies, &runtime.stream),
                     )?;
-                    Ok(bytes)
+                    Ok(bytes + decoded_bytes)
                 })();
                 let bytes = result.as_ref().copied().unwrap_or(0);
                 finish_load(task, result.map(|_| ()), started, bytes);
             }
             WorkerCommand::Save(SaveTask {
-                layers,
+                mut layers,
                 reply,
+                storage,
+                numa,
                 ssd_writes: _,
                 ssd_admission: _,
                 #[cfg(feature = "tracing")]
                 trace_ctx,
             }) => {
-                let result = process_save_task(
-                    &layers,
-                    &runtime.stream,
-                    runtime.backend.as_ref(),
-                    #[cfg(feature = "tracing")]
-                    trace_ctx,
-                )
-                .map(|()| layers);
+                let encoded = storage
+                    .as_ref()
+                    .is_some_and(|s| s.codec != crate::StorageCodec::None);
+                let result = codec::save(&runtime, &mut layers, storage.as_deref(), numa)
+                    .and_then(|()| {
+                        if encoded {
+                            return Ok(());
+                        }
+                        process_save_task(
+                            &layers,
+                            &runtime.stream,
+                            runtime.backend.as_ref(),
+                            #[cfg(feature = "tracing")]
+                            trace_ctx,
+                        )
+                    })
+                    .map(|()| layers);
                 let _ = reply.send(result);
             }
         }
@@ -398,6 +428,9 @@ fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usiz
 
         for block in &layer.blocks {
             if matches!(block.block, TransferPayload::Ssd { .. }) {
+                continue;
+            }
+            if block.block.raw().encoding.is_some() {
                 continue;
             }
             let block_copies = layer

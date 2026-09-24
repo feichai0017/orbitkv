@@ -341,18 +341,10 @@ impl OrbitKVEngine {
             )
             .map_err(|e| EngineError::InvalidArgument(format!("layer {layer_name}: {e}")))?;
 
-            if let Some(store) = &self.storage.ssd_store {
-                layout.storage_format = store.storage_format(
-                    storage_formats.map_or(Default::default(), |formats| formats[i]),
-                );
-                if layout.storage_format != orbitkv_state::StorageFormat::Exact
-                    && !bytes_per_block_list[i].is_multiple_of(2)
-                {
-                    return Err(EngineError::InvalidArgument(format!(
-                        "layer {layer_name} has a partial 16-bit element"
-                    )));
-                }
-            }
+            layout.storage_format = self
+                .storage
+                .codec
+                .format(storage_formats.map_or(Default::default(), |formats| formats[i]));
 
             if let Some(strides) = block_stride_bytes_list {
                 layout = layout.with_block_stride(strides[i]).map_err(|e| {
@@ -388,6 +380,7 @@ impl OrbitKVEngine {
         };
 
         // Get or create instance
+        let page_first = page_first && self.storage.codec == crate::StorageCodec::None;
         let instance =
             self.get_or_create_instance(instance_id, namespace, tp_size, world_size, page_first)?;
 

@@ -266,7 +266,11 @@ impl MooncakeFetchStore {
 
 /// One fetched slot: its Mooncake-staged segments plus the NUMA node they sit on.
 /// The NUMA travels with the slot so a re-served block advertises real topology.
-type StagedSlot = (Vec<SegmentAlloc>, NumaNode);
+type StagedSlot = (
+    Vec<SegmentAlloc>,
+    NumaNode,
+    Option<Vec<crate::codec::EncodedSegment>>,
+);
 /// A staged block awaiting SealedBlock rebuild: its hash and per-slot allocations.
 type StagedBlock = (Vec<u8>, Vec<StagedSlot>);
 
@@ -344,7 +348,18 @@ async fn fetch_blocks_via_mooncake(
                     });
                 }
 
-                slot_allocs.push((segments, numa));
+                let encoding = if slot.encoding.is_empty() {
+                    None
+                } else {
+                    if slot.encoding.len() > 4096 {
+                        return Err("remote codec metadata too large".into());
+                    }
+                    Some(
+                        serde_json::from_slice(&slot.encoding)
+                            .map_err(|e| format!("remote codec metadata: {e}"))?,
+                    )
+                };
+                slot_allocs.push((segments, numa, encoding));
             }
 
             block_allocs.push((block_info.block_hash.clone(), slot_allocs));
@@ -396,7 +411,7 @@ async fn fetch_blocks_via_mooncake(
         let key = StateKey::new(namespace.to_string(), hash);
         let slots: Vec<(RawBlock, NumaNode)> = slot_allocs
             .into_iter()
-            .map(|(segs, numa)| {
+            .map(|(segs, numa, encoding)| {
                 let segments: Vec<Segment> = segs
                     .into_iter()
                     .map(|sa| {
@@ -405,9 +420,15 @@ async fn fetch_blocks_via_mooncake(
                         Segment::new(ptr, sa.size, sa.alloc)
                     })
                     .collect();
-                (RawBlock::new(segments), numa)
+                let mut raw = RawBlock::new(segments);
+                raw.encoding = encoding;
+                (raw, numa)
             })
             .collect();
+        for (slot, _) in &slots {
+            slot.validate_encoding()
+                .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
+        }
         let sealed = Arc::new(SealedBlock::from_slots(slots));
         result.push((key, sealed));
     }

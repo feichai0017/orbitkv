@@ -139,6 +139,11 @@ impl P2pTransferService {
             v_ptr: layer_block.v_ptr().map(|p| p as u64).unwrap_or(0),
             v_size: layer_block.v_size().unwrap_or(0) as u64,
             numa_node: numa_node.0,
+            encoding: raw_block
+                .encoding
+                .as_ref()
+                .map(|meta| serde_json::to_vec(meta).expect("serializable codec metadata"))
+                .unwrap_or_default(),
         }
     }
 }

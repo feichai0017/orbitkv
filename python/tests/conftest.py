@@ -147,7 +147,11 @@ def pytest_addoption(parser):
         default="auto",
         help="Engine-native KV precision for both recovery and cold control",
     )
-    parser.addoption("--ssd-codec", choices=("none", "fp8"), default="none")
+    parser.addoption(
+        "--storage-codec",
+        choices=("none", "ans", "fp8", "turboquant-4", "turboquant-3"),
+        default="none",
+    )
     parser.addoption(
         "--ssd-backend",
         choices=("auto", "uring", "cufile"),
@@ -190,7 +194,7 @@ def channel_server(request, tmp_path):
             "--ssd-write-policy",
             request.config.getoption("--ssd-write-policy"),
         )
-        + (("--ssd-codec", request.config.getoption("--ssd-codec")) if mode == "ssd" else ()),
+        + ("--storage-codec", request.config.getoption("--storage-codec")),
     )
 
     if not server._binary_path:

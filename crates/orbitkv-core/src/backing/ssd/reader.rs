@@ -1,9 +1,4 @@
-use super::{
-    SsdBackingStore,
-    codec::{self, Encoding},
-    index::SsdIndexEntry,
-    uring::UringIoEngine,
-};
+use super::{SsdBackingStore, index::SsdIndexEntry, uring::UringIoEngine};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::metrics::core_metrics;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -152,7 +147,9 @@ async fn dispatch_prefetch_batch(
                     allocation,
                 ));
             }
-            slots.push(RawBlock::new(segments));
+            let mut raw = RawBlock::new(segments);
+            raw.encoding = meta.encoding.clone();
+            slots.push(raw);
         }
         block_slots.push(slots);
     }
@@ -279,34 +276,16 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
         .sum();
     let ctx = task.ctx;
 
-    let mut encoded = match &task.entry.encoding {
-        Encoding::Raw => None,
-        Encoding::Fp8V1(_) => {
-            let buffer = match &task.store.codec {
-                Some(codec) => codec.read_buffer(task.entry.len as usize).await.ok(),
-                None => None,
-            };
-            let Some(buffer) = buffer else {
-                return (key, task.entry, None, duration_secs(), block_size, ctx);
-            };
-            Some(buffer)
-        }
-    };
-    let expected_len = encoded
-        .as_ref()
-        .map_or(block_size as usize, |buffer| buffer.len);
+    let expected_len = block_size as usize;
     let read_result = {
-        let iovecs = match &encoded {
-            Some(buffer) => vec![(buffer.ptr(), buffer.len)],
-            None => task
-                .slots
-                .iter()
-                .flat_map(|slot| {
-                    slot.segment_iovecs()
-                        .map(|(ptr, size)| (ptr.as_ptr(), size))
-                })
-                .collect(),
-        };
+        let iovecs = task
+            .slots
+            .iter()
+            .flat_map(|slot| {
+                slot.segment_iovecs()
+                    .map(|(ptr, size)| (ptr.as_ptr(), size))
+            })
+            .collect();
         io.readv_at_async(task.entry.shard_id, iovecs, task.entry.file_offset)
     };
 
@@ -320,38 +299,19 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
     let slots = if !read_ok {
         warn!("SSD prefetch: failed or short read for {key:?}");
         None
-    } else if let Some(mut buffer) = encoded.take() {
-        let encoding = task.entry.encoding.clone();
-        let slots = task.slots;
-        let decoded = tokio::task::spawn_blocking(move || {
-            let mut segments: Vec<_> = slots
-                .iter()
-                .flat_map(|slot| slot.segment_iovecs())
-                .map(|(ptr, len)| {
-                    // SAFETY: fresh, disjoint allocations belong only to this job.
-                    unsafe {
-                        ptr.as_ptr().write_bytes(0, len);
-                        std::slice::from_raw_parts_mut(ptr.as_ptr(), len)
-                    }
-                })
-                .collect();
-            codec::decode(&encoding, &mut buffer, &mut segments)?;
-            Ok::<_, std::io::Error>(slots)
-        })
-        .await;
-        match decoded {
-            Ok(Ok(slots)) => Some(slots),
-            Ok(Err(error)) => {
-                task.store
-                    .inner
-                    .lock()
-                    .ring
-                    .invalidate_encoded(&key, &task.entry);
-                warn!("SSD prefetch: invalid encoded object {key:?}: {error}");
-                None
-            }
-            Err(_) => None,
-        }
+    } else if task
+        .slots
+        .iter()
+        .any(|slot| slot.validate_encoding().is_err())
+    {
+        core_metrics().storage_codec_decode_failures.add(1, &[]);
+        task.store
+            .inner
+            .lock()
+            .ring
+            .invalidate_encoded(&key, &task.entry);
+        warn!("SSD prefetch: corrupt encoded object {key:?}");
+        None
     } else {
         Some(task.slots)
     };

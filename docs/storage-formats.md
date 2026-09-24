@@ -1,145 +1,187 @@
-# KV precision and storage quantization
+# KV precision and storage encoding
 
-OrbitKV separates engine KV precision from the representation stored on SSD.
-`--ssd-codec fp8` opts into **experimental lossy FP8 E4M3FN storage** for registered BF16/FP16
-attention regions. Rust reconstructs the engine's original dtype on restore.
-Checkpoints, opaque layouts and engine-native FP8 remain exact.
+OrbitKV can encode KV pages on the GPU before offload, keep the encoded pages in
+DRAM and SSD, and transfer them unchanged between Managers. Restore uploads the
+encoded bytes and reconstructs the engine's original GPU layout. Rust owns codec
+selection, workspace, checksums and transfer lifetimes; Python only registers
+engine tensor geometry.
 
-## Configure the Manager
+## Choose a representation
+
+| `--storage-codec` | Representation | Eligible state | Precision |
+| --- | --- | --- | --- |
+| `none` (default) | Original bytes | All state | Exact |
+| `ans` | NVIDIA nvCOMP ANS on GPU | Byte streams, FP16/BF16, native E4M3FN | Lossless |
+| `fp8` | E4M3FN | Registered FP16/BF16 attention, including MLA | Lossy |
+| `turboquant-4` | 4-bit K and V plus metadata | Contiguous attention head vectors | Lossy |
+| `turboquant-3` | 3-bit K and V plus metadata | Contiguous attention head vectors | Lossy |
+
+These are **cache storage** representations. They do not change the inference
+engine's HBM allocator, attention kernels or `--kv-cache-dtype`. FP8 model weights
+also do not imply FP8 KV. Lossy modes are experimental and require application
+quality qualification; they are not enabled by default.
 
 ```bash
 orbitkv-cache-manager --pool-size 8gb \
-  --ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb \
-  --ssd-codec fp8 --ssd-codec-budget 64mb
+  --storage-codec turboquant-4 --storage-codec-budget 64mb \
+  --ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb
 ```
 
-The default is `--ssd-codec none`: preserve every byte. `fp8` follows the
-storage-transform boundary of [LMCache's FP8 serde](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/serde/fp8.py).
-It stores one E4M3FN byte per eligible 16-bit element and casts back on load.
-This is separate from engine-native `--kv-cache-dtype fp8_e4m3`, which changes
-HBM representation and attention execution. FP8 model weights do not imply FP8 KV.
+Omit the SSD arguments to use encoded DRAM only. Both the vLLM and SGLang
+connectors register the required layout without a separate compression setting.
+All peers sharing encoded state need the selected codec and its dependencies.
+The former `--ssd-codec` and `--ssd-codec-budget` flags have been removed.
 
-Encoding/decoding runs in Rust on bounded blocking workers. Precomputed scalar
-conversion tables avoid Python, Torch operations and per-element allocation in
-the hot path. Rounding is nearest, ties to even; signed zero and subnormal rules
-match E4M3FN. No additional scaling or clipping is applied. Nonfinite inputs or
-values outside [-448, 448] retain the entire original object, including NaN
-payloads. This fallback avoids introducing saturation or nonfinite values.
+## GPU ANS
 
-Physical extents use the actual encoded size, rounded to the backend alignment.
-An encoded object is kept only when it saves at least 12.5% after alignment.
-The target payload reduction for eligible BF16/FP16 regions is 2:1; raw regions,
-alignment, fallback and indexing reduce the total saving. DRAM and HBM still
-hold the original-width representation.
-
-`--ssd-codec-budget` limits temporary encoded host buffers across encoding,
-submitted I/O and decoding. The default is 64 MB, with a valid range of 4 KiB
-through 4 GiB minus one, separate from `--pool-size`. Encoding never waits for
-scratch held by demand reads. Fixed conversion tables use approximately
-257 KiB when both source dtypes have been used. Restored pages continue to
-consume full logical pinned-memory and query budgets.
-
-## Registration and identity
-
-The adapters declare attention regions as `bf16` or `fp16`; recurrent/convolution
-state, packed or unknown dtypes are `exact`. The Manager checks the declared
-scalar representation against the imported CUDA tensor. It does not infer dtype
-or quantization eligibility from page size, group number or a layer's name.
-
-The selected per-region storage policy is part of the sealed storage namespace,
-so exact and quantization-enabled registrations cannot reuse one another's
-lossy results. TP replicas must agree on that policy. A page-first object is
-quantized only when every constituent layer has the same eligible scalar type;
-a mixed page retains its original representation.
-
-Ordinary identity still includes engine release, model artifacts, KV dtype,
-layout and execution geometry. SGLang's external `--quantization-param-path`
-file is fingerprinted by content, even with `ORBITKV_MODEL_FINGERPRINT` set.
-Changing weights or scales requires a new identity; live mutation is unsupported.
-
-## Transfer and integrity
-
-| Representation | Write | Restore |
-| --- | --- | --- |
-| Codec disabled | cuFile when eligible; retain hot DRAM | cuFile or io_uring |
-| FP8 storage enabled, eligible state | D2H → Rust quantize → io_uring | io_uring → Rust reconstruct → pinned DRAM → H2D |
-| Raw fallback under FP8 policy | D2H → io_uring | cuFile for an entirely raw selected prefix; otherwise host read |
-
-The current implementation uses CPU conversion after D2H. It reduces SSD bytes,
-not GPU↔CPU transfer volume, and is not a GPU compressor or a direct compressed
-GDS path. A mixed raw/encoded prefix uses host reads without truncating the
-recoverable suffix. [Native GDS qualification](gds.md) remains a separate gate.
-
-The in-memory SSD index records a versioned format, original segment geometry,
-per-segment restoration type and CRC32 over stored bytes. Checksums and exact
-lengths are checked before admission. Corruption becomes a miss and invalidates
-only the failed generation, allowing recomputation to repair the same key.
-CRC checks detect storage corruption; they do not assess quantization error.
-
-Canceled queries retain submitted I/O buffers until completion. Normal query
-revisions and leases decide whether completed results may be adopted. Encoding
-does not broaden `required_ranges`. SSD files and indexes remain ephemeral and
-are recreated on Manager restart.
-
-## Qualification and measurement
-
-Compare raw and FP8 storage while keeping the **engine** KV dtype, model,
-capacities, requests and concurrency fixed. A useful BF16 qualification command
-from `python/` is:
+ANS uses the nvCOMP 5.3 C ABI loaded by Rust. Install NVIDIA's runtime for the
+CUDA major version of your deployment, for example:
 
 ```bash
+pip install nvidia-libnvcomp-cu13==5.3.0.16
+export ORBITKV_NVCOMP_LIBRARY=/path/to/site-packages/nvidia/libnvcomp/lib64/libnvcomp.so.5
+orbitkv-cache-manager --pool-size 8gb --storage-codec ans
+```
+
+CUDA 12 uses `nvidia-libnvcomp-cu12`; system installations may expose
+`libnvcomp.so.5` directly through the dynamic loader. A requested ANS policy fails
+startup if this dependency is missing or has an unsupported ABI. OrbitKV does
+not bundle NVIDIA's library or headers. See [NVIDIA installation instructions](https://docs.nvidia.com/cuda/nvcomp/installation.html).
+
+Following [FlexKV's GPU ANS integration](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/compression/ans/nvcomp_ans.cu),
+typed 16-bit and native FP8 tensors select nvCOMP's corresponding datatype;
+opaque and recurrent state use byte-stream compression. Decompression checks
+both nvCOMP status and the exact output length. Incompressible pages remain raw.
+
+## FP8 and TurboQuant
+
+FP8 matches E4M3FN round-to-nearest, ties-to-even, including signed zero and
+subnormals. Ada/Hopper and newer GPUs use FP8 conversion instructions; older
+GPUs use the CUDA arithmetic implementation. A segment containing nonfinite
+values or values outside [-448, 448] remains raw instead of being clipped.
+If the configured GPU workspace cannot hold FP8 output, Rust uses a runtime
+AVX2-dispatched CPU implementation (scalar on other CPUs). This fallback saves
+capacity but transfers the original width over PCIe.
+
+TurboQuant follows [LMCache's MSE + norm-correction serde](https://github.com/LMCache/LMCache/tree/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/serde/turboquant):
+
+- K: normalize each head vector, apply deterministic random signs and an
+  orthonormal Walsh-Hadamard transform, then encode Gaussian Lloyd-Max centroids.
+  Restore corrects the centroid-vector norm and applies the inverse transform
+  and the original FP16 norm.
+- V: per-vector uniform quantization with FP16 minimum and scale.
+- Head dimensions 32, 64, 128 and 256 are supported. The first and last two
+  layers of each pipeline stage remain exact. MLA, recurrent/convolution
+  checkpoints and unverified head layouts remain exact under this policy.
+
+OrbitKV's versioned sign generator and segment layout are its own; encoded bytes
+are not interchangeable with LMCache's serialized objects. For D=128, 4-bit K/V
+use 66/68 bytes per vector versus 256 original bytes; 3-bit uses 50/52 bytes.
+These are payload sizes, not an end-to-end compression or speedup guarantee.
+Alignment, protected layers, raw fallback and metadata reduce total savings.
+
+The Manager validates dtype, head dimension, stride and K/V roles, including
+vLLM's packed `[block, head, token, 2 × head_dim]` layout and separate K/V tensors,
+against imported tensors. Quantization never infers head layout from byte count.
+Format, geometry and rotation seed participate in the v2 storage namespace.
+The namespace version prevents older Managers that lack encoding metadata from
+adopting compressed replicas; all Managers in a deployment should be upgraded.
+Codec-enabled instances use per-layer storage, including when the adapter
+requests page-first placement; this is transparent to engine page addressing.
+
+## Ownership, storage and GDS
+
+```mermaid
+flowchart LR
+    E[Engine GPU pages] --> C[GPU encode]
+    C --> D[Encoded pinned DRAM]
+    D --> S[SSD via io_uring]
+    D --> P[Peer via Mooncake]
+    S --> D
+    P --> D
+    D --> R[Upload encoded bytes and GPU decode]
+    R --> E
+```
+
+Each encoded segment carries a version, original length, format, stored length
+and CRC32. The Manager validates checksums before cache admission or GPU decode.
+A damaged SSD object becomes a miss; only that generation is invalidated, so
+republication can repair it. Peer transfers carry the same metadata and verify
+received bytes. SSD files and indexes remain ephemeral across Manager restarts.
+
+Encoded segments are kept only when their aligned footprint saves at least
+12.5%. Oversized, unsupported, nonfinite or insufficient-budget segments use the
+raw path. Source segments up to 16 MiB are encoded; larger segments remain raw.
+ANS additionally requires at least 4 KiB and 8-byte aligned GPU input.
+
+`--storage-codec-budget` bounds GPU codec scratch **per active transfer worker**,
+including ANS temporary memory and output capacity; default 64 MB. Save and
+restore have independent workers. Encoded host residency consumes `--pool-size`
+and query/transfer leases retain it until completion. CPU FP8 fallback uses at
+most one 16 MiB host reconstruction buffer per worker, plus fixed lookup tables.
+Canceled requests cannot release submitted I/O or DMA resources early.
+
+With encoding enabled, encoded SSD objects use io_uring and pinned encoded
+pages. Direct compressed cuFile reads/writes are not implemented. Raw objects
+can still use the existing cuFile read path; `none` retains the direct GDS save
+path. Native GDS qualification requires a suitable host and filesystem; our
+container tests do not establish native GDS performance. See [GPU storage](gds.md).
+
+## Qualification
+
+Use a prebuilt Manager (`ORBITKV_CACHE_MANAGER_BINARY`) and run Cargo builds
+separately from live Managers. The Rust GPU codec tests cover exhaustive FP8
+source values, 3/4-bit K/V reconstruction and ANS exact round trips. Source-only
+Python tests verify connector contracts without a GPU.
+
+```bash
+# From python/: run the same commands with ans, fp8, turboquant-4 and turboquant-3.
 ../.venv/vllm-release/bin/python -m pytest -m e2e \
   tests/e2e/test_vllm_e2e_correctness.py --model /path/to/Qwen3-8B \
   --max-model-len 4096 --orbitkv-pool-size 1gb --vllm-cache-tier ssd \
-  --kv-cache-dtype auto --ssd-codec fp8 --ssd-backend uring
-
+  --storage-codec ans --ssd-backend uring
 ../.venv/sglang-release/bin/python -m pytest -m e2e \
   tests/e2e/test_sglang_direct_e2e.py -k ssd --model /path/to/Qwen3-8B \
-  --kv-cache-dtype auto --ssd-codec fp8 --ssd-backend uring
+  --storage-codec ans --ssd-backend uring
 ```
 
-Use a prebuilt Manager through `ORBITKV_CACHE_MANAGER_BINARY`; run Cargo builds
-and GPU gates sequentially. GPU layout gates compare reconstruction against
-Torch's E4M3FN cast, including page-first layouts. Process faults cover raw/FP8
-mixed prefixes, cancellation, corrupted data and repair. Serving gates force
-SSD recovery after eviction/restart and retain unquantized output controls.
-The output-equality assertions remain strict: a failed comparison is a measured
-precision change, not a passing exact-recovery gate. Run with `--ssd-codec none`
-for exact regression qualification.
-Passing these prompts does not establish general model-quality equivalence.
+Keep model, engine dtype, requests, capacity and concurrency identical to the
+`none` control. Exact-output tests remain strict: lossy output changes are
+quality findings, not grounds to weaken the exact recovery gate. Measure
+quality, encoded and total bytes, encode/decode duration, TTFT and throughput.
+GPU encoding can contend with inference and small segments incur submission
+and synchronization overhead; compression alone is not evidence of a latency win.
+See [metrics](metrics.md) and the maintained final qualification results below.
 
-Measure physical SSD bytes, encode/decode time, TTFT, throughput and model
-quality. Inspect `orbitkv_ssd_codec_bytes_total{representation="logical"|"stored"}`
-for successful encoded objects; use total SSD write bytes to include fallbacks.
-`orbitkv_ssd_codec_skips_total{reason=...}` distinguishes format, alignment ratio,
-range/nonfinite and resource limits. Scratch, duration and decode-failure
-metrics are documented in [metrics](metrics.md).
+### Recorded checks
 
-On 2026-09-24, the H20/Qwen3-8B vLLM 0.29.0 run with BF16 engine KV wrote
-168.75 MiB of eligible logical state as 84.375 MiB of encoded payloads. Two of
-the 12 execution-plan responses (`long_warm`, `rollback_short`) changed against
-the unquantized control; the strict output test failed while the five cache
-behavior checks passed and one recurrent-only check was skipped. This is a
-capacity result with observed output drift, not a model-quality or latency win.
-The SGLang 0.5.20 run wrote 72 MiB as 36 MiB; its eight-token recovery probe
-passed output equality and the existing log-probability tolerance after restart
-and concurrent prefix recovery. This single prompt does not cancel the vLLM
-precision finding or establish quality on other models.
-The 27 Manager fault checks and two SGLang GPU layout checks passed, including
-BF16/FP16 reconstruction against Torch for every finite source bit pattern
-within the FP8 range and isolation from exact registrations.
+Final checks use one H20, CUDA 13, nvCOMP 5.3.0.16, vLLM 0.29.0 and SGLang
+0.5.20 with Qwen3-8B in BF16. Model tests flush DRAM after SSD writes and restart
+the inference process before restoring; they also retain cold controls.
 
-## Next formats
+| Check | Result |
+| --- | --- |
+| GPU codec oracles and format policy | 4 passed: exhaustive in-range FP8 conversion, 3/4-bit separate and packed K/V, typed/byte ANS and budget fallback |
+| Manager fault/recovery gate | 32 passed, including cuFile compatibility, corruption/repair, cancellation and GPU/CPU SIMD FP8 |
+| ANS/TurboQuant re-registration and logical restore-byte accounting | 3 passed |
+| Encoded peer transfer | Passed for ANS, FP8, TurboQuant 4-bit and 3-bit; two Managers, same-host Mooncake TCP |
 
-The generic LZ4 experiment has been removed. Its sampled Qwen3-8B FP8 pages did
-not meet the storage-saving threshold, so it did not justify a separate public
-codec. Engine-native FP8 recovery was qualified in both engines independently
-of extra storage compression.
+The serving byte figures below count **slots that were actually encoded**,
+including their alignment and raw sibling segments. They exclude raw-only slots
+such as TurboQuant's protected layers, so they are not whole-cache capacity or
+PCIe savings. These correctness workloads do not establish TTFT or throughput
+improvements, and a short matching output is not a general quality evaluation.
 
-[FlexKV's nvCOMP ANS path](https://github.com/taco-project/FlexKV/tree/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/compression)
-is the GPU lossless reference: evaluate it on real tensors, including native FP8,
-and account for GPU workspace, contention and the complete transfer path.
-[LMCache's TurboQuant serde](https://docs.lmcache.ai/mp/serde.html) is the low-bit
-reference. It needs explicit head, K/V and layer geometry plus quality gates;
-those properties must not be guessed from opaque bytes. Neither ANS nor
-TurboQuant is implemented in OrbitKV yet. Recurrent checkpoints remain exact.
+| Engine / codec | Encoded slots: logical → stored | Output check |
+| --- | --- | --- |
+| vLLM / ANS | 180 → 131.48 MiB | All 12 greedy-output cases matched; 6 checks passed, 1 recurrent-only check skipped |
+| SGLang / ANS | 72 → 51.03 MiB | Recovery, concurrent restore, cold identity control, token IDs and logprobs passed |
+| vLLM / TurboQuant 4-bit | 160 → 42.50 MiB | 5 behavior checks passed, 1 skipped; exact-output check failed on 4/12 cases (`prefix_extend`, `rollback_short`, `multi_r2`, `multi_r3`) |
+| SGLang / TurboQuant 4-bit | 64 → 16.75 MiB | Recovery, concurrent restore, cold identity control, token IDs and logprobs passed |
+| vLLM / TurboQuant 3-bit | 160 → 32.50 MiB | 5 behavior checks passed, 1 skipped; exact-output check failed on 5/12 cases (`long_warm`, `prefix_extend`, `rollback_short`, `multi_r2`, `multi_r3`) |
+| SGLang / TurboQuant 3-bit | 64 → 12.75 MiB | Recovery, concurrent restore, cold identity control, token IDs and logprobs passed |
+
+The SGLang probe generates eight tokens, whereas vLLM uses 12 request cases;
+these results do not rank the engines' sensitivity to quantization. FP8's GPU
+path is checked against every finite, in-range BF16/FP16 source value and Torch,
+but has not received a new model-serving quality run in this matrix.

@@ -41,6 +41,32 @@ class GpuPool:
             raise ValueError("SGLang state group has no buffers or inconsistent page counts")
         return cls(group_id, kind, window, entry, names, counts, sizes)
 
+    def attention_layouts(
+        self, layer_count: int, start_layer: int
+    ) -> list[tuple[int, str, int, int]]:
+        if self.kind not in {"attention", "window"}:
+            return [(0, "", 0, 0)] * len(self.layer_names)
+        mapping = {local: global_id for global_id, local in self.entry.layer_mapping.items()}
+        layers = len(mapping)
+        result = []
+        for index, tensor in enumerate(self.entry.kv_buffer):
+            if (
+                tensor.dtype not in {torch.bfloat16, torch.float16}
+                or tensor.stride(-1) != 1
+                or any(stride % tensor.shape[-1] for stride in tensor.stride()[:-1])
+            ):
+                result.append((0, "", 0, 0))
+            else:
+                result.append(
+                    (
+                        tensor.shape[-1],
+                        "k" if index < layers else "v",
+                        mapping[index % layers] - start_layer,
+                        layer_count,
+                    )
+                )
+        return result
+
     def block_ids(self, indices: torch.Tensor, expected_pages: int) -> list[int]:
         if indices.numel() != expected_pages * self.entry.page_size:
             raise ValueError("SGLang GPU indices do not cover exactly the requested state pages")

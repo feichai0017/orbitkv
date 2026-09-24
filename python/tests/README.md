@@ -262,10 +262,10 @@ alone qualifies SGLang serving recovery.
 ## Storage representations
 
 The vLLM correctness and SGLang direct E2E gates accept `--kv-cache-dtype`
-(default `auto`) and `--ssd-codec none|fp8`. They keep output controls at
+(default `auto`) and `--storage-codec none|ans|fp8|turboquant-4|turboquant-3`. They keep output controls at
 the same KV precision and require actual SSD recovery after eviction/restart.
-The text-equality assertion remains strict with FP8 storage and can fail because
+The text-equality assertion remains strict with FP8/TurboQuant storage and can fail because
 the codec is lossy. Report those differences as quality evidence, not a passing
-exact-recovery result. Use `--ssd-codec none` for the exact regression gate.
+exact-recovery result. Use `--storage-codec none` for the exact regression gate.
 See [format qualification](../../docs/storage-formats.md) for commands, the
 storage-quantization scope and the distinction from native GDS qualification.

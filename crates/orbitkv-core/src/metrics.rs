@@ -79,11 +79,12 @@ pub(crate) struct CoreMetrics {
     pub load_duration_seconds: Histogram<f64>,
     pub load_failures: Counter<u64>,
 
-    pub ssd_codec_scratch_bytes: UpDownCounter<i64>,
-    pub ssd_codec_bytes: Counter<u64>,
-    pub ssd_codec_skips: Counter<u64>,
-    pub ssd_codec_decode_failures: Counter<u64>,
-    pub ssd_codec_seconds: Histogram<f64>,
+    pub storage_codec_reserved_bytes: UpDownCounter<i64>,
+    pub storage_codec_bytes: Counter<u64>,
+    pub storage_codec_transfer_bytes: Counter<u64>,
+    pub storage_codec_skips: Counter<u64>,
+    pub storage_codec_decode_failures: Counter<u64>,
+    pub storage_codec_seconds: Histogram<f64>,
 
     // SSD cache
     pub ssd_backend_fallbacks: Counter<u64>,
@@ -429,16 +430,17 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
 
             // SSD
-            ssd_codec_scratch_bytes: meter.i64_up_down_counter("orbitkv_ssd_codec_scratch_bytes")
-                .with_description("Live bounded codec host buffers including pending I/O").with_unit("bytes").build(),
-            ssd_codec_bytes: meter.u64_counter("orbitkv_ssd_codec_bytes")
-                .with_description("Successfully written compressed objects, logical and stored bytes").with_unit("bytes").build(),
-            ssd_codec_skips: meter.u64_counter("orbitkv_ssd_codec_skips")
-                .with_description("Encoding skipped by reason: ratio, budget, oversized, allocation, encode").build(),
-            ssd_codec_decode_failures: meter.u64_counter("orbitkv_ssd_codec_decode_failures")
-                .with_description("Encoded objects rejected before cache admission").build(),
-            ssd_codec_seconds: meter.f64_histogram("orbitkv_ssd_codec_duration")
-                .with_description("CPU encode/decode time excluding I/O and budget waits").with_unit("s")
+            storage_codec_reserved_bytes: meter.i64_up_down_counter("orbitkv_storage_codec_reserved_bytes")
+                .with_description("Reserved GPU codec workspace until transfer completion").with_unit("bytes").build(),
+            storage_codec_transfer_bytes: meter.u64_counter("orbitkv_storage_codec_transfer_bytes").with_description("Actual codec-path D2H/H2D payload bytes, including raw/CPU fallbacks").with_unit("bytes").build(),
+            storage_codec_bytes: meter.u64_counter("orbitkv_storage_codec_bytes")
+                .with_description("Encoded publications, logical and aligned resident bytes").with_unit("bytes").build(),
+            storage_codec_skips: meter.u64_counter("orbitkv_storage_codec_skips")
+                .with_description("Encoding declined by representation, value range, ratio or budget").build(),
+            storage_codec_decode_failures: meter.u64_counter("orbitkv_storage_codec_decode_failures")
+                .with_description("Invalid encoded objects and failed codec restores").build(),
+            storage_codec_seconds: meter.f64_histogram("orbitkv_storage_codec_duration")
+                .with_description("GPU codec and memory transfer duration, including CPU fallback").with_unit("s")
                 .with_boundaries(duration_seconds_boundaries()).build(),
             ssd_backend_fallbacks: meter.u64_counter("orbitkv_ssd_backend_fallbacks").with_description("Automatic transitions from cuFile to io_uring; startup or runtime failures").build(),
             ssd_cufile_write_bytes: meter.u64_counter("orbitkv_ssd_cufile_write_bytes").with_description("Bytes written by cuFile including alignment; does not prove native GDS").build(),
