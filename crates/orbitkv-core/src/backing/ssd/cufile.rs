@@ -10,14 +10,17 @@ use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
-use cudarc::driver::{CudaStream, result};
+use cudarc::driver::sys::CUstream;
 use libloading::Library;
 
 use super::GpuIo;
-use crate::metrics::core_metrics;
 
 pub(crate) const ALIGNMENT: usize = 4096;
-pub(crate) const STAGING_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const STAGING_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const STAGING_SLOTS: usize = 2;
+
+mod slot;
+pub(crate) use slot::GpuSlot;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -56,8 +59,18 @@ type RegisterFile = unsafe extern "C" fn(*mut *mut c_void, *mut Descriptor) -> S
 type DeregisterFile = unsafe extern "C" fn(*mut c_void);
 type RegisterBuffer = unsafe extern "C" fn(*const c_void, usize, i32) -> Status;
 type DeregisterBuffer = unsafe extern "C" fn(*const c_void) -> Status;
-type Write = unsafe extern "C" fn(*mut c_void, *const c_void, usize, i64, i64) -> isize;
-type Read = unsafe extern "C" fn(*mut c_void, *mut c_void, usize, i64, i64) -> isize;
+type StreamRegister = unsafe extern "C" fn(CUstream, u32) -> Status;
+type StreamDeregister = unsafe extern "C" fn(CUstream) -> Status;
+// Match the installed cufile.h ABI: off_t and ssize_t are 64-bit on Linux.
+type AsyncIo = unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut usize,
+    *mut i64,
+    *mut i64,
+    *mut isize,
+    CUstream,
+) -> Status;
 
 pub(crate) struct Cufile {
     _library: Library,
@@ -66,8 +79,10 @@ pub(crate) struct Cufile {
     deregister_file: DeregisterFile,
     register_buffer: RegisterBuffer,
     deregister_buffer: DeregisterBuffer,
-    read: Read,
-    write: Write,
+    register_stream: StreamRegister,
+    deregister_stream: StreamDeregister,
+    read: AsyncIo,
+    write: AsyncIo,
 }
 
 impl Cufile {
@@ -117,8 +132,18 @@ impl Cufile {
                 deregister_buffer: *library
                     .get(b"cuFileBufDeregister\0")
                     .map_err(|e| e.to_string())?,
-                read: *library.get(b"cuFileRead\0").map_err(|e| e.to_string())?,
-                write: *library.get(b"cuFileWrite\0").map_err(|e| e.to_string())?,
+                register_stream: *library
+                    .get(b"cuFileStreamRegister\0")
+                    .map_err(|e| e.to_string())?,
+                deregister_stream: *library
+                    .get(b"cuFileStreamDeregister\0")
+                    .map_err(|e| e.to_string())?,
+                read: *library
+                    .get(b"cuFileReadAsync\0")
+                    .map_err(|e| e.to_string())?,
+                write: *library
+                    .get(b"cuFileWriteAsync\0")
+                    .map_err(|e| e.to_string())?,
                 _library: library,
             };
             open().check("cuFileDriverOpen")?;
@@ -176,7 +201,7 @@ impl CufileFile {
 
 impl Drop for CufileFile {
     fn drop(&mut self) {
-        // SAFETY: all I/O borrows self and completes before the last owner drops.
+        // SAFETY: every submission owns an Arc until I/O and GPU copies finish.
         unsafe { (self.driver.deregister_file)(self.handle.as_ptr()) };
     }
 }
@@ -290,176 +315,6 @@ pub(crate) fn plan_writes(
         start = limit;
     }
     Ok(batches)
-}
-
-pub(crate) struct GpuBuffer {
-    driver: Arc<Cufile>,
-    stream: Arc<CudaStream>,
-    pointer: u64,
-}
-
-impl GpuBuffer {
-    pub(crate) fn new(stream: Arc<CudaStream>) -> Result<Self, String> {
-        let driver = Cufile::get(false)?;
-        stream
-            .context()
-            .bind_to_thread()
-            .map_err(|e| e.to_string())?;
-        // SAFETY: a synchronous device allocation, owned until Drop, avoids
-        // allocator-pool/VMM registration differences between CUDA releases.
-        let pointer = unsafe { result::malloc_sync(STAGING_BYTES) }.map_err(|e| e.to_string())?;
-        // SAFETY: pointer owns STAGING_BYTES and the calling thread has its CUDA context.
-        let registration =
-            unsafe { (driver.register_buffer)(pointer as *const c_void, STAGING_BYTES, 0) };
-        if let Err(error) = registration.check("cuFileBufRegister") {
-            // SAFETY: no I/O was issued, so this allocation can be released.
-            unsafe { result::free_sync(pointer) }.map_err(|e| e.to_string())?;
-            return Err(error);
-        }
-        core_metrics()
-            .ssd_gpu_staging_bytes
-            .add(STAGING_BYTES as i64, &[]);
-        Ok(Self {
-            driver,
-            stream,
-            pointer,
-        })
-    }
-
-    pub(crate) fn restore(&self, file: &CufileFile, batches: &[IoBatch]) -> Result<usize, String> {
-        let mut restored = 0;
-        for batch in batches {
-            #[cfg(feature = "test-hooks")]
-            crate::test_faults::pause_blocking("cufile");
-            let started = std::time::Instant::now();
-            // SAFETY: the plan bounds reads by our registered buffer; the SSD
-            // lease pins the source extent. This API completes before returning.
-            let bytes = unsafe {
-                (self.driver.read)(
-                    file.handle.as_ptr(),
-                    self.pointer as *mut c_void,
-                    batch.bytes,
-                    batch.file_offset as i64,
-                    0,
-                )
-            };
-            core_metrics()
-                .ssd_cufile_read_seconds
-                .record(started.elapsed().as_secs_f64(), &[]);
-            if bytes != batch.bytes as isize {
-                core_metrics().ssd_cufile_read_failures.add(1, &[]);
-                return Err(format!(
-                    "cuFileRead returned {bytes}, expected {} at {}",
-                    batch.bytes, batch.file_offset
-                ));
-            }
-            core_metrics().ssd_cufile_read_bytes.add(bytes as u64, &[]);
-            let submitted = (|| {
-                for copy in &batch.copies {
-                    // SAFETY: destination bounds were checked against the registered
-                    // layout; the task owns its engine page lease through completion.
-                    unsafe {
-                        result::memcpy_dtod_async(
-                            copy.device,
-                            self.pointer + (copy.file_offset - batch.file_offset),
-                            copy.bytes,
-                            self.stream.cu_stream(),
-                        )
-                    }
-                    .map_err(|e| e.to_string())?;
-                    restored += copy.bytes;
-                }
-                Ok(())
-            })();
-            // Staging must not be overwritten while any scatter still reads it,
-            // including a partially submitted scatter that failed.
-            crate::transfer::finish_gpu_transfer(&self.stream, submitted)
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(restored)
-    }
-
-    pub(crate) fn save(&self, file: &CufileFile, batches: &[IoBatch]) -> Result<(), String> {
-        for batch in batches {
-            let submitted = (|| {
-                // SAFETY: the buffer owns this bounded chunk. Every source is
-                // covered by the publish call's engine-page ownership barrier.
-                unsafe {
-                    result::memset_d8_async(self.pointer, 0, batch.bytes, self.stream.cu_stream())
-                }
-                .map_err(|e| e.to_string())?;
-                for copy in &batch.copies {
-                    unsafe {
-                        result::memcpy_dtod_async(
-                            self.pointer + (copy.file_offset - batch.file_offset),
-                            copy.device,
-                            copy.bytes,
-                            self.stream.cu_stream(),
-                        )
-                    }
-                    .map_err(|e| e.to_string())?;
-                }
-                Ok(())
-            })();
-            crate::transfer::finish_gpu_transfer(&self.stream, submitted)
-                .map_err(|e| e.to_string())?;
-            #[cfg(feature = "test-hooks")]
-            crate::test_faults::pause_blocking("cufile_write");
-            let started = std::time::Instant::now();
-            // SAFETY: the reservation exclusively owns the aligned file extent;
-            // the gather completed and this synchronous write drains before return.
-            let bytes = unsafe {
-                (self.driver.write)(
-                    file.handle.as_ptr(),
-                    self.pointer as *const c_void,
-                    batch.bytes,
-                    batch.file_offset as i64,
-                    0,
-                )
-            };
-            #[cfg(feature = "test-hooks")]
-            let bytes = if crate::test_faults::active("cufile_write_error") {
-                -1
-            } else {
-                bytes
-            };
-            core_metrics()
-                .ssd_cufile_write_seconds
-                .record(started.elapsed().as_secs_f64(), &[]);
-            if bytes != batch.bytes as isize {
-                core_metrics().ssd_cufile_write_failures.add(1, &[]);
-                return Err(format!(
-                    "cuFileWrite returned {bytes}, expected {} at {}",
-                    batch.bytes, batch.file_offset
-                ));
-            }
-            core_metrics().ssd_cufile_write_bytes.add(bytes as u64, &[]);
-        }
-        Ok(())
-    }
-}
-
-impl Drop for GpuBuffer {
-    fn drop(&mut self) {
-        let _ = crate::transfer::finish_gpu_transfer(&self.stream, Ok(()));
-        if let Err(error) = self.stream.context().bind_to_thread() {
-            log::error!("Cannot bind GPU context while releasing GDS buffer: {error}");
-            std::process::abort();
-        }
-        // SAFETY: every read and scatter has drained before deregistration/free.
-        let status = unsafe { (self.driver.deregister_buffer)(self.pointer as *const c_void) };
-        if let Err(error) = status.check("cuFileBufDeregister") {
-            log::error!("Cannot release registered GDS buffer: {error}");
-            std::process::abort();
-        }
-        unsafe { result::free_sync(self.pointer) }.unwrap_or_else(|error| {
-            log::error!("Cannot free GDS buffer: {error}");
-            std::process::abort();
-        });
-        core_metrics()
-            .ssd_gpu_staging_bytes
-            .add(-(STAGING_BYTES as i64), &[]);
-    }
 }
 
 #[cfg(test)]

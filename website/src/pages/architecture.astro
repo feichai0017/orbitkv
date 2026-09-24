@@ -47,8 +47,9 @@ import { layers, localUrl } from "../data/site";
             cache capacity. Standalone deployment needs neither etcd nor peer
             gRPC.
             Automatic SSD selection tries native cuFile and falls back to io_uring.
-            cuFile writes complete state groups and restores SSD state through bounded GPU
-            staging; native GDS performance qualification remains separate.
+            Rust submits cuFile reads and writes through two bounded GPU slots,
+            allowing demand reads to progress alongside writeback. Native GDS
+            performance qualification remains separate.
           </p>
         </article>
         <article class="layer">

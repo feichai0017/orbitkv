@@ -237,6 +237,10 @@ impl TransportServer {
         let service = node
             .service_builder(&name)
             .request_response::<WireMessage, WireMessage>()
+            // Each CacheClient can own separate control and Publish ports.
+            // Keep room for concurrent producers plus foreground requests.
+            .max_clients(64)
+            .max_nodes(65)
             .create()
             .map_err(|error| TransportError::Service(error.to_string()))?;
         let server = service

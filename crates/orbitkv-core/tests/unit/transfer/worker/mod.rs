@@ -10,6 +10,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
         ssd_tx: Mutex::new(Some(ssd_tx)),
+        ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
         load_tx,
         save_tx,
         closed: Mutex::new(false),

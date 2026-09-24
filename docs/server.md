@@ -46,10 +46,15 @@ orbitkv-cache-manager
   to io_uring if capability initialization fails; a cuFile operation failure switches new
   operations to io_uring until Manager restart. `uring` uses pinned DRAM;
   `cufile` writes complete GPU state groups and restores leased SSD sources
-  through 8 MiB GPU staging per instance/device and follows NVIDIA's compatibility
+  through two asynchronous 4 MiB GPU slots per instance/device and follows NVIDIA's compatibility
   configuration without automatic backend fallback. Native GDS must be [qualified separately](gds.md).
   Fragmented/multi-writer saves and speculative preparation retain io_uring.
   GPU-direct writes hold Publish pages until storage completion.
+  At most one GPU write batch is in flight; up to eight write jobs are queued or
+  active per instance/device. Saturation uses host publication/io_uring. These
+  fixed GPU limits are separate from the io_uring queue/inflight flags below.
+  The process channel admits up to 64 client ports; each cache client uses a
+  control port and, after its first save, a separate Publish port.
 - `--ssd-prefetch-queue-depth`: SSD prefetch queue depth, max pending prefetch batches (default: `2`)
 - `--ssd-write-inflight`: SSD write inflight, max concurrent block writes (default: `2`)
 - `--ssd-prefetch-inflight`: SSD prefetch inflight, max concurrent block reads (default: `16`)

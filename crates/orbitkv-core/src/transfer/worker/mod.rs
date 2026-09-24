@@ -6,7 +6,7 @@ use cudarc::driver::{CudaContext, CudaStream};
 use log::{debug, error, info, warn};
 use logforth::diagnostic::ThreadLocalDiagnostic;
 use parking_lot::Mutex;
-use tokio::sync::{OnceCell, mpsc, oneshot};
+use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
 use crate::EngineError;
 use crate::block::{RawBlock, SealedBlock};
@@ -16,7 +16,6 @@ use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
 
 pub(crate) mod ssd;
-use crate::backing::ssd::cufile::GpuBuffer;
 use ssd::GpuWrite;
 
 /// A task to restore KV blocks from leased sources to GPU layers
@@ -98,6 +97,7 @@ pub(crate) struct SaveTask {
     pub layers: Vec<LayerTransferData>,
     pub reply: oneshot::Sender<Result<Vec<LayerTransferData>, EngineError>>,
     pub ssd_writes: Vec<GpuWrite>,
+    pub ssd_admission: Option<OwnedSemaphorePermit>,
     #[cfg(feature = "tracing")]
     pub trace_ctx: Option<::fastrace::prelude::SpanContext>,
 }
@@ -114,6 +114,7 @@ pub(crate) struct GpuWorkerPool {
     numa_node: NumaNode,
     transfer_mode: TransferMode,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
+    ssd_write_admission: Arc<Semaphore>,
     load_tx: mpsc::UnboundedSender<WorkerCommand>,
     save_tx: mpsc::UnboundedSender<WorkerCommand>,
     closed: Mutex<bool>,
@@ -133,6 +134,7 @@ impl GpuWorkerPool {
             load_tx: spawn_worker(device_id, numa_node, transfer_mode, "load")?,
             save_tx: spawn_worker(device_id, numa_node, transfer_mode, "save")?,
             ssd_tx: Mutex::new(None),
+            ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
             closed: Mutex::new(false),
             drained: OnceCell::new(),
         })
@@ -184,15 +186,30 @@ impl GpuWorkerPool {
     pub(crate) async fn batch_save(
         &self,
         layers: Vec<LayerTransferData>,
-        ssd_writes: Vec<GpuWrite>,
+        mut ssd_writes: Vec<GpuWrite>,
     ) -> Result<Vec<LayerTransferData>, EngineError> {
         let (reply, receiver) = oneshot::channel();
-        let disk = !ssd_writes.is_empty();
+        let ssd_admission = if ssd_writes.is_empty() {
+            None
+        } else {
+            match Arc::clone(&self.ssd_write_admission).try_acquire_owned() {
+                Ok(permit) => Some(permit),
+                Err(_) => {
+                    // Roll back unsubmitted GPU extents, preserving the normal
+                    // D2H publication and bounded io_uring writeback path.
+                    ssd_writes.clear();
+                    core_metrics().ssd_gpu_write_fallbacks.add(1, &[]);
+                    None
+                }
+            }
+        };
+        let disk = ssd_admission.is_some();
         self.submit(
             WorkerCommand::Save(SaveTask {
                 layers,
                 reply,
                 ssd_writes,
+                ssd_admission,
                 #[cfg(feature = "tracing")]
                 trace_ctx: ::fastrace::prelude::SpanContext::current_local_parent(),
             }),
@@ -244,6 +261,7 @@ fn spawn_worker(
 ) -> Result<mpsc::UnboundedSender<WorkerCommand>, EngineError> {
     let (sender, receiver) = mpsc::unbounded_channel();
     let (ready_tx, ready_rx) = std_mpsc::channel();
+    let storage = name == "ssd";
     std::thread::Builder::new()
         .name(format!("gpu{device_id}-{name}"))
         .spawn(move || {
@@ -255,7 +273,11 @@ fn spawn_worker(
             match init_worker(device_id, mode) {
                 Ok(runtime) => {
                     let _ = ready_tx.send(Ok(()));
-                    worker_loop(device_id, receiver, runtime);
+                    if storage {
+                        ssd::run(receiver, runtime);
+                    } else {
+                        worker_loop(device_id, receiver, runtime);
+                    }
                 }
                 Err(error) => {
                     let _ = ready_tx.send(Err(error));
@@ -272,7 +294,6 @@ fn spawn_worker(
 struct WorkerRuntime {
     stream: Arc<CudaStream>,
     backend: Box<dyn TransferBackend>,
-    ssd_buffer: Option<GpuBuffer>,
 }
 
 fn build_backend(
@@ -308,17 +329,13 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
         backend.name()
     );
 
-    Ok(WorkerRuntime {
-        stream,
-        backend,
-        ssd_buffer: None,
-    })
+    Ok(WorkerRuntime { stream, backend })
 }
 
 fn worker_loop(
     device_id: i32,
     mut receiver: mpsc::UnboundedReceiver<WorkerCommand>,
-    mut runtime: WorkerRuntime,
+    runtime: WorkerRuntime,
 ) {
     while let Some(command) = receiver.blocking_recv() {
         match command {
@@ -327,37 +344,27 @@ fn worker_loop(
                     .stream
                     .synchronize()
                     .map_err(|e| format!("GPU drain failed: {e}"));
-                drop(runtime.ssd_buffer.take());
                 let _ = reply.send(result);
                 break;
             }
-            WorkerCommand::Load(LoadTask {
-                layers,
-                completion,
-                reservations,
-            }) => {
-                let result = process_load_task(
-                    &layers,
-                    &runtime.stream,
-                    runtime.backend.as_ref(),
-                    &mut runtime.ssd_buffer,
-                );
-                if let Err(ref error) = result {
-                    error!("GPU restore failed on {device_id}: {error}");
-                    core_metrics().load_failures.add(1, &[]);
-                    drop(runtime.ssd_buffer.take());
-                }
-                drop(layers);
-                drop(reservations);
-                let _ = completion.send(LoadOutcome {
-                    result,
-                    completed_at: Instant::now(),
-                });
+            WorkerCommand::Load(task) => {
+                let started = Instant::now();
+                let result = (|| {
+                    let (copies, bytes) = build_copy_descs(&task.layers)?;
+                    finish_gpu_transfer(
+                        &runtime.stream,
+                        runtime.backend.h2d(&copies, &runtime.stream),
+                    )?;
+                    Ok(bytes)
+                })();
+                let bytes = result.as_ref().copied().unwrap_or(0);
+                finish_load(task, result.map(|_| ()), started, bytes);
             }
             WorkerCommand::Save(SaveTask {
                 layers,
                 reply,
-                ssd_writes,
+                ssd_writes: _,
+                ssd_admission: _,
                 #[cfg(feature = "tracing")]
                 trace_ctx,
             }) => {
@@ -368,32 +375,7 @@ fn worker_loop(
                     #[cfg(feature = "tracing")]
                     trace_ctx,
                 )
-                .and_then(|()| {
-                    if !ssd_writes.is_empty() && runtime.ssd_buffer.is_none() {
-                        runtime.ssd_buffer = Some(
-                            GpuBuffer::new(Arc::clone(&runtime.stream))
-                                .inspect_err(|error| {
-                                    ssd_writes[0].lease.file().gpu_io.failed(error);
-                                })
-                                .map_err(EngineError::Storage)?,
-                        );
-                    }
-                    for write in ssd_writes {
-                        runtime
-                            .ssd_buffer
-                            .as_ref()
-                            .expect("storage buffer initialized")
-                            .save(write.lease.file(), &write.batches)
-                            .inspect_err(|error| write.lease.file().gpu_io.failed(error))
-                            .map_err(EngineError::Storage)?;
-                        write.lease.commit();
-                    }
-                    Ok(())
-                })
                 .map(|()| layers);
-                if result.is_err() {
-                    drop(runtime.ssd_buffer.take());
-                }
                 let _ = reply.send(result);
             }
         }
@@ -482,80 +464,32 @@ fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usiz
     Ok((copies, total_bytes))
 }
 
-/// Restore memory sources in one H2D batch and disk sources through bounded GPU
-/// staging. All submitted work drains before source and destination release.
-fn process_load_task(
-    layers: &[LayerTransferData],
-    stream: &Arc<CudaStream>,
-    backend: &dyn TransferBackend,
-    ssd_buffer: &mut Option<GpuBuffer>,
-) -> Result<(), EngineError> {
-    trace_root!("gpu.load_task", _root);
-    let start = std::time::Instant::now();
-    // Use the first layer's block count as the physical block count (all layers have the same)
-    let total_blocks = layers.first().map(|l| l.blocks.len()).unwrap_or(0);
-    let metrics = core_metrics();
-
-    let (copies, total_bytes) = build_copy_descs(layers)?;
-    let disk_reads = ssd::plan(layers)?;
-
-    if !disk_reads.is_empty() && ssd_buffer.is_none() {
-        *ssd_buffer = Some(
-            GpuBuffer::new(Arc::clone(stream))
-                .inspect_err(|error| disk_reads[0].0.gpu_io.failed(error))
-                .map_err(EngineError::Storage)?,
-        );
-    }
-
-    let submitted = backend.h2d(&copies, stream);
-    let mut disk_bytes = 0;
-    let submitted = submitted.and_then(|()| {
-        for (file, batches) in &disk_reads {
-            disk_bytes += ssd_buffer
-                .as_ref()
-                .expect("SSD buffer initialized")
-                .restore(file, batches)
-                .inspect_err(|error| file.gpu_io.failed(error))?;
-        }
-        Ok(())
-    });
-    finish_gpu_transfer(stream, submitted)?;
-    let total_bytes = total_bytes + disk_bytes;
-
-    for layer in layers {
-        for block in &layer.blocks {
-            if let TransferPayload::Cached { sealed, .. } = &block.block {
-                sealed.mark_warmup_restored();
+/// Publish completion only after the worker establishes that all GPU access has ended.
+fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant, bytes: usize) {
+    if result.is_ok() {
+        for layer in &task.layers {
+            for block in &layer.blocks {
+                if let TransferPayload::Cached { sealed, .. } = &block.block {
+                    sealed.mark_warmup_restored();
+                }
             }
         }
+        if bytes != 0 {
+            core_metrics().load_bytes.add(bytes as u64, &[]);
+            core_metrics()
+                .load_duration_seconds
+                .record(started.elapsed().as_secs_f64(), &[]);
+        }
+    } else if let Err(error) = &result {
+        error!("GPU restore failed: {error}");
+        core_metrics().load_failures.add(1, &[]);
     }
-
-    let elapsed = start.elapsed();
-    let bandwidth_gbps = if elapsed.as_secs_f64() > 0.0 {
-        (total_bytes as f64 / 1e9) / elapsed.as_secs_f64()
-    } else {
-        0.0
-    };
-
-    if total_blocks > 0 {
-        metrics.load_bytes.add(total_bytes as u64, &[]);
-        metrics
-            .load_duration_seconds
-            .record(elapsed.as_secs_f64(), &[]);
-    }
-
-    debug!(
-        "Load task completed: layers={} blocks={} copies={} bytes={} elapsed_ms={:.2} bandwidth_gbps={:.2} backend={}",
-        layers.len(),
-        total_blocks,
-        copies.len(),
-        total_bytes,
-        elapsed.as_secs_f64() * 1000.0,
-        bandwidth_gbps,
-        backend.name()
-    );
-
-    Ok(())
+    drop(task.layers);
+    drop(task.reservations);
+    let _ = task.completion.send(LoadOutcome {
+        result,
+        completed_at: Instant::now(),
+    });
 }
 
 /// Process a save task: copy blocks from GPU to CPU pinned memory. All layers

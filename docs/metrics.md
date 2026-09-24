@@ -270,14 +270,16 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 - **orbitkv_ssd_backend_fallbacks_total** (Counter) - Automatic fallback to io_uring
   after cuFile initialization or operation failure. Logs record the reason.
 - **orbitkv_ssd_cufile_write_bytes_total** (Counter) - Physical cuFile write bytes, including padding.
-- **orbitkv_ssd_cufile_write_seconds** (Histogram) - Time in synchronous cuFile writes.
+- **orbitkv_ssd_cufile_write_seconds** (Histogram) - Async submission-to-completion latency, including GPU gather and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_write_failures_total** (Counter) - Failed or short GPU-backed writes.
 - **orbitkv_ssd_cufile_read_bytes_total** (Counter) - Physical cuFile read bytes,
   including aligned edges. Does not distinguish native GDS from CPU compatibility.
-- **orbitkv_ssd_cufile_read_seconds** (Histogram) - Time in synchronous cuFile reads.
+- **orbitkv_ssd_cufile_read_seconds** (Histogram) - Async submission-to-completion latency, including GPU scatter and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_read_failures_total** (Counter) - Failed or short cuFile reads.
 - **orbitkv_ssd_read_pinned_bytes** (Gauge) - SSD extents owned by restore leases.
 - **orbitkv_ssd_gpu_staging_bytes** (Gauge) - Registered GPU storage staging memory.
+- **orbitkv_ssd_cufile_inflight_batches** (Gauge) - Occupied staging slots until I/O and scatter completion, at most two per instance/device.
+- **orbitkv_ssd_gpu_write_fallbacks_total** (Counter) - Write jobs using host publication after the eight-job GPU write admission limit is reached.
 - **orbitkv_ssd_pinned_write_skips_total** (Counter) - Reservations rejected to
   protect an active SSD read or write. See [GPU storage recovery](gds.md).
 - **orbitkv_ssd_write_bytes_total** (Counter) - Bytes written to SSD cache

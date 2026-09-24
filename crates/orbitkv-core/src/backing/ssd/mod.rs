@@ -40,7 +40,7 @@ pub struct SsdReadLease {
 }
 
 impl SsdReadLease {
-    pub(crate) fn file(&self) -> &CufileFile {
+    pub(crate) fn file(&self) -> &Arc<CufileFile> {
         &self.store.cufile_files[self.entry.shard_id]
     }
 }
@@ -63,7 +63,7 @@ pub(crate) struct GpuWriteLease {
 }
 
 impl GpuWriteLease {
-    pub(crate) fn file(&self) -> &CufileFile {
+    pub(crate) fn file(&self) -> &Arc<CufileFile> {
         &self.store.cufile_files[self.entry.shard_id]
     }
 
@@ -140,7 +140,7 @@ pub(crate) struct SsdBackingStore {
     pub(crate) gpu_io: Arc<GpuIo>,
     /// Keeps file descriptors alive for io_uring operations.
     _files: Vec<std::fs::File>,
-    cufile_files: Vec<CufileFile>,
+    cufile_files: Vec<Arc<CufileFile>>,
     io: Arc<UringIoEngine>,
     write_tx: tokio::sync::mpsc::Sender<SsdWriteCommand>,
     write_policy: SsdWritePolicy,
@@ -215,6 +215,7 @@ impl SsdBackingStore {
                 .iter()
                 .map(|file| {
                     CufileFile::new(file.try_clone()?, Arc::clone(&gpu_io))
+                        .map(Arc::new)
                         .map_err(std::io::Error::other)
                 })
                 .collect::<std::io::Result<Vec<_>>>();

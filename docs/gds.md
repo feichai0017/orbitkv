@@ -77,25 +77,36 @@ submitted restores keep their interests until completion.
 
 Rust validates source segment sizes, slot offsets and GPU destinations before
 issuing I/O. Adjacent ranges from different source leases in the same file are
-merged into reads of at most **8 MiB** with **4 KiB** aligned boundaries. Different
-files and unrequested aligned gaps stay separate. The plan borrows the entire
+merged into reads of at most **4 MiB** with **4 KiB** aligned boundaries. Different
+files and unrequested aligned gaps stay separate. The worker retains the entire
 restore task, keeping every source lease alive until GPU completion; it never
 uses one representative lease to protect other extents. Existing 512-byte storage segments can cause edge
 overread; only actual component bytes are scattered into engine pages. Large
 recurrent checkpoints are split across the bounded staging buffer.
 
-Each instance/device lazily creates one SSD worker and one registered
-8 MiB GPU buffer. It has its own CUDA stream, so synchronous disk I/O does not
-block the ordinary DRAM restore or save worker. GPU-backed SSD reads and writes
-share this lane and run sequentially; read preemption is not implemented. Hardware bandwidth and GPU
-scheduling remain shared. Reserve this extra HBM in the engine's memory budget;
-it is outside `--pool-size`. The buffer is reused until the worker drains. Query
+Each instance/device lazily creates one SSD worker with **two registered 4 MiB
+slots**, each with its own CUDA stream and completion event. It submits
+`cuFileReadAsync` / `cuFileWriteAsync` and polls completion without waiting for a
+whole storage job. At most two batches are in flight, including at most one write,
+leaving a slot for demand reads. Jobs rotate after each batch; after four read
+submissions a waiting write gets the next available opportunity. This bounds
+starvation by submissions, not elapsed time, and does not preempt DMA. Ordinary
+DRAM transfers retain their separate workers; hardware bandwidth remains shared.
+Reserve the total **8 MiB per instance/device** in the engine's memory budget;
+it is outside `--pool-size`. Slots are reused until the worker drains. Query
 reservations still charge logical source bytes under the existing query budget,
-even when those bytes remain on SSD.
+even when those bytes remain on SSD. Queued reads use those existing byte
+budgets; there is no additional read-job count limit.
+
+At most **eight GPU write jobs** can be queued or active per instance/device.
+Admission exhaustion rolls back unsubmitted GPU extents and uses ordinary D2H
+publication with bounded io_uring writeback. A permit stays owned until the
+GPU job terminates. Mixed-load H2D and hot-copy D2H preparation still drain once
+when a job is first selected; they are not yet pipelined with storage submission.
 
 Before GPU writeback, Rust reserves an unpublished, 4 KiB aligned SSD extent.
 Each chunk gathers only valid source bytes and zeroes padding, then completes
-cuFileWrite before reusing staging. The complete object becomes queryable only
+asynchronous cuFile I/O before reusing staging. The complete object becomes queryable only
 after all chunks finish. Failed or short writes abort the reservation; other
 completed objects remain valid. Publish retains the source pages until D2H and
 SSD work finish, including after a caller wait deadline. This extends page hold
@@ -106,9 +117,18 @@ Fragmented layers and multi-writer TP/PP groups assemble in DRAM and keep
 io_uring writeback. Both forms can subsequently restore through cuFile.
 The existing `all`/`reuse` admission policy still applies.
 
-Every read completes before scatter. The scatter stream drains before staging
-is reused or completion is reported, including partial submission failures.
-Short/failed reads fail the restore. A ring reservation that would overwrite an
+Each slot retains address-stable size/offset/result storage and a registered
+file reference until its completion event. Submission success alone never
+accepts data: Rust checks the completed byte count before scatter or publication.
+A second event proves read scatter has completed before reusing staging or
+reporting completion. Short/failed reads fail the restore. Partial submission
+errors drain their stream; other submitted batches retain ownership until they
+complete. A closed completion consumer stops unsubmitted work, then drains
+submitted batches. Canceling a query after restore submission does not revoke
+that restore's ownership or completion. Unregister waits for every worker and
+deregisters streams/buffers before releasing engine mappings.
+
+A ring reservation that would overwrite an
 active read or write tries the other shards, then drops the write if none has
 space. It does not block the directory. SSD remains a best-effort cache recreated
 at Manager startup.
@@ -178,10 +198,10 @@ uses `cuFileStreamRegister`, `cuFileReadAsync` and `cuFileWriteAsync`.
 
 | Concern | LMCache MP reference | Current OrbitKV |
 | --- | --- | --- |
-| GPU registration | Reusable staging, registered in regions of at most 16 MiB | One reusable registered 8 MiB buffer per instance/device |
+| GPU registration | Reusable staging, registered in regions of at most 16 MiB | Two reusable registered 4 MiB slots per instance/device |
 | File allocation | Preallocates its slab with `posix_fallocate` | Native `fallocate` reserves all GPU-storage shards before admission; allocation errors fail startup and release partial reservations |
-| Submission/completion | Stream-ordered asynchronous I/O; event-scoped submission lifetime | Synchronous cuFile calls and a scatter/gather stream drain for every batch |
-| Batching | GPU context provides four chunk slots | One staging slot; adjacent ranges merge by file across source leases without reading unrequested aligned gaps |
+| Submission/completion | Stream-ordered asynchronous I/O; event-scoped submission lifetime | Rust stream-ordered asynchronous I/O with stable arguments/results, completion byte checks and retained leases |
+| Batching | GPU context provides four chunk slots | Two slots, at most one write; adjacent ranges merge by file across source leases without reading unrequested aligned gaps |
 | Tier policy | GDS L1 replaces pinned-DRAM L1 in that configuration | Complete-group GPU writeback also creates a DRAM copy; Publish waits for SSD completion |
 
 The four-slot geometry comes from LMCache's
@@ -192,25 +212,19 @@ establishes an optimum for another model or storage device.
 
 The next implementation gates, in order, are:
 
-1. **Bounded asynchronous I/O in Rust.** Start with a small registered slot pool
-   and stream/event ownership. Keep each operation's argument storage, result
-   storage, file, extent leases and GPU pages alive through completion. Check
-   actual byte counts/errors before accepting a restore or publishing a write.
-   Cancellation stops admission; submitted work still drains. Compare stream
-   APIs with batch I/O for small scattered ranges rather than assuming one API
-   wins at every size.
-2. **Read progress.** Build on the implemented per-file coalescing and retained
-   source leases. Bound bytes, operations and queued writes; let demand reads progress between
-   write batches. Extra buffers must remain charged to a GPU budget.
-3. **Placement and source-page hold time.** Measure the cost of producing both
+1. **Native measurements.** Qualify first writes, overwrites and mixed demand on
+   supported hardware. Compare the two-slot stream path with batch I/O for small
+   scattered ranges; tune slot size/count and polling from request latency, GPU
+   budgets and CPU use rather than copying an upstream default.
+2. **Placement and source-page hold time.** Measure the cost of producing both
    DRAM and SSD copies. Evaluate selective hot-DRAM admission and releasing engine
    pages after their final copy into owned staging; the staging and SSD reservation
    must survive until disk completion. Large objects still need bounded chunking.
    Publish visibility must never precede complete successful writes.
 
-These remaining changes are planned. Physical allocation and cross-lease read
-coalescing are implemented; neither establishes a measured native-GDS performance
-advantage. Preserve those guarantees while adding concurrency; benchmark both
+Physical allocation, cross-lease read coalescing, bounded asynchronous submission
+and read/write scheduling are implemented. They do not establish a measured
+native-GDS performance advantage. Benchmark both
 engines with matched DRAM/SSD capacities, HBM budgets, working sets and native-I/O
 statistics. Shared-cache direct engine-page I/O remains a separate later step.
 
@@ -309,15 +323,18 @@ correctness, not native GDS throughput.
 | Gate | Final result |
 | --- | --- |
 | Rust GPU layouts, checkpoints, pinning, failure recovery and auto fallback | 6 passed |
-| Manager process faults, allocation, coalescing and cancellation ownership | 19 passed |
+| Manager process faults, coalescing, concurrent GPU I/O and cancellation ownership | 22 passed |
 | vLLM / Qwen3-8B / SSD | 6 passed; 1 recurrent-only check skipped, with both explicit `cufile` and default `auto` |
 | SGLang / Qwen3-8B / SSD | Passed with both explicit `cufile` and default `auto` |
 | vLLM / Qwen3.8-27B-FP8 / SSD | 7 passed |
 | SGLang / Qwen3.8-27B-FP8 / SSD | Passed |
 
-The allocation/coalescing update reran the Rust GPU gate, all 19 Manager tests
-and both Qwen3-8B engines with explicit cuFile compatibility. Default-auto and
-Qwen3.8 serving results are retained from the [GDS baseline](https://github.com/feichai0017/orbitkv/pull/176).
+The asynchronous update reran all six Rust GPU checks, 22 Manager faults and
+both Qwen3-8B engines with explicit cuFile compatibility. It adds gates for SSD reads during a held write completion,
+GPU write admission saturation with host fallback, and cancellation/unregister
+with both read slots occupied. Each checks actual GPU bytes and final resource
+release. Default-auto and Qwen3.8 serving results are retained from the
+[GDS baseline](https://github.com/feichai0017/orbitkv/pull/176).
 
 Both models' explicit cuFile checks require cuFile writes and new reads after
 DRAM eviction and engine restart. Default-auto checks require new SSD reads
@@ -386,7 +403,9 @@ functional passes do not satisfy it.
 
 - `orbitkv_ssd_cufile_read_bytes_total` / `orbitkv_ssd_cufile_write_bytes_total`:
   physical bytes, including alignment.
-- `orbitkv_ssd_cufile_read_seconds` / `orbitkv_ssd_cufile_write_seconds`: synchronous I/O duration.
+- `orbitkv_ssd_cufile_read_seconds` / `orbitkv_ssd_cufile_write_seconds`: submission-to-completion latency, including GPU gather/scatter and polling; excludes time waiting for a slot and is not pure device I/O time.
+- `orbitkv_ssd_cufile_inflight_batches`: slots occupied through I/O and scatter completion; at most two per active instance/device.
+- `orbitkv_ssd_gpu_write_fallbacks_total`: write jobs sent through host publication when eight GPU writes are already admitted.
 - `orbitkv_ssd_cufile_read_failures_total` / `orbitkv_ssd_cufile_write_failures_total`: failed or short I/O.
 - `orbitkv_ssd_backend_fallbacks_total`: transitions from automatic cuFile admission to io_uring.
 - `orbitkv_ssd_read_pinned_bytes`: SSD bytes held by restore leases.
@@ -403,8 +422,7 @@ Before claiming a performance improvement, compare io_uring and **verified nativ
 NVMe mount, model and working set larger than DRAM. Measure TTFT, throughput, CPU
 use, physical/read amplification, staging budgets and lease drain. Keep
 speculative preparation off in the first comparison. Automatic cost-based path
-selection, prioritizing reads over writes and overlapping multiple cuFile
-operations per GPU remain follow-up work. Complete-group direct writeback is
+selection and tuning concurrency/placement remain follow-up work. Complete-group direct writeback is
 implemented; multi-writer GPU assembly remains separate work.
 
 ## Design references

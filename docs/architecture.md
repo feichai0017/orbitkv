@@ -77,7 +77,11 @@ and speculative preparation retain their existing paths. Complete groups can
 be written from GPU staging; fragmented groups seal in DRAM before writeback.
 GPU-storage files reserve physical capacity before admission. Reads coalesce
 across source leases within each file, while the restore task retains all leases
-and excludes unrequested aligned gaps. Native GDS
+and excludes unrequested aligned gaps. Two registered 4 MiB slots issue
+asynchronous cuFile I/O with event/byte-count completion checks. The storage
+queue limits GPU writes to eight jobs and one in-flight write, rotates jobs by
+batch and bounds read bursts; saturation uses host publication/io_uring.
+Native GDS
 qualification is separate from compatibility-mode correctness.
 Publish holds its
 iceoryx2 reply until D2H and any GPU-backed SSD writes finish, so the caller does not release source HBM
@@ -141,8 +145,8 @@ scheduler signals and page ownership; they do not gain separate cache schedulers
 
 | Reference | Mechanism to use | OrbitKV owner and status |
 | --- | --- | --- |
-| [LMCache v0.5.5 GDS context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/gds_context.py) | Preallocated storage, reusable registered staging, stream-ordered I/O with retained submission state | `backing/ssd` reserves capacity and reuses staging. Bounded Rust async submissions and event-owned arguments/results are next; current cuFile calls are synchronous. |
-| [FlexKV file-range coalescing](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/transfer_ssd.cpp) and [GDS](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/gds/gds_manager.cpp) | Merge physically compatible same-file ranges; keep storage geometry separate from engine tensor layouts | `transfer/worker/ssd` validates compiled demand and coalesces leased ranges per file; `backing/ssd/cufile` owns aligned staging and I/O. Read/write fairness remains planned. |
+| [LMCache v0.5.5 GDS context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/gds_context.py) | Preallocated storage, reusable registered staging, stream-ordered I/O with retained submission state | `backing/ssd` reserves capacity; `cufile/slot` owns registered streams/staging and stable asynchronous arguments/results through event completion. |
+| [FlexKV file-range coalescing](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/transfer_ssd.cpp) and [GDS](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/gds/gds_manager.cpp) | Merge physically compatible same-file ranges; keep storage geometry separate from engine tensor layouts | `transfer/worker/ssd` validates demand and coalesces leased ranges per file; its queue owns task/extent lifetime, bounded GPU write admission and batch-level read/write scheduling. |
 | [Mooncake TE v0.3.13.post1](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/include/transfer_engine.h) | Registered memory and batched remote transfers | Reused directly through `orbitkv-transfer` and `orbitkv-mooncake-sys`. Catalog/source authorization and state compatibility remain OrbitKV responsibilities. Two-host/RDMA qualification is still pending. |
 | [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) — draft proposal | Cached membership and embedded authority; keep coordination off per-key data paths | `orbitkv-catalog` and `server/cluster` already use embedded shards, cached membership and etcd leases/Watch. Catalog replication, online placement and repair remain future work; the RFC is not evidence that those features are implemented. |
 

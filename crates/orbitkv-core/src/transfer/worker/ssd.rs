@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+
+mod queue;
+pub(super) use queue::{MAX_WRITES, run};
 
 use crate::backing::ssd::GpuWriteLease;
 use crate::backing::ssd::cufile::{CopyRange, CufileFile, IoBatch, plan_reads};
@@ -7,17 +11,17 @@ use crate::{EngineError, SlotMeta};
 
 use super::{LayerTransferData, TransferPayload};
 
-type FileReads<'a> = (&'a CufileFile, Vec<IoBatch>);
+type FileReads = (Arc<CufileFile>, Vec<IoBatch>);
 
 pub(crate) struct GpuWrite {
     pub lease: GpuWriteLease,
     pub batches: Vec<IoBatch>,
 }
 
-/// Merge validated ranges per file. Borrowing the task keeps every source lease
-/// alive until its scatter drains, including leases coalesced into the same I/O.
-pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<FileReads<'_>>, EngineError> {
-    let mut sources: HashMap<*const CufileFile, (&CufileFile, Vec<CopyRange>)> = HashMap::new();
+/// Merge validated ranges per file. The worker retains the whole task and every
+/// extent lease separately until all submitted reads and scatters complete.
+pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<FileReads>, EngineError> {
+    let mut sources: HashMap<*const CufileFile, (Arc<CufileFile>, Vec<CopyRange>)> = HashMap::new();
     for layer in layers {
         for block in &layer.blocks {
             let TransferPayload::Ssd {
@@ -49,8 +53,8 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<FileReads<'_>>, E
                 .map_err(EngineError::Storage)?;
             let file = source.file();
             let reads = &mut sources
-                .entry(std::ptr::from_ref(file))
-                .or_insert_with(|| (file, Vec::new()))
+                .entry(Arc::as_ptr(file))
+                .or_insert_with(|| (Arc::clone(file), Vec::new()))
                 .1;
             let mut push =
                 |segment: usize, relative: usize, device, bytes| -> Result<(), EngineError> {
