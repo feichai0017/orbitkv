@@ -17,8 +17,9 @@ and have passed single-node GPU recovery tests.
 
 ![Current compiled page demand, engine ownership and cache tiers; future lifetime and physical planning](../website/public/architecture.svg)
 
-Run one OrbitKV Cache Manager per inference host. Framework adapters run in the
-inference processes and use the same cache API for local DRAM, SSD, and remote
+Run one independent OrbitKV Cache Manager per inference host, with one or more
+engine instances connected to it. Framework adapters run in the inference
+processes and use the same cache API for local DRAM, SSD, and remote
 fetches. The cache manager decides where to source a hit; the inference engine
 still decides when to query and save. Remote fetch is experimental. There is no
 OrbitKV KV-aware request router today.
@@ -36,8 +37,12 @@ OrbitKV KV-aware request router today.
       catalog shards embedded in Managers; one copy per shard
 ```
 
-Single-node deployment consists of one engine and one Cache Manager on the same
-host and needs neither Catalog nor peer gRPC. Current SSD backing is a cache
+Single-node deployment connects engines to their host's Cache Manager and needs
+neither Catalog nor peer gRPC. The Manager shares external capacity across
+instances; model/storage identities still determine whether bytes are reusable.
+Container GPU/PID/IPC wiring and concurrent multi-engine serving require
+[separate qualification](deployment.md#containers-and-kubernetes).
+Current SSD backing is a cache
 file truncated on Cache Manager startup, not durable KV storage across manager
 restarts. Distributed Managers advertise sealed replicas to assigned catalog
 shards using cached membership, then query missing evidence in bounded batches.
@@ -69,6 +74,8 @@ Query reservations use the registered group's padded bytes and remain charged
 through preparation, result ownership, and GPU completion. Global and instance
 limits bound retained payloads; identical backing reads can be shared while
 each request keeps its own ticket and lease. See [query budgets](server.md#query-ownership-budgets).
+Users configure SSD paths and capacity; engine adapters do not choose the
+storage backend, and normal deployment leaves `--ssd-backend` at its default.
 With [automatic SSD selection](gds.md), the Manager tries native cuFile on
 ext4/XFS and falls back to io_uring when unavailable. On the cuFile path a demand
 result can own a pinned file extent instead of host bytes. A dedicated GPU storage worker reads through

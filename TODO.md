@@ -388,9 +388,18 @@ M5, with no measured latency claim. The general compiler work remains open:
 
 ## Hygiene and release
 
+- [x] Document independent per-node Managers, shared-instance capacity and automatic
+  SSD selection; keep backend overrides in diagnosis/qualification instructions.
+- [ ] Replace the engine-coupled Docker build with independently versioned Manager
+  and engine images built from the validated wheel artifacts.
+- [ ] Qualify concurrent engines sharing one Manager: matched runtime/device
+  identities, bounded query ownership, engine/Manager restart and resource drain.
+- [ ] Qualify container GPU access, shared UDS/iceoryx2/PyTorch IPC and pidfd
+  visibility before publishing DaemonSet/Deployment manifests. Test native SSD
+  mounts separately from container functional recovery.
 - [ ] Keep all public capability claims tied to a reproducible test.
-- [ ] Separate client, Cache Manager, and directory release artifacts once the local
-  and multi-node contracts are stable; retain one source workspace.
+- [ ] Separate client and Cache Manager release artifacts when their contracts are
+  stable; catalog shards remain embedded in the Manager.
 - [ ] Keep heavy GPU/RDMA gates explicitly marked.
 - [ ] Preserve license and upstream provenance requirements.
 - [ ] Keep SGLang support claims aligned with the direct-linker E2E gate.

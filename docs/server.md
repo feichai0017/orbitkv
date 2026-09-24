@@ -38,11 +38,16 @@ orbitkv-cache-manager
 
 ### SSD Cache
 
+For normal deployment, set the cache path and the intended capacity; leave
+backend selection to the Manager. `--ssd-backend` is an override for diagnosis
+and controlled tests. cuFile is an optional library inside the Manager, not a
+service to deploy. See [deployment examples](deployment.md#configure-capacity-then-connect-engines).
+
 - `--ssd-cache-path`: Enable SSD cache by providing cache file path (optional)
 - `--ssd-cache-capacity`: SSD cache capacity (default: `512gb`, supports: `kb`, `mb`, `gb`, `tb`). Selecting cuFile reserves this physical space before serving; allocation errors fail startup. io_uring uses logical sizing without upfront reservation.
 - `--ssd-write-queue-depth`: SSD write queue depth, max pending write batches (default: `8`)
 - `--ssd-write-policy`: `all` writes newly saved pages; `reuse` admits foreground-returned pages or repeated publications within a bounded history (default: `all`). Selective admission can require recomputation on the first reuse after DRAM eviction.
-- `--ssd-backend`: `auto` (default) tries native cuFile on ext4/XFS and falls back
+- `--ssd-backend`: optional override. `auto` (default) tries native cuFile on ext4/XFS and falls back
   to io_uring if capability initialization fails; a cuFile operation failure switches new
   operations to io_uring until Manager restart. `uring` uses pinned DRAM;
   `cufile` writes complete GPU state groups and restores leased SSD sources

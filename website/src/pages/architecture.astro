@@ -43,13 +43,14 @@ import { layers, localUrl } from "../data/site";
           <span class="package-name">01 / Single node</span>
           <h3>Keep useful prefixes.</h3>
           <p>
-            Run one manager beside an engine. DRAM and optional SSD extend its
-            cache capacity. Standalone deployment needs neither etcd nor peer
-            gRPC.
-            Automatic SSD selection tries native cuFile and falls back to io_uring.
+            Run an independent Manager per node and connect engines to its
+            shared DRAM and optional SSD cache. Engines retain HBM ownership.
+            Standalone deployment needs neither etcd nor peer gRPC. Configure
+            the SSD path and capacity; automatic selection tries native cuFile
+            and falls back to io_uring without engine-side backend settings.
             Rust submits cuFile reads and writes through two bounded GPU slots,
             allowing demand reads to progress alongside writeback. Native GDS
-            performance qualification remains separate.
+            performance and multi-engine container qualification remain separate.
           </p>
         </article>
         <article class="layer">
