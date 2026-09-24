@@ -90,6 +90,27 @@ def test_ssd_read_path_is_separate_from_cufile_initialization_and_writes(
     assert "--ssd-read-path" not in launch.command
 
 
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+@pytest.mark.parametrize("backend", [None, "direct", "kernel"])
+def test_fixed_transfer_backend_is_explicit_and_ignores_inherited_environment(
+    tmp_path, monkeypatch, engine, backend
+):
+    monkeypatch.setattr("benches.launch.free_port", lambda: 23456)
+    monkeypatch.setenv("ORBITKV_TRANSFER_BACKEND", "inherited-invalid")
+    args = launch_arguments(tmp_path, engine)
+    args.orbitkv_transfer_backend = backend
+    launch = configure(args, 147456)
+    assert launch.backend_configuration["orbitkv_transfer_backend"] == backend
+    if engine == "sglang":
+        assert launch.env.get("ORBITKV_TRANSFER_BACKEND") == backend
+    else:
+        assert "ORBITKV_TRANSFER_BACKEND" not in launch.env
+        connector = json.loads(launch.command[launch.command.index("--kv-transfer-config") + 1])
+        extra = connector.get("kv_connector_extra_config", {})
+        assert extra.get("orbitkv.transfer_backend") == backend
+        assert ("orbitkv.transfer_backend" in extra) == (backend is not None)
+
+
 def test_codec_budget_accepts_binary_units_and_rejects_out_of_range():
     for value, expected in (("64mb", 67108864), ("4096", 4096), ("1.5 GB", 1610612736)):
         assert storage_codec_budget(value) == expected

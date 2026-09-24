@@ -98,7 +98,11 @@ def main() -> None:
         default=0,
         help="OrbitKV SSD capacity; sustained traffic naturally evicts DRAM, other workloads add a forced-eviction phase",
     )
-    parser.add_argument("--orbitkv-transfer-backend", choices=["direct", "kernel"])
+    parser.add_argument(
+        "--orbitkv-transfer-backend",
+        choices=["direct", "kernel"],
+        help="Fix the OrbitKV H2D/D2H backend; default: vLLM model choice or SGLang direct",
+    )
     parser.add_argument("--cache-protected-percent", type=int, default=0)
     parser.add_argument("--ssd-write-policy", choices=["all", "reuse"], default="all")
     parser.add_argument("--ssd-backend", choices=["auto", "uring", "cufile"], default="uring")
@@ -172,8 +176,8 @@ def main() -> None:
         / "benches/results/runs"
         / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}-{args.engine}-{args.backend}"
     ).resolve()
-    if args.orbitkv_transfer_backend and (args.engine != "vllm" or args.backend != "orbitkv"):
-        parser.error("--orbitkv-transfer-backend requires --engine vllm --backend orbitkv")
+    if args.orbitkv_transfer_backend and args.backend != "orbitkv":
+        parser.error("--orbitkv-transfer-backend requires --backend orbitkv")
     if args.ssd_gib < 0 or (args.ssd_gib and args.backend != "orbitkv"):
         parser.error("--ssd-gib must be nonnegative and requires --backend orbitkv")
     if args.query_budget_gib is not None and (

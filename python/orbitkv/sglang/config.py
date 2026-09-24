@@ -1,7 +1,8 @@
-"""Bind SGLang model computation and GPU representation to a cache identity."""
+"""SGLang registration configuration and model-scoped cache identity."""
 
 from __future__ import annotations
 
+import os
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Any
 
@@ -9,6 +10,13 @@ from orbitkv.identity import artifact_identity, model_identity, state_namespace
 
 if TYPE_CHECKING:
     from .layout import GpuLayout
+
+
+def resolve_transfer_backend() -> str:
+    backend = os.environ.get("ORBITKV_TRANSFER_BACKEND", "direct")
+    if backend not in {"direct", "kernel"}:
+        raise ValueError("ORBITKV_TRANSFER_BACKEND must be direct or kernel")
+    return backend
 
 
 def derive_namespace(server_args: Any, params: Any, layout: GpuLayout) -> str:

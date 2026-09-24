@@ -57,6 +57,12 @@ continue to estimate service from submission to observed completion; stage
 histograms retain their queue/admission/service/total meanings. Neither failed
 nor cancelled, timed-out or abandoned work trains successful estimates.
 
+Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
+DMA-coalesced ranges. Actual execution samples and shadow candidates use the
+same shape from the validated copy list; the executor's merge iterator supplies
+the range count. Refining that key does not restart queue/admission timing.
+These fields are bounded estimator dimensions, not additional metric labels.
+
 The bounded SSD-route key includes buckets for the complete stored source image's
 bytes/fragments and the SSD-derived portion of target bytes/fragments, alongside
 the full task shape, representation and shared SSD/device identity. These fields
@@ -319,7 +325,7 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   - Use case: Monitor load throughput
 
 - **orbitkv_load_duration_seconds** (Histogram)
-  - GPU restore duration, including cuFile reads when selected
+  - GPU restore duration, including SSD reads on the selected cuFile or explicit io_uring restore lane
   - Use case: Track load performance (p50, p99)
 
 - **orbitkv_load_failures_total** (Counter)

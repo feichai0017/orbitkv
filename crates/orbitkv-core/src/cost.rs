@@ -49,6 +49,13 @@ pub(crate) enum CostPath {
 }
 
 impl CostPath {
+    fn is_raw_copy(self) -> bool {
+        matches!(
+            self,
+            Self::GpuLoadDirect | Self::GpuLoadKernel | Self::GpuSaveDirect | Self::GpuSaveKernel
+        )
+    }
+
     fn is_restore_route(self) -> bool {
         matches!(self, Self::SsdUringRestore | Self::SsdCufileRestore)
     }
@@ -108,6 +115,7 @@ pub(crate) struct CostKey {
     representation: Representation,
     size: u8,
     fragments: u8,
+    dma_ranges: u8,
     source_size: u8,
     source_fragments: u8,
     ssd_size: u8,
@@ -115,6 +123,13 @@ pub(crate) struct CostKey {
 }
 
 impl CostKey {
+    pub(crate) fn with_dma_ranges(self, ranges: usize) -> Self {
+        Self {
+            dma_ranges: bucket(ranges as u64),
+            ..self
+        }
+    }
+
     pub(crate) fn with_path(self, path: CostPath) -> Self {
         Self { path, ..self }
     }
@@ -153,6 +168,7 @@ impl CostKey {
             representation,
             size: bucket(bytes),
             fragments: bucket(fragments as u64),
+            dma_ranges: 0,
             source_size: 0,
             source_fragments: 0,
             ssd_size: 0,
@@ -297,6 +313,20 @@ impl Observation {
         if let Some(running) = &mut self.0 {
             running.admitted.get_or_insert_with(Instant::now);
         }
+    }
+
+    /// Actual descriptors refine raw-copy shape without restarting queue timing.
+    /// Composite paths and already submitted operations retain their own keys.
+    pub(crate) fn refine_raw_copy(&mut self, key: CostKey, bytes: u64) -> bool {
+        let Some(running) = &mut self.0 else {
+            return false;
+        };
+        if !key.path.is_raw_copy() || running.key.path != key.path || running.submitted.is_some() {
+            return false;
+        }
+        running.key = key;
+        running.logical_bytes = Some(bytes);
+        true
     }
 
     pub(crate) fn submitted(&mut self) {

@@ -52,7 +52,9 @@ fn estimates_are_bounded_and_isolate_resource_representation_and_shape() {
         assert!(estimates.entries.len() <= CAPACITY);
     }
     assert!(!estimates.entries.contains_key(&key(0)));
-    let retained = key(CAPACITY as u64).with_ssd_shape(131072, 8, 65536, 4);
+    let retained = key(CAPACITY as u64)
+        .with_ssd_shape(131072, 8, 65536, 4)
+        .with_dma_ranges(1);
     for _ in 0..MIN_SAMPLES {
         estimates.observe(retained, 0.01, start + Duration::from_secs(1));
     }
@@ -84,6 +86,7 @@ fn estimates_are_bounded_and_isolate_resource_representation_and_shape() {
         retained.with_ssd_shape(131072, 16, 65536, 4),
         retained.with_ssd_shape(131072, 8, 32768, 4),
         retained.with_ssd_shape(131072, 8, 65536, 2),
+        retained.with_dma_ranges(4),
         CostKey {
             path: CostPath::GpuLoadKernel,
             ..retained
@@ -231,6 +234,58 @@ fn repeated_submission_does_not_shorten_the_physical_operation() {
     disabled.admitted();
     disabled.submitted();
     assert!(disabled.0.is_none());
+}
+
+#[test]
+fn raw_shape_refinement_preserves_timing_and_cannot_relabel_composite_or_submitted_work() {
+    let start = Instant::now();
+    let admitted = start + Duration::from_millis(10);
+    let refined = key(9997).with_dma_ranges(1);
+    for (path, raw) in [
+        (CostPath::GpuLoadDirect, true),
+        (CostPath::GpuLoadKernel, true),
+        (CostPath::GpuSaveDirect, true),
+        (CostPath::GpuSaveKernel, true),
+        (CostPath::GpuDecode, false),
+        (CostPath::GpuEncode, false),
+        (CostPath::GpuSsdLoad, false),
+        (CostPath::GpuSsdSave, false),
+        (CostPath::SsdUringRestore, false),
+        (CostPath::SsdCufileRestore, false),
+    ] {
+        let original = key(9997).with_path(path);
+        let candidate = if raw {
+            refined.with_path(path)
+        } else {
+            refined
+        };
+        let mut observation = Observation(Some(Running {
+            key: original,
+            logical_bytes: Some(123),
+            enqueued: start,
+            admitted: Some(admitted),
+            submitted: None,
+            prediction: None,
+        }));
+        assert_eq!(observation.refine_raw_copy(candidate, 65536), raw);
+        let mut running = observation.0.take().unwrap();
+        assert_eq!(running.enqueued, start);
+        assert_eq!(running.admitted, Some(admitted));
+        assert_eq!(running.submitted, None);
+        assert_eq!(running.key, if raw { candidate } else { original });
+        assert_eq!(running.logical_bytes, Some(if raw { 65536 } else { 123 }));
+        running.submitted = Some(start + Duration::from_millis(30));
+        let expected_key = running.key;
+        observation.0 = Some(running);
+        assert!(!observation.refine_raw_copy(candidate.with_dma_ranges(4), 32768));
+        let running = observation.0.take().unwrap();
+        assert_eq!(running.key, expected_key);
+        assert_eq!(
+            running.service_sample(Outcome::Completed, start + Duration::from_millis(130)),
+            Some(0.1)
+        );
+    }
+    assert!(!Observation::disabled().refine_raw_copy(refined, 65536));
 }
 
 #[test]

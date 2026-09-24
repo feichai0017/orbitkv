@@ -52,9 +52,10 @@ fn descs(device_base: u64, host_base: MappedHost, n: usize, seg: usize) -> Vec<C
 #[test]
 #[ignore = "requires a CUDA GPU"]
 fn kernel_matches_direct_both_directions() {
-    const N: usize = 257; // odd, > one grid of blocks would merge nothing
+    const N: usize = 257;
     const SEG: usize = 4096 + 16; // non-power-of-two, 16B-aligned
-    let total = N * SEG;
+    const TAIL: usize = 7; // exercise the vectorized kernel's scalar tail
+    let total = N * SEG + TAIL;
 
     let ctx = CudaContext::new(0).expect("ctx");
     let stream = ctx.default_stream();
@@ -64,8 +65,9 @@ fn kernel_matches_direct_both_directions() {
     let host = alloc_mapped_host(total);
     let device = alloc_device(total);
 
-    // Distinct pattern per byte so a misrouted copy is caught.
-    let pattern: Vec<u8> = (0..total).map(|i| (i * 31 + 7) as u8).collect();
+    let mut pattern = vec![0u8; total];
+    let mut out = vec![0u8; total];
+    let zeros = vec![0u8; total];
     let host_slice = unsafe { std::slice::from_raw_parts_mut(host.host, total) };
 
     let read_device = |out: &mut [u8]| {
@@ -73,38 +75,64 @@ fn kernel_matches_direct_both_directions() {
         assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "DtoH");
     };
     let clear_device = || {
-        let zeros = vec![0u8; total];
         let r = unsafe { sys::cuMemcpyHtoD_v2(device, zeros.as_ptr() as *const _, total) };
         assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "HtoD clear");
     };
 
-    let d = descs(device, host, N, SEG);
-
-    // H2D via each backend, then verify device holds the pattern.
-    for backend in [&kernel as &dyn TransferBackend, &memcpy] {
-        host_slice.copy_from_slice(&pattern);
-        clear_device();
-        backend.h2d(&d, &stream).expect("h2d");
-        stream.synchronize().expect("sync");
-
-        let mut out = vec![0u8; total];
-        read_device(&mut out);
-        assert_eq!(out, pattern, "h2d mismatch for backend {}", backend.name());
+    let mut contiguous = descs(device, host, N, SEG);
+    contiguous.last_mut().unwrap().size += TAIL;
+    // 73 and N are coprime: every range is visited once, with no adjacent pair
+    // in physical order. Bytes and descriptor count stay unchanged.
+    let reordered: Vec<_> = (0..N).map(|index| contiguous[index * 73 % N]).collect();
+    let mut allocation_boundaries = contiguous.clone();
+    for (index, copy) in allocation_boundaries.iter_mut().enumerate() {
+        // Model separate suballocations within the contiguous backing regions.
+        // Either side's owner boundary must prevent direct-copy coalescing.
+        copy.host_allocation = index / 3;
+        copy.device_allocation = index / 5;
     }
 
-    // D2H via each backend: device holds the pattern, host is cleared first.
-    for backend in [&kernel as &dyn TransferBackend, &memcpy] {
-        let r = unsafe { sys::cuMemcpyHtoD_v2(device, pattern.as_ptr() as *const _, total) };
-        assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "HtoD seed");
-        host_slice.fill(0);
-        backend.d2h(&d, &stream).expect("d2h");
-        stream.synchronize().expect("sync");
-        assert_eq!(
-            host_slice,
-            &pattern[..],
-            "d2h mismatch for backend {}",
-            backend.name()
-        );
+    for (shape, copies) in [
+        ("contiguous", contiguous),
+        ("reordered", reordered),
+        ("allocation_boundaries", allocation_boundaries),
+    ] {
+        assert_eq!(copies.len(), N);
+        assert_eq!(copies.iter().map(|copy| copy.size).sum::<usize>(), total);
+        for round in 0..4 {
+            let backend: &dyn TransferBackend = if round % 2 == 0 { &kernel } else { &memcpy };
+            // Include descriptor identity and the round so stale data or
+            // misrouted ranges cannot hide behind a short repeating byte pattern.
+            for (index, byte) in pattern.iter_mut().enumerate() {
+                *byte = ((index * 31) ^ (index >> 8) ^ ((index / SEG) * 17) ^ (round * 67)) as u8;
+            }
+            host_slice.copy_from_slice(&pattern);
+            clear_device();
+            backend.h2d(&copies, &stream).expect("h2d");
+            stream.synchronize().expect("sync");
+            read_device(&mut out);
+            assert_eq!(
+                out,
+                pattern,
+                "h2d mismatch: shape={shape}, round={round}, backend={}",
+                backend.name()
+            );
+
+            for byte in &mut pattern {
+                *byte = byte.wrapping_add(97);
+            }
+            let r = unsafe { sys::cuMemcpyHtoD_v2(device, pattern.as_ptr() as *const _, total) };
+            assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "HtoD seed");
+            host_slice.fill(0);
+            backend.d2h(&copies, &stream).expect("d2h");
+            stream.synchronize().expect("sync");
+            assert_eq!(
+                host_slice,
+                &pattern[..],
+                "d2h mismatch: shape={shape}, round={round}, backend={}",
+                backend.name()
+            );
+        }
     }
 
     unsafe {

@@ -393,9 +393,11 @@ The initial shadow consumer inspects the **actual raw copy descriptors**. DMA
 is feasible for ordinary copies; the kernel alternative requires mapped host
 addresses. It reports predictions, age, count and error for those candidates
 without launching alternatives or changing readiness, ownership or registration.
-Unobserved alternatives remain unknown. Descriptor-count buckets do not yet
-model DMA coalescing or engine interference; the reported prediction error is
-part of that limitation.
+Unobserved alternatives remain unknown. Raw-copy keys retain both descriptor
+count and DMA-coalesced range count, using the executor's own merge iterator.
+The actual descriptors refine the observation and shadow together without
+restarting queue timing. These shapes still do not model NUMA placement or
+interference with inference kernels.
 
 SSD-route shadow uses the same leased sources and requested GPU destinations,
 considering io_uring and cuFile only when their route requirements are satisfied.

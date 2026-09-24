@@ -522,7 +522,13 @@ fn worker_loop(
                             })?;
                     let (copies, bytes) = build_copy_descs(&task.layers)?;
                     if decoded_bytes == 0 {
-                        shadow_raw_copies(&copies, device_id as u64, runtime.backend.name(), false);
+                        observe_raw_copies(
+                            &copies,
+                            device_id as u64,
+                            runtime.backend.name(),
+                            false,
+                            gpu_cost,
+                        );
                     }
                     gpu_cost.submitted();
                     finish_gpu_transfer(
@@ -726,25 +732,45 @@ fn transfer_key(
     )
 }
 
-fn shadow_raw_copies(copies: &[CopyDesc], device: u64, backend: &str, write: bool) {
-    if !enabled() || copies.is_empty() {
-        return;
-    }
-    let bytes = copies.iter().map(|copy| copy.size as u64).sum();
+fn raw_copy_keys(copies: &[CopyDesc], device: u64, write: bool) -> ([CostKey; 2], u64) {
+    let bytes = copies
+        .iter()
+        .fold(0u64, |bytes, copy| bytes.saturating_add(copy.size as u64));
+    let dma_ranges = crate::transfer::memcpy::merged_ranges(copies).count();
     let paths = if write {
         [CostPath::GpuSaveDirect, CostPath::GpuSaveKernel]
     } else {
         [CostPath::GpuLoadDirect, CostPath::GpuLoadKernel]
     };
-    let keys =
-        paths.map(|path| CostKey::new(path, device, Representation::Raw, bytes, copies.len()));
+    let keys = paths.map(|path| {
+        CostKey::new(path, device, Representation::Raw, bytes, copies.len())
+            .with_dma_ranges(dma_ranges)
+    });
+    (keys, bytes)
+}
+
+fn observe_raw_copies(
+    copies: &[CopyDesc],
+    device: u64,
+    backend: &str,
+    write: bool,
+    observation: &mut Observation,
+) {
+    if !enabled() || copies.is_empty() {
+        return;
+    }
+    let (keys, bytes) = raw_copy_keys(copies, device, write);
+    let selected = usize::from(backend == "kernel");
+    if !observation.refine_raw_copy(keys[selected], bytes) {
+        return;
+    }
     // Mapped pinned ranges are the existing kernel backend's required evidence.
     let candidates = if copies.iter().all(|copy| copy.host_device != 0) {
         &keys[..]
     } else {
         &keys[..1]
     };
-    shadow(candidates, usize::from(backend == "kernel"));
+    shadow(candidates, selected);
 }
 
 /// Build one `CopyDesc` per GPU segment of every block across all layers,
@@ -875,11 +901,12 @@ fn process_save_task(
 
     let (copies, total_bytes) = build_copy_descs(layers)?;
 
-    shadow_raw_copies(
+    observe_raw_copies(
         &copies,
         stream.context().ordinal() as u64,
         backend.name(),
         true,
+        observation,
     );
     observation.submitted();
     let submitted = backend.d2h(&copies, stream);

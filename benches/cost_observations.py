@@ -1,9 +1,9 @@
-"""Paired cost-observation overhead gate using prebuilt single-node serving artifacts.
+"""Paired observation overhead or fixed transfer-backend serving comparisons.
 
 Run from the repository root. This harness never builds native artifacts. Raw
 runs and logs remain under runs/; final/ contains only the reviewed-comparison
 shape, including missing evidence and failed gates. No dynamic-policy claim is
-made by this same-binary instrumentation comparison.
+made by either same-binary comparison.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import csv
 import json
 import math
 import os
+import re
 import signal
 import statistics
 import subprocess
@@ -28,6 +29,10 @@ BUDGETS = {
     "ttft_p50_ms": 3.0,
     "ttft_p95_ms": 5.0,
     "ttft_p99_ms": 5.0,
+}
+COMPARISONS = {
+    "observations": ("off", "on"),
+    "transfer-backends": ("direct", "kernel"),
 }
 MATCHED_ARGUMENTS = (
     "engine",
@@ -67,13 +72,14 @@ MATCHED_ARGUMENTS = (
 
 def plan(args) -> list[dict]:
     jobs = []
+    modes = COMPARISONS[args.comparison]
     for engine in args.engines:
-        for tier in ("dram", "ssd"):
+        for tier in args.tiers:
             for codec in args.storage_codecs:
                 if codec != "none" and tier not in args.encoded_tiers:
                     continue
                 for repetition in range(1, args.pairs + 1):
-                    for mode in ("off", "on") if repetition % 2 else ("on", "off"):
+                    for mode in modes if repetition % 2 else reversed(modes):
                         name = f"{engine}-{tier}-{codec}-pair-{repetition}-{mode}"
                         arguments = {
                             "engine": engine,
@@ -104,7 +110,9 @@ def plan(args) -> list[dict]:
                             "cache_protected_percent": 0,
                             "ssd_write_policy": "all",
                             "trace_transfers": False,
-                            "orbitkv_transfer_backend": None,
+                            "orbitkv_transfer_backend": mode
+                            if args.comparison == "transfer-backends"
+                            else None,
                             "settle_seconds": 1.2,
                             "seed": args.seed,
                             "ssd_dir": str(args.ssd_dir) if tier == "ssd" else None,
@@ -191,6 +199,8 @@ def preflight(args) -> list[str]:
 
 
 def read_run(directory: Path, mode: str, tier: str, slo: dict) -> dict:
+    if mode not in ("off", "on", "direct", "kernel"):
+        raise ValueError(f"Unknown comparison mode: {mode}")
     process = json.loads((directory / "process.json").read_text())
     if process.get("exit_code") != 0:
         raise ValueError(f"Serving process did not exit successfully: {process}")
@@ -199,6 +209,15 @@ def read_run(directory: Path, mode: str, tier: str, slo: dict) -> dict:
     expected = "1" if mode == "on" else "0"
     if manifest.get("cost_observations") != expected:
         raise ValueError("Run manifest does not prove the requested instrumentation mode")
+    if mode in COMPARISONS["transfer-backends"]:
+        if manifest["arguments"].get("orbitkv_transfer_backend") != mode:
+            raise ValueError("Run manifest does not prove the requested transfer backend")
+        backends = re.findall(
+            r"GPU worker initialized: device=\d+ backend=(direct|kernel)\b",
+            (directory / "manager.log").read_text(),
+        )
+        if not backends or set(backends) != {mode}:
+            raise ValueError("Manager workers did not use only the requested transfer backend")
     if len(rows) != 1 or rows[0].get("stop_reason") != "request_limit":
         raise ValueError("Paired overhead requires one complete fixed-request sustained window")
     (window,) = [
@@ -216,6 +235,11 @@ def read_run(directory: Path, mode: str, tier: str, slo: dict) -> dict:
             failures.append(f"Unexpected execution failures: {name}={counters[name]}")
     if counters.get("orbitkv_load_bytes_total", 0) <= 0:
         failures.append("No measured GPU restore bytes")
+    if (
+        mode in COMPARISONS["transfer-backends"]
+        and counters.get("orbitkv_save_bytes_total", 0) <= 0
+    ):
+        failures.append("No measured GPU save bytes for D2H/H2D backend comparison")
     if tier == "ssd":
         for name in ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_write_bytes_total"):
             if counters.get(name, 0) <= 0:
@@ -233,7 +257,7 @@ def read_run(directory: Path, mode: str, tier: str, slo: dict) -> dict:
         and cost.get("orbitkv_cost_shadow_decisions_total", 0) <= 0
     ):
         failures.append("No real-candidate shadow decisions")
-    if mode == "off" and any(value != 0 for value in cost.values()):
+    if mode != "on" and any(value != 0 for value in cost.values()):
         failures.append("Disabled observations still produced cost samples")
     if manifest["arguments"].get("storage_codec", "none") != "none":
         for operation in ("encode", "decode"):
@@ -272,9 +296,15 @@ def read_run(directory: Path, mode: str, tier: str, slo: dict) -> dict:
         ),
         "cost": cost,
         "engine_itl": itl,
-        "shadow_scope": "Raw direct/kernel candidate observations"
-        if shadow_applicable
-        else "Not applicable: encoded composite paths have no matched shadow alternatives in P4.1",
+        "shadow_scope": (
+            "Disabled during fixed transfer-backend comparison"
+            if mode in COMPARISONS["transfer-backends"]
+            else (
+                "Raw direct/kernel candidate observations"
+                if shadow_applicable
+                else "Not applicable: encoded composite paths have no matched shadow alternatives in P4.1"
+            )
+        ),
         "manager_usage": {
             key: run["manager_usage"][key]
             for key in ("workload_seconds", "delta", "scope", "io_note")
@@ -292,8 +322,22 @@ def read_run(directory: Path, mode: str, tier: str, slo: dict) -> dict:
     }
 
 
-def compare_pair(off: dict, on: dict) -> dict:
+def compare_pair(off: dict, on: dict, comparison: str = "observations") -> dict:
+    control_mode, candidate_mode = COMPARISONS[comparison]
+    if comparison == "transfer-backends":
+        for run, mode in ((off, control_mode), (on, candidate_mode)):
+            manifest = run["manifest"]
+            if (
+                manifest.get("cost_observations") != "0"
+                or manifest["arguments"].get("orbitkv_transfer_backend") != mode
+                or manifest["arguments"].get("storage_codec", "none") != "none"
+            ):
+                raise ValueError(
+                    "Backend comparison requires explicit direct/kernel, raw storage and observations off"
+                )
     for key in MATCHED_ARGUMENTS:
+        if comparison == "transfer-backends" and key == "orbitkv_transfer_backend":
+            continue
         if off["manifest"]["arguments"].get(key) != on["manifest"]["arguments"].get(key):
             raise ValueError(f"Unmatched run argument: {key}")
     for key in ("manager_binary_sha256", "model_revision", "packages", "gpu", "kv_bytes_per_token"):
@@ -327,8 +371,8 @@ def compare_pair(off: dict, on: dict) -> dict:
         "overhead_percent": overhead,
         "compared_requests": len(control),
         "output_mismatches": sum(candidate[i]["text"] != control[i]["text"] for i in control),
-        "off": off["evidence"],
-        "on": on["evidence"],
+        control_mode: off["evidence"],
+        candidate_mode: on["evidence"],
     }
 
 
@@ -350,6 +394,7 @@ def validate_planned_run(run: dict, job: dict) -> None:
 
 def summarize(args, jobs: list[dict], slo: dict) -> dict:
     cells = []
+    modes = COMPARISONS[args.comparison]
     planned = {job["name"]: job for job in jobs}
     for engine, tier, codec in dict.fromkeys((j["engine"], j["tier"], j["codec"]) for j in jobs):
         pairs, failures = [], []
@@ -362,18 +407,18 @@ def summarize(args, jobs: list[dict], slo: dict) -> dict:
                         tier,
                         slo,
                     )
-                    for mode in ("off", "on")
+                    for mode in modes
                 }
                 for mode, run in runs.items():
                     validate_planned_run(
                         run, planned[f"{engine}-{tier}-{codec}-pair-{repetition}-{mode}"]
                     )
-                pair = compare_pair(runs["off"], runs["on"])
+                pair = compare_pair(runs[modes[0]], runs[modes[1]], args.comparison)
                 pair["pair"] = repetition
                 pairs.append(pair)
                 failures.extend(
                     f"pair {repetition} {mode}: {failure}"
-                    for mode in ("off", "on")
+                    for mode in modes
                     for failure in pair[mode]["failures"]
                 )
             except (OSError, ValueError, KeyError) as error:
@@ -403,13 +448,20 @@ def summarize(args, jobs: list[dict], slo: dict) -> dict:
             }
         )
     return {
+        "comparison": args.comparison,
+        "control": modes[0],
+        "candidate": modes[1],
         "status": "passed"
         if cells and all(cell["status"] == "passed" for cell in cells)
         else "failed",
         "budgets_percent": BUDGETS,
         "slo": slo,
         "cells": cells,
-        "scope": "Finite matched cohorts; per-pair ratios then median, not pooled percentiles. End-to-end overhead with the existing 25ms Manager metrics sampling, including extra metric serialization and parsing; not isolated observer hot-path cost. Same-host io_uring only; no native GDS/RDMA or dynamic-policy qualification.",
+        "scope": (
+            "Finite matched cohorts; per-pair ratios then median, not pooled percentiles. Fixed kernel versus direct registration affects both D2H saves and H2D restores. Observations are disabled on both sides; the existing 25ms metrics sampler is unchanged. Fresh Managers do not accumulate both candidates in one estimator. This is not a restore-only microbenchmark, dynamic-policy qualification or native GDS/RDMA evidence."
+            if args.comparison == "transfer-backends"
+            else "Finite matched cohorts; per-pair ratios then median, not pooled percentiles. End-to-end overhead with the existing 25ms Manager metrics sampling, including extra metric serialization and parsing; not isolated observer hot-path cost. Same-host io_uring only; no native GDS/RDMA or dynamic-policy qualification."
+        ),
         "artifacts": "Checks the same Manager SHA-256, package versions and model revision. Python adapters, native shared libraries and benchmark source must remain frozen while the matrix runs; documentation edits are allowed.",
         "itl": "Official engine histogram bucket deltas provide approximate p50/p95/p99 and a p95 SLO at an exact bucket boundary. vLLM engine-core timing and SGLang tokenizer-receipt timing have different boundaries. Goodput uses only request TTFT and response-average decode, never assigns aggregate ITL to requests.",
         "output": "Exact text differences are retained diagnostics; concurrent greedy output is not assumed batch invariant. Run engine correctness gates separately.",
@@ -421,11 +473,24 @@ def write_summary(directory: Path, result: dict) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "summary.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     with (directory / "summary.csv").open("w") as file:
-        writer = csv.DictWriter(file, fieldnames=["engine", "tier", "codec", "status", *BUDGETS])
+        writer = csv.DictWriter(
+            file,
+            fieldnames=[
+                "comparison",
+                "control",
+                "candidate",
+                "engine",
+                "tier",
+                "codec",
+                "status",
+                *BUDGETS,
+            ],
+        )
         writer.writeheader()
         for cell in result.get("cells", []):
             writer.writerow(
                 {
+                    **{key: result[key] for key in ("comparison", "control", "candidate")},
                     **{key: cell[key] for key in ("engine", "tier", "codec", "status")},
                     **cell["paired_median_overhead_percent"],
                 }
@@ -434,6 +499,8 @@ def write_summary(directory: Path, result: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--comparison", choices=COMPARISONS, default="observations")
+    parser.add_argument("--tiers", nargs="+", choices=("dram", "ssd"), default=["dram", "ssd"])
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument(
         "--manager", type=Path, required=True, help="Prebuilt Manager; never rebuilt here"
@@ -468,6 +535,8 @@ def main() -> None:
     mode.add_argument("--preflight-only", action="store_true")
     mode.add_argument("--report-only", action="store_true")
     args = parser.parse_args()
+    if args.comparison == "transfer-backends" and args.storage_codecs != ["none"]:
+        parser.error("Transfer-backend comparison requires --storage-codecs none")
     if args.pairs < 3 or not 32 <= args.requests <= 100000:
         parser.error("Use at least three pairs and 32–100000 fixed requests")
     if any(
@@ -477,7 +546,7 @@ def main() -> None:
         parser.error("SLO thresholds must be finite and positive")
     if any(
         len(set(values)) != len(values)
-        for values in (args.engines, args.storage_codecs, args.encoded_tiers)
+        for values in (args.engines, args.tiers, args.storage_codecs, args.encoded_tiers)
     ):
         parser.error("Engine and codec lists must not contain duplicates")
     for name in ("model", "manager", "ssd_dir", "output"):
@@ -500,6 +569,9 @@ def main() -> None:
         failures = preflight(args)
         if failures or args.preflight_only:
             result = {
+                "comparison": args.comparison,
+                "control": COMPARISONS[args.comparison][0],
+                "candidate": COMPARISONS[args.comparison][1],
                 "status": "blocked" if failures else "ready",
                 "failures": failures,
                 "cells": [],

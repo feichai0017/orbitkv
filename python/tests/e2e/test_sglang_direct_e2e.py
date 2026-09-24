@@ -106,6 +106,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
     )
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
+    env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
     env["FLASHINFER_WORKSPACE_BASE"] = str(tmp_path / "flashinfer")
     log_path = tmp_path / "sglang-direct.log"
 

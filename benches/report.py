@@ -188,6 +188,7 @@ def main() -> None:
                     "run": run["directory"],
                     "engine": config["engine"],
                     "backend": config["backend"],
+                    "orbitkv_transfer_backend": config.get("orbitkv_transfer_backend"),
                     "gpu_tokens": config["gpu_tokens"],
                     "host_gib": config["host_gib"],
                     "ssd_gib": config.get("ssd_gib", 0),

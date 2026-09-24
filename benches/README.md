@@ -105,6 +105,19 @@ FlexKV compatibility failures observed on these releases are documented in the
 [measurement report](../docs/single-node-performance.md); accepting a backend
 option does not mean its current integration can start successfully.
 
+For either engine with `--backend orbitkv`, use
+`--orbitkv-transfer-backend direct` or `kernel` to fix the GPU H2D/D2H copy
+backend at registration. Omitting the option preserves vLLM's model-based
+choice and SGLang's `direct` default. The harness clears an inherited
+`ORBITKV_TRANSFER_BACKEND`; for SGLang it sets this variable only from the
+explicit benchmark option. Manifests and CSV reports retain the requested
+value; Manager worker logs and transfer counters provide execution evidence.
+This switch affects saves and restores, and does not enable dynamic selection.
+For a fixed-mode comparison, keep other controls and artifacts identical and
+run at least three pairs in direct/kernel, kernel/direct, direct/kernel order.
+An observation-overhead comparison requires one matched transfer mode in each
+off/on pair.
+
 All outputs and cache-source evidence are retained, including mixed hits,
 misses, and generated-text differences. A startup/request failure writes
 `failure.json` and is not a latency result. The serial workload measures TTFT;
@@ -562,3 +575,36 @@ it does not isolate observer hot-path cost. These finite cohorts measure
 instrumentation overhead on the recorded host; they do not establish a throughput ceiling, dynamic-path benefit, native GDS
 performance or distributed-cache qualification. See the final evidence in the
 [implementation handoff](../docs/implementation-plan.md#p41-final-evidence).
+
+## Fixed DMA/kernel comparison
+
+The same driver supports a separate `--comparison transfer-backends` contract.
+It fixes `--orbitkv-transfer-backend direct|kernel` for both engines, with
+observations explicitly disabled on both sides. The Manager log must confirm
+the requested worker backend; a requested flag alone is insufficient. Only the
+backend may differ within each pair. Raw storage is required, and the default
+observation comparison continues to reject mismatched backends.
+
+```bash
+.venv/vllm-release/bin/python -m benches.cost_observations \
+  --comparison transfer-backends --tiers dram --storage-codecs none \
+  --pairs 3 --requests 128 --seed 20260925 \
+  --model /path/to/qwen3-8b \
+  --manager /absolute/path/to/prebuilt/orbitkv-cache-manager \
+  --ssd-dir /path/to/existing-test-directory \
+  --output benches/results/runs/transfer-backends
+```
+
+This produces 12 sessions: three direct/kernel pairs per engine, reversing the
+middle pair. The fixed cohort, capacities, SLOs and regression budgets are the
+same as above. `--tiers dram` performs no SSD I/O; include `ssd` for a separate
+io_uring pressure control. The required SSD-directory argument is only used by
+SSD sessions. Both save D2H and restore H2D use the selected backend, so this
+comparison is not a restore-only microbenchmark. It retains actual GPU bytes,
+TTFT/ITL, throughput/goodput, CPU usage and exact-text diagnostics.
+
+Each session starts a fresh Manager. These runs do not populate two candidate
+estimates in a production process or qualify an automatic selector. Keep
+registration defaults unchanged until useful gains, shared-device admission and
+switching margins have their own evidence. `--report-only` must use the same
+comparison, tiers and other predeclared arguments.

@@ -80,6 +80,9 @@ qualification remain open. See the
   inputs with metrics; preserve uncertainty and censored timeout observations.
 - [x] Run shadow DMA/kernel candidates on actual raw-copy metadata; report
   prediction error without claiming unexecuted alternatives as measured savings.
+- [x] Distinguish descriptor count from DMA-coalesced range count using the
+  executor's merge logic, and support fixed direct/kernel comparisons in both
+  engine harnesses while preserving registration defaults.
 - [x] Separate immutable SSD extent leases from route eligibility. Execute the
   same generation through io_uring host materialization or cuFile GPU staging;
   use a separate host-restore lane and preserve terminal ownership.

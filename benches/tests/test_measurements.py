@@ -1,5 +1,6 @@
 """Protect cache-source evidence and incomplete-run rejection in comparisons."""
 
+import csv
 import json
 from types import SimpleNamespace
 
@@ -125,18 +126,87 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
         ["--cache-protected-percent", "80"],
         ["--ssd-write-policy", "reuse"],
         ["--ssd-read-path", "uring"],
+        ["--orbitkv-transfer-backend", "kernel"],
     ],
 )
-def test_non_orbitkv_runs_reject_inapplicable_controls(monkeypatch, flag):
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+def test_non_orbitkv_runs_reject_inapplicable_controls(monkeypatch, flag, engine):
     from benches.single_node import main
 
     monkeypatch.setattr(
         "sys.argv",
-        ["bench", "--engine", "vllm", "--backend", "native", "--model", "/missing", *flag],
+        ["bench", "--engine", engine, "--backend", "native", "--model", "/missing", *flag],
     )
     with pytest.raises(SystemExit) as error:
         main()
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+def test_fixed_backend_cli_reaches_configuration_without_runtime_start(
+    tmp_path, monkeypatch, engine
+):
+    from benches.single_node import main
+
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text(
+        json.dumps(
+            {"model_type": "qwen3", "num_hidden_layers": 1, "num_key_value_heads": 1, "head_dim": 1}
+        )
+    )
+
+    def inspect_configuration(args, bytes_per_token):
+        assert args.engine == engine
+        assert args.orbitkv_transfer_backend == "kernel"
+        raise RuntimeError("configuration reached")
+
+    monkeypatch.setattr("benches.single_node.configure", inspect_configuration)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "bench",
+            "--engine",
+            engine,
+            "--backend",
+            "orbitkv",
+            "--model",
+            str(model),
+            "--output",
+            str(tmp_path / "run"),
+            "--orbitkv-transfer-backend",
+            "kernel",
+        ],
+    )
+    with pytest.raises(RuntimeError, match="configuration reached"):
+        main()
+
+
+@pytest.mark.parametrize("backend", [None, "direct", "kernel"])
+def test_report_preserves_requested_transfer_backend(tmp_path, monkeypatch, backend):
+    from benches.report import main
+
+    args = {
+        "engine": "sglang",
+        "backend": "orbitkv",
+        "gpu_tokens": 8192,
+        "host_gib": 1,
+        "orbitkv_transfer_backend": backend,
+    }
+    run = {
+        "directory": "fixture",
+        "manifest": {"arguments": args},
+        "summary": [{"cache_sources": {}}],
+    }
+    monkeypatch.setattr("benches.report.collect_run", lambda path: run)
+    output = tmp_path / "report"
+    monkeypatch.setattr("sys.argv", ["report", "fixture", "--output", str(output)])
+    main()
+    with (output / "summary.csv").open() as report:
+        row = next(csv.DictReader(report))
+    assert row["orbitkv_transfer_backend"] == (backend or "")
+    saved = json.loads((output / "summary.json").read_text())[0]
+    assert saved["manifest"]["arguments"]["orbitkv_transfer_backend"] == backend
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])

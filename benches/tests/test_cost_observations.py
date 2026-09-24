@@ -1,6 +1,7 @@
 """Reject unmatched cohorts, absent physical work, and invented cost evidence."""
 
 import copy
+import csv
 import json
 import signal
 from argparse import Namespace
@@ -37,9 +38,15 @@ def run_files(directory, mode="on", tier="ssd", job=None):
     if job:
         manifest["arguments"] = copy.deepcopy(job["arguments"])
         manifest["manager_command"] = [job["manager"]]
+    if mode in ("direct", "kernel"):
+        manifest["arguments"]["orbitkv_transfer_backend"] = mode
+        (directory / "manager.log").write_text(
+            f"GPU worker initialized: device=0 backend={mode} device_id=0\n"
+        )
     count = manifest["arguments"]["max_requests"]
     counters = {
         "orbitkv_load_bytes_total": 8192,
+        "orbitkv_save_bytes_total": 8192,
         "orbitkv_ssd_prefetch_bytes_total": 8192 if tier == "ssd" else 0,
         "orbitkv_ssd_write_bytes_total": 16384 if tier == "ssd" else 0,
     }
@@ -109,6 +116,8 @@ def run_files(directory, mode="on", tier="ssd", job=None):
 
 def arguments(tmp_path):
     return Namespace(
+        comparison="observations",
+        tiers=["dram", "ssd"],
         engines=["vllm", "sglang"],
         storage_codecs=["none", "ans"],
         encoded_tiers=["ssd"],
@@ -133,6 +142,107 @@ def test_plan_reverses_order_and_keeps_engine_tier_codec_controls_matched(tmp_pa
         assert command[command.index("--ssd-gib") + 1] == ("16" if job["tier"] == "ssd" else "0")
         assert command[command.index("--storage-codec") + 1] == job["codec"]
         assert command[command.index("--max-requests") + 1] == "64"
+
+
+def test_transfer_backend_plan_reverses_both_engines_without_changing_other_arguments(tmp_path):
+    args = arguments(tmp_path)
+    args.comparison, args.tiers, args.storage_codecs = "transfer-backends", ["dram"], ["none"]
+    jobs = costs.plan(args)
+    assert len(jobs) == 12
+    assert [job["mode"] for job in jobs[:6]] == [
+        "direct",
+        "kernel",
+        "kernel",
+        "direct",
+        "direct",
+        "kernel",
+    ]
+    for job in jobs:
+        assert job["arguments"]["orbitkv_transfer_backend"] == job["mode"]
+        assert job["arguments"]["ssd_gib"] == 0
+        command = job["command"]
+        assert command[command.index("--orbitkv-transfer-backend") + 1] == job["mode"]
+
+
+@pytest.mark.parametrize("workers", ["", "direct", "kernel\ndirect"])
+def test_backend_comparison_requires_real_worker_selection(tmp_path, workers):
+    directory = tmp_path / "kernel"
+    run_files(directory, "kernel", "dram")
+    (directory / "manager.log").write_text(
+        "\n".join(
+            f"GPU worker initialized: device=0 backend={mode} device_id=0"
+            for mode in workers.splitlines()
+        )
+    )
+    with pytest.raises(ValueError, match="Manager workers"):
+        costs.read_run(directory, "kernel", "dram", SLO)
+
+
+def test_backend_pairs_only_allow_the_selected_backend_to_change(tmp_path):
+    for mode in ("direct", "kernel"):
+        run_files(tmp_path / mode, mode, "dram")
+    direct = costs.read_run(tmp_path / "direct", "direct", "dram", SLO)
+    kernel = costs.read_run(tmp_path / "kernel", "kernel", "dram", SLO)
+    pair = costs.compare_pair(direct, kernel, "transfer-backends")
+    assert pair["overhead_percent"] == dict.fromkeys(costs.BUDGETS, 0)
+    assert pair["direct"]["cost"] == pair["kernel"]["cost"] == {}
+    for key in ("seed", "ssd_read_path", "host_gib"):
+        changed = copy.deepcopy(kernel)
+        changed["manifest"]["arguments"][key] = "different"
+        with pytest.raises(ValueError, match="Unmatched run argument"):
+            costs.compare_pair(direct, changed, "transfer-backends")
+    for key, value in (
+        ("cost_observations", "1"),
+        ("storage_codec", "ans"),
+        ("orbitkv_transfer_backend", None),
+    ):
+        changed = copy.deepcopy(kernel)
+        target = (
+            changed["manifest"] if key == "cost_observations" else changed["manifest"]["arguments"]
+        )
+        target[key] = value
+        with pytest.raises(ValueError, match="Backend comparison requires"):
+            costs.compare_pair(direct, changed, "transfer-backends")
+    with pytest.raises(ValueError, match="Unmatched run argument"):
+        costs.compare_pair(direct, kernel)
+
+
+def test_backend_report_uses_direct_kernel_labels_and_rejects_observation_samples(tmp_path):
+    args = arguments(tmp_path)
+    args.comparison, args.tiers, args.storage_codecs = "transfer-backends", ["dram"], ["none"]
+    args.engines = ["vllm"]
+    jobs = costs.plan(args)
+    for job in jobs:
+        run_files(tmp_path / "runs" / job["name"], job["mode"], "dram", job)
+    result = costs.summarize(args, jobs, SLO)
+    assert result["status"] == "passed"
+    assert result["control"] == "direct" and result["candidate"] == "kernel"
+    assert "both D2H saves and H2D restores" in result["scope"]
+    assert "off" not in result["cells"][0]["pairs"][0]
+    costs.write_summary(tmp_path / "final", result)
+    with (tmp_path / "final/summary.csv").open() as output:
+        (row,) = list(csv.DictReader(output))
+    assert (row["comparison"], row["control"], row["candidate"]) == (
+        "transfer-backends",
+        "direct",
+        "kernel",
+    )
+    file = tmp_path / "runs" / jobs[1]["name"] / "windows.jsonl"
+    window = json.loads(file.read_text())
+    window["manager_delta"]["orbitkv_cost_operations_total"] = 1
+    file.write_text(json.dumps(window))
+    failed = costs.summarize(args, jobs, SLO)
+    assert failed["status"] == "failed"
+    assert any("Disabled observations" in message for message in failed["cells"][0]["failures"])
+
+
+def test_backend_comparison_requires_d2h_and_h2d_bytes(tmp_path):
+    directory = tmp_path / "direct"
+    window = run_files(directory, "direct", "dram")
+    window["manager_delta"].pop("orbitkv_save_bytes_total")
+    (directory / "windows.jsonl").write_text(json.dumps(window))
+    run = costs.read_run(directory, "direct", "dram", SLO)
+    assert any("GPU save bytes" in message for message in run["evidence"]["failures"])
 
 
 def test_cost_labels_keep_terminal_outcomes_and_stage_boundaries(monkeypatch):

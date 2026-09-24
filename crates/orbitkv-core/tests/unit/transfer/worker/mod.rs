@@ -189,3 +189,51 @@ fn failed_gpu_work_is_not_reclassified_by_consumer_loss() {
         assert_eq!(terminal_outcome(completed, closed), expected);
     }
 }
+
+#[test]
+fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
+    let mut host = [0u8; 16];
+    let contiguous: Vec<_> = (0..4)
+        .map(|index| CopyDesc {
+            device: 0x1000 + (index * 4) as u64,
+            host: host.as_mut_ptr().wrapping_add(index * 4),
+            host_device: 0x2000 + (index * 4) as u64,
+            size: 4,
+            device_allocation: 1,
+            host_allocation: 2,
+        })
+        .collect();
+    let mut fragmented = contiguous.clone();
+    fragmented.swap(1, 2);
+    let mut allocations = contiguous.clone();
+    for (index, copy) in allocations.iter_mut().enumerate() {
+        copy.host_allocation = index;
+    }
+    for write in [false, true] {
+        let (merged_keys, bytes) = raw_copy_keys(&contiguous, 3, write);
+        assert_eq!(bytes, 16);
+        let paths = if write {
+            [CostPath::GpuSaveDirect, CostPath::GpuSaveKernel]
+        } else {
+            [CostPath::GpuLoadDirect, CostPath::GpuLoadKernel]
+        };
+        for (key, path) in merged_keys.iter().zip(paths) {
+            assert_eq!(
+                *key,
+                CostKey::new(path, 3, Representation::Raw, 16, 4).with_dma_ranges(1)
+            );
+        }
+        for copies in [&fragmented, &allocations] {
+            let (keys, bytes) = raw_copy_keys(copies, 3, write);
+            assert_eq!(bytes, 16);
+            for ((key, merged_key), path) in keys.iter().zip(merged_keys).zip(paths) {
+                assert_ne!(*key, merged_key);
+                assert_eq!(
+                    *key,
+                    CostKey::new(path, 3, Representation::Raw, 16, 4).with_dma_ranges(4)
+                );
+            }
+        }
+        assert_ne!(merged_keys, raw_copy_keys(&contiguous, 3, !write).0);
+    }
+}
