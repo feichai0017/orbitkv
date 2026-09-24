@@ -292,6 +292,14 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                     item[0] for item in response.json()["meta_info"]["output_token_logprobs"]
                 ]
                 assert probabilities == pytest.approx(expected_probs, abs=0.05)
-        assert log_path.read_text().count("OrbitKV direct GPU linker registered") >= 3
+        registrations = [
+            line
+            for line in log_path.read_text().splitlines()
+            if "OrbitKV GPU linker registered" in line
+        ]
+        assert len(registrations) >= 3
+        assert all(
+            f"transfer backend {env['ORBITKV_TRANSFER_BACKEND']}" in line for line in registrations
+        )
     finally:
         stop_server(process)
