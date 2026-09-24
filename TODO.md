@@ -83,6 +83,9 @@ qualification remain open. See the
 - [x] Distinguish descriptor count from DMA-coalesced range count using the
   executor's merge logic, and support fixed direct/kernel comparisons in both
   engine harnesses while preserving registration defaults.
+- [x] Run the [three-pair DRAM/raw comparison](docs/implementation-plan.md#dmakernel-comparison-final-evidence)
+  on both engines. Fixed kernel exceeds throughput and TTFT p50 regression
+  budgets in both cells; keep the default direct backend for these layouts.
 - [x] Separate immutable SSD extent leases from route eligibility. Execute the
   same generation through io_uring host materialization or cuFile GPU staging;
   use a separate host-restore lane and preserve terminal ownership.

@@ -598,10 +598,13 @@ observation comparison continues to reject mismatched backends.
 This produces 12 sessions: three direct/kernel pairs per engine, reversing the
 middle pair. The fixed cohort, capacities, SLOs and regression budgets are the
 same as above. `--tiers dram` performs no SSD I/O; include `ssd` for a separate
-io_uring pressure control. The required SSD-directory argument is only used by
-SSD sessions. Both save D2H and restore H2D use the selected backend, so this
-comparison is not a restore-only microbenchmark. It retains actual GPU bytes,
-TTFT/ITL, throughput/goodput, CPU usage and exact-text diagnostics.
+io_uring pressure control. The SSD directory must exist for preflight; only SSD
+sessions create payload there. Both save D2H and restore H2D use the selected
+backend, so this comparison is not a restore-only microbenchmark. It retains
+completed logical GPU save/restore bytes, TTFT/ITL, throughput/goodput, Manager
+CPU usage and exact-text diagnostics. These byte counters do not measure PCIe
+traffic. Manager CPU includes preparation and drain; engine CPU and GPU
+contention are not measured.
 
 Each session starts a fresh Manager. These runs do not populate two candidate
 estimates in a production process or qualify an automatic selector. Keep

@@ -398,6 +398,9 @@ count and DMA-coalesced range count, using the executor's own merge iterator.
 The actual descriptors refine the observation and shadow together without
 restarting queue timing. These shapes still do not model NUMA placement or
 interference with inference kernels.
+The [fixed-backend DRAM comparison](implementation-plan.md#dmakernel-comparison-final-evidence)
+exceeds the throughput and TTFT p50 regression budgets for kernel in both
+engines; it does not qualify automatic selection or change registration defaults.
 
 SSD-route shadow uses the same leased sources and requested GPU destinations,
 considering io_uring and cuFile only when their route requirements are satisfied.

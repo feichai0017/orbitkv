@@ -40,12 +40,11 @@ an OrbitKV implementation or qualification item.
 
 ## Current baseline and evidence
 
-The checkout at handoff is `chore/transfer-planning`, based on `664f7262`;
-runtime codec/GDS work is in `7ee279c7`, merged by `ca621c10`. This branch has
-uncommitted planning/documentation changes. Recheck Git status before working
-and preserve those changes. The initial handoff changed no runtime behavior.
-P4.1 evidence and the subsequent SSD source/path separation are recorded below; dynamic
-execution selection remains planned.
+The working branch is `chore/transfer-planning`, based on `d83d8a47`, with the
+planning documents and implementation in [PR #182](https://github.com/feichai0017/orbitkv/pull/182).
+Recheck Git status before working and preserve existing changes. P4.1
+observations, independent SSD demand routes and the fixed DMA/kernel comparison
+are recorded below; dynamic execution selection remains planned.
 
 | Area | Implemented or recorded | Open boundary |
 | --- | --- | --- |
@@ -54,7 +53,7 @@ execution selection remains planned.
 | Local storage | Pinned DRAM, neutral SSD extent leases, independently executable io_uring/cuFile demand reads, reusable GPU staging and encoded recovery | New route validation recorded separately below; native GDS performance and direct engine-page I/O unqualified |
 | Codecs | Batched GPU ANS/FP8/TurboQuant, reusable workspace, CRC; CPU FP8 scalar/AVX2/AVX-512 | General lossy quality qualification and adaptive representation selection |
 | Lifecycle | Query budgets, shared reads, cancellation, completion ownership, restart and process-fault gates | Multi-rank and sustained fault soak; no timeout-only DMA reclamation |
-| Policies | Optional preparation, protected retention and reuse-based SSD admission | Calibrated costs, first-use prediction and dynamic path/boundary selection |
+| Policies | Optional preparation, protected retention, reuse-based SSD admission and opt-in bounded cost/shadow observations | Calibration under shared-device contention, first-use prediction and dynamic path/boundary selection |
 | Peer cache | Embedded catalogs, etcd Watch, cached/coalesced discovery, source authorization, bounded TE transfers and release recovery | Recorded serving evidence is same-host TCP; two-host TCP/RDMA, catalog replication and orphan revocation remain open |
 | Packaging | Source-buildable CUDA wheels and installed-artifact checks | First Python release, qualified container images, shared-instance deployment and Kubernetes installation |
 
@@ -245,7 +244,7 @@ work proceed alongside distributed qualification; no warming speedup gates DP.
 | --- | --- | --- | --- |
 | First: P4.1 | Bounded Rust cost observations and shadow decisions | Core transfer/backing/query; existing metrics and benchmarks | Prediction error on executed work, bounded state, measured instrumentation overhead; unchanged recovery behavior |
 | Alongside: deployment packaging | Installed Manager/engine images, shared-node qualification, explicit container profile; then isolated registration | Server registry/endpoint, channel, core transfer, thin adapters, release tooling | Both engines in separate processes/containers, concurrent instances, device remapping and restart/drain; real cluster gate before Kubernetes claims |
-| P4.2 | Independent io_uring/cuFile SSD routes and full-restore shadow implemented; qualify and select local movement paths next | Transfer workers, neutral SSD extent leases/queues and cost state | Current route validation below; DMA/kernel ablation, then io_uring/native-GDS comparison on a qualified host; shared-device budget, switching margin and conservative selection with weak evidence |
+| P4.2 | Independent io_uring/cuFile SSD routes, full-restore shadow and fixed DMA/kernel controls implemented; qualify per-batch choice next | Transfer workers, neutral SSD extent leases/queues and cost state | Route correctness and fixed-backend results below; io_uring/native-GDS comparison on a qualified host; shared-device budget, switching margin and conservative selection with weak evidence |
 | P4.3 / remaining P3 | Choose legal restore boundary vs recompute; first-use preparation and queue shares | Recovery contract, query/prefetch, engine admission callbacks | TTFT/ITL targets, bounded unused prepared bytes, cancellation/expiry/reordering and other-request progress |
 | P4.4 | Useful retention and writes, optional deferred publication and representation admission | Read cache, write path, codec and worker ownership | Independent policy ablations, write/read amplification and source-hold measurements; lossy quality is a separate gate |
 | D1, in parallel | Real two-host independent-replica recovery, first TP=1 | Catalog/cluster, peer authorization, TE and existing serving driver | Output controls, positive remote/GPU bytes, incarnation rejection, loss/partition cleanup; TCP and RDMA reported separately |
@@ -536,6 +535,89 @@ The earlier 36-run overhead matrix was not rerun for these executor changes;
 neither lower overhead nor a route-ranking improvement is claimed. Native GDS,
 physical two-host/RDMA and shared-device policy qualification remain separate gates.
 
+## DMA/kernel comparison final evidence
+
+The next P4.2 slice records actual raw-copy descriptor counts and DMA-coalesced
+range counts in the bounded cost key. Observation and execution share the same
+allocation-free merge iterator; refinement preserves the original enqueue and
+admission clocks. Contiguous ranges merge only within the same host and device
+allocations. Encoded composites and full SSD restores retain their own keys.
+
+Both engines now support fixed `direct`/`kernel` registration through the
+existing benchmark option. SGLang also accepts `ORBITKV_TRANSFER_BACKEND` before
+registration. Normal defaults remain direct for SGLang and non-MLA vLLM, kernel
+for vLLM MLA. These controls affect raw host/GPU saves and restores; codec and
+cuFile retain their own execution paths. No per-batch selector is enabled.
+
+Validation on **2026-09-25** uses the same exposed H20, Qwen3-8B, vLLM 0.29.0 and
+SGLang 0.5.20 container environment. The frozen, non-test-hooks Manager has
+SHA256 `605784bbafad0b2cfb090afb7b7cedfe316f3fc986c6c565f3651bc07e729487`.
+The Rust and engine gates include the shared-read permission guard described
+above. Native builds finished before runtime validation; no live Manager's
+Mooncake libraries were rebuilt or restaged.
+
+| Final gate | Result |
+| --- | --- |
+| Rust format and workspace Clippy, all targets, CUDA 13 + Mooncake | Passed |
+| Precompiled workspace Release tests | 380 passed; four untouched coordinator tests remain opt-in |
+| GPU direct/kernel equality | Passed: contiguous, shuffled and allocation-boundary shapes, both directions, four alternating rounds and unaligned tails |
+| Same-generation SSD routes, cuFile and peer regression gates | 2 + 8 + 2 passed; raw/ANS route equality, forced cuFile CPU compatibility and same-host TCP only |
+| vLLM kernel DRAM recovery | 6 passed, 1 recurrent-model-only skip; native output and restarted-engine recovery checks |
+| SGLang kernel DRAM recovery | 1 passed; registered backend, native output, restarted-engine GPU recovery and cold-identity controls |
+| Source-only Python gate | 353 passed, 1 skipped |
+| Benchmark harness and Python lint/format | 162 passed; Ruff passed; actual worker backend, both copy directions and disabled observations are required evidence |
+| Website check, build and link tests | Passed: no Astro diagnostics, 40 pages, 1 test |
+
+The DRAM/raw serving matrix completed **12 runs / 1,536 requests**, three pairs
+per engine with the second pair reversed, using source commit `ea7b3391` and
+the frozen Manager above. Both sides explicitly disable observations. The
+predeclared seed is 20260925, with 128 requests per run, concurrency four,
+1024/4096-token prefixes, 75% planned reuse, a 4.219 GiB prefix working set,
+16 GiB DRAM and 8192 engine KV tokens (1.125 GiB). This matrix performs no SSD I/O.
+
+All runs pass the fixed-cohort, registered-backend, positive save/restore byte,
+drain and absolute SLO checks. **Neither engine passes the relative regression
+budget for fixed kernel execution.** The following values are medians of the
+three paired percentage changes, kernel relative to direct; the budgets remain
+3% throughput loss, 3% TTFT p50 growth and 5% p95/p99 growth.
+
+| Engine / DRAM / raw | Throughput loss | TTFT p50 | TTFT p95 | TTFT p99 | Budget |
+| --- | ---: | ---: | ---: | ---: | --- |
+| vLLM | +4.246% | +5.370% | +0.658% | +2.233% | Fail: throughput, p50 |
+| SGLang | +3.870% | +3.392% | +3.068% | +3.225% | Fail: throughput, p50 |
+
+SGLang's individual p50 changes are +3.392%, -10.473% and +9.801%; this
+variation does not remove the failed median gate. These results do not support
+replacing direct with kernel on this workload. They do not qualify MLA layouts;
+registration defaults remain unchanged.
+
+The following are medians of each run's measurements, not pooled percentiles.
+All 1,536 requests meet the TTFT/response-average-decode SLO, so goodput equals
+throughput. Each run has 1,920 official ITL samples; at least 98.177% are within
+100 ms. ITL quantiles use histogram interpolation with engine-specific timing
+boundaries. Matched concurrent outputs have zero text differences; exact
+recovery is separately covered by the gates above.
+
+| Engine / backend | TTFT p50 / p95 / p99 (ms) | ITL p50 / p95 / p99 (ms, approximate) | Goodput (requests/s) | Manager CPU (s) | Logical save / restore (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| vLLM / direct | 268.18 / 1010.28 / 1276.08 | 5.15 / 9.79 / 134.35 | 7.579 | 4.27 | 9.984 / 30.929 |
+| vLLM / kernel | 281.32 / 1017.08 / 1301.77 | 5.77 / 20.78 / 130.83 | 7.257 | 5.28 | 9.984 / 30.551 |
+| SGLang / direct | 324.10 / 1133.08 / 1315.39 | 6.92 / 7.94 / 9.23 | 7.409 | 4.24 | 9.984 / 30.771 |
+| SGLang / kernel | 337.75 / 1153.96 / 1358.53 | 7.03 / 9.50 / 14.11 | 7.150 | 4.84 | 9.984 / 30.902 |
+
+The [fixed-backend protocol](../benches/README.md#fixed-dmakernel-comparison)
+compares both D2H saves and H2D restores with observations disabled on both
+sides. Each session starts a fresh Manager, so this does not train both
+candidates in one production estimator. Completed logical GPU byte counters
+prove that saves and restores ran; they do not measure PCIe traffic. Manager CPU
+includes preparation and drain; engine CPU and GPU contention are not measured.
+The new raw-shape observation overhead was not requalified by this disabled
+comparison. Native GDS, shared-device admission, per-batch switching and the
+earlier SGLang ANS SSD observation-overhead gate remain open.
+
+Raw logs, frozen artifacts and machine-readable summaries remain in ignored
+`benches/results/runs/20260925-p42-dma/`; paired results are under `paired/final/`.
+
 ## Session startup and working constraints
 
 Read [AGENTS.md](../AGENTS.md), this plan, the affected owners and the relevant
@@ -578,10 +660,17 @@ npm run build
 npm test
 ```
 
-Continue from the current SSD-route evidence above. Close the SGLang ANS SSD overhead gate
-before enabling observations by default. Qualified DMA/kernel ablations and
-selection margins follow using the bounded observer; deployment and physical
-two-host gates can proceed independently. Do not mark
+Continue from the SSD-route and DMA/kernel evidence above. Before per-batch
+selection, establish shared admission across registrations on the same GPU,
+prepare both legal backends outside request execution, and require fresh matched
+estimates with gains exceeding measured error and a declared switching margin.
+The admission permit must survive caller cancellation through the existing
+completion/drain owner; a partially submitted copy cannot be replayed through
+another backend. Offline fixed-backend results do not populate online estimates
+or measure a share of inference SM capacity.
+
+Close the SGLang ANS SSD overhead gate before enabling observations by default.
+Deployment and physical two-host gates can proceed independently. Do not mark
 dynamic selection, container isolation or distributed HA complete until their
 own gates pass.
 
