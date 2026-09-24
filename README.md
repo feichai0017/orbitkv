@@ -94,7 +94,9 @@ Manager command. The SSD cache is recreated when the Manager restarts.
 The default [automatic SSD backend](docs/gds.md) tries native cuFile on supported
 mounts and uses io_uring when unavailable. cuFile writes complete GPU state
 groups and restores SSD demand hits through bounded GPU staging. Hardware
-selection and native GDS performance qualification are separate.
+selection and native GDS performance qualification are separate. When cuFile
+is selected, the Manager reserves the configured disk capacity before serving
+and coalesces adjacent reads across cached blocks within each file.
 
 Keep the Manager alive, restart the engine, and repeat a multi-block prompt.
 An increase in `orbitkv_load_bytes_total` confirms an external restore.

@@ -1,23 +1,23 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::backing::ssd::GpuWriteLease;
-use crate::backing::ssd::cufile::{CopyRange, IoBatch, plan_reads};
+use crate::backing::ssd::cufile::{CopyRange, CufileFile, IoBatch, plan_reads};
 use crate::transfer::layout::BlockCopies;
-use crate::{EngineError, SlotMeta, SsdReadLease};
+use crate::{EngineError, SlotMeta};
 
 use super::{LayerTransferData, TransferPayload};
 
-type SourceReads = (Arc<SsdReadLease>, Vec<IoBatch>);
+type FileReads<'a> = (&'a CufileFile, Vec<IoBatch>);
 
 pub(crate) struct GpuWrite {
     pub lease: GpuWriteLease,
     pub batches: Vec<IoBatch>,
 }
 
-/// Validate all source/destination ranges before issuing any storage I/O.
-pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<SourceReads>, EngineError> {
-    let mut sources: HashMap<usize, (Arc<SsdReadLease>, Vec<CopyRange>)> = HashMap::new();
+/// Merge validated ranges per file. Borrowing the task keeps every source lease
+/// alive until its scatter drains, including leases coalesced into the same I/O.
+pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<FileReads<'_>>, EngineError> {
+    let mut sources: HashMap<*const CufileFile, (&CufileFile, Vec<CopyRange>)> = HashMap::new();
     for layer in layers {
         for block in &layer.blocks {
             let TransferPayload::Ssd {
@@ -33,18 +33,24 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<SourceReads>, Eng
                 .slots
                 .get(*slot_id)
                 .ok_or_else(|| EngineError::Storage("SSD slot is missing".into()))?;
-            let base = source.entry.file_offset
-                + source.entry.slots[..*slot_id]
-                    .iter()
-                    .map(|slot| slot.total_size())
-                    .sum::<u64>();
+            let base = source
+                .entry
+                .file_offset
+                .checked_add(
+                    source.entry.slots[..*slot_id]
+                        .iter()
+                        .map(|slot| slot.total_size())
+                        .sum::<u64>(),
+                )
+                .ok_or_else(|| EngineError::Storage("SSD slot offset overflow".into()))?;
             let copies = layer
                 .layout
                 .block_copies(block.block_idx)
                 .map_err(EngineError::Storage)?;
+            let file = source.file();
             let reads = &mut sources
-                .entry(Arc::as_ptr(source) as usize)
-                .or_insert_with(|| (Arc::clone(source), Vec::new()))
+                .entry(std::ptr::from_ref(file))
+                .or_insert_with(|| (file, Vec::new()))
                 .1;
             let mut push =
                 |segment: usize, relative: usize, device, bytes| -> Result<(), EngineError> {
@@ -78,9 +84,9 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<SourceReads>, Eng
     }
     sources
         .into_values()
-        .map(|(source, copies)| {
+        .map(|(file, copies)| {
             plan_reads(copies)
-                .map(|batches| (source, batches))
+                .map(|batches| (file, batches))
                 .map_err(EngineError::Storage)
         })
         .collect()

@@ -502,7 +502,7 @@ fn process_load_task(
     if !disk_reads.is_empty() && ssd_buffer.is_none() {
         *ssd_buffer = Some(
             GpuBuffer::new(Arc::clone(stream))
-                .inspect_err(|error| disk_reads[0].0.file().gpu_io.failed(error))
+                .inspect_err(|error| disk_reads[0].0.gpu_io.failed(error))
                 .map_err(EngineError::Storage)?,
         );
     }
@@ -510,12 +510,12 @@ fn process_load_task(
     let submitted = backend.h2d(&copies, stream);
     let mut disk_bytes = 0;
     let submitted = submitted.and_then(|()| {
-        for (source, batches) in &disk_reads {
+        for (file, batches) in &disk_reads {
             disk_bytes += ssd_buffer
                 .as_ref()
                 .expect("SSD buffer initialized")
-                .restore(source.file(), batches)
-                .inspect_err(|error| source.file().gpu_io.failed(error))?;
+                .restore(file, batches)
+                .inspect_err(|error| file.gpu_io.failed(error))?;
         }
         Ok(())
     });

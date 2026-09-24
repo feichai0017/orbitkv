@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -16,6 +15,7 @@ use crate::metrics::core_metrics;
 
 mod config;
 pub(crate) mod cufile;
+mod files;
 pub(crate) mod index;
 mod reader;
 mod uring;
@@ -202,8 +202,8 @@ impl SsdBackingStore {
             SSD_ALIGNMENT
         };
         let shard_capacity =
-            aligned_shard_capacity(config.capacity_bytes, total_shards, alignment)?;
-        let files = open_cache_files(
+            files::aligned_shard_capacity(config.capacity_bytes, total_shards, alignment)?;
+        let files = files::open_cache_files(
             &config.cache_paths,
             shards_per_path,
             shard_capacity,
@@ -229,6 +229,9 @@ impl SsdBackingStore {
         } else {
             Vec::new()
         };
+        if !cufile_files.is_empty() {
+            files::reserve_cache_space(&files, shard_capacity)?;
+        }
         let ring_alignment = if gpu_io.available() {
             cufile::ALIGNMENT
         } else {
@@ -518,88 +521,6 @@ impl SsdBackingStore {
             .record(started.elapsed().as_secs_f64(), &[]);
         result
     }
-}
-
-fn aligned_shard_capacity(
-    capacity_bytes: u64,
-    shard_count: usize,
-    alignment: usize,
-) -> std::io::Result<u64> {
-    let shard_count = u64::try_from(shard_count).expect("usize fits into u64");
-    let raw = capacity_bytes / shard_count;
-    // cuFile expands edge reads to 4 KiB, including the last block in a shard.
-    let alignment = alignment as u64;
-    let capacity = raw / alignment * alignment;
-    if capacity == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "SSD cache capacity is too small for the requested shard count",
-        ));
-    }
-    Ok(capacity)
-}
-
-fn open_cache_files(
-    cache_paths: &[PathBuf],
-    shards_per_path: usize,
-    shard_capacity: u64,
-    options: &mut std::fs::OpenOptions,
-) -> std::io::Result<Vec<std::fs::File>> {
-    use std::fs;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    options
-        .create(true)
-        .truncate(true)
-        .read(true)
-        .write(true)
-        .custom_flags(libc::O_DIRECT);
-
-    if cache_paths.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "SSD cache paths cannot be empty",
-        ));
-    }
-
-    let total_shards = cache_paths.len() * shards_per_path;
-
-    // A single shard uses a file path; multiple shards use directories.
-    if total_shards == 1 {
-        if let Some(parent) = cache_paths[0].parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let file = options.open(&cache_paths[0])?;
-        file.set_len(shard_capacity)?;
-        return Ok(vec![file]);
-    }
-
-    // Multi-path or multi-shard: each path must be a directory.
-    for path in cache_paths {
-        if path.exists() && !path.is_dir() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "SSD cache path {} must be a directory when using multiple paths or shards",
-                    path.display()
-                ),
-            ));
-        }
-        fs::create_dir_all(path)?;
-    }
-
-    let mut files = Vec::with_capacity(total_shards);
-    for (path_id, path) in cache_paths.iter().enumerate() {
-        for local_shard in 0..shards_per_path {
-            let global_shard_id = path_id * shards_per_path + local_shard;
-            let file_path = path.join(format!("shard-{global_shard_id:06}.dat"));
-            let file = options.open(&file_path)?;
-            file.set_len(shard_capacity)?;
-            files.push(file);
-        }
-    }
-
-    Ok(files)
 }
 
 /// Creates the SSD backing store, failing startup if it cannot be initialised.

@@ -52,7 +52,9 @@ def fault_cache(tmp_path, monkeypatch, request):
         http_port=find_available_port(),
         ssd_cache_path=tmp_path / "ssd",
         ssd_backend=backend,
-        extra_args=request.param if isinstance(getattr(request, "param", None), tuple) else (),
+        extra_args=request.param
+        if isinstance(getattr(request, "param", None), tuple)
+        else configuration.get("extra_args", ()),
         channel_service=f"orbitkv/fault/{tmp_path.name}"
         if getattr(request, "param", None)
         else None,
@@ -338,6 +340,76 @@ def test_cufile_write_holds_pages_and_publishes_only_completed_objects(fault_cac
         if not future.done():
             server.stop()
         pool.shutdown(wait=True)
+
+
+@pytest.mark.parametrize(
+    "fault_cache,selected,read_calls",
+    [
+        ({"ssd_backend": "cufile"}, (0, 1, 2, 3), 1),
+        (
+            {"ssd_backend": "cufile", "extra_args": ("--ssd-cache-shards", "2")},
+            (0, 1, 2, 3),
+            2,
+        ),
+        ({"ssd_backend": "cufile"}, (0, 2), 2),
+    ],
+    indirect=["fault_cache"],
+    ids=["adjacent-leases", "separate-files", "unrequested-gap"],
+)
+def test_cufile_batches_keep_all_leases_and_only_read_selected_pages(
+    fault_cache, selected, read_calls
+):
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    cache_path = directory / "ssd"
+    files = [cache_path] if cache_path.is_file() else list(cache_path.glob("shard-*.dat"))
+    assert files
+    for file in files:
+        stat = file.stat()
+        assert stat.st_size > 0 and stat.st_blocks * 512 >= stat.st_size
+    tensor = ctx.get_kv_cache()
+    expected = tensor.cpu().clone()
+    hashes = [bytes([i]) * 32 for i in range(ctx.num_blocks)]
+    assert publish(client, ctx, hashes)[0]
+    drain_ssd(server)
+    ready = query(client, ctx, hashes, "batched")
+    assert ready.num_hit_blocks == len(hashes)
+    before = fetch_orbitkv_metrics(server.http_port)
+    assert before["orbitkv_ssd_read_pinned_bytes"] == tensor.numel() * tensor.element_size()
+    assert before["orbitkv_ssd_cufile_write_seconds_sum"] > 0
+    page_bytes = expected[:, 0].numel() * expected.element_size()
+    tensor.zero_()
+    torch.cuda.synchronize()
+
+    arm(directory, "cufile")
+    destinations = [i if i in selected else None for i in range(ctx.num_blocks)]
+    handle = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [destinations])]
+    )
+    reached(directory, "cufile")
+    client.cancel_query(ctx.instance_id, "batched")
+    assert not client.poll_restore(handle).done
+    # Cancellation releases unselected query sources; every submitted source
+    # must remain pinned, including all extents merged into a single read.
+    assert fetch_orbitkv_metrics(server.http_port)[
+        "orbitkv_ssd_read_pinned_bytes"
+    ] == page_bytes * len(selected)
+    (directory / "cufile.pause").unlink()
+    assert client.wait_restore(handle, timeout=10).success
+    actual = tensor.cpu()
+    for page in range(ctx.num_blocks):
+        if page in selected:
+            assert torch.equal(actual[:, page], expected[:, page])
+        else:
+            assert torch.count_nonzero(actual[:, page]) == 0
+    until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] == 0)
+    after = fetch_orbitkv_metrics(server.http_port)
+    count = "orbitkv_ssd_cufile_read_seconds_count"
+    assert after[count] - before.get(count, 0) == read_calls
+    assert after["orbitkv_ssd_cufile_read_seconds_sum"] > 0
+    size = "orbitkv_ssd_cufile_read_bytes_total"
+    assert after[size] - before.get(size, 0) == page_bytes * len(selected)
 
 
 @pytest.mark.parametrize("fault_cache", [{"ssd_backend": "cufile"}], indirect=True)
