@@ -38,8 +38,13 @@ See [codec qualification](storage-formats.md#qualification). `orbitkv_storage_co
 labels `logical` and `stored` count encoded publications; stored includes per-segment
 alignment and mixed raw segments. `orbitkv_storage_codec_transfer_bytes_total`
 labels `d2h`/`h2d` count actual codec-path payload transfers, including CPU fallback.
-`orbitkv_storage_codec_reserved_bytes` holds GPU-workspace reservations through
-completion; its limit is per active worker. Duration and decode-failure metrics
+`orbitkv_storage_codec_reserved_bytes` holds active codec operation reservations
+through completion. `orbitkv_storage_codec_workspace_bytes` measures retained
+GPU arenas, including idle workers and SSD decoder inputs; they are released at
+worker teardown. `orbitkv_storage_codec_workspace_allocations_total` counts arena
+allocations and growth, while `orbitkv_storage_codec_batches_total` and the
+`orbitkv_storage_codec_batch_segments` histogram report actual batch sizes.
+Budgets apply per worker, not across the whole Manager. Duration and decode-failure metrics
 track complete codec transfers, corrupt objects rejected before admission and
 failed GPU codec restores.
 SSD prefetch byte counters now count stored physical segment bytes, including

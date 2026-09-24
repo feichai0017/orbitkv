@@ -263,7 +263,8 @@ impl StorageEngine {
             #[cfg(not(feature = "mooncake"))]
             let remote_fetch = None;
 
-            let prefetch = PrefetchScheduler::new(ssd_store.clone(), remote_fetch);
+            let prefetch =
+                PrefetchScheduler::new(ssd_store.clone(), remote_fetch, config.codec_budget);
 
             let transfer_lock = Arc::new(transfer_lock::TransferLockManager::new(
                 transfer_lock_timeout,

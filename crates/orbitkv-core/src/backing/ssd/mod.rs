@@ -36,6 +36,7 @@ use writer::{SsdWriteBatch, SsdWriteCommand, ssd_writer_loop};
 /// Owns an immutable SSD source until the last query/GPU consumer releases it.
 pub struct SsdReadLease {
     pub(crate) entry: SsdIndexEntry,
+    key: StateKey,
     store: Arc<SsdBackingStore>,
 }
 
@@ -43,11 +44,25 @@ impl SsdReadLease {
     pub(crate) fn file(&self) -> &Arc<CufileFile> {
         &self.store.cufile_files[self.entry.shard_id]
     }
+
+    pub(crate) fn invalidate_encoded(&self) {
+        self.store
+            .inner
+            .lock()
+            .ring
+            .invalidate_encoded(&self.key, &self.entry);
+    }
 }
 
 impl Drop for SsdReadLease {
     fn drop(&mut self) {
-        self.entry.readers.fetch_sub(1, Ordering::Release);
+        if self.entry.readers.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.store
+                .inner
+                .lock()
+                .ring
+                .release_invalid(&self.key, &self.entry);
+        }
         core_metrics()
             .ssd_read_pinned_bytes
             .add(-(self.entry.len as i64), &[]);
@@ -169,7 +184,12 @@ impl SsdBackingStore {
         {
             return None;
         }
-        let entry = inner.ring.reserve(&key, slots, index::Encoding::Raw)?;
+        let encoding = if slots.iter().any(|slot| slot.encoding.is_some()) {
+            index::Encoding::Encoded
+        } else {
+            index::Encoding::Raw
+        };
+        let entry = inner.ring.reserve(&key, slots, encoding)?;
         inner.pending_writes.insert(key.clone());
         core_metrics().ssd_write_inflight.add(1, &[]);
         Some(GpuWriteLease {
@@ -304,17 +324,18 @@ impl SsdBackingStore {
     pub(crate) fn pin_prefix(
         self: &Arc<Self>,
         keys: &[StateKey],
+        codec_budget: usize,
     ) -> Option<Vec<Arc<SsdReadLease>>> {
         if !self.gpu_io.available() {
             return None;
         }
         let inner = self.inner.lock();
-        // A mixed prefix must continue through the host reader, not truncate at
-        // its first encoded object and hide the remaining recoverable boundary.
+        // A tiny-budget CPU codec can persist a valid representation that
+        // cannot fit GPU staging. Preserve the complete prefix via io_uring.
         if keys
             .iter()
             .map_while(|key| inner.ring.get(key))
-            .any(|entry| !matches!(entry.encoding, index::Encoding::Raw))
+            .any(|entry| !entry.fits_gpu_decode(codec_budget))
         {
             return None;
         }
@@ -328,6 +349,7 @@ impl SsdBackingStore {
                         .add(entry.len as i64, &[]);
                     Some(Arc::new(SsdReadLease {
                         entry,
+                        key: key.clone(),
                         store: Arc::clone(self),
                     }))
                 })

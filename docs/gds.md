@@ -123,9 +123,21 @@ Direct writes require all slots of a storage group in the same Publish.
 Fragmented layers and multi-writer TP/PP groups assemble in DRAM and keep
 io_uring writeback. Both forms can subsequently restore through cuFile.
 The existing `all`/`reuse` admission policy still applies. Optional
-[GPU storage encoding](storage-formats.md) stores GPU-encoded pinned payloads
-through io_uring; encoded objects restore through host read and GPU decode, while raw prefixes retain
-cuFile eligibility. Compression is disabled by default.
+[GPU storage encoding](storage-formats.md) also supports direct cuFile payloads.
+Complete groups that fit one codec batch write encoded GPU bytes through a
+reusable 4 MiB registered slot. An independent bounded writeback lane retains
+the codec arena until disk completion; demand reads and host publication can
+continue. Fragmented groups, CPU encoding and oversized batches use io_uring
+writeback. A compressed pinned-DRAM copy remains available for hot reuse.
+
+Encoded demand reads use the two existing cuFile slots to assemble a bounded
+GPU input. A decoder validates CRC32 on GPU before decompressing into engine
+pages. Its retained input plus codec scratch share the configured codec budget.
+The I/O queue continues polling other requests while the decoder runs. Mixed
+raw/encoded prefixes use the same extent leases; a failed encoded generation
+cannot be reused or overwritten while another lease still owns it. Small codec
+budgets that cannot stage a segment select the host reader. Speculative warming
+continues through DRAM. Compression remains disabled by default.
 
 Each slot retains address-stable size/offset/result storage and a registered
 file reference until its completion event. Submission success alone never
@@ -326,14 +338,14 @@ both cuFile environment values to `false` for native-path qualification.
 
 Final checks on 2026-09-24 used one H20, cuFile 1.16.1, vLLM 0.29.0 and
 SGLang 0.5.20. Explicit cuFile runs **forced CPU compatibility mode** on this
-container's overlay mount. Default `auto` runs used its `/tmp` ext4 mount and
-selected io_uring after cuFile file registration failed. These results establish
+container's overlay mount. Baseline `auto` runs selected io_uring after cuFile
+file registration failed. These results establish
 correctness, not native GDS throughput.
 
 | Gate | Final result |
 | --- | --- |
-| Rust GPU layouts, checkpoints, pinning, failure recovery and auto fallback | 6 passed |
-| Manager process faults, concurrent GPU I/O, encoded storage and cancellation ownership | 32 passed |
+| Rust GPU layouts, encoded payloads, checkpoints, pinning, failure recovery and auto fallback | 8 passed |
+| Manager process faults, concurrent GPU I/O, encoded storage and cancellation ownership | 51 passed |
 | vLLM / Qwen3-8B / SSD | 6 passed; 1 recurrent-only check skipped, with both explicit `cufile` and default `auto` |
 | SGLang / Qwen3-8B / SSD | Passed with both explicit `cufile` and default `auto` |
 | vLLM / Qwen3.8-27B-FP8 / SSD | 7 passed |
@@ -344,7 +356,7 @@ GPU write admission saturation with host fallback, cancellation/unregister
 with both read slots occupied, held host-copy completion, corrupted encoded
 objects, GPU/CPU SIMD FP8 conversion against Torch, and ANS/TurboQuant recovery
 after DRAM eviction and re-registration. Each checks actual GPU bytes and final
-resource release. Default-auto and Qwen3.8 serving results are retained from the
+resource release. The exact-storage serving results are retained from the
 [GDS baseline](https://github.com/feichai0017/orbitkv/pull/176).
 
 The serving results above use exact storage. GPU codec capacity and model-quality
@@ -396,9 +408,15 @@ Set `--gds-tools` to the directory containing NVIDIA's `gdscheck.py`, `gdsio` an
 1. GPU/storage topology, `gdscheck`, and native `gdsio` writes and reads.
 2. Exact GPU-byte recovery, pinning, fragmented saves and large checkpoints.
 3. Real-process faults including stalled/failed cuFile writes and Manager death.
-4. vLLM and SGLang Qwen3 correctness across engine restart and SSD recovery.
-5. Matched io_uring/auto/cuFile serial and sustained mixed-prefix workloads, with
-   the same seed, capacities and a working set larger than both DRAM and HBM KV.
+4. vLLM and SGLang Qwen3 correctness across engine restart, DRAM and SSD recovery,
+   for each requested storage codec.
+5. Matched DRAM and io_uring/auto/cuFile SSD workloads across codecs, including
+   serial and sustained mixed-prefix requests with equal seeds and capacities.
+
+The default matrix includes `none`, `ans`, `fp8`, `turboquant-4` and
+`turboquant-3`. Use `--storage-codecs none ans` for lossless-only qualification.
+Strict model-output failures remain failures even when the script continues to
+collect performance evidence; a smaller payload does not waive the quality gate.
 
 Every auto/cuFile benchmark captures `gds_stats -p <manager-pid> -l 3` while the
 Manager is alive. Success requires positive reads **and** writes and zero

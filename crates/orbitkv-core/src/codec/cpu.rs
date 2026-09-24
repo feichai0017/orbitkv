@@ -3,9 +3,76 @@ use std::sync::OnceLock;
 use half::{bf16, f16};
 use orbitkv_state::StorageFormat;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Backend {
+    Scalar,
+    #[cfg(target_arch = "x86_64")]
+    Avx2,
+    #[cfg(target_arch = "x86_64")]
+    Avx512,
+}
+
+impl Backend {
+    fn detect() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("avx512f") {
+                return Self::Avx512;
+            }
+            if std::arch::is_x86_feature_detected!("avx2") {
+                return Self::Avx2;
+            }
+        }
+        Self::Scalar
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn avx512_encode(input: &[u8], output: &mut [u8], table: &[i32]) -> Option<usize> {
+    use std::arch::x86_64::*;
+    let end = output.len() / 16 * 16;
+    // SAFETY: each iteration reads 32 input bytes, writes 16 output bytes,
+    // and gathers indices in the complete 65536-entry table.
+    unsafe {
+        for i in (0..end).step_by(16) {
+            let indices =
+                _mm512_cvtepu16_epi32(_mm256_loadu_si256(input.as_ptr().add(i * 2).cast()));
+            let values = _mm512_i32gather_epi32::<4>(indices, table.as_ptr());
+            if _mm512_cmpgt_epi32_mask(values, _mm512_set1_epi32(255)) != 0 {
+                return None;
+            }
+            _mm_storeu_si128(
+                output.as_mut_ptr().add(i).cast(),
+                _mm512_cvtepi32_epi8(values),
+            );
+        }
+    }
+    Some(end)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn avx512_decode(input: &[u8], output: &mut [u8], table: &[i32; 256]) -> usize {
+    use std::arch::x86_64::*;
+    let end = input.len() / 16 * 16;
+    // SAFETY: each iteration reads 16 input bytes and writes 32 output bytes.
+    unsafe {
+        for i in (0..end).step_by(16) {
+            let indices = _mm512_cvtepu8_epi32(_mm_loadu_si128(input.as_ptr().add(i).cast()));
+            let values = _mm512_i32gather_epi32::<4>(indices, table.as_ptr());
+            _mm256_storeu_si256(
+                output.as_mut_ptr().add(i * 2).cast(),
+                _mm512_cvtepi32_epi16(values),
+            );
+        }
+    }
+    end
+}
+
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn simd_encode(input: &[u8], output: &mut [u8], table: &[i32]) -> Option<usize> {
+unsafe fn avx2_encode(input: &[u8], output: &mut [u8], table: &[i32]) -> Option<usize> {
     use std::arch::x86_64::*;
     let end = output.len() / 8 * 8;
     // SAFETY: each iteration reads 16 input bytes, writes 8 output bytes,
@@ -32,7 +99,7 @@ unsafe fn simd_encode(input: &[u8], output: &mut [u8], table: &[i32]) -> Option<
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn simd_decode(input: &[u8], output: &mut [u8], table: &[i32; 256]) -> usize {
+unsafe fn avx2_decode(input: &[u8], output: &mut [u8], table: &[i32; 256]) -> usize {
     use std::arch::x86_64::*;
     let end = input.len() / 8 * 8;
     // SAFETY: each iteration reads 8 input bytes and writes 16 output bytes.
@@ -121,20 +188,32 @@ fn tables(format: StorageFormat) -> &'static Tables {
 }
 
 pub(crate) fn encode(format: StorageFormat, input: &[u8], output: &mut [u8]) -> bool {
-    if input.len() != output.len() * 2 {
+    // SAFETY: detection includes OS support for the backend's vector registers.
+    unsafe { encode_with_backend(format, input, output, Backend::detect()) }
+}
+
+// SAFETY: the caller must verify support for the selected backend.
+unsafe fn encode_with_backend(
+    format: StorageFormat,
+    input: &[u8],
+    output: &mut [u8],
+    backend: Backend,
+) -> bool {
+    if output.len().checked_mul(2) != Some(input.len()) {
         return false;
     }
     let table = tables(format);
-    let mut start = 0;
-    #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: runtime dispatch and bounds checked above.
-        let result = unsafe { simd_encode(input, output, &table.encode) };
-        match result {
-            Some(count) => start = count,
-            None => return false,
-        }
-    }
+    // SAFETY: caller verifies ISA support; lengths and table bounds are checked.
+    let start = match backend {
+        Backend::Scalar => Some(0),
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => unsafe { avx2_encode(input, output, &table.encode) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => unsafe { avx512_encode(input, output, &table.encode) },
+    };
+    let Some(start) = start else {
+        return false;
+    };
     for (value, out) in input[start * 2..].chunks_exact(2).zip(&mut output[start..]) {
         let encoded = table.encode[u16::from_le_bytes([value[0], value[1]]) as usize];
         if encoded > 255 {
@@ -146,16 +225,29 @@ pub(crate) fn encode(format: StorageFormat, input: &[u8], output: &mut [u8]) -> 
 }
 
 pub(crate) fn decode(format: StorageFormat, input: &[u8], output: &mut [u8]) -> bool {
-    if output.len() != input.len() * 2 {
+    // SAFETY: detection includes OS support for the backend's vector registers.
+    unsafe { decode_with_backend(format, input, output, Backend::detect()) }
+}
+
+// SAFETY: the caller must verify support for the selected backend.
+unsafe fn decode_with_backend(
+    format: StorageFormat,
+    input: &[u8],
+    output: &mut [u8],
+    backend: Backend,
+) -> bool {
+    if input.len().checked_mul(2) != Some(output.len()) {
         return false;
     }
     let table = tables(format);
-    let mut start = 0;
-    #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: runtime dispatch and bounds checked above.
-        start = unsafe { simd_decode(input, output, &table.decode) };
-    }
+    // SAFETY: caller verifies ISA support; lengths and table bounds are checked.
+    let start = match backend {
+        Backend::Scalar => 0,
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx2 => unsafe { avx2_decode(input, output, &table.decode) },
+        #[cfg(target_arch = "x86_64")]
+        Backend::Avx512 => unsafe { avx512_decode(input, output, &table.decode) },
+    };
     for (&value, out) in input[start..]
         .iter()
         .zip(output[start * 2..].chunks_exact_mut(2))

@@ -231,7 +231,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         )
         if channel_server.ssd_cache_path is not None:
             compression = request.config.getoption("--storage-codec") != "none"
-            if channel_server.ssd_backend == "cufile" and not compression:
+            if channel_server.ssd_backend == "cufile":
                 assert (
                     fetch_orbitkv_metrics(channel_server.http_port).get(
                         "orbitkv_ssd_cufile_write_bytes_total", 0
@@ -242,8 +242,12 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                 "uring": ("orbitkv_ssd_prefetch_bytes_total",),
                 "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
                 "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
-            }["auto" if compression else channel_server.ssd_backend]
+            }[channel_server.ssd_backend]
             recovered = fetch_orbitkv_metrics(channel_server.http_port)
+            if channel_server.ssd_backend == "cufile":
+                assert recovered.get("orbitkv_ssd_prefetch_bytes_total", 0) == before_restart.get(
+                    "orbitkv_ssd_prefetch_bytes_total", 0
+                ), "cuFile recovery bounced through host SSD prefetch"
             if compression:
                 assert recovered.get("orbitkv_storage_codec_duration_seconds_count", 0) > 0
                 assert recovered.get("orbitkv_storage_codec_decode_failures_total", 0) == 0

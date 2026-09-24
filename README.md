@@ -105,8 +105,11 @@ asynchronous I/O through two 4 MiB slots, keeping demand reads progressing
 alongside bounded GPU writeback and event-tracked host copies.
 
 [GPU storage encoding](docs/storage-formats.md) supports nvCOMP ANS lossless
-compression, FP8 and 3/4-bit TurboQuant. Encoded pages stay compact in DRAM,
-SSD and peer transfers; GPU restore reconstructs the engine layout. Set
+compression, FP8 and 3/4-bit TurboQuant with bounded batches and reusable GPU
+workspace. Encoded pages stay compact in DRAM, SSD and peer transfers; cuFile can
+write complete encoded groups and restore encoded SSD hits through GPU validation
+and decode. GPU restore reconstructs the engine layout; FP8 CPU fallback selects
+AVX-512F, AVX2 or scalar code at runtime. Set
 `--storage-codec ans|fp8|turboquant-4|turboquant-3` on the Manager. The default
 is exact storage; lossy modes require model-quality qualification.
 

@@ -68,6 +68,11 @@ name = "cpu_path"
 harness = false
 
 [[bench]]
+name = "cpu_codec"
+path = "../../benches/cpu_codec.rs"
+harness = false
+
+[[bench]]
 name = "transfer_h2d"
 harness = false
 

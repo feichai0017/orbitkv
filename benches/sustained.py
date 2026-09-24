@@ -9,7 +9,7 @@ import statistics
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from .metrics import cached_tokens, measure, percentile
+from .metrics import cached_tokens, codec_summary, measure, percentile
 from .workload import generate
 
 
@@ -261,6 +261,7 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                 "requests_per_second": len(rows) / window["wall_seconds"],
                 "output_tokens_per_second": sum(s["usage"]["completion_tokens"] for s in rows)
                 / window["wall_seconds"],
+                "throughput_scope": "closed-loop window including admitted request completion; excludes preparation and cache drain",
                 "e2e_p50_ms": statistics.median(s["e2e_ms"] for s in rows),
                 "decode_ms_per_token_p50": statistics.median(
                     (s["e2e_ms"] - s["ttft_ms"]) / max(1, s["usage"]["completion_tokens"] - 1)
@@ -332,6 +333,7 @@ def summarize(samples: list[dict], windows: list[dict]) -> list[dict]:
                         "orbitkv_ssd_write_admission_skips_total_duplicate",
                     )
                 },
+                **codec_summary([window]),
             }
         )
     return result

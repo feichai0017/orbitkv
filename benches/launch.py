@@ -4,13 +4,26 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import sysconfig
-from argparse import Namespace
+from argparse import ArgumentTypeError, Namespace
 from dataclasses import dataclass
 from pathlib import Path
 
 from .runtime import ROOT, free_port
+
+STORAGE_CODECS = ("none", "ans", "fp8", "turboquant-4", "turboquant-3")
+
+
+def storage_codec_budget(value: str) -> int:
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?", value.strip().lower())
+    if match:
+        amount, unit = match.groups()
+        size = float(amount) * {None: 1, "b": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3}[unit]
+        if 4096 <= size < 1024**3 * 4:
+            return int(size)
+    raise ArgumentTypeError("codec budget must be 4 KiB to 4 GiB - 1, in bytes or kb/mb/gb")
 
 
 @dataclass(frozen=True)
@@ -68,15 +81,23 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             "--pool-size",
             f"{args.host_gib}gb",
             "--enable-prometheus",
+            "--storage-codec",
+            args.storage_codec,
+            "--storage-codec-budget",
+            str(args.storage_codec_budget),
         ]
+        backend_configuration.update(
+            storage_codec=args.storage_codec,
+            storage_codec_budget_bytes_per_worker=args.storage_codec_budget,
+        )
         if args.ssd_gib:
             manager_command += [
                 "--ssd-cache-path",
-                str(args.output / "cache.bin"),
+                str(args.ssd_path),
                 "--ssd-cache-capacity",
                 f"{args.ssd_gib}gb",
             ]
-            backend_configuration = {"ssd_gib": args.ssd_gib, "io": f"O_DIRECT/{args.ssd_backend}"}
+            backend_configuration.update(ssd_gib=args.ssd_gib, io=f"O_DIRECT/{args.ssd_backend}")
             manager_command += [
                 "--ssd-write-policy",
                 args.ssd_write_policy,

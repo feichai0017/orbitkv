@@ -381,11 +381,7 @@ class TestE2ECorrectness:
                 "uring": ("orbitkv_ssd_prefetch_bytes_total",),
                 "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
                 "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
-            }[
-                "auto"
-                if request.config.getoption("--storage-codec") != "none"
-                else request.config.getoption("--ssd-backend")
-            ]
+            }[request.config.getoption("--ssd-backend")]
             assert (
                 sum(metrics_end.get(key, 0) - before_restart.get(key, 0) for key in read_metrics)
                 > 0
@@ -394,9 +390,11 @@ class TestE2ECorrectness:
         if (
             request.config.getoption("--ssd-backend") == "cufile"
             and request.config.getoption("--vllm-cache-tier") == "ssd"
-            and request.config.getoption("--storage-codec") == "none"
         ):
             assert metrics_end.get("orbitkv_ssd_cufile_write_bytes_total", 0) > 0
+            assert metrics_end.get("orbitkv_ssd_prefetch_bytes_total", 0) == before_restart.get(
+                "orbitkv_ssd_prefetch_bytes_total", 0
+            ), "cuFile recovery bounced through host SSD prefetch"
 
         if (
             request.config.getoption("--storage-codec") != "none"

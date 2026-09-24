@@ -80,6 +80,10 @@ pub(crate) struct CoreMetrics {
     pub load_failures: Counter<u64>,
 
     pub storage_codec_reserved_bytes: UpDownCounter<i64>,
+    pub storage_codec_workspace_bytes: UpDownCounter<i64>,
+    pub storage_codec_workspace_allocations: Counter<u64>,
+    pub storage_codec_batches: Counter<u64>,
+    pub storage_codec_batch_segments: Histogram<u64>,
     pub storage_codec_bytes: Counter<u64>,
     pub storage_codec_transfer_bytes: Counter<u64>,
     pub storage_codec_skips: Counter<u64>,
@@ -432,6 +436,15 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
             // SSD
             storage_codec_reserved_bytes: meter.i64_up_down_counter("orbitkv_storage_codec_reserved_bytes")
                 .with_description("Reserved GPU codec workspace until transfer completion").with_unit("bytes").build(),
+            storage_codec_workspace_bytes: meter.i64_up_down_counter("orbitkv_storage_codec_workspace_bytes")
+                .with_description("Retained reusable GPU codec arenas, including idle workers").with_unit("bytes").build(),
+            storage_codec_workspace_allocations: meter.u64_counter("orbitkv_storage_codec_workspace_allocations")
+                .with_description("GPU codec arena allocations and growth operations").build(),
+            storage_codec_batches: meter.u64_counter("orbitkv_storage_codec_batches")
+                .with_description("GPU codec batches by operation").build(),
+            storage_codec_batch_segments: meter.u64_histogram("orbitkv_storage_codec_batch_segments")
+                .with_description("Segments processed per GPU codec batch")
+                .with_boundaries(vec![1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0]).build(),
             storage_codec_transfer_bytes: meter.u64_counter("orbitkv_storage_codec_transfer_bytes").with_description("Actual codec-path D2H/H2D payload bytes, including raw/CPU fallbacks").with_unit("bytes").build(),
             storage_codec_bytes: meter.u64_counter("orbitkv_storage_codec_bytes")
                 .with_description("Encoded publications, logical and aligned resident bytes").with_unit("bytes").build(),

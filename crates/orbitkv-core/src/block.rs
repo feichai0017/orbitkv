@@ -99,6 +99,10 @@ pub(crate) struct Segment {
 }
 
 impl Segment {
+    pub(crate) fn host_ptr(&self) -> NonNull<u8> {
+        self.ptr.host()
+    }
+
     pub(crate) fn new(ptr: NonNull<u8>, size: usize, allocation: Arc<PinnedAllocation>) -> Self {
         let ptr = allocation.mapped_ptr_for_host_range(ptr, size);
         Self {

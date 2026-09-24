@@ -29,6 +29,23 @@ pub(crate) struct SsdIndexEntry {
     pub readers: Arc<AtomicUsize>,
 }
 
+impl SsdIndexEntry {
+    pub(super) fn fits_gpu_decode(&self, budget: usize) -> bool {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.encoding.as_ref())
+            .flatten()
+            .all(|meta| {
+                // Input assembly is 4096-aligned. One segment additionally needs
+                // descriptors, a CRC reduction and the codec arena's base alignment.
+                meta.stored_bytes
+                    .checked_next_multiple_of(super::cufile::ALIGNMENT)
+                    .and_then(|bytes| bytes.checked_add(8192))
+                    .is_some_and(|bytes| bytes <= budget)
+            })
+    }
+}
+
 /// State of an SSD index entry (two-phase commit)
 #[derive(Clone)]
 pub(super) enum SsdEntryState {
@@ -36,13 +53,16 @@ pub(super) enum SsdEntryState {
     Writing(SsdIndexEntry),
     /// IO completed, readable
     Committed(SsdIndexEntry),
+    /// Corruption hides this generation immediately, but active readers still
+    /// protect its extent until their final GPU completion.
+    Invalid(SsdIndexEntry),
 }
 
 impl SsdEntryState {
     #[inline]
     fn entry(&self) -> &SsdIndexEntry {
         match self {
-            Self::Writing(e) | Self::Committed(e) => e,
+            Self::Writing(e) | Self::Committed(e) | Self::Invalid(e) => e,
         }
     }
 }
@@ -101,12 +121,24 @@ impl SsdRingBuffer {
         }
     }
 
-    /// A failed decode must permit recomputation to repair this object. Never
-    /// erase a replacement generation or metadata protecting an active GPU lease.
+    /// Hide exactly the failed generation, retaining its extent while leased.
     pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) {
-        if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry))
+        if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry) | SsdEntryState::Invalid(entry))
             if entry.shard_id == failed.shard_id && entry.begin == failed.begin
-                && matches!(entry.encoding, Encoding::Encoded)
+                && matches!(entry.encoding, Encoding::Encoded))
+        {
+            if failed.readers.load(Ordering::Acquire) == 0 {
+                self.entries.remove(key);
+            } else {
+                self.entries
+                    .insert(key.clone(), SsdEntryState::Invalid(failed.clone()));
+            }
+        }
+    }
+
+    pub(super) fn release_invalid(&mut self, key: &StateKey, released: &SsdIndexEntry) {
+        if matches!(self.entries.get(key), Some(SsdEntryState::Invalid(entry))
+            if entry.shard_id == released.shard_id && entry.begin == released.begin
                 && entry.readers.load(Ordering::Acquire) == 0)
         {
             self.entries.remove(key);
@@ -203,6 +235,7 @@ impl SsdRingBuffer {
                 warn!("SSD commit: key already committed, ignoring");
                 return true;
             }
+            SsdEntryState::Invalid(_) => return false,
         };
 
         // Check if expired (eviction faster than write)

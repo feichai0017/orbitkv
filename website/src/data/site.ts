@@ -31,7 +31,7 @@ export const layers = [
     name: "orbitkv-core",
     role: "Own the blocks.",
     detail:
-      "KV blocks, leases, tier coordination, GPU ANS lossless compression and experimental FP8/TurboQuant storage.",
+      "KV blocks, leases, tiers, batched GPU codecs with reusable workspace, CPU SIMD, and encoded cuFile storage.",
     path: "crates/orbitkv-core/src/lib.rs",
   },
   {

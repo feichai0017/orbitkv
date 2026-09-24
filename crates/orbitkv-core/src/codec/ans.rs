@@ -1,7 +1,7 @@
 //! Optional nvCOMP 5.3 ABI. No nvCOMP binaries or headers are bundled.
-use std::{ffi::c_void, sync::Arc};
+use std::ffi::c_void;
 
-use cudarc::driver::{CudaSlice, CudaStream, DevicePtr};
+use cudarc::driver::CudaStream;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -103,154 +103,125 @@ impl Library {
         }
     }
 
-    pub(crate) fn encode(
-        &self,
-        stream: &Arc<CudaStream>,
-        source: u64,
-        bytes: usize,
-        budget: usize,
-        data_type: i32,
-    ) -> Result<Option<(CudaSlice<u8>, usize)>, String> {
-        if !(4096..=16 * 1024 * 1024).contains(&bytes) || !source.is_multiple_of(8) {
-            return Ok(None);
-        }
-        let options = Options {
-            data_type,
-            ..OPTIONS
-        };
-        let mut temp_size = 0;
-        let mut max_size = 0;
-        let mut decode_temp = 0;
-        // SAFETY: host size queries with initialized options and output storage.
+    pub(super) fn max_output(&self, bytes: usize, data_type: i32) -> Result<usize, String> {
+        let mut size = 0;
+        // SAFETY: host-only query with initialized options and output storage.
         unsafe {
-            check((self.compress_temp)(
-                1,
+            check((self.max_output)(
                 bytes,
-                options,
-                &mut temp_size,
-                bytes,
-            ))?;
-            check((self.max_output)(bytes, options, &mut max_size))?;
-            check((self.decompress_temp)(
-                1,
-                bytes,
-                OPTIONS,
-                &mut decode_temp,
-                bytes,
+                Options {
+                    data_type,
+                    ..OPTIONS
+                },
+                &mut size,
             ))?;
         }
-        if temp_size
-            .max(decode_temp)
-            .saturating_add(max_size)
-            .saturating_add(1024)
-            > budget
-        {
-            return Ok(None);
+        if size == 0 || size > 32 * 1024 * 1024 {
+            return Err("nvCOMP returned invalid maximum output size".into());
         }
-        let output = stream
-            .alloc_zeros::<u8>(max_size)
-            .map_err(|e| e.to_string())?;
-        let temp = stream
-            .alloc_zeros::<u8>(temp_size.max(1))
-            .map_err(|e| e.to_string())?;
-        let input_ptrs = stream.clone_htod(&[source]).map_err(|e| e.to_string())?;
-        let input_sizes = stream
-            .clone_htod(&[bytes as u64])
-            .map_err(|e| e.to_string())?;
-        let output_ptrs = stream
-            .clone_htod(&[output.device_ptr(stream).0])
-            .map_err(|e| e.to_string())?;
-        let sizes = stream.alloc_zeros::<u64>(1).map_err(|e| e.to_string())?;
-        let statuses = stream.alloc_zeros::<i32>(1).map_err(|e| e.to_string())?;
-        // SAFETY: all pointers are device allocations on this stream and remain live through sync.
-        let status = unsafe {
-            (self.compress)(
-                input_ptrs.device_ptr(stream).0 as _,
-                input_sizes.device_ptr(stream).0 as _,
-                bytes,
-                1,
-                temp.device_ptr(stream).0 as _,
-                temp_size,
-                output_ptrs.device_ptr(stream).0 as _,
-                sizes.device_ptr(stream).0 as _,
-                options,
-                statuses.device_ptr(stream).0 as _,
-                stream.cu_stream().cast(),
-            )
-        };
-        stream.synchronize().map_err(|e| e.to_string())?;
-        check(status)?;
-        check(stream.clone_dtoh(&statuses).map_err(|e| e.to_string())?[0])?;
-        let stored = stream.clone_dtoh(&sizes).map_err(|e| e.to_string())?[0] as usize;
-        if stored == 0 || stored > max_size {
-            return Err("nvCOMP returned invalid output size".into());
-        }
-        Ok(Some((output, stored)))
+        Ok(size)
     }
 
-    pub(crate) fn decode(
+    pub(super) fn workspace(
         &self,
-        stream: &Arc<CudaStream>,
-        input: &CudaSlice<u8>,
-        bytes: usize,
-        target: u64,
-        logical: usize,
-        budget: usize,
-    ) -> Result<(), String> {
-        if !target.is_multiple_of(8) {
-            return Err("ANS destination is not 8-byte aligned".into());
-        }
-        let mut temp_size = 0;
-        // SAFETY: host-only scratch query.
+        count: usize,
+        max_bytes: usize,
+        total_bytes: usize,
+        data_type: i32,
+        encode: bool,
+    ) -> Result<usize, String> {
+        let mut size = 0;
+        let query = if encode {
+            self.compress_temp
+        } else {
+            self.decompress_temp
+        };
+        // SAFETY: both nvCOMP 5.3 option structs have this 64-byte C layout.
+        // Decompression's zero backend selects the default GPU backend.
         unsafe {
-            check((self.decompress_temp)(
-                1,
-                logical,
-                OPTIONS,
-                &mut temp_size,
-                logical,
+            check(query(
+                count,
+                max_bytes,
+                Options {
+                    data_type,
+                    ..OPTIONS
+                },
+                &mut size,
+                total_bytes,
             ))?;
         }
-        if temp_size.saturating_add(input.len()).saturating_add(64) > budget {
-            return Err("ANS decode exceeds GPU codec budget".into());
-        }
-        let temp = stream
-            .alloc_zeros::<u8>(temp_size.max(1))
-            .map_err(|e| e.to_string())?;
-        let input_ptrs = stream
-            .clone_htod(&[input.device_ptr(stream).0])
-            .map_err(|e| e.to_string())?;
-        let input_sizes = stream
-            .clone_htod(&[bytes as u64])
-            .map_err(|e| e.to_string())?;
-        let output_ptrs = stream.clone_htod(&[target]).map_err(|e| e.to_string())?;
-        let capacities = stream
-            .clone_htod(&[logical as u64])
-            .map_err(|e| e.to_string())?;
-        let sizes = stream.alloc_zeros::<u64>(1).map_err(|e| e.to_string())?;
-        let statuses = stream.alloc_zeros::<i32>(1).map_err(|e| e.to_string())?;
-        // SAFETY: caller validated checksum and bounded metadata before upload. Output capacity is explicit.
-        let status = unsafe {
-            (self.decompress)(
-                input_ptrs.device_ptr(stream).0 as _,
-                input_sizes.device_ptr(stream).0 as _,
-                capacities.device_ptr(stream).0 as _,
-                sizes.device_ptr(stream).0 as _,
-                1,
-                temp.device_ptr(stream).0 as _,
-                temp_size,
-                output_ptrs.device_ptr(stream).0 as _,
-                OPTIONS,
-                statuses.device_ptr(stream).0 as _,
-                stream.cu_stream().cast(),
-            )
-        };
-        stream.synchronize().map_err(|e| e.to_string())?;
-        check(status)?;
-        check(stream.clone_dtoh(&statuses).map_err(|e| e.to_string())?[0])?;
-        if stream.clone_dtoh(&sizes).map_err(|e| e.to_string())?[0] != logical as u64 {
-            return Err("ANS decoded size mismatch".into());
-        }
-        Ok(())
+        Ok(size)
     }
+
+    /// Enqueue a real nvCOMP batch into caller-owned pointer/size/status tables.
+    /// All device arrays and scratch must survive the caller's stream drain,
+    /// including when nvCOMP returns an error after partially enqueueing work.
+    pub(super) unsafe fn encode_batch(
+        &self,
+        stream: &CudaStream,
+        batch: DeviceBatch,
+        data_type: i32,
+    ) -> Result<(), String> {
+        // SAFETY: supplied by the codec's checked, aligned arena layout.
+        unsafe {
+            check((self.compress)(
+                batch.inputs as _,
+                batch.input_sizes as _,
+                batch.max_bytes,
+                batch.count,
+                batch.temp as _,
+                batch.temp_bytes,
+                batch.outputs as _,
+                batch.sizes as _,
+                Options {
+                    data_type,
+                    ..OPTIONS
+                },
+                batch.statuses as _,
+                stream.cu_stream().cast(),
+            ))
+        }
+    }
+
+    pub(super) unsafe fn decode_batch(
+        &self,
+        stream: &CudaStream,
+        batch: DeviceBatch,
+        data_type: i32,
+    ) -> Result<(), String> {
+        // SAFETY: the entire batch has passed bounded metadata and payload CRC
+        // checks; the codec owns the tables and drains before releasing ranges.
+        unsafe {
+            check((self.decompress)(
+                batch.inputs as _,
+                batch.input_sizes as _,
+                batch.capacities as _,
+                batch.sizes as _,
+                batch.count,
+                batch.temp as _,
+                batch.temp_bytes,
+                batch.outputs as _,
+                Options {
+                    data_type,
+                    ..OPTIONS
+                },
+                batch.statuses as _,
+                stream.cu_stream().cast(),
+            ))
+        }
+    }
+}
+
+/// Views into the codec arena; never allocates or synchronizes independently.
+pub(super) struct DeviceBatch {
+    pub inputs: u64,
+    pub input_sizes: u64,
+    pub outputs: u64,
+    pub capacities: u64,
+    pub sizes: u64,
+    pub statuses: u64,
+    pub temp: u64,
+    pub temp_bytes: usize,
+    pub count: usize,
+    pub max_bytes: usize,
 }

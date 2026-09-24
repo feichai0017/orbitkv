@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn submission_rejects_ranges_outside_registered_staging() {
+    let batch = |file_offset, bytes, copy| IoBatch {
+        file_offset,
+        bytes,
+        copies: vec![copy],
+    };
+    let copy = CopyRange {
+        file_offset: 4096,
+        device: 0x10000,
+        bytes: 512,
+    };
+    batch(4096, 4096, copy).validate().unwrap();
+    for invalid in [
+        batch(4096, STAGING_BYTES + ALIGNMENT, copy),
+        batch(4097, 4096, copy),
+        batch(4096, 4095, copy),
+        batch(4096, 0, copy),
+        batch(
+            4096,
+            4096,
+            CopyRange {
+                file_offset: 4095,
+                ..copy
+            },
+        ),
+        batch(
+            4096,
+            4096,
+            CopyRange {
+                bytes: 4097,
+                ..copy
+            },
+        ),
+        batch(4096, 4096, CopyRange { device: 0, ..copy }),
+        batch(
+            4096,
+            4096,
+            CopyRange {
+                device: u64::MAX,
+                ..copy
+            },
+        ),
+    ] {
+        assert!(invalid.validate().is_err());
+    }
+}
+
+#[test]
 fn writes_cover_the_padded_extent_without_reading_gpu_padding() {
     let high_address = CopyRange {
         file_offset: 4096,

@@ -6,6 +6,9 @@ extend-exclude = [
   "benches/results/**/*.jsonl",
 ]
 
+[default]
+extend-ignore-re = ['\b0x[0-9a-fA-F]+[uUlL]*\b']
+
 [default.extend-words]
 # Rust std library path (std::f64::consts)
 consts = "consts"

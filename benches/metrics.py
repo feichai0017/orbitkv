@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import statistics
 import threading
 import time
@@ -45,6 +46,8 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
                         "orbitkv_query_speculative_reserved_bytes",
                         "orbitkv_ssd_read_pinned_bytes",
                         "orbitkv_ssd_gpu_staging_bytes",
+                        "orbitkv_storage_codec_reserved_bytes",
+                        "orbitkv_storage_codec_workspace_bytes",
                     ) or key.startswith("orbitkv_query_reserved_bytes"):
                         peaks[key] = max(value, peaks.get(key, 0))
             except Exception as error:
@@ -73,6 +76,8 @@ def measure(base_url: str, manager_url: str | None, settle_seconds: float):
                     "orbitkv_ssd_write_inflight",
                     "orbitkv_ssd_prefetch_inflight",
                     "orbitkv_ssd_read_pinned_bytes",
+                    "orbitkv_ssd_cufile_inflight_batches",
+                    "orbitkv_storage_codec_reserved_bytes",
                 )
             )
             quiet = 0 if busy else quiet + 1
@@ -117,6 +122,16 @@ def metrics(url: str | None) -> dict[str, float]:
         number = float(value)
         if math.isfinite(number):
             values[name] = values.get(name, 0) + number
+            if name.startswith("orbitkv_storage_codec_"):
+                labels = dict(re.findall(r'(\w+)="([^"\\]*)"', series))
+                dimensions = [
+                    labels[label]
+                    for label in ("representation", "direction", "operation", "reason")
+                    if label in labels
+                ]
+                if dimensions:
+                    key = f"{name}_{'_'.join(dimensions)}"
+                    values[key] = values.get(key, 0) + number
             if name.startswith("orbitkv_remote_stage_duration_seconds_"):
                 for stage in REMOTE_STAGES:
                     if f'stage="{stage}"' in series:
@@ -144,6 +159,59 @@ def percentile(values: list[float], fraction: float) -> float:
     low = int(position)
     high = min(low + 1, len(ordered) - 1)
     return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def codec_summary(measurements: list[dict]) -> dict:
+    """Aggregate publication/transfer counters once per measured interval, never per request."""
+    keys = {
+        key
+        for row in measurements
+        for snapshot in ("manager_delta", "manager_before", "manager_after")
+        for key in row.get(snapshot, {})
+        if key.startswith("orbitkv_storage_codec_")
+        and ("_total" in key or "_sum" in key or "_count" in key)
+        and key != "orbitkv_storage_codec_bytes_total"
+    }
+    counters = {
+        key: sum(row.get("manager_delta", {}).get(key, 0) for row in measurements)
+        for key in sorted(keys)
+    }
+    logical = counters.get("orbitkv_storage_codec_bytes_total_logical", 0)
+    stored = counters.get("orbitkv_storage_codec_bytes_total_stored")
+    summary = {
+        **counters,
+        "encoded_publication_stored_fraction": stored / logical
+        if logical > 0 and stored is not None
+        else None,
+    }
+    for name in ("reserved", "workspace"):
+        metric = f"orbitkv_storage_codec_{name}_bytes"
+        summary[f"sampled_peak_codec_{name}_bytes"] = max(
+            (
+                row[snapshot][metric]
+                for row in measurements
+                for snapshot in ("manager_before", "sampled_peak_bytes", "manager_after")
+                if metric in row.get(snapshot, {})
+            ),
+            default=None,
+        )
+        summary[f"max_codec_{name}_bytes_after"] = max(
+            (
+                row["manager_after"][metric]
+                for row in measurements
+                if metric in row.get("manager_after", {})
+            ),
+            default=None,
+        )
+    summary["pool_used_bytes_after"] = max(
+        (
+            row["manager_after"]["orbitkv_pool_used_bytes"]
+            for row in measurements
+            if "orbitkv_pool_used_bytes" in row.get("manager_after", {})
+        ),
+        default=None,
+    )
+    return summary
 
 
 def cache_source(engine: str, result: dict) -> str:
@@ -219,6 +287,7 @@ def summarize(samples: list[dict], lengths: list[int]) -> list[dict]:
                         * 1000
                         for sample in group
                     ),
+                    **codec_summary(group),
                 }
             )
     return summary

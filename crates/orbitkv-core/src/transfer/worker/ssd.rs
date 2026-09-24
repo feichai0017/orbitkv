@@ -1,17 +1,34 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod decode;
 mod queue;
 pub(super) use queue::{MAX_WRITES, run};
 
-use crate::backing::ssd::GpuWriteLease;
+use orbitkv_state::StorageFormat;
+
 use crate::backing::ssd::cufile::{CopyRange, CufileFile, IoBatch, plan_reads};
+use crate::backing::ssd::{GpuWriteLease, SsdReadLease};
+use crate::codec::{EncodedSegment, segment_format};
 use crate::transfer::layout::BlockCopies;
 use crate::{EngineError, SlotMeta};
 
 use super::{LayerTransferData, TransferPayload};
 
 type FileReads = (Arc<CufileFile>, Vec<IoBatch>);
+
+pub(super) struct EncodedRead {
+    source: Arc<SsdReadLease>,
+    file_offset: u64,
+    target: u64,
+    meta: EncodedSegment,
+}
+
+#[derive(Default)]
+pub(super) struct ReadPlan {
+    raw: Vec<FileReads>,
+    encoded: Vec<EncodedRead>,
+}
 
 pub(crate) struct GpuWrite {
     pub lease: GpuWriteLease,
@@ -20,7 +37,8 @@ pub(crate) struct GpuWrite {
 
 /// Merge validated ranges per file. The worker retains the whole task and every
 /// extent lease separately until all submitted reads and scatters complete.
-pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<FileReads>, EngineError> {
+pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError> {
+    let mut plan = ReadPlan::default();
     let mut sources: HashMap<*const CufileFile, (Arc<CufileFile>, Vec<CopyRange>)> = HashMap::new();
     for layer in layers {
         for block in &layer.blocks {
@@ -37,20 +55,44 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<FileReads>, Engin
                 .slots
                 .get(*slot_id)
                 .ok_or_else(|| EngineError::Storage("SSD slot is missing".into()))?;
-            let base = source
-                .entry
-                .file_offset
-                .checked_add(
-                    source.entry.slots[..*slot_id]
-                        .iter()
-                        .map(|slot| slot.total_size())
-                        .sum::<u64>(),
-                )
+            let base = source.entry.slots[..*slot_id]
+                .iter()
+                .try_fold(source.entry.file_offset, |base, slot| {
+                    base.checked_add(slot.total_size())
+                })
                 .ok_or_else(|| EngineError::Storage("SSD slot offset overflow".into()))?;
+            validate_slot(slot)
+                .and_then(|()| {
+                    if base.checked_add(slot.total_size()).is_none_or(|end| {
+                        source
+                            .entry
+                            .file_offset
+                            .checked_add(source.entry.len)
+                            .is_none_or(|limit| end > limit)
+                    }) {
+                        return Err("SSD slot exceeds its leased extent".into());
+                    }
+                    Ok(())
+                })
+                .inspect_err(|_| source.invalidate_encoded())
+                .map_err(EngineError::Storage)?;
             let copies = layer
                 .layout
                 .block_copies(block.block_idx)
                 .map_err(EngineError::Storage)?;
+            if slot.encoding.is_some() {
+                for (copy, meta) in
+                    encoded_copies(slot, base, *offset, copies, layer.layout.storage_format)?
+                {
+                    plan.encoded.push(EncodedRead {
+                        source: Arc::clone(source),
+                        file_offset: copy.file_offset,
+                        target: copy.device,
+                        meta,
+                    });
+                }
+                continue;
+            }
             let file = source.file();
             let reads = &mut sources
                 .entry(Arc::as_ptr(file))
@@ -86,12 +128,88 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<Vec<FileReads>, Engin
             }
         }
     }
-    sources
+    plan.raw = sources
         .into_values()
         .map(|(file, copies)| {
             plan_reads(copies)
                 .map(|batches| (file, batches))
                 .map_err(EngineError::Storage)
+        })
+        .collect::<Result<_, _>>()?;
+    // Keep corruption attribution to one immutable generation per decode batch.
+    plan.encoded.sort_by_key(|read| {
+        (
+            Arc::as_ptr(&read.source.entry.readers) as usize,
+            read.file_offset,
+        )
+    });
+    Ok(plan)
+}
+
+fn validate_slot(slot: &SlotMeta) -> Result<(), String> {
+    if slot.segment_sizes.is_empty()
+        || slot.segment_sizes.contains(&0)
+        || slot
+            .segment_sizes
+            .iter()
+            .try_fold(0u64, |sum, &bytes| sum.checked_add(bytes))
+            != Some(slot.total_size())
+    {
+        return Err("invalid SSD slot bounds".into());
+    }
+    if let Some(metadata) = &slot.encoding {
+        if metadata.len() != slot.num_segments() {
+            return Err("encoded SSD segment count mismatch".into());
+        }
+        for (meta, &physical) in metadata.iter().zip(&slot.segment_sizes) {
+            meta.validate_metadata(usize::try_from(physical).map_err(|_| "SSD segment overflow")?)?;
+        }
+    }
+    Ok(())
+}
+
+fn encoded_copies(
+    slot: &SlotMeta,
+    base: u64,
+    offset: usize,
+    copies: BlockCopies,
+    format: StorageFormat,
+) -> Result<Vec<(CopyRange, EncodedSegment)>, EngineError> {
+    let ranges = match copies {
+        BlockCopies::Contiguous(copy) => vec![copy],
+        BlockCopies::Split { k, v } => vec![k, v],
+    };
+    let metadata = slot
+        .encoding
+        .as_ref()
+        .ok_or_else(|| EngineError::Storage("encoded SSD metadata is missing".into()))?;
+    if offset != 0 || metadata.len() != ranges.len() {
+        return Err(EngineError::Storage(
+            "encoded SSD restore layout mismatch".into(),
+        ));
+    }
+    metadata
+        .iter()
+        .zip(ranges)
+        .enumerate()
+        .map(|(index, (meta, copy))| {
+            if meta.logical_bytes != copy.bytes
+                || (meta.format != StorageFormat::Exact
+                    && meta.format != segment_format(format, index))
+            {
+                return Err(EngineError::Storage(
+                    "encoded SSD restore representation mismatch".into(),
+                ));
+            }
+            let file_offset = segment_offset(slot, base, index, 0, meta.stored_bytes)?;
+            Ok((
+                CopyRange {
+                    file_offset,
+                    device: copy.addr,
+                    bytes: meta.stored_bytes,
+                },
+                meta.clone(),
+            ))
         })
         .collect()
 }
@@ -116,7 +234,9 @@ fn segment_offset(
             "SSD segment is smaller than the registered GPU layout".into(),
         ));
     }
-    base.checked_add(slot.segment_sizes[..segment].iter().sum::<u64>())
+    slot.segment_sizes[..segment]
+        .iter()
+        .try_fold(base, |base, &bytes| base.checked_add(bytes))
         .and_then(|start| start.checked_add(offset as u64))
         .ok_or_else(|| EngineError::Storage("SSD segment offset overflow".into()))
 }

@@ -35,6 +35,8 @@ numbers below group work areas rather than imposing a strict serial schedule.
   unregister retain ownership until both DMA paths complete.
 - [x] Implement GPU ANS, FP8 and 3/4-bit TurboQuant, encoded DRAM/SSD/peer payloads,
   explicit head/K/V registration, raw fallback and CPU SIMD.
+- [x] Add runtime AVX-512F/AVX2/scalar FP8 CPU encoding and decoding, with
+  exhaustive BF16/FP16 value checks and a reproducible single-core benchmark.
 - [x] Verify optional FP8 storage, bounded scratch, mixed raw/encoded
   prefixes, cancellation, corruption rejection/repair and raw fallback.
 - [ ] Qualify lossy storage on representative model-quality workloads; Qwen3-8B
@@ -43,9 +45,11 @@ numbers below group work areas rather than imposing a strict serial schedule.
   SGLang scale artifacts and compare against same-dtype cold controls.
 - [ ] Extend quality and latency qualification of GPU codecs across hybrid models; retain
   exact recurrent state until model-quality and recovery gates pass.
-- [ ] Batch codec segments and reuse GPU scratch to reduce per-segment launches,
+- [x] Batch codec segments and reuse GPU scratch to reduce per-segment launches,
   allocations and synchronization; compare complete-request latency under inference load.
-- [ ] Add compressed cuFile I/O; current encoded SSD objects use io_uring.
+- [x] Add compressed cuFile reads and complete-group writes with GPU CRC validation,
+  bounded decode workspace, corruption isolation and cancellation ownership.
+  Qualify both engines in cuFile compatibility mode; native GDS remains a separate gate.
 - [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.
 - [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,

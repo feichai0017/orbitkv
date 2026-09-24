@@ -90,20 +90,23 @@ pub(crate) struct EncodedSegment {
 }
 
 impl EncodedSegment {
-    pub(crate) fn validate(&self, bytes: &[u8]) -> Result<(), String> {
+    /// Validate representation bounds without accessing a host payload (e.g. GDS).
+    pub(crate) fn validate_metadata(&self, available_bytes: usize) -> Result<(), String> {
         if self.version != 1
             || self.logical_bytes == 0
-            || self.logical_bytes > 16 * 1024 * 1024
             || self.stored_bytes == 0
-            || self.stored_bytes > bytes.len()
+            || self.logical_bytes > isize::MAX as usize
+            || self.stored_bytes > isize::MAX as usize
+            || self.stored_bytes > available_bytes
+            || (self.format != StorageFormat::Exact
+                && (self.logical_bytes > 16 * 1024 * 1024 || self.stored_bytes > 32 * 1024 * 1024))
         {
             return Err("invalid encoded segment bounds/version".into());
         }
         match self.format {
-            StorageFormat::Exact
-            | StorageFormat::Ans
-            | StorageFormat::Ans16
-            | StorageFormat::AnsFp8 => {}
+            StorageFormat::Exact if self.logical_bytes == self.stored_bytes => {}
+            StorageFormat::Ans | StorageFormat::AnsFp8 => {}
+            StorageFormat::Ans16 if self.logical_bytes.is_multiple_of(2) => {}
             StorageFormat::Fp8FromBf16 | StorageFormat::Fp8FromFp16
                 if self.stored_bytes.checked_mul(2) == Some(self.logical_bytes) => {}
             StorageFormat::TurboQuant {
@@ -115,9 +118,12 @@ impl EncodedSegment {
                 == Some(self.stored_bytes) => {}
             _ => return Err("invalid encoded segment geometry".into()),
         }
-        if (self.format == StorageFormat::Exact && self.logical_bytes != self.stored_bytes)
-            || crc32fast::hash(&bytes[..self.stored_bytes]) != self.checksum
-        {
+        Ok(())
+    }
+
+    pub(crate) fn validate(&self, bytes: &[u8]) -> Result<(), String> {
+        self.validate_metadata(bytes.len())?;
+        if crc32fast::hash(&bytes[..self.stored_bytes]) != self.checksum {
             return Err("encoded segment checksum/size mismatch".into());
         }
         Ok(())

@@ -10,13 +10,16 @@ import argparse
 import contextlib
 import json
 import math
+import shutil
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .launch import configure
-from .metrics import metrics, summarize
+from . import concurrent, sustained
+from .launch import STORAGE_CODECS, configure, storage_codec_budget
+from .metrics import codec_summary, delta, metrics, summarize
 from .runtime import ROOT, manifest, process_usage, server, storage_manifest
 from .workload import run_workload
 
@@ -77,6 +80,18 @@ def main() -> None:
         help="Engine prefill token batch limit; independent of total GPU KV capacity",
     )
     parser.add_argument("--host-gib", type=int, default=16)
+    parser.add_argument("--storage-codec", choices=STORAGE_CODECS, default="none")
+    parser.add_argument(
+        "--storage-codec-budget",
+        type=storage_codec_budget,
+        default=64 * 1024**2,
+        help="GPU codec scratch per worker, in bytes or kb/mb/gb (default: 64mb)",
+    )
+    parser.add_argument(
+        "--ssd-dir",
+        type=Path,
+        help="Existing SSD mount directory; use a private temporary subdirectory for the cache",
+    )
     parser.add_argument(
         "--ssd-gib",
         type=int,
@@ -101,6 +116,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
     args = parser.parse_args()
+    if args.backend != "orbitkv" and (
+        args.storage_codec != "none" or args.storage_codec_budget != 64 * 1024**2 or args.ssd_dir
+    ):
+        parser.error("storage codec and SSD directory controls require --backend orbitkv")
     if (args.ssd_backend != "uring" or args.gds_stats) and (
         args.backend != "orbitkv" or not args.ssd_gib
     ):
@@ -186,11 +205,17 @@ def main() -> None:
         2 * config["num_hidden_layers"] * config["num_key_value_heads"] * config["head_dim"] * 2
     )
 
-    launch = configure(args, bytes_per_token)
-    (args.output / "manifest.json").write_text(
-        json.dumps(manifest(args, launch, bytes_per_token), indent=2, allow_nan=False) + "\n"
-    )
+    ssd_directory = None
+    args.ssd_path = args.output / "cache.bin"
     try:
+        if args.ssd_gib and args.ssd_dir:
+            args.ssd_dir = args.ssd_dir.resolve(strict=True)
+            ssd_directory = Path(tempfile.mkdtemp(prefix="orbitkv-bench-", dir=args.ssd_dir))
+            args.ssd_path = ssd_directory / "cache.bin"
+        launch = configure(args, bytes_per_token)
+        (args.output / "manifest.json").write_text(
+            json.dumps(manifest(args, launch, bytes_per_token), indent=2, allow_nan=False) + "\n"
+        )
         with contextlib.ExitStack() as stack:
             if launch.manager_command:
                 manager = stack.enter_context(
@@ -204,20 +229,16 @@ def main() -> None:
                 )
                 if args.ssd_gib:
                     (args.output / "storage.json").write_text(
-                        json.dumps(
-                            storage_manifest(manager.pid, args.output / "cache.bin"), indent=2
-                        )
-                        + "\n"
+                        json.dumps(storage_manifest(manager.pid, args.ssd_path), indent=2) + "\n"
                     )
             stack.enter_context(
                 server(launch.command, launch.env, launch.base_url, args.output / "engine.log")
             )
             if launch.manager_command:
                 usage_before = process_usage(manager.pid)
+                workload_manager_before = metrics(launch.manager_url)
                 workload_started = time.monotonic()
             if args.workload in ("concurrent", "sustained"):
-                from . import concurrent, sustained
-
                 workload = sustained if args.workload == "sustained" else concurrent
                 samples, batches = workload.run_workload(args, launch.base_url, launch.manager_url)
                 workload.validate(vars(args), samples, batches)
@@ -227,6 +248,12 @@ def main() -> None:
                 summary = summarize(samples, args.lengths)
             if launch.manager_command:
                 usage_after = process_usage(manager.pid)
+                workload_manager_after = metrics(launch.manager_url)
+                workload_measurement = {
+                    "manager_before": workload_manager_before,
+                    "manager_after": workload_manager_after,
+                    "manager_delta": delta(workload_manager_before, workload_manager_after),
+                }
                 (args.output / "manager-usage.json").write_text(
                     json.dumps(
                         {
@@ -236,6 +263,8 @@ def main() -> None:
                             },
                             "scope": "Manager during the whole workload, including warmup/pressure; excludes engine CPU",
                             "io_note": "Linux process I/O accounting is not a GPU DMA byte counter; use cuFile metrics too",
+                            **workload_measurement,
+                            "codec": codec_summary([workload_measurement]),
                         },
                         indent=2,
                     )
@@ -271,7 +300,9 @@ def main() -> None:
         raise
     finally:
         if args.ssd_gib:
-            (args.output / "cache.bin").unlink(missing_ok=True)
+            args.ssd_path.unlink(missing_ok=True)
+        if ssd_directory:
+            shutil.rmtree(ssd_directory)
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summary, indent=2, allow_nan=False))
 

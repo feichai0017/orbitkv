@@ -16,6 +16,7 @@ use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
 
 mod codec;
+pub(crate) use codec::SaveGroup;
 pub(crate) mod ssd;
 use ssd::GpuWrite;
 
@@ -102,6 +103,7 @@ pub(crate) struct SaveTask {
     pub layers: Vec<LayerTransferData>,
     pub reply: oneshot::Sender<Result<Vec<LayerTransferData>, EngineError>>,
     pub ssd_writes: Vec<GpuWrite>,
+    pub codec_groups: Vec<SaveGroup>,
     pub storage: Option<Arc<crate::storage::StorageEngine>>,
     pub numa: NumaNode,
     pub ssd_admission: Option<OwnedSemaphorePermit>,
@@ -121,6 +123,7 @@ pub(crate) struct GpuWorkerPool {
     numa_node: NumaNode,
     transfer_mode: TransferMode,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
+    codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_write_admission: Arc<Semaphore>,
     load_tx: mpsc::UnboundedSender<WorkerCommand>,
     save_tx: mpsc::UnboundedSender<WorkerCommand>,
@@ -141,6 +144,7 @@ impl GpuWorkerPool {
             load_tx: spawn_worker(device_id, numa_node, transfer_mode, "load")?,
             save_tx: spawn_worker(device_id, numa_node, transfer_mode, "save")?,
             ssd_tx: Mutex::new(None),
+            codec_write_tx: Mutex::new(None),
             ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
             closed: Mutex::new(false),
             drained: OnceCell::new(),
@@ -152,7 +156,21 @@ impl GpuWorkerPool {
         if *closed {
             return Err(EngineError::Storage("GPU worker is draining".into()));
         }
-        if disk {
+        if matches!(&command, WorkerCommand::Save(task) if !task.codec_groups.is_empty()) {
+            let mut sender = self.codec_write_tx.lock();
+            if sender.is_none() {
+                *sender = Some(spawn_worker(
+                    self.device_id,
+                    self.numa_node,
+                    self.transfer_mode,
+                    "encoded-writeback",
+                )?);
+            }
+            sender
+                .as_ref()
+                .expect("encoded writeback worker initialized")
+                .send(command)
+        } else if disk {
             let mut sender = self.ssd_tx.lock();
             if sender.is_none() {
                 *sender = Some(spawn_worker(
@@ -181,6 +199,22 @@ impl GpuWorkerPool {
     }
 
     pub(crate) fn submit_load(&self, task: LoadTask) -> Result<(), EngineError> {
+        let mut targets = Vec::new();
+        for layer in &task.layers {
+            for block in &layer.blocks {
+                match layer
+                    .layout
+                    .block_copies(block.block_idx)
+                    .map_err(EngineError::Storage)?
+                {
+                    BlockCopies::Contiguous(copy) => targets.push((copy.addr, copy.bytes)),
+                    BlockCopies::Split { k, v } => {
+                        targets.extend([(k.addr, k.bytes), (v.addr, v.bytes)]);
+                    }
+                }
+            }
+        }
+        crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
         let disk = task.layers.iter().any(|layer| {
             layer
                 .blocks
@@ -194,10 +228,11 @@ impl GpuWorkerPool {
         &self,
         layers: Vec<LayerTransferData>,
         mut ssd_writes: Vec<GpuWrite>,
+        mut codec_groups: Vec<SaveGroup>,
         storage: Option<Arc<crate::storage::StorageEngine>>,
     ) -> Result<Vec<LayerTransferData>, EngineError> {
         let (reply, receiver) = oneshot::channel();
-        let ssd_admission = if ssd_writes.is_empty() {
+        let ssd_admission = if ssd_writes.is_empty() && codec_groups.is_empty() {
             None
         } else {
             match Arc::clone(&self.ssd_write_admission).try_acquire_owned() {
@@ -206,17 +241,19 @@ impl GpuWorkerPool {
                     // Roll back unsubmitted GPU extents, preserving the normal
                     // D2H publication and bounded io_uring writeback path.
                     ssd_writes.clear();
+                    codec_groups.clear();
                     core_metrics().ssd_gpu_write_fallbacks.add(1, &[]);
                     None
                 }
             }
         };
-        let disk = ssd_admission.is_some();
+        let disk = !ssd_writes.is_empty();
         self.submit(
             WorkerCommand::Save(SaveTask {
                 layers,
                 reply,
                 ssd_writes,
+                codec_groups,
                 ssd_admission,
                 storage,
                 numa: self.numa_node,
@@ -239,9 +276,15 @@ impl GpuWorkerPool {
                     let mut closed = self.closed.lock();
                     *closed = true;
                     let ssd = self.ssd_tx.lock();
-                    for sender in [Some(&self.load_tx), Some(&self.save_tx), ssd.as_ref()]
-                        .into_iter()
-                        .flatten()
+                    let codec_write = self.codec_write_tx.lock();
+                    for sender in [
+                        Some(&self.load_tx),
+                        Some(&self.save_tx),
+                        ssd.as_ref(),
+                        codec_write.as_ref(),
+                    ]
+                    .into_iter()
+                    .flatten()
                     {
                         let (reply, receiver) = oneshot::channel();
                         sender
@@ -305,6 +348,7 @@ struct WorkerRuntime {
     stream: Arc<CudaStream>,
     backend: Box<dyn TransferBackend>,
     codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
+    codec_write: std::cell::RefCell<Option<crate::backing::ssd::cufile::GpuSlot>>,
 }
 
 fn build_backend(
@@ -344,6 +388,7 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
         stream,
         backend,
         codec: Default::default(),
+        codec_write: Default::default(),
     })
 }
 
@@ -359,8 +404,9 @@ fn worker_loop(
                     .stream
                     .synchronize()
                     .map_err(|e| format!("GPU drain failed: {e}"));
+                drop(runtime);
                 let _ = reply.send(result);
-                break;
+                return;
             }
             WorkerCommand::Load(task) => {
                 let started = Instant::now();
@@ -385,27 +431,35 @@ fn worker_loop(
                 storage,
                 numa,
                 ssd_writes: _,
-                ssd_admission: _,
+                codec_groups,
+                ssd_admission,
                 #[cfg(feature = "tracing")]
                 trace_ctx,
             }) => {
                 let encoded = storage
                     .as_ref()
                     .is_some_and(|s| s.codec != crate::StorageCodec::None);
-                let result = codec::save(&runtime, &mut layers, storage.as_deref(), numa)
-                    .and_then(|()| {
-                        if encoded {
-                            return Ok(());
-                        }
-                        process_save_task(
-                            &layers,
-                            &runtime.stream,
-                            runtime.backend.as_ref(),
-                            #[cfg(feature = "tracing")]
-                            trace_ctx,
-                        )
-                    })
-                    .map(|()| layers);
+                let result = codec::save(
+                    &runtime,
+                    &mut layers,
+                    storage.as_deref(),
+                    numa,
+                    &codec_groups,
+                )
+                .and_then(|()| {
+                    if encoded {
+                        return Ok(());
+                    }
+                    process_save_task(
+                        &layers,
+                        &runtime.stream,
+                        runtime.backend.as_ref(),
+                        #[cfg(feature = "tracing")]
+                        trace_ctx,
+                    )
+                })
+                .map(|()| layers);
+                drop(ssd_admission);
                 let _ = reply.send(result);
             }
         }

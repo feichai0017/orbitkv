@@ -1,5 +1,7 @@
 use super::*;
-use cudarc::driver::{CudaContext, DevicePtr};
+use std::sync::Arc;
+
+use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, result};
 use half::{bf16, f16};
 
 #[test]
@@ -65,16 +67,16 @@ fn gpu_fp8_matches_simd_for_every_finite_in_range_bf16_and_fp16_value() {
             .collect();
         let bytes: Vec<u8> = bits.iter().flat_map(|b| b.to_le_bytes()).collect();
         let input = stream.clone_htod(&bytes).unwrap();
-        let (output, len) = codec
-            .encode(
-                &stream,
-                input.device_ptr(&stream).0,
-                bytes.len(),
-                format,
-                64 * 1024 * 1024,
-            )
-            .unwrap()
-            .unwrap();
+        let (output, len) = encode_one(
+            &mut codec,
+            &stream,
+            input.device_ptr(&stream).0,
+            bytes.len(),
+            format,
+            64 * 1024 * 1024,
+        )
+        .unwrap()
+        .unwrap();
         let encoded = stream.clone_dtoh(&output).unwrap();
         let mut reference = vec![0; len];
         assert!(cpu::encode(format, &bytes, &mut reference));
@@ -87,42 +89,42 @@ fn gpu_fp8_matches_simd_for_every_finite_in_range_bf16_and_fp16_value() {
             checksum: crc32fast::hash(&reference),
         };
         let reconstructed = stream.alloc_zeros::<u8>(bytes.len()).unwrap();
-        codec
-            .decode(
-                &stream,
-                &output,
-                reconstructed.device_ptr(&stream).0,
-                &meta,
-                64 * 1024 * 1024,
-            )
-            .unwrap();
+        decode_one(
+            &mut codec,
+            &stream,
+            &output,
+            reconstructed.device_ptr(&stream).0,
+            &meta,
+            64 * 1024 * 1024,
+        )
+        .unwrap();
         let mut reference = vec![0; bytes.len()];
         assert!(cpu::decode(format, &encoded[..len], &mut reference));
         assert_eq!(stream.clone_dtoh(&reconstructed).unwrap(), reference);
         let invalid = stream.clone_htod(&[f16::INFINITY.to_bits(); 32]).unwrap();
         assert!(
-            codec
-                .encode(
-                    &stream,
-                    invalid.device_ptr(&stream).0,
-                    64,
-                    StorageFormat::Fp8FromFp16,
-                    4096
-                )
-                .unwrap()
-                .is_none()
+            encode_one(
+                &mut codec,
+                &stream,
+                invalid.device_ptr(&stream).0,
+                64,
+                StorageFormat::Fp8FromFp16,
+                1024 * 1024
+            )
+            .unwrap()
+            .is_none()
         );
         assert!(
-            codec
-                .encode(
-                    &stream,
-                    input.device_ptr(&stream).0,
-                    bytes.len(),
-                    format,
-                    4096
-                )
-                .unwrap()
-                .is_none()
+            encode_one(
+                &mut codec,
+                &stream,
+                input.device_ptr(&stream).0,
+                bytes.len(),
+                format,
+                4096
+            )
+            .unwrap()
+            .is_none()
         );
     }
 }
@@ -167,16 +169,16 @@ fn gpu_turboquant_three_and_four_bits_preserve_key_norm_and_bound_error() {
                         seed: 42,
                         bits,
                     };
-                    let (output, len) = codec
-                        .encode(
-                            &stream,
-                            input.device_ptr(&stream).0,
-                            source.len() * 2,
-                            format,
-                            1024 * 1024,
-                        )
-                        .unwrap()
-                        .unwrap();
+                    let (output, len) = encode_one(
+                        &mut codec,
+                        &stream,
+                        input.device_ptr(&stream).0,
+                        source.len() * 2,
+                        format,
+                        1024 * 1024,
+                    )
+                    .unwrap()
+                    .unwrap();
                     assert_eq!(len, 7 * vector_bytes(dim, bits, role));
                     let bytes = stream.clone_dtoh(&output).unwrap();
                     let meta = EncodedSegment {
@@ -188,15 +190,15 @@ fn gpu_turboquant_three_and_four_bits_preserve_key_norm_and_bound_error() {
                     };
                     meta.validate(&bytes).unwrap();
                     let target = stream.alloc_zeros::<u16>(source.len()).unwrap();
-                    codec
-                        .decode(
-                            &stream,
-                            &output,
-                            target.device_ptr(&stream).0,
-                            &meta,
-                            1024 * 1024,
-                        )
-                        .unwrap();
+                    decode_one(
+                        &mut codec,
+                        &stream,
+                        &output,
+                        target.device_ptr(&stream).0,
+                        &meta,
+                        1024 * 1024,
+                    )
+                    .unwrap();
                     let actual: Vec<f32> = stream
                         .clone_dtoh(&target)
                         .unwrap()
@@ -257,27 +259,27 @@ fn gpu_ans_exact_roundtrip_and_budget() {
         StorageFormat::AnsFp8,
     ] {
         assert!(
-            codec
-                .encode(
-                    &stream,
-                    input.device_ptr(&stream).0,
-                    data.len(),
-                    format,
-                    4096
-                )
-                .unwrap()
-                .is_none()
-        );
-        let (output, len) = codec
-            .encode(
+            encode_one(
+                &mut codec,
                 &stream,
                 input.device_ptr(&stream).0,
                 data.len(),
                 format,
-                64 * 1024 * 1024,
+                4096
             )
             .unwrap()
-            .unwrap();
+            .is_none()
+        );
+        let (output, len) = encode_one(
+            &mut codec,
+            &stream,
+            input.device_ptr(&stream).0,
+            data.len(),
+            format,
+            64 * 1024 * 1024,
+        )
+        .unwrap()
+        .unwrap();
         assert!(len < data.len());
         let encoded = stream.clone_dtoh(&output).unwrap();
         let meta = EncodedSegment {
@@ -289,15 +291,84 @@ fn gpu_ans_exact_roundtrip_and_budget() {
         };
         meta.validate(&encoded).unwrap();
         let target = stream.alloc_zeros::<u8>(data.len()).unwrap();
-        codec
-            .decode(
-                &stream,
-                &output,
-                target.device_ptr(&stream).0,
-                &meta,
-                64 * 1024 * 1024,
-            )
-            .unwrap();
+        decode_one(
+            &mut codec,
+            &stream,
+            &output,
+            target.device_ptr(&stream).0,
+            &meta,
+            64 * 1024 * 1024,
+        )
+        .unwrap();
         assert_eq!(stream.clone_dtoh(&target).unwrap(), data);
     }
 }
+
+// Scalar numerical qualification still needs owned copies: the production API
+// deliberately borrows an arena whose contents change on the next batch.
+fn encode_one(
+    codec: &mut gpu::GpuCodec,
+    stream: &Arc<CudaStream>,
+    source: u64,
+    bytes: usize,
+    format: StorageFormat,
+    budget: usize,
+) -> Result<Option<(CudaSlice<u8>, usize)>, String> {
+    let batch = unsafe {
+        codec.encode_batch(
+            stream,
+            &[gpu::EncodeInput {
+                source,
+                bytes,
+                format,
+            }],
+            budget,
+        )?
+    };
+    assert_eq!(batch.processed, 1);
+    let Some(output) = &batch.outputs[0] else {
+        return Ok(None);
+    };
+    let copy = stream
+        .alloc_zeros::<u8>(output.meta.stored_bytes)
+        .map_err(|e| e.to_string())?;
+    let copied = unsafe {
+        result::memcpy_dtod_async(
+            copy.device_ptr(stream).0,
+            output.device,
+            output.meta.stored_bytes,
+            stream.cu_stream(),
+        )
+    };
+    stream.synchronize().unwrap();
+    copied.map_err(|e| e.to_string())?;
+    let host = stream.clone_dtoh(&copy).map_err(|e| e.to_string())?;
+    output.meta.validate(&host)?;
+    assert!(output.device.is_multiple_of(4096));
+    Ok(Some((copy, output.meta.stored_bytes)))
+}
+
+fn decode_one(
+    codec: &mut gpu::GpuCodec,
+    stream: &Arc<CudaStream>,
+    source: &CudaSlice<u8>,
+    target: u64,
+    meta: &EncodedSegment,
+    budget: usize,
+) -> Result<(), gpu::DecodeError> {
+    unsafe {
+        codec.decode_batch(
+            stream,
+            &[gpu::DecodeInput {
+                source: source.device_ptr(stream).0,
+                source_bytes: source.len(),
+                target,
+                target_bytes: meta.logical_bytes,
+                meta,
+            }],
+            budget,
+        )
+    }
+}
+
+mod batch;

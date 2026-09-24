@@ -1,15 +1,65 @@
 use super::*;
 
+#[test]
+fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
+    let (load_tx, mut load_rx) = mpsc::unbounded_channel();
+    let (save_tx, _save_rx) = mpsc::unbounded_channel();
+    let pool = GpuWorkerPool {
+        device_id: 0,
+        numa_node: NumaNode::UNKNOWN,
+        transfer_mode: TransferMode::Direct,
+        ssd_tx: Mutex::new(None),
+        codec_write_tx: Mutex::new(None),
+        ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        load_tx,
+        save_tx,
+        closed: Mutex::new(false),
+        drained: OnceCell::new(),
+    };
+    let mut layout = KVCacheLayout::new(0x10000, 257 * 4096, 257, 4096, 0, 1).unwrap();
+    layout.storage_format = orbitkv_state::StorageFormat::Fp8FromBf16;
+    for codec_budget in [4096, 64 * 1024 * 1024] {
+        for indices in [vec![0, 0], (0..257).chain([0]).collect()] {
+            let (completion, _) = oneshot::channel();
+            let task = LoadTask {
+                layers: vec![LayerTransferData {
+                    layer_name: "attention".into(),
+                    layout: layout.clone(),
+                    blocks: indices
+                        .into_iter()
+                        .map(|block_idx| TransferBlock {
+                            block_idx,
+                            // Rejection must precede source access or GPU work.
+                            block: TransferPayload::Pending,
+                        })
+                        .collect(),
+                }],
+                completion,
+                reservations: vec![],
+                codec_budget,
+            };
+            let error = pool.submit_load(task).unwrap_err();
+            assert!(error.to_string().contains("overlap"));
+            assert!(matches!(
+                load_rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+        }
+    }
+}
+
 #[tokio::test]
 async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, mut save_rx) = mpsc::unbounded_channel();
     let (ssd_tx, mut ssd_rx) = mpsc::unbounded_channel();
+    let (codec_write_tx, mut codec_write_rx) = mpsc::unbounded_channel();
     let pool = Arc::new(GpuWorkerPool {
         device_id: 0,
         numa_node: NumaNode::UNKNOWN,
         transfer_mode: TransferMode::Direct,
         ssd_tx: Mutex::new(Some(ssd_tx)),
+        codec_write_tx: Mutex::new(Some(codec_write_tx)),
         ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
         load_tx,
         save_tx,
@@ -36,6 +86,9 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let Some(WorkerCommand::Drain(ssd_ack)) = ssd_rx.recv().await else {
         panic!("missing SSD barrier")
     };
+    let Some(WorkerCommand::Drain(codec_write_ack)) = codec_write_rx.recv().await else {
+        panic!("missing encoded writeback barrier")
+    };
     let (reply, _) = oneshot::channel();
     assert!(
         pool.submit_load(LoadTask {
@@ -46,7 +99,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         })
         .is_err()
     );
-    assert!(pool.batch_save(vec![], vec![], None).await.is_err());
+    assert!(pool.batch_save(vec![], vec![], vec![], None).await.is_err());
     load_ack.send(Ok(())).unwrap();
     tokio::task::yield_now().await;
     assert!(
@@ -60,6 +113,9 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         "SSD completion must precede mapping release"
     );
     ssd_ack.send(Ok(())).unwrap();
+    tokio::task::yield_now().await;
+    assert!(!waiter.is_finished());
+    codec_write_ack.send(Ok(())).unwrap();
     waiter.await.unwrap().unwrap();
     pool.drain().await.unwrap();
 }

@@ -1,6 +1,17 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
-from benches.gds import native_io_stats
+from benches.gds import (
+    benchmark_commands,
+    correctness_result,
+    native_io_stats,
+    qualify_benchmark,
+    require_bare_metal,
+)
+from benches.launch import STORAGE_CODECS
 
 
 def stats(read=2, write=3, posix=0, extra=""):
@@ -26,3 +37,128 @@ def test_native_evidence_requires_both_directions_and_rejects_unknown_or_fallbac
     ):
         with pytest.raises(ValueError):
             native_io_stats(output)
+
+
+def test_native_codec_matrix_preserves_workloads_and_only_requests_gds_stats_for_ssd(tmp_path):
+    args = SimpleNamespace(
+        vllm_python=Path("/venv/vllm/python"),
+        sglang_python=Path("/venv/sglang/python"),
+        model=Path("/models/qwen3"),
+        host_gib=1,
+        ssd_gib=8,
+        storage_codecs=STORAGE_CODECS,
+        storage_codec_budget=64 * 1024**2,
+        workloads=["serial", "sustained"],
+        working_set=12,
+        length=4096,
+        duration_seconds=20,
+        max_requests=512,
+        gpu_tokens=8192,
+        prefill_tokens=4096,
+        output_tokens=16,
+        seed=20260920,
+        concurrencies=[4],
+        gds_tools=Path("/gds/tools"),
+    )
+    cases = list(benchmark_commands(args, tmp_path))
+    assert len(cases) == len({name for name, _ in cases}) == 80
+    groups = {}
+    for name, command in cases:
+
+        def value(flag, command=command):
+            return command[command.index(flag) + 1]
+
+        assert command[:3] == [
+            str(getattr(args, f"{value('--engine')}_python")),
+            "-m",
+            "benches.single_node",
+        ]
+        assert value("--output") == str(tmp_path / name)
+        for flag, expected in {
+            "--host-gib": 1,
+            "--lengths": 4096,
+            "--working-set": 12,
+            "--duration-seconds": 20,
+            "--max-requests": 512,
+            "--gpu-tokens": 8192,
+            "--prefill-tokens": 4096,
+            "--output-tokens": 16,
+            "--seed": 20260920,
+            "--storage-codec-budget": 67108864,
+        }.items():
+            assert value(flag) == str(expected)
+        assert ("--gds-stats" in command) == (
+            value("--ssd-gib") != "0" and value("--ssd-backend") != "uring"
+        )
+        key = tuple(
+            value(flag) for flag in ("--engine", "--workload", "--ssd-gib", "--ssd-backend")
+        )
+        groups.setdefault(key, []).append(value("--storage-codec"))
+    assert all(codecs == list(STORAGE_CODECS) for codecs in groups.values())
+
+
+def test_qualification_requires_gpu_restore_encoding_and_native_evidence(tmp_path):
+    run = {
+        "directory": str(tmp_path),
+        "manifest": {
+            "arguments": {
+                "workload": "sustained",
+                "ssd_gib": 8,
+                "ssd_backend": "cufile",
+                "storage_codec": "ans",
+            }
+        },
+        "summary": [
+            {"orbitkv_ssd_cufile_read_bytes_total": 4096, "orbitkv_load_bytes_total": 8192}
+        ],
+    }
+    usage = {
+        "manager_delta": {
+            "orbitkv_storage_codec_bytes_total_logical": 8192,
+            "orbitkv_storage_codec_bytes_total_stored": 4096,
+        }
+    }
+    native = {**native_io_stats(stats()), "backend_fallbacks": 0}
+    (tmp_path / "native-io.json").write_text(json.dumps(native))
+    assert qualify_benchmark(run, usage)["measured_gpu_load_bytes"] == 8192
+    with pytest.raises(ValueError, match="encoded-publication"):
+        qualify_benchmark(run, {})
+    usage["manager_delta"]["orbitkv_storage_codec_decode_failures_total"] = 1
+    with pytest.raises(ValueError, match="decode failures"):
+        qualify_benchmark(run, usage)
+    del usage["manager_delta"]["orbitkv_storage_codec_decode_failures_total"]
+    native["backend_fallbacks"] = 1
+    (tmp_path / "native-io.json").write_text(json.dumps(native))
+    with pytest.raises(ValueError, match="fallback observed"):
+        qualify_benchmark(run, usage)
+    run["summary"][0]["orbitkv_load_bytes_total"] = 0
+    with pytest.raises(ValueError, match="GPU restore evidence"):
+        qualify_benchmark(run, usage)
+
+
+def test_container_is_rejected_before_any_gpu_probe(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, "read_text", lambda *a, **kw: "0::/container")
+    monkeypatch.setattr("benches.gds.subprocess.check_output", lambda *a, **kw: "overlay\n")
+    monkeypatch.setattr(
+        "benches.gds.subprocess.run",
+        lambda *a, **kw: pytest.fail("probe ran before prerequisite check"),
+    )
+    with pytest.raises(RuntimeError, match="bare-metal"):
+        require_bare_metal(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("cases", "exit_code", "qualified"),
+    [
+        ("<testcase/>", 0, True),
+        ("<testcase/>", 1, False),
+        ("<testcase><failure/></testcase><testcase/>", 1, False),
+        ("<testcase><error/></testcase>", 1, False),
+        ("<testcase><skipped/></testcase>", 0, False),
+        ("", 0, False),
+    ],
+)
+def test_skipped_or_failed_correctness_cannot_qualify(tmp_path, cases, exit_code, qualified):
+    report = tmp_path / "quality.xml"
+    report.write_text(f"<testsuites><testsuite>{cases}</testsuite></testsuites>")
+    assert correctness_result(report, exit_code)["qualified"] == qualified

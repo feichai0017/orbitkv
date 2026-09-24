@@ -17,7 +17,7 @@ use crate::metrics::core_metrics;
 use crate::storage::write_path::{RawSaveBatch, RawSaveLayer};
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::worker::ssd::GpuWrite;
-use crate::transfer::worker::{LayerTransferData, TransferBlock, TransferPayload};
+use crate::transfer::worker::{LayerTransferData, SaveGroup, TransferBlock, TransferPayload};
 
 /// Unified per-layer context for the save pipeline.
 /// Combines metadata, filtered blocks, and allocation results.
@@ -125,6 +125,37 @@ fn prepare_gpu_writes(
         writes.push(GpuWrite { lease, batches });
     }
     Ok(writes)
+}
+
+/// Encoded sizes are known only on the GPU worker. Keep complete groups in
+/// slot order so their SSD reservation can be made before that arena is reused.
+fn prepare_codec_groups(
+    namespace: &str,
+    topology: &crate::engine::instance::LayerTopology,
+    layers: &[LayerContext],
+) -> Result<Vec<SaveGroup>, EngineError> {
+    let mut groups = HashMap::new();
+    for (layer_index, layer) in layers.iter().enumerate() {
+        for (block_position, (_, hash)) in layer.blocks_to_save.iter().enumerate() {
+            groups
+                .entry((layer.group, hash.clone()))
+                .or_insert_with(std::collections::BTreeMap::new)
+                .insert(layer.slot_id, (layer_index, block_position));
+        }
+    }
+    let mut result = Vec::new();
+    for ((group, hash), slots) in groups {
+        let expected = topology.group_total_slots(group)?;
+        if slots.len() == expected && slots.keys().copied().eq(0..expected) {
+            result.push(SaveGroup {
+                key: StateKey::new(namespace.to_owned(), group_hash(&hash, group)),
+                blocks: slots.into_values().collect(),
+            });
+        }
+    }
+    // Preserve the publisher's block order for adjacent-file writes.
+    result.sort_by_key(|group| group.blocks.first().map(|&(layer, block)| (block, layer)));
+    Ok(result)
 }
 
 /// Drop `(group, hash)` candidates whose group-encoded key already exists in
@@ -598,11 +629,23 @@ impl OrbitKVEngine {
             }
             _ => Vec::new(),
         };
+        let codec_groups = if self.storage.codec != crate::StorageCodec::None
+            && self
+                .storage
+                .ssd_store
+                .as_ref()
+                .is_some_and(|store| store.gpu_io.available())
+        {
+            prepare_codec_groups(&namespace, &topology, &layer_contexts)?
+        } else {
+            Vec::new()
+        };
         let returned_layers = trace_future!(
             "save.gpu_copy",
             gpu_context.worker_pool().batch_save(
                 gpu_save_layers,
                 ssd_writes,
+                codec_groups,
                 Some(Arc::clone(&self.storage))
             )
         )

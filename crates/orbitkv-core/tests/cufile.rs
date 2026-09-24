@@ -2,8 +2,11 @@
 //! compatibility configuration; these tests never label compatibility as GDS.
 mod common;
 
-use common::TestEnvBuilder;
-use orbitkv_core::{QueryMode, RestoreSource, SsdBackend, SsdCacheConfig, StorageConfig};
+use common::{GpuBuffer, TestEnvBuilder};
+use orbitkv_core::{
+    LayerSave, OrbitKVEngine, QueryLeaseId, QueryMode, RestoreSource, SsdBackend, SsdCacheConfig,
+    StorageCodec, StorageConfig, TransferMode,
+};
 
 fn storage(file: std::path::PathBuf, capacity_bytes: u64) -> StorageConfig {
     StorageConfig {
@@ -324,6 +327,236 @@ async fn pinned_shard_does_not_prevent_writes_to_another_shard() {
     env.layers[0].data.assert_gpu_matches_expected();
     env.engine
         .unregister_instance_and_wait(&env.instance_id)
+        .await
+        .unwrap();
+}
+
+struct EncodedFixture {
+    engine: OrbitKVEngine,
+    gpu: GpuBuffer,
+    expected: Vec<u8>,
+    hashes: Vec<Vec<u8>>,
+}
+
+impl EncodedFixture {
+    fn new(file: std::path::PathBuf, segment_bytes: usize, split: bool) -> Self {
+        let blocks = 2;
+        let segments = if split { 2 } else { 1 };
+        let total = segment_bytes * blocks * segments;
+        let mut expected = vec![0u8; total];
+        for segment in 0..segments {
+            for block in 0..blocks {
+                // The prefix begins with a raw fallback. The next object is
+                // encoded and, for split K/V, contains an exact V sibling.
+                let value = if block == 0 || segment == 1 {
+                    512.0f32
+                } else {
+                    1.0f32
+                };
+                let bits = ((value.to_bits() >> 16) as u16).to_le_bytes();
+                let start = (segment * blocks + block) * segment_bytes;
+                for pair in expected[start..start + segment_bytes].chunks_exact_mut(2) {
+                    pair.copy_from_slice(&bits);
+                }
+            }
+        }
+        let ctx = cudarc::driver::CudaContext::new(0).unwrap();
+        let gpu = GpuBuffer::alloc(ctx, total);
+        gpu.copy_from_host(&expected);
+        let mut config = storage(file, 64 << 20);
+        config.codec = StorageCodec::Fp8;
+        let engine = common::test_engine_with_pool(64 << 20, config);
+        engine
+            .register_context_layer_batch_strided(
+                "encoded-gds",
+                "encoded-gds",
+                0,
+                0,
+                0,
+                1,
+                1,
+                &["layer".to_owned()],
+                &[gpu.as_u64()],
+                &[total],
+                &[blocks],
+                &[segment_bytes],
+                &[if split { blocks * segment_bytes } else { 0 }],
+                &[segments],
+                None,
+                None,
+                Some(&[orbitkv_state::StorageFormat::Fp8FromBf16]),
+                TransferMode::Direct,
+                false,
+            )
+            .unwrap();
+        Self {
+            engine,
+            gpu,
+            expected,
+            hashes: common::make_block_hashes(blocks, 91),
+        }
+    }
+
+    async fn save(&self, ids: &[usize]) {
+        self.engine
+            .batch_save_kv_blocks_from_ipc(
+                "encoded-gds",
+                0,
+                0,
+                0,
+                vec![LayerSave {
+                    layer_name: "layer".into(),
+                    block_ids: ids.to_vec(),
+                    block_hashes: ids.iter().map(|&id| self.hashes[id].clone()).collect(),
+                }],
+            )
+            .await
+            .unwrap();
+        self.engine.flush_all().await;
+    }
+
+    async fn query(&self, ids: &[usize]) -> orbitkv_core::QueryResult {
+        self.engine
+            .count_prefix_hit_blocks_with_prefetch(
+                "encoded-gds",
+                "gds-codec-test",
+                &ids.iter()
+                    .map(|&id| self.hashes[id].clone())
+                    .collect::<Vec<_>>(),
+                QueryMode::Demand,
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn lease(&self, ids: &[usize]) -> QueryLeaseId {
+        let query = self.query(ids).await;
+        assert_eq!(query.blocks.len(), ids.len());
+        assert!(
+            query
+                .blocks
+                .iter()
+                .all(|source| matches!(source, RestoreSource::Ssd(_)))
+        );
+        self.engine
+            .create_query_lease("encoded-gds", query.blocks)
+            .unwrap()
+    }
+
+    async fn restore(&self, lease: QueryLeaseId, ids: &[usize]) -> orbitkv_core::LoadOutcome {
+        let completion = self
+            .engine
+            .restore(
+                "encoded-gds",
+                0,
+                0,
+                &[vec!["layer"]],
+                &[(lease, vec![ids.iter().copied().map(Some).collect()])],
+            )
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(30), completion)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CUDA, io_uring and libcufile; run the cuFile qualification gate"]
+async fn encoded_gds_restores_mixed_prefix_split_siblings_and_segments_larger_than_slots() {
+    // A 10 MiB logical FP8 segment stores 5 MiB: decoding its first 4 MiB
+    // cuFile chunk would consume incomplete data.
+    for (segment_bytes, split) in [(10 * 1024 * 1024, false), (7000, true)] {
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = EncodedFixture::new(dir.path().join("cache.bin"), segment_bytes, split);
+        fixture.save(&[0, 1]).await;
+        fixture.engine.cleanup_memory_cache();
+        let query = fixture.query(&[0, 1]).await;
+        assert_eq!(
+            query.blocks.len(),
+            2,
+            "mixed representation prefix must not truncate"
+        );
+        assert!(
+            query
+                .blocks
+                .iter()
+                .all(|source| matches!(source, RestoreSource::Ssd(_)))
+        );
+        assert!(
+            query.blocks[1].memory_footprint() < query.blocks[0].memory_footprint(),
+            "the second SSD object must actually be encoded"
+        );
+        assert_eq!(
+            fixture.engine.cleanup_memory_cache().evicted_blocks,
+            0,
+            "encoded demand queries must not materialize host payloads"
+        );
+        let lease = fixture
+            .engine
+            .create_query_lease("encoded-gds", query.blocks)
+            .unwrap();
+        fixture.gpu.zero();
+        fixture.restore(lease, &[0, 1]).await.result.unwrap();
+        assert_eq!(fixture.gpu.copy_to_host(), fixture.expected);
+        fixture
+            .engine
+            .unregister_instance_and_wait("encoded-gds")
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CUDA, io_uring and libcufile; run the cuFile qualification gate"]
+async fn corrupt_encoded_gds_generation_is_hidden_pinned_and_repaired_after_drain() {
+    use std::os::unix::fs::FileExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("cache.bin");
+    let fixture = EncodedFixture::new(file.clone(), 16384, false);
+    // Only the encoded block is published, making its first extent start at 0.
+    fixture.save(&[1]).await;
+    fixture.engine.cleanup_memory_cache();
+    let failing = fixture.lease(&[1]).await;
+    let held = fixture.lease(&[1]).await;
+    let disk = std::fs::OpenOptions::new().write(true).open(&file).unwrap();
+    disk.write_all_at(&[0xff], 0).unwrap();
+    disk.sync_all().unwrap();
+    fixture.gpu.zero();
+    let outcome = fixture.restore(failing, &[1]).await;
+    assert!(
+        outcome.result.is_err(),
+        "GPU CRC must reject the corrupted payload"
+    );
+    assert!(
+        fixture.gpu.copy_to_host().iter().all(|&byte| byte == 0),
+        "CRC failure must precede all decode writes"
+    );
+    assert!(
+        fixture.query(&[1]).await.blocks.is_empty(),
+        "corruption hides a still-pinned source"
+    );
+
+    fixture.gpu.copy_from_host(&fixture.expected);
+    fixture.save(&[1]).await;
+    fixture.engine.cleanup_memory_cache();
+    assert!(
+        fixture.query(&[1]).await.blocks.is_empty(),
+        "repair must wait for every old lease"
+    );
+    assert!(fixture.engine.release_query_lease(&held));
+    fixture.save(&[1]).await;
+    fixture.engine.cleanup_memory_cache();
+    let repaired = fixture.lease(&[1]).await;
+    fixture.gpu.zero();
+    fixture.restore(repaired, &[1]).await.result.unwrap();
+    let restored = fixture.gpu.copy_to_host();
+    assert!(restored[..16384].iter().all(|&byte| byte == 0));
+    assert_eq!(&restored[16384..], &fixture.expected[16384..]);
+    fixture
+        .engine
+        .unregister_instance_and_wait("encoded-gds")
         .await
         .unwrap();
 }

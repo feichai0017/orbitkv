@@ -128,14 +128,17 @@ pub(super) struct PrefetchScheduler {
     reads: Mutex<HashMap<FetchKey, Weak<SharedRead>>>,
     ssd_store: Option<Arc<SsdBackingStore>>,
     remote_fetch: Option<RemoteFetch>,
+    codec_budget: usize,
 }
 
 impl PrefetchScheduler {
     pub(super) fn new(
         ssd_store: Option<Arc<SsdBackingStore>>,
         remote_fetch: Option<RemoteFetch>,
+        codec_budget: usize,
     ) -> Self {
         Self {
+            codec_budget,
             reads: Mutex::new(HashMap::new()),
             ssd_store,
             remote_fetch,
@@ -175,7 +178,7 @@ impl PrefetchScheduler {
         // Speculative preparation continues to fill DRAM before GPU pages exist.
         if !warming
             && let Some(ssd) = &self.ssd_store
-            && let Some(disk) = ssd.pin_prefix(&keys[hit..])
+            && let Some(disk) = ssd.pin_prefix(&keys[hit..], self.codec_budget)
             && !disk.is_empty()
             && (!wait_for_full_prefix || hit + disk.len() == keys.len())
         {

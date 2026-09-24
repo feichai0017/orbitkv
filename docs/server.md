@@ -62,8 +62,10 @@ service to deploy. See [deployment examples](deployment.md#configure-capacity-th
   control port and, after its first save, a separate Publish port.
 - `--storage-codec`: `none` (default), GPU `ans`, lossy `fp8`, `turboquant-4` or
   `turboquant-3`. Applies to DRAM, SSD and peer payloads; see [storage formats](storage-formats.md).
-- `--storage-codec-budget`: GPU workspace per active transfer worker (default 64 MB),
-  separate from encoded pinned residency. ANS needs nvCOMP 5.3; FP8 has an AVX2 CPU fallback.
+- `--storage-codec-budget`: GPU workspace per transfer worker, including retained
+  idle arenas (default 64 MB), separate from encoded pinned residency. ANS needs
+  nvCOMP 5.3; FP8 selects
+  AVX-512F, AVX2 or scalar CPU fallback according to runtime support.
 
 - `--ssd-prefetch-queue-depth`: SSD prefetch queue depth, max pending prefetch batches (default: `2`)
 - `--ssd-write-inflight`: SSD write inflight, max concurrent block writes (default: `2`)
