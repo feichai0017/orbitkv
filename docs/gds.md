@@ -5,7 +5,10 @@ Complete state groups can be written
 from registered engine GPU pages to SSD, and selected SSD state can be restored
 to those pages. Both directions use bounded, registered GPU staging.
 vLLM and SGLang share this Rust implementation and their existing cache API.
-`--ssd-backend auto` tries native cuFile and uses io_uring when unavailable.
+Normal deployment only configures the SSD path and budget; leave
+`--ssd-backend` unset. Its default `auto` tries native cuFile and uses io_uring
+when unavailable. cuFile is a dynamically loaded Manager library, not an
+additional service or an inference-engine option.
 
 Calling cuFile does **not** prove native GPUDirect Storage: its compatibility
 mode performs host staging internally. Native-mode probes in this H20 container
@@ -39,7 +42,8 @@ and online latency-based selection remain future work.
 
 This is capability and failure adaptation. Successful initialization does not
 establish that cuFile beats io_uring for a workload, or replace native-path
-statistics. SSD paths/capacity must still be configured explicitly.
+statistics. An SSD path is required to enable disk caching. Capacity defaults
+to `512gb`; set an explicit budget that fits the storage filesystem.
 
 ## File capacity
 

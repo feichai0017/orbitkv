@@ -24,8 +24,10 @@ reusable prefixes in DRAM and SSD, then restore them when a matching request
 arrives. This helps workloads with repeated documents, shared system prompts,
 and conversations whose prefixes no longer fit in the engine's GPU cache.
 
-Run one Cache Manager per host and enable your engine's adapter. The engine
-owns GPU memory and scheduling; OrbitKV manages external replicas and transfers.
+Run an independent Cache Manager per host and connect the engines on that host
+to its shared cache. Engines own GPU memory and scheduling; OrbitKV manages
+external replicas and transfers. See [deployment patterns](docs/deployment.md)
+for shared-instance budgets and container qualification limits.
 The single-node path is GPU-tested on **vLLM 0.29.0** and **SGLang 0.5.20**.
 Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 
@@ -91,8 +93,10 @@ ORBITKV_SGLANG_ENDPOINT=unix:///tmp/orbitkv-50055.sock \
 To enable SSD caching, add
 `--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb` to the
 Manager command. The SSD cache is recreated when the Manager restarts.
-The default [automatic SSD backend](docs/gds.md) tries native cuFile on supported
-mounts and uses io_uring when unavailable. cuFile writes complete GPU state
+No backend flag or engine-side storage setting is needed. The default
+[automatic SSD backend](docs/gds.md) tries native cuFile on supported
+mounts and uses io_uring when unavailable. cuFile is an optional library loaded
+inside the Manager, not a separate service. It writes complete GPU state
 groups and restores SSD demand hits through bounded GPU staging. Hardware
 selection and native GDS performance qualification are separate. When cuFile
 is selected, the Manager reserves the configured disk capacity before serving

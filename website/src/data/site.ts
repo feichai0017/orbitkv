@@ -52,7 +52,7 @@ export const layers = [
     name: "Cache Manager",
     role: "Share the cache.",
     detail:
-      "Node-local cache operations, pinned DRAM/SSD, health, and peer transfer control.",
+      "Independent per-node service sharing external DRAM/SSD capacity across attached engines, with automatic SSD selection, health and peer transfer control.",
     path: "crates/orbitkv-server/README.md",
   },
   {

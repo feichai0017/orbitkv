@@ -1,6 +1,6 @@
 # Single-node cache: vLLM and SGLang
 
-OrbitKV runs one Cache Manager per host, next to the inference engine. The
+OrbitKV runs an independent Cache Manager per host, shared by attached engines. The
 engine owns HBM allocation and decides when to look up, save, and restore KV.
 The manager owns external pinned DRAM and optional SSD replicas. Both adapters
 register engine-owned GPU buffers through CUDA IPC, send cache commands through
@@ -58,6 +58,13 @@ cache budget. To enable an SSD backing cache, add for example
 manager command. The current SSD cache file is truncated on manager startup;
 it is not durable across a manager restart. Both engines have single-rank recovery gates after forced DRAM eviction.
 
+Leave `--ssd-backend` unset for normal deployments. Its default `auto` tries
+native cuFile and uses io_uring when unavailable. cuFile is an optional library
+inside the Manager, not another service or an engine setting. Only an SSD path
+enables disk caching; capacity defaults to `512gb` if omitted, so choose an
+explicit budget. Native GDS requires the matching NVIDIA/storage installation
+and [separate qualification](gds.md).
+
 Request preparation and queued warming are optional experiments and are disabled
 by default. Leave them off for the first deployment. See
 [request preparation](request-preparation.md) for measured policy tradeoffs and
@@ -66,9 +73,13 @@ by default. Leave them off for the first deployment. See
 The manager, each engine process, and their GPU buffers must be on the same
 host. The Unix socket verifies peer credentials; use the same UID and make the
 socket and iceoryx2 shared-memory resources visible to both processes. If they
-run in separate containers, their Unix socket, IPC/shared-memory namespace,
-and GPU access must be shared. A remote HTTP address is not a replacement for
-this node-local connection.
+run in separate containers, they must share the socket and iceoryx2 discovery
+files, IPC/shared-memory resources and GPU access. The client must also be able
+to observe the Manager process through a pidfd before publishing GPU pages;
+separate PID namespaces are not qualified. See
+[deployment requirements](deployment.md#containers-and-kubernetes), including
+GPU identity and cluster device access. A remote HTTP address is not a
+replacement for this node-local connection.
 
 ## vLLM
 
@@ -162,13 +173,16 @@ curl --fail http://127.0.0.1:9091/metrics | \
   grep -E 'orbitkv_(save_bytes_total|load_bytes_total|cache_block_hits_total)'
 ```
 
-Save completion confirms the GPU-to-DRAM copy. SSD writes proceed
-asynchronously and may be dropped under pressure; a completed save does not
-guarantee an SSD replica. Both adapters record a CUDA event on the producing
+Save completion confirms that submitted reads of the engine's GPU pages have
+finished. The host path writes SSD asynchronously through a bounded queue and
+is best effort: an accepted host save does not guarantee an SSD replica.
+Complete-group cuFile writes hold Publish until GPU-storage completion;
+fragmented saves and saturated GPU write admission use the host path.
+Both adapters record a CUDA event on the producing
 stream before handing pages to their save worker. vLLM records it after the
 forward launch, outside graph capture; saving waits for those events rather
 than synchronizing the whole device. Request and checkpoint pages remain held
-until the native D2H operation completes.
+until the selected native save operation completes.
 
 The SSD backend separates read and write submission queues across its existing
 io_uring workers. Reads rotate across read workers, including when there is only

@@ -55,11 +55,19 @@ for complete engine environments and the
 
 ## Quickstart
 
-Start a Manager in the engine's Python environment:
+Start an independent Manager in a compatible PyTorch/CUDA environment:
 
 ```bash
 orbitkv-cache-manager --addr 127.0.0.1:50055 --pool-size 8gb
 ```
+
+To add SSD capacity, append
+`--ssd-cache-path /data/orbitkv/cache.bin --ssd-cache-capacity 100gb`.
+The Manager automatically tries native cuFile and falls back to io_uring;
+normal deployments do not need `--ssd-backend` or a separate cuFile service.
+Engines on the same host can connect to this Manager and share its external
+capacity; see [deployment requirements](../docs/deployment.md) for runtime
+compatibility, shared resources and current qualification limits.
 
 Then enable the adapter on the same host:
 
