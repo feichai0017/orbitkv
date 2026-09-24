@@ -293,7 +293,7 @@ Allocation, PCIe transfer and GPU work are excluded.
 | Conversion | Scalar | AVX2 | AVX-512 | Automatic |
 | --- | ---: | ---: | ---: | ---: |
 | BF16 → FP8 | 3.20 | 4.53 | 4.92 | 4.93 |
-| FP8 → BF16 | 7.12 | 8.32 | 8.88 | 8.88 |
+| FP8 → BF16 | 7.12 | 8.32 | 8.87 | 8.88 |
 | FP16 → FP8 | 3.01 | 4.25 | 4.49 | 4.50 |
 | FP8 → FP16 | 7.21 | 8.62 | 9.86 | 9.85 |
 
