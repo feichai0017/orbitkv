@@ -66,7 +66,8 @@ def fault_cache(tmp_path, monkeypatch, request):
         instance_id="fault-instance",
         namespace="fault-model",
         device_id=0,
-        num_blocks=4,
+        num_blocks=configuration.get("num_blocks", 4),
+        block_size=configuration.get("block_size", 16),
         num_layers=1,
     )
     ctx.register_kv_caches()
@@ -339,6 +340,157 @@ def test_cufile_write_holds_pages_and_publishes_only_completed_objects(fault_cac
         (directory / "cufile_write_error.pause").unlink(missing_ok=True)
         if not future.done():
             server.stop()
+        pool.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("fault_cache", [{"ssd_backend": "cufile"}], indirect=True)
+def test_submitted_cufile_write_allows_ssd_reads_and_delays_unregister(fault_cache):
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    expected = ctx.get_kv_cache()[:, 0:1].cpu().clone()
+    assert publish(client, ctx, [b"on-disk"])[0]
+    drain_ssd(server)
+    ready = query(client, ctx, [b"on-disk"], "read-during-write")
+    arm(directory, "cufile_write_completion")
+    pool = ThreadPoolExecutor(2)
+    writing = pool.submit(publish, client, ctx, [b"unconfirmed"])
+    try:
+        reached(directory, "cufile_write_completion")
+        before = fetch_orbitkv_metrics(server.http_port)
+        assert before["orbitkv_ssd_cufile_inflight_batches"] == 1
+        assert not writing.done()
+        assert query(client, ctx, [b"unconfirmed"], "unpublished").num_hit_blocks == 0
+        restore = client.start_restore(
+            ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+        )
+        assert client.wait_restore(restore, timeout=5).success
+        assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), expected)
+        after = fetch_orbitkv_metrics(server.http_port)
+        assert after["orbitkv_ssd_cufile_read_bytes_total"] > before.get(
+            "orbitkv_ssd_cufile_read_bytes_total", 0
+        )
+        assert after["orbitkv_ssd_cufile_inflight_batches"] == 1
+        unregistering = pool.submit(client.unregister_context, ctx.instance_id)
+        time.sleep(0.15)
+        assert not unregistering.done(), "unregister must retain submitted write ownership"
+        assert after["orbitkv_ssd_write_inflight"] > 0
+        (directory / "cufile_write_completion.pause").unlink()
+        assert writing.result(timeout=10)[0]
+        assert unregistering.result(timeout=10)[0]
+        until(
+            lambda: all(
+                fetch_orbitkv_metrics(server.http_port).get(name, 0) == 0
+                for name in (
+                    "orbitkv_ssd_cufile_inflight_batches",
+                    "orbitkv_ssd_write_inflight",
+                    "orbitkv_ssd_read_pinned_bytes",
+                    "orbitkv_ssd_gpu_staging_bytes",
+                )
+            )
+        )
+    finally:
+        (directory / "cufile_write_completion.pause").unlink(missing_ok=True)
+        pool.shutdown(wait=True)
+
+
+@pytest.mark.parametrize(
+    "fault_cache", [{"ssd_backend": "cufile", "num_blocks": 10}], indirect=True
+)
+def test_full_gpu_write_queue_uses_host_writeback_without_waiting(fault_cache):
+    import torch
+
+    from orbitkv import CacheManagerClient
+
+    server, client, ctx, directory = fault_cache
+    tensor = ctx.get_kv_cache()
+    expected = tensor[:, 8:9].cpu().clone()
+    arm(directory, "cufile_write_completion")
+
+    # Each Publish descriptor session has one outstanding call. Independent
+    # producers are needed to exercise the shared worker's admission limit.
+    producers = [CacheManagerClient(server.bootstrap_socket, timeout_ms=100) for _ in range(8)]
+
+    def save_page(producer, index):
+        return producer.save(
+            ctx.instance_id, 0, 0, 0, [(ctx._layer_names[0], [index], [bytes([index]) * 32])]
+        )
+
+    pool = ThreadPoolExecutor(8)
+    writes = [pool.submit(save_page, producer, i) for i, producer in enumerate(producers)]
+    try:
+        reached(directory, "cufile_write_completion")
+        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_write_inflight"] == 8)
+        assert all(not write.done() for write in writes)
+        assert save_page(client, 8)[0], "saturated GPU writes must not block host publication"
+        stats = fetch_orbitkv_metrics(server.http_port)
+        assert stats["orbitkv_ssd_gpu_write_fallbacks_total"] == 1
+        assert stats["orbitkv_ssd_cufile_inflight_batches"] == 1
+        assert stats["orbitkv_ssd_gpu_staging_bytes"] == 8 << 20
+        (directory / "cufile_write_completion.pause").unlink()
+        assert all(write.result(timeout=10)[0] for write in writes)
+        drain_ssd(server)
+        ready = query(client, ctx, [bytes([8]) * 32], "fallback-on-disk")
+        assert ready.num_hit_blocks == 1
+        handle = client.start_restore(
+            ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[9]])]
+        )
+        assert client.wait_restore(handle, timeout=10).success
+        assert torch.equal(tensor[:, 9:10].cpu(), expected)
+        assert client.unregister_context(ctx.instance_id)[0]
+        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_gpu_staging_bytes"] == 0)
+    finally:
+        (directory / "cufile_write_completion.pause").unlink(missing_ok=True)
+        pool.shutdown(wait=True)
+        for producer in producers:
+            producer.close()
+
+
+@pytest.mark.parametrize(
+    "fault_cache", [{"ssd_backend": "cufile", "block_size": 1024}], indirect=True
+)
+def test_submitted_cufile_reads_keep_two_slots_and_leases_until_unregister(fault_cache):
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    tensor = ctx.get_kv_cache()
+    expected = tensor.cpu().clone()
+    hashes = [bytes([i]) * 32 for i in range(ctx.num_blocks)]
+    assert publish(client, ctx, hashes)[0]
+    drain_ssd(server)
+    ready = query(client, ctx, hashes, "large-read")
+    tensor.zero_()
+    torch.cuda.synchronize()
+    arm(directory, "cufile_read_completion")
+    handle = client.start_restore(
+        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [list(range(ctx.num_blocks))])]
+    )
+    pool = ThreadPoolExecutor(1)
+    try:
+        reached(directory, "cufile_read_completion")
+        until(
+            lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_cufile_inflight_batches"]
+            == 2
+        )
+        client.cancel_query(ctx.instance_id, "large-read")
+        unregistering = pool.submit(client.unregister_context, ctx.instance_id)
+        time.sleep(0.15)
+        assert not unregistering.done()
+        assert not client.poll_restore(handle).done
+        held = fetch_orbitkv_metrics(server.http_port)
+        assert held["orbitkv_ssd_gpu_staging_bytes"] == 8 << 20
+        assert held["orbitkv_ssd_read_pinned_bytes"] == tensor.numel() * tensor.element_size()
+        (directory / "cufile_read_completion.pause").unlink()
+        assert client.wait_restore(handle, timeout=10).success
+        assert unregistering.result(timeout=10)[0]
+        assert torch.equal(tensor.cpu(), expected)
+        after = fetch_orbitkv_metrics(server.http_port)
+        assert after["orbitkv_ssd_cufile_read_seconds_count"] == 4
+        assert after["orbitkv_ssd_cufile_inflight_batches"] == 0
+        assert after["orbitkv_ssd_read_pinned_bytes"] == 0
+        assert after["orbitkv_ssd_gpu_staging_bytes"] == 0
+    finally:
+        (directory / "cufile_read_completion.pause").unlink(missing_ok=True)
         pool.shutdown(wait=True)
 
 

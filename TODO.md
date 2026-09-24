@@ -24,12 +24,13 @@ numbers below group work areas rather than imposing a strict serial schedule.
   stop new GPU I/O after an operation failure without revoking in-flight ownership.
 - [x] Reserve physical GPU-storage file space before admission; report allocation
   failures and release partial startup reservations. Keep file ownership in `backing/ssd/files.rs`.
-- [ ] Implement bounded Rust asynchronous cuFile submissions with reusable staging
+- [x] Implement bounded Rust asynchronous cuFile submissions with reusable staging
   slots, stream/event completion, per-operation byte/error checks and cancellation drain.
 - [x] Coalesce reads by file across leased sources without broadening required ranges;
   verify call counts, separate files, unrequested gaps and cancellation ownership.
-- [ ] Bound queued GPU-storage writes and staging so demand reads make progress
-  between write batches.
+- [x] Bound queued GPU-storage writes and staging so demand reads make progress
+  between write batches: two 4 MiB slots, one in-flight write, eight admitted write
+  jobs and bounded read bursts; saturation uses host publication/io_uring.
 - [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.
 - [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,

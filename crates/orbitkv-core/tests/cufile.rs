@@ -246,9 +246,13 @@ async fn canceled_disk_lease_releases_ring_capacity_and_large_checkpoint_restore
 async fn short_disk_read_fails_restore_and_releases_its_source() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("cache.bin");
+    // More than two slots: one failed submission must stop remaining chunks
+    // while draining both already submitted reads before releasing the extent.
+    let size = 10 << 20;
     let env = TestEnvBuilder::new("cufile-short", "gds-short")
-        .layer("layer", 1, 4096)
-        .storage(storage(file.clone(), 4096))
+        .layer("layer", 1, size)
+        .pool_size(64 << 20)
+        .storage(storage(file.clone(), size as u64))
         .build();
     let hashes = env.hashes(22);
     env.save_and_wait(&hashes).await;
