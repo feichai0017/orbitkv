@@ -67,6 +67,19 @@ records LMCache, FlexKV and Mooncake mechanisms, owners and implementation statu
 
 ## Measured transfer planning
 
+Next structural step: [unified replicas, routes and owned plans](docs/state-planning.md#unified-replicas-routes-and-execution-ownership).
+
+- [ ] Replace dedicated local DRAM/SSD/peer-DRAM fields with bounded replica
+  records carrying owner/resource endpoint, medium, version and representation;
+  preserve current namespace compatibility and unknown peer metadata.
+- [ ] Retain those records through route enumeration and selected-plan ownership;
+  extend current query leases rather than adding another lease registry. Keep
+  default execution unchanged and only enumerate implemented, authorized routes.
+- [ ] Separate operation observations from complete-route estimates and attach
+  live resource evidence, without double-counting queue time or composite stages.
+  Restructure modules with their actual consumers, following the
+  [target ownership layout](docs/state-planning.md#code-ownership-and-migration).
+
 Follow [P4](docs/state-planning.md#p4-calibrate-costs-and-choose-useful-writes)
 and its [deployment contracts](docs/state-planning.md#policies-by-deployment-mode).
 P4.1 instrumentation and raw-copy/SSD-route shadow are implemented as an opt-in.
