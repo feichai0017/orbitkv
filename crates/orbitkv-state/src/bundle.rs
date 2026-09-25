@@ -38,6 +38,57 @@ pub struct StateBundle {
     pub components: Vec<BundleComponent>,
 }
 
+/// Complete page demand at an engine-selected recovery boundary.
+/// The existing query instance and session bind this demand to registered state;
+/// it does not carry a second namespace or own engine destinations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveryDemand {
+    pub page_tokens: u64,
+    pub span: TokenRange,
+    pub groups: Vec<(u32, TokenRange)>,
+}
+
+impl RecoveryDemand {
+    /// Validate the declared ranges and the selected group's transmitted hashes.
+    /// The Manager additionally checks the exact registered group set.
+    pub fn validate(&self, group: u32, blocks: usize) -> Result<(), RecoveryError> {
+        if self.page_tokens == 0
+            || self.span.end < self.span.start
+            || !self.span.start.is_multiple_of(self.page_tokens)
+            || !self.span.end.is_multiple_of(self.page_tokens)
+        {
+            return Err(RecoveryError::InvalidSpan);
+        }
+        if self.groups.first() != Some(&(0, self.span)) {
+            return Err(RecoveryError::InvalidGroup(0));
+        }
+        let mut previous = None;
+        let mut selected = None;
+        for &(id, range) in &self.groups {
+            if previous.is_some_and(|previous| id <= previous) {
+                return Err(RecoveryError::InvalidGroup(id));
+            }
+            previous = Some(id);
+            if range.start < self.span.start
+                || range.start > range.end
+                || range.end != self.span.end
+                || !range.start.is_multiple_of(self.page_tokens)
+                || (range.is_empty() && !self.span.is_empty())
+            {
+                return Err(RecoveryError::InvalidCoverage(id));
+            }
+            if id == group {
+                selected = Some((range.end - range.start) / self.page_tokens);
+            }
+        }
+        let pages = selected.ok_or(RecoveryError::InvalidGroup(group))?;
+        if u64::try_from(blocks).ok() != Some(pages) {
+            return Err(RecoveryError::InvalidCoverage(group));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RecoveryError {
     #[error("invalid recovery contract: {0}")]
@@ -138,6 +189,19 @@ impl RecoveryContract {
             .iter()
             .map(|(&group, &pages)| (group, self.required_span(span, pages)))
             .collect())
+    }
+
+    /// Carry all compiled group ranges with each selected group read.
+    pub fn demand(
+        &self,
+        namespace: &str,
+        span: TokenRange,
+    ) -> Result<RecoveryDemand, RecoveryError> {
+        Ok(RecoveryDemand {
+            page_tokens: self.page_tokens,
+            span,
+            groups: self.required_ranges(namespace, span)?,
+        })
     }
 
     /// Translate the compiled demand into a slice of the original hash batch.

@@ -1740,7 +1740,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     push_meta = PdConnectorMetadata(
         reqs_to_push={
             "req-1": PushReqMeta(
-                local_block_ids=([1, 2],),
+                local_block_ids=([1],),
                 target_request_id="req-1",
                 handshakes=(handshake,),
             )
@@ -1749,18 +1749,6 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     push_worker.start_load_kv(push_meta, None)
     assert push_worker.transfer.peer_handshakes["req-1"] is handshake
 
-    push_worker.start_load_kv(
-        PdConnectorMetadata(
-            reqs_to_push={
-                "req-1": PushReqMeta(
-                    local_block_ids=([1],),
-                    target_request_id="req-1",
-                    handshakes=(DUMMY_HANDSHAKE,),
-                )
-            }
-        ),
-        None,
-    )
     push_worker.save_kv_layer(
         "layer.0", tensor, SimpleNamespace(slot_mapping=FakeSlotMapping([16]))
     )
@@ -1777,7 +1765,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
                 "req-1": PushReqMeta(
                     local_block_ids=([2],),
                     target_request_id="req-1",
-                    handshakes=(DUMMY_HANDSHAKE,),
+                    handshakes=(handshake,),
                 )
             }
         ),
@@ -2380,7 +2368,7 @@ def test_layer_push_sender_runs_requests_concurrently() -> None:
             self.entered: queue.Queue[str] = queue.Queue()
             self.release = threading.Event()
 
-        def push_layer(self, req_id, layer_idx, blocks) -> None:
+        def push_layer(self, req_id, layer_idx, blocks, *, request_generation) -> None:
             self.entered.put(req_id)
             assert self.release.wait(timeout=2)
 
@@ -2395,6 +2383,7 @@ def test_layer_push_sender_runs_requests_concurrently() -> None:
                 req_id="req-1",
                 layer_idx=0,
                 block_slices=[],
+                request_generation=1,
                 event=ready_event,
             )
         )
@@ -2404,6 +2393,7 @@ def test_layer_push_sender_runs_requests_concurrently() -> None:
                 req_id="req-2",
                 layer_idx=1,
                 block_slices=[],
+                request_generation=1,
                 event=ready_event,
             )
         )
@@ -2430,7 +2420,7 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
         def __init__(self) -> None:
             self.pushed: queue.Queue[str] = queue.Queue()
 
-        def push_layer(self, req_id, layer_idx, blocks) -> None:
+        def push_layer(self, req_id, layer_idx, blocks, *, request_generation) -> None:
             self.pushed.put(req_id)
 
     hold_event = Event()
@@ -2445,6 +2435,7 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
                 req_id="hold",
                 layer_idx=0,
                 block_slices=[],
+                request_generation=1,
                 event=hold_event,
             )
         )
@@ -2454,6 +2445,7 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
                 req_id="cancelled",
                 layer_idx=0,
                 block_slices=[],
+                request_generation=1,
                 event=ready_event,
             )
         )
@@ -2472,6 +2464,7 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
                 req_id="cancelled",
                 layer_idx=1,
                 block_slices=[],
+                request_generation=1,
                 event=ready_event,
             )
         )
@@ -3033,7 +3026,8 @@ def test_p_worker_precomputes_layer_push_plan_before_save() -> None:
     assert [block.regions[0].block_id for block in pushed] == [68]
 
 
-def test_p_worker_advances_remote_blocks_across_chunk_prefill() -> None:
+@pytest.mark.parametrize("overlapping", [False, True])
+def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overlapping) -> None:
     tensor = FakeTensor(
         shape=(2, 16, 16, 4, 32),
         stride=(16 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
@@ -3061,6 +3055,11 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill() -> None:
         ),
     )
 
+    queued = []
+    submit = worker._push_sender.submit
+    if overlapping:
+        monkeypatch.setattr(worker._push_sender, "submit", queued.append)
+
     worker.start_load_kv(
         PdConnectorMetadata(
             reqs_to_push={
@@ -3079,13 +3078,14 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill() -> None:
         SimpleNamespace(slot_mapping=FakeSlotMapping([3 * 16, 4 * 16])),
     )
     worker.wait_for_save()
-    drain_pd_pushes(worker)
+    if not overlapping:
+        drain_pd_pushes(worker)
+        assert len(transfer.pushed_layers["prefill-r0"]) == 1
+    else:
+        assert len(queued) == 1
+        assert "prefill-r0" not in transfer.pushed_layers
 
     assert worker.get_finished(set())[0] is None
-    assert [block.regions[0].block_id for block in transfer.pushed_layers["prefill-r0"][0][1]] == [
-        68
-    ]
-    assert len(transfer.pushed_layers["prefill-r0"]) == 1
 
     worker.start_load_kv(
         PdConnectorMetadata(
@@ -3099,6 +3099,13 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill() -> None:
         ),
         None,
     )
+    if overlapping:
+        assert queued[0].request_generation == transfer._request_generations["prefill-r0"]
+        prefill_worker_mod._run_layer_push(queued.pop())
+        monkeypatch.setattr(worker._push_sender, "submit", submit)
+    assert [block.regions[0].block_id for block in transfer.pushed_layers["prefill-r0"][0][1]] == [
+        68
+    ]
     worker.save_kv_layer(
         "layer.0",
         tensor,

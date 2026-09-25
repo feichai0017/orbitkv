@@ -30,6 +30,7 @@ pub(crate) struct QueryInput {
     pub discover: bool,
     pub materialize: bool,
     pub prepare: bool,
+    pub demand: Option<orbitkv_state::RecoveryDemand>,
     pub control: Arc<ReadControl>,
 }
 
@@ -309,7 +310,16 @@ pub(crate) async fn execute_query(
         });
     }
     let hit = blocks.len();
-    if input.group_id == 0 && !input.materialize && complete_evidence {
+    // A selected boundary needs every page in this group's declared range.
+    // Drop incomplete sources and their reservation before creating any lease.
+    if input.demand.is_some() && (!complete_evidence || hit != input.block_hashes.len()) {
+        return Ok(QueryOutcome::Ready {
+            num_hit_blocks: 0,
+            lease: Vec::new(),
+            hit_positions: Vec::new(),
+        });
+    }
+    if input.group_id == 0 && !input.materialize && !input.prepare && complete_evidence {
         record_prefix_reuse(
             engine,
             hll_tracker,

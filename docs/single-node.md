@@ -152,6 +152,16 @@ expires, when the engine can recompute. Supported hybrid layouts use compiled
 ranges and validate every selected window/checkpoint before recovery. See
 [hybrid recovery](hybrid-recovery.md) for model limits and GPU test coverage.
 
+SGLang registers the `direct` DMA copy backend by default. For a controlled
+copy-backend comparison, set `ORBITKV_TRANSFER_BACKEND=kernel` in the SGLang
+process environment before startup; `direct` explicitly selects the default.
+This fixes the raw host/GPU copy backend for saves and restores; codec and cuFile
+execution keep their own paths. It does not enable measured selection or change
+SSD read routes. vLLM retains its model-based default (kernel for MLA,
+direct otherwise) and its existing `orbitkv.transfer_backend` override. The
+[paired benchmark](../benches/README.md#fixed-dmakernel-comparison) fixes either
+backend in both engines without changing their normal defaults.
+
 Both engines fingerprint local weights, tokenizer and processor artifacts at
 startup, and bind the computation and registered storage layout to the cache
 identity. Hub models require a full commit in `--revision`. Large deployments

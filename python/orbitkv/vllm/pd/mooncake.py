@@ -30,7 +30,7 @@ class MooncakePort(Protocol):
         self, layers: tuple[LayerRemoteLayout, ...]
     ) -> tuple[LayerRemoteLayout, ...]: ...
 
-    def open_request(self, req_id: str, handshake: PdHandshake) -> None: ...
+    def open_request(self, req_id: str, handshake: PdHandshake) -> int: ...
 
     def endpoint(self) -> str: ...
 
@@ -39,6 +39,8 @@ class MooncakePort(Protocol):
         req_id: str,
         layer_idx: int,
         blocks: list[LayerBlockSlices],
+        *,
+        request_generation: int,
     ) -> None: ...
 
     def wait_for_pushes(self, req_id: str) -> None: ...
@@ -60,88 +62,6 @@ class MooncakePort(Protocol):
     def pop_finished_recving(self) -> set[str]: ...
 
     def close_request(self, req_id: str) -> None: ...
-
-
-class MockMooncakePort:
-    """A test double that records transfer calls without loading Mooncake."""
-
-    def __init__(self) -> None:
-        self.local_layers: tuple[LayerRemoteLayout, ...] = ()
-        self.registered: set[str] = set()
-        self.peer_handshakes: dict[str, PdHandshake | None] = {}
-        self.pushed_layers: dict[str, list[tuple[int, list[LayerBlockSlices]]]] = {}
-        self._finished_sending: set[str] = set()
-        self._finished_recving: set[str] = set()
-
-    def register_local_layers(
-        self, layers: tuple[LayerRemoteLayout, ...]
-    ) -> tuple[LayerRemoteLayout, ...]:
-        self.local_layers = layers
-        return layers
-
-    def open_request(self, req_id: str, handshake: PdHandshake) -> None:
-        self.registered.add(req_id)
-        self.peer_handshakes[req_id] = handshake
-
-    def endpoint(self) -> str:
-        return "127.0.0.1:15290"
-
-    def push_layer(
-        self,
-        req_id: str,
-        layer_idx: int,
-        blocks: list[LayerBlockSlices],
-    ) -> None:
-        self.pushed_layers.setdefault(req_id, [])
-        self.pushed_layers[req_id].append((layer_idx, blocks))
-
-    def wait_for_pushes(self, req_id: str) -> None:
-        return None
-
-    def push_done(self, req_id: str) -> None:
-        self._finished_sending.add(req_id)
-
-    def write_stats(self, req_id: str) -> dict[str, Any]:
-        bytes_total = sum(
-            block_slices_bytes(blocks) for _, blocks in self.pushed_layers.get(req_id, [])
-        )
-        return {
-            "submitted": len(self.pushed_layers.get(req_id, [])),
-            "completed": len(self.pushed_layers.get(req_id, [])),
-            "errors": 0,
-            "bytes": bytes_total,
-            "has_submit": bytes_total > 0,
-            "has_complete": bytes_total > 0,
-        }
-
-    def fail_request(self, req_id: str) -> None:
-        return None
-
-    def abort_request(self, req_id: str) -> None:
-        self._finished_recving.add(req_id)
-
-    def aggregated_link_speed(self) -> int:
-        return 400_000_000_000
-
-    def wait_done(self, req_id: str) -> None:
-        return None
-
-    def pop_finished_sending(self) -> set[str]:
-        finished = self._finished_sending
-        self._finished_sending = set()
-        return finished
-
-    def pop_finished_recving(self) -> set[str]:
-        finished = self._finished_recving
-        self._finished_recving = set()
-        return finished
-
-    def close_request(self, req_id: str) -> None:
-        self.registered.discard(req_id)
-        self.peer_handshakes.pop(req_id, None)
-        self.pushed_layers.pop(req_id, None)
-        self._finished_sending.discard(req_id)
-        self._finished_recving.discard(req_id)
 
 
 def _block_slice_to_native(block: BlockRegionSlice) -> dict[str, int]:
@@ -261,7 +181,7 @@ class RealMooncakePort:
         )
         return layers
 
-    def open_request(self, req_id: str, handshake: PdHandshake) -> None:
+    def open_request(self, req_id: str, handshake: PdHandshake) -> int:
         start = time.perf_counter()
         if not handshake.transfer_endpoint:
             raise ValueError("Mooncake handshake is missing transfer_endpoint")
@@ -269,6 +189,7 @@ class RealMooncakePort:
             self._next_request_generation += 1
             self.peer_handshakes[req_id] = handshake
             self._request_generations[req_id] = self._next_request_generation
+            generation = self._next_request_generation
         elapsed_ms = (time.perf_counter() - start) * 1000
         blocks_per_layer = len(handshake.layers[0].block_ids) if handshake.layers else 0
         logger.info(
@@ -283,15 +204,20 @@ class RealMooncakePort:
             handshake.block_size,
             elapsed_ms,
         )
+        return generation
 
     def push_layer(
         self,
         req_id: str,
         layer_idx: int,
         blocks: list[LayerBlockSlices],
+        *,
+        request_generation: int,
     ) -> None:
         start = time.perf_counter()
         with self._lock:
+            if self._request_generations.get(req_id) != request_generation:
+                raise RuntimeError(f"stale Mooncake push generation for request {req_id}")
             local = self.local_layers.get(layer_idx)
             handshake = self.peer_handshakes.get(req_id)
         if local is None:
@@ -331,9 +257,16 @@ class RealMooncakePort:
                         )
                     )
         bytes_total = sum(length for _, _, length in slices)
+        # This is write admission. The sender holds the task through native
+        # completion, so an admitted write keeps its captured authorization.
+        with self._lock:
+            if self._request_generations.get(req_id) != request_generation:
+                raise RuntimeError(f"stale Mooncake push generation for request {req_id}")
         self.engine.write(handshake.transfer_endpoint, slices, timeout_s=30.0)
         elapsed_ms = (time.perf_counter() - start) * 1000
         with self._lock:
+            if self._request_generations.get(req_id) != request_generation:
+                return
             stats = self._stats.setdefault(
                 req_id,
                 {"submitted": 0, "completed": 0, "errors": 0, "bytes": 0},

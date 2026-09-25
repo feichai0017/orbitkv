@@ -1,11 +1,12 @@
 use super::{SsdBackingStore, index::SsdIndexEntry, uring::UringIoEngine};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation};
 use crate::metrics::core_metrics;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, warn};
 use mea::oneshot;
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
@@ -23,12 +24,78 @@ type SinglePrefetchResult = (
 pub(super) struct PrefetchRequest {
     pub key: StateKey,
     pub entry: SsdIndexEntry,
+    pub lease: Option<Arc<super::SsdReadLease>>,
 }
 
 /// Batch of prefetch requests (sent as a unit to limit queue depth)
 pub(super) struct PrefetchBatch {
     pub requests: Vec<PrefetchRequest>,
     pub done_tx: oneshot::Sender<crate::backing::PrefetchResult>,
+    pub observation: Observation,
+}
+
+impl PrefetchBatch {
+    pub(super) fn new(
+        requests: Vec<PrefetchRequest>,
+        done_tx: oneshot::Sender<crate::backing::PrefetchResult>,
+        resource: u64,
+    ) -> Self {
+        if !crate::cost::enabled() {
+            return Self {
+                requests,
+                done_tx,
+                observation: Observation::disabled(),
+            };
+        }
+        let mut logical_bytes = Some(0u64);
+        let mut stored_bytes = 0u64;
+        let mut fragments = 0;
+        let mut representation = None;
+        for request in &requests {
+            for slot in &request.entry.slots {
+                fragments += slot.num_segments();
+                stored_bytes = stored_bytes.saturating_add(slot.total_size());
+                if let Some(metadata) = &slot.encoding {
+                    if metadata.len() != slot.num_segments() {
+                        logical_bytes = None;
+                    }
+                    for meta in metadata {
+                        logical_bytes = logical_bytes
+                            .and_then(|bytes| bytes.checked_add(meta.logical_bytes as u64));
+                        let next = Representation::from(meta.format);
+                        representation = Some(match representation {
+                            None => next,
+                            Some(previous) if previous == next => previous,
+                            Some(_) => Representation::Mixed,
+                        });
+                    }
+                } else {
+                    // Raw segment lengths include allocation alignment. Only
+                    // the GPU layout owner knows their logical data size.
+                    logical_bytes = None;
+                    representation = Some(match representation {
+                        None | Some(Representation::Raw) => Representation::Raw,
+                        Some(_) => Representation::Mixed,
+                    });
+                }
+            }
+        }
+        let observation = Observation::new(
+            CostKey::new(
+                CostPath::SsdPrefetch,
+                resource,
+                representation.unwrap_or(Representation::Unknown),
+                logical_bytes.unwrap_or(stored_bytes),
+                fragments,
+            ),
+            logical_bytes,
+        );
+        Self {
+            requests,
+            done_tx,
+            observation,
+        }
+    }
 }
 
 /// Shared context for a batch of prefetch operations.
@@ -37,26 +104,54 @@ pub(super) struct BatchContext {
     results: Mutex<crate::backing::PrefetchResult>,
     remaining: AtomicUsize,
     done_tx: Mutex<Option<oneshot::Sender<crate::backing::PrefetchResult>>>,
+    observation: Mutex<Option<Observation>>,
+    failed: AtomicBool,
+    submitted: AtomicBool,
+    /// Pinned generations stay owned until every queued/submitted read drains.
+    _leases: Vec<Arc<super::SsdReadLease>>,
 }
 
 impl BatchContext {
-    fn new(count: usize, done_tx: oneshot::Sender<crate::backing::PrefetchResult>) -> Self {
+    fn new(
+        count: usize,
+        done_tx: oneshot::Sender<crate::backing::PrefetchResult>,
+        observation: Observation,
+        leases: Vec<Arc<super::SsdReadLease>>,
+    ) -> Self {
         Self {
             results: Mutex::new(Vec::with_capacity(count)),
             remaining: AtomicUsize::new(count),
             done_tx: Mutex::new(Some(done_tx)),
+            observation: Mutex::new(Some(observation)),
+            failed: AtomicBool::new(false),
+            submitted: AtomicBool::new(false),
+            _leases: leases,
         }
     }
 
     fn complete_one(&self, key: StateKey, block: Option<Arc<SealedBlock>>) {
         if let Some(block) = block {
             self.results.lock().push((key, block));
+        } else {
+            self.failed.store(true, Ordering::Release);
         }
         if self.remaining.fetch_sub(1, Ordering::AcqRel) == 1
             && let Some(tx) = self.done_tx.lock().take()
         {
             let results = std::mem::take(&mut *self.results.lock());
-            let _ = tx.send(results);
+            let delivered = tx.send(results).is_ok();
+            if let Some(observation) = self.observation.lock().take() {
+                let outcome = if self.failed.load(Ordering::Acquire) {
+                    Outcome::Failed
+                } else if !delivered {
+                    Outcome::Cancelled
+                } else {
+                    Outcome::Completed
+                };
+                // io_uring owns physical byte accounting. This composite also
+                // includes allocation, queueing, validation and reconstruction.
+                observation.finish(outcome, None);
+            }
         }
     }
 }
@@ -125,7 +220,12 @@ async fn dispatch_prefetch_batch(
     task_tx: &tokio::sync::mpsc::Sender<PrefetchTask>,
     batch: PrefetchBatch,
 ) -> bool {
-    let PrefetchBatch { requests, done_tx } = batch;
+    let PrefetchBatch {
+        mut requests,
+        done_tx,
+        mut observation,
+    } = batch;
+    observation.admitted();
     let mut block_slots = Vec::with_capacity(requests.len());
     for req in &requests {
         let mut slots = Vec::with_capacity(req.entry.slots.len());
@@ -138,6 +238,7 @@ async fn dispatch_prefetch_batch(
                     warn!(
                         "SSD prefetch dispatcher: alloc failed for {size} bytes numa={numa_node:?}, failing entire batch"
                     );
+                    observation.finish(Outcome::Failed, None);
                     let _ = done_tx.send(Vec::new());
                     return true;
                 };
@@ -154,7 +255,16 @@ async fn dispatch_prefetch_batch(
         block_slots.push(slots);
     }
 
-    let ctx = Arc::new(BatchContext::new(requests.len(), done_tx));
+    let leases = requests
+        .iter_mut()
+        .filter_map(|req| req.lease.take())
+        .collect();
+    let ctx = Arc::new(BatchContext::new(
+        requests.len(),
+        done_tx,
+        observation,
+        leases,
+    ));
     let mut iter = requests.into_iter().zip(block_slots);
     while let Some((req, slots)) = iter.next() {
         let task = PrefetchTask {
@@ -286,6 +396,11 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
                     .map(|(ptr, size)| (ptr.as_ptr(), size))
             })
             .collect();
+        if !ctx.submitted.swap(true, Ordering::Relaxed)
+            && let Some(observation) = ctx.observation.lock().as_mut()
+        {
+            observation.submitted();
+        }
         io.readv_at_async(task.entry.shard_id, iovecs, task.entry.file_offset)
     };
 
@@ -326,3 +441,7 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleP
     });
     (key, task.entry, block, duration_secs(), block_size, ctx)
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/backing/ssd/reader.rs"]
+mod tests;

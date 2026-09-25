@@ -2,10 +2,14 @@
 
 This is the repository-wide execution checklist. Completed items must have code
 and a passing gate; design text alone does not close an item.
+The [implementation plan and agent handoff](docs/implementation-plan.md) maps
+upstream references, deployment profiles and the P4.1 implementation contract to these gates.
 
 Follow the [current delivery priorities](docs/roadmap.md#current-delivery-priorities):
 close the single-node hybrid-layout gates, maintain deterministic demand and
 model-serving fault coverage, and start real two-host DP qualification.
+Build measured Rust transfer planning alongside these gates, using shared
+local/peer observations and distinct DP/P/D/TP/PP completion contracts.
 Warming gains are not a DP prerequisite. P/D with cache reuse follows; replicated
 catalogs are required before production distributed deployment. Milestone
 numbers below group work areas rather than imposing a strict serial schedule.
@@ -61,6 +65,59 @@ See [GPU storage recovery](docs/gds.md) for deployment and reproduction, and the
 The [upstream design mapping](docs/architecture.md#upstream-designs-and-orbitkv-owners)
 records LMCache, FlexKV and Mooncake mechanisms, owners and implementation status.
 
+## Measured transfer planning
+
+Follow [P4](docs/state-planning.md#p4-calibrate-costs-and-choose-useful-writes)
+and its [deployment contracts](docs/state-planning.md#policies-by-deployment-mode).
+P4.1 instrumentation and raw-copy/SSD-route shadow are implemented as an opt-in.
+The first SSD source/path separation is implemented; dynamic selection and its
+qualification remain open. See the
+[observation contract](docs/state-planning.md#p41-observation-contract) and
+[implementation contract](docs/implementation-plan.md#p41-implementation-contract).
+
+- [x] Add bounded Rust queue/service/completion estimates keyed by path,
+  representation, size/fragmentation and resource/peer incarnation. Share event
+  inputs with metrics; preserve uncertainty and censored timeout observations.
+- [x] Run shadow DMA/kernel candidates on actual raw-copy metadata; report
+  prediction error without claiming unexecuted alternatives as measured savings.
+- [x] Distinguish descriptor count from DMA-coalesced range count using the
+  executor's merge logic, and support fixed direct/kernel comparisons in both
+  engine harnesses while preserving registration defaults.
+- [x] Run the [three-pair DRAM/raw comparison](docs/implementation-plan.md#dmakernel-comparison-final-evidence)
+  on both engines. Fixed kernel exceeds throughput and TTFT p50 regression
+  budgets in both cells; keep the default direct backend for these layouts.
+- [x] Separate immutable SSD extent leases from route eligibility. Execute the
+  same generation through io_uring host materialization or cuFile GPU staging;
+  use a separate host-restore lane and preserve terminal ownership.
+- [x] Add explicit demand-route controls and shadow full-restore estimates for
+  both eligible SSD routes. Keep default selection and DRAM preparation unchanged.
+- [x] Separate metadata residency candidates from acquisition: preserve local
+  DRAM/SSD and cached peer DRAM evidence, and revalidate the exact SSD generation
+  before pinning. Discovery does not read or reserve payloads.
+- [x] Complete [current route correctness and lifecycle validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence)
+  across both engines, same-generation raw/ANS recovery, cancellation and remote
+  misses. The previous 36-run observation matrix does not qualify these executor changes' overhead.
+- [ ] Close the SGLang ANS SSD TTFT p50 overhead gate before default enablement:
+  the matched three-pair result is +5.915%, above the predeclared 3% budget.
+- [ ] Extend shadow decisions to legal boundaries and additional qualified paths;
+  retain unknown alternatives when existing metadata or measurements are absent.
+- [ ] Qualify per-batch DMA/kernel selection, then io_uring/native cuFile choice,
+  with both SSD routes independently eligible over one index/extent lifetime;
+  separate capability and failure handling from measured choice. Include shared
+  device budgets, switching margins, fixed-format data and inference contention.
+- [ ] Compare legal `required_ranges` boundaries and engine-owned recomputation;
+  calibrate preparation deadlines and retention/write admission. Bound DRAM,
+  GPU workspace, SSD/TE work and per-instance shares through terminal completion.
+- [ ] Extend qualified peer source selection with discovery, authorization,
+  TE and decode/H2D costs. Keep same-host TCP and physical two-host/RDMA evidence
+  separate; DP qualification does not wait for local policy gains.
+- [ ] Implement the [Manager-owned cluster decision loop](docs/state-planning.md#cache-manager-decisions-below-the-engine):
+  bounded residence/resource evidence with freshness, joint local/peer route
+  ranking, source credit admission and bounded replanning. Qualify without a
+  request router and with concurrent destinations contending for one peer.
+- [ ] Integrate P/D completion/admission evidence separately from cache misses;
+  qualify rank-common TP and stage-dependent PP plans as later topology gates.
+
 ## M0 — framework-neutral foundation
 
 - [x] Establish the OrbitKV data plane and workspace.
@@ -68,8 +125,8 @@ records LMCache, FlexKV and Mooncake mechanisms, owners and implementation statu
 - [x] Keep NUMA topology/affinity in Core and HLL reuse statistics in Server;
   limit `orbitkv-common` to shared process logging and peer-connection defaults.
 - [x] Remove the unused repository-root `src/main.rs`.
-- [x] Add `orbitkv-state` with state identity, format, page generation, and
-  recovery-bundle types.
+- [x] Add `orbitkv-state` with state identity, format and recovery-bundle types.
+  Remove unused page-generation types until an actual execution contract owns them.
 - [x] Name the bundle's current component-presence check honestly; it is not
   yet a restorable-state proof.
 - [x] Move the canonical vLLM package to `orbitkv.vllm`.
@@ -147,6 +204,11 @@ records LMCache, FlexKV and Mooncake mechanisms, owners and implementation statu
   additional discovery rounds are not claimed as a TTFT improvement.
 - [x] Move hybrid-boundary validation out of `orbitkv.vllm`; retain engine-owned
   allocation and checkpoint handoff, and apply the token limit before reading.
+- [x] Send complete selected-boundary `RecoveryDemand` to the Manager with each
+  group read. Validate registered groups before admission, include all ranges
+  in query revisions and reject incomplete selected-group leases.
+- [ ] Add joint multi-group physical planning and admission; retain engine-owned
+  rank agreement, HBM allocation and legal recovery boundaries.
 - [x] Handle asynchronous vLLM checkpoint queries from SSD, retain completed
   groups during preparation, and retire pending groups on cancel/drift/expiry.
   Verify native validation and exact DRAM/SSD GPU restoration in
@@ -295,8 +357,6 @@ records LMCache, FlexKV and Mooncake mechanisms, owners and implementation statu
 - [ ] Calibrate expected use time and priority from engine HBM hits, prepared
   consumption and restorable-prefix/bundle coverage. Qualify bounded writer
   staging, source-expiration accounting and multi-rank behavior.
-- [ ] Calibrate restore-versus-recompute and write admission using
-  `docs/state-planning.md` (P4); speculative workflow hints remain optional.
 - [ ] Profile the measured restore latency gap to both built-in CPU caches;
   measure transfer batching, completion observation, and inference overlap.
 - [ ] Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,
@@ -338,6 +398,9 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   uncertain native batches.
 - [x] D1 discovery RPC reduction: batch shards by catalog host, share connections,
   bound host concurrency and include coalescing in the common lookup deadline.
+- [x] Coalesce matching directory batches without serializing unrelated queries.
+  Bound pending metadata and per-owner/global RPC concurrency; cancellation and
+  membership changes cannot leave stale evidence or detached lookup owners.
 - [x] D1 authorization reconciliation: source-issued windows and generation-fenced
   slots identify holds before authorization; reconcile lost grant replies and
   cancellation, reject delayed authorizations, and bound idle replay metadata.
@@ -351,6 +414,10 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   bounded subscriptions; qualify partitions and coordinator/catalog failure.
 - [ ] D3: support source-local SSD staging and measured source selection without
   recursive peer fetches or unbounded staging.
+- [ ] D3 prerequisite: distinguish owner/resource and HBM/DRAM/SSD residence in
+  candidate/inventory records; preserve surviving SSD evidence after DRAM
+  eviction. Keep temporary staging private unless explicitly admitted; qualify
+  engine leases separately before advertising general peer-HBM sources.
 - [x] Measure cold discovery RPCs and source authorization, READ and completion
   stages independently in the shared-cache serving gate.
 - [ ] Measure background synchronization and etcd traffic, index bytes and recovery
@@ -364,8 +431,12 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 - [ ] Integrate pinned `dynamo-kv-router` worker selection and production service
   lifecycle; verify hash/event mapping and request-load reservations (R1 in
   `docs/state-planning.md`).
-- [ ] Add measured HBM/DRAM/SSD/RDMA restore cost.
-- [ ] Add recompute and queue-delay estimates.
+- [ ] Evaluate NIXL's Preview Mooncake backend before expanding transfer
+  abstraction: qualify registration/completion, pinned TE compatibility and
+  overhead; treat missing backend cost estimates as unknown. Keep direct TE
+  until evidence justifies migration; do not add deprecated KVBM.
+- [ ] Feed qualified local/peer restore, recompute and queue estimates from
+  [measured transfer planning](#measured-transfer-planning) into router summaries.
 - [ ] Add eviction externality and replica-risk terms.
 - [ ] Select a worker through the router, then revalidate and lease its
   transfer/restore plan at the Cache Manager.

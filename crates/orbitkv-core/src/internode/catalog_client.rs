@@ -38,6 +38,8 @@ const MIN_RETRY: Duration = Duration::from_millis(100);
 const MAX_RETRY: Duration = Duration::from_secs(5);
 
 type CatalogConnection = (CacheOwner, GrpcClient<Channel>);
+#[cfg(feature = "mooncake")]
+type QueryConnection = (GrpcClient<Channel>, Arc<tokio::sync::Semaphore>);
 
 #[derive(Default)]
 struct Control {
@@ -60,13 +62,15 @@ pub(crate) struct CatalogClient {
     #[cfg(feature = "mooncake")]
     candidates: parking_lot::Mutex<CandidateIndex>,
     #[cfg(feature = "mooncake")]
-    discovery_gate: tokio::sync::Mutex<()>,
+    pending_lookups: Arc<parking_lot::Mutex<lookup::PendingLookups>>,
+    #[cfg(feature = "mooncake")]
+    lookup_slots: Arc<tokio::sync::Semaphore>,
     read_cache: Weak<ReadCache>,
     membership: Arc<MembershipView>,
     streams: Vec<(Arc<Control>, watch::Receiver<Acknowledgement>)>,
     shutdown: watch::Sender<bool>,
     #[cfg(feature = "mooncake")]
-    query_clients: parking_lot::Mutex<std::collections::HashMap<CacheOwner, GrpcClient<Channel>>>,
+    query_clients: parking_lot::Mutex<std::collections::HashMap<CacheOwner, QueryConnection>>,
 }
 
 impl CatalogClient {
@@ -97,7 +101,9 @@ impl CatalogClient {
             #[cfg(feature = "mooncake")]
             candidates: parking_lot::Mutex::new(CandidateIndex::new(CANDIDATE_CACHE_BYTES)),
             #[cfg(feature = "mooncake")]
-            discovery_gate: tokio::sync::Mutex::new(()),
+            pending_lookups: Arc::new(parking_lot::Mutex::new(lookup::PendingLookups::default())),
+            #[cfg(feature = "mooncake")]
+            lookup_slots: Arc::new(tokio::sync::Semaphore::new(lookup::MAX_LOOKUP_HOSTS)),
             read_cache,
             membership,
             streams,

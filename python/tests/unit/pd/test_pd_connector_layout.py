@@ -651,7 +651,7 @@ def test_real_mooncake_port_maps_pd_push_to_mooncake_ranges() -> None:
         block_size=16,
         layers=registered,
     )
-    transfer.open_request("req-1", handshake)
+    generation = transfer.open_request("req-1", handshake)
 
     assert transfer.peer_handshakes["req-1"] == handshake
 
@@ -663,6 +663,7 @@ def test_real_mooncake_port_maps_pd_push_to_mooncake_ranges() -> None:
                 "layer.0", (2, 8, 16, 4, 32), (16384, 2048, 32, 512, 1), 2, 0x1000
             ).block_slices(1)
         ],
+        request_generation=generation,
     )
     transfer.push_done("req-1")
     transfer.wait_done("req-1")

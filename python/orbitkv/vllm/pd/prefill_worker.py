@@ -80,6 +80,7 @@ class PrefillHandler:
         self._push_plans: dict[str, PushLayoutPlan] = {}
         self._physical_to_logical: dict[str, str] = {}
         self._logical_to_physical: dict[str, tuple[str, ...]] = {}
+        self._push_authorizations: dict[str, tuple[PdHandshake, int]] = {}
         self._push_traces: dict[str, _PushTrace] = {}
         self._skipped_pushes = 0
         push_worker_count = int(
@@ -117,6 +118,10 @@ class PrefillHandler:
         for req_id, req in reqs_to_push.items():
             self._tracker.add_request(req_id)
             plan = self._build_push_layout_plan(req)
+            physical_req_ids = self._physical_req_ids(req_id, plan)
+            previous_targets = self._logical_to_physical.get(req_id)
+            if previous_targets is not None and previous_targets != physical_req_ids:
+                raise RuntimeError(f"P/D push targets changed before release for request {req_id}")
             if plan.should_skip:
                 self._skipped_pushes += 1
                 self._w.metrics.record_prefill_skipped_push()
@@ -129,6 +134,16 @@ class PrefillHandler:
                     self._skipped_pushes,
                 )
                 continue
+            local_layout = next(iter(self._w.layouts.values()), None)
+            handshakes = tuple(
+                _target_handshake_for_local_layout(target, local_layout) for target in plan.targets
+            )
+            for physical_req_id, handshake in zip(physical_req_ids, handshakes, strict=True):
+                authorization = self._push_authorizations.get(physical_req_id)
+                if authorization is not None and authorization[0] != handshake:
+                    raise RuntimeError(
+                        f"P/D push authorization changed before release for request {physical_req_id}"
+                    )
             self._push_reqs[req_id] = req
             self._w.metrics.set_prefill_active_pushes(len(self._push_reqs))
             self._push_plans[req_id] = plan
@@ -136,18 +151,12 @@ class PrefillHandler:
             self._pending_push_chunks.add(req_id)
             self._clear_push_chunk_maps(req_id)
             self._clear_push_layer_plans(req_id)
-            physical_req_ids = self._physical_req_ids(req_id, plan)
             self._logical_to_physical[req_id] = physical_req_ids
-            for physical_req_id, target in zip(physical_req_ids, plan.targets, strict=True):
+            for physical_req_id, handshake in zip(physical_req_ids, handshakes, strict=True):
                 self._physical_to_logical[physical_req_id] = req_id
-                local_layout = next(iter(self._w.layouts.values()), None)
-                self._w.transfer.open_request(
-                    physical_req_id,
-                    _target_handshake_for_local_layout(
-                        target,
-                        local_layout,
-                    ),
-                )
+                if physical_req_id not in self._push_authorizations:
+                    generation = self._w.transfer.open_request(physical_req_id, handshake)
+                    self._push_authorizations[physical_req_id] = (handshake, generation)
             self._prepare_push_layers(req_id, req, plan)
             logger.info(
                 "[PdConnector] P queued push req=%s target_req=%s rank=%d physical_reqs=%d blocks=%d",
@@ -186,6 +195,7 @@ class PrefillHandler:
             elif reason in (RELEASE_PRODUCER_ABORT, RELEASE_PRODUCER_PREEMPTED):
                 self._fail_physical_requests(physical_req_ids)
         for physical_req_id in physical_req_ids:
+            self._push_authorizations.pop(physical_req_id, None)
             self._physical_to_logical.pop(physical_req_id, None)
             self._completed_physical_pushes.discard(physical_req_id)
         self._clear_remote_block_offsets(req_id, physical_req_ids)
@@ -269,6 +279,7 @@ class PrefillHandler:
             self._push_plans.pop(req_id, None)
             physical_req_ids = self._logical_to_physical.pop(req_id, ())
             for physical_req_id in dict.fromkeys(physical_req_ids):
+                self._push_authorizations.pop(physical_req_id, None)
                 self._physical_to_logical.pop(physical_req_id, None)
                 self._completed_physical_pushes.discard(physical_req_id)
                 self._w.transfer.close_request(physical_req_id)
@@ -292,6 +303,7 @@ class PrefillHandler:
         self._push_plans.clear()
         self._physical_to_logical.clear()
         self._logical_to_physical.clear()
+        self._push_authorizations.clear()
         self._push_traces.clear()
         self._push_finalizer.close()
         self._push_sender.close()
@@ -336,6 +348,7 @@ class PrefillHandler:
                         req_id=target_push.physical_req_id,
                         layer_idx=layer_idx,
                         block_slices=target_push.block_slices,
+                        request_generation=target_push.request_generation,
                         event=event,
                     )
                 )
@@ -455,6 +468,7 @@ class PrefillHandler:
                     _PreparedTargetPush(
                         physical_req_id=physical_req_id,
                         block_slices=block_slices,
+                        request_generation=self._push_authorizations[physical_req_id][1],
                     )
                 )
             pushed_req_blocks_frozen = frozenset(pushed_req_blocks)

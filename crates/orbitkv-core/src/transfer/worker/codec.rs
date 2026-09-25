@@ -18,6 +18,7 @@ use crate::{
         gpu::{EncodeInput, GpuCodec, HostDecodeInput},
         segment_format,
     },
+    cost::Observation,
     memory::numa::NumaNode,
     metrics::core_metrics,
     storage::StorageEngine,
@@ -79,6 +80,7 @@ pub(super) fn save(
     storage: Option<&StorageEngine>,
     numa: NumaNode,
     groups: &[SaveGroup],
+    observation: &mut Observation,
 ) -> Result<(), EngineError> {
     if !layers.iter().any(|l| {
         l.blocks
@@ -103,6 +105,7 @@ pub(super) fn save(
             numa,
             &group.blocks,
             Some(&group.key),
+            observation,
         )?;
     }
     let remaining: Vec<_> = layers
@@ -119,11 +122,24 @@ pub(super) fn save(
         })
         .collect();
     if !remaining.is_empty() {
-        save_blocks(runtime, codec, layers, storage, numa, &remaining, None)?;
+        save_blocks(
+            runtime,
+            codec,
+            layers,
+            storage,
+            numa,
+            &remaining,
+            None,
+            observation,
+        )?;
     }
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep existing resource owners and their observation explicit"
+)]
 fn save_blocks(
     runtime: &WorkerRuntime,
     codec: &mut GpuCodec,
@@ -132,6 +148,7 @@ fn save_blocks(
     numa: NumaNode,
     blocks: &[(usize, usize)],
     key: Option<&StateKey>,
+    observation: &mut Observation,
 ) -> Result<(), EngineError> {
     let stream = &runtime.stream;
     let alignment = if storage.is_ssd_enabled() { 512 } else { 1 };
@@ -160,6 +177,7 @@ fn save_blocks(
     let mut offset = 0;
     let mut transferred = 0u64;
     while offset < inputs.len() {
+        observation.submitted();
         // SAFETY: the save task owns every registered source page until completion.
         let batch = unsafe { codec.encode_batch(stream, &inputs[offset..], storage.codec_budget) }
             .map_err(EngineError::Storage)?;
@@ -432,6 +450,7 @@ pub(super) fn restore(
     runtime: &WorkerRuntime,
     layers: &[LayerTransferData],
     budget: usize,
+    observation: &mut Observation,
 ) -> Result<usize, EngineError> {
     let mut inputs = Vec::new();
     for layer in layers {
@@ -523,6 +542,7 @@ pub(super) fn restore(
             if !crate::codec::cpu::decode(input.meta.format, input.source, &mut decoded) {
                 return Err(EngineError::Storage("CPU FP8 decode mismatch".into()));
             }
+            observation.submitted();
             let copied =
                 unsafe { result::memcpy_htod_async(input.target, &decoded, stream.cu_stream()) }
                     .map_err(|e| e.to_string());
@@ -535,6 +555,7 @@ pub(super) fn restore(
                 .iter()
                 .position(|&fallback| fallback)
                 .map_or(inputs.len(), |n| offset + n);
+            observation.submitted();
             // SAFETY: source host allocations and destination pages are owned by this task.
             let count = unsafe { codec.decode_host_batch(stream, &inputs[offset..end], budget) }
                 .map_err(EngineError::Storage)?;

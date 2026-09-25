@@ -149,6 +149,9 @@ LMCache, FlexKV and Mooncake provide implementation references for concrete
 cache mechanisms. OrbitKV applies them through its existing state contract and
 Rust resource owners. vLLM and SGLang adapters continue to supply engine layouts,
 scheduler signals and page ownership; they do not gain separate cache schedulers.
+The [complete implementation plan](implementation-plan.md#upstream-mechanisms-and-how-to-apply-them)
+also maps LMCache MP deployment, prefetch/store policies, lazy offload,
+allocation/event sharing and instance isolation to concrete OrbitKV work.
 
 | Reference | Mechanism to use | OrbitKV owner and status |
 | --- | --- | --- |
@@ -203,9 +206,8 @@ are:
 - `StateFormat`: model/implementation digest, dtype, layout, and parallel shape;
 - `StateComponent`: attention KV, MLA, recurrent, convolution, SWA, draft, and
   indexer state;
-- `LocalPageRef`: generation-qualified CUDA IPC or shared-host page reference;
-- `StateBundle` and `RecoveryContract`: the components needed to claim that a
-  logical boundary is restorable.
+- `StateBundle`, `RecoveryContract` and `RecoveryDemand`: recovery evidence,
+  compiled rules and the complete selected boundary's required group ranges.
 
 `RecoveryContract::compile` normalizes declared prefix/window/checkpoint rules
 once at registration. `required_ranges(namespace, start, end)` exposes
@@ -334,10 +336,10 @@ evidence; it does not by itself prove semantic death.
 
 The descriptor arena validates its slot generation and Cache Manager session epoch,
 and vLLM pins save-source blocks until Publish returns. These checks do not
-yet validate a framework HBM page's reuse generation. `LocalPageRef` defines
-the future contract, but current Publish still carries raw block IDs;
-generation enforcement requires page-lifecycle information from the adapter
-before a stale ID can be rejected at the Cache Manager boundary.
+yet validate a framework HBM page's reuse generation. Publish and Restore still
+carry block IDs; unused page-reference types are not exposed as guarantees.
+Generation enforcement requires page-lifecycle information from the adapter
+and destination ownership through terminal DMA completion.
 
 ## Multi-node cache path and deployment
 
@@ -390,28 +392,35 @@ catalog summaries ----> future KV-aware router <---- engine load/events
 ## Planning direction
 
 The proposed [state demand and transfer planner](state-planning.md) describes
-engine readiness signals, recovery boundaries, prefetch timing, and the local
-evaluation sequence. It is a design proposal; current cache hits do not imply
-those planning capabilities are implemented.
+engine readiness signals, recovery boundaries, measured local/peer paths and
+prefetch timing. Shared Rust cost observations and resource accounting support
+different [deployment contracts](state-planning.md#policies-by-deployment-mode).
+Local path selection comes first; distributed qualification proceeds alongside
+it. These are design proposals, not capabilities implied by current cache hits.
 
-After the cache and catalog are reliable, the target optimization problem is
-Minimum Persistent State Realization: find
-the smallest complete `StateBundle` that can resume legal execution, then choose
-its physical realization. The planner compares:
+The planner compares legal recovery boundaries and the exact `required_ranges`
+for each, then chooses available sources and executable paths. The longest
+prefix or smallest stored representation need not minimize request latency.
+For whole-restore admission, estimate from one decision point:
 
 ```text
-queue delay
-+ missing-state recomputation
-+ restore time by tier and topology
-+ transfer queueing
-+ destination eviction externality
-+ replica failure risk
+state_ready = resource wait + restore critical path + completion visibility
+first_token = max(engine_admission, state_ready) + remaining_prefill
 ```
 
-These terms require calibrated units and critical-path accounting; overlapping
-operations cannot simply have their durations added together.
+Observe queue/service time, encoded and physical bytes, fragmentation, device
+contention and prediction error. Enforce capacity, quality and latency limits;
+overlapping durations cannot simply be added. Retention/write admission and
+transfer scheduling share observations but remain separate decisions.
 
-Reuse Dynamo's worker selector for request placement. Dynamo v1.4.2 provides
+Mooncake TE remains the remote byte engine. Candidate discovery, source
+authorization and both peers' budgets stay with OrbitKV. DP can propose bounded
+fallback to recomputation; current-request P/D handoff needs explicit recovery
+on failure. TP/PP add rank/stage completion dependencies. These dimensions can
+compose within a deployment; roles belong to engine instances and operations,
+not a single global Manager mode. HBM allocation stays with each engine.
+
+Reuse Dynamo's worker selector for request placement. Dynamo v1.5.0 provides
 an independent Rust router crate and a selection service; its runtime is an
 optional dependency of the crate. The selected Cache Manager then revalidates
 replicas and constructs the leased physical plan: source, restore or recompute

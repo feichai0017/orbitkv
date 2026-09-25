@@ -21,6 +21,39 @@ fn cache_policy_controls_validate_protection_and_admission() {
     assert_eq!(cli.cache_protected_percent, 80);
     assert_eq!(cli.ssd_write_policy, orbitkv_core::SsdWritePolicy::Reuse);
     assert_eq!(cli.ssd_backend, orbitkv_core::SsdBackend::Auto);
+    assert_eq!(cli.ssd_read_path, None);
+}
+
+#[test]
+fn ssd_read_route_is_independent_of_backend_initialization() {
+    for (value, expected) in [
+        ("uring", orbitkv_core::SsdReadPath::Uring),
+        ("cufile", orbitkv_core::SsdReadPath::Cufile),
+    ] {
+        let cli = Cli::try_parse_from([
+            "orbitkv-cache-manager",
+            "--ssd-cache-path",
+            "/tmp/route-test",
+            "--ssd-backend",
+            "cufile",
+            "--ssd-read-path",
+            value,
+        ])
+        .unwrap();
+        assert_eq!(cli.ssd_backend, orbitkv_core::SsdBackend::Cufile);
+        assert_eq!(cli.ssd_read_path, Some(expected));
+    }
+    assert!(
+        Cli::try_parse_from([
+            "orbitkv-cache-manager",
+            "--ssd-cache-path",
+            "/tmp/route-test",
+            "--ssd-read-path",
+            "auto",
+        ])
+        .is_err()
+    );
+    assert!(Cli::try_parse_from(["orbitkv-cache-manager", "--ssd-read-path", "uring",]).is_err());
 }
 
 #[test]

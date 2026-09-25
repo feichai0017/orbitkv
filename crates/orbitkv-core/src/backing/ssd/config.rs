@@ -38,6 +38,28 @@ pub enum SsdBackend {
     Cufile,
 }
 
+/// Independent read routes over the same immutable SSD extent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SsdReadPath {
+    /// SSD -> pinned DRAM -> registered engine HBM (copy or decode).
+    Uring,
+    /// SSD -> registered GPU staging -> engine HBM (scatter or decode).
+    /// A cuFile route does not by itself prove native GDS execution.
+    Cufile,
+}
+
+impl std::str::FromStr for SsdReadPath {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "uring" => Ok(Self::Uring),
+            "cufile" => Ok(Self::Cufile),
+            _ => Err("SSD read path must be uring or cufile".into()),
+        }
+    }
+}
+
 impl std::str::FromStr for SsdBackend {
     type Err = String;
 
@@ -88,6 +110,9 @@ pub struct SsdCacheConfig {
     /// Max concurrent block prefetches.
     pub prefetch_inflight: usize,
     pub backend: SsdBackend,
+    /// Explicit demand route for matched qualification. None preserves the
+    /// existing selection; preparation still materializes DRAM via io_uring.
+    pub read_path: Option<SsdReadPath>,
 }
 
 impl Default for SsdCacheConfig {
@@ -102,6 +127,7 @@ impl Default for SsdCacheConfig {
             write_inflight: DEFAULT_SSD_WRITE_INFLIGHT,
             prefetch_inflight: DEFAULT_SSD_PREFETCH_INFLIGHT,
             backend: SsdBackend::Auto,
+            read_path: None,
         }
     }
 }

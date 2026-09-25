@@ -235,6 +235,8 @@ class TestE2ECorrectness:
                 "--ssd-backend",
                 request.config.getoption("--ssd-backend"),
             )
+            if read_path := request.config.getoption("--ssd-read-path"):
+                extra_args += ("--ssd-read-path", read_path)
         with CacheManager(
             log_file=log_dir / "orbitkv-cache-manager.log",
             pool_size=orbitkv_pool_size,
@@ -377,24 +379,34 @@ class TestE2ECorrectness:
             metrics_end = fetch_orbitkv_metrics(metrics_port)
 
         if request.config.getoption("--vllm-cache-tier") == "ssd":
+            read_path = request.config.getoption("--ssd-read-path") or request.config.getoption(
+                "--ssd-backend"
+            )
             read_metrics = {
                 "uring": ("orbitkv_ssd_prefetch_bytes_total",),
                 "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
                 "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
-            }[request.config.getoption("--ssd-backend")]
+            }[read_path]
             assert (
                 sum(metrics_end.get(key, 0) - before_restart.get(key, 0) for key in read_metrics)
                 > 0
             ), "engine restart performed no SSD recovery"
+            if read_path == "cufile":
+                assert metrics_end.get("orbitkv_ssd_prefetch_bytes_total", 0) == before_restart.get(
+                    "orbitkv_ssd_prefetch_bytes_total", 0
+                ), "cuFile recovery bounced through host SSD prefetch"
+            elif read_path == "uring":
+                assert metrics_end.get(
+                    "orbitkv_ssd_cufile_read_bytes_total", 0
+                ) == before_restart.get("orbitkv_ssd_cufile_read_bytes_total", 0), (
+                    "io_uring recovery unexpectedly used cuFile reads"
+                )
 
         if (
             request.config.getoption("--ssd-backend") == "cufile"
             and request.config.getoption("--vllm-cache-tier") == "ssd"
         ):
             assert metrics_end.get("orbitkv_ssd_cufile_write_bytes_total", 0) > 0
-            assert metrics_end.get("orbitkv_ssd_prefetch_bytes_total", 0) == before_restart.get(
-                "orbitkv_ssd_prefetch_bytes_total", 0
-            ), "cuFile recovery bounced through host SSD prefetch"
 
         if (
             request.config.getoption("--storage-codec") != "none"

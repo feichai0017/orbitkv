@@ -41,6 +41,7 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
     env = dict(os.environ)
     env.update(PYTHONHASHSEED="0", VLLM_LOG_STATS_INTERVAL="1")
     env.pop("VLLM_BATCH_INVARIANT", None)
+    env.pop("ORBITKV_TRANSFER_BACKEND", None)
     env["PYTHONPATH"] = os.pathsep.join(
         [str(ROOT / "python"), str(args.output)]
         + [path for path in sys.path if Path(path).name in {"site-packages", "dist-packages"}]
@@ -87,9 +88,12 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
             str(args.storage_codec_budget),
         ]
         backend_configuration.update(
+            orbitkv_transfer_backend=args.orbitkv_transfer_backend,
             storage_codec=args.storage_codec,
             storage_codec_budget_bytes_per_worker=args.storage_codec_budget,
         )
+        if args.engine == "sglang" and args.orbitkv_transfer_backend is not None:
+            env["ORBITKV_TRANSFER_BACKEND"] = args.orbitkv_transfer_backend
         if args.ssd_gib:
             manager_command += [
                 "--ssd-cache-path",
@@ -97,13 +101,20 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
                 "--ssd-cache-capacity",
                 f"{args.ssd_gib}gb",
             ]
-            backend_configuration.update(ssd_gib=args.ssd_gib, io=f"O_DIRECT/{args.ssd_backend}")
+            backend_configuration.update(
+                ssd_gib=args.ssd_gib,
+                io="O_DIRECT",
+                ssd_backend=args.ssd_backend,
+                ssd_read_path=args.ssd_read_path,
+            )
             manager_command += [
                 "--ssd-write-policy",
                 args.ssd_write_policy,
                 "--ssd-backend",
                 args.ssd_backend,
             ]
+            if args.ssd_read_path is not None:
+                manager_command += ["--ssd-read-path", args.ssd_read_path]
         manager_command += ["--cache-protected-percent", str(args.cache_protected_percent)]
         backend_configuration["cache_protected_percent"] = args.cache_protected_percent
         backend_configuration["ssd_write_policy"] = args.ssd_write_policy

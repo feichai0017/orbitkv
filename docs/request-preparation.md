@@ -18,12 +18,19 @@ operation instead of using stale pages. This arrival-order heuristic is
 qualified with the default serving policies; it does not predict priority,
 preemption, token-budget or cross-rank admission.
 
-The native `prepare_recovery` call applies the compiled contract's
+vLLM's ordinary single-group lookup uses native `prepare_prefix`: it preserves
+partial-prefix results and counts a logical lookup only when foreground demand
+claims the result. Native `prepare_recovery` applies the compiled contract's
 `required_ranges` to the immutable hash batch in Rust. It can represent an
 attention prefix, sliding window or checkpoint range. Automatic hybrid-model
 lookahead is not enabled: those models continue through candidate discovery,
 rank-common boundary selection and revalidated ordinary recovery. A preparation
 is never proof that all model components can be restored.
+
+Selected-boundary preparation carries the complete `RecoveryDemand`, including
+other groups' required ranges. Claiming requires the same demand as well as
+the same selected hashes; an incomplete selected group returns no lease. An
+ordinary prefix query does not implicitly claim a selected-boundary operation.
 
 The Manager retains the result until a demand claim. Its existing operation ID,
 revision, session epoch, query budget and result lease remain the owners:

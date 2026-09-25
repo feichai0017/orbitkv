@@ -46,36 +46,12 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError
                 source,
                 slot_id,
                 offset,
+                ..
             } = &block.block
             else {
                 continue;
             };
-            let slot = source
-                .entry
-                .slots
-                .get(*slot_id)
-                .ok_or_else(|| EngineError::Storage("SSD slot is missing".into()))?;
-            let base = source.entry.slots[..*slot_id]
-                .iter()
-                .try_fold(source.entry.file_offset, |base, slot| {
-                    base.checked_add(slot.total_size())
-                })
-                .ok_or_else(|| EngineError::Storage("SSD slot offset overflow".into()))?;
-            validate_slot(slot)
-                .and_then(|()| {
-                    if base.checked_add(slot.total_size()).is_none_or(|end| {
-                        source
-                            .entry
-                            .file_offset
-                            .checked_add(source.entry.len)
-                            .is_none_or(|limit| end > limit)
-                    }) {
-                        return Err("SSD slot exceeds its leased extent".into());
-                    }
-                    Ok(())
-                })
-                .inspect_err(|_| source.invalidate_encoded())
-                .map_err(EngineError::Storage)?;
+            let (slot, base) = source_slot(source, *slot_id)?;
             let copies = layer
                 .layout
                 .block_copies(block.block_idx)
@@ -93,39 +69,14 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError
                 }
                 continue;
             }
-            let file = source.file();
+            let file = source.file()?;
             let reads = &mut sources
                 .entry(Arc::as_ptr(file))
                 .or_insert_with(|| (Arc::clone(file), Vec::new()))
                 .1;
-            let mut push =
-                |segment: usize, relative: usize, device, bytes| -> Result<(), EngineError> {
-                    let file_offset = segment_offset(slot, base, segment, relative, bytes)?;
-                    reads.push(CopyRange {
-                        file_offset,
-                        device,
-                        bytes,
-                    });
-                    Ok(())
-                };
-            match copies {
-                BlockCopies::Contiguous(copy) => push(0, *offset, copy.addr, copy.bytes)?,
-                BlockCopies::Split { k, v } => {
-                    push(0, *offset, k.addr, k.bytes)?;
-                    if slot.num_segments() > 1 {
-                        push(1, *offset, v.addr, v.bytes)?;
-                    } else {
-                        push(
-                            0,
-                            offset.checked_add(k.bytes).ok_or_else(|| {
-                                EngineError::Storage("SSD slot offset overflow".into())
-                            })?,
-                            v.addr,
-                            v.bytes,
-                        )?;
-                    }
-                }
-            }
+            let (first, second) = raw_copies(slot, base, *offset, copies)?;
+            reads.push(first);
+            reads.extend(second);
         }
     }
     plan.raw = sources
@@ -144,6 +95,94 @@ pub(super) fn plan(layers: &[LayerTransferData]) -> Result<ReadPlan, EngineError
         )
     });
     Ok(plan)
+}
+
+fn source_slot(source: &SsdReadLease, slot_id: usize) -> Result<(&SlotMeta, u64), EngineError> {
+    let slot = source
+        .entry
+        .slots
+        .get(slot_id)
+        .ok_or_else(|| EngineError::Storage("SSD slot is missing".into()))?;
+    let base = source.entry.slots[..slot_id]
+        .iter()
+        .try_fold(source.entry.file_offset, |base, slot| {
+            base.checked_add(slot.total_size())
+        })
+        .ok_or_else(|| EngineError::Storage("SSD slot offset overflow".into()))?;
+    validate_slot(slot)
+        .and_then(|()| {
+            if base.checked_add(slot.total_size()).is_none_or(|end| {
+                source
+                    .entry
+                    .file_offset
+                    .checked_add(source.entry.len)
+                    .is_none_or(|limit| end > limit)
+            }) {
+                return Err("SSD slot exceeds its leased extent".into());
+            }
+            Ok(())
+        })
+        .inspect_err(|_| source.invalidate_encoded())
+        .map_err(EngineError::Storage)?;
+    Ok((slot, base))
+}
+
+fn raw_copies(
+    slot: &SlotMeta,
+    base: u64,
+    offset: usize,
+    copies: BlockCopies,
+) -> Result<(CopyRange, Option<CopyRange>), EngineError> {
+    let range = |segment, relative, copy: crate::transfer::layout::BlockCopy| {
+        Ok(CopyRange {
+            file_offset: segment_offset(slot, base, segment, relative, copy.bytes)?,
+            device: copy.addr,
+            bytes: copy.bytes,
+        })
+    };
+    match copies {
+        BlockCopies::Contiguous(copy) => Ok((range(0, offset, copy)?, None)),
+        BlockCopies::Split { k, v } => {
+            let second = if slot.num_segments() > 1 {
+                range(1, offset, v)?
+            } else {
+                range(
+                    0,
+                    offset
+                        .checked_add(k.bytes)
+                        .ok_or_else(|| EngineError::Storage("SSD slot offset overflow".into()))?,
+                    v,
+                )?
+            };
+            Ok((range(0, offset, k)?, Some(second)))
+        }
+    }
+}
+
+pub(super) fn validate_host_sources(layers: &[LayerTransferData]) -> Result<(), EngineError> {
+    for layer in layers {
+        for block in &layer.blocks {
+            if let TransferPayload::Ssd {
+                source,
+                slot_id,
+                offset,
+                ..
+            } = &block.block
+            {
+                let (slot, base) = source_slot(source, *slot_id)?;
+                let copies = layer
+                    .layout
+                    .block_copies(block.block_idx)
+                    .map_err(EngineError::Storage)?;
+                if slot.encoding.is_some() {
+                    encoded_copies(slot, base, *offset, copies, layer.layout.storage_format)?;
+                } else {
+                    raw_copies(slot, base, *offset, copies)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_slot(slot: &SlotMeta) -> Result<(), String> {

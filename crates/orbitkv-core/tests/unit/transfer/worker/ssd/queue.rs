@@ -4,12 +4,24 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
     let (completion, receiver) = oneshot::channel();
     let job = Job::new(
         0,
-        WorkerCommand::Load(LoadTask {
-            layers: Vec::new(),
-            completion,
-            reservations: Vec::new(),
-            codec_budget: 64 << 20,
-        }),
+        WorkerCommand::Load(
+            LoadTask {
+                layers: Vec::new(),
+                completion,
+                reservations: Vec::new(),
+                codec_budget: 64 << 20,
+            },
+            Observation::new(
+                crate::cost::CostKey::new(
+                    crate::cost::CostPath::GpuSsdLoad,
+                    0,
+                    crate::cost::Representation::Raw,
+                    0,
+                    0,
+                ),
+                Some(0),
+            ),
+        ),
     );
     (job, receiver)
 }
@@ -167,4 +179,70 @@ fn failed_or_canceled_write_cannot_commit_a_later_successful_chunk() {
     assert_eq!(job.writes[0].remaining, 0);
     assert_eq!(job.error.as_deref(), Some("first chunk failed"));
     assert!(job.is_complete());
+}
+
+#[test]
+fn cancellation_observation_waits_for_io_and_preserves_later_failure() {
+    for submitted in [false, true] {
+        for failed in [false, true] {
+            let (mut job, consumer) = load_job();
+            job.observation.admitted();
+            if submitted {
+                job.observation.submitted();
+                job.inflight = 1;
+            }
+            drop(consumer);
+            job.cancel_abandoned();
+            assert_eq!(job.outcome, Outcome::Cancelled);
+            assert_eq!(job.is_complete(), !submitted);
+            if submitted {
+                job.complete(
+                    None,
+                    if failed {
+                        Err("I/O failed".into())
+                    } else {
+                        Ok(())
+                    },
+                );
+            } else if failed {
+                job.fail("preparation failed".into());
+            }
+            assert_eq!(
+                job.outcome,
+                if failed {
+                    Outcome::Failed
+                } else {
+                    Outcome::Cancelled
+                }
+            );
+            assert!(job.is_complete());
+            // Only this safe terminal path emits the cancellation/failure sample.
+            job.finish();
+        }
+    }
+}
+
+#[test]
+fn canceled_decoder_preparation_is_not_an_io_failure() {
+    let (mut job, consumer) = load_job();
+    job.decoding = true;
+    drop(consumer);
+    job.cancel_abandoned();
+    let mut jobs = VecDeque::from([job]);
+    let mut active = Some(Decode {
+        job: 0,
+        reads: Vec::new(),
+        offsets: Vec::new(),
+        base: 0,
+        remaining: 0,
+        phase: DecodePhase::Preparing,
+    });
+    let (decoder, requests, replies) = decoder_channels();
+    replies.send(DecodeReply::Prepared(Ok(1))).unwrap();
+    poll_decode(&decoder, &mut active, &mut jobs);
+    assert!(active.is_none());
+    assert!(jobs[0].is_complete());
+    assert_eq!(jobs[0].outcome, Outcome::Cancelled);
+    assert!(requests.try_recv().is_err());
+    jobs.pop_front().unwrap().finish();
 }

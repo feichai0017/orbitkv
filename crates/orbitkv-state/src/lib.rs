@@ -1,6 +1,6 @@
 //! Framework-neutral contracts shared by OrbitKV engine adapters.
 //!
-//! These types describe logical model state and local page references without
+//! These types describe logical model state and recovery requirements without
 //! importing vLLM block IDs, SGLang radix nodes, CUDA handles, or transport
 //! implementations. Framework adapters translate their native objects into
 //! this vocabulary before calling the OrbitKV data plane.
@@ -13,10 +13,10 @@ mod discovery;
 mod format;
 mod inventory;
 mod key;
-mod page;
 
 pub use bundle::{
-    BundleComponent, RecoveryContract, RecoveryError, RecoveryRule, StateBundle, StateRequirement,
+    BundleComponent, RecoveryContract, RecoveryDemand, RecoveryError, RecoveryRule, StateBundle,
+    StateRequirement,
 };
 pub use component::StateComponent;
 pub use discovery::{
@@ -32,4 +32,3 @@ pub use key::{
     ContractError, Digest, StateDescriptor, StateKey, StorageSlot, TokenRange, group_hash,
     storage_namespace,
 };
-pub use page::{LocalPageRef, RegionId};

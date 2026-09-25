@@ -28,7 +28,7 @@ from orbitkv import (
 from orbitkv.client.gpu import resolve_device_id, serialize_gpu_buffer
 from orbitkv.logging_utils import TRANSFER_TRACING, trace_transfer
 
-from .config import derive_namespace
+from .config import derive_namespace, resolve_transfer_backend
 from .layout import GpuLayout
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
     _QUERY_WAIT_SECONDS = 5.0
 
     def __init__(self, server_args: Any, params: Any, *, components: set[ComponentType]):
+        transfer_backend = resolve_transfer_backend()
         self.layout = GpuLayout.from_pool(params, components)
         self.page_size = self.layout.page_size
         self.namespace = derive_namespace(server_args, params, self.layout)
@@ -149,7 +150,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 [size for pool in pools for size in pool.block_bytes],
                 [0] * len(wrappers),
                 [1] * len(wrappers),
-                "direct",
+                transfer_backend,
                 False,
                 layer_group_ids=[pool.group_id for pool in pools for _ in pool.layer_names],
                 layer_attention=[
@@ -203,10 +204,11 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._load_thread.start()
         self._offload_thread.start()
         logger.info(
-            "OrbitKV direct GPU linker registered %s buffers, %s pages on device %s",
+            "OrbitKV GPU linker registered %s buffers, %s pages on device %s, transfer backend %s",
             sum(len(pool.layer_names) for pool in self.layout.pools.values()),
             self.layout.pools[PoolName.KV].num_blocks[0],
             self.device_id,
+            transfer_backend,
         )
 
     @staticmethod

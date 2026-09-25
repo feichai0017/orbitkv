@@ -385,6 +385,13 @@ async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_e
         );
     }
     assert_eq!(catalog.locates.load(Ordering::Acquire), 3);
+    let cached = requester.cached_blocks(&[
+        StateKey::new("ns".into(), hashes[0].clone()),
+        StateKey::new("ns".into(), hash(999)),
+    ]);
+    assert!(cached[0].is_some());
+    assert!(cached[1].is_none());
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 3);
     catalog.offline.store(true, Ordering::Release);
     assert_eq!(
         requester.locate_blocks("ns", &hashes).await.unwrap().len(),
@@ -446,8 +453,155 @@ async fn discovery_coalesces_bounds_batches_and_reuses_only_positive_versioned_e
             .replicas
             .is_empty()
     );
+    let calls = catalog.locates.load(Ordering::Acquire);
+    requester.candidates.lock().insert(
+        current[0].clone(),
+        std::time::Instant::now() - Duration::from_secs(6),
+    );
+    assert!(requester.cached_blocks(std::slice::from_ref(&current[0].key))[0].is_none());
+    assert_eq!(catalog.locates.load(Ordering::Acquire), calls);
     requester.shutdown().await;
     owner.shutdown().await;
+    server.stop().await;
+}
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn discovery_deadline_spans_batches_and_keeps_later_local_and_cached_candidates() {
+    use crate::storage::StorageEngine;
+    use orbitkv_state::{BlockCandidates, DISCOVERY_MAX_KEYS, ReplicaLocation};
+
+    let catalog = Catalog::new();
+    catalog.pause_lookup.store(true, Ordering::Release);
+    let server = TestServer::start(catalog.clone(), "127.0.0.1:0".parse().unwrap()).await;
+    let destination = cache(4096);
+    let hashes: Vec<_> = (0_u32..300).map(hash).collect();
+    for &position in &[129, 257] {
+        destination.insert_retained_for_test(
+            StateKey::new("ns".into(), hashes[position].clone()),
+            Arc::new(SealedBlock::from_slots(Vec::new())),
+        );
+    }
+    let requester = Arc::new(
+        CatalogClient::new(
+            test_view(server.addr, "requester"),
+            Arc::downgrade(&destination),
+        )
+        .unwrap(),
+    );
+    let storage =
+        StorageEngine::with_discovery_catalog_for_test(destination, Arc::clone(&requester));
+    let deadline = Instant::now() + Duration::from_millis(200);
+    let discovery = async {
+        let mut found = Vec::new();
+        for (batch, hashes) in hashes.chunks(DISCOVERY_MAX_KEYS).enumerate() {
+            let rows = storage.discover("ns", hashes, deadline).await;
+            for (offset, candidate) in rows.into_iter().enumerate() {
+                let position = batch * DISCOVERY_MAX_KEYS + offset;
+                if position == 129 {
+                    assert!(candidate.dram.is_some());
+                    assert_eq!(candidate.peer_dram.len(), 1);
+                }
+                if candidate.is_available() {
+                    found.push(position);
+                }
+            }
+        }
+        found
+    };
+    let publish_healthy_evidence = async {
+        until(|| catalog.locates.load(Ordering::Acquire) == 1).await;
+        // Another healthy lookup can publish while this request waits for a
+        // slow peer. Keep that evidence even when the enclosing deadline wins.
+        for position in [5, 129, 130] {
+            requester.candidates.lock().insert(
+                BlockCandidates {
+                    key: StateKey::new("ns".into(), hashes[position].clone()),
+                    replicas: vec![ReplicaLocation {
+                        owner: CacheOwner {
+                            endpoint: "127.0.0.1:58001".into(),
+                            incarnation: Uuid::from_u128(2),
+                        },
+                        sequence: 1,
+                    }],
+                },
+                std::time::Instant::now(),
+            );
+        }
+    };
+    let (found, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(discovery, publish_healthy_evidence)
+    })
+    .await
+    .expect("later batches must not restart the catalog deadline");
+    assert_eq!(found, [5, 129, 130, 257]);
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 1);
+    assert_eq!(
+        requester.lookup_slots.available_permits(),
+        lookup::MAX_LOOKUP_HOSTS
+    );
+    requester.shutdown().await;
+    server.stop().await;
+}
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn cancelling_a_discovery_leader_preserves_waiters_and_releases_admission() {
+    let catalog = Catalog::new();
+    catalog.pause_lookup.store(true, Ordering::Release);
+    let server = TestServer::start(catalog.clone(), "127.0.0.1:0".parse().unwrap()).await;
+    let destination = cache(4096);
+    let requester = Arc::new(
+        CatalogClient::new(
+            test_view(server.addr, "requester"),
+            Arc::downgrade(&destination),
+        )
+        .unwrap(),
+    );
+    let hashes = vec![hash(999)];
+    let leader = {
+        let requester = Arc::clone(&requester);
+        let hashes = hashes.clone();
+        tokio::spawn(async move { requester.locate_blocks("ns", &hashes).await })
+    };
+    until(|| catalog.locates.load(Ordering::Acquire) == 1).await;
+    let mut waiter = Box::pin(requester.locate_blocks("ns", &hashes));
+    assert!(futures::poll!(&mut waiter).is_pending());
+    assert_eq!(
+        requester.lookup_slots.available_permits(),
+        lookup::MAX_LOOKUP_HOSTS - 1
+    );
+    catalog.pause_lookup.store(false, Ordering::Release);
+    leader.abort();
+    assert!(leader.await.unwrap_err().is_cancelled());
+    let result = tokio::time::timeout(Duration::from_secs(1), &mut waiter)
+        .await
+        .expect("remaining waiter must take over the cancelled initialization")
+        .unwrap();
+    assert!(result[0].replicas.is_empty());
+    assert_eq!(catalog.locates.load(Ordering::Acquire), 2);
+    assert_eq!(
+        requester.lookup_slots.available_permits(),
+        lookup::MAX_LOOKUP_HOSTS
+    );
+    assert!(
+        requester
+            .query_clients
+            .lock()
+            .values()
+            .all(|(_, gate)| gate.available_permits() == 1)
+    );
+    assert!(
+        requester.locate_blocks("ns", &hashes).await.unwrap()[0]
+            .replicas
+            .is_empty()
+    );
+    assert_eq!(
+        catalog.locates.load(Ordering::Acquire),
+        3,
+        "negative responses are not cached"
+    );
+    requester.shutdown().await;
     server.stop().await;
 }
 
@@ -540,10 +694,11 @@ async fn two_embedded_catalogs_partition_inventory_and_repair_restarted_member()
                 .sum::<usize>(),
             calls
         );
-        // A stalled host consumes the common deadline, while healthy host
-        // results enter the candidate cache and hits bypass the coalescing gate.
+        // A stalled host consumes its deadline, while both cached and cold
+        // queries to an unrelated healthy host continue to make progress.
         *query.candidates.lock() = CandidateIndex::new(CANDIDATE_CACHE_BYTES);
         catalogs[0].pause_lookup.store(true, Ordering::Release);
+        let slow_calls = catalogs[0].locates.load(Ordering::Acquire) + 1;
         let started = Instant::now();
         let slow = query.locate_blocks("ns", &hashes);
         let healthy_key = keys
@@ -557,7 +712,7 @@ async fn two_embedded_catalogs_partition_inventory_and_repair_restarted_member()
                         .candidates
                         .lock()
                         .get(healthy_key, std::time::Instant::now());
-                    if hit.is_some() {
+                    if hit.is_some() && catalogs[0].locates.load(Ordering::Acquire) == slow_calls {
                         break;
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -573,10 +728,40 @@ async fn two_embedded_catalogs_partition_inventory_and_repair_restarted_member()
             .unwrap()
             .unwrap();
             assert_eq!(hit[0].replicas.len(), 1);
-            let waiting = Instant::now();
-            let unknown = query.locate_blocks("ns", &[vec![255; 8]]).await.unwrap();
-            assert!(waiting.elapsed() < Duration::from_secs(4));
+            let waiting_hashes: Vec<_> = keys
+                .iter()
+                .filter(|key| placement.host(catalog_shard(key)) == Some("a"))
+                .take(lookup::MAX_LOOKUP_HOSTS + 1)
+                .map(|key| vec![key.hash.clone()])
+                .collect();
+            let mut waiting: Vec<_> = waiting_hashes
+                .iter()
+                .map(|hashes| Box::pin(query.locate_blocks("ns", hashes)))
+                .collect();
+            // The healthy peer may still be reading its next batch. Only
+            // these additional slow-peer waiters must leave global slots unchanged.
+            let slots_before_waiting = query.lookup_slots.available_permits();
+            for future in &mut waiting {
+                assert!(futures::poll!(future).is_pending());
+            }
+            assert_eq!(query.lookup_slots.available_permits(), slots_before_waiting);
+            let unknown_hash = (1000_u32..)
+                .map(|n| n.to_be_bytes().to_vec())
+                .find(|hash| {
+                    placement.host(catalog_shard(&StateKey::new("ns".into(), hash.clone())))
+                        == Some("b")
+                })
+                .unwrap();
+            let unknown = tokio::time::timeout(
+                Duration::from_millis(500),
+                query.locate_blocks("ns", &[unknown_hash]),
+            )
+            .await
+            .expect("a slow catalog must not block unrelated cold discovery")
+            .unwrap();
             assert!(unknown[0].replicas.is_empty());
+            assert_eq!(catalogs[0].locates.load(Ordering::Acquire), slow_calls);
+            drop(waiting);
         };
         let (partial, _) = tokio::join!(slow, healthy);
         assert!(started.elapsed() < Duration::from_secs(4));

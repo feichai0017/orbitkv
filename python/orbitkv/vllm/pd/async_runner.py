@@ -53,9 +53,9 @@ class InflightTaskRunner(AsyncTaskPool, Generic[T]):
     """Task pool that tracks inflight count, errors, and supports ``wait_all``.
 
     Shared by the prefill push sender and finalizer. Uses a ``Condition`` so
-    callers can block until all (or a subset of) submitted tasks drain. The
-    first task exception is captured and re-raised to the next waiter, matching
-    the original fail-fast behaviour.
+    callers can block until all (or a subset of) submitted tasks drain.
+    Task exceptions are captured and reported after the requested work drains;
+    an error does not establish that another task has stopped accessing pages.
 
     Subclasses implement ``_run(task)`` (the work body) and may override
     ``_on_submit_locked`` / ``_on_finish_locked`` to maintain per-request state.
@@ -105,7 +105,7 @@ class InflightTaskRunner(AsyncTaskPool, Generic[T]):
 
     def wait_all(self) -> None:
         with self._condition:
-            while self._inflight > 0 and self._error is None:
+            while self._inflight > 0:
                 self._condition.wait()
             self._raise_pending_error_locked()
 

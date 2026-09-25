@@ -106,6 +106,7 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
         [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
     )
     env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
+    env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
     env["FLASHINFER_WORKSPACE_BASE"] = str(tmp_path / "flashinfer")
     log_path = tmp_path / "sglang-direct.log"
 
@@ -238,16 +239,23 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                     )
                     > 0
                 )
+            read_path = channel_server.ssd_read_path or channel_server.ssd_backend
             read_metrics = {
                 "uring": ("orbitkv_ssd_prefetch_bytes_total",),
                 "cufile": ("orbitkv_ssd_cufile_read_bytes_total",),
                 "auto": ("orbitkv_ssd_prefetch_bytes_total", "orbitkv_ssd_cufile_read_bytes_total"),
-            }[channel_server.ssd_backend]
+            }[read_path]
             recovered = fetch_orbitkv_metrics(channel_server.http_port)
-            if channel_server.ssd_backend == "cufile":
+            if read_path == "cufile":
                 assert recovered.get("orbitkv_ssd_prefetch_bytes_total", 0) == before_restart.get(
                     "orbitkv_ssd_prefetch_bytes_total", 0
                 ), "cuFile recovery bounced through host SSD prefetch"
+            elif read_path == "uring":
+                assert recovered.get(
+                    "orbitkv_ssd_cufile_read_bytes_total", 0
+                ) == before_restart.get("orbitkv_ssd_cufile_read_bytes_total", 0), (
+                    "io_uring recovery unexpectedly used cuFile reads"
+                )
             if compression:
                 assert recovered.get("orbitkv_storage_codec_duration_seconds_count", 0) > 0
                 assert recovered.get("orbitkv_storage_codec_decode_failures_total", 0) == 0
@@ -284,6 +292,14 @@ def test_sglang_direct_gpu_cache_recovery(channel_server, request, tmp_path):
                     item[0] for item in response.json()["meta_info"]["output_token_logprobs"]
                 ]
                 assert probabilities == pytest.approx(expected_probs, abs=0.05)
-        assert log_path.read_text().count("OrbitKV direct GPU linker registered") >= 3
+        registrations = [
+            line
+            for line in log_path.read_text().splitlines()
+            if "OrbitKV GPU linker registered" in line
+        ]
+        assert len(registrations) >= 3
+        assert all(
+            f"transfer backend {env['ORBITKV_TRANSFER_BACKEND']}" in line for line in registrations
+        )
     finally:
         stop_server(process)

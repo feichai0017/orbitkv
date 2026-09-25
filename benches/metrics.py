@@ -12,6 +12,7 @@ from contextlib import contextmanager
 import requests
 
 REMOTE_STAGES = ("discovery_rpc", "authorization", "allocation", "read", "rebuild", "release")
+ENGINE_ITL = {engine: f"{engine}:inter_token_latency_seconds" for engine in ("vllm", "sglang")}
 
 
 def delta(before: dict, after: dict) -> dict:
@@ -19,6 +20,7 @@ def delta(before: dict, after: dict) -> dict:
         key: value - before.get(key, 0)
         for key, value in after.items()
         if value != before.get(key, 0)
+        or any(key.startswith(f"{name}_bucket{{le=") for name in ENGINE_ITL.values())
     }
 
 
@@ -117,10 +119,16 @@ def metrics(url: str | None) -> dict[str, float]:
             continue
         series, value = line.rsplit(" ", 1)
         name = series.split("{", 1)[0]
-        if name.endswith("_created") or "bucket" in name:
+        if name.endswith("_created"):
             continue
         number = float(value)
         if math.isfinite(number):
+            if "bucket" in name:
+                if name in {f"{prefix}_bucket" for prefix in ENGINE_ITL.values()}:
+                    labels = dict(re.findall(r'(\w+)="([^"\\]*)"', series))
+                    key = f"{name}{{le={labels['le']}}}"
+                    values[key] = values.get(key, 0) + number
+                continue
             values[name] = values.get(name, 0) + number
             if name.startswith("orbitkv_storage_codec_"):
                 labels = dict(re.findall(r'(\w+)="([^"\\]*)"', series))
@@ -131,6 +139,16 @@ def metrics(url: str | None) -> dict[str, float]:
                 ]
                 if dimensions:
                     key = f"{name}_{'_'.join(dimensions)}"
+                    values[key] = values.get(key, 0) + number
+            if name.startswith("orbitkv_cost_"):
+                labels = dict(re.findall(r'(\w+)="([^"\\]*)"', series))
+                dimensions = [
+                    f"{label}={labels[label]}"
+                    for label in ("path", "stage", "outcome", "evidence", "decision", "reason")
+                    if label in labels
+                ]
+                if dimensions:
+                    key = f"{name}{{{','.join(dimensions)}}}"
                     values[key] = values.get(key, 0) + number
             if name.startswith("orbitkv_remote_stage_duration_seconds_"):
                 for stage in REMOTE_STAGES:
@@ -151,6 +169,69 @@ def metrics(url: str | None) -> dict[str, float]:
                         key = f"{name}_{reason}"
                         values[key] = values.get(key, 0) + number
     return values
+
+
+def engine_itl_summary(engine: str, counters: dict, slo_ms: float) -> dict:
+    """Estimate quantiles from official engine histograms, preserving bucket uncertainty."""
+    name = ENGINE_ITL[engine]
+    prefix = f"{name}_bucket{{le="
+    buckets = sorted(
+        (float(key[len(prefix) : -1]), value)
+        for key, value in counters.items()
+        if key.startswith(prefix)
+    )
+    count = counters.get(f"{name}_count", 0)
+    result = {
+        "metric": name,
+        "status": "missing",
+        "count": count,
+        "p50_ms": None,
+        "p95_ms": None,
+        "p99_ms": None,
+        "slo_ms": slo_ms,
+        "within_slo_fraction": None,
+        "buckets": [
+            {"upper_ms": bound * 1000 if math.isfinite(bound) else None, "count": value}
+            for bound, value in buckets
+        ],
+        "scope": "Official engine histogram delta over the measured window; bucket-linear quantile estimates, not exact samples or SSE packet intervals. No request-level goodput attribution.",
+        "engine_boundary": "Engine-core adjacent token timestamps"
+        if engine == "vllm"
+        else "Tokenizer output receipt interval divided by new-token count and weighted by that count; coalesced output intervals are averaged",
+    }
+    if not buckets or count <= 0:
+        return result
+    previous = 0
+    for bound, value in buckets:
+        if math.isnan(bound) or bound <= 0 or not math.isfinite(value) or value < previous:
+            result["status"] = "invalid_buckets"
+            return result
+        previous = value
+    if not math.isinf(buckets[-1][0]) or buckets[-1][1] != count:
+        result["status"] = "incomplete_buckets"
+        return result
+    result["status"] = "observed"
+    duration = counters.get(f"{name}_sum")
+    result["mean_ms"] = duration / count * 1000 if duration is not None else None
+    for label, fraction in (("p50", 0.5), ("p95", 0.95), ("p99", 0.99)):
+        low, before = 0.0, 0.0
+        for high, cumulative in buckets:
+            if cumulative >= count * fraction:
+                result[f"{label}_bounds_ms"] = [
+                    low * 1000,
+                    high * 1000 if math.isfinite(high) else None,
+                ]
+                if math.isfinite(high) and cumulative > before:
+                    result[f"{label}_ms"] = (
+                        low + (high - low) * (count * fraction - before) / (cumulative - before)
+                    ) * 1000
+                break
+            low, before = high, cumulative
+    for bound, cumulative in buckets:
+        if math.isclose(bound * 1000, slo_ms):
+            result["within_slo_fraction"] = cumulative / count
+            break
+    return result
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -269,6 +350,13 @@ def summarize(samples: list[dict], lengths: list[int]) -> list[dict]:
                         + sample["manager_delta"].get("orbitkv_ssd_cufile_read_bytes_total", 0)
                         for sample in group
                     ),
+                    **{
+                        key: sum(sample["manager_delta"].get(key, 0) for sample in group)
+                        for key in (
+                            "orbitkv_ssd_prefetch_bytes_total",
+                            "orbitkv_ssd_cufile_read_bytes_total",
+                        )
+                    },
                     "ssd_reads_without_gpu_restore": sum(
                         (
                             sample["manager_delta"].get("orbitkv_ssd_prefetch_bytes_total", 0)

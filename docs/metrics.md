@@ -32,6 +32,51 @@ Cache Manager → OpenTelemetry Collector → Prometheus → Grafana
 
 OrbitKV exposes the following metrics for monitoring KV cache operations:
 
+### Bounded cost observations
+
+See the [P4.1 boundaries](state-planning.md#p41-observation-contract) before
+combining measurements. All labels below come from fixed enums; device, peer,
+request and state identities are kept out of the exported series.
+
+| Metric family | Labels / meaning |
+| --- | --- |
+| `orbitkv_cost_operations_total` | `path`, `outcome`: completed, failed, cancelled, timed_out or abandoned |
+| `orbitkv_cost_stage_seconds` | `path`, `outcome`, `stage`: queue, admission, completed service or inclusive total; microsecond-to-second buckets |
+| `orbitkv_cost_logical_bytes_total` / `orbitkv_cost_logical_unknown_total` | Known attempted logical bytes versus unavailable unpadded sizes; do not sum nested owners |
+| `orbitkv_cost_io_bytes_total` / `orbitkv_cost_io_unknown_total` | Known physical bytes, including short I/O, versus unknown counts; same path/outcome labels |
+| `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-GPU-terminal total for the two SSD restore routes |
+| `orbitkv_cost_shadow_candidates_total` / `orbitkv_cost_shadow_prediction_seconds` | Feasible raw-copy or SSD restore-route candidates, labelled by path and known/unknown evidence |
+| `orbitkv_cost_shadow_decisions_total` | agree, different or unknown; execution never follows this result |
+| `orbitkv_cost_estimate_samples`, `orbitkv_cost_estimate_age_seconds`, `orbitkv_cost_estimate_error_seconds` | Count, sample age and EWMA absolute error supporting known shadow predictions |
+| `orbitkv_cost_estimate_evictions_total` / `orbitkv_cost_estimate_dropped_total` | Fixed-capacity eviction and skipped updates on estimator contention |
+
+`path="ssd_uring_restore"` and `path="ssd_cufile_restore"` identify complete
+SSD restore routes to the same GPU completion target. Their estimates include
+queueing and host materialization/H2D or GPU staging/scatter/decode. Other paths
+continue to estimate service from submission to observed completion; stage
+histograms retain their queue/admission/service/total meanings. Neither failed
+nor cancelled, timed-out or abandoned work trains successful estimates.
+
+Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
+DMA-coalesced ranges. Actual execution samples and shadow candidates use the
+same shape from the validated copy list; the executor's merge iterator supplies
+the range count. Refining that key does not restart queue/admission timing.
+These fields are bounded estimator dimensions, not additional metric labels.
+
+The bounded SSD-route key includes buckets for the complete stored source image's
+bytes/fragments and the SSD-derived portion of target bytes/fragments, alongside
+the full task shape, representation and shared SSD/device identity. These fields
+are not metric labels. Stored source sizes do not turn padded raw bytes into
+known logical data. Composite route totals and nested operation timers overlap;
+physical bytes are reported only by their existing I/O owners. Do not sum either
+parent/child timings or logical bytes across those paths.
+
+This family and its shadow work are disabled by default. Enable them with
+`ORBITKV_COST_OBSERVATIONS=1` before Manager startup. Existing operational
+metrics remain enabled independently. See the
+[overhead gate](implementation-plan.md#p41-final-evidence) before enabling cost
+observations in serving.
+
 ### Storage encoding
 
 See [codec qualification](storage-formats.md#qualification). `orbitkv_storage_codec_bytes_total`
@@ -280,7 +325,7 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   - Use case: Monitor load throughput
 
 - **orbitkv_load_duration_seconds** (Histogram)
-  - GPU restore duration, including cuFile reads when selected
+  - GPU restore duration, including SSD reads on the selected cuFile or explicit io_uring restore lane
   - Use case: Track load performance (p50, p99)
 
 - **orbitkv_load_failures_total** (Counter)
@@ -289,8 +334,10 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 
 ### SSD Cache Metrics
 
-- **orbitkv_ssd_backend_fallbacks_total** (Counter) - Automatic fallback to io_uring
-  after cuFile initialization or operation failure. Logs record the reason.
+- **orbitkv_ssd_backend_fallbacks_total** (Counter) - Automatic cuFile admission
+  disabled after initialization or operation failure. The default policy uses
+  io_uring thereafter; an explicit cuFile read route does not silently change.
+  Logs record the reason.
 - **orbitkv_ssd_cufile_write_bytes_total** (Counter) - Physical cuFile write bytes, including padding.
 - **orbitkv_ssd_cufile_write_seconds** (Histogram) - Async submission-to-completion latency, including GPU gather and polling; excludes waiting for a slot.
 - **orbitkv_ssd_cufile_write_failures_total** (Counter) - Failed or short GPU-backed writes.
@@ -312,8 +359,8 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   validated SSD bytes, including reads an engine may not subsequently consume.
 - **orbitkv_ssd_prefetch_success_total** (Counter) - Successful SSD prefetches
 - **orbitkv_ssd_prefetch_failures_total** (Counter) - Failed SSD prefetches
-- **orbitkv_ssd_prefetch_duration_seconds** (Histogram) - Prefix prefetch latency
-  for nonempty SSD candidates, including queueing, pinned-memory allocation,
+- **orbitkv_ssd_prefetch_duration_seconds** (Histogram) - Prefix prefetch or
+  explicitly leased host-read latency, including queueing, pinned-memory allocation,
   reads, and block reconstruction. Excludes H2D and does not prove a successful
   GPU restore; correlate with read bytes, failures, and load bytes.
 

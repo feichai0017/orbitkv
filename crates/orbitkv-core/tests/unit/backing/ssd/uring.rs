@@ -30,6 +30,8 @@ fn a_full_write_queue_does_not_block_single_file_reads() {
     let (read_tx, read_rx) = mpsc::sync_channel(1);
     let engine = Arc::new(UringIoEngine {
         fds: vec![0], // No kernel worker: the test completes queued I/O itself.
+        resources: vec![1],
+        cost_resource: 1,
         txs: vec![write_tx, read_tx],
         write_shards: 1,
         next_read: AtomicUsize::new(0),
@@ -53,12 +55,7 @@ fn a_full_write_queue_does_not_block_single_file_reads() {
     });
 
     let independent = submitted_rx.recv_timeout(Duration::from_secs(1)).is_ok();
-    write_rx
-        .recv()
-        .unwrap()
-        .complete
-        .send(Ok(SSD_ALIGNMENT))
-        .unwrap();
+    write_rx.recv().unwrap().complete(Ok(SSD_ALIGNMENT));
     assert_eq!(write.blocking_recv().unwrap().unwrap(), SSD_ALIGNMENT);
     if !independent {
         // Unblock even a regressed dispatcher before failing the assertion.
@@ -68,9 +65,55 @@ fn a_full_write_queue_does_not_block_single_file_reads() {
         .try_recv()
         .or_else(|_| write_rx.try_recv())
         .unwrap()
-        .complete
-        .send(Ok(SSD_ALIGNMENT))
-        .unwrap();
+        .complete(Ok(SSD_ALIGNMENT));
     assert_eq!(reader.join().unwrap(), SSD_ALIGNMENT);
     assert!(independent, "a read waited for space in the write queue");
+}
+
+#[test]
+fn observed_completion_preserves_short_reads_errors_and_detached_delivery() {
+    for outcome in [
+        Ok(SSD_ALIGNMENT / 2),
+        Err(io::ErrorKind::Other),
+        Ok(SSD_ALIGNMENT),
+    ] {
+        let (complete, receiver) = oneshot::channel();
+        let mut observation = Observation::new(
+            CostKey::new(
+                CostPath::SsdRead,
+                101,
+                Representation::Unknown,
+                SSD_ALIGNMENT as u64,
+                1,
+            ),
+            None,
+        );
+        observation.admitted();
+        observation.submitted();
+        let context = IoCtx {
+            io_type: IoType::Readv,
+            fd: 0,
+            len: 1,
+            offset: 0,
+            complete,
+            iovecs: None,
+            requested_bytes: SSD_ALIGNMENT as u64,
+            observation,
+        };
+        if outcome == Ok(SSD_ALIGNMENT) {
+            // A disappearing consumer does not revoke submitted I/O or turn
+            // its later successful physical completion into a failure.
+            drop(receiver);
+            context.complete(outcome.map_err(io::Error::from));
+        } else {
+            context.complete(outcome.map_err(io::Error::from));
+            assert_eq!(
+                receiver
+                    .blocking_recv()
+                    .unwrap()
+                    .map_err(|error| error.kind()),
+                outcome,
+            );
+        }
+    }
 }

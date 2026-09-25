@@ -4,6 +4,19 @@ fn make_engine() -> Arc<StorageEngine> {
     StorageEngine::new_with_config(1 << 20, false, StorageConfig::default(), &[]).unwrap()
 }
 
+#[cfg(feature = "mooncake")]
+impl StorageEngine {
+    pub(crate) fn with_discovery_catalog_for_test(
+        read_cache: Arc<ReadCache>,
+        catalog: Arc<CatalogClient>,
+    ) -> Self {
+        let mut storage = Arc::try_unwrap(make_engine()).ok().unwrap();
+        storage.read_cache = read_cache;
+        storage.catalog_client = Some(catalog);
+        storage
+    }
+}
+
 #[tokio::test]
 async fn filter_hashes_not_in_cache_inplace_handles_empty_input() {
     let storage = make_engine();

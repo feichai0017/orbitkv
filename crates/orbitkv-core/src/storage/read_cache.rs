@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+    time::Instant,
+};
 
 use hashlink::LruCache;
 use orbitkv_state::{CATALOG_SHARDS, InventoryRecord, catalog_shard};
@@ -129,6 +133,13 @@ impl ReadCache {
     pub(super) fn contains_keys(&self, keys: &[StateKey]) -> Vec<bool> {
         let inner = self.inner.lock();
         keys.iter().map(|k| inner.cache.contains_key(k)).collect()
+    }
+
+    pub(super) fn discover(&self, keys: &[StateKey]) -> Vec<Option<Weak<SealedBlock>>> {
+        let inner = self.inner.lock();
+        keys.iter()
+            .map(|key| inner.cache.peek(key).map(|block| Arc::downgrade(&block)))
+            .collect()
     }
 
     /// Scan cache for a prefix of `keys`, stopping at the first miss.

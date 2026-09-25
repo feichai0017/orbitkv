@@ -136,7 +136,7 @@ class _AsyncLayerPushSender(InflightTaskRunner["_LayerPushTask"]):
 
     def wait_req(self, req_id: str) -> None:
         with self._condition:
-            while self._inflight_by_req.get(req_id, 0) > 0 and self._error is None:
+            while self._inflight_by_req.get(req_id, 0) > 0:
                 self._condition.wait()
             self._raise_pending_error_locked()
 
@@ -176,7 +176,12 @@ class _AsyncLayerPushSender(InflightTaskRunner["_LayerPushTask"]):
 def _run_layer_push(task: _LayerPushTask) -> None:
     if task.event is not None:
         task.event.synchronize()
-    task.transfer.push_layer(task.req_id, task.layer_idx, task.block_slices)
+    task.transfer.push_layer(
+        task.req_id,
+        task.layer_idx,
+        task.block_slices,
+        request_generation=task.request_generation,
+    )
 
 
 class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):

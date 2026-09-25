@@ -7,7 +7,9 @@
 use std::ffi::c_void;
 use std::fs::File;
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::MetadataExt;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use cudarc::driver::sys::CUstream;
@@ -160,6 +162,7 @@ pub(crate) struct CufileFile {
     handle: NonNull<c_void>,
     _file: File,
     pub(crate) gpu_io: Arc<GpuIo>,
+    cost_resource: u64,
 }
 
 // SAFETY: cuFile's file APIs are thread-safe. The handle and fd stay live until
@@ -169,6 +172,18 @@ unsafe impl Sync for CufileFile {}
 
 impl CufileFile {
     pub(crate) fn new(file: File, gpu_io: Arc<GpuIo>) -> Result<Self, String> {
+        static NEXT_FILE: AtomicU64 = AtomicU64::new(1);
+        let cost_resource = if crate::cost::enabled() {
+            let incarnation = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
+            match file.metadata() {
+                Ok(metadata) => {
+                    crate::cost::resource_id(&(incarnation, metadata.dev(), metadata.ino()))
+                }
+                Err(_) => crate::cost::resource_id(&(incarnation, file.as_raw_fd())),
+            }
+        } else {
+            0
+        };
         if gpu_io.automatic {
             let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
             // SAFETY: live descriptor and writable statfs output.
@@ -195,6 +210,7 @@ impl CufileFile {
             handle,
             _file: file,
             gpu_io,
+            cost_resource,
         })
     }
 }

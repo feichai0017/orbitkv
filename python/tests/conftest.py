@@ -158,6 +158,12 @@ def pytest_addoption(parser):
         default="auto",
         help="SSD backend; auto selects native cuFile when available, otherwise io_uring",
     )
+    parser.addoption(
+        "--ssd-read-path",
+        choices=("uring", "cufile"),
+        default=None,
+        help="Explicit SSD restore path; leave unset to preserve Manager selection",
+    )
 
 
 @pytest.fixture
@@ -183,6 +189,7 @@ def channel_server(request, tmp_path):
         bootstrap_socket=bootstrap_socket,
         ssd_cache_path=tmp_path / "cache.bin" if mode == "ssd" else None,
         ssd_backend=request.config.getoption("--ssd-backend"),
+        ssd_read_path=request.config.getoption("--ssd-read-path"),
         ssd_cache_capacity=(
             configuration.get("ssd_cache_capacity", "256mb")
             if isinstance(configuration, dict)

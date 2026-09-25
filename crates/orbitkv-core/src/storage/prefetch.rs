@@ -121,6 +121,7 @@ struct FetchKey {
     keys: Vec<StateKey>,
     hit: usize,
     wait_for_full_prefix: bool,
+    allow_ssd_prefetch: bool,
 }
 type SharedRead = OnceCell<PrefetchTaskResult>;
 
@@ -178,27 +179,64 @@ impl PrefetchScheduler {
         // Speculative preparation continues to fill DRAM before GPU pages exist.
         if !warming
             && let Some(ssd) = &self.ssd_store
-            && let Some(disk) = ssd.pin_prefix(&keys[hit..], self.codec_budget)
-            && !disk.is_empty()
-            && (!wait_for_full_prefix || hit + disk.len() == keys.len())
+            && (ssd.read_path.is_some() || ssd.gpu_io.available())
         {
-            let count = hit + disk.len();
-            ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
-            record_tier_attribution(keys.len(), hit, disk.len(), Some(AttributionSource::Ssd));
-            return QueryResult {
-                blocks: prefix_blocks
-                    .into_iter()
-                    .map(RestoreSource::Memory)
-                    .chain(disk.into_iter().map(RestoreSource::Ssd))
-                    .collect(),
-                missing: keys.len() - count,
+            let disk = ssd.discover_prefix(&keys[hit..]);
+            let cufile = disk
+                .iter()
+                .all(|lease| lease.cufile_eligible(self.codec_budget));
+            let path = match ssd.read_path {
+                Some(crate::SsdReadPath::Uring) => Some(crate::SsdReadPath::Uring),
+                _ if cufile => Some(crate::SsdReadPath::Cufile),
+                _ => None,
             };
+            if let Some(path) = path
+                && !disk.is_empty()
+                && (!wait_for_full_prefix || hit + disk.len() == keys.len())
+            {
+                let disk: Vec<_> = disk.iter().map_while(|candidate| candidate.pin()).collect();
+                // Discovery did not pin or read payloads. Revalidate the exact
+                // selected generations and path before transferring ownership.
+                if !disk.is_empty()
+                    && (!wait_for_full_prefix || hit + disk.len() == keys.len())
+                    && (path != crate::SsdReadPath::Cufile
+                        || disk
+                            .iter()
+                            .all(|lease| lease.cufile_eligible(self.codec_budget)))
+                {
+                    let count = hit + disk.len();
+                    ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
+                    record_tier_attribution(
+                        keys.len(),
+                        hit,
+                        disk.len(),
+                        Some(AttributionSource::Ssd),
+                    );
+                    return QueryResult {
+                        blocks: prefix_blocks
+                            .into_iter()
+                            .map(RestoreSource::Memory)
+                            .chain(
+                                disk.into_iter()
+                                    .map(|lease| RestoreSource::Ssd { lease, path }),
+                            )
+                            .collect(),
+                        missing: keys.len() - count,
+                    };
+                }
+            }
         }
 
+        let allow_ssd_prefetch = warming
+            || self
+                .ssd_store
+                .as_ref()
+                .is_none_or(|ssd| ssd.read_path.is_none());
         let key = FetchKey {
             keys: keys.clone(),
             hit,
             wait_for_full_prefix,
+            allow_ssd_prefetch,
         };
         let read = {
             let mut reads = self.reads.lock();
@@ -217,7 +255,9 @@ impl PrefetchScheduler {
                 let mut result = run_prefetch_task(
                     PrefetchTaskDeps {
                         remote_fetch: self.remote_fetch.clone(),
-                        ssd_store: self.ssd_store.clone(),
+                        // An explicit SSD route must not silently become a
+                        // host prefetch, but unrelated peer recovery remains available.
+                        ssd_store: self.ssd_store.clone().filter(|_| allow_ssd_prefetch),
                     },
                     PrefetchTaskInput {
                         req_id: req_id.to_string(),

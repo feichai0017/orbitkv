@@ -10,12 +10,14 @@ use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
 use crate::EngineError;
 use crate::block::{RawBlock, SealedBlock};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, enabled, shadow};
 use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::metrics::core_metrics;
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
 
 mod codec;
+mod restore;
 pub(crate) use codec::SaveGroup;
 pub(crate) mod ssd;
 use ssd::GpuWrite;
@@ -51,6 +53,7 @@ pub(crate) enum TransferPayload {
     Pending,
     Ssd {
         source: Arc<crate::SsdReadLease>,
+        path: crate::SsdReadPath,
         slot_id: usize,
         offset: usize,
     },
@@ -112,8 +115,8 @@ pub(crate) struct SaveTask {
 }
 
 enum WorkerCommand {
-    Load(LoadTask),
-    Save(SaveTask),
+    Load(LoadTask, Observation),
+    Save(SaveTask, Observation),
     Drain(oneshot::Sender<Result<(), String>>),
 }
 
@@ -123,6 +126,7 @@ pub(crate) struct GpuWorkerPool {
     numa_node: NumaNode,
     transfer_mode: TransferMode,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
+    ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_write_admission: Arc<Semaphore>,
     load_tx: mpsc::UnboundedSender<WorkerCommand>,
@@ -144,6 +148,7 @@ impl GpuWorkerPool {
             load_tx: spawn_worker(device_id, numa_node, transfer_mode, "load")?,
             save_tx: spawn_worker(device_id, numa_node, transfer_mode, "save")?,
             ssd_tx: Mutex::new(None),
+            ssd_host_tx: Mutex::new(None),
             codec_write_tx: Mutex::new(None),
             ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
             closed: Mutex::new(false),
@@ -152,33 +157,59 @@ impl GpuWorkerPool {
     }
 
     fn submit(&self, command: WorkerCommand, disk: bool) -> Result<(), EngineError> {
+        let reject = |command: WorkerCommand| match command {
+            WorkerCommand::Load(_, observation) | WorkerCommand::Save(_, observation) => {
+                observation.finish(Outcome::Failed, Some(0));
+            }
+            WorkerCommand::Drain(_) => {}
+        };
         let closed = self.closed.lock();
         if *closed {
+            reject(command);
             return Err(EngineError::Storage("GPU worker is draining".into()));
         }
-        if matches!(&command, WorkerCommand::Save(task) if !task.codec_groups.is_empty()) {
+        if matches!(&command, WorkerCommand::Save(task, _) if !task.codec_groups.is_empty()) {
             let mut sender = self.codec_write_tx.lock();
             if sender.is_none() {
-                *sender = Some(spawn_worker(
+                match spawn_worker(
                     self.device_id,
                     self.numa_node,
                     self.transfer_mode,
                     "encoded-writeback",
-                )?);
+                ) {
+                    Ok(worker) => *sender = Some(worker),
+                    Err(error) => {
+                        reject(command);
+                        return Err(error);
+                    }
+                }
             }
             sender
                 .as_ref()
                 .expect("encoded writeback worker initialized")
                 .send(command)
+        } else if matches!(&command, WorkerCommand::Load(task, _) if restore::ssd_path(&task.layers) == Ok(Some(crate::SsdReadPath::Uring))) {
+            let mut sender = self.ssd_host_tx.lock();
+            if sender.is_none() {
+                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host") {
+                    Ok(worker) => *sender = Some(worker),
+                    Err(error) => {
+                        reject(command);
+                        return Err(error);
+                    }
+                }
+            }
+            sender.as_ref().expect("SSD host worker initialized").send(command)
         } else if disk {
             let mut sender = self.ssd_tx.lock();
             if sender.is_none() {
-                *sender = Some(spawn_worker(
-                    self.device_id,
-                    self.numa_node,
-                    self.transfer_mode,
-                    "ssd",
-                )?);
+                match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd") {
+                    Ok(worker) => *sender = Some(worker),
+                    Err(error) => {
+                        reject(command);
+                        return Err(error);
+                    }
+                }
             }
             sender
                 .as_ref()
@@ -186,11 +217,12 @@ impl GpuWorkerPool {
                 .send(command)
         } else {
             match command {
-                WorkerCommand::Load(_) => self.load_tx.send(command),
+                WorkerCommand::Load(..) => self.load_tx.send(command),
                 _ => self.save_tx.send(command),
             }
         }
-        .map_err(|_| {
+        .map_err(|error| {
+            reject(error.0);
             EngineError::Storage(format!(
                 "GPU worker channel closed for device {}",
                 self.device_id
@@ -215,13 +247,33 @@ impl GpuWorkerPool {
             }
         }
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
-        let disk = task.layers.iter().any(|layer| {
-            layer
-                .blocks
-                .iter()
-                .any(|block| matches!(block.block, TransferPayload::Ssd { .. }))
-        });
-        self.submit(WorkerCommand::Load(task), disk)
+        let ssd_path = restore::ssd_path(&task.layers).map_err(EngineError::Storage)?;
+        if ssd_path == Some(crate::SsdReadPath::Cufile)
+            && task.layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
+                matches!(&block.block, TransferPayload::Ssd { source, .. } if !source.cufile_eligible(task.codec_budget))
+            })
+        {
+            return Err(EngineError::Storage("cuFile read route is no longer eligible".into()));
+        }
+        let disk = ssd_path.is_some();
+        let observation = if enabled() {
+            let (mut key, bytes) = transfer_key(
+                &task.layers,
+                self.device_id,
+                self.transfer_mode,
+                false,
+                disk,
+            );
+            if let Some(path) = ssd_path {
+                key =
+                    restore::cost_key(&task.layers, self.device_id, self.transfer_mode, path, key);
+                restore::shadow(&task, path, key);
+            }
+            Observation::new(key, Some(bytes))
+        } else {
+            Observation::disabled()
+        };
+        self.submit(WorkerCommand::Load(task, observation), disk)
     }
 
     pub(crate) async fn batch_save(
@@ -248,18 +300,33 @@ impl GpuWorkerPool {
             }
         };
         let disk = !ssd_writes.is_empty();
+        let observation = if enabled() {
+            let (key, bytes) = transfer_key(
+                &layers,
+                self.device_id,
+                self.transfer_mode,
+                true,
+                disk || !codec_groups.is_empty(),
+            );
+            Observation::new(key, Some(bytes))
+        } else {
+            Observation::disabled()
+        };
         self.submit(
-            WorkerCommand::Save(SaveTask {
-                layers,
-                reply,
-                ssd_writes,
-                codec_groups,
-                ssd_admission,
-                storage,
-                numa: self.numa_node,
-                #[cfg(feature = "tracing")]
-                trace_ctx: ::fastrace::prelude::SpanContext::current_local_parent(),
-            }),
+            WorkerCommand::Save(
+                SaveTask {
+                    layers,
+                    reply,
+                    ssd_writes,
+                    codec_groups,
+                    ssd_admission,
+                    storage,
+                    numa: self.numa_node,
+                    #[cfg(feature = "tracing")]
+                    trace_ctx: ::fastrace::prelude::SpanContext::current_local_parent(),
+                },
+                observation,
+            ),
             disk,
         )?;
         receiver
@@ -276,11 +343,13 @@ impl GpuWorkerPool {
                     let mut closed = self.closed.lock();
                     *closed = true;
                     let ssd = self.ssd_tx.lock();
+                    let ssd_host = self.ssd_host_tx.lock();
                     let codec_write = self.codec_write_tx.lock();
                     for sender in [
                         Some(&self.load_tx),
                         Some(&self.save_tx),
                         ssd.as_ref(),
+                        ssd_host.as_ref(),
                         codec_write.as_ref(),
                     ]
                     .into_iter()
@@ -408,14 +477,60 @@ fn worker_loop(
                 let _ = reply.send(result);
                 return;
             }
-            WorkerCommand::Load(task) => {
+            WorkerCommand::Load(mut task, mut observation) => {
                 let started = Instant::now();
+                observation.admitted();
+                let host_staged =
+                    restore::ssd_path(&task.layers) == Ok(Some(crate::SsdReadPath::Uring));
+                let mut cancelled = false;
+                let mut gpu_observation = Observation::disabled();
                 let result = (|| {
-                    let decoded_bytes = codec::restore(&runtime, &task.layers, task.codec_budget)
-                        .inspect_err(|_| {
-                        core_metrics().storage_codec_decode_failures.add(1, &[]);
-                    })?;
+                    if task.completion.is_closed() {
+                        cancelled = true;
+                        return Err(EngineError::Storage("GPU transfer consumer closed".into()));
+                    }
+                    if host_staged {
+                        observation.submitted();
+                        restore::materialize_host(&mut task)?;
+                        if task.completion.is_closed() {
+                            cancelled = true;
+                            return Err(EngineError::Storage(
+                                "GPU transfer consumer closed".into(),
+                            ));
+                        }
+                        if enabled() {
+                            let mode = if runtime.backend.name() == "kernel" {
+                                TransferMode::Kernel
+                            } else {
+                                TransferMode::Direct
+                            };
+                            let (key, bytes) =
+                                transfer_key(&task.layers, device_id, mode, false, false);
+                            gpu_observation = Observation::new(key, Some(bytes));
+                            gpu_observation.admitted();
+                        }
+                    }
+                    let gpu_cost = if host_staged {
+                        &mut gpu_observation
+                    } else {
+                        &mut observation
+                    };
+                    let decoded_bytes =
+                        codec::restore(&runtime, &task.layers, task.codec_budget, gpu_cost)
+                            .inspect_err(|_| {
+                                core_metrics().storage_codec_decode_failures.add(1, &[]);
+                            })?;
                     let (copies, bytes) = build_copy_descs(&task.layers)?;
+                    if decoded_bytes == 0 {
+                        observe_raw_copies(
+                            &copies,
+                            device_id as u64,
+                            runtime.backend.name(),
+                            false,
+                            gpu_cost,
+                        );
+                    }
+                    gpu_cost.submitted();
                     finish_gpu_transfer(
                         &runtime.stream,
                         runtime.backend.h2d(&copies, &runtime.stream),
@@ -423,19 +538,39 @@ fn worker_loop(
                     Ok(bytes + decoded_bytes)
                 })();
                 let bytes = result.as_ref().copied().unwrap_or(0);
+                let outcome = if cancelled {
+                    Outcome::Cancelled
+                } else {
+                    terminal_outcome(result.is_ok(), task.completion.is_closed())
+                };
+                let actual_io = (enabled()
+                    && result.is_ok()
+                    && runtime.backend.name() == "direct"
+                    && !has_encoded(&task.layers))
+                .then_some(bytes as u64);
+                if host_staged {
+                    gpu_observation.finish(outcome, actual_io);
+                    observation.finish(outcome, None);
+                } else {
+                    observation.finish(outcome, actual_io);
+                }
                 finish_load(task, result.map(|_| ()), started, bytes);
             }
-            WorkerCommand::Save(SaveTask {
-                mut layers,
-                reply,
-                storage,
-                numa,
-                ssd_writes: _,
-                codec_groups,
-                ssd_admission,
-                #[cfg(feature = "tracing")]
-                trace_ctx,
-            }) => {
+            WorkerCommand::Save(
+                SaveTask {
+                    mut layers,
+                    reply,
+                    storage,
+                    numa,
+                    ssd_writes: _,
+                    codec_groups,
+                    ssd_admission,
+                    #[cfg(feature = "tracing")]
+                    trace_ctx,
+                },
+                mut observation,
+            ) => {
+                observation.admitted();
                 let encoded = storage
                     .as_ref()
                     .is_some_and(|s| s.codec != crate::StorageCodec::None);
@@ -445,6 +580,7 @@ fn worker_loop(
                     storage.as_deref(),
                     numa,
                     &codec_groups,
+                    &mut observation,
                 )
                 .and_then(|()| {
                     if encoded {
@@ -454,17 +590,187 @@ fn worker_loop(
                         &layers,
                         &runtime.stream,
                         runtime.backend.as_ref(),
+                        &mut observation,
                         #[cfg(feature = "tracing")]
                         trace_ctx,
                     )
                 })
                 .map(|()| layers);
+                let outcome = terminal_outcome(result.is_ok(), reply.is_closed());
+                let actual_io = if enabled() && runtime.backend.name() == "direct" && !encoded {
+                    result.as_ref().ok().map(|layers| transfer_shape(layers).0)
+                } else {
+                    None
+                };
+                observation.finish(outcome, actual_io);
                 drop(ssd_admission);
                 let _ = reply.send(result);
             }
         }
     }
     info!("GPU worker shutting down: device={device_id}");
+}
+
+fn terminal_outcome(completed: bool, consumer_closed: bool) -> Outcome {
+    if !completed {
+        Outcome::Failed
+    } else if consumer_closed {
+        Outcome::Cancelled
+    } else {
+        Outcome::Completed
+    }
+}
+
+fn has_encoded(layers: &[LayerTransferData]) -> bool {
+    layers.iter().any(|layer| {
+        layer.blocks.iter().any(|block| match &block.block {
+            TransferPayload::Pending => true,
+            TransferPayload::Owned(raw) => raw.encoding.is_some(),
+            TransferPayload::Cached {
+                sealed, slot_id, ..
+            } => sealed
+                .get_slot(*slot_id)
+                .is_some_and(|raw| raw.encoding.is_some()),
+            TransferPayload::Ssd {
+                source, slot_id, ..
+            } => source
+                .entry
+                .slots
+                .get(*slot_id)
+                .is_some_and(|slot| slot.encoding.is_some()),
+        })
+    })
+}
+
+fn transfer_shape(layers: &[LayerTransferData]) -> (u64, usize) {
+    let mut bytes = 0u64;
+    let mut fragments = 0usize;
+    for layer in layers {
+        for block in &layer.blocks {
+            if let Ok(copies) = layer.layout.block_copies(block.block_idx) {
+                match copies {
+                    BlockCopies::Contiguous(copy) => {
+                        bytes = bytes.saturating_add(copy.bytes as u64);
+                        fragments = fragments.saturating_add(1);
+                    }
+                    BlockCopies::Split { k, v } => {
+                        bytes = bytes
+                            .saturating_add(k.bytes as u64)
+                            .saturating_add(v.bytes as u64);
+                        fragments = fragments.saturating_add(2);
+                    }
+                }
+            }
+        }
+    }
+    (bytes, fragments)
+}
+
+fn transfer_key(
+    layers: &[LayerTransferData],
+    device: i32,
+    mode: TransferMode,
+    write: bool,
+    disk: bool,
+) -> (CostKey, u64) {
+    let (bytes, fragments) = transfer_shape(layers);
+    let encoded = has_encoded(layers);
+    let path = match (disk, encoded, write, mode) {
+        (true, _, false, _) => CostPath::GpuSsdLoad,
+        (true, _, true, _) => CostPath::GpuSsdSave,
+        (false, true, false, _) => CostPath::GpuDecode,
+        (false, true, true, _) => CostPath::GpuEncode,
+        (false, false, false, TransferMode::Direct) => CostPath::GpuLoadDirect,
+        (false, false, false, TransferMode::Kernel) => CostPath::GpuLoadKernel,
+        (false, false, true, TransferMode::Direct) => CostPath::GpuSaveDirect,
+        (false, false, true, TransferMode::Kernel) => CostPath::GpuSaveKernel,
+    };
+    let mut representation = None;
+    let mut add_format = |format| {
+        let next = Representation::from(format);
+        representation = Some(match representation {
+            Some(previous) if previous != next => Representation::Mixed,
+            _ => next,
+        });
+    };
+    for layer in layers {
+        for block in &layer.blocks {
+            let metadata = match &block.block {
+                TransferPayload::Pending => {
+                    add_format(layer.layout.storage_format);
+                    continue;
+                }
+                TransferPayload::Owned(raw) => raw.encoding.as_ref(),
+                TransferPayload::Cached {
+                    sealed, slot_id, ..
+                } => sealed
+                    .get_slot(*slot_id)
+                    .and_then(|raw| raw.encoding.as_ref()),
+                TransferPayload::Ssd {
+                    source, slot_id, ..
+                } => source
+                    .entry
+                    .slots
+                    .get(*slot_id)
+                    .and_then(|slot| slot.encoding.as_ref()),
+            };
+            match metadata {
+                Some(metadata) => metadata.iter().for_each(|meta| add_format(meta.format)),
+                None => add_format(orbitkv_state::StorageFormat::Exact),
+            }
+        }
+    }
+    (
+        CostKey::new(
+            path,
+            device as u64,
+            representation.unwrap_or(Representation::Raw),
+            bytes,
+            fragments,
+        ),
+        bytes,
+    )
+}
+
+fn raw_copy_keys(copies: &[CopyDesc], device: u64, write: bool) -> ([CostKey; 2], u64) {
+    let bytes = copies
+        .iter()
+        .fold(0u64, |bytes, copy| bytes.saturating_add(copy.size as u64));
+    let dma_ranges = crate::transfer::memcpy::merged_ranges(copies).count();
+    let paths = if write {
+        [CostPath::GpuSaveDirect, CostPath::GpuSaveKernel]
+    } else {
+        [CostPath::GpuLoadDirect, CostPath::GpuLoadKernel]
+    };
+    let keys = paths.map(|path| {
+        CostKey::new(path, device, Representation::Raw, bytes, copies.len())
+            .with_dma_ranges(dma_ranges)
+    });
+    (keys, bytes)
+}
+
+fn observe_raw_copies(
+    copies: &[CopyDesc],
+    device: u64,
+    backend: &str,
+    write: bool,
+    observation: &mut Observation,
+) {
+    if !enabled() || copies.is_empty() {
+        return;
+    }
+    let (keys, bytes) = raw_copy_keys(copies, device, write);
+    let selected = usize::from(backend == "kernel");
+    if !observation.refine_raw_copy(keys[selected], bytes) {
+        return;
+    }
+    // Mapped pinned ranges are the existing kernel backend's required evidence.
+    let candidates = if copies.iter().all(|copy| copy.host_device != 0) {
+        &keys[..]
+    } else {
+        &keys[..1]
+    };
+    shadow(candidates, selected);
 }
 
 /// Build one `CopyDesc` per GPU segment of every block across all layers,
@@ -586,6 +892,7 @@ fn process_save_task(
     layers: &[LayerTransferData],
     stream: &Arc<CudaStream>,
     backend: &dyn TransferBackend,
+    observation: &mut Observation,
     #[cfg(feature = "tracing")] trace_ctx: Option<::fastrace::prelude::SpanContext>,
 ) -> Result<(), EngineError> {
     trace_child!("gpu.save_task", trace_ctx);
@@ -594,6 +901,14 @@ fn process_save_task(
 
     let (copies, total_bytes) = build_copy_descs(layers)?;
 
+    observe_raw_copies(
+        &copies,
+        stream.context().ordinal() as u64,
+        backend.name(),
+        true,
+        observation,
+    );
+    observation.submitted();
     let submitted = backend.d2h(&copies, stream);
     finish_gpu_transfer(stream, submitted)?;
 

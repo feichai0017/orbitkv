@@ -90,6 +90,7 @@ def test_native_codec_matrix_preserves_workloads_and_only_requests_gds_stats_for
         assert ("--gds-stats" in command) == (
             value("--ssd-gib") != "0" and value("--ssd-backend") != "uring"
         )
+        assert "--ssd-read-path" not in command
         key = tuple(
             value(flag) for flag in ("--engine", "--workload", "--ssd-gib", "--ssd-backend")
         )
@@ -97,7 +98,8 @@ def test_native_codec_matrix_preserves_workloads_and_only_requests_gds_stats_for
     assert all(codecs == list(STORAGE_CODECS) for codecs in groups.values())
 
 
-def test_qualification_requires_gpu_restore_encoding_and_native_evidence(tmp_path):
+@pytest.mark.parametrize("read_path", [None, "cufile"])
+def test_qualification_requires_gpu_restore_encoding_and_native_evidence(tmp_path, read_path):
     run = {
         "directory": str(tmp_path),
         "manifest": {
@@ -105,6 +107,7 @@ def test_qualification_requires_gpu_restore_encoding_and_native_evidence(tmp_pat
                 "workload": "sustained",
                 "ssd_gib": 8,
                 "ssd_backend": "cufile",
+                "ssd_read_path": read_path,
                 "storage_codec": "ans",
             }
         },
@@ -120,7 +123,9 @@ def test_qualification_requires_gpu_restore_encoding_and_native_evidence(tmp_pat
     }
     native = {**native_io_stats(stats()), "backend_fallbacks": 0}
     (tmp_path / "native-io.json").write_text(json.dumps(native))
-    assert qualify_benchmark(run, usage)["measured_gpu_load_bytes"] == 8192
+    evidence = qualify_benchmark(run, usage)
+    assert evidence["measured_gpu_load_bytes"] == 8192
+    assert evidence["native_read_qualified"]
     with pytest.raises(ValueError, match="encoded-publication"):
         qualify_benchmark(run, {})
     usage["manager_delta"]["orbitkv_storage_codec_decode_failures_total"] = 1
@@ -134,6 +139,78 @@ def test_qualification_requires_gpu_restore_encoding_and_native_evidence(tmp_pat
     run["summary"][0]["orbitkv_load_bytes_total"] = 0
     with pytest.raises(ValueError, match="GPU restore evidence"):
         qualify_benchmark(run, usage)
+
+
+@pytest.mark.parametrize("workload", ["serial", "sustained"])
+def test_cufile_with_uring_reads_is_a_host_control_even_with_native_stats(tmp_path, workload):
+    load_key = "orbitkv_load_bytes" if workload == "serial" else "orbitkv_load_bytes_total"
+    row = {
+        load_key: 8192,
+        "orbitkv_ssd_read_bytes": 4096,
+        "orbitkv_ssd_prefetch_bytes_total": 4096,
+    }
+    run = {
+        "directory": str(tmp_path),
+        "manifest": {
+            "arguments": {
+                "workload": workload,
+                "ssd_gib": 8,
+                "ssd_backend": "cufile",
+                "ssd_read_path": "uring",
+                "storage_codec": "none",
+            }
+        },
+        "summary": [row],
+    }
+    usage = {"manager_delta": {"orbitkv_ssd_cufile_write_bytes_total": 8192}}
+    native = {**native_io_stats(stats()), "backend_fallbacks": 0}
+    (tmp_path / "native-io.json").write_text(json.dumps(native))
+    evidence = qualify_benchmark(run, usage)
+    assert evidence["measured_ssd_read_bytes"] == 4096
+    assert evidence["ssd_read_counter"] == "orbitkv_ssd_prefetch_bytes_total"
+    assert not evidence["native_read_qualified"]
+    assert "native_io" not in evidence
+    with pytest.raises(ValueError, match="write evidence"):
+        qualify_benchmark(run, {})
+    row["orbitkv_ssd_cufile_read_bytes_total"] = 4096
+    with pytest.raises(ValueError, match="different path"):
+        qualify_benchmark(run, usage)
+    row["orbitkv_ssd_prefetch_bytes_total"] = 0
+    with pytest.raises(ValueError, match="GPU restore evidence"):
+        qualify_benchmark(run, usage)
+
+
+@pytest.mark.parametrize("read_path", ["uring", "cufile"])
+@pytest.mark.parametrize("preparation", ["queue_warmup", "prepare_requests"])
+def test_explicit_read_qualification_rejects_preparation_but_preserves_default_controls(
+    tmp_path, read_path, preparation
+):
+    arguments = {
+        "workload": "sustained",
+        "ssd_gib": 8,
+        "ssd_backend": "cufile",
+        "ssd_read_path": read_path,
+        "storage_codec": "none",
+        preparation: "on",
+    }
+    run = {
+        "directory": str(tmp_path),
+        "manifest": {"arguments": arguments},
+        "summary": [
+            {
+                "orbitkv_load_bytes_total": 8192,
+                "orbitkv_ssd_cufile_read_bytes_total": 4096,
+                "orbitkv_ssd_prefetch_bytes_total": 4096,
+            }
+        ],
+    }
+    usage = {"manager_delta": {"orbitkv_ssd_cufile_write_bytes_total": 8192}}
+    native = {**native_io_stats(stats()), "backend_fallbacks": 0}
+    (tmp_path / "native-io.json").write_text(json.dumps(native))
+    with pytest.raises(ValueError, match="cannot separate demand and preparation reads"):
+        qualify_benchmark(run, usage)
+    arguments["ssd_read_path"] = None
+    assert qualify_benchmark(run, usage)["native_read_qualified"]
 
 
 def test_container_is_rejected_before_any_gpu_probe(monkeypatch, tmp_path):

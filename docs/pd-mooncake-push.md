@@ -68,6 +68,12 @@ Mooncake Store as its state authority.
 - A transfer notification is accepted only for the matching request ID.
 - The decode side waits for the expected number of producer notifications.
 - Failure/abort notifications never publish the destination as complete.
+- Queued writes carry the producer request generation and captured destination
+  authorization. Reusing a request ID cannot redirect an old task into new
+  pages. Overlapping chunks share a generation only while their authorization
+  and target mapping remain unchanged.
+- Producer release waits for admitted writes to drain even after another task
+  reports an error; an error alone does not permit retiring authorization.
 - vLLM retains ownership of source/destination HBM pages; OrbitKV's proposed
   semantic and execution frontiers are not enforced by the current connector.
 

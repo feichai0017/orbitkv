@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use orbitkv_state::RecoveryDemand;
+
 use crate::{
     CallOptions, CancelQueryRequest, ChannelClient, ChannelError, PublishRequest,
     QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode, QueryTicket,
@@ -33,11 +35,11 @@ struct PendingQuery {
     prepared_until: Option<Instant>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QueryIntent {
     Lookup { wait_for_full_prefix: bool },
     Candidates,
-    Recovery,
+    Recovery(RecoveryDemand),
 }
 
 /// Immutable query hashes with shared, allocation-free prefix views.
@@ -106,20 +108,11 @@ impl Queries {
         intent: QueryIntent,
     ) -> Result<QueryCommand, ChannelError> {
         if let Some(query) = self.pending.get_mut(key) {
-            if query.prepared_until.is_some()
-                && query.hashes == *hashes
-                && (intent == QueryIntent::Recovery
-                    || (key.group == 0
-                        && intent
-                            == QueryIntent::Lookup {
-                                wait_for_full_prefix: false,
-                            }))
-            {
+            if query.prepared_until.is_some() && query.hashes == *hashes && query.intent == intent {
                 query.prepared_until = None;
-                query.intent = intent;
                 return Ok(QueryCommand::Claim {
                     ticket: query.ticket,
-                    count_lookup: intent != QueryIntent::Recovery,
+                    count_lookup: matches!(&intent, QueryIntent::Lookup { .. }),
                 });
             }
             if query.hashes == *hashes && query.intent == intent {
@@ -131,7 +124,7 @@ impl Queries {
                 .checked_add(1)
                 .ok_or(ChannelError::SessionRequiresReconnect)?;
             query.hashes = hashes.clone();
-            query.intent = intent;
+            query.intent = intent.clone();
             query.prepared_until = None;
         } else {
             let ticket = self.ticket()?;
@@ -140,7 +133,7 @@ impl Queries {
                 PendingQuery {
                     ticket,
                     hashes: hashes.clone(),
-                    intent,
+                    intent: intent.clone(),
                     prepared_until: None,
                 },
             );
@@ -153,15 +146,19 @@ impl Queries {
             block_hashes: query.hashes.as_slice().to_vec(),
             group_id: key.group,
             wait_for_full_prefix: matches!(
-                intent,
+                &intent,
                 QueryIntent::Lookup {
                     wait_for_full_prefix: true
                 }
             ),
             warmup: false,
             discover: intent == QueryIntent::Candidates,
-            materialize: intent == QueryIntent::Recovery,
+            materialize: matches!(&intent, QueryIntent::Recovery(_)),
             prepare: false,
+            demand: match intent {
+                QueryIntent::Recovery(demand) => Some(demand),
+                _ => None,
+            },
         }))
     }
 
@@ -270,7 +267,7 @@ impl CacheClient {
             self.cancel(query.ticket)?;
         }
         let previous = queries.pending.get(&key).map(|query| query.ticket);
-        let command = queries.prepare(&key, hashes, intent)?;
+        let command = queries.prepare(&key, hashes, intent.clone())?;
         let response = self
             .channel
             .query_bundle(next_id(&self.requests)?, &command);
@@ -324,8 +321,14 @@ impl CacheClient {
         let selected = hashes
             .slice(range.clone())
             .ok_or(orbitkv_state::RecoveryError::InvalidSpan)?;
-        let mut response =
-            self.query(instance, &selected, request, group, QueryIntent::Recovery)?;
+        let demand = contract.demand(namespace, span)?;
+        let mut response = self.query(
+            instance,
+            &selected,
+            request,
+            group,
+            QueryIntent::Recovery(demand),
+        )?;
         if response.outcome == QueryOutcomeCode::Ready {
             let complete = response.num_hit_blocks as usize == range.len()
                 && (range.is_empty() || !response.lease.is_empty())
@@ -372,10 +375,50 @@ impl CacheClient {
         let hashes = hashes
             .slice(range)
             .ok_or(orbitkv_state::RecoveryError::InvalidSpan)?;
+        let demand = read.contract.demand(read.namespace, read.span)?;
+        self.prepare_query(
+            instance,
+            hashes,
+            request,
+            read.group,
+            QueryIntent::Recovery(demand),
+        )
+    }
+
+    /// Prepare an unselected attention prefix. A matching ordinary lookup may
+    /// claim its partial prefix and counts the logical lookup exactly once.
+    pub fn prepare_prefix(
+        &self,
+        instance: &str,
+        hashes: &BlockHashes,
+        request: &str,
+    ) -> Result<bool, ChannelError> {
+        self.prepare_query(
+            instance,
+            hashes.clone(),
+            request,
+            0,
+            QueryIntent::Lookup {
+                wait_for_full_prefix: false,
+            },
+        )
+    }
+
+    fn prepare_query(
+        &self,
+        instance: &str,
+        hashes: BlockHashes,
+        request: &str,
+        group: u32,
+        intent: QueryIntent,
+    ) -> Result<bool, ChannelError> {
+        if hashes.as_slice().is_empty() {
+            return Ok(false);
+        }
         let key = QueryKey {
             instance: instance.into(),
             request: request.into(),
-            group: read.group,
+            group,
         };
         let mut queries = self
             .queries
@@ -411,12 +454,16 @@ impl CacheClient {
                 instance_id: instance.into(),
                 request_id: request.into(),
                 block_hashes: hashes.as_slice().to_vec(),
-                group_id: read.group,
+                group_id: group,
                 wait_for_full_prefix: false,
                 warmup: false,
                 discover: false,
-                materialize: true,
+                materialize: matches!(&intent, QueryIntent::Recovery(_)),
                 prepare: true,
+                demand: match &intent {
+                    QueryIntent::Recovery(demand) => Some(demand.clone()),
+                    _ => None,
+                },
             }),
         );
         match response {
@@ -426,7 +473,7 @@ impl CacheClient {
                     PendingQuery {
                         ticket,
                         hashes,
-                        intent: QueryIntent::Recovery,
+                        intent,
                         prepared_until: Some(now + PREPARATION_TTL),
                     },
                 );
@@ -494,6 +541,7 @@ impl CacheClient {
                 discover: false,
                 materialize: false,
                 prepare: false,
+                demand: None,
             }),
         )?;
         match response.outcome {

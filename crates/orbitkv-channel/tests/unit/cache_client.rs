@@ -49,7 +49,15 @@ fn polls_reuse_hash_storage_and_changed_demand_revises_one_ticket() {
             3,
         ),
         (vec![b"changed".as_slice()], QueryIntent::Candidates, 4),
-        (vec![b"changed".as_slice()], QueryIntent::Recovery, 5),
+        (
+            vec![b"changed".as_slice()],
+            QueryIntent::Recovery(RecoveryDemand {
+                page_tokens: 16,
+                span: orbitkv_state::TokenRange { start: 0, end: 16 },
+                groups: vec![(0, orbitkv_state::TokenRange { start: 0, end: 16 })],
+            }),
+            5,
+        ),
     ] {
         let QueryCommand::Submit(changed) = queries.prepare(&key, &hashes(&bytes), intent).unwrap()
         else {
@@ -117,6 +125,84 @@ fn hash_views_share_storage_but_do_not_hide_changed_content_or_bounds() {
         queries.prepare(&key("m", 0), &prefix, LOOKUP).unwrap(),
         QueryCommand::Submit(_)
     ));
+}
+
+#[test]
+fn preparations_and_polls_require_the_complete_selected_demand() {
+    use orbitkv_state::TokenRange;
+    let span = TokenRange { start: 64, end: 96 };
+    let demand = RecoveryDemand {
+        page_tokens: 16,
+        span,
+        groups: vec![(0, span), (1, TokenRange { start: 80, end: 96 })],
+    };
+    let mut shifted = demand.clone();
+    shifted.span = TokenRange {
+        start: 80,
+        end: 112,
+    };
+    shifted.groups = vec![
+        (0, shifted.span),
+        (
+            1,
+            TokenRange {
+                start: 96,
+                end: 112,
+            },
+        ),
+    ];
+    let mut other_group = demand.clone();
+    other_group.groups[1].1.start = 64;
+    let batch = hashes(&[b"same-a", b"same-b"]);
+    let key = key("registered-shard", 0);
+    for (intent, unchanged) in [
+        (QueryIntent::Recovery(demand.clone()), true),
+        (QueryIntent::Recovery(shifted), false),
+        (QueryIntent::Recovery(other_group), false),
+        (LOOKUP, false),
+    ] {
+        for prepared in [false, true] {
+            let mut queries = Queries::default();
+            let QueryCommand::Submit(first) = queries
+                .prepare(&key, &batch, QueryIntent::Recovery(demand.clone()))
+                .unwrap()
+            else {
+                panic!("initial submit")
+            };
+            if prepared {
+                queries.pending.get_mut(&key).unwrap().prepared_until =
+                    Some(Instant::now() + PREPARATION_TTL);
+            }
+            let command = queries.prepare(&key, &batch, intent.clone()).unwrap();
+            if unchanged {
+                assert_eq!(
+                    command,
+                    if prepared {
+                        QueryCommand::Claim {
+                            ticket: first.ticket,
+                            count_lookup: false,
+                        }
+                    } else {
+                        QueryCommand::Poll(first.ticket)
+                    }
+                );
+            } else {
+                let QueryCommand::Submit(next) = command else {
+                    panic!("changed demand must submit")
+                };
+                assert_eq!(next.ticket.operation_id, first.ticket.operation_id);
+                assert_eq!(next.ticket.revision, first.ticket.revision + 1);
+                assert_eq!(
+                    next.demand,
+                    match &intent {
+                        QueryIntent::Recovery(demand) => Some(demand.clone()),
+                        _ => None,
+                    }
+                );
+            }
+            assert!(queries.pending[&key].prepared_until.is_none());
+        }
+    }
 }
 
 /// Real bootstrap/descriptor framing with controlled completion timing.
@@ -451,6 +537,25 @@ fn planned_read_fetches_only_its_window_and_releases_a_stale_partial_lease() {
             let request = match QueryCommand::decode(bytes).unwrap() {
                 QueryCommand::Submit(request) if request.prepare => {
                     assert_eq!(request.block_hashes, vec![b"c".to_vec(), b"d".to_vec()]);
+                    assert_eq!(
+                        request.demand.as_ref().unwrap().groups,
+                        vec![
+                            (
+                                0,
+                                TokenRange {
+                                    start: 64,
+                                    end: 128
+                                }
+                            ),
+                            (
+                                1,
+                                TokenRange {
+                                    start: 96,
+                                    end: 128
+                                }
+                            ),
+                        ]
+                    );
                     preparations.lock().unwrap().insert(request.ticket, request);
                     return Some(loading());
                 }
@@ -463,6 +568,34 @@ fn planned_read_fetches_only_its_window_and_releases_a_stale_partial_lease() {
             };
             assert!(!request.discover);
             assert!(request.materialize);
+            let demand = request.demand.as_ref().unwrap();
+            assert_eq!(demand.page_tokens, 16);
+            assert_eq!(
+                demand.span,
+                TokenRange {
+                    start: 64,
+                    end: 128
+                }
+            );
+            assert_eq!(
+                demand.groups,
+                vec![
+                    (
+                        0,
+                        TokenRange {
+                            start: 64,
+                            end: 128
+                        }
+                    ),
+                    (
+                        1,
+                        TokenRange {
+                            start: 96,
+                            end: 128
+                        }
+                    ),
+                ]
+            );
             assert_eq!(request.block_hashes, vec![b"c".to_vec(), b"d".to_vec()]);
             let count = if request.request_id == "stale" { 1 } else { 2 };
             Some(
@@ -518,4 +651,65 @@ fn planned_read_fetches_only_its_window_and_releases_a_stale_partial_lease() {
         .unwrap();
     assert_eq!(prepared.hit_positions, vec![2, 3]);
     assert_eq!(prepared.lease, vec![7]);
+}
+
+#[test]
+fn prepared_prefix_claims_partial_hits_without_an_extra_payload_query() {
+    let preparations = Arc::new(Mutex::new(HashMap::new()));
+    let calls = Arc::new(AtomicU64::new(0));
+    let observed_calls = Arc::clone(&calls);
+    let released = Arc::new(AtomicBool::new(false));
+    let observed_release = Arc::clone(&released);
+    let peer = Peer::new(move |command, bytes, _| match command.code {
+        CommandCode::QueryBundle => {
+            observed_calls.fetch_add(1, Ordering::Relaxed);
+            match QueryCommand::decode(bytes).unwrap() {
+                QueryCommand::Submit(request) => {
+                    assert!(request.prepare);
+                    assert!(!request.materialize && !request.discover && !request.warmup);
+                    assert!(!request.wait_for_full_prefix && request.demand.is_none());
+                    assert_eq!(request.group_id, 0);
+                    assert_eq!(
+                        request.block_hashes,
+                        vec![b"present".to_vec(), b"missing".to_vec()]
+                    );
+                    preparations.lock().unwrap().insert(request.ticket, request);
+                    Some(loading())
+                }
+                QueryCommand::Claim {
+                    ticket,
+                    count_lookup: true,
+                } => {
+                    preparations.lock().unwrap().remove(&ticket).unwrap();
+                    Some(
+                        QueryBundleResponse {
+                            outcome: QueryOutcomeCode::Ready,
+                            num_hit_blocks: 1,
+                            lease: vec![7],
+                            hit_positions: vec![],
+                        }
+                        .encode()
+                        .unwrap(),
+                    )
+                }
+                other => panic!("unexpected foreground operation: {other:?}"),
+            }
+        }
+        CommandCode::Release => {
+            observed_release.store(true, Ordering::Release);
+            Some(Vec::new())
+        }
+        other => panic!("unexpected {other:?}"),
+    });
+    let client = peer.client();
+    let batch = hashes(&[b"present", b"missing"]);
+    assert!(client.prepare_prefix("m", &batch, "prefix").unwrap());
+    assert!(!client.prepare_prefix("m", &batch, "prefix").unwrap());
+    let ready = client.query("m", &batch, "prefix", 0, LOOKUP).unwrap();
+    assert_eq!(ready.num_hit_blocks, 1);
+    assert_eq!(ready.lease, vec![7]);
+    assert_eq!(calls.load(Ordering::Acquire), 2);
+    assert!(!released.load(Ordering::Acquire));
+    client.release(ready.lease).unwrap();
+    assert!(released.load(Ordering::Acquire));
 }
