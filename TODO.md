@@ -27,7 +27,7 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Default to automatic native cuFile initialization with io_uring fallback;
   stop new GPU I/O after an operation failure without revoking in-flight ownership.
 - [x] Reserve physical GPU-storage file space before admission; report allocation
-  failures and release partial startup reservations. Keep file ownership in `backing/ssd/files.rs`.
+  failures and release partial startup reservations. Keep file ownership in `storage/ssd/files.rs`.
 - [x] Implement bounded Rust asynchronous cuFile submissions with reusable staging
   slots, stream/event completion, per-operation byte/error checks and cancellation drain.
 - [x] Coalesce reads by file across leased sources without broadening required ranges;
@@ -86,8 +86,12 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   coverage across groups/ranks, with actual destination and staging admission.
 - [ ] Separate operation observations from complete-route estimates and attach
   live resource evidence, without double-counting queue time or composite stages.
-  Restructure modules with their actual consumers, following the
-  [target ownership layout](docs/state-planning.md#code-ownership-and-migration).
+- [x] Establish the [ownership layout](docs/state-planning.md#code-ownership-and-migration):
+  DRAM/SSD residency under `storage/`, peer workflows under `peer/`, inbound RPC
+  adaptation in Server, shared reads in `query/`, publication in its worker,
+  and separate cost observation/estimate/shadow modules. Remove the former
+  `backing/`, `internode/`, weak insert dependency wrapper and storage forwarding
+  methods; hold registered pinned pools through Mooncake unregister.
 
 Follow [P4](docs/state-planning.md#p4-calibrate-costs-and-choose-useful-writes)
 and its [deployment contracts](docs/state-planning.md#policies-by-deployment-mode).

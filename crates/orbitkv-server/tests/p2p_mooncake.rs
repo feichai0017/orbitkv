@@ -19,6 +19,7 @@ use orbitkv_proto::proto::engine::{
     OpenTransferWindowRequest, QueryBlocksForTransferRequest, ReleaseTransferLockRequest,
     TransferTicket, catalog_server::CatalogServer, engine_client::EngineClient,
 };
+use orbitkv_server::P2pTransferService;
 use orbitkv_server::proto::engine::engine_server::EngineServer;
 use orbitkv_state::group_hash;
 use orbitkv_state::{BlockCandidates, CATALOG_SHARDS, StateKey, catalog_shard};
@@ -304,12 +305,12 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     ));
     membership_a.replace_members([("a".into(), membership_a.owner().clone())]);
     assert!(membership_a.renew(Instant::now(), Duration::from_secs(300)));
-    let config_a = StorageConfig {
+    let config_a = EngineConfig {
         membership: Some(membership_a.clone()),
         mooncake_nic_names: mooncake_nics(),
         transfer_budget_bytes: Some(TOTAL_SIZE),
         transfer_lock_timeout: Duration::ZERO,
-        ..StorageConfig::default()
+        ..EngineConfig::default()
     };
     let engine_a = Arc::new(
         OrbitKVEngine::new_with_config(16 << 20, false, config_a).expect("engine A should start"),
@@ -534,10 +535,10 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     membership_a.replace_members(members.clone());
     membership_b.replace_members(members);
     assert!(membership_b.renew(Instant::now(), Duration::from_secs(300)));
-    let config_b = StorageConfig {
+    let config_b = EngineConfig {
         membership: Some(membership_b.clone()),
         mooncake_nic_names: mooncake_nics(),
-        ..StorageConfig::default()
+        ..EngineConfig::default()
     };
     let engine_b =
         OrbitKVEngine::new_with_config(16 << 20, false, config_b).expect("engine B should start");
@@ -823,7 +824,7 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                 OrbitKVEngine::new_with_config(
                     16 << 20,
                     false,
-                    StorageConfig {
+                    EngineConfig {
                         codec,
                         ssd_cache_config,
                         membership: Some(view),

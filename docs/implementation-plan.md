@@ -45,8 +45,12 @@ was merged at `b1aef401`; the design in
 [PR #183](https://github.com/feichai0017/orbitkv/pull/183) was merged at `13ac3a9d`.
 The first structural implementation is in
 [PR #184](https://github.com/feichai0017/orbitkv/pull/184), on
-`refactor/replica-route-planning`, based on that merge. Recheck Git status before
-working and preserve existing changes. P4.1
+`refactor/replica-route-planning`, based on that merge. Batch candidate retention
+and source acquisition follow in [PR #185](https://github.com/feichai0017/orbitkv/pull/185).
+The ownership refactor now follows the implemented
+[Core layout](architecture.md#core-module-ownership): DRAM/SSD, peer, planning,
+query, publication and costs have distinct owners; old `backing/` and `internode/`
+trees are removed. Recheck Git status before working and preserve existing changes. P4.1
 observations, independent SSD demand routes and the fixed DMA/kernel comparison
 are recorded below; dynamic execution selection remains planned.
 
@@ -246,7 +250,7 @@ work proceed alongside distributed qualification; no warming speedup gates DP.
 
 | Order / existing stage | Deliverable | Main owners | Exit evidence |
 | --- | --- | --- | --- |
-| First: P4.1 | Bounded Rust cost observations and shadow decisions | Core transfer/backing/query; existing metrics and benchmarks | Prediction error on executed work, bounded state, measured instrumentation overhead; unchanged recovery behavior |
+| First: P4.1 | Bounded Rust cost observations and shadow decisions | Core transfer/storage/query; existing metrics and benchmarks | Prediction error on executed work, bounded state, measured instrumentation overhead; unchanged recovery behavior |
 | Alongside: deployment packaging | Installed Manager/engine images, shared-node qualification, explicit container profile; then isolated registration | Server registry/endpoint, channel, core transfer, thin adapters, release tooling | Both engines in separate processes/containers, concurrent instances, device remapping and restart/drain; real cluster gate before Kubernetes claims |
 | P4.2 | Independent io_uring/cuFile SSD routes, full-restore shadow and fixed DMA/kernel controls implemented; qualify per-batch choice next | Transfer workers, neutral SSD extent leases/queues and cost state | Route correctness and fixed-backend results below; io_uring/native-GDS comparison on a qualified host; shared-device budget, switching margin and conservative selection with weak evidence |
 | P4.3 / remaining P3 | Choose legal restore boundary vs recompute; first-use preparation and queue shares | Recovery contract, query/prefetch, engine admission callbacks | TTFT/ITL targets, bounded unused prepared bytes, cancellation/expiry/reordering and other-request progress |
@@ -254,7 +258,7 @@ work proceed alongside distributed qualification; no warming speedup gates DP.
 | D1, in parallel | Real two-host independent-replica recovery, first TP=1 | Catalog/cluster, peer authorization, TE and existing serving driver | Output controls, positive remote/GPU bytes, incarnation rejection, loss/partition cleanup; TCP and RDMA reported separately |
 | After D1: P/D plus reuse | Compose the existing vLLM handoff with cache; integrate SGLang's own handoff lifecycle | Engine adapters/P-D integration plus shared Rust lifetime logic | Cached P prefix reaches D; later P reuses D state; failed/cancelled handoffs cannot expose partial state |
 | D2, before production distributed use | Replicated catalog evidence, placement generations, repair and operational recovery | Catalog, inventory sync and server cluster | Three failure domains, coordinator/catalog outage, bounded replay and source holds; etcd replication alone is insufficient |
-| D3 | Measured peer selection and source-local SSD staging; evaluate dedicated cache nodes | Existing backing/peer workers and common cost observations | Forced source DRAM eviction, real SSD/TE bytes, bounded two-sided credits and useful latency under mixed load |
+| D3 | Measured peer selection and source-local SSD staging; evaluate dedicated cache nodes | Existing SSD/peer workers and common cost observations | Forced source DRAM eviction, real SSD/TE bytes, bounded two-sided credits and useful latency under mixed load |
 | Later topology gates / P6 | Same-host TP per replica, then cross-host TP/PP and layer overlap | Engine coordination, state contract and transfer dependencies | Rank/stage completion, compatible layouts, graph-capture/overlap tests; resharding separately gated |
 | R1 | Optional pinned Dynamo worker routing fed by cache/engine summaries | Server-side optional integration | Correct event/hash mapping and request reservations; selected Manager revalidates actual state |
 
@@ -299,8 +303,8 @@ transfers. Adding these timers together would double count work.
 | --- | --- |
 | GPU copy shape and completion | `crates/orbitkv-core/src/transfer/{mod.rs,memcpy.rs,kernel.rs,worker/}` |
 | Codec time, payload and workspace | `crates/orbitkv-core/src/codec/`, `transfer/worker/codec.rs`, `transfer/worker/ssd/decode.rs` |
-| SSD queue and operation time | `crates/orbitkv-core/src/backing/ssd/`, `transfer/worker/ssd/` |
-| Peer discovery/authorization/TE stages | `crates/orbitkv-core/src/internode/`, `backing/mooncake_fetch.rs`, `crates/orbitkv-transfer/` |
+| SSD queue and operation time | `crates/orbitkv-core/src/storage/ssd/`, `transfer/worker/ssd/` |
+| Peer discovery/authorization/TE stages | `crates/orbitkv-core/src/peer/`, `peer/read.rs`, `crates/orbitkv-transfer/` |
 | Budget, candidate selection and leases | `crates/orbitkv-core/src/query/`, `engine/query.rs` |
 | Exported metrics / request timelines | `crates/orbitkv-core/src/metrics.rs`, `crates/orbitkv-server/src/metric/timeline.rs` |
 | Tests / serving measurements | Crate `tests/unit/` and integration tests, `python/tests/`, repository-root `benches/` |

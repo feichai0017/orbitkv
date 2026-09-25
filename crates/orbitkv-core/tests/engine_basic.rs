@@ -6,7 +6,7 @@
 mod common;
 
 use common::*;
-use orbitkv_core::{LayerSave, StorageConfig, TransferMode};
+use orbitkv_core::{EngineConfig, LayerSave, TransferMode};
 
 /// Full save -> query -> load round-trip with data integrity check.
 #[tokio::test]
@@ -161,9 +161,9 @@ async fn page_first_rejects_partial_layer_save() {
 async fn save_query_load_roundtrip_with_numa() {
     let env = TestEnvBuilder::new("test-roundtrip-numa", "test-ns")
         .layer("layer_0", 4, 1024)
-        .storage(StorageConfig {
+        .storage(EngineConfig {
             enable_numa_affinity: true,
-            ..StorageConfig::default()
+            ..EngineConfig::default()
         })
         .build();
     let hashes = env.hashes(0);

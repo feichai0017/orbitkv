@@ -22,7 +22,7 @@ orbitkv/
 │   ├── orbitkv-state/           # Framework-neutral state and recovery contracts
 │   ├── orbitkv-channel/         # iceoryx2/UDS process transport
 │   ├── orbitkv-common/           # Process logging and peer-connection defaults
-│   ├── orbitkv-core/             # Cache engine, storage, and backing tiers
+│   ├── orbitkv-core/             # Storage owners, planning, costs and execution
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
 │   ├── orbitkv-server/           # Cache Manager orchestration and protocol adapters
 │   ├── orbitkv-catalog/       # Embedded sharded replica directory
@@ -71,13 +71,15 @@ orbitkv/
 - `crates/orbitkv-core/src/memory/`: NUMA, allocations and pools
 - `crates/orbitkv-core/src/transfer/`: GPU layouts, copy backends and worker ownership
 - `crates/orbitkv-core/src/codec/`: GPU ANS/FP8/TurboQuant and bounded representation validation
-- `crates/orbitkv-core/src/backing/ssd/`: SSD index, io_uring and optional cuFile read/write
-- `crates/orbitkv-core/src/storage/mod.rs`: storage pipeline
+- `crates/orbitkv-core/src/storage/ssd/`: SSD index, io_uring and optional cuFile read/write
+- `crates/orbitkv-core/src/storage/mod.rs`: residency assembly and pinned-memory reclamation
+- `crates/orbitkv-core/src/storage/dram/`: DRAM residency, policy and inventory
+- `crates/orbitkv-core/src/storage/publish.rs`: queued sealing and DRAM/SSD publication
+- `crates/orbitkv-core/src/cost/`: bounded observations, estimates and shadow comparisons
 - `crates/orbitkv-core/src/planning/`: batch candidates/targets, SSD route eligibility/acquisition and peer source segmentation
 - `crates/orbitkv-core/src/query/`: byte admission, shared-read coordination, query leases and ownership handoff
-- `crates/orbitkv-core/src/backing/`: SSD and Mooncake-backed remote tiers
-- `crates/orbitkv-core/src/internode/`: cross-node coordination
-- `crates/orbitkv-core/src/internode/p2p_service.rs`: peer transfer control service
+- `crates/orbitkv-core/src/peer/`: catalog discovery, authoritative source exports, remote READ and completion ownership
+- `crates/orbitkv-server/src/peer.rs`: peer transfer control service
 - `crates/orbitkv-server/src/cache/`: cache operations, lifecycle, and pending queries
 - `crates/orbitkv-server/src/endpoint/`: two-process iceoryx2 endpoint and authenticated UDS lifecycle channel
 - `crates/orbitkv-server/src/wire.rs`: protobuf-to-cache registration conversion

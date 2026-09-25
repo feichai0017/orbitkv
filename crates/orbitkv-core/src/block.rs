@@ -1,5 +1,5 @@
 // ============================================================================
-// Block types for StorageEngine
+// Block types for Storage
 // ============================================================================
 
 use std::fmt;
@@ -42,7 +42,7 @@ pub struct QueryResult {
 pub enum RestoreSource {
     Memory(Arc<SealedBlock>),
     Ssd {
-        lease: Arc<crate::backing::ssd::SsdReadLease>,
+        lease: Arc<crate::storage::ssd::SsdReadLease>,
         path: crate::SsdReadPath,
     },
 }
@@ -202,6 +202,11 @@ impl RawBlock {
             encoding: None,
             total_size,
         }
+    }
+
+    /// Stored representation metadata for wire adapters; absence means raw data.
+    pub fn encoding(&self) -> Option<&[crate::EncodedSegment]> {
+        self.encoding.as_deref()
     }
 
     pub(crate) fn validate_encoding(&self) -> Result<(), String> {
@@ -494,7 +499,7 @@ pub(crate) enum SlotInsertResult {
 // Inflight Block (write path, mutable)
 // ============================================================================
 
-/// Block that is still being written. Internal to StorageEngine.
+/// Block that is still being written. Internal to Storage.
 pub(crate) struct InflightBlock {
     slots: Vec<Option<RawBlock>>,
     remaining: usize,

@@ -11,7 +11,6 @@ use orbitkv_state::StorageFormat;
 use super::{LayerTransferData, TransferPayload, WorkerRuntime};
 use crate::{
     EngineError, SlotMeta,
-    backing::ssd::cufile::{CopyRange, GpuSlot, plan_writes},
     block::{RawBlock, Segment, StateKey},
     codec::{
         EncodedSegment,
@@ -21,7 +20,8 @@ use crate::{
     cost::Observation,
     memory::numa::NumaNode,
     metrics::core_metrics,
-    storage::StorageEngine,
+    storage::Storage,
+    storage::ssd::cufile::{CopyRange, GpuSlot, plan_writes},
     transfer::{finish_gpu_transfer, layout::BlockCopies},
 };
 
@@ -77,7 +77,7 @@ struct SavedSegment {
 pub(super) fn save(
     runtime: &WorkerRuntime,
     layers: &mut [LayerTransferData],
-    storage: Option<&StorageEngine>,
+    storage: Option<&Storage>,
     numa: NumaNode,
     groups: &[SaveGroup],
     observation: &mut Observation,
@@ -144,7 +144,7 @@ fn save_blocks(
     runtime: &WorkerRuntime,
     codec: &mut GpuCodec,
     layers: &mut [LayerTransferData],
-    storage: &StorageEngine,
+    storage: &Storage,
     numa: NumaNode,
     blocks: &[(usize, usize)],
     key: Option<&StateKey>,
@@ -371,7 +371,7 @@ fn save_blocks(
 
 fn write_gpu(
     runtime: &WorkerRuntime,
-    storage: &StorageEngine,
+    storage: &Storage,
     key: &StateKey,
     numa: NumaNode,
     blocks: &[(usize, usize)],

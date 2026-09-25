@@ -311,6 +311,7 @@ impl PinnedMemoryPool {
     }
 
     /// Return the base pointer and length of the backing pinned memory.
+    #[cfg(feature = "mooncake")]
     fn memory_region(&self) -> (NonNull<u8>, usize) {
         let ptr = NonNull::new(self.backing.as_ptr() as *mut u8)
             .expect("PinnedMemoryPool backing pointer is null");
@@ -438,6 +439,7 @@ impl ShardedPinnedPool {
     }
 
     /// Return all backing memory regions (one per shard).
+    #[cfg(feature = "mooncake")]
     fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
         self.shards.iter().map(|s| s.memory_region()).collect()
     }
@@ -587,6 +589,7 @@ impl NumaAwarePinnedPools {
     }
 
     /// Return all backing memory regions across all NUMA nodes and shards.
+    #[cfg(feature = "mooncake")]
     fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
         self.pools
             .values()
@@ -711,6 +714,7 @@ impl PinnedAllocator {
     }
 
     /// Return all backing memory regions as `(ptr, len)` pairs.
+    #[cfg(feature = "mooncake")]
     pub(crate) fn memory_regions(&self) -> Vec<(NonNull<u8>, usize)> {
         match self {
             Self::Global(pool) => pool.memory_regions(),

@@ -7,9 +7,9 @@ pub(super) use queue::{MAX_WRITES, run};
 
 use orbitkv_state::StorageFormat;
 
-use crate::backing::ssd::cufile::{CopyRange, CufileFile, IoBatch, plan_reads};
-use crate::backing::ssd::{GpuWriteLease, SsdReadLease};
 use crate::codec::{EncodedSegment, segment_format};
+use crate::storage::ssd::cufile::{CopyRange, CufileFile, IoBatch, plan_reads};
+use crate::storage::ssd::{GpuWriteLease, SsdReadLease};
 use crate::transfer::layout::BlockCopies;
 use crate::{EngineError, SlotMeta};
 

@@ -4,19 +4,19 @@ mod common;
 
 use common::{GpuBuffer, TestEnvBuilder};
 use orbitkv_core::{
-    LayerSave, OrbitKVEngine, QueryLeaseId, QueryMode, RestoreSource, SsdBackend, SsdCacheConfig,
-    StorageCodec, StorageConfig, TransferMode,
+    EngineConfig, LayerSave, OrbitKVEngine, QueryLeaseId, QueryMode, RestoreSource, SsdBackend,
+    SsdCacheConfig, StorageCodec, TransferMode,
 };
 
-fn storage(file: std::path::PathBuf, capacity_bytes: u64) -> StorageConfig {
-    StorageConfig {
+fn storage(file: std::path::PathBuf, capacity_bytes: u64) -> EngineConfig {
+    EngineConfig {
         ssd_cache_config: Some(SsdCacheConfig {
             cache_paths: vec![file],
             capacity_bytes,
             backend: SsdBackend::Cufile,
             ..SsdCacheConfig::default()
         }),
-        ..StorageConfig::default()
+        ..EngineConfig::default()
     }
 }
 
@@ -34,13 +34,13 @@ async fn automatic_fallback_preserves_host_layout_and_small_block_capacity() {
     let env = TestEnvBuilder::new("auto-fallback", "auto-fallback")
         .layer("attention", 4, 512)
         .pool_size(64 * 1024)
-        .storage(StorageConfig {
+        .storage(EngineConfig {
             ssd_cache_config: Some(SsdCacheConfig {
                 cache_paths: vec![dir.path().join("cache.bin")],
                 capacity_bytes: 4096,
                 ..SsdCacheConfig::default()
             }),
-            ..StorageConfig::default()
+            ..EngineConfig::default()
         })
         .build();
     let hashes = common::make_block_hashes(4, 71);

@@ -2,6 +2,8 @@ mod cache;
 mod check_cuda_version;
 mod cluster;
 mod endpoint;
+mod peer;
+pub use peer::P2pTransferService;
 pub mod http_server;
 pub mod metric;
 pub mod proto;
@@ -27,7 +29,7 @@ use opentelemetry_sdk::metrics::SdkMeterProvider;
 use orbitkv_common::grpc::{
     GRPC_SERVER_HTTP2_KEEPALIVE_INTERVAL, GRPC_SERVER_HTTP2_KEEPALIVE_TIMEOUT,
 };
-use orbitkv_core::{OrbitKVEngine, P2pTransferService};
+use orbitkv_core::OrbitKVEngine;
 use prometheus::Registry;
 use proto::engine::engine_server::EngineServer;
 use pyo3::{PyErr, Python, types::PyAnyMethods};
@@ -635,7 +637,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
-    let storage_config = orbitkv_core::StorageConfig {
+    let storage_config = orbitkv_core::EngineConfig {
         query_budget_bytes: cli.query_budget,
         query_instance_budget_bytes: cli.query_instance_budget,
         enable_lfu_admission: cli.enable_lfu_admission,

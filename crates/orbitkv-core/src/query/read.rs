@@ -6,16 +6,17 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
 
+use futures::{StreamExt, stream};
 #[cfg(feature = "mooncake")]
 use log::warn;
 use parking_lot::Mutex;
 
 use crate::QueryMode;
-#[cfg(feature = "mooncake")]
-use crate::backing::MooncakeFetchStore;
-use crate::backing::{PrefetchResult, SsdBackingStore};
 use crate::block::{QueryResult, RestoreSource, SealedBlock, StateKey};
 use crate::metrics::core_metrics;
+#[cfg(feature = "mooncake")]
+use crate::peer::read::PeerReader;
+use crate::storage::{MaterializedBlocks, ssd::SsdStore};
 
 use super::tier_attribution::{
     AttributionSource, TierAttribution, record_cache_tier_block_requests,
@@ -23,7 +24,7 @@ use super::tier_attribution::{
 #[cfg(feature = "mooncake")]
 use crate::planning::peer::FetchPlan;
 use crate::planning::read::ReadPlan;
-use crate::storage::read_cache::ReadCache;
+use crate::storage::dram::DramStore;
 
 #[cfg(feature = "mooncake")]
 const REMOTE_WAIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -33,7 +34,7 @@ const REMOTE_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone)]
 struct MaterializedRead {
     source: Option<AttributionSource>,
-    cache_inserts: PrefetchResult,
+    cache_inserts: MaterializedBlocks,
     ready_blocks: Vec<Arc<SealedBlock>>,
     missing: usize,
 }
@@ -48,20 +49,23 @@ struct ReadKey {
 type SharedRead = OnceCell<MaterializedRead>;
 
 pub(crate) struct ReadCoordinator {
+    dram: Arc<DramStore>,
     reads: Mutex<HashMap<ReadKey, Weak<SharedRead>>>,
-    ssd_store: Option<Arc<SsdBackingStore>>,
+    ssd_store: Option<Arc<SsdStore>>,
     #[cfg(feature = "mooncake")]
-    remote_fetch: Option<Arc<MooncakeFetchStore>>,
+    remote_fetch: Option<Arc<PeerReader>>,
     codec_budget: usize,
 }
 
 impl ReadCoordinator {
     pub(crate) fn new(
-        ssd_store: Option<Arc<SsdBackingStore>>,
-        #[cfg(feature = "mooncake")] remote_fetch: Option<Arc<MooncakeFetchStore>>,
+        dram: Arc<DramStore>,
+        ssd_store: Option<Arc<SsdStore>>,
+        #[cfg(feature = "mooncake")] remote_fetch: Option<Arc<PeerReader>>,
         codec_budget: usize,
     ) -> Self {
         Self {
+            dram,
             codec_budget,
             reads: Mutex::new(HashMap::new()),
             ssd_store,
@@ -72,7 +76,6 @@ impl ReadCoordinator {
 
     pub(crate) async fn read_prefix(
         &self,
-        read_cache: &ReadCache,
         req_id: &str,
         namespace: &str,
         hashes: &[Vec<u8>],
@@ -84,7 +87,7 @@ impl ReadCoordinator {
             .iter()
             .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
             .collect();
-        let (hit, prefix_blocks) = read_cache.get_prefix_blocks(&keys, warming);
+        let (hit, prefix_blocks) = self.dram.get_prefix_blocks(&keys, warming);
         #[cfg(feature = "mooncake")]
         let has_remote = self.remote_fetch.is_some();
         #[cfg(not(feature = "mooncake"))]
@@ -169,15 +172,15 @@ impl ReadCoordinator {
                     }
                 }
                 if warming || result.source == Some(AttributionSource::Remote) {
-                    read_cache.batch_insert_reclaimable(inserts);
+                    self.dram.batch_insert_reclaimable(inserts);
                 } else {
-                    read_cache.batch_insert(inserts);
+                    self.dram.batch_insert(inserts);
                 }
                 result
             })
             .await;
         if !warming {
-            read_cache.retain_demand(&keys, &result.ready_blocks);
+            self.dram.retain_demand(&keys, &result.ready_blocks);
             if let Some(ssd) = &self.ssd_store {
                 ssd.ingest_batch(keys.iter().zip(&result.ready_blocks), true);
             }
@@ -199,12 +202,50 @@ impl ReadCoordinator {
         }
     }
 
+    /// Position-aligned membership across resident and backing tiers: entry
+    /// `i` is the sealed block for `hashes[i]`, or `None` on miss. Hashes must
+    /// already carry any group encoding (see `group_hash`).
+    pub(crate) async fn read_membership(
+        &self,
+        req_id: &str,
+        namespace: &str,
+        hashes: &[Vec<u8>],
+        mode: crate::QueryMode,
+    ) -> Vec<Option<crate::RestoreSource>> {
+        let keys: Vec<StateKey> = hashes
+            .iter()
+            .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
+            .collect();
+        let resident = self.dram.get_blocks_aligned(&keys);
+        // Auxiliary state can have holes (checkpoints or evicted windows).
+        // Bound independent reads and reuse prefix fetch coalescing/cancellation
+        // without waiting for absent checkpoints to be published.
+        stream::iter(
+            hashes
+                .iter()
+                .cloned()
+                .zip(resident)
+                .map(|(hash, block)| async move {
+                    if block.is_some() {
+                        return block.map(crate::RestoreSource::Memory);
+                    }
+                    self.read_prefix(req_id, namespace, std::slice::from_ref(&hash), mode)
+                        .await
+                        .blocks
+                        .pop()
+                }),
+        )
+        .buffered(8)
+        .collect()
+        .await
+    }
+
     async fn materialize(
         &self,
         plan: &mut ReadPlan,
         req_id: &str,
         allow_ssd_prefetch: bool,
-    ) -> (Option<AttributionSource>, PrefetchResult) {
+    ) -> (Option<AttributionSource>, MaterializedBlocks) {
         #[cfg(feature = "mooncake")]
         if let Some(remote) = &self.remote_fetch {
             remote.discover(&mut plan.rows).await;
@@ -274,7 +315,7 @@ fn build_ready_result(
     total: usize,
     source: Option<AttributionSource>,
     requested_keys: &[StateKey],
-    cache_inserts: PrefetchResult,
+    cache_inserts: MaterializedBlocks,
 ) -> MaterializedRead {
     let mut ready_blocks = prefix_blocks;
     let inserts_by_key: HashMap<_, _> = cache_inserts

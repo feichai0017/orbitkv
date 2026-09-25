@@ -72,7 +72,7 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
         (Some(SsdReadPath::Cufile), QueryMode::Prepare, false, false),
     ] {
         let directory = tempfile::tempdir().unwrap();
-        let store = crate::backing::new_ssd(
+        let store = crate::storage::ssd::SsdStore::new(
             SsdCacheConfig {
                 cache_paths: vec![directory.path().join("cache.bin")],
                 capacity_bytes: 4096,
@@ -82,14 +82,16 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
             },
             Arc::new(|_, _| None),
             false,
-        );
+        )
+        .unwrap();
+        let cache = Arc::new(DramStore::new(4096, false, None, None, 0));
         let scheduler = ReadCoordinator::new(
+            cache.clone(),
             Some(store),
             #[cfg(feature = "mooncake")]
             None,
             0,
         );
-        let cache = ReadCache::new(4096, false, None, None, 0);
         let shared = Arc::new(SharedRead::new());
         scheduler.reads.lock().insert(
             ReadKey {
@@ -112,7 +114,7 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
         }));
         assert!(futures::poll!(initializing.as_mut()).is_pending());
         let hashes = [vec![1]];
-        let mut read = Box::pin(scheduler.read_prefix(&cache, "query", "ns", &hashes, mode));
+        let mut read = Box::pin(scheduler.read_prefix("query", "ns", &hashes, mode));
         if share {
             assert!(futures::poll!(read.as_mut()).is_pending());
             release.send(()).unwrap();

@@ -93,7 +93,7 @@ repair progress. There is no separate catalog health or maintenance listener.
 ```bash
 cargo test --release -p orbitkv-catalog
 cargo test --release -p orbitkv-core --no-default-features --features cuda-13,mooncake \
-  internode::catalog_client::tests
+  peer::catalog::tests
 cargo bench -p orbitkv-catalog --bench unregister_node
 ```
 

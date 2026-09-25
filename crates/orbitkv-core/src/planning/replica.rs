@@ -4,8 +4,8 @@ use std::sync::Weak;
 use orbitkv_state::{DISCOVERY_MAX_REPLICAS, ReplicaLocation};
 use smallvec::SmallVec;
 
-use crate::backing::ssd::SsdReadCandidate;
 use crate::block::{SealedBlock, StateKey};
+use crate::storage::ssd::SsdReadCandidate;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Medium {

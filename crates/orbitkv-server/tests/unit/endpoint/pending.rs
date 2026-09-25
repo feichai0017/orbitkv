@@ -1,5 +1,5 @@
 use super::*;
-use orbitkv_core::StorageConfig;
+use orbitkv_core::EngineConfig;
 
 fn request(operation_id: u64, revision: u64) -> QueryBundleRequest {
     QueryBundleRequest {
@@ -21,7 +21,7 @@ fn request(operation_id: u64, revision: u64) -> QueryBundleRequest {
 }
 
 fn engine() -> Arc<OrbitKVEngine> {
-    Arc::new(OrbitKVEngine::new_with_config(1 << 20, false, StorageConfig::default()).unwrap())
+    Arc::new(OrbitKVEngine::new_with_config(1 << 20, false, EngineConfig::default()).unwrap())
 }
 
 fn tracker() -> Arc<Mutex<MultiWindowHllTracker>> {

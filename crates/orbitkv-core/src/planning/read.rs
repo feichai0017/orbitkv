@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::QueryMode;
-use crate::backing::ssd::SsdBackingStore;
 use crate::block::StateKey;
+use crate::storage::ssd::SsdStore;
 
 use super::replica::ReplicaSet;
 
@@ -23,11 +23,7 @@ pub(crate) struct ReadPlan {
 }
 
 impl ReadPlan {
-    pub(crate) fn new(
-        keys: &[StateKey],
-        mode: QueryMode,
-        ssd: Option<&Arc<SsdBackingStore>>,
-    ) -> Self {
+    pub(crate) fn new(keys: &[StateKey], mode: QueryMode, ssd: Option<&Arc<SsdStore>>) -> Self {
         let mut rows: Vec<_> = keys.iter().cloned().map(ReplicaSet::new).collect();
         if let Some(ssd) = ssd {
             for (row, candidate) in rows.iter_mut().zip(ssd.discover(keys)) {

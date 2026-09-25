@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::SsdReadPath;
-use crate::backing::ssd::{SsdBackingStore, SsdReadLease};
+use crate::storage::ssd::{SsdReadLease, SsdStore};
 
 use super::read::{ReadPlan, ReadTarget};
 use super::replica::ReplicaSet;
@@ -16,7 +16,7 @@ pub(crate) struct SsdReadPlan<'a> {
 impl ReadPlan {
     pub(crate) fn deferred_ssd(
         &self,
-        store: &SsdBackingStore,
+        store: &SsdStore,
         codec_budget: usize,
     ) -> Option<SsdReadPlan<'_>> {
         if self.target != ReadTarget::EngineRestore

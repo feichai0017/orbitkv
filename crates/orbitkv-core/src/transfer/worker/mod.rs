@@ -107,7 +107,7 @@ pub(crate) struct SaveTask {
     pub reply: oneshot::Sender<Result<Vec<LayerTransferData>, EngineError>>,
     pub ssd_writes: Vec<GpuWrite>,
     pub codec_groups: Vec<SaveGroup>,
-    pub storage: Option<Arc<crate::storage::StorageEngine>>,
+    pub storage: Option<Arc<crate::storage::Storage>>,
     pub numa: NumaNode,
     pub ssd_admission: Option<OwnedSemaphorePermit>,
     #[cfg(feature = "tracing")]
@@ -281,7 +281,7 @@ impl GpuWorkerPool {
         layers: Vec<LayerTransferData>,
         mut ssd_writes: Vec<GpuWrite>,
         mut codec_groups: Vec<SaveGroup>,
-        storage: Option<Arc<crate::storage::StorageEngine>>,
+        storage: Option<Arc<crate::storage::Storage>>,
     ) -> Result<Vec<LayerTransferData>, EngineError> {
         let (reply, receiver) = oneshot::channel();
         let ssd_admission = if ssd_writes.is_empty() && codec_groups.is_empty() {
@@ -417,7 +417,7 @@ struct WorkerRuntime {
     stream: Arc<CudaStream>,
     backend: Box<dyn TransferBackend>,
     codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
-    codec_write: std::cell::RefCell<Option<crate::backing::ssd::cufile::GpuSlot>>,
+    codec_write: std::cell::RefCell<Option<crate::storage::ssd::cufile::GpuSlot>>,
 }
 
 fn build_backend(

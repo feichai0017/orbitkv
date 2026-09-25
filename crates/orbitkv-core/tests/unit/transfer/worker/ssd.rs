@@ -115,13 +115,13 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
     use cudarc::driver::{CudaContext, DevicePtr, result};
     use tokio::sync::oneshot;
 
-    use crate::backing::ssd::SsdReadPath;
     use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
     use crate::codec::gpu::{EncodeInput, GpuCodec};
-    use crate::storage::StorageEngine;
+    use crate::storage::Storage;
+    use crate::storage::ssd::SsdReadPath;
     use crate::transfer::layout::KVCacheLayout;
     use crate::transfer::worker::{GpuWorkerPool, LoadTask, TransferBlock};
-    use crate::{NumaNode, SsdBackend, SsdCacheConfig, StorageCodec, StorageConfig, TransferMode};
+    use crate::{EngineConfig, NumaNode, SsdBackend, SsdCacheConfig, StorageCodec, TransferMode};
 
     const BYTES: usize = 65_536;
     const CODEC_BUDGET: usize = 64 * 1024 * 1024;
@@ -163,10 +163,10 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
     };
 
     let directory = tempfile::tempdir().unwrap();
-    let storage = StorageEngine::new_with_config(
+    let storage = Storage::new_with_config(
         8 * 1024 * 1024,
         false,
-        StorageConfig {
+        EngineConfig {
             ssd_cache_config: Some(SsdCacheConfig {
                 cache_paths: vec![directory.path().join("shared-extent.bin")],
                 capacity_bytes: 2 * 1024 * 1024,
@@ -179,7 +179,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
                 StorageCodec::None
             },
             codec_budget: CODEC_BUDGET,
-            ..StorageConfig::default()
+            ..EngineConfig::default()
         },
         &[],
     )

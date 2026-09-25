@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use cudarc::driver::{CudaContext, sys};
 use orbitkv_core::{
-    LayerSave, OrbitKVEngine, QueryLeaseId, QueryResult, StorageConfig, TransferMode,
+    EngineConfig, LayerSave, OrbitKVEngine, QueryLeaseId, QueryResult, TransferMode,
 };
 use tokio::runtime::Runtime;
 
@@ -47,11 +47,11 @@ impl BenchFixture {
         Self::with_config(
             num_blocks,
             bytes_per_block,
-            StorageConfig {
+            EngineConfig {
                 enable_lfu_admission: false,
                 hint_value_size_bytes: Some(bytes_per_block),
                 enable_numa_affinity: false,
-                ..StorageConfig::default()
+                ..EngineConfig::default()
             },
             TransferMode::Direct,
             block_ids(num_blocks),
@@ -62,7 +62,7 @@ impl BenchFixture {
         Self::with_config(
             num_blocks,
             bytes_per_block,
-            StorageConfig {
+            EngineConfig {
                 enable_lfu_admission: false,
                 hint_value_size_bytes: Some(bytes_per_block),
                 enable_numa_affinity: false,
@@ -75,7 +75,7 @@ impl BenchFixture {
                         orbitkv_catalog::Placement::new(vec!["bench".into()]).unwrap(),
                     ))
                 }),
-                ..StorageConfig::default()
+                ..EngineConfig::default()
             },
             TransferMode::Direct,
             block_ids(num_blocks),
@@ -98,11 +98,11 @@ impl BenchFixture {
         Self::with_config(
             registered_blocks,
             bytes_per_block,
-            StorageConfig {
+            EngineConfig {
                 enable_lfu_admission: false,
                 hint_value_size_bytes: Some(bytes_per_block),
                 enable_numa_affinity: false,
-                ..StorageConfig::default()
+                ..EngineConfig::default()
             },
             transfer_mode,
             block_ids,
@@ -112,7 +112,7 @@ impl BenchFixture {
     fn with_config(
         registered_blocks: usize,
         bytes_per_block: usize,
-        config: StorageConfig,
+        config: EngineConfig,
         transfer_mode: TransferMode,
         block_ids: Vec<usize>,
     ) -> Self {
@@ -306,11 +306,11 @@ impl MultiLayerBenchFixture {
         let engine = OrbitKVEngine::new_with_config(
             pool_size,
             false,
-            StorageConfig {
+            EngineConfig {
                 enable_lfu_admission: false,
                 hint_value_size_bytes: Some(bytes_per_block),
                 enable_numa_affinity: false,
-                ..StorageConfig::default()
+                ..EngineConfig::default()
             },
         )
         .expect("engine");
