@@ -737,39 +737,41 @@ SSD needs source-side preparation. Neither is enabled by this refactor.
 
 ### Replica/source planning final evidence
 
-Validation on **2026-09-25** uses the container's exposed H20, CUDA 13, Qwen3-8B,
-vLLM 0.29.0 and SGLang 0.5.20. All native builds finished before runtime gates;
-no active Manager's Mooncake libraries were rebuilt or restaged. The frozen
-normal Manager SHA-256 is
-`413ae7ed9f0ead9598439609fbbacfac356212b018ad6b1403444a3d2b5eda90`;
+Validation on **2026-09-25** covers implementation `21300c1e` on the container's
+exposed H20, CUDA 13, Qwen3-8B, vLLM 0.29.0 and SGLang 0.5.20. All native builds
+finished before runtime gates; no active Manager's Mooncake libraries were
+rebuilt or restaged. The frozen normal Manager SHA-256 is
+`436304e0caae02f84e46094f52a076264734f45b7e34fcefab206216e312e395`;
 the test-hooks Manager is
-`87a772d91f614b62cd07656b5703aff0f96b0f5e670819e2abcfbb4daabb28f4`.
+`42420583639cbda24064bafb4d544b2bda4bbff7f729761baf210ef2b7928245`.
 
 | Gate | Final result |
 | --- | --- |
-| CUDA 13 + Mooncake workspace Clippy, Rust formatting | Passed |
-| Rust workspace debug tests | 397 passed, including bounded replica refresh, owner-incarnation rejection, metadata-only SSD planning and strict acquisition cleanup after source invalidation |
+| CUDA 13 + Mooncake workspace Clippy, Rust formatting, local-only compilation | Passed |
+| Rust workspace debug tests | 399 passed, including metadata-only planning, exact-generation revalidation, strict prefix cleanup, batch cancellation ownership, cross-store lease rejection and preservation of SSD evidence after peer rejection |
 | Explicit GPU/cuFile/peer tests | 14 passed: complete-demand admission, copy equality, same-generation io_uring/cuFile raw/ANS reads, cuFile compatibility and same-host TCP |
 | Source-only Python gate | 364 passed, 1 skipped |
 | GPU recovery integration and lifecycle faults | vLLM 14, SGLang 8 and fault tests 8 passed |
 | vLLM serving | DRAM with preparation and cuFile-backed SSD with explicit io_uring/ANS: 6 passed, 1 recurrent-model-only skip per configuration |
 | SGLang serving | 2 passed: DRAM and io_uring SSD, restarted-engine GPU restoration and cold-identity output controls |
-| Shared-cache serving | vLLM and SGLang each passed: three remote GPU restores, catalog replay after restart, source-loss recomputation and drained resources; 288 MiB transferred/restored per engine |
+| Shared-cache serving | vLLM and SGLang each passed: three peer-DRAM-to-engine-GPU restores, catalog replay after restart, source-loss recomputation and drained resources; 288 MiB transferred/restored per engine |
 | Website/documentation | Check, 40-page build and link test passed |
-| GitHub CI on implementation commit `18617a74` | Passed, including CUDA 12/13 checks, Clippy, Python 3.14 wheel builds, Python tests, formatting and documentation |
+| GitHub CI on implementation commit `21300c1e` | Passed, including CUDA 12/13 checks, Clippy, Python 3.14 wheel builds, Python tests, formatting and documentation |
 
-This establishes correctness and lifecycle behavior for the structural refactor.
-Matched pressure overhead was not remeasured, and no cost-based selection or
-default observation change follows from these results. cuFile uses forced CPU
-compatibility; native GDS, GPUDirect RDMA, physical two-host transfers and general
-peer HBM/SSD remain separate qualification and implementation work. The earlier
-SGLang ANS SSD observation-overhead gate stays open.
+These results establish correctness and lifecycle behavior for batch candidate
+retention and exact-source acquisition. Matched pressure overhead was not
+remeasured, and no cost-based selection or default observation change follows.
+cuFile uses forced CPU compatibility; native GDS, GPUDirect RDMA, physical two-host
+transfers and general peer HBM/SSD remain separate qualification and implementation
+work. The earlier SGLang ANS SSD observation-overhead gate stays open.
 
 Frozen artifacts, commands, logs and final machine-readable summaries remain in
-ignored `benches/results/runs/20260925-replica-planning/`. Reproduce with the
+ignored `benches/results/runs/20260925-request-planning/`. Reproduce with the
 existing [engine gates](../python/tests/README.md) and
 [shared-cache gates](shared-cache-qualification.md#restart-and-ownership-gates),
 using a matching prebuilt Manager/client and no concurrent native builds.
+The preceding structural slice's evidence remains in
+[its committed summary](https://github.com/feichai0017/orbitkv/blob/34266d6122bff43ac833825bafdc3932489cad70/docs/implementation-plan.md#replicasource-planning-final-evidence).
 
 ## Session startup and working constraints
 
