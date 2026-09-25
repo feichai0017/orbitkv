@@ -43,9 +43,10 @@ an OrbitKV implementation or qualification item.
 The implementation in [PR #182](https://github.com/feichai0017/orbitkv/pull/182)
 was merged at `b1aef401`; the design in
 [PR #183](https://github.com/feichai0017/orbitkv/pull/183) was merged at `13ac3a9d`.
-The first structural implementation is on `refactor/replica-route-planning`,
-based on that merge. Recheck Git status before working and preserve existing
-changes. P4.1
+The first structural implementation is in
+[PR #184](https://github.com/feichai0017/orbitkv/pull/184), on
+`refactor/replica-route-planning`, based on that merge. Recheck Git status before
+working and preserve existing changes. P4.1
 observations, independent SSD demand routes and the fixed DMA/kernel comparison
 are recorded below; dynamic execution selection remains planned.
 
@@ -727,6 +728,42 @@ GPUDirect RDMA remains inside TE, with separately validated GPU endpoints and
 topology. It is neither another medium nor implied by host-memory TCP success.
 General peer HBM still needs engine source/destination lifetime grants; remote
 SSD needs source-side preparation. Neither is enabled by this refactor.
+
+### Replica/source planning final evidence
+
+Validation on **2026-09-25** uses the container's exposed H20, CUDA 13, Qwen3-8B,
+vLLM 0.29.0 and SGLang 0.5.20. All native builds finished before runtime gates;
+no active Manager's Mooncake libraries were rebuilt or restaged. The frozen
+normal Manager SHA-256 is
+`413ae7ed9f0ead9598439609fbbacfac356212b018ad6b1403444a3d2b5eda90`;
+the test-hooks Manager is
+`87a772d91f614b62cd07656b5703aff0f96b0f5e670819e2abcfbb4daabb28f4`.
+
+| Gate | Final result |
+| --- | --- |
+| CUDA 13 + Mooncake workspace Clippy, Rust formatting | Passed |
+| Rust workspace debug tests | 397 passed, including bounded replica refresh, owner-incarnation rejection, metadata-only SSD planning and strict acquisition cleanup after source invalidation |
+| Explicit GPU/cuFile/peer tests | 14 passed: complete-demand admission, copy equality, same-generation io_uring/cuFile raw/ANS reads, cuFile compatibility and same-host TCP |
+| Source-only Python gate | 364 passed, 1 skipped |
+| GPU recovery integration and lifecycle faults | vLLM 14, SGLang 8 and fault tests 8 passed |
+| vLLM serving | DRAM with preparation and cuFile-backed SSD with explicit io_uring/ANS: 6 passed, 1 recurrent-model-only skip per configuration |
+| SGLang serving | 2 passed: DRAM and io_uring SSD, restarted-engine GPU restoration and cold-identity output controls |
+| Shared-cache serving | vLLM and SGLang each passed: three remote GPU restores, catalog replay after restart, source-loss recomputation and drained resources; 288 MiB transferred/restored per engine |
+| Website/documentation | Check, 40-page build and link test passed |
+| GitHub CI on implementation commit `18617a74` | Passed, including CUDA 12/13 checks, Clippy, Python 3.14 wheel builds, Python tests, formatting and documentation |
+
+This establishes correctness and lifecycle behavior for the structural refactor.
+Matched pressure overhead was not remeasured, and no cost-based selection or
+default observation change follows from these results. cuFile uses forced CPU
+compatibility; native GDS, GPUDirect RDMA, physical two-host transfers and general
+peer HBM/SSD remain separate qualification and implementation work. The earlier
+SGLang ANS SSD observation-overhead gate stays open.
+
+Frozen artifacts, commands, logs and final machine-readable summaries remain in
+ignored `benches/results/runs/20260925-replica-planning/`. Reproduce with the
+existing [engine gates](../python/tests/README.md) and
+[shared-cache gates](shared-cache-qualification.md#restart-and-ownership-gates),
+using a matching prebuilt Manager/client and no concurrent native builds.
 
 ## Session startup and working constraints
 
