@@ -255,11 +255,6 @@ async fn candidates_do_not_pin_and_cannot_authorize_a_replaced_generation() {
     assert_eq!(candidate.entry.readers.load(Ordering::Acquire), 0);
     assert!(!candidate.cufile_eligible(64 * 1024));
     assert_eq!(queued.len(), 0, "discovery must not enqueue payload reads");
-    let missing = StateKey::new("queued-lease".into(), vec![1]);
-    let prefix = store.discover_prefix(&[key.clone(), missing.clone(), key.clone()]);
-    assert_eq!(prefix.len(), 1);
-    assert_eq!(prefix[0].entry.readers.load(Ordering::Acquire), 0);
-    assert!(store.discover_prefix(&[missing, key.clone()]).is_empty());
     let lease = candidate.pin().unwrap();
     assert!(Arc::ptr_eq(&lease.entry.readers, &candidate.entry.readers));
     assert_eq!(candidate.entry.readers.load(Ordering::Acquire), 1);
@@ -318,10 +313,7 @@ async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
     assert_eq!(readers.load(Ordering::Acquire), 1);
     let request = &batch.requests[0];
     assert!(Arc::ptr_eq(&request.entry.readers, &readers));
-    assert!(Arc::ptr_eq(
-        request.lease.as_ref().unwrap(),
-        &source.upgrade().unwrap()
-    ));
+    assert!(Arc::ptr_eq(request, &source.upgrade().unwrap()));
     drop(batch);
     assert_eq!(readers.load(Ordering::Acquire), 0);
     assert!(source.upgrade().is_none());
@@ -342,8 +334,8 @@ async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
 
 #[tokio::test]
 async fn ssd_planning_preserves_default_preparation_and_explicit_route_rules() {
-    use crate::planning::ssd::SsdReadPlan;
-    use crate::{QueryMode, RestoreSource};
+    use crate::QueryMode;
+    use crate::planning::read::ReadPlan;
 
     for (path, mode, should_plan) in [
         (None, QueryMode::Demand, false),
@@ -356,19 +348,16 @@ async fn ssd_planning_preserves_default_preparation_and_explicit_route_rules() {
         Arc::get_mut(&mut store).unwrap().read_path = path;
         let key = StateKey::new("queued-lease".into(), vec![0]);
         let version = store.inner.lock().ring.get(&key).unwrap().readers.clone();
-        let plan = SsdReadPlan::discover(&store, std::slice::from_ref(&key), mode, 64 * 1024);
+        let read = ReadPlan::new(std::slice::from_ref(&key), mode, Some(&store));
+        let plan = read.deferred_ssd(&store, 64 * 1024);
+        assert!(read.ssd(SsdReadPath::Uring, 64 * 1024).is_some());
+        assert!(read.ssd(SsdReadPath::Cufile, 64 * 1024).is_none());
         assert_eq!(plan.is_some(), should_plan, "path={path:?}, mode={mode:?}");
         assert_eq!(version.load(Ordering::Acquire), 0);
         assert_eq!(queued.len(), 0, "planning cannot read payloads");
         if let Some(plan) = plan {
+            assert_eq!(plan.path, SsdReadPath::Uring);
             let sources = plan.acquire(64 * 1024).unwrap();
-            assert!(matches!(
-                &sources[0],
-                RestoreSource::Ssd {
-                    path: SsdReadPath::Uring,
-                    ..
-                }
-            ));
             assert_eq!(version.load(Ordering::Acquire), 1);
             drop(sources);
             assert_eq!(version.load(Ordering::Acquire), 0);
@@ -379,7 +368,7 @@ async fn ssd_planning_preserves_default_preparation_and_explicit_route_rules() {
 #[tokio::test]
 async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes() {
     use crate::QueryMode;
-    use crate::planning::ssd::SsdReadPlan;
+    use crate::planning::read::ReadPlan;
 
     let (mut store, queued) = queued_read_store();
     Arc::get_mut(&mut store).unwrap().read_path = Some(SsdReadPath::Uring);
@@ -387,12 +376,16 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     let missing = StateKey::new("queued-lease".into(), vec![1]);
     let keys = [key.clone(), missing.clone()];
     assert!(
-        SsdReadPlan::discover(&store, &keys, QueryMode::WaitForFullPrefix, 64 * 1024).is_none()
+        ReadPlan::new(&keys, QueryMode::WaitForFullPrefix, Some(&store))
+            .deferred_ssd(&store, 64 * 1024)
+            .is_none()
     );
-    let partial = SsdReadPlan::discover(&store, &keys, QueryMode::Demand, 64 * 1024).unwrap();
+    let partial_read = ReadPlan::new(&keys, QueryMode::Demand, Some(&store));
+    let partial = partial_read.deferred_ssd(&store, 64 * 1024).unwrap();
     assert_eq!(partial.acquire(64 * 1024).unwrap().len(), 1);
 
-    let plan = SsdReadPlan::discover(&store, &keys[..1], QueryMode::Demand, 64 * 1024).unwrap();
+    let plan_read = ReadPlan::new(&keys[..1], QueryMode::Demand, Some(&store));
+    let plan = plan_read.deferred_ssd(&store, 64 * 1024).unwrap();
     let mut inner = store.inner.lock();
     let old = inner.ring.get(&key).unwrap().clone();
     for next in [&missing, &key] {
@@ -424,9 +417,10 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     let first = inner.ring.get(&key).unwrap().clone();
     let last = inner.ring.get(&missing).unwrap().clone();
     drop(inner);
-    let full =
-        SsdReadPlan::discover(&store, &keys, QueryMode::WaitForFullPrefix, 64 * 1024).unwrap();
-    let partial = SsdReadPlan::discover(&store, &keys, QueryMode::Demand, 64 * 1024).unwrap();
+    let full_read = ReadPlan::new(&keys, QueryMode::WaitForFullPrefix, Some(&store));
+    let full = full_read.deferred_ssd(&store, 64 * 1024).unwrap();
+    let partial_read = ReadPlan::new(&keys, QueryMode::Demand, Some(&store));
+    let partial = partial_read.deferred_ssd(&store, 64 * 1024).unwrap();
     store.inner.lock().ring.invalidate_encoded(&missing, &last);
     assert!(full.acquire(64 * 1024).is_none());
     assert_eq!(first.readers.load(Ordering::Acquire), 0);
@@ -436,4 +430,108 @@ async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes()
     drop(prefix);
     assert_eq!(first.readers.load(Ordering::Acquire), 0);
     assert_eq!(queued.len(), 0);
+}
+
+#[tokio::test]
+async fn batched_host_reads_hold_selected_generations_and_reject_foreign_stores() {
+    use crate::QueryMode;
+    use crate::planning::read::ReadPlan;
+
+    let (store, mut queued) = queued_read_store();
+    let (other, other_queue) = queued_read_store();
+    let keys = [
+        StateKey::new("queued-lease".into(), vec![0]),
+        StateKey::new("queued-lease".into(), vec![1]),
+    ];
+    let (slots, versions) = {
+        let mut inner = store.inner.lock();
+        let slots = inner.ring.get(&keys[0]).unwrap().slots.clone();
+        inner.ring =
+            SsdRingBuffer::new_sharded(vec![2 * SSD_ALIGNMENT as u64], SSD_ALIGNMENT as u64);
+        for key in &keys {
+            inner
+                .ring
+                .reserve(key, slots.clone(), index::Encoding::Raw)
+                .unwrap();
+            assert!(inner.ring.commit(key, true));
+        }
+        let versions: Vec<_> = keys
+            .iter()
+            .map(|key| inner.ring.get(key).unwrap().readers.clone())
+            .collect();
+        (slots, versions)
+    };
+    let plan = ReadPlan::new(&keys, QueryMode::Prepare, Some(&store));
+    let leases = plan.ssd(SsdReadPath::Uring, 0).unwrap().acquire(0).unwrap();
+    assert_eq!(leases.len(), 2);
+    assert!(other.read_host_batch(leases.clone()).await.is_err());
+    assert!(other_queue.is_empty());
+    let mut read = Box::pin(store.read_host_batch(leases));
+    assert!(futures::poll!(read.as_mut()).is_pending());
+    drop(read);
+    let batch = queued.recv().await.unwrap();
+    assert!(batch.done_tx.is_closed());
+    assert_eq!(batch.requests.len(), 2);
+    for (lease, version) in batch.requests.iter().zip(&versions) {
+        assert!(Arc::ptr_eq(&lease.entry.readers, version));
+        assert_eq!(version.load(Ordering::Acquire), 1);
+    }
+    assert!(
+        store
+            .inner
+            .lock()
+            .ring
+            .reserve(
+                &StateKey::new("queued-lease".into(), vec![2]),
+                slots,
+                index::Encoding::Raw
+            )
+            .is_none()
+    );
+    drop(batch);
+    assert!(
+        versions
+            .iter()
+            .all(|version| version.load(Ordering::Acquire) == 0)
+    );
+}
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions() {
+    use crate::QueryMode;
+    use crate::planning::{peer::FetchPlan, read::ReadPlan};
+    use orbitkv_state::{CacheOwner, ReplicaLocation};
+
+    let (store, queued) = queued_read_store();
+    let keys = [
+        StateKey::new("queued-lease".into(), vec![0]),
+        StateKey::new("queued-lease".into(), vec![1]),
+    ];
+    let mut plan = ReadPlan::new(&keys, QueryMode::Demand, Some(&store));
+    let location = ReplicaLocation {
+        owner: CacheOwner {
+            endpoint: "peer".into(),
+            incarnation: uuid::Uuid::from_u128(1),
+        },
+        sequence: 7,
+    };
+    plan.rows[0].set_peer_dram(vec![location]);
+    assert!(FetchPlan::new(&mut plan.rows, 2).is_none());
+    let mut route = FetchPlan::new(&mut plan.rows, 1).unwrap();
+    let segment = route.next_segment(0).unwrap();
+    route.reject(0, &segment);
+    assert!(route.next_segment(0).is_none());
+    assert!(plan.rows[0].peer_dram().next().is_none());
+    assert_eq!(
+        plan.rows.len(),
+        2,
+        "a short peer plan must not truncate other evidence"
+    );
+    let leases = plan.ssd(SsdReadPath::Uring, 0).unwrap().acquire(0).unwrap();
+    assert_eq!(leases.len(), 1);
+    assert!(
+        queued.is_empty(),
+        "selection and rejection must not read payloads"
+    );
 }

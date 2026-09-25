@@ -143,7 +143,7 @@ impl ReadCache {
     }
 
     /// Scan cache for a prefix of `keys`, stopping at the first miss.
-    pub(super) fn get_prefix_blocks(
+    pub(crate) fn get_prefix_blocks(
         &self,
         keys: &[StateKey],
         warming: bool,
@@ -173,7 +173,7 @@ impl ReadCache {
         (hit, blocks)
     }
 
-    pub(super) fn retain_demand(&self, keys: &[StateKey], blocks: &[Arc<SealedBlock>]) {
+    pub(crate) fn retain_demand(&self, keys: &[StateKey], blocks: &[Arc<SealedBlock>]) {
         let mut inner = self.inner.lock();
         for (key, block) in keys.iter().zip(blocks) {
             if inner
@@ -186,14 +186,14 @@ impl ReadCache {
         }
     }
 
-    pub(super) fn batch_insert(&self, blocks: Vec<(StateKey, Arc<SealedBlock>)>) {
+    pub(crate) fn batch_insert(&self, blocks: Vec<(StateKey, Arc<SealedBlock>)>) {
         let mut inner = self.inner.lock();
         for (key, block) in blocks {
             insert_block(&mut inner, key, block, ResidentClass::Retained);
         }
     }
 
-    pub(super) fn batch_insert_reclaimable(&self, blocks: Vec<(StateKey, Arc<SealedBlock>)>) {
+    pub(crate) fn batch_insert_reclaimable(&self, blocks: Vec<(StateKey, Arc<SealedBlock>)>) {
         let mut inner = self.inner.lock();
         for (key, block) in blocks {
             insert_block(&mut inner, key, block, ResidentClass::Reclaimable);

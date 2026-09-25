@@ -125,6 +125,10 @@ impl ReplicaSet {
             .retain(|replica| replica.peer_dram().is_none_or(|peer| &peer.owner != owner));
     }
 
+    pub(crate) fn local_ssd(&self) -> Option<&SsdReadCandidate> {
+        self.replicas.iter().find_map(ReplicaCandidate::local_ssd)
+    }
+
     pub(crate) fn is_available(&self) -> bool {
         self.replicas.iter().any(ReplicaCandidate::is_available)
     }

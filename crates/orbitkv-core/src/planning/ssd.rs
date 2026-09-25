@@ -1,68 +1,64 @@
 use std::sync::Arc;
 
-use crate::backing::ssd::SsdBackingStore;
-use crate::block::{RestoreSource, StateKey};
-use crate::{QueryMode, SsdReadPath};
+use crate::SsdReadPath;
+use crate::backing::ssd::{SsdBackingStore, SsdReadLease};
 
-use super::replica::ReplicaCandidate;
+use super::read::{ReadPlan, ReadTarget};
+use super::replica::ReplicaSet;
 
-/// Metadata-only plan for one homogeneous SSD route. Acquisition revalidates
-/// each version; the returned sources hand ownership to existing query leases.
-pub(crate) struct SsdReadPlan {
-    candidates: Vec<ReplicaCandidate>,
-    path: SsdReadPath,
+/// A route over request-owned evidence, not another copy of the SSD inventory.
+pub(crate) struct SsdReadPlan<'a> {
+    rows: &'a [ReplicaSet],
+    pub(crate) path: SsdReadPath,
     required: usize,
 }
 
-impl SsdReadPlan {
-    pub(crate) fn discover(
-        store: &Arc<SsdBackingStore>,
-        keys: &[StateKey],
-        mode: QueryMode,
+impl ReadPlan {
+    pub(crate) fn deferred_ssd(
+        &self,
+        store: &SsdBackingStore,
         codec_budget: usize,
-    ) -> Option<Self> {
-        if matches!(mode, QueryMode::Warmup | QueryMode::Prepare)
+    ) -> Option<SsdReadPlan<'_>> {
+        if self.target != ReadTarget::EngineRestore
             || (store.read_path.is_none() && !store.gpu_io.available())
         {
             return None;
         }
-        let candidates: Vec<_> = store
-            .discover_prefix(keys)
-            .into_iter()
-            .map(ReplicaCandidate::ssd)
-            .collect();
-        let required = if mode == QueryMode::WaitForFullPrefix {
-            keys.len()
-        } else {
-            1
-        };
-        if candidates.is_empty() || candidates.len() < required {
-            return None;
-        }
-        let path = match store.read_path {
-            Some(SsdReadPath::Uring) => SsdReadPath::Uring,
-            _ if candidates.iter().all(|candidate| {
-                candidate
-                    .local_ssd()
-                    .is_some_and(|source| source.cufile_eligible(codec_budget))
-            }) =>
-            {
-                SsdReadPath::Cufile
-            }
-            _ => return None,
-        };
-        Some(Self {
-            candidates,
-            path,
-            required,
-        })
+        self.ssd(store.read_path.unwrap_or(SsdReadPath::Cufile), codec_budget)
     }
 
-    pub(crate) fn acquire(self, codec_budget: usize) -> Option<Vec<RestoreSource>> {
-        let leases: Vec<_> = self
-            .candidates
+    pub(crate) fn ssd(&self, path: SsdReadPath, codec_budget: usize) -> Option<SsdReadPlan<'_>> {
+        let count = self
+            .rows
             .iter()
-            .map_while(|candidate| candidate.local_ssd()?.pin())
+            .take_while(|row| row.local_ssd().is_some())
+            .count();
+        if count == 0 || count < self.required {
+            return None;
+        }
+        let rows = &self.rows[..count];
+        if path == SsdReadPath::Cufile
+            && rows.iter().any(|row| {
+                !row.local_ssd()
+                    .is_some_and(|source| source.cufile_eligible(codec_budget))
+            })
+        {
+            return None;
+        }
+        Some(SsdReadPlan {
+            rows,
+            path,
+            required: self.required,
+        })
+    }
+}
+
+impl SsdReadPlan<'_> {
+    pub(crate) fn acquire(self, codec_budget: usize) -> Option<Vec<Arc<SsdReadLease>>> {
+        let leases: Vec<_> = self
+            .rows
+            .iter()
+            .map_while(|row| row.local_ssd()?.pin())
             .collect();
         if leases.len() < self.required
             || (self.path == SsdReadPath::Cufile
@@ -72,14 +68,6 @@ impl SsdReadPlan {
         {
             return None;
         }
-        Some(
-            leases
-                .into_iter()
-                .map(|lease| RestoreSource::Ssd {
-                    lease,
-                    path: self.path,
-                })
-                .collect(),
-        )
+        Some(leases)
     }
 }

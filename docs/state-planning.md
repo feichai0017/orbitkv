@@ -246,19 +246,30 @@ traffic needs priority with bounded write starvation.
 
 ### Unified replicas, routes and execution ownership
 
-The first structural slice is implemented in Core's `planning/`: discovery and
-peer source selection use a bounded `ReplicaSet`, replacing the dedicated
-`dram` / `ssd` / `peer_dram` fields. Each record separates medium from acquisition
-evidence: weak DRAM ownership, an SSD index version, or peer owner/incarnation
-and inventory sequence. Peer refresh preserves local evidence and the directory's
-replica bound. Current peer evidence still describes DRAM only.
+Core's `planning/` uses a bounded `ReplicaSet` for local DRAM, local SSD and
+peer DRAM. Each record separates medium from acquisition evidence: weak DRAM
+ownership, an SSD index version, or peer owner/incarnation and inventory sequence.
+Peer refresh preserves local evidence and the directory's replica bound. Current
+peer evidence describes DRAM only; unknown peer size/encoding stays unknown.
 
-`SsdReadPlan` separates metadata eligibility from exact-generation acquisition;
-`FetchPlan` owns peer selection/rejection without cloning its candidate rows at
-execution. Existing source and completion owners retain all allocations, files,
-registrations and queues. The fuller endpoint/route contract below remains the
-target: request-wide candidate retention, common completion targets and measured
-cross-source selection are not implemented by this slice.
+`ReadPlan` now retains unresolved candidates for an admitted query batch and
+declares host-ready preparation or engine restoration. The coordinator keeps
+already acquired DRAM prefix holds. SSD and peer route plans borrow the same
+records, validate required coverage, and acquire sources through their existing
+owners. Host SSD reads also submit exact-generation leases; they no longer
+rediscover by key. Both queued and submitted reads retain these leases through
+cancellation until completion. Peer rejection updates only the rejected owner,
+without truncating the batch or discarding SSD alternatives.
+
+The selection order remains unchanged: local DRAM first; eligible deferred SSD
+restoration next; host materialization tries peer DRAM, then permitted SSD
+io_uring. Explicit SSD paths do not silently switch to host prefetch. Preparation
+produces host state; an engine restore completes only through the existing GPU
+completion owner. Metadata discovery still returns positions to engines, so it
+is not a reusable read grant. Plans are per admitted query batch, not a joint
+optimizer across groups, ranks or all request batches. Full route/resource
+estimates, consumed endpoint descriptors and measured cross-source selection
+remain open.
 
 | Concept | Information and responsibility |
 | --- | --- |
@@ -380,8 +391,10 @@ Retention/write admission stays a separate decision using the same observations.
 Keep the existing crates. The target Core layout separates physical residency,
 planning, request ownership and execution; introduce modules when their behavior
 moves, with no empty scaffolding or compatibility re-exports. `planning/replica.rs`,
-`planning/ssd.rs` and `planning/peer.rs` now own existing candidate collection,
-SSD route planning and peer segmentation. The remaining directory moves below
+`planning/read.rs`, `planning/ssd.rs` and `planning/peer.rs` own batch candidates,
+completion targets, SSD route eligibility and peer segmentation. `query/read.rs`
+owns shared reads, host materialization and producer waiting. SSD/peer executors
+retain physical I/O and completion ownership. The remaining directory moves below
 are a target, not a description of today's tree:
 
 ```text
@@ -402,9 +415,11 @@ orbitkv-core/
 `planning` may query cost/resource evidence but does not own an allocator, file,
 CUDA stream or peer payload. `cost` is shared by planning and execution; it does
 not acquire leases or decide whether a source exists. Extend `QueryLease` and
-the existing restore task handoff for the admitted plan. Bring source/path choice
-out of `storage/prefetch.rs` and remote fetch priority branches into one planning
-owner. Retain authoritative checks in each source owner and the completion
+the existing restore task handoff for the admitted plan. The former
+`storage/prefetch.rs` coordinator now lives in `query/read.rs`; it keeps the
+existing default priority while route eligibility lives in `planning/`. Connect
+complete-route comparisons there as estimates become available. Retain
+authoritative checks in each source owner and the completion
 owners in the workers. Consolidate `internode` and remote-fetch coordination into
 `peer` as those behaviors move; the Mooncake wrapper remains the byte-transfer
 boundary. Module moves should accompany real consumers, not one large rename PR.
@@ -413,11 +428,12 @@ The refactor sequence is:
 
 1. Bounded records now replace the three-field candidate shape for existing
    DRAM/SSD/peer-DRAM sources, preserving exact namespaces, metadata-only
-   discovery and version revalidation. Next retain these records across the
-   complete request's planning instead of projecting engine-facing positions
-   and reacquiring evidence for reads.
-2. Express existing routes and their common completion targets explicitly,
-   preserving today's default selection. Keep io_uring/cuFile on the same extent.
+   discovery and version revalidation. Admitted read batches now retain these
+   records through source selection and acquisition. Joint multi-group/request
+   planning and richer consumed endpoint descriptors remain open.
+2. Host-ready and engine-restore targets now control existing source routes,
+   preserving today's default selection and io_uring/cuFile on one extent. Next
+   compare complete routes to the same target, including staging and decode.
 3. Bind the selected plan to current query/source/destination/completion owners.
    Establish shared device admission across registrations before dynamic choice.
 4. Connect complete-route shadow estimates and resource evidence. Qualify
@@ -1066,7 +1082,7 @@ The absence of a query lease is not proof that a queued request can soon
 consume prepared KV; prepared residency must remain inside the admission
 budget through handoff or expiry.
 
-Extend `storage/prefetch.rs` rather than adding a second scheduler facade.
+Extend the shared-read owner in `query/read.rs` rather than adding a second scheduler facade.
 Refine the current global/per-instance ownership budget with device and staging
 accounting. Keep capacity for normal demand restores and independent leases
 for owners of shared reads. Give overdue demand work priority, cap speculative traffic, and bound write

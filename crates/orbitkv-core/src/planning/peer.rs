@@ -1,6 +1,4 @@
-use orbitkv_state::{
-    BlockCandidates, CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_KEYS, InventoryRecord,
-};
+use orbitkv_state::{CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_KEYS, InventoryRecord};
 
 use super::replica::ReplicaSet;
 
@@ -9,30 +7,19 @@ pub(crate) struct FetchSegment {
     pub(crate) records: Vec<InventoryRecord>,
 }
 
-pub(crate) struct FetchPlan {
-    rows: Vec<ReplicaSet>,
+pub(crate) struct FetchPlan<'a> {
+    rows: &'a mut [ReplicaSet],
 }
 
-impl FetchPlan {
-    pub(crate) fn new(rows: Vec<BlockCandidates>) -> Option<Self> {
-        let mut rows: Vec<_> = rows
-            .into_iter()
-            .map(|row| {
-                let mut replicas = ReplicaSet::new(row.key);
-                replicas.set_peer_dram(row.replicas);
-                replicas
-            })
-            .collect();
+impl<'a> FetchPlan<'a> {
+    pub(crate) fn new(rows: &'a mut [ReplicaSet], required: usize) -> Option<Self> {
         let prefix = rows
             .iter()
             .take_while(|row| row.peer_dram().next().is_some())
             .count();
-        rows.truncate(prefix);
-        (!rows.is_empty()).then_some(Self { rows })
-    }
-
-    pub(crate) fn next_segment(&self, start: usize) -> Option<FetchSegment> {
-        next_segment(&self.rows, start)
+        (prefix > 0 && prefix >= required).then(|| Self {
+            rows: &mut rows[..prefix],
+        })
     }
 
     pub(crate) fn reject(&mut self, start: usize, segment: &FetchSegment) {
@@ -45,48 +32,41 @@ impl FetchPlan {
         self.rows.len()
     }
 
-    pub(crate) fn matches(&self, namespace: &str, hashes: &[Vec<u8>]) -> bool {
-        self.rows.len() <= hashes.len()
-            && self
-                .rows
-                .iter()
-                .zip(hashes)
-                .all(|(row, hash)| row.key.namespace == namespace && row.key.hash == *hash)
-    }
-}
+    pub(crate) fn next_segment(&self, start: usize) -> Option<FetchSegment> {
+        let rows = &self.rows;
 
-fn next_segment(rows: &[ReplicaSet], start: usize) -> Option<FetchSegment> {
-    let row = rows.get(start)?;
-    let mut best: Option<FetchSegment> = None;
-    for candidate in row.peer_dram() {
-        let mut bytes = row.key.namespace.len();
-        let records: Vec<_> = rows[start..]
-            .iter()
-            .take(DISCOVERY_MAX_KEYS)
-            .map_while(|row| {
-                let replica = row.peer_dram().find(|r| r.owner == candidate.owner)?;
-                bytes = bytes.saturating_add(row.key.hash.len());
-                (bytes <= DISCOVERY_MAX_BYTES).then(|| InventoryRecord {
-                    key: row.key.clone(),
-                    sequence: replica.sequence,
-                    present: true,
+        let row = rows.get(start)?;
+        let mut best: Option<FetchSegment> = None;
+        for candidate in row.peer_dram() {
+            let mut bytes = row.key.namespace.len();
+            let records: Vec<_> = rows[start..]
+                .iter()
+                .take(DISCOVERY_MAX_KEYS)
+                .map_while(|row| {
+                    let replica = row.peer_dram().find(|r| r.owner == candidate.owner)?;
+                    bytes = bytes.saturating_add(row.key.hash.len());
+                    (bytes <= DISCOVERY_MAX_BYTES).then(|| InventoryRecord {
+                        key: row.key.clone(),
+                        sequence: replica.sequence,
+                        present: true,
+                    })
                 })
-            })
-            .collect();
-        if records.is_empty() {
-            continue;
+                .collect();
+            if records.is_empty() {
+                continue;
+            }
+            if best.as_ref().is_none_or(|best| {
+                records.len() > best.records.len()
+                    || (records.len() == best.records.len() && candidate.owner < best.owner)
+            }) {
+                best = Some(FetchSegment {
+                    owner: candidate.owner.clone(),
+                    records,
+                });
+            }
         }
-        if best.as_ref().is_none_or(|best| {
-            records.len() > best.records.len()
-                || (records.len() == best.records.len() && candidate.owner < best.owner)
-        }) {
-            best = Some(FetchSegment {
-                owner: candidate.owner.clone(),
-                records,
-            });
-        }
+        best
     }
-    best
 }
 
 #[cfg(test)]

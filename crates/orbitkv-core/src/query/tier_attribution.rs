@@ -1,24 +1,9 @@
-// Decision-level tier attribution for `query_prefetch`.
-//
-// Splits a single `query_prefetch` decision's block budget into four mutually
-// exclusive tiers: RAM (resident-cache prefix hit), Mooncake / SSD (backing tier
-// selected to satisfy the remaining prefix), and MISS (everything no tier
-// could satisfy this decision, including SSD backpressure and Mooncake partial
-// returns).
-//
-// `ram + remote + ssd + miss == total` is enforced on construction.
-//
-// This is decision attribution: tiers report which path was *selected* by
-// `full_prefix_scan`, not which path *eventually* succeeded. Backing
-// completion / failure must be observed via the existing `remote_fetch_total`
-// and `ssd_prefetch_failures` counters.
-
 /// The tier a block was attributed to for a single `query_prefetch` decision.
 ///
 /// Only backing tiers (`Remote`, `Ssd`) are represented here; the local RAM
 /// prefix hit is conveyed through the `hit` argument to `classify` rather
 /// than as a separate `AttributionSource` variant. Keeping the enum closed
-/// over the two backing sources makes the call sites in `prefetch.rs` total
+/// over the two backing sources makes the call sites in `read.rs` total
 /// without a dead RAM branch.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum AttributionSource {
@@ -38,7 +23,7 @@ pub(super) struct TierAttribution {
 }
 
 impl TierAttribution {
-    /// Build the per-decision attribution from the values `full_prefix_scan`
+    /// Build the per-decision attribution from the values the query coordinator
     /// already knows. `loading_source` is `Some` iff a backing tier was
     /// chosen for the remaining prefix.
     ///
@@ -103,5 +88,5 @@ pub(super) fn record_cache_tier_block_requests(total: usize, attribution: TierAt
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/storage/tier_attribution.rs"]
+#[path = "../../tests/unit/query/tier_attribution.rs"]
 mod tests;

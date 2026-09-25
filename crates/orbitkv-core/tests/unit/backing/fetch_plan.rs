@@ -1,15 +1,16 @@
 use super::*;
 use crate::block::SealedBlock;
-use orbitkv_state::{BlockCandidates, CacheOwner, ReplicaLocation, StateKey};
+use crate::planning::replica::ReplicaSet;
+use orbitkv_state::{CacheOwner, ReplicaLocation, StateKey};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
 };
 
-fn row(hash: u8, owners: &[&str]) -> BlockCandidates {
-    BlockCandidates {
-        key: StateKey::new("ns".into(), vec![hash]),
-        replicas: owners
+fn row(hash: u8, owners: &[&str]) -> ReplicaSet {
+    let mut row = ReplicaSet::new(StateKey::new("ns".into(), vec![hash]));
+    row.set_peer_dram(
+        owners
             .iter()
             .map(|owner| ReplicaLocation {
                 owner: CacheOwner {
@@ -19,7 +20,8 @@ fn row(hash: u8, owners: &[&str]) -> BlockCandidates {
                 sequence: u64::from(hash),
             })
             .collect(),
-    }
+    );
+    row
 }
 
 struct Fetcher {
@@ -56,7 +58,8 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
             responses: Mutex::new(VecDeque::from([response])),
             calls: Mutex::new(Vec::new()),
         };
-        let plan = FetchPlan::new(vec![row(1, &["a", "b"]), row(2, &["a", "b"])]).unwrap();
+        let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"])];
+        let plan = FetchPlan::new(&mut rows, 1).unwrap();
         let (fetched, _, _) = execute_fetch_plan(&fetcher, plan, "test-request").await;
         assert_eq!(fetched.len(), expected);
         assert_eq!(
@@ -72,7 +75,8 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
         ])),
         calls: Mutex::new(Vec::new()),
     };
-    let plan = FetchPlan::new(vec![row(1, &["a", "b", "c", "d"])]).unwrap();
+    let mut rows = vec![row(1, &["a", "b", "c", "d"])];
+    let plan = FetchPlan::new(&mut rows, 1).unwrap();
     assert!(
         execute_fetch_plan(&fetcher, plan, "test-request")
             .await
@@ -97,7 +101,8 @@ async fn malformed_or_short_segment_never_skips_a_gap() {
         ])])),
         calls: Mutex::new(Vec::new()),
     };
-    let plan = FetchPlan::new(vec![row(1, &["a"]), row(2, &["a"]), row(3, &["b"])]).unwrap();
+    let mut rows = vec![row(1, &["a"]), row(2, &["a"]), row(3, &["b"])];
+    let plan = FetchPlan::new(&mut rows, 1).unwrap();
     assert_eq!(
         execute_fetch_plan(&fetcher, plan, "test-request")
             .await

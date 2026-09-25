@@ -18,7 +18,7 @@ pub(super) trait SegmentFetcher {
 
 pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
     fetcher: &F,
-    mut plan: FetchPlan,
+    mut plan: FetchPlan<'_>,
     req_id: &str,
 ) -> (PrefetchResult, usize, usize) {
     let mut fetched = Vec::with_capacity(plan.block_count());

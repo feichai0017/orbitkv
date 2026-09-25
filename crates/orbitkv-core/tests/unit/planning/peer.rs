@@ -1,10 +1,10 @@
 use super::*;
 use orbitkv_state::{ReplicaLocation, StateKey};
 
-fn row(hash: u8, owners: &[&str]) -> BlockCandidates {
-    BlockCandidates {
-        key: StateKey::new("ns".into(), vec![hash]),
-        replicas: owners
+fn row(hash: u8, owners: &[&str]) -> ReplicaSet {
+    let mut row = ReplicaSet::new(StateKey::new("ns".into(), vec![hash]));
+    row.set_peer_dram(
+        owners
             .iter()
             .map(|owner| ReplicaLocation {
                 owner: CacheOwner {
@@ -14,19 +14,20 @@ fn row(hash: u8, owners: &[&str]) -> BlockCandidates {
                 sequence: u64::from(hash),
             })
             .collect(),
-    }
+    );
+    row
 }
 
 #[test]
 fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
-    let rows = vec![
+    let mut rows = vec![
         row(1, &["c", "b", "a"]),
         row(2, &["c", "b"]),
         row(3, &["d"]),
         row(4, &[]),
         row(5, &["a"]),
     ];
-    let plan = FetchPlan::new(rows).unwrap();
+    let plan = FetchPlan::new(&mut rows, 1).unwrap();
     assert_eq!(plan.block_count(), 3);
     let first = plan.next_segment(0).unwrap();
     assert_eq!(first.owner.endpoint, "b");
@@ -35,9 +36,11 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
         [1, 2]
     );
     assert_eq!(plan.next_segment(2).unwrap().owner.endpoint, "d");
-    let mut rows = vec![row(1, &["a"]); DISCOVERY_MAX_KEYS + 1];
+    let mut rows = (0..=DISCOVERY_MAX_KEYS)
+        .map(|_| row(1, &["a"]))
+        .collect::<Vec<_>>();
     assert_eq!(
-        FetchPlan::new(rows.clone())
+        FetchPlan::new(&mut rows, 1)
             .unwrap()
             .next_segment(0)
             .unwrap()
@@ -47,7 +50,7 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
     );
     rows[0].key.hash = vec![1; DISCOVERY_MAX_BYTES - 2];
     assert_eq!(
-        FetchPlan::new(rows)
+        FetchPlan::new(&mut rows, 1)
             .unwrap()
             .next_segment(0)
             .unwrap()

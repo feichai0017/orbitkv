@@ -1,8 +1,6 @@
 pub(crate) mod inventory;
 pub(crate) mod metadata;
-mod prefetch;
-mod read_cache;
-mod tier_attribution;
+pub(crate) mod read_cache;
 pub(crate) mod transfer_lock;
 pub(crate) mod write_path;
 
@@ -24,9 +22,7 @@ use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
 
 use crate::planning::replica::ReplicaSet;
-use prefetch::PrefetchScheduler;
-#[cfg(feature = "mooncake")]
-use prefetch::RemoteFetch;
+use crate::query::read::ReadCoordinator;
 pub(crate) use read_cache::ReadCache;
 use write_path::{InsertDeps, WritePipeline};
 
@@ -115,7 +111,7 @@ pub(crate) struct StorageEngine {
     pub(crate) codec: crate::StorageCodec,
     pub(crate) codec_budget: usize,
     read_cache: Arc<ReadCache>,
-    prefetch: PrefetchScheduler,
+    reads: ReadCoordinator,
     write_pipeline: Arc<WritePipeline>,
     pub(crate) ssd_store: Option<Arc<SsdBackingStore>>,
     #[cfg(feature = "mooncake")]
@@ -253,7 +249,7 @@ impl StorageEngine {
             #[cfg(feature = "mooncake")]
             let remote_fetch = mooncake_transport.as_ref().and_then(|transfer| {
                 let ms = catalog_client.as_ref()?;
-                Some(RemoteFetch::new(Arc::new(MooncakeFetchStore::new(
+                Some(Arc::new(MooncakeFetchStore::new(
                     Arc::clone(ms),
                     Arc::clone(transfer),
                     allocate_fn.clone(),
@@ -261,13 +257,15 @@ impl StorageEngine {
                         .membership
                         .clone()
                         .expect("distributed configuration"),
-                ))))
+                )))
             });
-            #[cfg(not(feature = "mooncake"))]
-            let remote_fetch = None;
 
-            let prefetch =
-                PrefetchScheduler::new(ssd_store.clone(), remote_fetch, config.codec_budget);
+            let reads = ReadCoordinator::new(
+                ssd_store.clone(),
+                #[cfg(feature = "mooncake")]
+                remote_fetch,
+                config.codec_budget,
+            );
 
             let transfer_lock = Arc::new(transfer_lock::TransferLockManager::new(
                 transfer_lock_timeout,
@@ -279,7 +277,7 @@ impl StorageEngine {
                 codec: config.codec,
                 codec_budget: config.codec_budget,
                 read_cache: read_cache.clone(),
-                prefetch,
+                reads,
                 write_pipeline: write_pipeline.clone(),
                 ssd_store,
                 #[cfg(feature = "mooncake")]
@@ -516,8 +514,8 @@ impl StorageEngine {
                     if block.is_some() {
                         return block.map(crate::RestoreSource::Memory);
                     }
-                    self.prefetch
-                        .check_and_prefetch(
+                    self.reads
+                        .read_prefix(
                             &self.read_cache,
                             req_id,
                             namespace,
@@ -601,8 +599,8 @@ impl StorageEngine {
         hashes: &[Vec<u8>],
         mode: crate::QueryMode,
     ) -> QueryResult {
-        self.prefetch
-            .check_and_prefetch(&self.read_cache, req_id, namespace, hashes, mode)
+        self.reads
+            .read_prefix(&self.read_cache, req_id, namespace, hashes, mode)
             .await
     }
 

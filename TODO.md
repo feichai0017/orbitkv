@@ -77,9 +77,13 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
 - [ ] Complete consumed endpoint descriptors for owner/resource identity,
   representation and bytes; bind actual TE transport capability to GPU routes
   without treating GPUDirect RDMA as a tier or assuming peer HBM authorization.
-- [ ] Retain those records through route enumeration and selected-plan ownership;
-  extend current query leases rather than adding another lease registry. Keep
-  default execution unchanged and only enumerate implemented, authorized routes.
+- [x] Retain unresolved candidates within each admitted query batch; distinguish
+  host preparation from engine restoration, borrow SSD/peer plans over the same
+  records, and hand exact source versions to existing query/completion owners.
+  Move shared-read coordination into `query/` and remove by-key SSD rescans and
+  forwarding/argument wrappers, preserving default source priority.
+- [ ] Extend batch plans into complete-route comparisons and joint demand
+  coverage across groups/ranks, with actual destination and staging admission.
 - [ ] Separate operation observations from complete-route estimates and attach
   live resource evidence, without double-counting queue time or composite stages.
   Restructure modules with their actual consumers, following the

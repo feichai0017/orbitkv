@@ -238,40 +238,39 @@ impl MooncakeFetchStore {
         }
     }
 
-    /// Use cached positive evidence before consulting the directory.
-    pub(crate) async fn query_plan(
-        &self,
-        namespace: &str,
-        hashes: &[Vec<u8>],
-    ) -> Option<FetchPlan> {
-        if !self.membership.permits(self.membership.owner()) {
-            return None;
+    /// Refresh peer evidence in the same request records that retain local SSD
+    /// alternatives. Directory hints still require authoritative source grants.
+    pub(crate) async fn discover(&self, rows: &mut [crate::planning::replica::ReplicaSet]) {
+        for row in rows.iter_mut() {
+            row.set_peer_dram(Vec::new());
         }
-        let mut candidates = match self.catalog_client.locate_blocks(namespace, hashes).await {
+        if !self.membership.permits(self.membership.owner()) || rows.is_empty() {
+            return;
+        }
+        let namespace = &rows[0].key.namespace;
+        if rows.iter().any(|row| &row.key.namespace != namespace) {
+            return;
+        }
+        let hashes: Vec<_> = rows.iter().map(|row| row.key.hash.clone()).collect();
+        let candidates = match self.catalog_client.locate_blocks(namespace, &hashes).await {
             Ok(candidates) => candidates,
             Err(e) => {
                 warn!("Candidate discovery failed: {e}");
-                return None;
+                return;
             }
         };
-        for row in &mut candidates {
-            row.replicas
+        for (row, mut candidate) in rows.iter_mut().zip(candidates) {
+            if candidate.key != row.key {
+                continue;
+            }
+            candidate
+                .replicas
                 .retain(|replica| self.membership.permits(&replica.owner));
+            row.set_peer_dram(candidate.replicas);
         }
-        FetchPlan::new(candidates)
     }
 
-    pub(crate) async fn fetch_plan(
-        &self,
-        plan: FetchPlan,
-        req_id: &str,
-        namespace: &str,
-        hashes: &[Vec<u8>],
-    ) -> PrefetchResult {
-        if !plan.matches(namespace, hashes) {
-            warn!("Remote fetch plan does not match the requested state");
-            return Vec::new();
-        }
+    pub(crate) async fn fetch_plan(&self, plan: FetchPlan<'_>, req_id: &str) -> PrefetchResult {
         let planned_blocks = plan.block_count();
         let started_at = Instant::now();
         let (fetched, attempts, completed) = execute_fetch_plan(self, plan, req_id).await;

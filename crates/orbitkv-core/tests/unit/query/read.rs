@@ -21,7 +21,7 @@ fn ready_result_rebuilds_prefix_in_requested_key_order() {
     let result = build_ready_result(
         vec![Arc::clone(&local)],
         4,
-        Some(PrefetchSource::Ssd),
+        Some(AttributionSource::Ssd),
         &[k1.clone(), k2.clone(), k3.clone()],
         vec![
             (k2, Arc::clone(&b2)),
@@ -50,7 +50,7 @@ fn ready_result_stops_at_first_missing_prefetch_key() {
     let result = build_ready_result(
         Vec::new(),
         3,
-        Some(PrefetchSource::Ssd),
+        Some(AttributionSource::Ssd),
         &[k1.clone(), k2, k3.clone()],
         vec![(k3, b3), (k1, Arc::clone(&b1))],
     );
@@ -83,11 +83,16 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
             Arc::new(|_, _| None),
             false,
         );
-        let scheduler = PrefetchScheduler::new(Some(store), None, 0);
+        let scheduler = ReadCoordinator::new(
+            Some(store),
+            #[cfg(feature = "mooncake")]
+            None,
+            0,
+        );
         let cache = ReadCache::new(4096, false, None, None, 0);
         let shared = Arc::new(SharedRead::new());
         scheduler.reads.lock().insert(
-            FetchKey {
+            ReadKey {
                 keys: vec![key(1)],
                 hit: 0,
                 wait_for_full_prefix: false,
@@ -98,8 +103,8 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
         let (release, hold) = tokio::sync::oneshot::channel();
         let mut initializing = Box::pin(shared.get_or_init(|| async {
             hold.await.unwrap();
-            PrefetchTaskResult {
-                source: Some(PrefetchSource::Ssd),
+            MaterializedRead {
+                source: Some(AttributionSource::Ssd),
                 cache_inserts: Vec::new(),
                 ready_blocks: vec![block()],
                 missing: 0,
@@ -107,7 +112,7 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
         }));
         assert!(futures::poll!(initializing.as_mut()).is_pending());
         let hashes = [vec![1]];
-        let mut read = Box::pin(scheduler.check_and_prefetch(&cache, "query", "ns", &hashes, mode));
+        let mut read = Box::pin(scheduler.read_prefix(&cache, "query", "ns", &hashes, mode));
         if share {
             assert!(futures::poll!(read.as_mut()).is_pending());
             release.send(()).unwrap();

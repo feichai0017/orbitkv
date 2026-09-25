@@ -301,7 +301,7 @@ transfers. Adding these timers together would double count work.
 | Codec time, payload and workspace | `crates/orbitkv-core/src/codec/`, `transfer/worker/codec.rs`, `transfer/worker/ssd/decode.rs` |
 | SSD queue and operation time | `crates/orbitkv-core/src/backing/ssd/`, `transfer/worker/ssd/` |
 | Peer discovery/authorization/TE stages | `crates/orbitkv-core/src/internode/`, `backing/mooncake_fetch.rs`, `crates/orbitkv-transfer/` |
-| Budget, candidate selection and leases | `crates/orbitkv-core/src/query/`, `storage/prefetch.rs`, `engine/query.rs` |
+| Budget, candidate selection and leases | `crates/orbitkv-core/src/query/`, `engine/query.rs` |
 | Exported metrics / request timelines | `crates/orbitkv-core/src/metrics.rs`, `crates/orbitkv-server/src/metric/timeline.rs` |
 | Tests / serving measurements | Crate `tests/unit/` and integration tests, `python/tests/`, repository-root `benches/` |
 
@@ -701,28 +701,34 @@ have Mooncake libraries mapped.
 
 ## Replica collection and source planning
 
-Core now has a concrete `planning/` owner without additional crates, public
-backend traits or configuration:
+Core separates metadata planning, query lifetime and physical I/O without new
+crates, backend traits or configuration:
 
-- `replica.rs` replaces per-tier candidate fields with a bounded collection of
-  medium plus concrete acquisition evidence. Discovery retains weak DRAM/index
-  snapshots and bounded peer owner/incarnation/sequence records; it does not
-  materialize or pin payloads. Refresh and rejection preserve unrelated sources.
-- `ssd.rs` builds metadata-only plans and then acquires exact source generations.
-  io_uring and cuFile remain independent routes over the same store. Strict
-  selected-prefix reads reject incomplete acquisition; ordinary demand retains
-  existing partial-prefix behavior. Preparation still targets host DRAM.
-- `peer.rs` owns contiguous source selection, stable ties and bounded segments.
-  The executor consumes its plan and updates rejected evidence without cloning
-  all rows. Authoritative peer admission, TE READ ownership, bounded retries and
-  terminal release stay in the existing remote executor.
+- `planning/replica.rs` retains bounded weak DRAM/index evidence and peer
+  owner/incarnation/sequence records. Discovery does not materialize or pin data.
+- `planning/read.rs` keeps unresolved candidates for one admitted query batch,
+  its required coverage and host-ready versus engine-restore target. Already
+  acquired DRAM prefix holds remain with the query coordinator.
+- `planning/ssd.rs` and `planning/peer.rs` borrow those records for route
+  eligibility/acquisition and bounded peer segments. Rejection preserves other
+  sources. Strict acquisition releases partial holds when coverage disappears.
+- `query/read.rs` owns coalescing, materialization and producer waiting, moved
+  from `storage/prefetch.rs`. Default priority is unchanged: local DRAM, eligible
+  deferred SSD restore, then peer-first host materialization and permitted SSD
+  io_uring. Explicit SSD routes keep their existing no-silent-switch rule.
+- SSD host batches now contain acquired version leases, retained by the queue
+  and batch completion owner until all reads drain. Key-based rescans, optional
+  request leases, the remote forwarding wrapper and temporary argument wrappers
+  are removed. Existing query leases, reservations and GPU/TE completion owners
+  continue to own admitted work; no second lease registry is introduced.
 
-This is the first structural slice, not a complete cost-based planner. Discovery
-still projects positions to engines; reads reacquire candidates, SSD/peer priority
-is unchanged, and there is no new automatic selection or live-resource estimator.
-Existing opt-in cost observations retain their current boundaries. Next connect
-request-wide candidates and declared completion targets to selected query leases,
-then compare complete routes with resource admission and measured uncertainty.
+This is batch-scoped physical planning. Complete demand is still validated at
+Manager admission and before leasing a selected group; joint multi-group/rank
+planning, reusable discovery grants, full endpoint descriptors, live admission
+and complete-route cost selection remain open. Observations stay opt-in and
+measured estimates do not change execution. The existing source representation,
+byte metadata and version authority stay in actual source evidence rather than
+being copied into an unconsumed public descriptor.
 
 GPUDirect RDMA remains inside TE, with separately validated GPU endpoints and
 topology. It is neither another medium nor implied by host-memory TCP success.
@@ -817,9 +823,10 @@ physical namespace, and do not expose unsupported peer SSD/HBM as executable
 candidates. Source and destination engine HBM need real page-lifetime grants;
 Manager staging is not automatically a retained replica.
 
-Retain records in the request plan, enumerate supported routes to one declared
-completion target, and bind selected sources to the existing query leases and
-completion owners. Keep default choice unchanged while this structure replaces
+Build on batch-owned candidate retention, declared preparation/restore targets
+and selected sources bound to the existing query leases and completion owners.
+Extend this into complete route comparisons and joint demand coverage as their
+consumers are implemented. Keep default choice unchanged while this structure replaces
 the distributed selection branches. Apply the [complete-route cost contract](state-planning.md#cost-model-for-complete-routes):
 operation samples and composite totals cannot be added together, live resource
 evidence is advisory until actual admission, and unknown/error margins matter.

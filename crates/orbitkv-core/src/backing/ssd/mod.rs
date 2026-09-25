@@ -30,7 +30,7 @@ pub use config::{
 };
 use cufile::CufileFile;
 use index::{SsdIndexEntry, SsdRingBuffer};
-use reader::{PrefetchBatch, PrefetchRequest, ssd_prefetch_loop};
+use reader::{PrefetchBatch, ssd_prefetch_loop};
 use uring::{UringConfig, UringIoEngine};
 use writer::{SsdWriteBatch, SsdWriteCommand, ssd_writer_loop};
 
@@ -100,37 +100,11 @@ impl SsdReadLease {
     pub(crate) async fn read_host(
         self: &Arc<Self>,
     ) -> Result<Arc<SealedBlock>, crate::EngineError> {
-        let started = std::time::Instant::now();
-        let (done_tx, done_rx) = oneshot::channel();
-        let batch = PrefetchBatch::new(
-            vec![PrefetchRequest {
-                key: self.key.clone(),
-                entry: self.entry.clone(),
-                lease: Some(Arc::clone(self)),
-            }],
-            done_tx,
-            self.cost_resource(),
-        );
-        if let Err(error) = self.store.prefetch_tx.send(batch).await {
-            core_metrics().ssd_prefetch_queue_closed.add(1, &[]);
-            error.0.observation.finish(Outcome::Failed, None);
-            return Err(crate::EngineError::Storage(
-                "SSD host reader is closed".into(),
-            ));
+        let mut blocks = self.store.read_host_batch(vec![Arc::clone(self)]).await?;
+        if blocks.len() != 1 || blocks[0].0 != self.key {
+            return Err(crate::EngineError::Storage("SSD source read failed".into()));
         }
-        let result = done_rx
-            .await
-            .map_err(|_| crate::EngineError::Storage("SSD host reader lost completion".into()))
-            .and_then(|mut blocks| {
-                if blocks.len() != 1 || blocks[0].0 != self.key {
-                    return Err(crate::EngineError::Storage("SSD source read failed".into()));
-                }
-                Ok(blocks.remove(0).1)
-            });
-        core_metrics()
-            .ssd_prefetch_duration_seconds
-            .record(started.elapsed().as_secs_f64(), &[]);
-        result
+        Ok(blocks.remove(0).1)
     }
 
     pub(crate) fn invalidate_encoded(&self) {
@@ -430,20 +404,6 @@ impl SsdBackingStore {
             .collect()
     }
 
-    pub(crate) fn discover_prefix(self: &Arc<Self>, keys: &[StateKey]) -> Vec<SsdReadCandidate> {
-        let inner = self.inner.lock();
-        keys.iter()
-            .map_while(|key| {
-                let entry = inner.ring.get(key)?.clone();
-                Some(SsdReadCandidate {
-                    entry,
-                    key: key.clone(),
-                    store: Arc::downgrade(self),
-                })
-            })
-            .collect()
-    }
-
     pub(super) fn is_offset_valid(&self, entry: &SsdIndexEntry) -> bool {
         self.inner.lock().ring.is_offset_valid(entry)
     }
@@ -594,75 +554,38 @@ impl SsdBackingStore {
         }
     }
 
-    /// Count consecutive SSD-resident keys from the start of `keys`.
-    pub(crate) fn prefix_len(&self, keys: &[StateKey]) -> usize {
-        let inner = self.inner.lock();
-        keys.iter()
-            .map_while(|key| inner.ring.get(key).map(|_| ()))
-            .count()
-    }
-
-    /// Submit prefix reads: scan `keys` in order, submit reads for consecutive hits, stop at first miss.
-    ///
-    /// Returns `(submitted, done_rx)` where `done_rx` delivers completed blocks.
-    async fn submit_prefix(
+    /// Submit only acquired generations. The queue and batch completion owner
+    /// retain every source through cancellation and the last physical read.
+    pub(crate) async fn read_host_batch(
         &self,
-        keys: Vec<StateKey>,
-    ) -> (usize, oneshot::Receiver<PrefetchResult>) {
-        let (done_tx, done_rx) = oneshot::channel();
-
-        // Prefix-scan the ring buffer: stop at first miss.
-        let requests: Vec<PrefetchRequest> = {
-            let inner = self.inner.lock();
-            keys.into_iter()
-                .map_while(|key| {
-                    let entry = inner.ring.get(&key)?.clone();
-                    Some(PrefetchRequest {
-                        key,
-                        entry,
-                        lease: None,
-                    })
-                })
-                .collect()
-        };
-
-        let found = requests.len();
-        if found == 0 {
-            let _ = done_tx.send(Vec::new());
-            return (0, done_rx);
+        leases: Vec<Arc<SsdReadLease>>,
+    ) -> Result<PrefetchResult, crate::EngineError> {
+        if leases
+            .iter()
+            .any(|lease| !std::ptr::eq(self, Arc::as_ptr(&lease.store)))
+        {
+            return Err(crate::EngineError::Storage(
+                "SSD leases belong to another store".into(),
+            ));
         }
-
-        let batch = PrefetchBatch::new(requests, done_tx, self.io.cost_resource);
-
-        if let Err(e) = self.prefetch_tx.send(batch).await {
-            let batch = e.0;
-            let count = batch.requests.len();
-            warn!("SSD prefetch queue closed, dropping {} reads", count);
+        if leases.is_empty() {
+            return Ok(Vec::new());
+        }
+        let started = std::time::Instant::now();
+        let (done_tx, done_rx) = oneshot::channel();
+        let batch = PrefetchBatch::new(leases, done_tx, self.io.cost_resource);
+        if let Err(error) = self.prefetch_tx.send(batch).await {
             core_metrics()
                 .ssd_prefetch_queue_closed
-                .add(count as u64, &[]);
-            batch.observation.finish(crate::cost::Outcome::Failed, None);
-            let _ = batch.done_tx.send(Vec::new());
+                .add(error.0.requests.len() as u64, &[]);
+            error.0.observation.finish(Outcome::Failed, None);
+            return Err(crate::EngineError::Storage(
+                "SSD host reader is closed".into(),
+            ));
         }
-
-        (found, done_rx)
-    }
-
-    /// Prefetch prefix reads and await completion.
-    pub(crate) async fn prefetch_prefix(&self, keys: Vec<StateKey>) -> (usize, PrefetchResult) {
-        let started = std::time::Instant::now();
-        let (found, done_rx) = self.submit_prefix(keys).await;
-        if found == 0 {
-            return (0, Vec::new());
-        }
-
-        let result = match done_rx.await {
-            Ok(blocks) => (found, blocks),
-            Err(_) => {
-                warn!("SSD prefetch completion channel closed");
-                (found, Vec::new())
-            }
-        };
+        let result = done_rx
+            .await
+            .map_err(|_| crate::EngineError::Storage("SSD host reader lost completion".into()));
         core_metrics()
             .ssd_prefetch_duration_seconds
             .record(started.elapsed().as_secs_f64(), &[]);

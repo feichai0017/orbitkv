@@ -1,6 +1,8 @@
 //! Byte reservations held from query admission through the last GPU consumer.
 
 pub(crate) mod lease;
+pub(crate) mod read;
+mod tier_attribution;
 
 use std::collections::HashMap;
 use std::sync::Arc;

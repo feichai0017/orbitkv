@@ -20,23 +20,16 @@ type SinglePrefetchResult = (
     Arc<BatchContext>,
 );
 
-/// Request to prefetch a block from SSD (metadata only, allocation done in worker)
-pub(super) struct PrefetchRequest {
-    pub key: StateKey,
-    pub entry: SsdIndexEntry,
-    pub lease: Option<Arc<super::SsdReadLease>>,
-}
-
 /// Batch of prefetch requests (sent as a unit to limit queue depth)
 pub(super) struct PrefetchBatch {
-    pub requests: Vec<PrefetchRequest>,
+    pub requests: Vec<Arc<super::SsdReadLease>>,
     pub done_tx: oneshot::Sender<crate::backing::PrefetchResult>,
     pub observation: Observation,
 }
 
 impl PrefetchBatch {
     pub(super) fn new(
-        requests: Vec<PrefetchRequest>,
+        requests: Vec<Arc<super::SsdReadLease>>,
         done_tx: oneshot::Sender<crate::backing::PrefetchResult>,
         resource: u64,
     ) -> Self {
@@ -108,7 +101,7 @@ pub(super) struct BatchContext {
     failed: AtomicBool,
     submitted: AtomicBool,
     /// Pinned generations stay owned until every queued/submitted read drains.
-    _leases: Vec<Arc<super::SsdReadLease>>,
+    leases: Vec<Arc<super::SsdReadLease>>,
 }
 
 impl BatchContext {
@@ -125,7 +118,7 @@ impl BatchContext {
             observation: Mutex::new(Some(observation)),
             failed: AtomicBool::new(false),
             submitted: AtomicBool::new(false),
-            _leases: leases,
+            leases,
         }
     }
 
@@ -221,7 +214,7 @@ async fn dispatch_prefetch_batch(
     batch: PrefetchBatch,
 ) -> bool {
     let PrefetchBatch {
-        mut requests,
+        requests,
         done_tx,
         mut observation,
     } = batch;
@@ -255,21 +248,17 @@ async fn dispatch_prefetch_batch(
         block_slots.push(slots);
     }
 
-    let leases = requests
-        .iter_mut()
-        .filter_map(|req| req.lease.take())
-        .collect();
     let ctx = Arc::new(BatchContext::new(
         requests.len(),
         done_tx,
         observation,
-        leases,
+        requests,
     ));
-    let mut iter = requests.into_iter().zip(block_slots);
+    let mut iter = ctx.leases.iter().zip(block_slots);
     while let Some((req, slots)) = iter.next() {
         let task = PrefetchTask {
-            key: req.key,
-            entry: req.entry,
+            key: req.key.clone(),
+            entry: req.entry.clone(),
             slots,
             ctx: Arc::clone(&ctx),
             store: Arc::clone(store),
@@ -280,7 +269,7 @@ async fn dispatch_prefetch_batch(
             let task = err.0;
             ctx.complete_one(task.key, None);
             for (req, _) in iter {
-                ctx.complete_one(req.key, None);
+                ctx.complete_one(req.key.clone(), None);
             }
             return false;
         }
