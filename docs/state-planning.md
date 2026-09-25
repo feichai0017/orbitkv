@@ -244,6 +244,180 @@ do not add those quantities without explicit cost weights. Large one-off
 prefills should not automatically monopolize the SSD write queue. Restore
 traffic needs priority with bounded write starvation.
 
+### Unified replicas, routes and execution ownership
+
+This is the target for the next refactor, not an additional implemented backend
+surface. The current `dram` / `ssd` / `peer_dram` candidate fields encode both
+medium and locality and cannot naturally express another owner's SSD or HBM.
+Replace them with a bounded collection of replica candidates consumed by the
+physical planner. Keep the actual allocations, files, registrations and queues
+with their existing owners.
+
+| Concept | Information and responsibility |
+| --- | --- |
+| Recovery demand | Existing `RecoveryDemand`, request revision, required groups and ranges, and a declared target state. Engine-visible recovery additionally needs engine-owned destination authorization; speculative host preparation has a different completion target. |
+| Resource endpoint | Owner/runtime incarnation, node and concrete resource identity: DRAM pool/NUMA placement, SSD store, or GPU/allocation domain. Medium is DRAM, SSD or HBM. Locality is derived relative to the consumer; another Manager on the same host still requires its ownership protocol. |
+| Replica candidate | State identity and coverage, endpoint, immutable residency version, layout/encoding, known logical/stored sizes and bounded freshness evidence. Local evidence retains weak/index references; peer evidence retains an opaque source reference. Discovery owns no payload. |
+| Restore route | A source replica, a declared destination state, and supported transfer/staging/decode steps with completion dependencies. Multiple routes may read the same replica and version. |
+| Admitted plan | Selected routes plus actual source leases, destination authorization, staging and queue reservations, handed to the existing execution/completion owners. A proposed route or estimate alone grants no access. |
+
+Use a concrete internal enum for evidence that must be acquired differently;
+do not build invalid combinations from optional file offsets, GPU pointers and
+peer addresses. Share only descriptors actually consumed across module/process
+boundaries through `orbitkv-state`. Do not add public types for unsupported
+routes or a second query-lease registry.
+
+The endpoint model covers the following residences without inventing a backend
+for every local/remote combination:
+
+| Medium | Consumer's node | Another node | Current executable scope |
+| --- | --- | --- | --- |
+| DRAM | Manager-owned pool | Peer Manager-owned pool | Both supported; peer payload currently stages into requester DRAM |
+| SSD | Manager-owned store | Peer Manager-owned store | Local supported; peer SSD preparation/authorization remains planned |
+| HBM | Engine pages or Manager GPU allocations, with distinct owners | Peer engine pages or peer Manager GPU allocations | Local registered restore destinations/staging supported; general HBM cache sourcing is not implemented; experimental P/D is a separate contract |
+
+Engine HBM becomes a source only with an engine grant binding instance/session,
+page generation, range and access rights. Registration or a known device address
+is insufficient. Destination authorization must prevent page reuse until all
+submitted writes finish. GPU staging is temporary workspace and is not advertised
+as a cache replica unless explicitly admitted for retention. Do not unify these
+owners behind unrestricted `allocate`/`free` operations.
+
+Preserve the current `StateKey` during the first migration. Its namespace already
+binds storage format, layout, TP/PP and geometry. Initially compare replicas
+within that compatibility domain. Comparing raw/ANS or different layouts as
+alternative representations later requires an explicit logical-state identity,
+physical representation identity and conversion/quality contract, including
+versioned index/catalog changes. Adding a format field does not authorize
+merging existing namespaces or dropping their compatibility checks.
+
+Route construction uses a small set of implemented templates. io_uring and
+cuFile are independent routes over one SSD store and one source generation.
+Mooncake connects registered memory endpoints; it does not turn an SSD extent
+into remotely readable memory. A peer SSD route must ask the source Manager to
+pin that extent and admit its read and staging resources before publishing a
+transfer-ready memory window. Charge source preparation and both endpoints;
+the requester must not allocate or schedule the peer's internal resources.
+Peer HBM routes require the engine-grant contract above before enumeration.
+
+Compare only routes satisfying the same demand and completion target. A host-ready
+prefetch cannot compete as if it were an engine-visible restore. Do not enumerate
+every cluster resource or search an unrestricted transfer graph. Use bounded
+cached evidence and demand-driven directory queries; capability/health evidence
+filters routes before costing, and acquisition revalidates the chosen version.
+
+### Cost model for complete routes
+
+Keep the shared measurement substrate and make its two boundaries explicit:
+operation samples describe individual I/O/copy/codec work; complete-route samples
+describe a named start-to-declared-target completion interval. Engine-visible
+restore and host-ready preparation use distinct targets and estimate keys. The
+existing `CostPath` enum includes both operation and composite boundaries. It is
+not yet a set of additive graph-edge costs.
+
+The planner's estimate should report a predicted ready time, measured uncertainty
+and freshness, and the resources needed to execute. Resource demand includes
+source holds, pinned DRAM/GPU staging peaks and queue/transfer slots. Retained
+byte-seconds and actual I/O are separate costs, not quantities to add to latency
+without a defined objective. Existing EWMA absolute error is an empirical margin,
+not a calibrated confidence interval or p99 guarantee.
+
+Estimate from route shape, layout/encoding, logical and aligned/stored/wire bytes,
+fragmentation, resource identities, actual transport mode and current resource
+evidence. Keep cuFile compatibility/native GDS and TCP/RDMA samples distinguishable;
+unknown mode is not proof of a native path. Use bounded device/store/peer-runtime
+keys, never request IDs or per-replica generations in the statistical index.
+Generation belongs to correctness validation. Missing format, size, queue or
+cost information stays unknown rather than becoming zero.
+
+There are two valid estimation methods, which must not be added together:
+
+- Fresh, matched complete-route observations can directly predict that route's
+  finish time. Their embedded historical waiting cannot then be counted again
+  as a separate stage cost; changed contention may invalidate their applicability.
+- Disjoint stage observations can feed a bounded dependency schedule. A stage
+  starts after its predecessors and required resources are available; parallel
+  branches complete at their latest finish. Chunked pipelines require their
+  actual dependencies and shared-resource constraints. A source read, network
+  transfer and decode cannot all be treated as independent if they contend for
+  the same workspace or execution resource.
+
+Current queue/usage snapshots guide estimation but do not reserve capacity.
+Actual resource owners remain authoritative. Acquire leases/credits in a bounded
+order; if admission fails, release unsubmitted reservations and replan within
+the request deadline without accumulating holds across peers. Once submitted,
+the completion/drain owner retains resources even if the request is cancelled.
+An uncertain or partially completed destination write cannot be replayed through
+another route until the old work is safely fenced and the destination revalidated.
+
+Selection first enforces semantic compatibility, exact/approved quality and
+resource limits, then compares conservative completion estimates. Preserve the
+existing admissible route when evidence is absent or the predicted gain does
+not exceed measured error and a declared switching margin. Initial integration
+remains shadow-only; do not fetch alternatives just to populate samples. Avoid
+new per-tier weights or policy configuration: derive resource identity, capability
+and current usage from the real owners, using existing capacity/deadline contracts.
+Retention/write admission stays a separate decision using the same observations.
+
+### Code ownership and migration
+
+Keep the existing crates. The target Core layout separates physical residency,
+planning, request ownership and execution; introduce modules when their behavior
+moves, with no empty scaffolding or compatibility re-exports:
+
+```text
+orbitkv-state/       shared state/recovery and consumed descriptor contracts
+orbitkv-core/
+  engine/           registration and engine-facing query/restore orchestration
+  storage/          DRAM/SSD residency, index, eviction and source pinning
+    dram/           current read-cache ownership
+    ssd/            current backing/ssd files, extents and storage I/O
+  planning/         bounded replicas -> eligible routes -> proposed selection
+  query/            admission, existing query leases and owned selected plans
+  transfer/         GPU movement, staging, stage submission and completion/drain
+  peer/             discovery and peer authorization/preparation orchestration
+  codec/            representation validation and encoding/decoding
+  cost/             operation/route observations and bounded estimates
+```
+
+`planning` may query cost/resource evidence but does not own an allocator, file,
+CUDA stream or peer payload. `cost` is shared by planning and execution; it does
+not acquire leases or decide whether a source exists. Extend `QueryLease` and
+the existing restore task handoff for the admitted plan. Bring source/path choice
+out of `storage/prefetch.rs` and remote fetch priority branches into one planning
+owner. Retain authoritative checks in each source owner and the completion
+owners in the workers. Consolidate `internode` and remote-fetch coordination into
+`peer` as those behaviors move; the Mooncake wrapper remains the byte-transfer
+boundary. Module moves should accompany real consumers, not one large rename PR.
+
+The refactor sequence is:
+
+1. Replace the three-field candidate shape with bounded replica records for
+   existing DRAM/SSD/peer-DRAM sources. Preserve exact namespaces, metadata-only
+   discovery and version revalidation; retain records through request planning.
+2. Express existing routes and their common completion targets explicitly,
+   preserving today's default selection. Keep io_uring/cuFile on the same extent.
+3. Bind the selected plan to current query/source/destination/completion owners.
+   Establish shared device admission across registrations before dynamic choice.
+4. Connect complete-route shadow estimates and resource evidence. Qualify
+   lifecycle, source invalidation, deadline/cancellation and matched overhead
+   before allowing a measured route to change execution.
+5. Add source-side SSD preparation, then engine-authorized HBM replicas when
+   their protocols and deployment gates are ready. Cross-representation discovery
+   requires its own identity migration; none is implied by endpoint normalization.
+
+Upstream mechanisms supporting this organization were checked at pinned sources:
+[LMCache MP](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py)
+separates policy, I/O and lock/completion ownership;
+[vLLM](https://github.com/vllm-project/vllm/blob/98dff2a81d747d1dba01a47f939f48c3526d4206/vllm/v1/core/block_pool.py)
+separates logical hashes from physical blocks and references;
+[SGLang](https://github.com/sgl-project/sglang/blob/94602c9c2b7cbdb8efd5c52802dac6a1c180089e/python/sglang/srt/mem_cache/radix_cache.py)
+holds distinct device/host residencies and references for one logical node;
+[FlexKV](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/scheduler.py)
+uses transfer dependencies and completion-driven scheduling. These are design
+inputs, not evidence that either their default policies or OrbitKV already
+perform unified measured path selection.
+
 ### Transfer paths and cost observations
 
 Represent a candidate by location, representation and valid generation, rather

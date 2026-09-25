@@ -40,9 +40,10 @@ an OrbitKV implementation or qualification item.
 
 ## Current baseline and evidence
 
-The working branch is `chore/transfer-planning`, based on `d83d8a47`, with the
-planning documents and implementation in [PR #182](https://github.com/feichai0017/orbitkv/pull/182).
-Recheck Git status before working and preserve existing changes. P4.1
+The implementation in [PR #182](https://github.com/feichai0017/orbitkv/pull/182)
+was merged at `b1aef401`. The follow-up design branch is
+`chore/replica-route-design`, based on that merge. Recheck Git status before
+working and preserve existing changes. P4.1
 observations, independent SSD demand routes and the fixed DMA/kernel comparison
 are recorded below; dynamic execution selection remains planned.
 
@@ -737,9 +738,26 @@ npm run build
 npm test
 ```
 
-Continue from the demand/candidate boundary above. Retain candidates in an owned
-request plan, attach current resource evidence, and compare complete paths to
-the same engine-visible state. Before per-batch selection, establish shared
+Continue with the [unified replica/route refactor](state-planning.md#unified-replicas-routes-and-execution-ownership)
+and its [code ownership and migration](state-planning.md#code-ownership-and-migration).
+Normalize the existing local DRAM/SSD and peer DRAM candidates into bounded
+replica records: owner/node/resource endpoint, medium, immutable version,
+representation and explicit unknown evidence. Locality is relative to the
+consumer; io_uring/cuFile/Mooncake are access methods. Preserve the current
+physical namespace, and do not expose unsupported peer SSD/HBM as executable
+candidates. Source and destination engine HBM need real page-lifetime grants;
+Manager staging is not automatically a retained replica.
+
+Retain records in the request plan, enumerate supported routes to one declared
+completion target, and bind selected sources to the existing query leases and
+completion owners. Keep default choice unchanged while this structure replaces
+the distributed selection branches. Apply the [complete-route cost contract](state-planning.md#cost-model-for-complete-routes):
+operation samples and composite totals cannot be added together, live resource
+evidence is advisory until actual admission, and unknown/error margins matter.
+Move modules as their behavior is connected; add no forwarding layer, empty
+backend framework or new per-tier configuration.
+
+Before per-batch selection, establish shared
 admission across registrations on the same GPU,
 prepare both legal backends outside request execution, and require fresh matched
 estimates with gains exceeding measured error and a declared switching margin.
