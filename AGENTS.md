@@ -47,6 +47,7 @@ orbitkv/
 | NUMA topology and affinity | `crates/orbitkv-core/src/memory/numa.rs` |
 | Cache reuse statistics | `crates/orbitkv-server/src/metric/hll.rs` |
 | Core engine and storage path | `crates/orbitkv-core/` |
+| Bounded replica evidence and SSD/peer source plans | `crates/orbitkv-core/src/planning/` |
 | GPU storage codecs, CPU SIMD fallback and encoding metadata | `crates/orbitkv-core/src/codec/` |
 | gRPC protocol changes | `crates/orbitkv-proto/` |
 | Cache Manager cache operations and process endpoint | `crates/orbitkv-server/src/cache/`, `endpoint/` |
@@ -72,6 +73,7 @@ orbitkv/
 - `crates/orbitkv-core/src/codec/`: GPU ANS/FP8/TurboQuant and bounded representation validation
 - `crates/orbitkv-core/src/backing/ssd/`: SSD index, io_uring and optional cuFile read/write
 - `crates/orbitkv-core/src/storage/mod.rs`: storage pipeline
+- `crates/orbitkv-core/src/planning/`: replica evidence, SSD route eligibility/acquisition and peer source segmentation
 - `crates/orbitkv-core/src/backing/`: SSD and Mooncake-backed remote tiers
 - `crates/orbitkv-core/src/internode/`: cross-node coordination
 - `crates/orbitkv-core/src/internode/p2p_service.rs`: peer transfer control service

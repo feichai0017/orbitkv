@@ -339,3 +339,101 @@ async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
     drop(lease);
     assert_eq!(readers.load(Ordering::Acquire), 0);
 }
+
+#[tokio::test]
+async fn ssd_planning_preserves_default_preparation_and_explicit_route_rules() {
+    use crate::planning::ssd::SsdReadPlan;
+    use crate::{QueryMode, RestoreSource};
+
+    for (path, mode, should_plan) in [
+        (None, QueryMode::Demand, false),
+        (Some(SsdReadPath::Uring), QueryMode::Demand, true),
+        (Some(SsdReadPath::Cufile), QueryMode::Demand, false),
+        (Some(SsdReadPath::Uring), QueryMode::Prepare, false),
+        (Some(SsdReadPath::Uring), QueryMode::Warmup, false),
+    ] {
+        let (mut store, queued) = queued_read_store();
+        Arc::get_mut(&mut store).unwrap().read_path = path;
+        let key = StateKey::new("queued-lease".into(), vec![0]);
+        let version = store.inner.lock().ring.get(&key).unwrap().readers.clone();
+        let plan = SsdReadPlan::discover(&store, std::slice::from_ref(&key), mode, 64 * 1024);
+        assert_eq!(plan.is_some(), should_plan, "path={path:?}, mode={mode:?}");
+        assert_eq!(version.load(Ordering::Acquire), 0);
+        assert_eq!(queued.len(), 0, "planning cannot read payloads");
+        if let Some(plan) = plan {
+            let sources = plan.acquire(64 * 1024).unwrap();
+            assert!(matches!(
+                &sources[0],
+                RestoreSource::Ssd {
+                    path: SsdReadPath::Uring,
+                    ..
+                }
+            ));
+            assert_eq!(version.load(Ordering::Acquire), 1);
+            drop(sources);
+            assert_eq!(version.load(Ordering::Acquire), 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn ssd_plan_revalidates_versions_and_requires_complete_selected_prefixes() {
+    use crate::QueryMode;
+    use crate::planning::ssd::SsdReadPlan;
+
+    let (mut store, queued) = queued_read_store();
+    Arc::get_mut(&mut store).unwrap().read_path = Some(SsdReadPath::Uring);
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let missing = StateKey::new("queued-lease".into(), vec![1]);
+    let keys = [key.clone(), missing.clone()];
+    assert!(
+        SsdReadPlan::discover(&store, &keys, QueryMode::WaitForFullPrefix, 64 * 1024).is_none()
+    );
+    let partial = SsdReadPlan::discover(&store, &keys, QueryMode::Demand, 64 * 1024).unwrap();
+    assert_eq!(partial.acquire(64 * 1024).unwrap().len(), 1);
+
+    let plan = SsdReadPlan::discover(&store, &keys[..1], QueryMode::Demand, 64 * 1024).unwrap();
+    let mut inner = store.inner.lock();
+    let old = inner.ring.get(&key).unwrap().clone();
+    for next in [&missing, &key] {
+        inner
+            .ring
+            .reserve(next, old.slots.clone(), index::Encoding::Raw)
+            .unwrap();
+        assert!(inner.ring.commit(next, true));
+    }
+    drop(inner);
+    assert!(plan.acquire(64 * 1024).is_none());
+    assert_eq!(old.readers.load(Ordering::Acquire), 0);
+
+    // A later source can disappear after discovery. Strict acquisition must
+    // release earlier leases; ordinary demand may still use that prefix.
+    store._files[0].set_len(2 * SSD_ALIGNMENT as u64).unwrap();
+    let mut inner = store.inner.lock();
+    inner.ring = SsdRingBuffer::new_sharded(vec![2 * SSD_ALIGNMENT as u64], SSD_ALIGNMENT as u64);
+    for (key, encoding) in [
+        (&key, index::Encoding::Raw),
+        (&missing, index::Encoding::Encoded),
+    ] {
+        inner
+            .ring
+            .reserve(key, old.slots.clone(), encoding)
+            .unwrap();
+        assert!(inner.ring.commit(key, true));
+    }
+    let first = inner.ring.get(&key).unwrap().clone();
+    let last = inner.ring.get(&missing).unwrap().clone();
+    drop(inner);
+    let full =
+        SsdReadPlan::discover(&store, &keys, QueryMode::WaitForFullPrefix, 64 * 1024).unwrap();
+    let partial = SsdReadPlan::discover(&store, &keys, QueryMode::Demand, 64 * 1024).unwrap();
+    store.inner.lock().ring.invalidate_encoded(&missing, &last);
+    assert!(full.acquire(64 * 1024).is_none());
+    assert_eq!(first.readers.load(Ordering::Acquire), 0);
+    let prefix = partial.acquire(64 * 1024).unwrap();
+    assert_eq!(prefix.len(), 1);
+    assert_eq!(first.readers.load(Ordering::Acquire), 1);
+    drop(prefix);
+    assert_eq!(first.readers.load(Ordering::Acquire), 0);
+    assert_eq!(queued.len(), 0);
+}

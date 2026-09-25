@@ -496,11 +496,12 @@ async fn discovery_deadline_spans_batches_and_keeps_later_local_and_cached_candi
         let mut found = Vec::new();
         for (batch, hashes) in hashes.chunks(DISCOVERY_MAX_KEYS).enumerate() {
             let rows = storage.discover("ns", hashes, deadline).await;
-            for (offset, candidate) in rows.into_iter().enumerate() {
+            for (offset, mut candidate) in rows.into_iter().enumerate() {
                 let position = batch * DISCOVERY_MAX_KEYS + offset;
                 if position == 129 {
-                    assert!(candidate.dram.is_some());
-                    assert_eq!(candidate.peer_dram.len(), 1);
+                    assert_eq!(candidate.peer_dram().count(), 1);
+                    candidate.set_peer_dram(Vec::new());
+                    assert!(candidate.is_available());
                 }
                 if candidate.is_available() {
                     found.push(position);

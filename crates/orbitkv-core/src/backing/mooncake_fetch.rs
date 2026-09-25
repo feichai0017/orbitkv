@@ -13,15 +13,14 @@ use crate::memory::numa::NumaNode;
 
 use opentelemetry::KeyValue;
 
-use super::fetch_plan::{
-    FetchPlan, FetchSegment, SegmentFetcher, SegmentOutcome, execute_fetch_plan,
-};
+use super::fetch_plan::{SegmentFetcher, SegmentOutcome, execute_fetch_plan};
 use super::transfer_lock_guard::{TransferCompletions, TransferLockGuard};
 use super::{AllocateFn, MooncakeTransport, PrefetchResult};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, resource_id};
 use crate::internode::CatalogClient;
 use crate::metrics::core_metrics;
+use crate::planning::peer::{FetchPlan, FetchSegment};
 
 /// Minimum usable transfer timeout. If the server's lock timeout minus the
 /// safety margin falls below this, we use this floor to avoid instant timeouts.
@@ -264,7 +263,7 @@ impl MooncakeFetchStore {
 
     pub(crate) async fn fetch_plan(
         &self,
-        plan: &FetchPlan,
+        plan: FetchPlan,
         req_id: &str,
         namespace: &str,
         hashes: &[Vec<u8>],
@@ -273,6 +272,7 @@ impl MooncakeFetchStore {
             warn!("Remote fetch plan does not match the requested state");
             return Vec::new();
         }
+        let planned_blocks = plan.block_count();
         let started_at = Instant::now();
         let (fetched, attempts, completed) = execute_fetch_plan(self, plan, req_id).await;
         let metrics = core_metrics();
@@ -284,7 +284,7 @@ impl MooncakeFetchStore {
             .record(completed as u64, &[]);
         info!(
             "Mooncake fetch plan: req_id={req_id} attempted_segments={attempts} completed_segments={completed} planned_blocks={} fetched_blocks={} total_ms={:.2}",
-            plan.block_count(),
+            planned_blocks,
             fetched.len(),
             started_at.elapsed().as_secs_f64() * 1000.0
         );

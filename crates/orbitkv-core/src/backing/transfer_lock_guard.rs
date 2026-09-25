@@ -15,8 +15,8 @@ use tonic::Status;
 use tonic::transport::{Channel, Endpoint};
 use uuid::Uuid;
 
-use super::fetch_plan::FetchSegment;
 use crate::metrics::core_metrics;
+use crate::planning::peer::FetchSegment;
 use crate::storage::transfer_lock::TRANSFER_WINDOW_SLOTS;
 
 const MAX_COMPLETIONS: usize = 1024;

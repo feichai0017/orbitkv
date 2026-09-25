@@ -396,15 +396,17 @@ engine readiness signals, recovery boundaries, measured local/peer paths and
 prefetch timing. Shared Rust cost observations and resource accounting support
 different [deployment contracts](state-planning.md#policies-by-deployment-mode).
 
-Its [next structural refactor](state-planning.md#unified-replicas-routes-and-execution-ownership)
-uses bounded replica records with owner/resource endpoints, medium, version and
-representation. Locality is relative to the consumer; a replica may have several
-eligible transfer routes. The selected plan acquires the existing source leases,
-destination authorization and resource reservations. A common endpoint does not
-give the Manager allocation or eviction authority over engine HBM. The
+The first [structural refactor](state-planning.md#unified-replicas-routes-and-execution-ownership)
+adds Core `planning/`: bounded replica records separate medium from acquisition
+evidence, SSD planning revalidates exact versions before pinning, and peer plans
+own source segmentation and rejected-evidence updates. Default execution remains
+unchanged. The fuller owner/resource endpoint, route and resource-reservation
+contract remains planned; current discovery still returns positions to the
+engine. A common endpoint does not give the Manager allocation or eviction
+authority over engine HBM. GPUDirect RDMA remains a TE capability requiring valid
+GPU endpoints, not a new cache tier. See the
 [target Core layout](state-planning.md#code-ownership-and-migration) and
-[route cost contract](state-planning.md#cost-model-for-complete-routes) are planned
-changes; current discovery still returns positions to the engine.
+[route cost contract](state-planning.md#cost-model-for-complete-routes).
 Local path selection comes first; distributed qualification proceeds alongside
 it. These are design proposals, not capabilities implied by current cache hits.
 

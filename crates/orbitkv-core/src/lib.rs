@@ -15,6 +15,7 @@ mod engine;
 mod internode;
 mod memory;
 mod metrics;
+mod planning;
 mod query;
 mod storage;
 pub mod transfer;

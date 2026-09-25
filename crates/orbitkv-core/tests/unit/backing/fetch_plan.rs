@@ -1,6 +1,6 @@
 use super::*;
 use crate::block::SealedBlock;
-use orbitkv_state::{ReplicaLocation, StateKey};
+use orbitkv_state::{BlockCandidates, CacheOwner, ReplicaLocation, StateKey};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -49,33 +49,6 @@ impl SegmentFetcher for Fetcher {
     }
 }
 
-#[test]
-fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
-    let rows = vec![
-        row(1, &["c", "b", "a"]),
-        row(2, &["c", "b"]),
-        row(3, &["d"]),
-        row(4, &[]),
-        row(5, &["a"]),
-    ];
-    let plan = FetchPlan::new(rows).unwrap();
-    assert_eq!(plan.block_count(), 3);
-    let first = next_segment(&plan.rows, 0).unwrap();
-    assert_eq!(first.owner.endpoint, "b");
-    assert_eq!(
-        first.records.iter().map(|r| r.sequence).collect::<Vec<_>>(),
-        [1, 2]
-    );
-    assert_eq!(next_segment(&plan.rows, 2).unwrap().owner.endpoint, "d");
-    let mut rows = vec![row(1, &["a"]); DISCOVERY_MAX_KEYS + 1];
-    assert_eq!(
-        next_segment(&rows, 0).unwrap().records.len(),
-        DISCOVERY_MAX_KEYS
-    );
-    rows[0].key.hash = vec![1; DISCOVERY_MAX_BYTES - 2];
-    assert_eq!(next_segment(&rows, 0).unwrap().records.len(), 1);
-}
-
 #[tokio::test]
 async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_payload_failure() {
     for (response, expected) in [(SegmentOutcome::Rejected, 2), (SegmentOutcome::Failed, 0)] {
@@ -84,7 +57,7 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
             calls: Mutex::new(Vec::new()),
         };
         let plan = FetchPlan::new(vec![row(1, &["a", "b"]), row(2, &["a", "b"])]).unwrap();
-        let (fetched, _, _) = execute_fetch_plan(&fetcher, &plan, "test-request").await;
+        let (fetched, _, _) = execute_fetch_plan(&fetcher, plan, "test-request").await;
         assert_eq!(fetched.len(), expected);
         assert_eq!(
             fetcher.calls.lock().unwrap().len(),
@@ -101,7 +74,7 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
     };
     let plan = FetchPlan::new(vec![row(1, &["a", "b", "c", "d"])]).unwrap();
     assert!(
-        execute_fetch_plan(&fetcher, &plan, "test-request")
+        execute_fetch_plan(&fetcher, plan, "test-request")
             .await
             .0
             .is_empty()
@@ -126,7 +99,7 @@ async fn malformed_or_short_segment_never_skips_a_gap() {
     };
     let plan = FetchPlan::new(vec![row(1, &["a"]), row(2, &["a"]), row(3, &["b"])]).unwrap();
     assert_eq!(
-        execute_fetch_plan(&fetcher, &plan, "test-request")
+        execute_fetch_plan(&fetcher, plan, "test-request")
             .await
             .0
             .len(),

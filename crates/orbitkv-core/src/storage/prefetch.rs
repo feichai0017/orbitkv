@@ -50,7 +50,7 @@ impl RemoteFetch {
         }
         let blocks = self
             .0
-            .fetch_plan(&plan, req_id, namespace, remaining_hashes)
+            .fetch_plan(plan, req_id, namespace, remaining_hashes)
             .await;
         if require_full_prefix && blocks.len() != found {
             // Complete this query with the partial result; do not retry a
@@ -175,56 +175,26 @@ impl PrefetchScheduler {
             };
         }
 
-        // Demand leases can own disk extents without materializing host data.
-        // Speculative preparation continues to fill DRAM before GPU pages exist.
-        if !warming
-            && let Some(ssd) = &self.ssd_store
-            && (ssd.read_path.is_some() || ssd.gpu_io.available())
+        if let Some(ssd) = &self.ssd_store
+            && let Some(plan) = crate::planning::ssd::SsdReadPlan::discover(
+                ssd,
+                &keys[hit..],
+                mode,
+                self.codec_budget,
+            )
+            && let Some(disk) = plan.acquire(self.codec_budget)
         {
-            let disk = ssd.discover_prefix(&keys[hit..]);
-            let cufile = disk
-                .iter()
-                .all(|lease| lease.cufile_eligible(self.codec_budget));
-            let path = match ssd.read_path {
-                Some(crate::SsdReadPath::Uring) => Some(crate::SsdReadPath::Uring),
-                _ if cufile => Some(crate::SsdReadPath::Cufile),
-                _ => None,
+            let count = hit + disk.len();
+            ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
+            record_tier_attribution(keys.len(), hit, disk.len(), Some(AttributionSource::Ssd));
+            return QueryResult {
+                blocks: prefix_blocks
+                    .into_iter()
+                    .map(RestoreSource::Memory)
+                    .chain(disk)
+                    .collect(),
+                missing: keys.len() - count,
             };
-            if let Some(path) = path
-                && !disk.is_empty()
-                && (!wait_for_full_prefix || hit + disk.len() == keys.len())
-            {
-                let disk: Vec<_> = disk.iter().map_while(|candidate| candidate.pin()).collect();
-                // Discovery did not pin or read payloads. Revalidate the exact
-                // selected generations and path before transferring ownership.
-                if !disk.is_empty()
-                    && (!wait_for_full_prefix || hit + disk.len() == keys.len())
-                    && (path != crate::SsdReadPath::Cufile
-                        || disk
-                            .iter()
-                            .all(|lease| lease.cufile_eligible(self.codec_budget)))
-                {
-                    let count = hit + disk.len();
-                    ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
-                    record_tier_attribution(
-                        keys.len(),
-                        hit,
-                        disk.len(),
-                        Some(AttributionSource::Ssd),
-                    );
-                    return QueryResult {
-                        blocks: prefix_blocks
-                            .into_iter()
-                            .map(RestoreSource::Memory)
-                            .chain(
-                                disk.into_iter()
-                                    .map(|lease| RestoreSource::Ssd { lease, path }),
-                            )
-                            .collect(),
-                        missing: keys.len() - count,
-                    };
-                }
-            }
         }
 
         let allow_ssd_prefetch = warming

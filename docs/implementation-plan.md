@@ -41,9 +41,11 @@ an OrbitKV implementation or qualification item.
 ## Current baseline and evidence
 
 The implementation in [PR #182](https://github.com/feichai0017/orbitkv/pull/182)
-was merged at `b1aef401`. The follow-up design branch is
-`chore/replica-route-design`, based on that merge. Recheck Git status before
-working and preserve existing changes. P4.1
+was merged at `b1aef401`; the design in
+[PR #183](https://github.com/feichai0017/orbitkv/pull/183) was merged at `13ac3a9d`.
+The first structural implementation is on `refactor/replica-route-planning`,
+based on that merge. Recheck Git status before working and preserve existing
+changes. P4.1
 observations, independent SSD demand routes and the fixed DMA/kernel comparison
 are recorded below; dynamic execution selection remains planned.
 
@@ -696,6 +698,36 @@ Frozen artifacts, commands and raw logs are in ignored
 with the matching prebuilt Manager/client; do not run Cargo while those processes
 have Mooncake libraries mapped.
 
+## Replica collection and source planning
+
+Core now has a concrete `planning/` owner without additional crates, public
+backend traits or configuration:
+
+- `replica.rs` replaces per-tier candidate fields with a bounded collection of
+  medium plus concrete acquisition evidence. Discovery retains weak DRAM/index
+  snapshots and bounded peer owner/incarnation/sequence records; it does not
+  materialize or pin payloads. Refresh and rejection preserve unrelated sources.
+- `ssd.rs` builds metadata-only plans and then acquires exact source generations.
+  io_uring and cuFile remain independent routes over the same store. Strict
+  selected-prefix reads reject incomplete acquisition; ordinary demand retains
+  existing partial-prefix behavior. Preparation still targets host DRAM.
+- `peer.rs` owns contiguous source selection, stable ties and bounded segments.
+  The executor consumes its plan and updates rejected evidence without cloning
+  all rows. Authoritative peer admission, TE READ ownership, bounded retries and
+  terminal release stay in the existing remote executor.
+
+This is the first structural slice, not a complete cost-based planner. Discovery
+still projects positions to engines; reads reacquire candidates, SSD/peer priority
+is unchanged, and there is no new automatic selection or live-resource estimator.
+Existing opt-in cost observations retain their current boundaries. Next connect
+request-wide candidates and declared completion targets to selected query leases,
+then compare complete routes with resource admission and measured uncertainty.
+
+GPUDirect RDMA remains inside TE, with separately validated GPU endpoints and
+topology. It is neither another medium nor implied by host-memory TCP success.
+General peer HBM still needs engine source/destination lifetime grants; remote
+SSD needs source-side preparation. Neither is enabled by this refactor.
+
 ## Session startup and working constraints
 
 Read [AGENTS.md](../AGENTS.md), this plan, the affected owners and the relevant
@@ -740,10 +772,10 @@ npm test
 
 Continue with the [unified replica/route refactor](state-planning.md#unified-replicas-routes-and-execution-ownership)
 and its [code ownership and migration](state-planning.md#code-ownership-and-migration).
-Normalize the existing local DRAM/SSD and peer DRAM candidates into bounded
-replica records: owner/node/resource endpoint, medium, immutable version,
-representation and explicit unknown evidence. Locality is relative to the
-consumer; io_uring/cuFile/Mooncake are access methods. Preserve the current
+Build on the implemented bounded replica collection and SSD/peer plans. Complete
+the consumed owner/node/resource, representation and byte descriptors while
+preserving immutable versions and explicit unknown evidence. Locality is relative
+to the consumer; io_uring/cuFile/Mooncake are access methods. Preserve the current
 physical namespace, and do not expose unsupported peer SSD/HBM as executable
 candidates. Source and destination engine HBM need real page-lifetime grants;
 Manager staging is not automatically a retained replica.

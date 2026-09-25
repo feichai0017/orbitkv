@@ -67,11 +67,16 @@ records LMCache, FlexKV and Mooncake mechanisms, owners and implementation statu
 
 ## Measured transfer planning
 
-Next structural step: [unified replicas, routes and owned plans](docs/state-planning.md#unified-replicas-routes-and-execution-ownership).
+Structural work: [unified replicas, routes and owned plans](docs/state-planning.md#unified-replicas-routes-and-execution-ownership).
 
-- [ ] Replace dedicated local DRAM/SSD/peer-DRAM fields with bounded replica
-  records carrying owner/resource endpoint, medium, version and representation;
-  preserve current namespace compatibility and unknown peer metadata.
+- [x] Replace dedicated local DRAM/SSD/peer-DRAM fields with bounded replica
+  records separating medium from acquisition evidence; preserve current
+  namespace compatibility, exact source versions and unknown peer metadata.
+  Move SSD route eligibility/acquisition and peer source segmentation into
+  `planning/`, preserving existing execution defaults and completion owners.
+- [ ] Complete consumed endpoint descriptors for owner/resource identity,
+  representation and bytes; bind actual TE transport capability to GPU routes
+  without treating GPUDirect RDMA as a tier or assuming peer HBM authorization.
 - [ ] Retain those records through route enumeration and selected-plan ownership;
   extend current query leases rather than adding another lease registry. Keep
   default execution unchanged and only enumerate implemented, authorized routes.

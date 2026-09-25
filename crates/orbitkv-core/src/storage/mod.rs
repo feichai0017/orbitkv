@@ -1,4 +1,3 @@
-mod candidates;
 pub(crate) mod inventory;
 pub(crate) mod metadata;
 mod prefetch;
@@ -24,7 +23,7 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
 
-use candidates::ResidencyCandidates;
+use crate::planning::replica::ReplicaSet;
 use prefetch::PrefetchScheduler;
 #[cfg(feature = "mooncake")]
 use prefetch::RemoteFetch;
@@ -420,7 +419,7 @@ impl StorageEngine {
         namespace: &str,
         hashes: &[Vec<u8>],
         deadline: tokio::time::Instant,
-    ) -> Vec<ResidencyCandidates> {
+    ) -> Vec<ReplicaSet> {
         #[cfg(not(feature = "mooncake"))]
         let _ = deadline;
         let keys: Vec<_> = hashes
@@ -431,23 +430,26 @@ impl StorageEngine {
             .iter()
             .cloned()
             .zip(self.read_cache.discover(&keys))
-            .map(|(key, dram)| ResidencyCandidates {
-                key,
-                dram,
-                ssd: None,
-                peer_dram: Vec::new(),
+            .map(|(key, dram)| {
+                let mut candidates = ReplicaSet::new(key);
+                if let Some(dram) = dram {
+                    candidates.set_memory(dram);
+                }
+                candidates
             })
             .collect();
         if let Some(ssd) = &self.ssd_store {
             for (candidate, backing) in candidates.iter_mut().zip(ssd.discover(&keys)) {
-                candidate.ssd = backing;
+                if let Some(backing) = backing {
+                    candidate.set_ssd(backing);
+                }
             }
         }
         #[cfg(feature = "mooncake")]
         if let Some(catalog) = &self.catalog_client {
             for (candidate, cached) in candidates.iter_mut().zip(catalog.cached_blocks(&keys)) {
                 if let Some(cached) = cached {
-                    candidate.peer_dram = cached.replicas;
+                    candidate.set_peer_dram(cached.replicas);
                 }
             }
             let missing: Vec<_> = candidates
@@ -479,7 +481,7 @@ impl StorageEngine {
                     if let Some(candidate) = candidate
                         && candidates[i].key == candidate.key
                     {
-                        candidates[i].peer_dram = candidate.replicas;
+                        candidates[i].set_peer_dram(candidate.replicas);
                     }
                 }
             }

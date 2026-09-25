@@ -246,12 +246,19 @@ traffic needs priority with bounded write starvation.
 
 ### Unified replicas, routes and execution ownership
 
-This is the target for the next refactor, not an additional implemented backend
-surface. The current `dram` / `ssd` / `peer_dram` candidate fields encode both
-medium and locality and cannot naturally express another owner's SSD or HBM.
-Replace them with a bounded collection of replica candidates consumed by the
-physical planner. Keep the actual allocations, files, registrations and queues
-with their existing owners.
+The first structural slice is implemented in Core's `planning/`: discovery and
+peer source selection use a bounded `ReplicaSet`, replacing the dedicated
+`dram` / `ssd` / `peer_dram` fields. Each record separates medium from acquisition
+evidence: weak DRAM ownership, an SSD index version, or peer owner/incarnation
+and inventory sequence. Peer refresh preserves local evidence and the directory's
+replica bound. Current peer evidence still describes DRAM only.
+
+`SsdReadPlan` separates metadata eligibility from exact-generation acquisition;
+`FetchPlan` owns peer selection/rejection without cloning its candidate rows at
+execution. Existing source and completion owners retain all allocations, files,
+registrations and queues. The fuller endpoint/route contract below remains the
+target: request-wide candidate retention, common completion targets and measured
+cross-source selection are not implemented by this slice.
 
 | Concept | Information and responsibility |
 | --- | --- |
@@ -300,6 +307,15 @@ transfer-ready memory window. Charge source preparation and both endpoints;
 the requester must not allocate or schedule the peer's internal resources.
 Peer HBM routes require the engine-grant contract above before enumeration.
 
+GPUDirect RDMA is a Mooncake TE transport capability for registered GPU memory,
+not a residence or another remote backend. A route must retain both memory
+endpoints and validated transport capability: host-to-host RDMA, host/GPU RDMA
+and GPU-to-GPU RDMA have different prerequisites and resource costs. NIC selection,
+connections and low-level retries remain with TE. Do not infer GPU reachability
+from a successful TCP/DRAM transfer, nor expose another transport switch here.
+Ordinary shared-cache recovery still uses peer DRAM → local DRAM → engine HBM;
+the experimental GPU P/D handoff does not advertise peer HBM cache replicas.
+
 Compare only routes satisfying the same demand and completion target. A host-ready
 prefetch cannot compete as if it were an engine-visible restore. Do not enumerate
 every cluster resource or search an unrestricted transfer graph. Use bounded
@@ -324,8 +340,8 @@ not a calibrated confidence interval or p99 guarantee.
 
 Estimate from route shape, layout/encoding, logical and aligned/stored/wire bytes,
 fragmentation, resource identities, actual transport mode and current resource
-evidence. Keep cuFile compatibility/native GDS and TCP/RDMA samples distinguishable;
-unknown mode is not proof of a native path. Use bounded device/store/peer-runtime
+evidence. Keep cuFile compatibility/native GDS and TCP/host-memory RDMA/GPUDirect
+RDMA samples distinguishable; unknown mode is not proof of a native path. Use bounded device/store/peer-runtime
 keys, never request IDs or per-replica generations in the statistical index.
 Generation belongs to correctness validation. Missing format, size, queue or
 cost information stays unknown rather than becoming zero.
@@ -363,7 +379,10 @@ Retention/write admission stays a separate decision using the same observations.
 
 Keep the existing crates. The target Core layout separates physical residency,
 planning, request ownership and execution; introduce modules when their behavior
-moves, with no empty scaffolding or compatibility re-exports:
+moves, with no empty scaffolding or compatibility re-exports. `planning/replica.rs`,
+`planning/ssd.rs` and `planning/peer.rs` now own existing candidate collection,
+SSD route planning and peer segmentation. The remaining directory moves below
+are a target, not a description of today's tree:
 
 ```text
 orbitkv-state/       shared state/recovery and consumed descriptor contracts
@@ -392,9 +411,11 @@ boundary. Module moves should accompany real consumers, not one large rename PR.
 
 The refactor sequence is:
 
-1. Replace the three-field candidate shape with bounded replica records for
-   existing DRAM/SSD/peer-DRAM sources. Preserve exact namespaces, metadata-only
-   discovery and version revalidation; retain records through request planning.
+1. Bounded records now replace the three-field candidate shape for existing
+   DRAM/SSD/peer-DRAM sources, preserving exact namespaces, metadata-only
+   discovery and version revalidation. Next retain these records across the
+   complete request's planning instead of projecting engine-facing positions
+   and reacquiring evidence for reads.
 2. Express existing routes and their common completion targets explicitly,
    preserving today's default selection. Keep io_uring/cuFile on the same extent.
 3. Bind the selected plan to current query/source/destination/completion owners.
