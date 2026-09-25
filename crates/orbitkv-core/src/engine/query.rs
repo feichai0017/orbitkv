@@ -37,7 +37,8 @@ impl OrbitKVEngine {
 
         let status = self
             .storage
-            .check_prefix_and_prefetch(req_id, namespace, &encoded, mode)
+            .reads
+            .read_prefix(req_id, namespace, &encoded, mode)
             .await;
 
         {
@@ -63,7 +64,7 @@ impl OrbitKVEngine {
         let topology = instance.sealed_topology()?;
         topology.group_total_slots(group_id)?;
         let mut positions = Vec::new();
-        let deadline = tokio::time::Instant::now() + crate::storage::DISCOVERY_TIMEOUT;
+        let deadline = tokio::time::Instant::now() + crate::planning::discover::DISCOVERY_TIMEOUT;
         'discovery: for (batch, hashes) in
             hashes.chunks(orbitkv_state::DISCOVERY_MAX_KEYS).enumerate()
         {
@@ -71,10 +72,15 @@ impl OrbitKVEngine {
                 .iter()
                 .map(|hash| group_hash(hash, group_id))
                 .collect();
-            let candidates = self
-                .storage
-                .discover(&topology.cache_namespace, &encoded, deadline)
-                .await;
+            let candidates = crate::planning::discover::discover(
+                &self.storage.dram,
+                self.storage.ssd_store.as_ref(),
+                self.storage.catalog_client.as_ref(),
+                &topology.cache_namespace,
+                &encoded,
+                deadline,
+            )
+            .await;
             for (position, candidate) in candidates.into_iter().enumerate() {
                 debug_assert_eq!(candidate.key.hash, encoded[position]);
                 if candidate.is_available() {
@@ -128,7 +134,8 @@ impl OrbitKVEngine {
 
         let status = self
             .storage
-            .check_prefix_and_prefetch(req_id, namespace, &encoded, QueryMode::WaitForFullPrefix)
+            .reads
+            .read_prefix(req_id, namespace, &encoded, QueryMode::WaitForFullPrefix)
             .await;
 
         {
@@ -174,7 +181,8 @@ impl OrbitKVEngine {
             .collect();
         Ok(self
             .storage
-            .get_membership(req_id, namespace, &encoded, mode)
+            .reads
+            .read_membership(req_id, namespace, &encoded, mode)
             .await)
     }
 

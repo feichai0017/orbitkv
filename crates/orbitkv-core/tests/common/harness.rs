@@ -144,7 +144,7 @@ pub struct TestEnvBuilder {
     namespace: &'static str,
     pool_size: usize,
     world_size: usize,
-    storage_config: Option<StorageConfig>,
+    storage_config: Option<EngineConfig>,
     transfer_mode: TransferMode,
     page_first: bool,
     layers: Vec<LayerSpec>,
@@ -240,7 +240,7 @@ impl TestEnvBuilder {
         self
     }
 
-    pub fn storage(mut self, config: StorageConfig) -> Self {
+    pub fn storage(mut self, config: EngineConfig) -> Self {
         self.storage_config = Some(config);
         self
     }

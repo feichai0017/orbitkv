@@ -1,5 +1,6 @@
 //! Cache orchestration and registration; storage and transfer owners retain resources.
 
+pub(crate) mod config;
 pub(crate) mod instance;
 mod publish;
 mod query;
@@ -13,11 +14,11 @@ use std::{
 
 use log::info;
 
-use crate::backing::SSD_ALIGNMENT;
 use crate::memory::numa::{NumaNode, NumaTopology};
 use crate::query::QueryBudget;
 use crate::query::lease::QueryLeaseManager;
-use crate::storage::{self, MemoryCacheCleanupStats, StorageEngine};
+use crate::storage::ssd::SSD_ALIGNMENT;
+use crate::storage::{MemoryCacheCleanupStats, Storage};
 use crate::transfer::TransferMode;
 use crate::transfer::layout::KVCacheLayout;
 use instance::{GpuRegistration, InstanceContext};
@@ -72,7 +73,7 @@ pub struct OrbitKVEngine {
     /// Active inference instances indexed by instance ID.
     instances: Arc<RwLock<HashMap<String, Arc<InstanceContext>>>>,
     /// Storage engine for pinned memory, block cache, and SSD tier.
-    pub(crate) storage: Arc<StorageEngine>,
+    pub(crate) storage: Arc<Storage>,
     /// GPU-NUMA topology for memory allocation decisions.
     topology: Arc<NumaTopology>,
     /// Query-ready blocks owned by opaque scheduler leases.
@@ -88,7 +89,7 @@ impl OrbitKVEngine {
     pub fn new_with_config(
         pool_size: usize,
         use_hugepages: bool,
-        storage_config: storage::StorageConfig,
+        storage_config: crate::EngineConfig,
     ) -> Result<Self, EngineError> {
         let topology = Arc::new(NumaTopology::detect());
         topology.log_summary();
@@ -127,7 +128,7 @@ impl OrbitKVEngine {
             vec![]
         };
 
-        let storage = StorageEngine::new_with_config(pool_size, use_hugepages, config, &numa_nodes)
+        let storage = Storage::new_with_config(pool_size, use_hugepages, config, &numa_nodes)
             .map_err(EngineError::Storage)?;
 
         Ok(OrbitKVEngine {
@@ -516,13 +517,13 @@ impl OrbitKVEngine {
     /// call that returned before this call will have its blocks inserted into the
     /// read cache (or inflight map) by the time this future resolves.
     pub async fn flush_saves(&self) {
-        self.storage.flush_write_pipeline().await;
+        self.storage.writes.flush().await;
     }
 
     /// Flush saves and wait for directory acknowledgement of current residency.
     /// Returns an error if synchronization cannot complete within its deadline.
     pub async fn flush_saves_and_inventory(&self) -> Result<(), EngineError> {
-        self.storage.flush_write_pipeline().await;
+        self.storage.writes.flush().await;
         self.storage
             .flush_inventory()
             .await
@@ -534,28 +535,27 @@ impl OrbitKVEngine {
     /// Guarantees that all saves submitted before this call are both
     /// cache-visible and persisted to SSD (if SSD is enabled).
     pub async fn flush_all(&self) {
-        self.storage.flush_write_pipeline().await;
+        self.storage.writes.flush().await;
         self.storage.flush_ssd().await;
     }
 
     /// Remove abandoned writes. Query futures drain independently of polling.
     pub async fn gc_stale_inflight(&self, max_age: std::time::Duration) -> usize {
-        self.storage.gc_stale_inflight(max_age).await
+        self.storage.writes.gc_stale_inflight(max_age).await
     }
 
     // =========================================================================
     // Cross-node transfer: serving side
     // =========================================================================
 
-    /// Mark overdue source transfers without releasing their memory.
-    pub fn expire_transfer_locks(&self) -> usize {
-        self.storage.transfer_lock.expire()
+    /// Source admission and completion ownership for the peer protocol adapter.
+    pub fn peer_exports(&self) -> &crate::PeerExports {
+        &self.storage.exports
     }
 
-    /// Return `(base_ptr, size)` for each contiguous pinned memory region.
-    /// Used for Mooncake memory registration.
-    pub fn pinned_memory_regions(&self) -> Vec<(u64, usize)> {
-        self.storage.pinned_memory_regions()
+    /// Mark overdue source transfers without releasing their memory.
+    pub fn expire_transfer_locks(&self) -> usize {
+        self.storage.exports.expire()
     }
 
     /// Returns true if the Mooncake remote transfer engine is available.

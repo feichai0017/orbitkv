@@ -246,12 +246,30 @@ traffic needs priority with bounded write starvation.
 
 ### Unified replicas, routes and execution ownership
 
-This is the target for the next refactor, not an additional implemented backend
-surface. The current `dram` / `ssd` / `peer_dram` candidate fields encode both
-medium and locality and cannot naturally express another owner's SSD or HBM.
-Replace them with a bounded collection of replica candidates consumed by the
-physical planner. Keep the actual allocations, files, registrations and queues
-with their existing owners.
+Core's `planning/` uses a bounded `ReplicaSet` for local DRAM, local SSD and
+peer DRAM. Each record separates medium from acquisition evidence: weak DRAM
+ownership, an SSD index version, or peer owner/incarnation and inventory sequence.
+Peer refresh preserves local evidence and the directory's replica bound. Current
+peer evidence describes DRAM only; unknown peer size/encoding stays unknown.
+
+`ReadPlan` now retains unresolved candidates for an admitted query batch and
+declares host-ready preparation or engine restoration. The coordinator keeps
+already acquired DRAM prefix holds. SSD and peer route plans borrow the same
+records, validate required coverage, and acquire sources through their existing
+owners. Host SSD reads also submit exact-generation leases; they no longer
+rediscover by key. Both queued and submitted reads retain these leases through
+cancellation until completion. Peer rejection updates only the rejected owner,
+without truncating the batch or discarding SSD alternatives.
+
+The selection order remains unchanged: local DRAM first; eligible deferred SSD
+restoration next; host materialization tries peer DRAM, then permitted SSD
+io_uring. Explicit SSD paths do not silently switch to host prefetch. Preparation
+produces host state; an engine restore completes only through the existing GPU
+completion owner. Metadata discovery still returns positions to engines, so it
+is not a reusable read grant. Plans are per admitted query batch, not a joint
+optimizer across groups, ranks or all request batches. Full route/resource
+estimates, consumed endpoint descriptors and measured cross-source selection
+remain open.
 
 | Concept | Information and responsibility |
 | --- | --- |
@@ -300,6 +318,15 @@ transfer-ready memory window. Charge source preparation and both endpoints;
 the requester must not allocate or schedule the peer's internal resources.
 Peer HBM routes require the engine-grant contract above before enumeration.
 
+GPUDirect RDMA is a Mooncake TE transport capability for registered GPU memory,
+not a residence or another remote backend. A route must retain both memory
+endpoints and validated transport capability: host-to-host RDMA, host/GPU RDMA
+and GPU-to-GPU RDMA have different prerequisites and resource costs. NIC selection,
+connections and low-level retries remain with TE. Do not infer GPU reachability
+from a successful TCP/DRAM transfer, nor expose another transport switch here.
+Ordinary shared-cache recovery still uses peer DRAM → local DRAM → engine HBM;
+the experimental GPU P/D handoff does not advertise peer HBM cache replicas.
+
 Compare only routes satisfying the same demand and completion target. A host-ready
 prefetch cannot compete as if it were an engine-visible restore. Do not enumerate
 every cluster resource or search an unrestricted transfer graph. Use bounded
@@ -324,8 +351,8 @@ not a calibrated confidence interval or p99 guarantee.
 
 Estimate from route shape, layout/encoding, logical and aligned/stored/wire bytes,
 fragmentation, resource identities, actual transport mode and current resource
-evidence. Keep cuFile compatibility/native GDS and TCP/RDMA samples distinguishable;
-unknown mode is not proof of a native path. Use bounded device/store/peer-runtime
+evidence. Keep cuFile compatibility/native GDS and TCP/host-memory RDMA/GPUDirect
+RDMA samples distinguishable; unknown mode is not proof of a native path. Use bounded device/store/peer-runtime
 keys, never request IDs or per-replica generations in the statistical index.
 Generation belongs to correctness validation. Missing format, size, queue or
 cost information stays unknown rather than becoming zero.
@@ -361,42 +388,59 @@ Retention/write admission stays a separate decision using the same observations.
 
 ### Code ownership and migration
 
-Keep the existing crates. The target Core layout separates physical residency,
-planning, request ownership and execution; introduce modules when their behavior
-moves, with no empty scaffolding or compatibility re-exports:
+The implemented Core layout separates physical residency, planning, request
+ownership and execution. Existing crates are retained; no generic tier trait or
+compatibility re-export was added.
 
 ```text
 orbitkv-state/       shared state/recovery and consumed descriptor contracts
 orbitkv-core/
-  engine/           registration and engine-facing query/restore orchestration
-  storage/          DRAM/SSD residency, index, eviction and source pinning
-    dram/           current read-cache ownership
-    ssd/            current backing/ssd files, extents and storage I/O
-  planning/         bounded replicas -> eligible routes -> proposed selection
-  query/            admission, existing query leases and owned selected plans
-  transfer/         GPU movement, staging, stage submission and completion/drain
-  peer/             discovery and peer authorization/preparation orchestration
+  engine/           registration, EngineConfig and engine-facing orchestration
+  storage/          residency assembly and allocator-driven reclamation
+    dram/           resident images, eviction policy and inventory
+    ssd/            files, immutable extents and independent storage I/O routes
+    publish.rs      queued sealing, DRAM insertion and SSD admission
+  planning/         discovery -> batch replica evidence -> eligible source routes
+  query/            admission, shared reads, materialization and query leases
+  transfer/         GPU movement, staging, submission and completion/drain
+  peer/             catalog, source exports, remote READ and release recovery
   codec/            representation validation and encoding/decoding
-  cost/             operation/route observations and bounded estimates
+  cost/             observations, bounded estimates and shadow comparisons
+orbitkv-server/
+  peer.rs           peer RPC parsing, error mapping and response serialization
 ```
 
-`planning` may query cost/resource evidence but does not own an allocator, file,
-CUDA stream or peer payload. `cost` is shared by planning and execution; it does
-not acquire leases or decide whether a source exists. Extend `QueryLease` and
-the existing restore task handoff for the admitted plan. Bring source/path choice
-out of `storage/prefetch.rs` and remote fetch priority branches into one planning
-owner. Retain authoritative checks in each source owner and the completion
-owners in the workers. Consolidate `internode` and remote-fetch coordination into
-`peer` as those behaviors move; the Mooncake wrapper remains the byte-transfer
-boundary. Module moves should accompany real consumers, not one large rename PR.
+`planning` does not own an allocator, file, CUDA stream or peer payload.
+`cost` does not acquire leases or prove source availability. Its `observation`,
+`estimates` and `shadow` modules share bounded path/resource/representation keys;
+composite route timings must not be added to their constituent operations.
+`query/read.rs` owns shared reads and sparse membership materialization, retaining
+candidate batches through acquisition. `storage/publish.rs` owns incomplete
+blocks and its worker's DRAM/SSD references instead of passing weak dependency
+wrappers through storage forwarding methods.
+
+The former `backing/` and `internode/` trees are removed. `peer/export.rs` is the
+authoritative source owner: it checks incarnation, membership, namespace and
+residency sequence, accounts pinned allocations and drains completion after
+fencing. `peer/transport.rs` holds the registered pinned pool until unregister.
+Server owns the inbound gRPC adapter; outbound catalog/requester clients remain
+with their Core peer workflows. The Mooncake crate remains the byte-transfer
+boundary, including NIC and transport selection.
+
+These ownership changes preserve default source priority and the opt-in cost
+policy. Complete-route comparisons, shared-device admission and new peer memory
+endpoints still require their own implementation and qualification.
 
 The refactor sequence is:
 
-1. Replace the three-field candidate shape with bounded replica records for
-   existing DRAM/SSD/peer-DRAM sources. Preserve exact namespaces, metadata-only
-   discovery and version revalidation; retain records through request planning.
-2. Express existing routes and their common completion targets explicitly,
-   preserving today's default selection. Keep io_uring/cuFile on the same extent.
+1. Bounded records now replace the three-field candidate shape for existing
+   DRAM/SSD/peer-DRAM sources, preserving exact namespaces, metadata-only
+   discovery and version revalidation. Admitted read batches now retain these
+   records through source selection and acquisition. Joint multi-group/request
+   planning and richer consumed endpoint descriptors remain open.
+2. Host-ready and engine-restore targets now control existing source routes,
+   preserving today's default selection and io_uring/cuFile on one extent. Next
+   compare complete routes to the same target, including staging and decode.
 3. Bind the selected plan to current query/source/destination/completion owners.
    Establish shared device admission across registrations before dynamic choice.
 4. Connect complete-route shadow estimates and resource evidence. Qualify
@@ -911,9 +955,9 @@ found, without waiting for completion of the broader P5 recovery contract.
 | P1 | Owned pending operations, cancellation and bounded completion retention | `orbitkv-core`, `orbitkv-server`, `orbitkv-channel`, Python bindings/client | Can proceed while P0 establishes the engine contract |
 | P2 | SGLang consumes SSD results in actual serving | SGLang linker and its qualified admission hook | P0 and P1 |
 | P3 | Explicit demand and bounded early warming to DRAM | Engine adapters, state/channel contracts, core prefetch | P1 and P2 |
-| P4 | Measured path/boundary decisions and SSD write admission, with shared peer observations | Core storage/query/transfer/backing and `benches/` | Existing demand/codec measurements; P3 evidence for preparation decisions |
+| P4 | Measured path/boundary decisions and SSD write admission, with shared peer observations | Core storage/query/transfer/peer and `benches/` | Existing demand/codec measurements; P3 evidence for preparation decisions |
 | P5 | Recovery evidence, page generations and layer completion fences | State contracts, adapters, core GPU workers | P2; required before P6 |
-| P6 | Qualified overlap of storage, H2D and computation | Core transfer/backing and engine layer callbacks | P3 and P5 |
+| P6 | Qualified overlap of storage, H2D and computation | Core transfer/storage/peer and engine layer callbacks | P3 and P5 |
 | R1 | Upstream Dynamo routing with OrbitKV events | Optional server routing component and event integration | Recoverable distributed catalog and qualified remote restores |
 
 ### P0: establish the SGLang scheduling contract
@@ -1045,7 +1089,7 @@ The absence of a query lease is not proof that a queued request can soon
 consume prepared KV; prepared residency must remain inside the admission
 budget through handoff or expiry.
 
-Extend `storage/prefetch.rs` rather than adding a second scheduler facade.
+Extend the shared-read owner in `query/read.rs` rather than adding a second scheduler facade.
 Refine the current global/per-instance ownership budget with device and staging
 accounting. Keep capacity for normal demand restores and independent leases
 for owners of shared reads. Give overdue demand work priority, cap speculative traffic, and bound write
@@ -1080,7 +1124,7 @@ Implement the [path observations](#transfer-paths-and-cost-observations) and
 Carry peer identity and stage measurements alongside local work so DP does not
 need a replacement planner. Activate peer source comparisons after remote
 recovery qualification; P/D and TP/PP retain their distinct completion gates.
-Extend Core's existing storage/query and transfer/backing owners, with shared
+Extend Core's existing storage/query and transfer/peer owners, with shared
 cost state only where it has consumers. Do not add a scheduler facade, generic
 transport registry or Python policy loops. Adapters provide engine evidence.
 

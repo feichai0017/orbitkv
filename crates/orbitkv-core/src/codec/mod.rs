@@ -81,7 +81,7 @@ impl StorageCodec {
 /// Versioned segment representation travels unchanged through memory, disk and peers.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct EncodedSegment {
+pub struct EncodedSegment {
     pub version: u32,
     pub format: StorageFormat,
     pub logical_bytes: usize,

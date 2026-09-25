@@ -116,8 +116,8 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Cache statistics | `orbitkv-server/src/metric/hll.rs` | Namespaced miss cardinality and windowed reuse estimates |
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
 | Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
-| Peer control | `orbitkv-proto`, `orbitkv-core/src/internode/p2p_service.rs` | Network authorization and transfer locks |
-| Replica catalog | `orbitkv-catalog`, `orbitkv-core/src/internode` | Candidate ownership and node liveness; embedded fixed shards with cached member admission |
+| Peer control | `orbitkv-server/src/peer.rs`, `orbitkv-core/src/peer/export.rs` | Server translates RPCs; Core validates and owns source grants |
+| Replica catalog | `orbitkv-catalog`, `orbitkv-core/src/peer/catalog` | Candidate ownership and node liveness; embedded fixed shards with cached member admission |
 | Byte movement | `orbitkv-transfer`, `orbitkv-mooncake-sys` | Mooncake Segment/BatchTransfer over RDMA or TCP |
 
 Transport-specific names belong at physical boundaries. Cache operations and
@@ -130,16 +130,27 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 
 | Module | Responsibility |
 | --- | --- |
-| `engine/` | Instance registration, Publish planning, query orchestration and restore validation |
-| `memory/` | NUMA placement, pinned allocations, pools and resident-cache policy |
-| `query/` | Admission budgets, phases and query leases |
-| `storage/` | Sealing, resident lookup, read coalescing, metadata and inventory |
-| `backing/ssd/` | SSD index/reservations, io_uring workers, cuFile registration and bounded GPU staging |
-| `backing/`, `internode/` | Remote retrieval, catalog client and peer control |
-| `transfer/` | Registered layouts, CUDA copies and drained memory/storage workers |
+| `engine/` | Instance registration, `EngineConfig`, Publish orchestration, demand validation and restore handoff |
+| `memory/` | NUMA placement, pinned allocations and pools |
+| `storage/` | Residency assembly and allocator-driven reclamation; `publish.rs` owns queued sealing and publication |
+| `storage/dram/` | Resident images, eviction/admission policy, exact insertion versions and inventory |
+| `storage/ssd/` | Files, index, immutable extent leases, io_uring/cuFile I/O and registered staging |
+| `planning/` | Metadata-only discovery, batch replica evidence, completion targets and source/path eligibility |
+| `query/` | Admission budgets, shared reads, host materialization, query phases and leases |
+| `peer/` | Catalog client, cached candidates, authoritative exports, requester READs and completion recovery |
+| `transfer/` | Registered engine layouts, GPU copies/codecs and completion-drained workers |
+| `codec/` | Representation validation and encoding/decoding |
+| `cost/` | Operation observations, bounded estimates and same-target shadow comparisons |
 
 `lib.rs` defines the public API. Tests mirror these modules under
 `crates/orbitkv-core/tests/unit/`; GPU integration gates stay in `tests/`.
+`backing/` and `internode/` have been removed. There is one SSD store with
+independent access routes; peer transport is not a storage medium. `PeerExports`
+checks live owner/version evidence and holds source memory until completion.
+The Mooncake registration owner retains its pinned pool through unregister.
+Cost observations and shadow comparisons remain opt-in and do not select a new
+execution route. Remote SSD/HBM and GPU-direct cache endpoints remain future work.
+
 Restore returns one completion receiver after all submitted DMA drains. The old
 shared-memory completion state and its second load API have been removed.
 
@@ -155,7 +166,7 @@ allocation/event sharing and instance isolation to concrete OrbitKV work.
 
 | Reference | Mechanism to use | OrbitKV owner and status |
 | --- | --- | --- |
-| [LMCache v0.5.5 GDS context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/gds_context.py) | Preallocated storage, reusable registered staging, stream-ordered I/O with retained submission state | `backing/ssd` reserves capacity; `cufile/slot` owns registered streams/staging and stable asynchronous arguments/results through event completion. |
+| [LMCache v0.5.5 GDS context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/gds_context.py) | Preallocated storage, reusable registered staging, stream-ordered I/O with retained submission state | `storage/ssd` reserves capacity; `cufile/slot` owns registered streams/staging and stable asynchronous arguments/results through event completion. |
 | [LMCache MP serialization](https://docs.lmcache.ai/mp/serde.html) and [FlexKV compression](https://github.com/taco-project/FlexKV/tree/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/compression) | Separate engine precision from cache encoding; bound codec workspace and qualify formats | `codec/` owns batched GPU ANS/FP8/TurboQuant, reusable arenas, CPU SIMD and CRC validation; `transfer/worker/codec` owns engine-page and writeback lifetimes. Encoded DRAM, SSD and Mooncake payloads share versioned metadata. cuFile can write encoded GPU groups and restore through GPU validation/decode. Native GDS and broader model-quality qualification remain open. |
 | [FlexKV file-range coalescing](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/transfer_ssd.cpp) and [GDS](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/gds/gds_manager.cpp) | Merge physically compatible same-file ranges; keep storage geometry separate from engine tensor layouts | `transfer/worker/ssd` validates demand and coalesces leased ranges per file; its queue owns task/extent lifetime, bounded GPU write admission and batch-level read/write scheduling. |
 | [Mooncake TE v0.3.13.post1](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/include/transfer_engine.h) | Registered memory and batched remote transfers | Reused directly through `orbitkv-transfer` and `orbitkv-mooncake-sys`. Catalog/source authorization and state compatibility remain OrbitKV responsibilities. Two-host/RDMA qualification is still pending. |
@@ -396,15 +407,17 @@ engine readiness signals, recovery boundaries, measured local/peer paths and
 prefetch timing. Shared Rust cost observations and resource accounting support
 different [deployment contracts](state-planning.md#policies-by-deployment-mode).
 
-Its [next structural refactor](state-planning.md#unified-replicas-routes-and-execution-ownership)
-uses bounded replica records with owner/resource endpoints, medium, version and
-representation. Locality is relative to the consumer; a replica may have several
-eligible transfer routes. The selected plan acquires the existing source leases,
-destination authorization and resource reservations. A common endpoint does not
-give the Manager allocation or eviction authority over engine HBM. The
+The first [structural refactor](state-planning.md#unified-replicas-routes-and-execution-ownership)
+adds Core `planning/`: bounded replica records separate medium from acquisition
+evidence, SSD planning revalidates exact versions before pinning, and peer plans
+own source segmentation and rejected-evidence updates. Default execution remains
+unchanged. The fuller owner/resource endpoint, route and resource-reservation
+contract remains planned; current discovery still returns positions to the
+engine. A common endpoint does not give the Manager allocation or eviction
+authority over engine HBM. GPUDirect RDMA remains a TE capability requiring valid
+GPU endpoints, not a new cache tier. See the
 [target Core layout](state-planning.md#code-ownership-and-migration) and
-[route cost contract](state-planning.md#cost-model-for-complete-routes) are planned
-changes; current discovery still returns positions to the engine.
+[route cost contract](state-planning.md#cost-model-for-complete-routes).
 Local path selection comes first; distributed qualification proceeds alongside
 it. These are design proposals, not capabilities implied by current cache hits.
 

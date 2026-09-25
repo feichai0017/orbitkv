@@ -16,12 +16,12 @@ On CUDA 13 development machines, use
 ## Test Layout
 
 Keep each crate's private unit tests in `tests/unit/`, mirroring the source
-module tree. For example, `src/storage/read_cache.rs` loads
-`tests/unit/storage/read_cache.rs` with:
+module tree. For example, `src/storage/dram/mod.rs` loads
+`tests/unit/storage/dram/mod.rs` with:
 
 ```rust
 #[cfg(test)]
-#[path = "../../tests/unit/storage/read_cache.rs"]
+#[path = "../../../tests/unit/storage/dram/mod.rs"]
 mod tests;
 ```
 

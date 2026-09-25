@@ -41,9 +41,17 @@ an OrbitKV implementation or qualification item.
 ## Current baseline and evidence
 
 The implementation in [PR #182](https://github.com/feichai0017/orbitkv/pull/182)
-was merged at `b1aef401`. The follow-up design branch is
-`chore/replica-route-design`, based on that merge. Recheck Git status before
-working and preserve existing changes. P4.1
+was merged at `b1aef401`; the design in
+[PR #183](https://github.com/feichai0017/orbitkv/pull/183) was merged at `13ac3a9d`.
+The first structural implementation is in
+[PR #184](https://github.com/feichai0017/orbitkv/pull/184), on
+`refactor/replica-route-planning`, based on that merge. Batch candidate retention
+and source acquisition follow in [PR #185](https://github.com/feichai0017/orbitkv/pull/185).
+The ownership refactor in [PR #186](https://github.com/feichai0017/orbitkv/pull/186)
+follows the implemented
+[Core layout](architecture.md#core-module-ownership): DRAM/SSD, peer, planning,
+query, publication and costs have distinct owners; old `backing/` and `internode/`
+trees are removed. Recheck Git status before working and preserve existing changes. P4.1
 observations, independent SSD demand routes and the fixed DMA/kernel comparison
 are recorded below; dynamic execution selection remains planned.
 
@@ -243,7 +251,7 @@ work proceed alongside distributed qualification; no warming speedup gates DP.
 
 | Order / existing stage | Deliverable | Main owners | Exit evidence |
 | --- | --- | --- | --- |
-| First: P4.1 | Bounded Rust cost observations and shadow decisions | Core transfer/backing/query; existing metrics and benchmarks | Prediction error on executed work, bounded state, measured instrumentation overhead; unchanged recovery behavior |
+| First: P4.1 | Bounded Rust cost observations and shadow decisions | Core transfer/storage/query; existing metrics and benchmarks | Prediction error on executed work, bounded state, measured instrumentation overhead; unchanged recovery behavior |
 | Alongside: deployment packaging | Installed Manager/engine images, shared-node qualification, explicit container profile; then isolated registration | Server registry/endpoint, channel, core transfer, thin adapters, release tooling | Both engines in separate processes/containers, concurrent instances, device remapping and restart/drain; real cluster gate before Kubernetes claims |
 | P4.2 | Independent io_uring/cuFile SSD routes, full-restore shadow and fixed DMA/kernel controls implemented; qualify per-batch choice next | Transfer workers, neutral SSD extent leases/queues and cost state | Route correctness and fixed-backend results below; io_uring/native-GDS comparison on a qualified host; shared-device budget, switching margin and conservative selection with weak evidence |
 | P4.3 / remaining P3 | Choose legal restore boundary vs recompute; first-use preparation and queue shares | Recovery contract, query/prefetch, engine admission callbacks | TTFT/ITL targets, bounded unused prepared bytes, cancellation/expiry/reordering and other-request progress |
@@ -251,7 +259,7 @@ work proceed alongside distributed qualification; no warming speedup gates DP.
 | D1, in parallel | Real two-host independent-replica recovery, first TP=1 | Catalog/cluster, peer authorization, TE and existing serving driver | Output controls, positive remote/GPU bytes, incarnation rejection, loss/partition cleanup; TCP and RDMA reported separately |
 | After D1: P/D plus reuse | Compose the existing vLLM handoff with cache; integrate SGLang's own handoff lifecycle | Engine adapters/P-D integration plus shared Rust lifetime logic | Cached P prefix reaches D; later P reuses D state; failed/cancelled handoffs cannot expose partial state |
 | D2, before production distributed use | Replicated catalog evidence, placement generations, repair and operational recovery | Catalog, inventory sync and server cluster | Three failure domains, coordinator/catalog outage, bounded replay and source holds; etcd replication alone is insufficient |
-| D3 | Measured peer selection and source-local SSD staging; evaluate dedicated cache nodes | Existing backing/peer workers and common cost observations | Forced source DRAM eviction, real SSD/TE bytes, bounded two-sided credits and useful latency under mixed load |
+| D3 | Measured peer selection and source-local SSD staging; evaluate dedicated cache nodes | Existing SSD/peer workers and common cost observations | Forced source DRAM eviction, real SSD/TE bytes, bounded two-sided credits and useful latency under mixed load |
 | Later topology gates / P6 | Same-host TP per replica, then cross-host TP/PP and layer overlap | Engine coordination, state contract and transfer dependencies | Rank/stage completion, compatible layouts, graph-capture/overlap tests; resharding separately gated |
 | R1 | Optional pinned Dynamo worker routing fed by cache/engine summaries | Server-side optional integration | Correct event/hash mapping and request reservations; selected Manager revalidates actual state |
 
@@ -296,9 +304,9 @@ transfers. Adding these timers together would double count work.
 | --- | --- |
 | GPU copy shape and completion | `crates/orbitkv-core/src/transfer/{mod.rs,memcpy.rs,kernel.rs,worker/}` |
 | Codec time, payload and workspace | `crates/orbitkv-core/src/codec/`, `transfer/worker/codec.rs`, `transfer/worker/ssd/decode.rs` |
-| SSD queue and operation time | `crates/orbitkv-core/src/backing/ssd/`, `transfer/worker/ssd/` |
-| Peer discovery/authorization/TE stages | `crates/orbitkv-core/src/internode/`, `backing/mooncake_fetch.rs`, `crates/orbitkv-transfer/` |
-| Budget, candidate selection and leases | `crates/orbitkv-core/src/query/`, `storage/prefetch.rs`, `engine/query.rs` |
+| SSD queue and operation time | `crates/orbitkv-core/src/storage/ssd/`, `transfer/worker/ssd/` |
+| Peer discovery/authorization/TE stages | `crates/orbitkv-core/src/peer/`, `peer/read.rs`, `crates/orbitkv-transfer/` |
+| Budget, candidate selection and leases | `crates/orbitkv-core/src/query/`, `engine/query.rs` |
 | Exported metrics / request timelines | `crates/orbitkv-core/src/metrics.rs`, `crates/orbitkv-server/src/metric/timeline.rs` |
 | Tests / serving measurements | Crate `tests/unit/` and integration tests, `python/tests/`, repository-root `benches/` |
 
@@ -661,40 +669,92 @@ by this slice.
 
 ### Demand/candidate final evidence
 
-Native source `cfb4418a` was validated on the single H20 in this container with CUDA 13,
-vLLM 0.29.0, SGLang 0.5.20 and Qwen3-8B. Native builds completed before runtime
-tests. The normal Manager SHA-256 is
-`514a0a5ffe63b48879b9d0c4091dc7ce8d449a804d69e3477e78052c84904b33`;
-the separately frozen test-hooks Manager is
-`5de2fb1b164bd5b0b1554aa1e9ddd3393a9b2307baaa5bbe91c36065abbe3d15`.
-Both use the matching query-body-v6 client extension.
+The demand/candidate gate for `cfb4418a` is preserved in
+[its committed final summary](https://github.com/feichai0017/orbitkv/blob/bc0a72169de07c65fbfde638b95e3ce82a2bbb5d/docs/implementation-plan.md#demandcandidate-final-evidence).
+It covered both engines, cuFile compatibility and same-host TCP. The current
+ownership-layout validation is recorded below; historical numbers do not
+establish a new pressure-overhead result.
+
+## Replica collection and source planning
+
+Core separates metadata planning, query lifetime and physical I/O without new
+crates, backend traits or configuration:
+
+- `planning/replica.rs` retains bounded weak DRAM/index evidence and peer
+  owner/incarnation/sequence records. Discovery does not materialize or pin data.
+- `planning/read.rs` keeps unresolved candidates for one admitted query batch,
+  its required coverage and host-ready versus engine-restore target. Already
+  acquired DRAM prefix holds remain with the query coordinator.
+- `planning/ssd.rs` and `planning/peer.rs` borrow those records for route
+  eligibility/acquisition and bounded peer segments. Rejection preserves other
+  sources. Strict acquisition releases partial holds when coverage disappears.
+- `query/read.rs` owns coalescing, materialization and producer waiting, moved
+  from `storage/prefetch.rs`. Default priority is unchanged: local DRAM, eligible
+  deferred SSD restore, then peer-first host materialization and permitted SSD
+  io_uring. Explicit SSD routes keep their existing no-silent-switch rule.
+- SSD host batches now contain acquired version leases, retained by the queue
+  and batch completion owner until all reads drain. Key-based rescans, optional
+  request leases, the remote forwarding wrapper and temporary argument wrappers
+  are removed. Existing query leases, reservations and GPU/TE completion owners
+  continue to own admitted work; no second lease registry is introduced.
+
+This is batch-scoped physical planning. Complete demand is still validated at
+Manager admission and before leasing a selected group; joint multi-group/rank
+planning, reusable discovery grants, full endpoint descriptors, live admission
+and complete-route cost selection remain open. Observations stay opt-in and
+measured estimates do not change execution. The existing source representation,
+byte metadata and version authority stay in actual source evidence rather than
+being copied into an unconsumed public descriptor.
+
+GPUDirect RDMA remains inside TE, with separately validated GPU endpoints and
+topology. It is neither another medium nor implied by host-memory TCP success.
+General peer HBM still needs engine source/destination lifetime grants; remote
+SSD needs source-side preparation. Neither is enabled by this refactor.
+
+### Replica/source planning final evidence
+
+The batch candidate/source-acquisition gate for `21300c1e` is preserved in
+[its committed final summary](https://github.com/feichai0017/orbitkv/blob/bc0a72169de07c65fbfde638b95e3ce82a2bbb5d/docs/implementation-plan.md#replicasource-planning-final-evidence).
+That gate kept default execution unchanged and did not remeasure matched
+pressure overhead. See the latest ownership-layout gate below.
+
+## Ownership layout final evidence
+
+The [ownership refactor, PR #186](https://github.com/feichai0017/orbitkv/pull/186)
+was validated on **2026-09-25**, source `046b16f5`, with the container's exposed
+H20, CUDA 13, Qwen3-8B, vLLM 0.29.0 and SGLang 0.5.20. Native builds finished
+before the final runtime gates; no running Manager's Mooncake libraries were
+rebuilt or restaged. Frozen normal Manager SHA-256:
+`defb30a42fe0b23df465e5b517917cc43ca0bb7867a474df09ac84b44c00fd76`; test-hooks Manager:
+`96604d9aaac5379732214ed91d4b94093c6792fbeb50f830f49ae5221a58143e`.
 
 | Gate | Final result |
 | --- | --- |
-| CUDA 13 workspace Clippy, Rust formatting | Passed |
-| Rust workspace debug tests | 393 passed, including bounded/coalesced discovery, stale SSD generations and complete-demand revisions |
-| Explicit GPU/cuFile/peer tests | 14 passed: Manager demand admission/partial-prefix claim, copy equality, same-generation raw/ANS SSD routes, cuFile CPU compatibility and same-host TCP |
-| Source-only Python; Ruff and formatting | 364 passed, 1 skipped; 134 Python/benchmark files checked |
-| GPU recovery integration | vLLM 14 passed; SGLang 8 passed, covering prefix/window/checkpoint and combined state through DRAM/SSD |
-| Preparation, cancellation and read-lifetime faults | 8 passed with the frozen test-hooks Manager |
-| vLLM Qwen3-8B serving | DRAM with preparation enabled and cuFile-backed SSD with explicit io_uring/ANS: 6 passed, 1 recurrent-model-only skip per configuration |
-| SGLang Qwen3-8B serving | 2 passed: DRAM and io_uring SSD, actual GPU restore after restart and cold-control output equality |
-| Shared-cache serving | vLLM and SGLang each passed: three remote GPU restores, catalog replay after restart, source-loss recomputation, matching outputs and drained resource counters; 288 MiB transferred and restored per engine |
-| Benchmark fixture tests; website/documentation | 42 passed; website checks, build and link tests passed |
+| Rust formatting, strict Core local-only and Mooncake workspace Clippy | Passed; debug and release test artifacts built |
+| Prebuilt Rust workspace release tests | 400 passed, including source-version revalidation, invalid export rejection, release after fencing and propagated SSD startup errors |
+| Explicit CUDA/cuFile/peer tests | 15 passed, including registered-pool ownership, same-extent raw/ANS routes, copy equality, complete-demand admission and peer transfer/release |
+| Isolated Python unit gate | 364 passed, 1 skipped |
+| GPU recovery and lifecycle faults | vLLM 14, SGLang 8, preparation/cancellation/fault tests 8 passed |
+| vLLM serving | DRAM with preparation and cuFile-backed SSD with explicit io_uring/ANS each passed 6 tests; one recurrent-model-only skip each |
+| SGLang serving | DRAM and io_uring SSD: 2 passed, including restart restoration and cold-control outputs |
+| Shared-cache serving | Both engines passed: three remote restores each, catalog restart replay, source-loss recomputation, matching outputs and drained resources; 288 MiB transferred/restored per engine |
+| Website/documentation | Check, 40-page build and link test passed |
+| GitHub CI on `046b16f5` | Passed, including CUDA 12/13 checks, Python 3.14 wheel builds, Clippy, source tests and documentation |
 
-These are source-artifact correctness and lifecycle results. The new candidate
-metadata overhead was not requalified under matched pressure workloads; earlier
-observation and fixed-backend measurements retain their original artifact scope.
-No measured-selection default changes follow from this gate. cuFile uses forced
-CPU compatibility and peers use same-host TCP; native GDS, physical two-host/RDMA,
-multi-rank serving and installed-container qualification remain open.
+This validates the implemented [ownership layout](architecture.md#core-module-ownership)
+and cleanup, with unchanged source/path defaults and no new configuration knobs.
+Matched pressure overhead was not remeasured. Cost observations and shadow
+comparisons remain opt-in; dynamic selection and the earlier SGLang ANS SSD
+overhead gate remain open. cuFile used forced CPU compatibility and peers used
+same-host TCP; these results do not qualify native GDS, GPUDirect RDMA or
+physical two-host deployment, nor implement general remote SSD/HBM sources.
 
-Frozen artifacts, commands and raw logs are in ignored
-`benches/results/runs/20260925-recovery-demand/`. Use the existing
-[GPU recovery gates](../python/tests/README.md) and
-[shared-cache serving commands](shared-cache-qualification.md#restart-and-ownership-gates)
-with the matching prebuilt Manager/client; do not run Cargo while those processes
-have Mooncake libraries mapped.
+Only this final summary is tracked. Frozen artifacts, exact commands, logs and
+machine-readable results remain in ignored
+`benches/results/runs/20260925-core-layout/`. Reproduce with the existing
+[engine gates](../python/tests/README.md) and
+[shared-cache gates](shared-cache-qualification.md#restart-and-ownership-gates),
+using the matching prebuilt Manager/client and no concurrent native builds.
 
 ## Session startup and working constraints
 
@@ -738,24 +798,25 @@ npm run build
 npm test
 ```
 
-Continue with the [unified replica/route refactor](state-planning.md#unified-replicas-routes-and-execution-ownership)
-and its [code ownership and migration](state-planning.md#code-ownership-and-migration).
-Normalize the existing local DRAM/SSD and peer DRAM candidates into bounded
-replica records: owner/node/resource endpoint, medium, immutable version,
-representation and explicit unknown evidence. Locality is relative to the
-consumer; io_uring/cuFile/Mooncake are access methods. Preserve the current
+Continue with the [unified replica/route plan](state-planning.md#unified-replicas-routes-and-execution-ownership),
+using the implemented [ownership layout](state-planning.md#code-ownership-and-migration),
+bounded replica collection and SSD/peer plans. Complete
+the consumed owner/node/resource, representation and byte descriptors while
+preserving immutable versions and explicit unknown evidence. Locality is relative
+to the consumer; io_uring/cuFile/Mooncake are access methods. Preserve the current
 physical namespace, and do not expose unsupported peer SSD/HBM as executable
 candidates. Source and destination engine HBM need real page-lifetime grants;
 Manager staging is not automatically a retained replica.
 
-Retain records in the request plan, enumerate supported routes to one declared
-completion target, and bind selected sources to the existing query leases and
-completion owners. Keep default choice unchanged while this structure replaces
+Build on batch-owned candidate retention, declared preparation/restore targets
+and selected sources bound to the existing query leases and completion owners.
+Extend this into complete route comparisons and joint demand coverage as their
+consumers are implemented. Keep default choice unchanged while this structure replaces
 the distributed selection branches. Apply the [complete-route cost contract](state-planning.md#cost-model-for-complete-routes):
 operation samples and composite totals cannot be added together, live resource
 evidence is advisory until actual admission, and unknown/error margins matter.
-Move modules as their behavior is connected; add no forwarding layer, empty
-backend framework or new per-tier configuration.
+Add new capabilities to their actual residency, admission and completion owners;
+add no forwarding layer, empty backend framework or new per-tier configuration.
 
 Before per-batch selection, establish shared
 admission across registrations on the same GPU,

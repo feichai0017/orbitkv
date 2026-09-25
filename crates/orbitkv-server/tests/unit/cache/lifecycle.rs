@@ -5,13 +5,13 @@ use crate::proto::engine::{RegisterContextRequest, SessionRequest};
 use crate::registry::CudaTensorRegistry;
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{CallOptions, ChannelClient, ChannelError, QueryBundleRequest};
-use orbitkv_core::StorageConfig;
+use orbitkv_core::EngineConfig;
 use prost::Message;
 use std::time::Duration;
 use tokio::sync::Notify;
 
 pub(crate) fn test_engine() -> Arc<OrbitKVEngine> {
-    Arc::new(OrbitKVEngine::new_with_config(1 << 20, false, StorageConfig::default()).unwrap())
+    Arc::new(OrbitKVEngine::new_with_config(1 << 20, false, EngineConfig::default()).unwrap())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

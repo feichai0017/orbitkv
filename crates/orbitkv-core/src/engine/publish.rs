@@ -8,13 +8,13 @@ use orbitkv_state::group_hash;
 
 use super::{EngineError, OrbitKVEngine};
 use crate::SlotMeta;
-use crate::backing::ssd::SsdBackingStore;
-use crate::backing::ssd::cufile::{CopyRange, plan_writes};
 use crate::block::{LayerSave, RawBlock, Segment, StateKey};
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
-use crate::storage::write_path::{RawSaveBatch, RawSaveLayer};
+use crate::storage::publish::{RawSaveBatch, RawSaveLayer};
+use crate::storage::ssd::SsdStore;
+use crate::storage::ssd::cufile::{CopyRange, plan_writes};
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::worker::ssd::GpuWrite;
 use crate::transfer::worker::{LayerTransferData, SaveGroup, TransferBlock, TransferPayload};
@@ -37,7 +37,7 @@ struct LayerContext {
 /// Only a complete state group can be written from this publisher's GPU pages.
 /// Fragmented/multi-writer publications still seal in DRAM before SSD ingestion.
 fn prepare_gpu_writes(
-    store: &Arc<SsdBackingStore>,
+    store: &Arc<SsdStore>,
     namespace: &str,
     topology: &crate::engine::instance::LayerTopology,
     layers: &[LayerContext],
@@ -162,7 +162,7 @@ fn prepare_codec_groups(
 /// the read cache. Filtering is per group because groups key the same content
 /// hash independently (e.g. attention block vs. recurrent checkpoint).
 fn filter_new_hashes_per_group(
-    storage: &crate::storage::StorageEngine,
+    storage: &crate::storage::Storage,
     namespace: &str,
     candidates: HashSet<(u32, Vec<u8>)>,
 ) -> HashSet<(u32, Vec<u8>)> {
@@ -740,7 +740,7 @@ impl OrbitKVEngine {
                     block
                 })
                 .collect();
-            self.storage.send_raw_insert(RawSaveBatch {
+            self.storage.writes.insert(RawSaveBatch {
                 namespace,
                 total_slots: topology.total_slots(),
                 numa_node: save_numa_node,
@@ -774,7 +774,7 @@ impl OrbitKVEngine {
                         }
                     })
                     .collect();
-                self.storage.send_raw_insert(RawSaveBatch {
+                self.storage.writes.insert(RawSaveBatch {
                     namespace: namespace.clone(),
                     total_slots: topology.group_total_slots(group)?,
                     numa_node: save_numa_node,

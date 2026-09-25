@@ -7,7 +7,7 @@ pub const LOAD_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default test pool size: 16 MB — enough for test blocks, small enough to be fast.
 const DEFAULT_TEST_POOL_SIZE: usize = 16 << 20;
 
-pub fn test_engine_with_pool(pool_size: usize, config: StorageConfig) -> OrbitKVEngine {
+pub fn test_engine_with_pool(pool_size: usize, config: EngineConfig) -> OrbitKVEngine {
     OrbitKVEngine::new_with_config(pool_size, false, config).expect("test engine should start")
 }
 

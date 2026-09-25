@@ -3,10 +3,10 @@ use super::*;
 #[cfg(feature = "mooncake")]
 #[tokio::test]
 async fn mooncake_initialization_failure_is_returned_to_caller() {
-    let config = storage::StorageConfig {
+    let config = crate::EngineConfig {
         mooncake_nic_names: vec!["definitely-not-a-real-nic".to_string()],
         membership: Some(test_membership()),
-        ..storage::StorageConfig::default()
+        ..crate::EngineConfig::default()
     };
 
     let err = match OrbitKVEngine::new_with_config(1 << 20, false, config) {
@@ -24,10 +24,10 @@ async fn mooncake_initialization_failure_is_returned_to_caller() {
 #[cfg(not(feature = "mooncake"))]
 #[tokio::test]
 async fn remote_transfer_config_is_ignored_without_feature() {
-    let config = storage::StorageConfig {
+    let config = crate::EngineConfig {
         mooncake_nic_names: vec!["mlx5_0".to_string()],
         membership: Some(test_membership()),
-        ..storage::StorageConfig::default()
+        ..crate::EngineConfig::default()
     };
 
     let engine = OrbitKVEngine::new_with_config(1 << 20, false, config)

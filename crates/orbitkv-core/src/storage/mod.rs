@@ -1,39 +1,31 @@
-mod candidates;
-pub(crate) mod inventory;
-pub(crate) mod metadata;
-mod prefetch;
-mod read_cache;
-mod tier_attribution;
-pub(crate) mod transfer_lock;
-pub(crate) mod write_path;
+pub(crate) mod dram;
+pub(crate) mod publish;
+pub(crate) mod ssd;
 
 use bytesize::ByteSize;
-use futures::{StreamExt, stream};
 use log::{debug, info};
 use std::collections::HashSet;
 use std::num::NonZeroU64;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
 
-use crate::backing::{AllocateFn, SsdBackingStore, SsdCacheConfig};
-#[cfg(feature = "mooncake")]
-use crate::backing::{MooncakeFetchStore, MooncakeTransport};
-use crate::block::{QueryResult, SealedBlock, StateKey};
-use crate::internode::CatalogClient;
+use self::ssd::SsdStore;
+use crate::EngineConfig;
+use crate::block::{SealedBlock, StateKey};
+use crate::memory::AllocateFn;
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
-
-use candidates::ResidencyCandidates;
-use prefetch::PrefetchScheduler;
+use crate::peer::catalog::CatalogClient;
 #[cfg(feature = "mooncake")]
-use prefetch::RemoteFetch;
-pub(crate) use read_cache::ReadCache;
-use write_path::{InsertDeps, WritePipeline};
+use crate::peer::{read::PeerReader, transport::MooncakeTransport};
+
+use crate::query::read::ReadCoordinator;
+use dram::DramStore;
+use publish::PublishQueue;
+
+pub(crate) type MaterializedBlocks = Vec<(StateKey, Arc<SealedBlock>)>;
 
 const RECLAIM_BATCH_SIZE: usize = 512;
-// One catalog budget across every bounded batch in a candidate discovery.
-pub(crate) const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryCacheCleanupStats {
@@ -43,95 +35,26 @@ pub struct MemoryCacheCleanupStats {
     pub still_referenced_blocks: u64,
 }
 
-#[derive(Clone)]
-pub struct StorageConfig {
-    /// Query-owned bytes across preparation, ready leases, and GPU loads.
-    /// Defaults to three quarters of the pinned pool; the allocator remains
-    /// the physical-memory limit, including publish and cache residency.
-    pub query_budget_bytes: Option<usize>,
-    /// Per-instance query limit, defaulting to the global query limit.
-    pub query_instance_budget_bytes: Option<usize>,
-    pub enable_lfu_admission: bool,
-    /// Maximum percent of host capacity in demand-promoted cache entries.
-    /// Zero keeps the ordinary LRU classes; positive values enable segmented LRU.
-    pub cache_protected_percent: u8,
-    /// Optional hint for expected value size in bytes (tunes cache + allocator granularity).
-    pub hint_value_size_bytes: Option<usize>,
-    /// Optional SSD cache for sealed blocks (single-node, FIFO).
-    pub ssd_cache_config: Option<SsdCacheConfig>,
-    pub codec: crate::StorageCodec,
-    /// GPU scratch per transfer worker.
-    pub codec_budget: usize,
-    /// Optional Mooncake RDMA rail filter. Empty means that Mooncake selects
-    /// the available transport, including TCP fallback.
-    pub mooncake_nic_names: Vec<String>,
-    /// Enable NUMA-aware memory allocation.
-    pub enable_numa_affinity: bool,
-    /// Allocate each block separately instead of contiguous batch allocation.
-    /// Reduces fragmentation when blocks are freed in different order.
-    /// SSD-backed storage always uses independent allocations for reads and saves.
-    pub blockwise_alloc: bool,
-    /// Overdue threshold for cross-node transfers; expiry retains source allocations.
-    pub transfer_lock_timeout: Duration,
-    /// Source allocation reservations, including overdue transfers. Defaults to half the pool.
-    pub transfer_budget_bytes: Option<usize>,
-    /// Optional leased membership. Its incarnation also identifies this inventory.
-    pub membership: Option<Arc<orbitkv_catalog::MembershipView>>,
-    /// Byte limit for retained residency changes used by directory synchronization.
-    pub inventory_journal_bytes: usize,
-    /// Number of shards for the pinned memory pool (reduces allocator lock contention).
-    pub pool_shards: usize,
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            query_budget_bytes: None,
-            query_instance_budget_bytes: None,
-            enable_lfu_admission: false,
-            cache_protected_percent: 0,
-            hint_value_size_bytes: None,
-            ssd_cache_config: None,
-            codec: crate::StorageCodec::None,
-            codec_budget: 64 * 1024 * 1024,
-            mooncake_nic_names: Vec::new(),
-            enable_numa_affinity: true,
-            blockwise_alloc: false,
-            transfer_lock_timeout: Duration::from_secs(120),
-            transfer_budget_bytes: None,
-            membership: None,
-            inventory_journal_bytes: inventory::DEFAULT_INVENTORY_JOURNAL_BYTES,
-            pool_shards: 1,
-        }
-    }
-}
-
-pub(crate) enum TransferAuthorizationError {
-    StaleReplica,
-    Lock(transfer_lock::TransferLockError),
-}
-
-pub(crate) struct StorageEngine {
+pub(crate) struct Storage {
     allocator: Arc<PinnedAllocator>,
     pub(crate) codec: crate::StorageCodec,
     pub(crate) codec_budget: usize,
-    read_cache: Arc<ReadCache>,
-    prefetch: PrefetchScheduler,
-    write_pipeline: Arc<WritePipeline>,
-    pub(crate) ssd_store: Option<Arc<SsdBackingStore>>,
+    pub(crate) dram: Arc<DramStore>,
+    pub(crate) reads: ReadCoordinator,
+    pub(crate) writes: PublishQueue,
+    pub(crate) ssd_store: Option<Arc<SsdStore>>,
     #[cfg(feature = "mooncake")]
     mooncake_transport: Option<Arc<MooncakeTransport>>,
     blockwise_alloc: bool,
-    catalog_client: Option<Arc<CatalogClient>>,
-    membership: Option<Arc<orbitkv_catalog::MembershipView>>,
-    pub(crate) transfer_lock: Arc<transfer_lock::TransferLockManager>,
+    pub(crate) catalog_client: Option<Arc<CatalogClient>>,
+    pub(crate) exports: crate::peer::export::PeerExports,
 }
 
-impl StorageEngine {
+impl Storage {
     pub(crate) fn new_with_config(
         capacity_bytes: usize,
         use_hugepages: bool,
-        config: StorageConfig,
+        config: EngineConfig,
         numa_nodes: &[NumaNode],
     ) -> Result<Arc<Self>, String> {
         if config.codec_budget < 4096 || config.codec_budget > u32::MAX as usize {
@@ -194,7 +117,7 @@ impl StorageEngine {
         };
 
         // Sub-components
-        let read_cache = Arc::new(ReadCache::new(
+        let dram = Arc::new(DramStore::new(
             capacity_bytes,
             config.enable_lfu_admission,
             value_size_hint,
@@ -208,11 +131,8 @@ impl StorageEngine {
         let catalog_client = config
             .membership
             .as_ref()
-            .map(|view| CatalogClient::new(view.clone(), Arc::downgrade(&read_cache)).map(Arc::new))
+            .map(|view| CatalogClient::new(view.clone(), Arc::downgrade(&dram)).map(Arc::new))
             .transpose()?;
-
-        let (write_pipeline, insert_rx) = WritePipeline::new();
-        let write_pipeline = Arc::new(write_pipeline);
 
         // Mooncake must be created after the allocator so it can register the
         // pinned pool. An empty rail filter lets Mooncake choose TCP fallback.
@@ -225,7 +145,11 @@ impl StorageEngine {
                 .owner()
                 .endpoint;
             let transfer =
-                crate::backing::new_mooncake(&mooncake_nic_names, &allocator, advertise)?;
+                MooncakeTransport::new(&mooncake_nic_names, allocator.clone(), advertise)
+                    .map(Arc::new)
+                    .map_err(|error| {
+                        format!("Failed to initialise Mooncake Transfer Engine: {error}")
+                    })?;
             Some(transfer)
         } else {
             None
@@ -239,22 +163,25 @@ impl StorageEngine {
         }
 
         let is_numa = allocator.is_numa();
-        let engine = Arc::new_cyclic(move |weak_engine: &Weak<Self>| {
-            // Build shared allocate_fn for backing stores.
-            let alloc_weak = weak_engine.clone();
-            let allocate_fn: AllocateFn = Arc::new(move |size, numa_node| {
-                alloc_weak
-                    .upgrade()
-                    .and_then(|engine| engine.allocate(NonZeroU64::new(size)?, numa_node))
-            });
-
-            let ssd_store = ssd_cache_config
-                .map(|cfg| crate::backing::new_ssd(cfg, allocate_fn.clone(), is_numa));
-
+        let storage_ref = Arc::new(std::sync::OnceLock::<Weak<Self>>::new());
+        let allocation_owner = storage_ref.clone();
+        let allocate_fn: AllocateFn = Arc::new(move |size, numa_node| {
+            allocation_owner
+                .get()?
+                .upgrade()?
+                .allocate(NonZeroU64::new(size)?, numa_node)
+        });
+        let ssd_store = ssd_cache_config
+            .map(|cfg| {
+                SsdStore::new(cfg, allocate_fn.clone(), is_numa)
+                    .map_err(|error| format!("Failed to initialise SSD cache: {error}"))
+            })
+            .transpose()?;
+        let engine = Arc::new({
             #[cfg(feature = "mooncake")]
             let remote_fetch = mooncake_transport.as_ref().and_then(|transfer| {
                 let ms = catalog_client.as_ref()?;
-                Some(RemoteFetch::new(Arc::new(MooncakeFetchStore::new(
+                Some(Arc::new(PeerReader::new(
                     Arc::clone(ms),
                     Arc::clone(transfer),
                     allocate_fn.clone(),
@@ -262,54 +189,49 @@ impl StorageEngine {
                         .membership
                         .clone()
                         .expect("distributed configuration"),
-                ))))
+                )))
             });
+
+            let reads = ReadCoordinator::new(
+                dram.clone(),
+                ssd_store.clone(),
+                #[cfg(feature = "mooncake")]
+                remote_fetch,
+                config.codec_budget,
+            );
+
+            #[cfg(feature = "mooncake")]
+            let endpoint = mooncake_transport
+                .as_ref()
+                .map(|transport| transport.transfer_endpoint().to_owned());
             #[cfg(not(feature = "mooncake"))]
-            let remote_fetch = None;
-
-            let prefetch =
-                PrefetchScheduler::new(ssd_store.clone(), remote_fetch, config.codec_budget);
-
-            let transfer_lock = Arc::new(transfer_lock::TransferLockManager::new(
+            let endpoint = None;
+            let exports = crate::peer::export::PeerExports::new(
+                dram.clone(),
+                config.membership.clone(),
+                endpoint,
                 transfer_lock_timeout,
                 transfer_budget as u64,
-            ));
+            );
 
             Self {
                 allocator,
                 codec: config.codec,
                 codec_budget: config.codec_budget,
-                read_cache: read_cache.clone(),
-                prefetch,
-                write_pipeline: write_pipeline.clone(),
+                dram: dram.clone(),
+                reads,
+                writes: PublishQueue::spawn(dram.clone(), ssd_store.clone())
+                    .map_err(|error| error.to_string())?,
                 ssd_store,
                 #[cfg(feature = "mooncake")]
                 mooncake_transport,
                 blockwise_alloc,
                 catalog_client,
-                membership: config.membership.clone(),
-                transfer_lock,
+                exports,
             }
         });
 
-        // Spawn insert worker on a dedicated OS thread (CPU-bound work)
-        {
-            let deps = Arc::new(InsertDeps {
-                read_cache: engine.read_cache.clone(),
-                ssd_store: engine.ssd_store.clone(),
-            });
-            let weak_deps = Arc::downgrade(&deps);
-            // Keep deps alive by leaking it into the thread. The worker holds
-            // a Weak, so it won't prevent engine drop. The Arc is dropped when
-            // the thread exits (channel closed).
-            std::thread::Builder::new()
-                .name("orbitkv-insert".into())
-                .spawn(move || {
-                    let _keep_alive = deps;
-                    write_path::insert_worker_loop(insert_rx, weak_deps);
-                })
-                .expect("failed to spawn insert worker thread");
-        }
+        let _ = storage_ref.set(Arc::downgrade(&engine));
 
         Ok(engine)
     }
@@ -366,20 +288,6 @@ impl StorageEngine {
         None
     }
 
-    pub(crate) fn send_raw_insert(&self, batch: write_path::RawSaveBatch) {
-        self.write_pipeline.send_raw_insert(batch);
-    }
-
-    /// Flush the write pipeline.
-    ///
-    /// Returns a receiver that resolves once all batches enqueued before this
-    /// call have been processed by the insert worker.
-    pub(crate) async fn flush_write_pipeline(&self) {
-        if let Some(rx) = self.write_pipeline.flush() {
-            let _ = rx.await;
-        }
-    }
-
     /// Flush the SSD writer: waits until all enqueued writes are committed.
     pub(crate) async fn flush_ssd(&self) {
         if let Some(ssd) = &self.ssd_store {
@@ -405,131 +313,12 @@ impl StorageEngine {
             .iter()
             .map(|hash| StateKey::new(namespace.clone(), hash.clone()))
             .collect();
-        let present = self.read_cache.contains_keys(&keys);
+        let present = self.dram.contains_keys(&keys);
         for (hash, is_present) in hash_vec.into_iter().zip(present) {
             if is_present {
                 hashes.remove(&hash);
             }
         }
-    }
-
-    /// Availability hints; concurrent eviction can invalidate them immediately.
-    /// Only a subsequent payload read and lease establishes recoverability.
-    pub(crate) async fn discover(
-        &self,
-        namespace: &str,
-        hashes: &[Vec<u8>],
-        deadline: tokio::time::Instant,
-    ) -> Vec<ResidencyCandidates> {
-        #[cfg(not(feature = "mooncake"))]
-        let _ = deadline;
-        let keys: Vec<_> = hashes
-            .iter()
-            .map(|hash| StateKey::new(namespace.to_owned(), hash.clone()))
-            .collect();
-        let mut candidates: Vec<_> = keys
-            .iter()
-            .cloned()
-            .zip(self.read_cache.discover(&keys))
-            .map(|(key, dram)| ResidencyCandidates {
-                key,
-                dram,
-                ssd: None,
-                peer_dram: Vec::new(),
-            })
-            .collect();
-        if let Some(ssd) = &self.ssd_store {
-            for (candidate, backing) in candidates.iter_mut().zip(ssd.discover(&keys)) {
-                candidate.ssd = backing;
-            }
-        }
-        #[cfg(feature = "mooncake")]
-        if let Some(catalog) = &self.catalog_client {
-            for (candidate, cached) in candidates.iter_mut().zip(catalog.cached_blocks(&keys)) {
-                if let Some(cached) = cached {
-                    candidate.peer_dram = cached.replicas;
-                }
-            }
-            let missing: Vec<_> = candidates
-                .iter()
-                .enumerate()
-                .filter_map(|(i, candidate)| (!candidate.is_available()).then_some(i))
-                .collect();
-            let hashes: Vec<_> = missing.iter().map(|&i| hashes[i].clone()).collect();
-            if !hashes.is_empty() && tokio::time::Instant::now() < deadline {
-                let remote = match tokio::time::timeout_at(
-                    deadline,
-                    catalog.locate_blocks(namespace, &hashes),
-                )
-                .await
-                {
-                    Ok(Ok(remote)) => remote.into_iter().map(Some).collect(),
-                    Ok(Err(error)) => {
-                        log::warn!("candidate discovery failed: {error}");
-                        Vec::new()
-                    }
-                    Err(_) => {
-                        // Healthy peers may have published evidence before a
-                        // different peer exhausted this discovery's deadline.
-                        let keys: Vec<_> = missing.iter().map(|&i| keys[i].clone()).collect();
-                        catalog.cached_blocks(&keys)
-                    }
-                };
-                for (i, candidate) in missing.into_iter().zip(remote) {
-                    if let Some(candidate) = candidate
-                        && candidates[i].key == candidate.key
-                    {
-                        candidates[i].peer_dram = candidate.replicas;
-                    }
-                }
-            }
-        }
-        candidates
-    }
-
-    /// Position-aligned membership across resident and backing tiers: entry
-    /// `i` is the sealed block for `hashes[i]`, or `None` on miss. Hashes must
-    /// already carry any group encoding (see `group_hash`).
-    pub(crate) async fn get_membership(
-        &self,
-        req_id: &str,
-        namespace: &str,
-        hashes: &[Vec<u8>],
-        mode: crate::QueryMode,
-    ) -> Vec<Option<crate::RestoreSource>> {
-        let keys: Vec<StateKey> = hashes
-            .iter()
-            .map(|hash| StateKey::new(namespace.to_string(), hash.clone()))
-            .collect();
-        let resident = self.read_cache.get_blocks_aligned(&keys);
-        // Auxiliary state can have holes (checkpoints or evicted windows).
-        // Bound independent reads and reuse prefix fetch coalescing/cancellation
-        // without waiting for absent checkpoints to be published.
-        stream::iter(
-            hashes
-                .iter()
-                .cloned()
-                .zip(resident)
-                .map(|(hash, block)| async move {
-                    if block.is_some() {
-                        return block.map(crate::RestoreSource::Memory);
-                    }
-                    self.prefetch
-                        .check_and_prefetch(
-                            &self.read_cache,
-                            req_id,
-                            namespace,
-                            std::slice::from_ref(&hash),
-                            mode,
-                        )
-                        .await
-                        .blocks
-                        .pop()
-                }),
-        )
-        .buffered(8)
-        .collect()
-        .await
     }
 
     /// Evict all blocks from the resident in-memory read cache.
@@ -539,7 +328,7 @@ impl StorageEngine {
     /// the last `Arc`.
     pub(crate) fn cleanup_memory_cache(&self) -> MemoryCacheCleanupStats {
         let used_before = self.allocator.usage().0;
-        let evicted = self.read_cache.remove_all();
+        let evicted = self.dram.remove_all();
         if evicted.is_empty() {
             return MemoryCacheCleanupStats::default();
         }
@@ -591,19 +380,6 @@ impl StorageEngine {
         }
     }
 
-    /// Check prefix blocks and schedule backing-store reads if needed.
-    pub(crate) async fn check_prefix_and_prefetch(
-        &self,
-        req_id: &str,
-        namespace: &str,
-        hashes: &[Vec<u8>],
-        mode: crate::QueryMode,
-    ) -> QueryResult {
-        self.prefetch
-            .check_and_prefetch(&self.read_cache, req_id, namespace, hashes, mode)
-            .await
-    }
-
     fn reclaim_until_allocator_can_allocate(
         &self,
         required_bytes: u64,
@@ -625,7 +401,7 @@ impl StorageEngine {
             let used_before = self.allocator.usage().0;
 
             let evicted = self
-                .read_cache
+                .dram
                 .remove_lru_batch(RECLAIM_BATCH_SIZE, required_bytes);
 
             if evicted.is_empty() {
@@ -669,57 +445,6 @@ impl StorageEngine {
         }
 
         (freed_blocks, freed_bytes, largest_free)
-    }
-
-    pub(crate) async fn gc_stale_inflight(&self, max_age: std::time::Duration) -> usize {
-        self.write_pipeline.gc_stale_inflight(max_age).await
-    }
-
-    // ---- Cross-node transfer: serving side ----
-
-    pub(crate) fn validate_transfer_owner(
-        &self,
-        owner: uuid::Uuid,
-    ) -> Result<(), TransferAuthorizationError> {
-        if self
-            .catalog_client
-            .as_ref()
-            .is_none_or(|client| client.node_id != owner)
-            || self
-                .membership
-                .as_ref()
-                .is_some_and(|view| !view.permits(view.owner()))
-        {
-            return Err(TransferAuthorizationError::StaleReplica);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn authorize_transfer(
-        &self,
-        owner: uuid::Uuid,
-        ticket: transfer_lock::TransferTicket,
-        records: &[orbitkv_state::InventoryRecord],
-    ) -> Result<Vec<(StateKey, Arc<SealedBlock>)>, TransferAuthorizationError> {
-        self.validate_transfer_owner(owner)?;
-        let found = self
-            .read_cache
-            .pin_residencies(records)
-            .ok_or(TransferAuthorizationError::StaleReplica)?;
-        self.transfer_lock
-            .lock_blocks(ticket, found.clone())
-            .map_err(TransferAuthorizationError::Lock)?;
-        Ok(found)
-    }
-
-    /// Return `(base_ptr, size)` for each contiguous pinned memory region.
-    /// Used for Mooncake memory registration.
-    pub(crate) fn pinned_memory_regions(&self) -> Vec<(u64, usize)> {
-        self.allocator
-            .memory_regions()
-            .into_iter()
-            .map(|(ptr, len)| (ptr.as_ptr() as u64, len))
-            .collect()
     }
 
     #[cfg(feature = "mooncake")]

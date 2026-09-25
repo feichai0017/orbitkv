@@ -7,18 +7,18 @@
 mod common;
 
 use common::*;
-use orbitkv_core::StorageConfig;
+use orbitkv_core::EngineConfig;
 
 const BLOCK_SIZE: usize = 4096;
 const NUM_BLOCKS: usize = 4;
 /// Pool fits two batches, so a third batch must reclaim one of them.
 const POOL_SIZE: usize = NUM_BLOCKS * BLOCK_SIZE * 2;
 
-fn eviction_storage_config() -> StorageConfig {
-    StorageConfig {
+fn eviction_storage_config() -> EngineConfig {
+    EngineConfig {
         enable_lfu_admission: false,
         enable_numa_affinity: false,
-        ..StorageConfig::default()
+        ..EngineConfig::default()
     }
 }
 
@@ -86,7 +86,7 @@ async fn eviction_works_with_sharded_pool() {
     let mut env = TestEnvBuilder::new("inst-shard", "ns-shard")
         .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
         .pool_size(POOL_SIZE)
-        .storage(StorageConfig {
+        .storage(EngineConfig {
             pool_shards: 2,
             ..eviction_storage_config()
         })

@@ -27,7 +27,7 @@ numbers below group work areas rather than imposing a strict serial schedule.
 - [x] Default to automatic native cuFile initialization with io_uring fallback;
   stop new GPU I/O after an operation failure without revoking in-flight ownership.
 - [x] Reserve physical GPU-storage file space before admission; report allocation
-  failures and release partial startup reservations. Keep file ownership in `backing/ssd/files.rs`.
+  failures and release partial startup reservations. Keep file ownership in `storage/ssd/files.rs`.
 - [x] Implement bounded Rust asynchronous cuFile submissions with reusable staging
   slots, stream/event completion, per-operation byte/error checks and cancellation drain.
 - [x] Coalesce reads by file across leased sources without broadening required ranges;
@@ -67,18 +67,31 @@ records LMCache, FlexKV and Mooncake mechanisms, owners and implementation statu
 
 ## Measured transfer planning
 
-Next structural step: [unified replicas, routes and owned plans](docs/state-planning.md#unified-replicas-routes-and-execution-ownership).
+Structural work: [unified replicas, routes and owned plans](docs/state-planning.md#unified-replicas-routes-and-execution-ownership).
 
-- [ ] Replace dedicated local DRAM/SSD/peer-DRAM fields with bounded replica
-  records carrying owner/resource endpoint, medium, version and representation;
-  preserve current namespace compatibility and unknown peer metadata.
-- [ ] Retain those records through route enumeration and selected-plan ownership;
-  extend current query leases rather than adding another lease registry. Keep
-  default execution unchanged and only enumerate implemented, authorized routes.
+- [x] Replace dedicated local DRAM/SSD/peer-DRAM fields with bounded replica
+  records separating medium from acquisition evidence; preserve current
+  namespace compatibility, exact source versions and unknown peer metadata.
+  Move SSD route eligibility/acquisition and peer source segmentation into
+  `planning/`, preserving existing execution defaults and completion owners.
+- [ ] Complete consumed endpoint descriptors for owner/resource identity,
+  representation and bytes; bind actual TE transport capability to GPU routes
+  without treating GPUDirect RDMA as a tier or assuming peer HBM authorization.
+- [x] Retain unresolved candidates within each admitted query batch; distinguish
+  host preparation from engine restoration, borrow SSD/peer plans over the same
+  records, and hand exact source versions to existing query/completion owners.
+  Move shared-read coordination into `query/` and remove by-key SSD rescans and
+  forwarding/argument wrappers, preserving default source priority.
+- [ ] Extend batch plans into complete-route comparisons and joint demand
+  coverage across groups/ranks, with actual destination and staging admission.
 - [ ] Separate operation observations from complete-route estimates and attach
   live resource evidence, without double-counting queue time or composite stages.
-  Restructure modules with their actual consumers, following the
-  [target ownership layout](docs/state-planning.md#code-ownership-and-migration).
+- [x] Establish the [ownership layout](docs/state-planning.md#code-ownership-and-migration):
+  DRAM/SSD residency under `storage/`, peer workflows under `peer/`, inbound RPC
+  adaptation in Server, shared reads in `query/`, publication in its worker,
+  and separate cost observation/estimate/shadow modules. Remove the former
+  `backing/`, `internode/`, weak insert dependency wrapper and storage forwarding
+  methods; hold registered pinned pools through Mooncake unregister.
 
 Follow [P4](docs/state-planning.md#p4-calibrate-costs-and-choose-useful-writes)
 and its [deployment contracts](docs/state-planning.md#policies-by-deployment-mode).

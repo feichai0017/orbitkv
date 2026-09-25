@@ -52,14 +52,14 @@ fn ssd_env(instance_id: &'static str) -> (TestEnv, std::path::PathBuf, tempfile:
     let env = TestEnvBuilder::new(instance_id, "test-ns-ssd")
         .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
         .pool_size(POOL_SIZE)
-        .storage(StorageConfig {
+        .storage(EngineConfig {
             ssd_cache_config: Some(SsdCacheConfig {
                 backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path.clone()],
                 capacity_bytes: SSD_CAPACITY,
                 ..SsdCacheConfig::default()
             }),
-            ..StorageConfig::default()
+            ..EngineConfig::default()
         })
         .build();
     (env, cache_path, temp_dir)
@@ -76,14 +76,14 @@ fn ssd_split_env(instance_id: &'static str) -> (TestEnv, tempfile::TempDir) {
             BLOCK_SIZE * NUM_BLOCKS,
         )
         .pool_size(POOL_SIZE)
-        .storage(StorageConfig {
+        .storage(EngineConfig {
             ssd_cache_config: Some(SsdCacheConfig {
                 backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path],
                 capacity_bytes: SSD_CAPACITY,
                 ..SsdCacheConfig::default()
             }),
-            ..StorageConfig::default()
+            ..EngineConfig::default()
         })
         .build();
     (env, temp_dir)
@@ -98,7 +98,7 @@ fn ssd_multi_path_env(
     let env = TestEnvBuilder::new(instance_id, "test-ns-ssd")
         .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
         .pool_size(POOL_SIZE)
-        .storage(StorageConfig {
+        .storage(EngineConfig {
             ssd_cache_config: Some(SsdCacheConfig {
                 backend: SsdBackend::Uring,
                 cache_paths: vec![path0.clone(), path1.clone()],
@@ -106,7 +106,7 @@ fn ssd_multi_path_env(
                 shards: NonZeroUsize::new(2).unwrap(),
                 ..SsdCacheConfig::default()
             }),
-            ..StorageConfig::default()
+            ..EngineConfig::default()
         })
         .build();
     (env, vec![path0, path1], temp_dir)
@@ -118,7 +118,7 @@ fn ssd_sharded_env(instance_id: &'static str) -> (TestEnv, std::path::PathBuf, t
     let env = TestEnvBuilder::new(instance_id, "test-ns-ssd")
         .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
         .pool_size(POOL_SIZE)
-        .storage(StorageConfig {
+        .storage(EngineConfig {
             ssd_cache_config: Some(SsdCacheConfig {
                 backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path.clone()],
@@ -126,7 +126,7 @@ fn ssd_sharded_env(instance_id: &'static str) -> (TestEnv, std::path::PathBuf, t
                 shards: NonZeroUsize::new(4).unwrap(),
                 ..SsdCacheConfig::default()
             }),
-            ..StorageConfig::default()
+            ..EngineConfig::default()
         })
         .build();
     (env, cache_path, temp_dir)
@@ -141,14 +141,14 @@ fn ssd_custom_capacity_env(
     let env = TestEnvBuilder::new(instance_id, "test-ns-ssd")
         .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
         .pool_size(POOL_SIZE)
-        .storage(StorageConfig {
+        .storage(EngineConfig {
             ssd_cache_config: Some(SsdCacheConfig {
                 backend: SsdBackend::Uring,
                 cache_paths: vec![cache_path],
                 capacity_bytes,
                 ..SsdCacheConfig::default()
             }),
-            ..StorageConfig::default()
+            ..EngineConfig::default()
         })
         .build();
     (env, temp_dir)
@@ -200,7 +200,7 @@ async fn selective_ssd_admission_preserves_demand_and_ignores_warming() {
         let env = TestEnvBuilder::new("selective-ssd", "selective-ns")
             .layer("layer_0", NUM_BLOCKS, BLOCK_SIZE)
             .pool_size(POOL_SIZE)
-            .storage(StorageConfig {
+            .storage(EngineConfig {
                 cache_protected_percent: 80,
                 ssd_cache_config: Some(SsdCacheConfig {
                     backend: SsdBackend::Uring,
@@ -209,7 +209,7 @@ async fn selective_ssd_admission_preserves_demand_and_ignores_warming() {
                     write_policy: SsdWritePolicy::Reuse,
                     ..SsdCacheConfig::default()
                 }),
-                ..StorageConfig::default()
+                ..EngineConfig::default()
             })
             .build();
         let target = env.hashes(97);
