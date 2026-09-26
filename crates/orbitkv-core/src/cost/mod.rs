@@ -13,16 +13,33 @@ const ALPHA: f64 = 0.2;
 
 static ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ORBITKV_COST_OBSERVATIONS").as_deref() == Ok("1"));
+#[cfg(feature = "mooncake")]
+static SELECTION_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("ORBITKV_COST_SELECTION").as_deref() == Ok("1"));
 
 pub(crate) fn enabled() -> bool {
     *ENABLED
 }
 
+#[cfg(feature = "mooncake")]
+pub(crate) fn selection_enabled() -> bool {
+    *ENABLED && *SELECTION_ENABLED
+}
+
+#[cfg(all(test, feature = "mooncake"))]
+pub(crate) fn observe_for_test(key: CostKey, seconds: f64, now: std::time::Instant) {
+    estimates::ESTIMATES.lock().observe(key, seconds, now);
+}
+
+#[cfg(feature = "mooncake")]
+mod decision;
 mod estimates;
 mod observation;
 mod resource;
 mod shadow;
 
+#[cfg(feature = "mooncake")]
+pub(crate) use decision::select_route;
 pub(crate) use observation::{Observation, Outcome};
 pub(crate) use orbitkv_state::ReplicaRepresentation as Representation;
 pub(crate) use resource::{Resource, resource_id};
@@ -39,6 +56,8 @@ enum Comparison {
     GpuLoad,
     GpuSave,
     SsdRestore,
+    #[cfg(feature = "mooncake")]
+    HostReady,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -65,6 +84,10 @@ pub(crate) enum CostPath {
     RemoteAuthorization,
     #[cfg(feature = "mooncake")]
     RemoteSsdAuthorization,
+    #[cfg(feature = "mooncake")]
+    PeerDramHostReady,
+    #[cfg(feature = "mooncake")]
+    PeerSsdHostReady,
 }
 
 impl CostPath {
@@ -96,6 +119,10 @@ impl CostPath {
             Self::RemoteRead | Self::RemoteAuthorization | Self::RemoteSsdAuthorization => {
                 SampleBoundary::SubmittedToCompletion
             }
+            #[cfg(feature = "mooncake")]
+            Self::PeerDramHostReady | Self::PeerSsdHostReady => {
+                SampleBoundary::SubmittedToCompletion
+            }
         }
     }
 
@@ -104,6 +131,8 @@ impl CostPath {
             Self::GpuLoadDirect | Self::GpuLoadKernel => Some(Comparison::GpuLoad),
             Self::GpuSaveDirect | Self::GpuSaveKernel => Some(Comparison::GpuSave),
             Self::SsdUringRestore | Self::SsdCufileRestore => Some(Comparison::SsdRestore),
+            #[cfg(feature = "mooncake")]
+            Self::PeerDramHostReady | Self::PeerSsdHostReady => Some(Comparison::HostReady),
             _ => None,
         }
     }
@@ -132,6 +161,10 @@ impl CostPath {
             Self::RemoteAuthorization => "remote_authorization",
             #[cfg(feature = "mooncake")]
             Self::RemoteSsdAuthorization => "remote_ssd_authorization",
+            #[cfg(feature = "mooncake")]
+            Self::PeerDramHostReady => "peer_dram_host_ready",
+            #[cfg(feature = "mooncake")]
+            Self::PeerSsdHostReady => "peer_ssd_host_ready",
         }
     }
 }
@@ -158,6 +191,14 @@ impl CostKey {
             && self.path.comparison() == other.path.comparison()
             && self.representation != Representation::Unknown
             && self.with_path(other.path) == other
+    }
+
+    #[cfg(feature = "mooncake")]
+    fn route_comparable(self, other: Self) -> bool {
+        self.path.comparison() == Some(Comparison::HostReady)
+            && other.path.comparison() == Some(Comparison::HostReady)
+            && self.representation != Representation::Unknown
+            && self.with_path_resource(other.path, other.resource) == other
     }
 
     pub(crate) fn with_dma_ranges(self, ranges: usize) -> Self {

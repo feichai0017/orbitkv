@@ -411,8 +411,10 @@ discovery or grant transfer authority.
 Use the same [cost observations and deployment contracts](state-planning.md#policies-by-deployment-mode)
 as local storage planning. Shared-cache DP, P/D handoff and TP/PP consumption
 have different completion targets; do not assign one policy to every operation
-on a physical node. This is a target design: today's source planner uses
-coverage and ownership checks, not calibrated latency selection.
+on a physical node. The current narrow selector first requires equal coverage
+and the same peer medium, then may choose an owner using fresh, incarnation-
+scoped complete HostReady estimates. Cross-medium and local/peer selection remain
+target design rather than inferred from these samples.
 
 Represent a request as demand for a legal recovery boundary, with known bytes,
 query ownership and later engine-supplied priority/first-use hints. Estimate

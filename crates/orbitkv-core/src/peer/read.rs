@@ -58,6 +58,13 @@ impl SegmentFetcher for PeerReader {
         let remote_addr = &segment.owner.endpoint;
         let namespace = &segment.records[0].key.namespace;
         let t0 = Instant::now();
+        let mut route_observation = if crate::cost::enabled() {
+            Observation::new(segment.cost_key(), None)
+        } else {
+            Observation::disabled()
+        };
+        route_observation.admitted();
+        route_observation.submitted();
 
         // Query the OrbitKV authority before exposing any physical addresses.
         let query_start = Instant::now();
@@ -105,6 +112,7 @@ impl SegmentFetcher for PeerReader {
         let (lock_guard, response) = match authorization {
             Ok(cr) => cr,
             Err(error) if error.code() == tonic::Code::FailedPrecondition => {
+                route_observation.finish(Outcome::Failed, None);
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "rejected")]);
@@ -120,7 +128,29 @@ impl SegmentFetcher for PeerReader {
                 }
                 return SegmentOutcome::Rejected;
             }
+            Err(error)
+                if matches!(
+                    error.code(),
+                    tonic::Code::ResourceExhausted | tonic::Code::Unavailable
+                ) =>
+            {
+                route_observation.finish(Outcome::Failed, None);
+                core_metrics()
+                    .remote_fetch_total
+                    .add(1, &[KeyValue::new("status", "rejected")]);
+                return SegmentOutcome::Rejected;
+            }
             Err(e) => {
+                route_observation.finish(
+                    if e.code() == tonic::Code::DeadlineExceeded {
+                        Outcome::TimedOut
+                    } else if e.code() == tonic::Code::Cancelled {
+                        Outcome::Cancelled
+                    } else {
+                        Outcome::Failed
+                    },
+                    None,
+                );
                 warn!("Remote query to {remote_addr} failed: {e}");
                 core_metrics()
                     .remote_fetch_total
@@ -139,6 +169,7 @@ impl SegmentFetcher for PeerReader {
                 .zip(&segment.records)
                 .any(|(block, record)| block.block_hash != record.key.hash)
         {
+            route_observation.finish(Outcome::Failed, None);
             warn!("Remote query to {remote_addr} returned invalid transfer authorization");
             drop(lock_guard);
             core_metrics()
@@ -169,6 +200,7 @@ impl SegmentFetcher for PeerReader {
         {
             Ok(r) => r,
             Err(e) => {
+                route_observation.finish(Outcome::Failed, None);
                 warn!("Mooncake transfer from {remote_addr} failed: {e}");
                 self.transfer
                     .engine()
@@ -179,6 +211,7 @@ impl SegmentFetcher for PeerReader {
                 return SegmentOutcome::Failed;
             }
         };
+        route_observation.finish(Outcome::Completed, Some(total_bytes));
 
         let elapsed = t0.elapsed();
         let mb = total_bytes as f64 / (1024.0 * 1024.0);

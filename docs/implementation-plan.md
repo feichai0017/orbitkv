@@ -924,6 +924,30 @@ longest-cover/stable-owner selection, source-version retention, local priority
 and stale-local fallback. This enables the route but does not qualify physical
 two-host TCP/RDMA behavior or measured cross-source selection.
 
+The guarded peer-owner decision increment records non-additive
+`peer_dram_host_ready` and `peer_ssd_host_ready` samples from authorization start
+through destination block reconstruction. Planning still maximizes contiguous
+coverage and binds one source medium first. Only equal-coverage owners then
+participate in execution selection, keyed by peer incarnation, representation,
+known stored-byte bucket and block count. `ORBITKV_COST_SELECTION=1` must be set
+together with `ORBITKV_COST_OBSERVATIONS=1`; all estimates must have at least
+four fresh successful samples and the winner must clear both empirical errors
+plus the 5% margin. Otherwise stable owner ordering is unchanged. Stale and
+transient resource-admission rejection may try another retained owner without
+removing valid Catalog evidence. Nested authorization and TE observations remain
+diagnostic and are never added to the complete-route estimate.
+
+This is real but deliberately narrow execution selection. It does not compare
+peer DRAM against peer SSD, local SSD against a peer, different coverage, or
+engine-ready completion. Those require matched admission and complete-route
+evidence plus the physical two-host gates.
+
+Validation for this increment: three decision tests cover explicit dual opt-in,
+fresh/complete evidence, incompatibility, empirical error and switching margin;
+five peer-planner tests include an end-to-end estimator-driven owner change.
+Strict Core Clippy passed in local-only and CPU-Mooncake configurations, and
+strict Server Clippy passed with CPU-Mooncake.
+
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
 the pinned Mooncake native library is built with CUDA disabled. This is a build

@@ -44,6 +44,9 @@ For integration boundaries and execution priorities, see
 
 The planned [transfer policies](state-planning.md#policies-by-deployment-mode)
 share Rust cost observations and budgets across local and Mooncake TE paths.
+`ORBITKV_COST_SELECTION=1` has an effect only together with
+`ORBITKV_COST_OBSERVATIONS=1`; today it can select among equal-coverage owners
+of the same peer medium and does not enable general cross-tier policy.
 They distinguish ordinary cache recovery, current-request P/D handoff and
 TP/PP completion dependencies. These deployment dimensions can compose; one
 Manager may serve instances with different roles. Dynamic cost selection and

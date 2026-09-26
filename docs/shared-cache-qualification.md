@@ -84,6 +84,34 @@ and I/O reservations, including requester completion records awaiting a source
 acknowledgement. A response without these counters does not pass as a
 remote hit. This gate proves recovery, not throughput superiority.
 
+## Forced source-SSD gate
+
+Run this as a separate result from the DRAM baseline. Configure SSD on the
+source Manager with write policy `all`; the target may use its ordinary local
+configuration. For each prompt:
+
+1. Execute it on the source, call `POST /cache/sync`, and verify the SSD write
+   completed before changing residency.
+2. Call `POST /cache/memory/cleanup` on the source. Require positive evicted
+   blocks, zero `still_referenced_blocks`, and surviving Catalog evidence with
+   medium `ssd`; do not clear the SSD ring or restart the source.
+3. Send the prompt to a target replica with a cold local namespace. Require an
+   increase in source `orbitkv_ssd_prefetch_bytes_total`, target
+   `orbitkv_remote_fetch_bytes_total`, and target GPU restore bytes. The output
+   must match the deterministic cold control.
+4. After completion, require source `orbitkv_ssd_read_pinned_bytes`,
+   `orbitkv_transfer_reserved_bytes` and `orbitkv_transfer_lock_active` plus
+   target query and `orbitkv_transfer_completion_outstanding` reservations to
+   return to baseline. Repeat cancellation
+   while source I/O is queued and while Mooncake READ is active.
+
+Run first with `MC_FORCE_TCP=1`, then on two physical hosts with the intended
+RDMA rails and `--nics`. Record the actual Mooncake transport, NIC counters,
+source SSD device/mount, byte amplification, authorization/staging/READ
+latencies and peak sender/receiver memory. A successful same-host or TCP run
+does not qualify RDMA, and a remote byte increase without a source SSD-read
+increase does not qualify the peer-SSD route.
+
 ## Restart and ownership gates
 
 The repository's model-serving test starts etcd, two Managers and two replicas

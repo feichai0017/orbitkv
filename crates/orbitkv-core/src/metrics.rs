@@ -39,6 +39,8 @@ pub(crate) struct CoreMetrics {
     pub cost_shadow_candidates: Counter<u64>,
     pub cost_shadow_prediction_seconds: Histogram<f64>,
     pub cost_shadow_decisions: Counter<u64>,
+    #[cfg(feature = "mooncake")]
+    pub cost_route_decisions: Counter<u64>,
     pub cost_estimate_samples: Histogram<u64>,
     pub cost_estimate_age_seconds: Histogram<f64>,
     pub cost_estimate_error_seconds: Histogram<f64>,
@@ -324,6 +326,10 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .build(),
             cost_shadow_decisions: meter.u64_counter("orbitkv_cost_shadow_decisions")
                 .with_description("Shadow agreement with compatibility, empirical-error and gain-margin checks; never selects execution")
+                .build(),
+            #[cfg(feature = "mooncake")]
+            cost_route_decisions: meter.u64_counter("orbitkv_cost_route_decisions")
+                .with_description("Opt-in execution choices among fresh compatible complete-route estimates")
                 .build(),
             cost_estimate_samples: meter.u64_histogram("orbitkv_cost_estimate_samples")
                 .with_description("Completed samples behind shadow predictions")

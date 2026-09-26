@@ -91,10 +91,13 @@ or cluster-wide cache placement. Optional Dynamo routing can later consume
 Manager summaries, while Managers retain discovery and physical decisions.
 
 Current implementation has embedded discovery, bounded candidate caching,
-source authorization and opt-in cost observations. Peer fetch selection still
-maximizes consecutive coverage from one owner; it does not rank by measured
-completion time. Per-residence advertisements, peer resource summaries and the
-joint local/peer decision loop above remain implementation work.
+per-residence advertisements, source authorization and opt-in cost observations.
+Peer fetch first maximizes consecutive coverage. Among owners with the same
+coverage and source medium, an additional opt-in can use fresh complete
+HostReady estimates scoped by peer incarnation. Unknown/incompatible estimates
+preserve the stable owner order, and source admission rejection replans within
+the bounded batch. Peer resource summaries and the joint local/peer decision
+loop above remain implementation work.
 
 ## What can be known ahead of time
 
@@ -720,12 +723,13 @@ actual work. Matching estimator buckets alone does not prove equal demand.
 Cross-source local/peer comparisons still require a separate complete-route and
 admission contract; they cannot reuse this same-source check blindly.
 
-The declared shadow margin is 5% of the current estimate. A different path is
+The declared margin is 5% of the current estimate. A different path is
 suggested only if its mean plus empirical error is below the current mean minus
 its error by more than that margin. Faster means inside this guard report
 `within_margin`, incompatible evidence reports `incomparable`, and missing
-estimates remain `unknown`. This refines the observation experiment; it does
-not qualify the margin for execution selection or enable a path switch. See
+estimates remain `unknown`. Shadow decisions never alter execution. The narrow
+peer-owner selector applies the same guard only to equal-coverage, same-medium
+HostReady routes; it does not qualify cross-medium or local/peer switching. See
 [cost metrics](metrics.md#bounded-cost-observations) for the complete labels.
 
 Observations and shadow work are **off by default**. Set
@@ -735,6 +739,10 @@ passes five of six cells; SGLang ANS SSD exceeds the TTFT p50 budget, so default
 enablement remains unqualified. That matrix predates independent SSD-route
 execution; [current validation](implementation-plan.md#ssd-sourcepath-separation-final-evidence)
 is recorded separately.
+Set `ORBITKV_COST_SELECTION=1` in addition to observations to allow the guarded
+same-medium peer-owner choice. Either variable absent or unequal to `1` keeps
+the stable longest-coverage/owner ordering. Selection never expands candidate
+coverage, bypasses authorization or treats a prediction as a resource permit.
 There are no Python hot-loop callbacks, extra GPU synchronizations or payload
 reads for telemetry. See [the paired workload](../benches/README.md#cost-observation-overhead)
 for the predeclared overhead budget and final qualification evidence.

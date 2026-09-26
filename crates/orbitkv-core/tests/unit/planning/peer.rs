@@ -200,3 +200,50 @@ fn peer_ssd_plan_is_explicit_and_never_mixes_source_media() {
             .all(|record| { record.metadata.unwrap().medium == orbitkv_state::ReplicaMedium::Ssd })
     );
 }
+
+#[test]
+fn peer_owner_selection_is_opt_in_and_uses_matching_complete_route_evidence() {
+    const CHILD: &str = "ORBITKV_TEST_PEER_OWNER_SELECTION_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let owners = ["a-stable", "z-measured"];
+        let mut rows = vec![row(1, &owners), row(2, &owners)];
+        let now = std::time::Instant::now();
+        for (owner, seconds) in [("a-stable", 0.02), ("z-measured", 0.01)] {
+            let location = rows[0]
+                .peer(orbitkv_state::ReplicaMedium::Dram)
+                .find(|replica| replica.owner.endpoint == owner)
+                .unwrap();
+            let key = crate::cost::CostKey::new(
+                crate::cost::CostPath::PeerDramHostReady,
+                crate::cost::Resource::Peer(crate::cost::resource_id(&location.owner)),
+                ReplicaRepresentation::Raw,
+                8192,
+                2,
+            );
+            for _ in 0..4 {
+                crate::cost::observe_for_test(key, seconds, now);
+            }
+        }
+        let plan = FetchPlan::new(&mut rows, 2, PeerSource::Dram).unwrap();
+        assert_eq!(plan.next_segment(0).unwrap().owner.endpoint, "z-measured");
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "planning::peer::tests::peer_owner_selection_is_opt_in_and_uses_matching_complete_route_evidence",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("ORBITKV_COST_OBSERVATIONS", "1")
+        .env("ORBITKV_COST_SELECTION", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}

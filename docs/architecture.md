@@ -148,9 +148,11 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 independent access routes; peer transport is not a storage medium. `PeerExports`
 checks live owner/version evidence and holds source memory until completion.
 The Mooncake registration owner retains its pinned pool through unregister.
-Cost observations and shadow comparisons remain opt-in and do not select a new
-execution route. Peer SSD uses source io_uring staging plus Mooncake TE; remote
-HBM and GPU-direct cache endpoints remain future work.
+Cost observations and shadow comparisons remain opt-in; shadow results never
+select execution. A second opt-in may choose among equal-coverage owners of one
+peer medium using complete HostReady evidence, while broader cross-route choice
+remains open. Peer SSD uses source io_uring staging plus Mooncake TE; remote HBM
+and GPU-direct cache endpoints remain future work.
 Instance-owned GPU workers share the bounded GPU SSD-write admission for their
 physical CUDA device; the permit remains with the submitted save until its
 completion owner releases it.

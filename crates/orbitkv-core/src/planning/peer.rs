@@ -1,6 +1,8 @@
 use orbitkv_state::{CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_KEYS, InventoryRecord};
+use smallvec::SmallVec;
 
 use super::replica::ReplicaSet;
+use crate::cost::{CostKey, CostPath, Resource, resource_id, select_route, selection_enabled};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PeerSource {
@@ -15,6 +17,13 @@ impl PeerSource {
             Self::Ssd => orbitkv_state::ReplicaMedium::Ssd,
         }
     }
+
+    fn cost_path(self) -> CostPath {
+        match self {
+            Self::Dram => CostPath::PeerDramHostReady,
+            Self::Ssd => CostPath::PeerSsdHostReady,
+        }
+    }
 }
 
 pub(crate) struct FetchSegment {
@@ -23,6 +32,18 @@ pub(crate) struct FetchSegment {
     pub(crate) records: Vec<InventoryRecord>,
     pub(crate) stored_bytes: Option<u64>,
     pub(crate) representation: orbitkv_state::ReplicaRepresentation,
+}
+
+impl FetchSegment {
+    pub(crate) fn cost_key(&self) -> CostKey {
+        CostKey::new(
+            self.source.cost_path(),
+            Resource::Peer(resource_id(&self.owner)),
+            self.representation,
+            self.stored_bytes.unwrap_or(0),
+            self.records.len(),
+        )
+    }
 }
 
 pub(crate) struct FetchPlan<'a> {
@@ -72,7 +93,7 @@ impl<'a> FetchPlan<'a> {
         let rows = &self.rows;
 
         let row = rows.get(start)?;
-        let mut best: Option<(&CacheOwner, usize)> = None;
+        let mut candidates: SmallVec<[(&CacheOwner, usize); 4]> = SmallVec::new();
         for candidate in row.peer(self.source.medium()) {
             let mut bytes = row.key.namespace.len();
             let count = rows[start..]
@@ -88,17 +109,66 @@ impl<'a> FetchPlan<'a> {
             if count == 0 {
                 continue;
             }
-            if best.is_none_or(|(owner, best_count)| {
-                count > best_count || (count == best_count && candidate.owner < *owner)
-            }) {
-                best = Some((&candidate.owner, count));
-            }
+            candidates.push((&candidate.owner, count));
         }
-        let (owner, count) = best?;
+        candidates.sort_unstable_by(|(left_owner, left_count), (right_owner, right_count)| {
+            right_count
+                .cmp(left_count)
+                .then_with(|| left_owner.cmp(right_owner))
+        });
+        let count = candidates.first()?.1;
+        candidates.retain(|(_, coverage)| *coverage == count);
+        let selected = if selection_enabled() {
+            let keys: SmallVec<[CostKey; 4]> = candidates
+                .iter()
+                .map(|(owner, _)| {
+                    let (stored_bytes, representation) =
+                        self.shape_for_owner(start, count, owner)?;
+                    Some(CostKey::new(
+                        self.source.cost_path(),
+                        Resource::Peer(resource_id(owner)),
+                        representation.unwrap_or_default(),
+                        stored_bytes.unwrap_or(0),
+                        count,
+                    ))
+                })
+                .collect::<Option<_>>()?;
+            select_route(&keys, 0)
+        } else {
+            0
+        };
+        let owner = candidates.get(selected)?.0;
+        let (stored_bytes, representation) = self.shape_for_owner(start, count, owner)?;
         let mut records = Vec::with_capacity(count);
+        for row in &rows[start..start + count] {
+            let replica = row
+                .peer(self.source.medium())
+                .find(|replica| &replica.owner == owner)?;
+            records.push(InventoryRecord {
+                key: row.key.clone(),
+                sequence: replica.sequence,
+                present: true,
+                metadata: Some(replica.metadata),
+            });
+        }
+        Some(FetchSegment {
+            owner: owner.clone(),
+            source: self.source,
+            records,
+            stored_bytes,
+            representation: representation.unwrap_or_default(),
+        })
+    }
+
+    fn shape_for_owner(
+        &self,
+        start: usize,
+        count: usize,
+        owner: &CacheOwner,
+    ) -> Option<(Option<u64>, Option<orbitkv_state::ReplicaRepresentation>)> {
         let mut stored_bytes = Some(0u64);
         let mut representation = None;
-        for row in &rows[start..start + count] {
+        for row in &self.rows[start..start + count] {
             let replica = row
                 .peer(self.source.medium())
                 .find(|replica| &replica.owner == owner)?;
@@ -117,20 +187,8 @@ impl<'a> FetchPlan<'a> {
                 Some(previous) if previous == next => previous,
                 Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
             });
-            records.push(InventoryRecord {
-                key: row.key.clone(),
-                sequence: replica.sequence,
-                present: true,
-                metadata: Some(replica.metadata),
-            });
         }
-        Some(FetchSegment {
-            owner: owner.clone(),
-            source: self.source,
-            records,
-            stored_bytes,
-            representation: representation.unwrap_or_default(),
-        })
+        Some((stored_bytes, representation))
     }
 }
 

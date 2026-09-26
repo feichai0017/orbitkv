@@ -61,6 +61,8 @@ gate, without claiming cross-host tensor parallelism.
 
 1. **Qualify local path selection using Rust cost observations.** The bounded
    estimator, raw-copy shadow and full SSD-route shadow are implemented as an opt-in.
+   Equal-coverage owners of one peer medium also have a separately gated,
+   opt-in complete-HostReady selector; cross-medium/local/peer choice is still open.
    Use explicit demand-read controls over one SSD store for route ablations;
    default execution and DRAM preparation remain unchanged. Close
    the SGLang ANS SSD overhead gate before default enablement. Begin with

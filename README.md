@@ -147,8 +147,10 @@ completion and recovery contracts. Bounded Rust cost observations, raw-copy
 shadow predictions, independent local SSD read routes and a fixed-priority peer
 SSD route are implemented. SSD route
 shadow compares complete restoration to GPU readiness without changing execution.
-This is the first source/path separation, not a completed planner across all tiers.
-Dynamic cost selection remains planned, and observations remain off by default:
+This is not yet a completed planner across all tiers. An opt-in selector can
+choose between equal-coverage owners of the same peer medium using fresh complete
+HostReady observations; cross-medium/local/peer selection remains planned, and
+observations plus execution selection remain off by default:
 the [earlier overhead qualification](docs/implementation-plan.md#p41-final-evidence)
 has one open SGLang ANS SSD latency gate. The route changes require their own
 [validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence).

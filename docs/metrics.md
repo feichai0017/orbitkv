@@ -47,6 +47,7 @@ request and state identities are kept out of the exported series.
 | `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-GPU-terminal total for the two SSD restore routes |
 | `orbitkv_cost_shadow_candidates_total` / `orbitkv_cost_shadow_prediction_seconds` | Feasible raw-copy or SSD restore-route candidates, labelled by path and known/unknown evidence |
 | `orbitkv_cost_shadow_decisions_total` | agree, different, within_margin, incomparable or unknown; execution never follows this result |
+| `orbitkv_cost_route_decisions_total` | `default`, `selected`, `within_margin`, `unknown`, `incomparable` or `contention` for opt-in equal-coverage peer-owner execution choices |
 | `orbitkv_cost_estimate_samples`, `orbitkv_cost_estimate_age_seconds`, `orbitkv_cost_estimate_error_seconds` | Count, sample age and EWMA absolute error supporting known shadow predictions |
 | `orbitkv_cost_estimate_evictions_total` / `orbitkv_cost_estimate_dropped_total` | Fixed-capacity eviction and skipped updates on estimator contention |
 
@@ -60,6 +61,9 @@ Peer DRAM authorization uses `path="remote_authorization"`; peer SSD uses
 `path="remote_ssd_authorization"`, whose service interval also includes
 source-local io_uring staging. The following `remote_read` remains the Mooncake
 TE payload interval for either source medium.
+`peer_dram_host_ready` and `peer_ssd_host_ready` are non-additive composite
+samples from authorization start through destination block reconstruction.
+They alone feed the narrow peer-owner execution selector.
 
 Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
 DMA-coalesced ranges. Actual execution samples and shadow candidates use the
@@ -96,6 +100,9 @@ This family and its shadow work are disabled by default. Enable them with
 metrics remain enabled independently. See the
 [overhead gate](implementation-plan.md#p41-final-evidence) before enabling cost
 observations in serving.
+Execution selection additionally requires `ORBITKV_COST_SELECTION=1`. It is
+currently limited to equal-coverage owners of one peer medium; it does not use
+nested authorization/READ timers as additive costs.
 
 ### Storage encoding
 

@@ -2,11 +2,12 @@ use crate::planning::peer::{FetchPlan, FetchSegment};
 
 use crate::storage::MaterializedBlocks;
 
-const MAX_STALE_RETRIES: usize = 2;
+const MAX_AUTHORIZATION_RETRIES: usize = 2;
 
 pub(super) enum SegmentOutcome {
     Fetched(MaterializedBlocks),
     /// Rejected during authorization, before any payload transfer was submitted.
+    /// Stale evidence and transient source admission both permit another owner.
     Rejected,
     Failed,
 }
@@ -32,7 +33,7 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
                 // Only discard this batch's evidence. A later key may still be valid.
                 plan.reject(fetched.len(), &segment);
                 rejected += 1;
-                if rejected > MAX_STALE_RETRIES {
+                if rejected > MAX_AUTHORIZATION_RETRIES {
                     break;
                 }
             }

@@ -174,6 +174,11 @@ qualification remain open. See the
 - [ ] Extend qualified peer source selection with discovery, authorization,
   TE and decode/H2D costs. Keep same-host TCP and physical two-host/RDMA evidence
   separate; DP qualification does not wait for local policy gains.
+- [x] Add guarded execution selection between equal-coverage owners of the same
+  peer medium. Train only complete HostReady observations scoped by peer
+  incarnation; require every estimate to be fresh and compatible plus a gain
+  beyond empirical error and 5%. Keep it behind both cost opt-ins and replan on
+  stale or temporarily resource-exhausted source authorization.
 - [ ] Implement the [Manager-owned cluster decision loop](docs/state-planning.md#cache-manager-decisions-below-the-engine):
   bounded residence/resource evidence with freshness, joint local/peer route
   ranking, source credit admission and bounded replanning. Qualify without a
