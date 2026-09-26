@@ -258,7 +258,10 @@ One Storage-owned residency stream tracks current DRAM plus committed SSD for
 each owner/key. DRAM is the advertised preference while present; its eviction
 reveals the surviving SSD evidence without losing the owner. SSD commit is the
 publication boundary, and ring overwrite or corruption removes its evidence.
-This is discovery only: peer SSD still needs source-local staging and credits.
+Peer SSD discovery is no longer treated as directly readable memory. The source
+can now revalidate an exact SSD generation and materialize it through bounded
+io_uring host staging, but requester-side peer-SSD enumeration remains disabled
+until route and two-host qualification complete.
 
 `ReadPlan` now retains unresolved candidates for an admitted query batch and
 declares host-ready preparation or engine restoration. The coordinator keeps
@@ -319,7 +322,7 @@ for every local/remote combination:
 | Medium | Consumer's node | Another node | Current executable scope |
 | --- | --- | --- | --- |
 | DRAM | Manager-owned pool | Peer Manager-owned pool | Both supported; peer payload currently stages into requester DRAM |
-| SSD | Manager-owned store | Peer Manager-owned store | Local supported; peer SSD preparation/authorization remains planned |
+| SSD | Manager-owned store | Peer Manager-owned store | Local supported; peer io_uring preparation/authorization implemented at the source, requester route not yet enabled |
 | HBM | Engine pages or Manager GPU allocations, with distinct owners | Peer engine pages or peer Manager GPU allocations | Local registered restore destinations/staging supported; general HBM cache sourcing is not implemented; experimental P/D is a separate contract |
 
 Engine HBM becomes a source only with an engine grant binding instance/session,
@@ -615,7 +618,7 @@ cache tiers. Several residences may contain the same compatible state.
 | Peer DRAM → TE → local GPU staging → local HBM | Planned; GPU registration, capacity and decode/scatter ownership required |
 | Peer DRAM → TE → local engine HBM | Planned; registered destinations, exact engine-ready bytes/layout and completion visibility required |
 | Peer HBM → TE → local DRAM or GPU memory | General cache sourcing planned; source engine must grant a lifetime lease. GPU-to-GPU vLLM P/D is an existing experimental handoff, not general peer-HBM reuse |
-| Peer SSD → owner DRAM → TE → local DRAM or GPU memory | Planned owner-local staging with bounded credits at both ends |
+| Peer SSD → owner DRAM → TE → local DRAM or GPU memory | Source io_uring staging and two-phase source credits implemented; requester planning and two-host qualification remain disabled |
 | Peer SSD → owner GPU staging via cuFile → TE → local GPU memory | Later candidate only on qualified source GDS and GPU RDMA paths; charge source GPU space and interference |
 | Mounted remote storage → cuFile → local GPU staging | Separate future storage deployment; not an implicit Mooncake peer-memory path |
 
@@ -838,10 +841,14 @@ without automatically adding them to the request critical path. Cached directory
 evidence avoids repeated discovery, not source lifetime checks; etcd remains
 membership/configuration coordination and never a per-read dependency.
 
-For later remote SSD support, the owner prepares only its own SSD bytes into
-bounded registered memory, then TE moves them. Reserve source and destination
-credits without holding unbounded partial reservations. Do not recursively fetch
-from another peer or advertise SSD-only state as immediately RDMA-readable.
+For remote SSD support, the owner prepares only its own SSD bytes into bounded
+registered memory, then TE moves them. Source-side io_uring staging now reserves
+ticket/session and allocator-rounded byte credits before allocation. Its detached
+batch owns exact extent leases and staging credit through drain, atomically
+commits actual allocation footprint, and publishes only after result handoff.
+Requester selection and destination-side qualification remain open. Do not
+recursively fetch from another peer or advertise SSD-only state as immediately
+RDMA-readable.
 Peer-HBM sourcing similarly needs engine-owned lifetime evidence; it is not a
 free Manager memory pool. Different TP/PP shapes require explicit compatibility
 or a separately implemented resharding step.

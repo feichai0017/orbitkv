@@ -24,7 +24,7 @@ mod uring;
 mod writer;
 
 use super::MaterializedBlocks;
-use crate::memory::AllocateFn;
+use crate::memory::{AllocateFn, AllocationFootprintFn};
 pub(crate) use config::SSD_ALIGNMENT;
 pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
@@ -223,6 +223,7 @@ pub(crate) struct SsdStore {
     prefetch_tx: tokio::sync::mpsc::Sender<PrefetchBatch>,
     inner: Mutex<SsdInner>,
     allocate_fn: AllocateFn,
+    allocation_footprint_fn: AllocationFootprintFn,
     is_numa: bool,
     inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
 }
@@ -272,6 +273,7 @@ impl SsdStore {
     pub(crate) fn new(
         config: SsdCacheConfig,
         allocate_fn: AllocateFn,
+        allocation_footprint_fn: AllocationFootprintFn,
         is_numa: bool,
         inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
     ) -> std::io::Result<Arc<Self>> {
@@ -379,6 +381,7 @@ impl SsdStore {
                 reuse_history: LruCache::new(REUSE_HISTORY_BLOCKS),
             }),
             allocate_fn,
+            allocation_footprint_fn,
             is_numa,
             inventory,
         });
@@ -406,6 +409,70 @@ impl SsdStore {
                 })
             })
             .collect()
+    }
+
+    /// Validate the advertised inventory versions and pin their exact SSD
+    /// generations under the index lock before source staging begins.
+    pub(crate) fn pin_residencies(
+        self: &Arc<Self>,
+        records: &[orbitkv_state::InventoryRecord],
+    ) -> Option<Vec<Arc<SsdReadLease>>> {
+        let inner = self.inner.lock();
+        let inventory = self.inventory.as_ref()?;
+        if records.is_empty()
+            || !records
+                .iter()
+                .all(|record| inventory.contains_record(record))
+        {
+            return None;
+        }
+        let entries = records
+            .iter()
+            .map(|record| inner.ring.get(&record.key).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        let leases = records
+            .iter()
+            .zip(entries)
+            .map(|(record, entry)| {
+                entry.readers.fetch_add(1, Ordering::Relaxed);
+                core_metrics()
+                    .ssd_read_pinned_bytes
+                    .add(entry.len as i64, &[]);
+                Arc::new(SsdReadLease {
+                    entry,
+                    key: record.key.clone(),
+                    store: Arc::clone(self),
+                })
+            })
+            .collect();
+        Some(leases)
+    }
+
+    /// Exact upper bound for the pool allocations made by the host reader.
+    /// Each stored segment is materialized into its own rounded allocation.
+    pub(crate) fn staging_footprint(&self, leases: &[Arc<SsdReadLease>]) -> Option<u64> {
+        let mut bytes = 0u64;
+        for lease in leases {
+            if !std::ptr::eq(self, Arc::as_ptr(&lease.store)) {
+                return None;
+            }
+            for slot in &lease.entry.slots {
+                let numa_node = if self.is_numa {
+                    if slot.numa_node.is_unknown() {
+                        return None;
+                    }
+                    slot.numa_node
+                } else {
+                    NumaNode::UNKNOWN
+                };
+                for &size in &slot.segment_sizes {
+                    let numa_node = (!numa_node.is_unknown()).then_some(numa_node);
+                    let footprint = (self.allocation_footprint_fn)(size, numa_node)?;
+                    bytes = bytes.checked_add(footprint)?;
+                }
+            }
+        }
+        Some(bytes)
     }
 
     pub(super) fn is_offset_valid(&self, entry: &SsdIndexEntry) -> bool {
@@ -615,7 +682,42 @@ impl SsdStore {
         }
         let result = done_rx
             .await
-            .map_err(|_| crate::EngineError::Storage("SSD host reader lost completion".into()));
+            .map_err(|_| crate::EngineError::Storage("SSD host reader lost completion".into()))?
+            .map_err(|_| crate::EngineError::Storage("SSD host reader failed".into()));
+        core_metrics()
+            .ssd_prefetch_duration_seconds
+            .record(started.elapsed().as_secs_f64(), &[]);
+        result
+    }
+
+    /// Materialize a remote export while the detached batch owns its source
+    /// admission. A successful result atomically publishes the transfer grant.
+    pub(crate) async fn read_host_batch_for_export(
+        &self,
+        leases: Vec<Arc<SsdReadLease>>,
+        reservation: crate::peer::export::StagingReservation,
+    ) -> Result<MaterializedBlocks, crate::PeerError> {
+        if leases.is_empty()
+            || leases
+                .iter()
+                .any(|lease| !std::ptr::eq(self, Arc::as_ptr(&lease.store)))
+        {
+            return Err(crate::PeerError::StagingFailed);
+        }
+        let started = std::time::Instant::now();
+        let count = leases.len();
+        let (done_tx, done_rx) = oneshot::channel();
+        let batch = PrefetchBatch::for_export(leases, done_tx, self.io.cost_resource, reservation);
+        if let Err(error) = self.prefetch_tx.send(batch).await {
+            core_metrics()
+                .ssd_prefetch_queue_closed
+                .add(count as u64, &[]);
+            error.0.observation.finish(Outcome::Failed, None);
+            return Err(crate::PeerError::StagingFailed);
+        }
+        let result = done_rx
+            .await
+            .unwrap_or(Err(crate::PeerError::StagingFailed));
         core_metrics()
             .ssd_prefetch_duration_seconds
             .record(started.elapsed().as_secs_f64(), &[]);

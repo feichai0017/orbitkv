@@ -886,6 +886,27 @@ H20 is visible to `nvidia-smi`; the loaded CUDA driver/runtime stack requires
 alignment before GPU gates. GPU recovery, native GDS/RDMA and matched serving
 overhead were not requalified.
 
+The source-staging increment makes advertised SSD evidence executable inside
+the owning Manager without yet exposing it to requester planning. Authorization
+revalidates and pins every exact SSD generation, reserves a ticket session plus
+the allocator-rounded host footprint before allocation, and moves that
+reservation into the io_uring batch. `BatchContext` retains the reservation and
+extent leases after RPC-future cancellation until all physical reads drain. It
+then atomically replaces the conservative bytes with deduplicated actual pinned
+allocations and publishes the existing transfer grant only after successful
+result handoff. A concurrent release fences publication but cannot free staging
+early; allocation, queue, partial-read and failed-handoff paths roll back. The
+returned registered DRAM ranges continue through the existing Mooncake TE READ.
+Requester peer-SSD enumeration, route costing and two-host TCP/RDMA evidence
+remain disabled gates.
+
+Validation for this increment: strict all-target Core and Server Clippy passed
+with CUDA 13 bindings and the staged CPU-Mooncake libraries. Six staging/source
+tests and six cancellation/drain tests passed; three footprint tests cover
+rounding, estimate replacement and over-budget growth. A separate existing
+pinned-allocation test still returns `cudaErrorNoDevice` in this container and
+does not invalidate the host-safe ownership tests.
+
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
 the pinned Mooncake native library is built with CUDA disabled. This is a build

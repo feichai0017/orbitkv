@@ -81,6 +81,7 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
                 ..Default::default()
             },
             Arc::new(|_, _| None),
+            Arc::new(|bytes, _| Some(bytes)),
             false,
             None,
         )

@@ -86,7 +86,13 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   checks. This establishes one sequence owner for later DRAM/SSD transitions.
 - [x] Publish SSD evidence only after terminal commit, prefer live DRAM for the
   same owner/key, fall back to surviving SSD after DRAM eviction, and remove
-  evidence on ring overwrite or encoded corruption. Keep peer SSD execution off.
+  evidence on ring overwrite or encoded corruption.
+- [x] Add source-local peer SSD materialization through io_uring. Revalidate and
+  pin the exact advertised extent generation, reserve rounded pinned-allocation
+  bytes before staging, atomically replace the estimate with actual allocation
+  footprint, and retain reservation/extent ownership through cancellation and
+  detached I/O drain. Keep requester peer-SSD selection off until its route and
+  two-host qualification land.
 - [x] Retain unresolved candidates within each admitted query batch; distinguish
   host preparation from engine restoration, borrow SSD/peer plans over the same
   records, and hand exact source versions to existing query/completion owners.
@@ -469,12 +475,13 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   obsolete executables, Python launcher and fixed-directory APIs.
 - [ ] D2: implement versioned shard placement, replicated evidence, handoff and
   bounded subscriptions; qualify partitions and coordinator/catalog failure.
-- [ ] D3: support source-local SSD staging and measured source selection without
-  recursive peer fetches or unbounded staging.
-- [ ] D3 prerequisite: distinguish owner/resource and HBM/DRAM/SSD residence in
+- [ ] D3: enable and qualify requester peer-SSD routes plus measured source
+  selection without recursive peer fetches or unbounded staging. Source-local
+  io_uring staging and its two-phase byte/session admission are implemented.
+- [x] D3 prerequisite: distinguish owner/resource and HBM/DRAM/SSD residence in
   candidate/inventory records; preserve surviving SSD evidence after DRAM
-  eviction. Keep temporary staging private unless explicitly admitted; qualify
-  engine leases separately before advertising general peer-HBM sources.
+  eviction. Keep temporary staging private unless explicitly admitted. Engine
+  leases remain required before advertising general peer-HBM sources.
 - [x] Measure cold discovery RPCs and source authorization, READ and completion
   stages independently in the shared-cache serving gate.
 - [ ] Measure background synchronization and etcd traffic, index bytes and recovery

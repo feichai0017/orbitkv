@@ -45,7 +45,8 @@ ports. Do not serve unrelated traffic during the gate.
 
 For deterministic Qwen3 controls, set `VLLM_BATCH_INVARIANT=1` for vLLM or
 `--enable-deterministic-inference` for SGLang. Keep preparation disabled. Start
-with DRAM-only Managers; remote SSD staging is not implemented. A two-host TCP
+with DRAM-only Managers; source SSD staging exists, but requester routing and
+remote SSD qualification are not enabled. A two-host TCP
 run sets `MC_FORCE_TCP=1` on both Managers. For RDMA, expose the devices and
 select the appropriate `--nics`; record the actual Mooncake transport and NIC
 counters with the result.

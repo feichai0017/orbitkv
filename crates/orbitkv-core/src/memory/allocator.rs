@@ -101,11 +101,7 @@ impl ScaledOffsetAllocator {
             return Ok(None);
         }
 
-        let units = size_bytes.div_ceil(self.unit_size.get());
-        let units_u32 = u32::try_from(units).map_err(|_| AllocatorError::RequestTooLarge {
-            requested_bytes: size_bytes,
-            unit_size: self.unit_size.get(),
-        })?;
+        let units_u32 = self.allocation_units(size_bytes)?;
 
         let Some(raw) = self.inner.allocate(units_u32) else {
             return Ok(None);
@@ -119,6 +115,20 @@ impl ScaledOffsetAllocator {
             size_bytes,
             raw,
         }))
+    }
+
+    /// Exact allocator footprint for a request, without mutating allocator state.
+    pub(crate) fn allocation_footprint(&self, size_bytes: u64) -> Result<u64, AllocatorError> {
+        let units = self.allocation_units(size_bytes)?;
+        Ok(units as u64 * self.unit_size.get())
+    }
+
+    fn allocation_units(&self, size_bytes: u64) -> Result<u32, AllocatorError> {
+        let units = size_bytes.div_ceil(self.unit_size.get());
+        u32::try_from(units).map_err(|_| AllocatorError::RequestTooLarge {
+            requested_bytes: size_bytes,
+            unit_size: self.unit_size.get(),
+        })
     }
 
     /// Free a previously allocated region.

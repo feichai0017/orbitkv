@@ -4,8 +4,9 @@ Status: D0 inventory recovery and the D1 candidate index, source validation,
 leased membership and embedded catalog are implemented. Managers host 16 fixed
 logical shards, each with one directory copy, and route through cached member
 information. The standalone MetaServer has been removed. Replication, online
-placement changes, remote SSD execution and cross-host serving qualification remain open.
-Mooncake TE carries KV bytes.
+placement changes, requester-side remote SSD route enablement and cross-host
+serving qualification remain open. Source Managers can materialize an exact SSD
+generation into bounded pinned DRAM; Mooncake TE carries all remote KV bytes.
 
 Owners retain bounded journals and recover each shard independently using
 paginated snapshots and a complete delta interval. Catalog epochs and member
@@ -21,7 +22,8 @@ Implemented discovery behavior:
   the request across gaps; empty rows do not prove global absence.
 - An owner advertises live DRAM ahead of its committed SSD copy. SSD commit,
   DRAM eviction, ring overwrite and corruption update the same ordered stream;
-  requesters currently reject SSD evidence because source staging is not executable.
+  requesters currently reject SSD evidence until peer-SSD route planning and
+  two-host qualification are complete.
 - Managers retain positive hints in an LRU index with a 16 MiB logical byte
   budget and a five-second TTL. Reads do not extend the TTL. Misses are not
   cached. A failed directory lookup preserves any already-known prefix.
@@ -217,8 +219,8 @@ the medium and storage/engine resource where needed. Carry compatible state and
 representation evidence, byte size and a residency generation. HBM evidence
 also needs the exporting engine instance/rank and lifetime checks. Keep raw
 addresses and transfer grants out of long-lived directory records. Current
-`ReplicaLocation` contains only owner and insertion sequence; the residence
-fields and corresponding inventory/wire changes are planned, not implemented.
+`ReplicaLocation` carries owner, insertion sequence, medium, representation
+family and optional stored bytes.
 Keep the existing representation-bound StateKey until a separately qualified
 logical-to-physical format mapping exists.
 
@@ -229,6 +231,16 @@ and lease the extent, acquire bounded staging credit, prepare locally, then
 export the prepared memory. Return pending, backpressure or missing explicitly.
 Use existing transfer lifetime owners; do not add a recursively fetching
 remote cache or a second copy of the SSD storage index.
+
+The source-side executor now implements this sequence for io_uring host staging.
+It reserves a ticket session and the allocator-rounded staging footprint before
+allocation. The detached SSD batch owns both exact extent leases and a two-phase
+reservation until every read drains. Successful materialization replaces the
+estimate with deduplicated actual allocation bytes and publishes the existing
+transfer grant only after handing the result to the authorization owner.
+Release-before-completion fences publication without freeing in-flight memory;
+allocation, partial-read, queue and cancelled-receiver paths roll back. The
+requester route remains disabled, so this is not yet a deployed remote SSD claim.
 
 Restoring a peer replica creates destination state; retaining it in destination
 DRAM or SSD is a separate admission decision. Copies may coexist and expire

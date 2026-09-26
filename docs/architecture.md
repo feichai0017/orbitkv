@@ -392,8 +392,10 @@ but this does not prove safe source failure or partitions. See the
 [implemented protocol and limits](../crates/orbitkv-catalog/README.md).
 
 The next stages add replicated placement generations, controlled handoff,
-subscriptions and executable remote SSD staging. SSD discovery evidence alone
-does not authorize a file or memory transfer. These are target features in the diagram below.
+subscriptions and requester-side remote SSD routing. Source-local SSD staging
+is implemented with exact-generation leases and two-phase byte/session
+admission, but SSD discovery evidence alone still does not authorize a file or
+memory transfer. These are target features in the diagram below.
 The [distributed cache design](distributed-cache.md) defines the acceptance gates.
 A later KV-aware router can consume replica summaries and engine load events
 without entering the transfer path. Metadata replicas do not imply KV payload

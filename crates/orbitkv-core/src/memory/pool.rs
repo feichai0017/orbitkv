@@ -279,6 +279,10 @@ impl PinnedMemoryPool {
         })
     }
 
+    fn allocation_footprint(&self, size: NonZeroU64) -> Option<u64> {
+        self.allocator.lock().allocation_footprint(size.get()).ok()
+    }
+
     /// Internal method to free a pinned memory allocation.
     /// This is called automatically by PinnedAllocation's Drop implementation.
     /// Users should not call this directly - use PinnedAllocation RAII instead.
@@ -415,6 +419,10 @@ impl ShardedPinnedPool {
             }
         }
         None
+    }
+
+    fn allocation_footprint(&self, size: NonZeroU64) -> Option<u64> {
+        self.shards.first()?.allocation_footprint(size)
     }
 
     /// Aggregate usage across all shards.
@@ -577,6 +585,13 @@ impl NumaAwarePinnedPools {
         self.pools.get(&numa_node.0)?.allocate(size).map(Arc::new)
     }
 
+    fn allocation_footprint(&self, numa_node: NumaNode, size: NonZeroU64) -> Option<u64> {
+        if numa_node.is_unknown() {
+            return None;
+        }
+        self.pools.get(&numa_node.0)?.allocation_footprint(size)
+    }
+
     /// Largest contiguous free region for a specific NUMA node.
     fn largest_free_allocation_for_node(&self, numa_node: NumaNode) -> u64 {
         if numa_node.is_unknown() {
@@ -686,6 +701,18 @@ impl PinnedAllocator {
         match self {
             Self::Global(pool) => pool.allocate(size).map(Arc::new),
             Self::Numa(pools) => pools.allocate(numa_node, size),
+        }
+    }
+
+    /// Exact rounded footprint an allocation would consume from its target pool.
+    pub(crate) fn allocation_footprint(
+        &self,
+        size: NonZeroU64,
+        numa_node: NumaNode,
+    ) -> Option<u64> {
+        match self {
+            Self::Global(pool) => pool.allocation_footprint(size),
+            Self::Numa(pools) => pools.allocation_footprint(numa_node, size),
         }
     }
 

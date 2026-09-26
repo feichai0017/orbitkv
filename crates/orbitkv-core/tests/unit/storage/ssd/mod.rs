@@ -89,6 +89,15 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
             Arc::new(move |bytes, node| {
                 pool.allocate(NonZeroU64::new(bytes)?, node.unwrap_or(NumaNode::UNKNOWN))
             }),
+            {
+                let allocator = Arc::clone(&allocator);
+                Arc::new(move |bytes, node| {
+                    allocator.allocation_footprint(
+                        NonZeroU64::new(bytes)?,
+                        node.unwrap_or(NumaNode::UNKNOWN),
+                    )
+                })
+            },
             false,
             None,
         )
@@ -228,6 +237,7 @@ fn queued_read_store_with_inventory(
             reuse_history: LruCache::new(1),
         }),
         allocate_fn: Arc::new(|_, _| None),
+        allocation_footprint_fn: Arc::new(|bytes, _| Some(bytes)),
         is_numa: false,
         inventory,
     });
@@ -334,6 +344,105 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
     let entry = store.inner.lock().ring.get(&replacement).unwrap().clone();
     store.invalidate_encoded_entry(&replacement, &entry);
     assert!(inventory.page(replacement_shard, None).unwrap().is_empty());
+}
+
+#[test]
+fn export_pins_exact_ssd_evidence_and_accounts_staging_allocations() {
+    let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
+        16 * 1024,
+    ));
+    let (store, _queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), true);
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let record = inventory
+        .page(orbitkv_state::catalog_shard(&key), None)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
+    let leases = store
+        .pin_residencies(std::slice::from_ref(&record))
+        .unwrap();
+    assert_eq!(readers.load(Ordering::Acquire), 1);
+    assert_eq!(store.staging_footprint(&leases), Some(SSD_ALIGNMENT as u64));
+    drop(leases);
+    assert_eq!(readers.load(Ordering::Acquire), 0);
+
+    inventory.change(
+        &key,
+        orbitkv_state::ReplicaMedium::Dram,
+        Some(orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Dram,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(SSD_ALIGNMENT as u64),
+        }),
+    );
+    assert!(store.pin_residencies(&[record]).is_none());
+    assert_eq!(readers.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test]
+async fn cancelled_ssd_authorization_keeps_admission_with_queued_batch() {
+    use orbitkv_catalog::{MembershipView, Placement};
+    use orbitkv_state::CacheOwner;
+
+    let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
+        16 * 1024,
+    ));
+    let (store, mut queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), true);
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let records = inventory
+        .page(orbitkv_state::catalog_shard(&key), None)
+        .unwrap();
+    let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
+    let owner = CacheOwner {
+        endpoint: "127.0.0.1:50055".into(),
+        incarnation: uuid::Uuid::new_v4(),
+    };
+    let membership = Arc::new(MembershipView::new(
+        owner.clone(),
+        Placement::new(vec!["source".into()]).unwrap(),
+    ));
+    assert!(membership.renew(
+        std::time::Instant::now(),
+        std::time::Duration::from_secs(30)
+    ));
+    membership.replace_members([("source".into(), owner.clone())]);
+    let dram = Arc::new(crate::storage::dram::DramStore::with_inventory(
+        1 << 20,
+        false,
+        None,
+        Some(inventory),
+        0,
+    ));
+    let exports = crate::PeerExports::new(
+        dram,
+        Some(Arc::clone(&store)),
+        Some(membership),
+        Some("127.0.0.1:12345".into()),
+        std::time::Duration::from_secs(30),
+        SSD_ALIGNMENT as u64,
+    );
+    let ticket = crate::TransferTicket::new(
+        exports
+            .open(owner.incarnation, uuid::Uuid::new_v4())
+            .unwrap(),
+        0,
+        1,
+    )
+    .unwrap();
+    let mut authorization = Box::pin(exports.authorize(owner.incarnation, ticket, &records));
+    assert!(futures::poll!(authorization.as_mut()).is_pending());
+    let batch = queued.recv().await.unwrap();
+    assert_eq!(exports.transfer_accounting(), (1, SSD_ALIGNMENT as u64));
+    assert_eq!(readers.load(Ordering::Acquire), 1);
+
+    drop(authorization);
+    assert!(batch.done_tx.is_closed());
+    assert_eq!(exports.transfer_accounting(), (1, SSD_ALIGNMENT as u64));
+    assert_eq!(readers.load(Ordering::Acquire), 1);
+    drop(batch);
+    assert_eq!(exports.transfer_accounting(), (0, 0));
+    assert_eq!(readers.load(Ordering::Acquire), 0);
 }
 
 #[tokio::test]
