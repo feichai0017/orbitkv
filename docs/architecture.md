@@ -369,8 +369,9 @@ member loss does not change placement. Cached member snapshots resolve each
 assigned Node ID to a current endpoint and runtime UUID. Ordinary block operations
 perform no etcd I/O.
 
-Managers asynchronously synchronize independently ordered DRAM inventory streams
-per shard, including representation family and known stored bytes. Bounded
+Managers asynchronously synchronize independently ordered residency streams
+per shard, falling back to committed SSD evidence when an owner's DRAM copy is
+evicted, including representation family and known stored bytes. Bounded
 snapshots and deltas reconstruct lost evidence; incomplete
 replacement views stay hidden until commit. After a local miss, the requester
 checks its bounded positive candidate index and queries only missing shards.
@@ -391,7 +392,8 @@ but this does not prove safe source failure or partitions. See the
 [implemented protocol and limits](../crates/orbitkv-catalog/README.md).
 
 The next stages add replicated placement generations, controlled handoff,
-subscriptions and remote SSD. These are target features in the diagram below.
+subscriptions and executable remote SSD staging. SSD discovery evidence alone
+does not authorize a file or memory transfer. These are target features in the diagram below.
 The [distributed cache design](distributed-cache.md) defines the acceptance gates.
 A later KV-aware router can consume replica summaries and engine load events
 without entering the transfer path. Metadata replicas do not imply KV payload

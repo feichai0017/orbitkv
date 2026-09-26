@@ -110,11 +110,7 @@ impl SsdReadLease {
     }
 
     pub(crate) fn invalidate_encoded(&self) {
-        self.store
-            .inner
-            .lock()
-            .ring
-            .invalidate_encoded(&self.key, &self.entry);
+        self.store.invalidate_encoded_entry(&self.key, &self.entry);
     }
 }
 
@@ -228,6 +224,7 @@ pub(crate) struct SsdStore {
     inner: Mutex<SsdInner>,
     allocate_fn: AllocateFn,
     is_numa: bool,
+    inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
 }
 
 impl SsdStore {
@@ -260,8 +257,11 @@ impl SsdStore {
             index::Encoding::Raw
         };
         let entry = inner.ring.reserve(&key, slots, encoding)?;
+        let retired = inner.ring.take_retired();
         inner.pending_writes.insert(key.clone());
         core_metrics().ssd_write_inflight.add(1, &[]);
+        drop(inner);
+        self.retire_inventory(retired);
         Some(GpuWriteLease {
             entry,
             key: Some(key),
@@ -273,6 +273,7 @@ impl SsdStore {
         config: SsdCacheConfig,
         allocate_fn: AllocateFn,
         is_numa: bool,
+        inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
     ) -> std::io::Result<Arc<Self>> {
         use std::fs::OpenOptions;
         use std::os::unix::io::AsRawFd;
@@ -379,6 +380,7 @@ impl SsdStore {
             }),
             allocate_fn,
             is_numa,
+            inventory,
         });
 
         Self::spawn_workers(
@@ -420,8 +422,34 @@ impl SsdStore {
 
     pub(super) fn commit_write(&self, key: &StateKey, success: bool) {
         let mut inner = self.inner.lock();
-        inner.ring.commit(key, success);
+        let committed = inner.ring.commit(key, success);
+        let metadata = if committed {
+            inner.ring.get(key).map(SsdIndexEntry::replica_metadata)
+        } else {
+            None
+        };
+        let retired = inner.ring.take_retired();
         inner.pending_writes.remove(key);
+        drop(inner);
+        self.retire_inventory(retired);
+        if let (Some(inventory), Some(metadata)) = (&self.inventory, metadata) {
+            inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, Some(metadata));
+        }
+    }
+
+    pub(super) fn invalidate_encoded_entry(&self, key: &StateKey, entry: &SsdIndexEntry) {
+        let invalidated = self.inner.lock().ring.invalidate_encoded(key, entry);
+        if invalidated && let Some(inventory) = &self.inventory {
+            inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, None);
+        }
+    }
+
+    pub(super) fn retire_inventory(&self, keys: Vec<StateKey>) {
+        if let Some(inventory) = &self.inventory {
+            for key in keys {
+                inventory.change(&key, orbitkv_state::ReplicaMedium::Ssd, None);
+            }
+        }
     }
 
     pub(super) fn is_numa(&self) -> bool {

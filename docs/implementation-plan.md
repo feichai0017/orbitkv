@@ -865,6 +865,16 @@ DRAM-to-SSD fallback evidence instead of adding a second SSD directory stream.
 Strict Core Clippy and 13 inventory, source-fencing and Catalog replay tests
 passed with CPU-Mooncake; behavior and wire contents are unchanged.
 
+The SSD-evidence increment lets `ResidencyInventory` retain DRAM and SSD state
+for one owner/key while advertising one executable preference. SSD appears only
+after terminal commit; live DRAM remains preferred, DRAM eviction exposes the
+surviving SSD generation, and ring retirement or encoded corruption removes it.
+Pending writes never enter Catalog. The current requester deliberately filters
+SSD/HBM media, so this cannot trigger a remote read before source-local staging
+and credits land. Strict workspace Clippy and 20 host-safe inventory/index tests
+passed. One existing pinned-memory roundtrip remains unavailable in this
+container because CUDA initialization returns `cudaErrorNoDevice`.
+
 Validation for the cost-evidence increment: strict Core all-target Clippy passed in local-only
 and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
 peer-plan, io_uring completion and worker-ownership tests passed 26 cases;

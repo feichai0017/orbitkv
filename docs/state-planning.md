@@ -254,6 +254,12 @@ owner inventory advertises DRAM medium, representation family and known stored
 bytes. Unknown values remain explicit, and advertised SSD/HBM records do not
 become executable peer-DRAM routes.
 
+One Storage-owned residency stream tracks current DRAM plus committed SSD for
+each owner/key. DRAM is the advertised preference while present; its eviction
+reveals the surviving SSD evidence without losing the owner. SSD commit is the
+publication boundary, and ring overwrite or corruption removes its evidence.
+This is discovery only: peer SSD still needs source-local staging and credits.
+
 `ReadPlan` now retains unresolved candidates for an admitted query batch and
 declares host-ready preparation or engine restoration. The coordinator keeps
 already acquired DRAM prefix holds. SSD and peer route plans borrow the same

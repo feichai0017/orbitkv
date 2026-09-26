@@ -127,7 +127,7 @@ impl Storage {
             capacity_bytes,
             config.enable_lfu_admission,
             value_size_hint,
-            inventory,
+            inventory.clone(),
             (capacity_bytes as u128 * config.cache_protected_percent as u128 / 100) as u64,
         ));
 
@@ -176,7 +176,7 @@ impl Storage {
         });
         let ssd_store = ssd_cache_config
             .map(|cfg| {
-                SsdStore::new(cfg, allocate_fn.clone(), is_numa)
+                SsdStore::new(cfg, allocate_fn.clone(), is_numa, inventory.clone())
                     .map_err(|error| format!("Failed to initialise SSD cache: {error}"))
             })
             .transpose()?;

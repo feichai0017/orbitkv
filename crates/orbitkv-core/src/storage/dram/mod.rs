@@ -316,7 +316,7 @@ impl DramStore {
                 .collect::<Vec<_>>();
             if let Some(inventory) = &mut inner.inventory {
                 for entry in &removed {
-                    inventory.change(&entry.key, None);
+                    inventory.change(&entry.key, orbitkv_state::ReplicaMedium::Dram, None);
                 }
             }
             debug_assert_eq!(
@@ -393,7 +393,11 @@ fn insert_block(
     match outcome {
         CacheInsertOutcome::InsertedNew => {
             if let Some(inventory) = &mut inner.inventory {
-                inventory.change(&key, Some(replica_metadata));
+                inventory.change(
+                    &key,
+                    orbitkv_state::ReplicaMedium::Dram,
+                    Some(replica_metadata),
+                );
             }
             class_lru(inner, class).insert(
                 key,
@@ -545,7 +549,7 @@ fn remove_lru(inner: &mut DramStoreInner, class: ResidentClass) -> Option<Remove
             continue;
         };
         if let Some(inventory) = &mut inner.inventory {
-            inventory.change(&key, None);
+            inventory.change(&key, orbitkv_state::ReplicaMedium::Dram, None);
         }
         let metrics = core_metrics();
         if class == ResidentClass::Retained {

@@ -409,11 +409,7 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleM
         .any(|slot| slot.validate_encoding().is_err())
     {
         core_metrics().storage_codec_decode_failures.add(1, &[]);
-        task.store
-            .inner
-            .lock()
-            .ring
-            .invalidate_encoded(&key, &task.entry);
+        task.store.invalidate_encoded_entry(&key, &task.entry);
         warn!("SSD prefetch: corrupt encoded object {key:?}");
         None
     } else {

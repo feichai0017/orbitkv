@@ -90,6 +90,7 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
                 pool.allocate(NonZeroU64::new(bytes)?, node.unwrap_or(NumaNode::UNKNOWN))
             }),
             false,
+            None,
         )
         .unwrap();
         let data = [if encoded { 0x71 } else { 0x32 }; SSD_ALIGNMENT];
@@ -186,6 +187,13 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
 }
 
 pub(super) fn queued_read_store() -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver<PrefetchBatch>) {
+    queued_read_store_with_inventory(None, true)
+}
+
+fn queued_read_store_with_inventory(
+    inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
+    commit: bool,
+) -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver<PrefetchBatch>) {
     use std::os::fd::AsRawFd;
 
     let file = tempfile::tempfile().unwrap();
@@ -221,6 +229,7 @@ pub(super) fn queued_read_store() -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver
         }),
         allocate_fn: Arc::new(|_, _| None),
         is_numa: false,
+        inventory,
     });
     let key = StateKey::new("queued-lease".into(), vec![0]);
     let mut inner = store.inner.lock();
@@ -235,9 +244,96 @@ pub(super) fn queued_read_store() -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver
             index::Encoding::Raw,
         )
         .unwrap();
-    assert!(inner.ring.commit(&key, true));
     drop(inner);
+    if commit {
+        store.commit_write(&key, true);
+    }
     (store, prefetch_rx)
+}
+
+#[test]
+fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
+    let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
+        16 * 1024,
+    ));
+    let (store, _queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), false);
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let shard = orbitkv_state::catalog_shard(&key);
+    assert!(inventory.page(shard, None).unwrap().is_empty());
+
+    store.commit_write(&key, true);
+    let ssd = inventory.page(shard, None).unwrap();
+    assert_eq!(ssd.len(), 1);
+    assert_eq!(
+        ssd[0].metadata.unwrap().medium,
+        orbitkv_state::ReplicaMedium::Ssd
+    );
+    assert_eq!(
+        ssd[0].metadata.unwrap().stored_bytes,
+        Some(SSD_ALIGNMENT as u64)
+    );
+
+    let dram = crate::storage::dram::DramStore::with_inventory(
+        4096,
+        false,
+        None,
+        Some(Arc::clone(&inventory)),
+        0,
+    );
+    dram.batch_insert(vec![(
+        key.clone(),
+        Arc::new(SealedBlock::for_policy_test(2048)),
+    )]);
+    assert_eq!(
+        inventory.page(shard, None).unwrap()[0]
+            .metadata
+            .unwrap()
+            .medium,
+        orbitkv_state::ReplicaMedium::Dram
+    );
+    dram.remove_all();
+    assert_eq!(
+        inventory.page(shard, None).unwrap()[0]
+            .metadata
+            .unwrap()
+            .medium,
+        orbitkv_state::ReplicaMedium::Ssd
+    );
+
+    let replacement = StateKey::new("queued-lease".into(), vec![1]);
+    let retired = {
+        let mut inner = store.inner.lock();
+        let mut slot =
+            crate::SlotMeta::new(smallvec::smallvec![SSD_ALIGNMENT as u64], NumaNode::UNKNOWN);
+        slot.encoding = Some(vec![crate::codec::EncodedSegment {
+            version: 1,
+            format: orbitkv_state::StorageFormat::Exact,
+            logical_bytes: SSD_ALIGNMENT,
+            stored_bytes: SSD_ALIGNMENT,
+            checksum: 0,
+        }]);
+        inner
+            .ring
+            .reserve(&replacement, vec![slot], index::Encoding::Encoded)
+            .unwrap();
+        inner.ring.take_retired()
+    };
+    assert_eq!(retired, [key]);
+    store.retire_inventory(retired);
+    assert!(inventory.page(shard, None).unwrap().is_empty());
+
+    store.commit_write(&replacement, true);
+    let replacement_shard = orbitkv_state::catalog_shard(&replacement);
+    assert_eq!(
+        inventory.page(replacement_shard, None).unwrap()[0]
+            .metadata
+            .unwrap()
+            .medium,
+        orbitkv_state::ReplicaMedium::Ssd
+    );
+    let entry = store.inner.lock().ring.get(&replacement).unwrap().clone();
+    store.invalidate_encoded_entry(&replacement, &entry);
+    assert!(inventory.page(replacement_shard, None).unwrap().is_empty());
 }
 
 #[tokio::test]

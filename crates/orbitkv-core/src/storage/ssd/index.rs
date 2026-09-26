@@ -30,6 +30,39 @@ pub(crate) struct SsdIndexEntry {
 }
 
 impl SsdIndexEntry {
+    pub(super) fn replica_metadata(&self) -> orbitkv_state::ReplicaMetadata {
+        let mut representation = None;
+        let mut stored_bytes = 0u64;
+        for slot in &self.slots {
+            stored_bytes = stored_bytes.saturating_add(slot.total_size());
+            let next = match &slot.encoding {
+                None => orbitkv_state::ReplicaRepresentation::Raw,
+                Some(metadata) => {
+                    let mut slot_representation = None;
+                    for segment in metadata {
+                        let current = orbitkv_state::ReplicaRepresentation::from(segment.format);
+                        slot_representation = Some(match slot_representation {
+                            None => current,
+                            Some(previous) if previous == current => previous,
+                            Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+                        });
+                    }
+                    slot_representation.unwrap_or_default()
+                }
+            };
+            representation = Some(match representation {
+                None => next,
+                Some(previous) if previous == next => previous,
+                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+            });
+        }
+        orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Ssd,
+            representation: representation.unwrap_or_default(),
+            stored_bytes: Some(stored_bytes),
+        }
+    }
+
     pub(super) fn fits_gpu_decode(&self, budget: usize) -> bool {
         self.slots
             .iter()
@@ -89,6 +122,7 @@ pub(super) struct SsdRingBuffer {
     alignment: u64,
     /// Fast lookup: key -> state (Writing or Committed)
     entries: HashMap<StateKey, SsdEntryState>,
+    retired: Vec<StateKey>,
 }
 
 impl SsdRingBuffer {
@@ -110,6 +144,7 @@ impl SsdRingBuffer {
             next_shard: 0,
             alignment,
             entries: HashMap::new(),
+            retired: Vec::new(),
         }
     }
 
@@ -122,7 +157,7 @@ impl SsdRingBuffer {
     }
 
     /// Hide exactly the failed generation, retaining its extent while leased.
-    pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) {
+    pub(super) fn invalidate_encoded(&mut self, key: &StateKey, failed: &SsdIndexEntry) -> bool {
         if matches!(self.entries.get(key), Some(SsdEntryState::Committed(entry) | SsdEntryState::Invalid(entry))
             if entry.shard_id == failed.shard_id && entry.begin == failed.begin
                 && matches!(entry.encoding, Encoding::Encoded))
@@ -133,7 +168,9 @@ impl SsdRingBuffer {
                 self.entries
                     .insert(key.clone(), SsdEntryState::Invalid(failed.clone()));
             }
+            return true;
         }
+        false
     }
 
     pub(super) fn release_invalid(&mut self, key: &StateKey, released: &SsdIndexEntry) {
@@ -216,8 +253,13 @@ impl SsdRingBuffer {
                 .expect("front exists");
             if current {
                 self.entries.remove(&key);
+                self.retired.push(key);
             }
         }
+    }
+
+    pub(super) fn take_retired(&mut self) -> Vec<StateKey> {
+        std::mem::take(&mut self.retired)
     }
 
     /// Commit a write: success=true transitions Writing→Committed, success=false removes.

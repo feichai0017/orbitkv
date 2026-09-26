@@ -32,7 +32,9 @@ Each Manager maintains an independently ordered residency inventory and bounded
 journal per shard. Actual insertions and removals update residency, sequence,
 representation family and known stored bytes under the cache lock. Duplicate
 insertions and rejected admissions produce no event; journals retain no payload
-references. SSD-only replicas are not advertised.
+references. A committed SSD copy is advertised when no DRAM copy survives;
+pending, overwritten or invalidated extents are not. Requesters still filter
+SSD candidates until source-local staging is implemented and qualified.
 
 The [schema](../orbitkv-proto/proto/engine.proto) exposes `HeartbeatNode`,
 `SyncInventory`, `LocateBlocks`, and `UnregisterNode` on the Manager's peer port.

@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ops::Bound::{Excluded, Unbounded};
 use std::sync::Arc;
 
 use orbitkv_state::{
-    CATALOG_SHARDS, INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord,
+    CATALOG_SHARDS, INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord, ReplicaMedium,
     ReplicaMetadata, StateKey, catalog_shard,
 };
 use parking_lot::Mutex;
@@ -12,28 +12,63 @@ use tokio::sync::Notify;
 pub const DEFAULT_INVENTORY_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
 
 pub(crate) struct ResidencyInventory {
-    shards: Mutex<[Inventory; CATALOG_SHARDS]>,
+    state: Mutex<ResidencyState>,
+}
+
+struct ResidencyState {
+    shards: [Inventory; CATALOG_SHARDS],
+    media: HashMap<StateKey, Residences>,
+}
+
+#[derive(Default)]
+struct Residences {
+    dram: Option<ReplicaMetadata>,
+    ssd: Option<ReplicaMetadata>,
 }
 
 impl ResidencyInventory {
     pub(crate) fn new(byte_limit: usize) -> Self {
         Self {
-            shards: Mutex::new(std::array::from_fn(|_| {
-                Inventory::new(byte_limit / CATALOG_SHARDS)
-            })),
+            state: Mutex::new(ResidencyState {
+                shards: std::array::from_fn(|_| Inventory::new(byte_limit / CATALOG_SHARDS)),
+                media: HashMap::new(),
+            }),
         }
     }
 
-    pub(crate) fn change(&self, key: &StateKey, metadata: Option<ReplicaMetadata>) {
-        self.shards.lock()[catalog_shard(key)].change(key, metadata);
+    pub(crate) fn change(
+        &self,
+        key: &StateKey,
+        medium: ReplicaMedium,
+        metadata: Option<ReplicaMetadata>,
+    ) {
+        debug_assert!(
+            metadata.is_none_or(|metadata| metadata.medium == medium),
+            "residency metadata medium differs from its owner"
+        );
+        let mut state = self.state.lock();
+        let residences = state.media.entry(key.clone()).or_default();
+        match medium {
+            ReplicaMedium::Dram => residences.dram = metadata,
+            ReplicaMedium::Ssd => residences.ssd = metadata,
+            ReplicaMedium::Unknown | ReplicaMedium::Hbm => {
+                debug_assert!(false, "unsupported local residency transition");
+                return;
+            }
+        }
+        let advertised = residences.dram.or(residences.ssd);
+        if residences.dram.is_none() && residences.ssd.is_none() {
+            state.media.remove(key);
+        }
+        state.shards[catalog_shard(key)].change(key, advertised);
     }
 
     pub(crate) fn sequence(&self, shard: usize) -> u64 {
-        self.shards.lock()[shard].sequence()
+        self.state.lock().shards[shard].sequence()
     }
 
     pub(crate) fn changed(&self, shard: usize) -> Arc<Notify> {
-        self.shards.lock()[shard].changed()
+        self.state.lock().shards[shard].changed()
     }
 
     pub(crate) fn page(
@@ -41,7 +76,7 @@ impl ResidencyInventory {
         shard: usize,
         after: Option<&StateKey>,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
-        self.shards.lock()[shard].snapshot_page(after)
+        self.state.lock().shards[shard].snapshot_page(after)
     }
 
     pub(crate) fn changes(
@@ -50,15 +85,15 @@ impl ResidencyInventory {
         after: u64,
         through: u64,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
-        self.shards.lock()[shard].changes(after, through)
+        self.state.lock().shards[shard].changes(after, through)
     }
 
     pub(crate) fn covers(&self, shard: usize, after: u64) -> bool {
-        self.shards.lock()[shard].covers(after)
+        self.state.lock().shards[shard].covers(after)
     }
 
     pub(crate) fn contains_record(&self, record: &InventoryRecord) -> bool {
-        self.shards.lock()[catalog_shard(&record.key)].contains_record(record)
+        self.state.lock().shards[catalog_shard(&record.key)].contains_record(record)
     }
 }
 
@@ -97,7 +132,7 @@ impl Inventory {
 
     pub(super) fn change(&mut self, key: &StateKey, metadata: Option<ReplicaMetadata>) {
         let present = metadata.is_some();
-        if self.residents.contains_key(key) == present {
+        if self.residents.get(key).map(|resident| resident.metadata) == metadata {
             return;
         }
         self.sequence = self

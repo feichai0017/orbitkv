@@ -4,7 +4,7 @@ Status: D0 inventory recovery and the D1 candidate index, source validation,
 leased membership and embedded catalog are implemented. Managers host 16 fixed
 logical shards, each with one directory copy, and route through cached member
 information. The standalone MetaServer has been removed. Replication, online
-placement changes, remote SSD and cross-host serving qualification remain open.
+placement changes, remote SSD execution and cross-host serving qualification remain open.
 Mooncake TE carries KV bytes.
 
 Owners retain bounded journals and recover each shard independently using
@@ -19,6 +19,9 @@ Implemented discovery behavior:
   owner endpoint, runtime UUID, insertion sequence, medium, representation and
   known stored bytes. Rows remain aligned with
   the request across gaps; empty rows do not prove global absence.
+- An owner advertises live DRAM ahead of its committed SSD copy. SSD commit,
+  DRAM eviction, ring overwrite and corruption update the same ordered stream;
+  requesters currently reject SSD evidence because source staging is not executable.
 - Managers retain positive hints in an LRU index with a 16 MiB logical byte
   budget and a five-second TTL. Reads do not extend the TTL. Misses are not
   cached. A failed directory lookup preserves any already-known prefix.

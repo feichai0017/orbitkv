@@ -235,7 +235,13 @@ async fn execute_write(
     } else {
         Encoding::Raw
     };
-    let entry = store.inner.lock().ring.reserve(&key, slots, encoding);
+    let (entry, retired) = {
+        let mut inner = store.inner.lock();
+        let entry = inner.ring.reserve(&key, slots, encoding);
+        let retired = inner.ring.take_retired();
+        (entry, retired)
+    };
+    store.retire_inventory(retired);
     let Some(entry) = entry else {
         return (key, false, start.elapsed().as_secs_f64(), 0);
     };

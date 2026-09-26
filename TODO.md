@@ -84,6 +84,9 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
 - [x] Move the residency journal owner from `storage/dram` to `storage/` while
   preserving atomic DRAM transitions, inventory replay and source version
   checks. This establishes one sequence owner for later DRAM/SSD transitions.
+- [x] Publish SSD evidence only after terminal commit, prefer live DRAM for the
+  same owner/key, fall back to surviving SSD after DRAM eviction, and remove
+  evidence on ring overwrite or encoded corruption. Keep peer SSD execution off.
 - [x] Retain unresolved candidates within each admitted query batch; distinguish
   host preparation from engine restoration, borrow SSD/peer plans over the same
   records, and hand exact source versions to existing query/completion owners.
