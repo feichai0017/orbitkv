@@ -5,6 +5,7 @@ use tokio::sync::oneshot;
 
 use super::{EngineError, OrbitKVEngine};
 use crate::block::RestoreSource;
+use crate::planning::restore::RestorePlan;
 use crate::query::lease::QueryLeaseId;
 use crate::transfer::worker::{
     LayerTransferData, LoadOutcome, LoadTask, TransferBlock, TransferPayload,
@@ -137,6 +138,15 @@ impl OrbitKVEngine {
         }
         trace_drop!(_s);
 
+        let restore_plan = RestorePlan::new(
+            device_id,
+            block_targets_by_group
+                .iter()
+                .flatten()
+                .map(|&(_, source_index)| (source_index, &block_cache[source_index])),
+        )
+        .map_err(EngineError::InvalidArgument)?;
+
         // Build load tasks for each layer
         trace_scope!("load.build_tasks");
         let mut layers = Vec::with_capacity(layer_count);
@@ -208,6 +218,7 @@ impl OrbitKVEngine {
 
         // Submit to worker pool (fire and forget)
         gpu.worker_pool().submit_load(LoadTask {
+            plan: restore_plan,
             layers,
             completion,
             reservations,

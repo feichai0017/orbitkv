@@ -16,6 +16,7 @@ use crate::cost::{
 };
 use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::metrics::core_metrics;
+use crate::planning::restore::RestorePlan;
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
 
@@ -27,6 +28,7 @@ use ssd::GpuWrite;
 
 /// A task to restore KV blocks from leased sources to GPU layers
 pub(crate) struct LoadTask {
+    pub plan: RestorePlan,
     pub layers: Vec<LayerTransferData>,
     pub completion: oneshot::Sender<LoadOutcome>,
     pub reservations: Vec<crate::QueryReservation>,
@@ -206,7 +208,7 @@ impl GpuWorkerPool {
                 .as_ref()
                 .expect("encoded writeback worker initialized")
                 .send(command)
-        } else if matches!(&command, WorkerCommand::Load(task, _) if restore::ssd_path(&task.layers) == Ok(Some(crate::SsdReadPath::Uring))) {
+        } else if matches!(&command, WorkerCommand::Load(task, _) if task.plan.ssd_path() == Some(crate::SsdReadPath::Uring)) {
             let mut sender = self.ssd_host_tx.lock();
             if sender.is_none() {
                 match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host") {
@@ -249,6 +251,13 @@ impl GpuWorkerPool {
     }
 
     pub(crate) fn submit_load(&self, task: LoadTask) -> Result<(), EngineError> {
+        if task.plan.device_id() != self.device_id {
+            return Err(EngineError::InvalidArgument(format!(
+                "restore plan targets device {} but worker owns device {}",
+                task.plan.device_id(),
+                self.device_id
+            )));
+        }
         let mut targets = Vec::new();
         for layer in &task.layers {
             for block in &layer.blocks {
@@ -265,7 +274,8 @@ impl GpuWorkerPool {
             }
         }
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
-        let ssd_path = restore::ssd_path(&task.layers).map_err(EngineError::Storage)?;
+        restore::validate_plan(&task)?;
+        let ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
             && task.layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
                 matches!(&block.block, TransferPayload::Ssd { source, .. } if !source.cufile_eligible(task.codec_budget))
@@ -283,8 +293,7 @@ impl GpuWorkerPool {
                 disk,
             );
             if let Some(path) = ssd_path {
-                key =
-                    restore::cost_key(&task.layers, self.device_id, self.transfer_mode, path, key);
+                key = restore::cost_key(&task, self.transfer_mode, path, key);
                 restore::shadow(&task, path, key);
             }
             Observation::new(key, Some(bytes))
@@ -498,8 +507,7 @@ fn worker_loop(
             WorkerCommand::Load(mut task, mut observation) => {
                 let started = Instant::now();
                 observation.admitted();
-                let host_staged =
-                    restore::ssd_path(&task.layers) == Ok(Some(crate::SsdReadPath::Uring));
+                let host_staged = task.plan.ssd_path() == Some(crate::SsdReadPath::Uring);
                 let mut cancelled = false;
                 let mut gpu_observation = Observation::disabled();
                 let result = (|| {

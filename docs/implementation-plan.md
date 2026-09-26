@@ -817,6 +817,16 @@ saturation fallback before worker submission, failed-work classification and
 multi-lane drain. The change does not require CUDA execution; matched multi-
 instance serving and GPU-memory pressure remain separate qualification gates.
 
+The consumed-restore increment constructs a Rust `RestorePlan` only after the
+engine supplies concrete destination blocks. It records the target CUDA device,
+deduplicated SSD source bytes/fragments, one SSD path and whether DRAM sources
+are mixed into the task. Worker dispatch and complete-route cost keys consume
+that plan and reject device/path drift before submission. The plan owns no
+payload or permit: existing query/source leases and destination mappings still
+move into `LoadTask` and drain at terminal completion. Seven focused tests cover
+target binding, source deduplication, mixed-route rejection, host-route behavior
+and unchanged shared reads; strict local-only and CPU-Mooncake Clippy passed.
+
 Validation for the cost-evidence increment: strict Core all-target Clippy passed in local-only
 and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
 peer-plan, io_uring completion and worker-ownership tests passed 26 cases;

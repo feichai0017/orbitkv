@@ -281,6 +281,16 @@ Peer evaluation counts each candidate's consecutive coverage before allocating
 authorization records only for the winner. This removes allocation proportional
 to every rejected peer without changing source priority or retry semantics.
 
+After query leases meet real engine destinations, `engine::restore` builds a
+consumed `RestorePlan` from only referenced source indices. It binds the
+EngineRestore target to one CUDA device, deduplicates source geometry, records
+one SSD route plus source bytes/fragments and DRAM mixing, and owns no payload.
+The GPU worker rejects a plan for another device or payloads that disagree with
+its route. Lane dispatch and complete SSD cost shape consume this plan instead
+of independently rediscovering intent from every layer. Source leases, query
+reservations, destination pages and completion remain owned by `LoadTask` and
+the existing workers.
+
 | Concept | Information and responsibility |
 | --- | --- |
 | Recovery demand | Existing `RecoveryDemand`, request revision, required groups and ranges, and a declared target state. Engine-visible recovery additionally needs engine-owned destination authorization; speculative host preparation has a different completion target. |

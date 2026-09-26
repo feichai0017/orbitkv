@@ -135,7 +135,7 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 | `storage/` | Residency assembly and allocator-driven reclamation; `publish.rs` owns queued sealing and publication |
 | `storage/dram/` | Resident images, eviction/admission policy, exact insertion versions and inventory |
 | `storage/ssd/` | Files, index, immutable extent leases, io_uring/cuFile I/O and registered staging |
-| `planning/` | Metadata-only discovery, batch replica evidence, completion targets and bounded host/engine source routes |
+| `planning/` | Metadata-only discovery, batch replica evidence, bounded host routes and device-bound consumed restore plans |
 | `query/` | Admission budgets, shared reads, host materialization, query phases and leases |
 | `peer/` | Catalog client, cached candidates, authoritative exports, requester READs and completion recovery |
 | `transfer/` | Registered engine layouts, GPU copies/codecs and completion-drained workers |

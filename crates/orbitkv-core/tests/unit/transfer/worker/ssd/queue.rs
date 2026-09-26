@@ -6,6 +6,11 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
         0,
         WorkerCommand::Load(
             LoadTask {
+                plan: crate::planning::restore::RestorePlan::new(
+                    0,
+                    std::iter::empty::<(usize, &crate::RestoreSource)>(),
+                )
+                .unwrap(),
                 layers: Vec::new(),
                 completion,
                 reservations: Vec::new(),

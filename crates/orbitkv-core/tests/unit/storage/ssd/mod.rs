@@ -351,6 +351,39 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
 }
 
 #[tokio::test]
+async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
+    let (store, _queued) = queued_read_store();
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let lease = store
+        .discover(&[key])
+        .pop()
+        .unwrap()
+        .unwrap()
+        .pin()
+        .unwrap();
+    let cufile = crate::RestoreSource::Ssd {
+        lease: Arc::clone(&lease),
+        path: crate::SsdReadPath::Cufile,
+    };
+    let plan = crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &cufile)]).unwrap();
+    assert_eq!(plan.device_id(), 2);
+    assert_eq!(plan.ssd_path(), Some(crate::SsdReadPath::Cufile));
+    assert_eq!(plan.ssd_source_bytes(), SSD_ALIGNMENT as u64);
+    assert_eq!(plan.ssd_source_fragments(), 1);
+    assert!(!plan.has_memory());
+
+    let uring = crate::RestoreSource::Ssd {
+        lease,
+        path: crate::SsdReadPath::Uring,
+    };
+    assert!(
+        crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &uring)])
+            .unwrap_err()
+            .contains("mix SSD read routes")
+    );
+}
+
+#[tokio::test]
 async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
     let (store, mut queued) = queued_read_store();
     let key = StateKey::new("queued-lease".into(), vec![0]);

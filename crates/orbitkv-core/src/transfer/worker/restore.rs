@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::cost::{CostKey, CostPath, Resource};
@@ -6,7 +6,7 @@ use crate::{EngineError, SsdReadPath, TransferMode};
 
 use super::{LayerTransferData, LoadTask, TransferPayload};
 
-pub(super) fn ssd_path(layers: &[LayerTransferData]) -> Result<Option<SsdReadPath>, String> {
+fn ssd_path(layers: &[LayerTransferData]) -> Result<Option<SsdReadPath>, String> {
     let mut selected = None;
     for block in layers.iter().flat_map(|layer| &layer.blocks) {
         if let TransferPayload::Ssd { path, .. } = block.block {
@@ -19,14 +19,24 @@ pub(super) fn ssd_path(layers: &[LayerTransferData]) -> Result<Option<SsdReadPat
     Ok(selected)
 }
 
+pub(super) fn validate_plan(task: &LoadTask) -> Result<(), EngineError> {
+    let path = ssd_path(&task.layers).map_err(EngineError::Storage)?;
+    if path != task.plan.ssd_path() {
+        return Err(EngineError::InvalidArgument(
+            "restore plan source path differs from transfer payloads".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn cost_key(
-    layers: &[LayerTransferData],
-    device: i32,
+    task: &LoadTask,
     mode: TransferMode,
     path: SsdReadPath,
     shape: CostKey,
 ) -> CostKey {
-    let mut resources: Vec<_> = layers
+    let mut resources: Vec<_> = task
+        .layers
         .iter()
         .flat_map(|layer| &layer.blocks)
         .filter_map(|block| match &block.block {
@@ -36,52 +46,39 @@ pub(super) fn cost_key(
         .collect();
     resources.sort_unstable();
     resources.dedup();
-    let mut sources = HashSet::new();
-    let mut source_bytes = 0u64;
-    let mut source_fragments = 0usize;
     let mut target_bytes = 0u64;
     let mut target_fragments = 0usize;
-    for layer in layers {
+    for layer in &task.layers {
         for block in &layer.blocks {
-            if let TransferPayload::Ssd { source, .. } = &block.block {
-                if sources.insert(Arc::as_ptr(&source.entry.readers)) {
-                    for slot in &source.entry.slots {
-                        source_bytes = source_bytes.saturating_add(slot.total_size());
-                        source_fragments = source_fragments.saturating_add(slot.num_segments());
+            if let TransferPayload::Ssd { .. } = &block.block
+                && let Ok(copies) = layer.layout.block_copies(block.block_idx)
+            {
+                use crate::transfer::layout::BlockCopies;
+                match copies {
+                    BlockCopies::Contiguous(copy) => {
+                        target_bytes = target_bytes.saturating_add(copy.bytes as u64);
+                        target_fragments += 1;
                     }
-                }
-                if let Ok(copies) = layer.layout.block_copies(block.block_idx) {
-                    use crate::transfer::layout::BlockCopies;
-                    match copies {
-                        BlockCopies::Contiguous(copy) => {
-                            target_bytes = target_bytes.saturating_add(copy.bytes as u64);
-                            target_fragments += 1;
-                        }
-                        BlockCopies::Split { k, v } => {
-                            target_bytes = target_bytes
-                                .saturating_add(k.bytes as u64)
-                                .saturating_add(v.bytes as u64);
-                            target_fragments += 2;
-                        }
+                    BlockCopies::Split { k, v } => {
+                        target_bytes = target_bytes
+                            .saturating_add(k.bytes as u64)
+                            .saturating_add(v.bytes as u64);
+                        target_fragments += 2;
                     }
                 }
             }
         }
     }
-    let has_memory = layers
-        .iter()
-        .flat_map(|layer| &layer.blocks)
-        .any(|block| !matches!(block.block, TransferPayload::Ssd { .. }));
     let resource = Resource::SsdRestore {
-        device: device as u64,
+        device: task.plan.device_id() as u64,
         copy_backend: mode as u8,
         stores: crate::cost::resource_id(&resources),
-        has_memory,
+        has_memory: task.plan.has_memory(),
     };
     shape
         .with_ssd_shape(
-            source_bytes,
-            source_fragments,
+            task.plan.ssd_source_bytes(),
+            task.plan.ssd_source_fragments(),
             target_bytes,
             target_fragments,
         )

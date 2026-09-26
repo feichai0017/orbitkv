@@ -1,4 +1,5 @@
 use super::*;
+use crate::RestoreSource;
 use smallvec::smallvec;
 
 #[test]
@@ -239,8 +240,14 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
             .unwrap();
         stream.synchronize().unwrap();
         let (completion, result) = oneshot::channel();
+        let planned_source = RestoreSource::Ssd {
+            lease: Arc::clone(&source),
+            path,
+        };
         worker
             .submit_load(LoadTask {
+                plan: crate::planning::restore::RestorePlan::new(0, [(0, &planned_source)])
+                    .unwrap(),
                 layers: vec![LayerTransferData {
                     layer_name: "attention".into(),
                     layout: layout.clone(),

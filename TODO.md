@@ -88,6 +88,10 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   full-prefix coverage requirements and immutable source versions.
 - [ ] Extend batch plans into complete-route comparisons and joint demand
   coverage across groups/ranks, with actual destination and staging admission.
+- [x] Build a consumed `RestorePlan` at the Rust engine boundary from only
+  sources with real destinations. Bind its EngineRestore target to the CUDA
+  device, deduplicate source geometry, preserve one SSD route, and make worker
+  lane/cost construction validate and consume the plan.
 - [x] Share the existing bounded GPU SSD-write admission across every instance
   registered on the same CUDA device. Acquire without blocking, retain the
   permit inside `SaveTask` through terminal completion, and preserve host

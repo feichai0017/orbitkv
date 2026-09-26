@@ -1,5 +1,13 @@
 use super::*;
 
+fn empty_restore_plan(device_id: i32) -> crate::planning::restore::RestorePlan {
+    crate::planning::restore::RestorePlan::new(
+        device_id,
+        std::iter::empty::<(usize, &crate::RestoreSource)>(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn gpu_ssd_write_admission_is_shared_per_device_and_recreated_after_release() {
     let first = device_ssd_write_admission(i32::MAX);
@@ -110,6 +118,7 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
         for indices in [vec![0, 0], (0..257).chain([0]).collect()] {
             let (completion, _) = oneshot::channel();
             let task = LoadTask {
+                plan: empty_restore_plan(0),
                 layers: vec![LayerTransferData {
                     layer_name: "attention".into(),
                     layout: layout.clone(),
@@ -136,6 +145,40 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
     }
 }
 
+#[test]
+fn restore_plan_must_target_the_worker_device() {
+    let (load_tx, mut load_rx) = mpsc::unbounded_channel();
+    let (save_tx, _save_rx) = mpsc::unbounded_channel();
+    let pool = GpuWorkerPool {
+        device_id: 0,
+        numa_node: NumaNode::UNKNOWN,
+        transfer_mode: TransferMode::Direct,
+        ssd_tx: Mutex::new(None),
+        ssd_host_tx: Mutex::new(None),
+        codec_write_tx: Mutex::new(None),
+        ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        load_tx,
+        save_tx,
+        closed: Mutex::new(false),
+        drained: OnceCell::new(),
+    };
+    let (completion, _) = oneshot::channel();
+    let error = pool
+        .submit_load(LoadTask {
+            plan: empty_restore_plan(1),
+            layers: Vec::new(),
+            completion,
+            reservations: Vec::new(),
+            codec_budget: 0,
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("targets device 1"));
+    assert!(matches!(
+        load_rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+}
+
 #[tokio::test]
 async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
@@ -158,6 +201,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     });
     let (reply, _result) = oneshot::channel();
     pool.submit_load(LoadTask {
+        plan: empty_restore_plan(0),
         layers: vec![],
         completion: reply,
         reservations: vec![],
@@ -188,6 +232,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let (reply, _) = oneshot::channel();
     assert!(
         pool.submit_load(LoadTask {
+            plan: empty_restore_plan(0),
             layers: vec![],
             completion: reply,
             reservations: vec![],
