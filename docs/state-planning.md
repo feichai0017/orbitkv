@@ -402,6 +402,15 @@ The implemented Core layout separates physical residency, planning, request
 ownership and execution. Existing crates are retained; no generic tier trait or
 compatibility re-export was added.
 
+GPU worker pools remain instance-owned so registration, transfer backend and
+drain lifetimes stay isolated. Their GPU-storage write admission is process-wide
+per CUDA device, because several instances on one Manager contend for the same
+staging and storage queue capacity. The lookup happens when a pool is created,
+not on the request hot path. `SaveTask` owns an acquired permit until terminal
+completion; caller cancellation cannot return capacity early. A full shared
+budget preserves the existing host-publication fallback. Shared read/staging
+admission and fair shares remain separate work.
+
 ```text
 orbitkv-state/       shared state/recovery and consumed descriptor contracts
 orbitkv-core/

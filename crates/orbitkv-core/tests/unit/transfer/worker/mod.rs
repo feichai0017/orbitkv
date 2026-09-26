@@ -1,6 +1,93 @@
 use super::*;
 
 #[test]
+fn gpu_ssd_write_admission_is_shared_per_device_and_recreated_after_release() {
+    let first = device_ssd_write_admission(i32::MAX);
+    let same = device_ssd_write_admission(i32::MAX);
+    let other = device_ssd_write_admission(i32::MAX - 1);
+    assert!(Arc::ptr_eq(&first, &same));
+    assert!(!Arc::ptr_eq(&first, &other));
+    let permits = (0..ssd::MAX_WRITES)
+        .map(|_| Arc::clone(&first).try_acquire_owned().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(same.available_permits(), 0);
+    assert!(Arc::clone(&same).try_acquire_owned().is_err());
+    drop(permits);
+    assert_eq!(same.available_permits(), ssd::MAX_WRITES);
+    drop(first);
+    drop(same);
+    let replacement = device_ssd_write_admission(i32::MAX);
+    assert_eq!(replacement.available_permits(), ssd::MAX_WRITES);
+}
+
+#[test]
+fn save_task_owns_shared_admission_until_terminal_drop() {
+    let admission = device_ssd_write_admission(i32::MAX - 2);
+    let permit = Arc::clone(&admission).try_acquire_owned().unwrap();
+    let (reply, _receiver) = oneshot::channel();
+    let command = WorkerCommand::Save(
+        SaveTask {
+            layers: Vec::new(),
+            reply,
+            ssd_writes: Vec::new(),
+            codec_groups: Vec::new(),
+            storage: None,
+            numa: NumaNode::UNKNOWN,
+            ssd_admission: Some(permit),
+            #[cfg(feature = "tracing")]
+            trace_ctx: None,
+        },
+        Observation::disabled(),
+    );
+    assert_eq!(admission.available_permits(), ssd::MAX_WRITES - 1);
+    drop(command);
+    assert_eq!(admission.available_permits(), ssd::MAX_WRITES);
+}
+
+#[tokio::test]
+async fn shared_admission_saturation_falls_back_before_worker_submission() {
+    let admission = device_ssd_write_admission(i32::MAX - 3);
+    let permits = (0..ssd::MAX_WRITES)
+        .map(|_| Arc::clone(&admission).try_acquire_owned().unwrap())
+        .collect::<Vec<_>>();
+    let (load_tx, _load_rx) = mpsc::unbounded_channel();
+    let (save_tx, mut save_rx) = mpsc::unbounded_channel();
+    let pool = GpuWorkerPool {
+        device_id: i32::MAX - 3,
+        numa_node: NumaNode::UNKNOWN,
+        transfer_mode: TransferMode::Direct,
+        ssd_tx: Mutex::new(None),
+        ssd_host_tx: Mutex::new(None),
+        codec_write_tx: Mutex::new(None),
+        ssd_write_admission: Arc::clone(&admission),
+        load_tx,
+        save_tx,
+        closed: Mutex::new(false),
+        drained: OnceCell::new(),
+    };
+    let mut saving = Box::pin(pool.batch_save(
+        Vec::new(),
+        Vec::new(),
+        vec![SaveGroup {
+            key: crate::block::StateKey::new("shared-admission".into(), vec![1]),
+            blocks: Vec::new(),
+        }],
+        None,
+    ));
+    assert!(futures::poll!(saving.as_mut()).is_pending());
+    let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
+        panic!("saturated GPU write must use the ordinary save lane")
+    };
+    assert!(task.codec_groups.is_empty());
+    assert!(task.ssd_writes.is_empty());
+    assert!(task.ssd_admission.is_none());
+    assert!(task.reply.send(Ok(task.layers)).is_ok());
+    saving.await.unwrap();
+    drop(permits);
+    assert_eq!(admission.available_permits(), ssd::MAX_WRITES);
+}
+
+#[test]
 fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();

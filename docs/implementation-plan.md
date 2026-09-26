@@ -800,14 +800,33 @@ stable peer tie breaks, source version preservation, rejection fallback and
 malformed/short responses. GPU execution and serving performance are unchanged
 and were not requalified by this metadata-planning change.
 
-Validation for this increment: strict Core all-target Clippy passed in local-only
+The first shared-device admission increment makes the existing eight-job GPU
+SSD-write budget process-wide per CUDA device instead of per registered
+instance. Worker pools keep independent queues and drain ownership; they share
+only the physical-device semaphore. Registration performs the synchronized
+lookup once. An acquired permit moves into `SaveTask` and is released by its
+terminal worker/drop path, including after caller cancellation. Saturation
+continues to roll back unsubmitted GPU extents and use host publication. This
+does not yet admit cuFile reads, codec workspace or inference SM capacity, and
+does not claim tenant fairness.
+
+Validation for this increment: strict Core all-target Clippy passed in
+local-only and CPU-Mooncake configurations. Five host-safe tests cover shared
+capacity and device isolation, permit ownership through terminal drop,
+saturation fallback before worker submission, failed-work classification and
+multi-lane drain. The change does not require CUDA execution; matched multi-
+instance serving and GPU-memory pressure remain separate qualification gates.
+
+Validation for the cost-evidence increment: strict Core all-target Clippy passed in local-only
 and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
 peer-plan, io_uring completion and worker-ownership tests passed 26 cases;
 the cost-observation benchmark harness passed 39 cases. Website check, the
 40-page build and both link/search tests passed. The existing
 `transfer_cost_shape_uses_logical_ranges_and_actual_encoding` test requires CUDA
-pinned memory and could not run on this host (`cudaErrorNoDevice`). GPU recovery,
-native GDS/RDMA and matched serving overhead were not requalified.
+pinned memory and returned `cudaErrorNoDevice` in this container even though its
+H20 is visible to `nvidia-smi`; the loaded CUDA driver/runtime stack requires
+alignment before GPU gates. GPU recovery, native GDS/RDMA and matched serving
+overhead were not requalified.
 
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while

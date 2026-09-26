@@ -150,6 +150,9 @@ checks live owner/version evidence and holds source memory until completion.
 The Mooncake registration owner retains its pinned pool through unregister.
 Cost observations and shadow comparisons remain opt-in and do not select a new
 execution route. Remote SSD/HBM and GPU-direct cache endpoints remain future work.
+Instance-owned GPU workers share the bounded GPU SSD-write admission for their
+physical CUDA device; the permit remains with the submitted save until its
+completion owner releases it.
 
 Restore returns one completion receiver after all submitted DMA drains. The old
 shared-memory completion state and its second load API have been removed.

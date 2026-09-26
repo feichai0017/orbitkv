@@ -1,5 +1,6 @@
 use crate::transfer::finish_gpu_transfer;
-use std::sync::{Arc, mpsc as std_mpsc};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Weak, mpsc as std_mpsc};
 use std::time::Instant;
 
 use cudarc::driver::{CudaContext, CudaStream};
@@ -137,6 +138,21 @@ pub(crate) struct GpuWorkerPool {
     drained: OnceCell<Result<(), String>>,
 }
 
+/// One process-wide GPU-storage write budget per physical CUDA device. Worker
+/// pools are instance-owned, but their staging pressure is not.
+fn device_ssd_write_admission(device_id: i32) -> Arc<Semaphore> {
+    static ADMISSIONS: LazyLock<Mutex<HashMap<i32, Weak<Semaphore>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut admissions = ADMISSIONS.lock();
+    admissions.retain(|_, admission| admission.strong_count() > 0);
+    if let Some(admission) = admissions.get(&device_id).and_then(Weak::upgrade) {
+        return admission;
+    }
+    let admission = Arc::new(Semaphore::new(ssd::MAX_WRITES));
+    admissions.insert(device_id, Arc::downgrade(&admission));
+    admission
+}
+
 impl GpuWorkerPool {
     pub(crate) fn new(
         device_id: i32,
@@ -152,7 +168,7 @@ impl GpuWorkerPool {
             ssd_tx: Mutex::new(None),
             ssd_host_tx: Mutex::new(None),
             codec_write_tx: Mutex::new(None),
-            ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+            ssd_write_admission: device_ssd_write_admission(device_id),
             closed: Mutex::new(false),
             drained: OnceCell::new(),
         })

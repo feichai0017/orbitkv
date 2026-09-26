@@ -88,6 +88,10 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   full-prefix coverage requirements and immutable source versions.
 - [ ] Extend batch plans into complete-route comparisons and joint demand
   coverage across groups/ranks, with actual destination and staging admission.
+- [x] Share the existing bounded GPU SSD-write admission across every instance
+  registered on the same CUDA device. Acquire without blocking, retain the
+  permit inside `SaveTask` through terminal completion, and preserve host
+  publication fallback when the shared device budget is full.
 - [ ] Separate operation observations from complete-route estimates and attach
   live resource evidence, without double-counting queue time or composite stages.
 - [x] Make operation/route sample boundaries explicit and distinguish GPU,
