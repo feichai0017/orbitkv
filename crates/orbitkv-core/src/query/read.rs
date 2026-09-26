@@ -21,9 +21,7 @@ use crate::storage::{MaterializedBlocks, ssd::SsdStore};
 use super::tier_attribution::{
     AttributionSource, TierAttribution, record_cache_tier_block_requests,
 };
-#[cfg(feature = "mooncake")]
-use crate::planning::peer::FetchPlan;
-use crate::planning::read::ReadPlan;
+use crate::planning::read::{HostReadRoute, ReadPlan};
 use crate::storage::dram::DramStore;
 
 #[cfg(feature = "mooncake")]
@@ -249,25 +247,35 @@ impl ReadCoordinator {
         #[cfg(feature = "mooncake")]
         if let Some(remote) = &self.remote_fetch {
             remote.discover(&mut plan.rows).await;
-            if let Some(route) = FetchPlan::new(&mut plan.rows, plan.required) {
-                return (
-                    Some(AttributionSource::Remote),
-                    remote.fetch_plan(route, req_id).await,
-                );
-            }
         }
+        #[cfg(feature = "mooncake")]
+        let peer_available = self.remote_fetch.is_some();
+        #[cfg(not(feature = "mooncake"))]
+        let peer_available = false;
         #[cfg(not(feature = "mooncake"))]
         let _ = req_id;
 
-        if allow_ssd_prefetch
-            && let Some(ssd) = &self.ssd_store
-            && let Some(route) = plan.ssd(crate::SsdReadPath::Uring, self.codec_budget)
-            && let Some(leases) = route.acquire(self.codec_budget)
-        {
-            return (
-                Some(AttributionSource::Ssd),
-                ssd.read_host_batch(leases).await.unwrap_or_default(),
-            );
+        match plan.host_route(peer_available, allow_ssd_prefetch, self.codec_budget) {
+            #[cfg(feature = "mooncake")]
+            Some(HostReadRoute::Peer(route)) => {
+                if let Some(remote) = &self.remote_fetch {
+                    return (
+                        Some(AttributionSource::Remote),
+                        remote.fetch_plan(route, req_id).await,
+                    );
+                }
+            }
+            Some(HostReadRoute::Ssd(route)) => {
+                if let Some(ssd) = &self.ssd_store
+                    && let Some(leases) = route.acquire(self.codec_budget)
+                {
+                    return (
+                        Some(AttributionSource::Ssd),
+                        ssd.read_host_batch(leases).await.unwrap_or_default(),
+                    );
+                }
+            }
+            None => {}
         }
 
         #[cfg(feature = "mooncake")]
@@ -278,7 +286,9 @@ impl ReadCoordinator {
             while started_at.elapsed() < REMOTE_WAIT_TIMEOUT {
                 tokio::time::sleep(REMOTE_WAIT_POLL_INTERVAL).await;
                 remote.discover(&mut plan.rows).await;
-                if let Some(route) = FetchPlan::new(&mut plan.rows, plan.required) {
+                if let Some(HostReadRoute::Peer(route)) =
+                    plan.host_route(true, false, self.codec_budget)
+                {
                     // A submitted payload failure completes this query; only
                     // missing advertisements participate in producer waiting.
                     return (

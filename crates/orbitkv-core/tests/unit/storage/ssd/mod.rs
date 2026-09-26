@@ -288,6 +288,69 @@ async fn candidates_do_not_pin_and_cannot_authorize_a_replaced_generation() {
 }
 
 #[tokio::test]
+async fn host_routes_preserve_source_priority_permissions_and_complete_coverage() {
+    use crate::QueryMode;
+    use crate::planning::read::{HostReadRoute, ReadPlan, ReadTarget};
+
+    let (store, queued) = queued_read_store();
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let missing = StateKey::new("queued-lease".into(), vec![1]);
+    let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
+
+    for mode in [
+        QueryMode::Demand,
+        QueryMode::Prepare,
+        QueryMode::WaitForFullPrefix,
+    ] {
+        for peer_available in [false, true] {
+            for allow_ssd in [false, true] {
+                let mut plan = ReadPlan::new(&[key.clone(), missing.clone()], mode, Some(&store));
+                assert!(plan.deferred_ssd(&store, 0).is_none());
+                assert!(
+                    matches!(plan.target, ReadTarget::HostReady) == (mode == QueryMode::Prepare)
+                );
+                #[cfg(feature = "mooncake")]
+                plan.rows[0].set_peer_dram(vec![orbitkv_state::ReplicaLocation {
+                    owner: orbitkv_state::CacheOwner {
+                        endpoint: "source".into(),
+                        incarnation: uuid::Uuid::from_u128(1),
+                    },
+                    sequence: 1,
+                }]);
+                let route = plan.host_route(peer_available, allow_ssd, 0);
+                let expected_peer = cfg!(feature = "mooncake") && peer_available;
+                if mode == QueryMode::WaitForFullPrefix {
+                    assert!(route.is_none(), "neither source covers the complete demand");
+                } else {
+                    match route {
+                        #[cfg(feature = "mooncake")]
+                        Some(HostReadRoute::Peer(peer)) => {
+                            assert!(expected_peer);
+                            assert_eq!(peer.block_count(), 1);
+                        }
+                        Some(HostReadRoute::Ssd(ssd)) => {
+                            assert!(allow_ssd && !expected_peer);
+                            assert_eq!(readers.load(Ordering::Acquire), 0);
+                            let leases = ssd.acquire(0).unwrap();
+                            assert_eq!(leases.len(), 1);
+                            assert!(Arc::ptr_eq(&leases[0].entry.readers, &readers));
+                            assert_eq!(readers.load(Ordering::Acquire), 1);
+                        }
+                        None => assert!(!allow_ssd && !expected_peer),
+                    }
+                }
+                assert_eq!(readers.load(Ordering::Acquire), 0);
+                assert_eq!(
+                    queued.len(),
+                    0,
+                    "route selection must not submit payload reads"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn cancelled_host_read_keeps_the_same_generation_owned_by_its_queue() {
     let (store, mut queued) = queued_read_store();
     let key = StateKey::new("queued-lease".into(), vec![0]);

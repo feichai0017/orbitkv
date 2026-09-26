@@ -781,6 +781,25 @@ comparisons and calibration of unexecuted paths remain open. The same-source
 shadow guard must not be reused as a general cross-source selection policy.
 No new peer source, configuration switch or Python callback is introduced.
 
+The following host-route increment moves the existing peer-before-SSD choice
+from query coordination into `planning/`. A bounded `HostReadRoute` borrows the
+same batch evidence and declares either peer materialization or io_uring SSD
+materialization. Source authorization/leases and completion remain with peer
+and SSD owners. Peer scoring first counts consecutive coverage and allocates
+authorization records only for the selected owner, retaining exact inventory
+sequences and the existing stable tie break. This is still fixed-priority
+selection; it prepares one consumer for later route costs without enabling a
+policy switch or a generic backend abstraction.
+
+Validation for the host-route increment: strict Core all-target Clippy passed
+in local-only and CPU-Mooncake configurations. Seven peer/route tests and three
+query/shared-read tests passed with Mooncake enabled; the two applicable local
+route tests also passed without Mooncake. They cover peer-before-SSD priority,
+full-prefix coverage, exact SSD acquisition, unchanged metadata-only selection,
+stable peer tie breaks, source version preservation, rejection fallback and
+malformed/short responses. GPU execution and serving performance are unchanged
+and were not requalified by this metadata-planning change.
+
 Validation for this increment: strict Core all-target Clippy passed in local-only
 and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
 peer-plan, io_uring completion and worker-ownership tests passed 26 cases;

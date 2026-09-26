@@ -12,14 +12,22 @@ pub(crate) struct FetchPlan<'a> {
 }
 
 impl<'a> FetchPlan<'a> {
+    #[cfg(test)]
     pub(crate) fn new(rows: &'a mut [ReplicaSet], required: usize) -> Option<Self> {
-        let prefix = rows
-            .iter()
+        let prefix = Self::prefix_len(rows);
+        (prefix > 0 && prefix >= required).then(|| Self::from_prefix(rows, prefix))
+    }
+
+    pub(super) fn prefix_len(rows: &[ReplicaSet]) -> usize {
+        rows.iter()
             .take_while(|row| row.peer_dram().next().is_some())
-            .count();
-        (prefix > 0 && prefix >= required).then(|| Self {
+            .count()
+    }
+
+    pub(super) fn from_prefix(rows: &'a mut [ReplicaSet], prefix: usize) -> Self {
+        Self {
             rows: &mut rows[..prefix],
-        })
+        }
     }
 
     pub(crate) fn reject(&mut self, start: usize, segment: &FetchSegment) {
@@ -36,36 +44,41 @@ impl<'a> FetchPlan<'a> {
         let rows = &self.rows;
 
         let row = rows.get(start)?;
-        let mut best: Option<FetchSegment> = None;
+        let mut best: Option<(&CacheOwner, usize)> = None;
         for candidate in row.peer_dram() {
             let mut bytes = row.key.namespace.len();
-            let records: Vec<_> = rows[start..]
+            let count = rows[start..]
                 .iter()
                 .take(DISCOVERY_MAX_KEYS)
                 .map_while(|row| {
-                    let replica = row.peer_dram().find(|r| r.owner == candidate.owner)?;
+                    row.peer_dram().find(|r| r.owner == candidate.owner)?;
                     bytes = bytes.saturating_add(row.key.hash.len());
-                    (bytes <= DISCOVERY_MAX_BYTES).then(|| InventoryRecord {
-                        key: row.key.clone(),
-                        sequence: replica.sequence,
-                        present: true,
-                    })
+                    (bytes <= DISCOVERY_MAX_BYTES).then_some(())
                 })
-                .collect();
-            if records.is_empty() {
+                .count();
+            if count == 0 {
                 continue;
             }
-            if best.as_ref().is_none_or(|best| {
-                records.len() > best.records.len()
-                    || (records.len() == best.records.len() && candidate.owner < best.owner)
+            if best.is_none_or(|(owner, best_count)| {
+                count > best_count || (count == best_count && candidate.owner < *owner)
             }) {
-                best = Some(FetchSegment {
-                    owner: candidate.owner.clone(),
-                    records,
-                });
+                best = Some((&candidate.owner, count));
             }
         }
-        best
+        let (owner, count) = best?;
+        let mut records = Vec::with_capacity(count);
+        for row in &rows[start..start + count] {
+            let replica = row.peer_dram().find(|replica| &replica.owner == owner)?;
+            records.push(InventoryRecord {
+                key: row.key.clone(),
+                sequence: replica.sequence,
+                present: true,
+            });
+        }
+        Some(FetchSegment {
+            owner: owner.clone(),
+            records,
+        })
     }
 }
 

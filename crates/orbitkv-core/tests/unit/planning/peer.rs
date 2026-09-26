@@ -58,4 +58,63 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
             .len(),
         1
     );
+
+    rows[0].key.hash = vec![1; DISCOVERY_MAX_BYTES];
+    assert!(
+        FetchPlan::new(&mut rows, 1)
+            .unwrap()
+            .next_segment(0)
+            .is_none()
+    );
+}
+
+#[test]
+fn selected_source_records_keep_its_versions_and_rejection_preserves_alternatives() {
+    let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"])];
+    rows[0].set_peer_dram(vec![
+        ReplicaLocation {
+            owner: CacheOwner {
+                endpoint: "a".into(),
+                incarnation: uuid::Uuid::from_u128(1),
+            },
+            sequence: 11,
+        },
+        ReplicaLocation {
+            owner: CacheOwner {
+                endpoint: "b".into(),
+                incarnation: uuid::Uuid::from_u128(2),
+            },
+            sequence: 21,
+        },
+    ]);
+    rows[1].set_peer_dram(vec![
+        ReplicaLocation {
+            owner: CacheOwner {
+                endpoint: "a".into(),
+                incarnation: uuid::Uuid::from_u128(1),
+            },
+            sequence: 12,
+        },
+        ReplicaLocation {
+            owner: CacheOwner {
+                endpoint: "b".into(),
+                incarnation: uuid::Uuid::from_u128(2),
+            },
+            sequence: 22,
+        },
+    ]);
+    let mut plan = FetchPlan::new(&mut rows, 2).unwrap();
+    let first = plan.next_segment(0).unwrap();
+    assert_eq!(
+        first.records.iter().map(|r| r.sequence).collect::<Vec<_>>(),
+        [11, 12]
+    );
+    plan.reject(0, &first);
+    let next = plan.next_segment(0).unwrap();
+    assert_eq!(next.owner.endpoint, "b");
+    assert_eq!(next.owner.incarnation, uuid::Uuid::from_u128(2));
+    assert_eq!(
+        next.records.iter().map(|r| r.sequence).collect::<Vec<_>>(),
+        [21, 22]
+    );
 }

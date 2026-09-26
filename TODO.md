@@ -82,6 +82,10 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   records, and hand exact source versions to existing query/completion owners.
   Move shared-read coordination into `query/` and remove by-key SSD rescans and
   forwarding/argument wrappers, preserving default source priority.
+- [x] Move host-ready peer/SSD route choice into `planning/`; keep source
+  acquisition in its execution owner and avoid allocating peer authorization
+  records for every rejected source candidate. Preserve peer-before-SSD defaults,
+  full-prefix coverage requirements and immutable source versions.
 - [ ] Extend batch plans into complete-route comparisons and joint demand
   coverage across groups/ranks, with actual destination and staging admission.
 - [ ] Separate operation observations from complete-route estimates and attach

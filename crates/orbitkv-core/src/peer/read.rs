@@ -57,7 +57,6 @@ impl SegmentFetcher for PeerReader {
         }
         let remote_addr = &segment.owner.endpoint;
         let namespace = &segment.records[0].key.namespace;
-        let block_hashes: Vec<_> = segment.records.iter().map(|r| r.key.hash.clone()).collect();
         let t0 = Instant::now();
 
         // Query the OrbitKV authority before exposing any physical addresses.
@@ -129,12 +128,12 @@ impl SegmentFetcher for PeerReader {
         // The guard moves into the blocking transfer with the destination buffers.
         // Cancelling this future cannot release either while the READ is running.
         if response.transfer_endpoint.is_empty()
-            || response.blocks.len() != block_hashes.len()
+            || response.blocks.len() != segment.records.len()
             || response
                 .blocks
                 .iter()
-                .zip(&block_hashes)
-                .any(|(block, hash)| block.block_hash != *hash)
+                .zip(&segment.records)
+                .any(|(block, record)| block.block_hash != record.key.hash)
         {
             warn!("Remote query to {remote_addr} returned invalid transfer authorization");
             drop(lock_guard);
@@ -188,7 +187,7 @@ impl SegmentFetcher for PeerReader {
         info!(
             "Mooncake fetch summary: req_id={req_id} remote={remote_addr} blocks={}/{} slots={} descs={} slabs={} bytes_mib={mb:.1} total_ms={elapsed_ms:.2} tp_mib_s={throughput_mib_s:.0}",
             result.len(),
-            block_hashes.len(),
+            segment.records.len(),
             transfer_timing.slot_count,
             transfer_timing.transfer_desc_count,
             transfer_timing.numa_slab_count,

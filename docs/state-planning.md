@@ -271,6 +271,16 @@ optimizer across groups, ranks or all request batches. Full route/resource
 estimates, consumed endpoint descriptors and measured cross-source selection
 remain open.
 
+Host materialization now asks `ReadPlan` for one bounded `HostReadRoute`, which
+returns either the existing peer segment plan or the existing io_uring SSD plan.
+The query coordinator performs discovery and owns shared-read lifetime, but no
+longer duplicates peer-before-SSD route choice. Planning remains metadata-only:
+the selected peer still needs authoritative authorization, while SSD pins the
+exact indexed generation only when its execution owner acquires the route.
+Peer evaluation counts each candidate's consecutive coverage before allocating
+authorization records only for the winner. This removes allocation proportional
+to every rejected peer without changing source priority or retry semantics.
+
 | Concept | Information and responsibility |
 | --- | --- |
 | Recovery demand | Existing `RecoveryDemand`, request revision, required groups and ranges, and a declared target state. Engine-visible recovery additionally needs engine-owned destination authorization; speculative host preparation has a different completion target. |
