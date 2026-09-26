@@ -224,7 +224,7 @@ sharing a handle does not itself move data. The
 [experimental vLLM P/D connector](pd-mooncake-push.md) already registers engine
 GPU tensors and submits remote writes, but remains outside the qualified shared
 cache path. Direct placement in that shared-cache path is a follow-up to
-qualify before adding remote SSD pools.
+qualify independently from the host-staged peer SSD route.
 
 GDS does not schedule requests or select reusable model state. Recovery planning
 selects the required ranges; the storage/transfer owners choose a viable data

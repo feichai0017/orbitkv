@@ -55,7 +55,9 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   Mooncake Transfer Engine moves bytes, and etcd tracks cluster membership.
   Source allocations remain budgeted through timeout; bounded completion records
   reconcile lost authorization replies and retry completion acknowledgements
-  using reusable windows and generation-fenced tickets.
+  using reusable windows and generation-fenced tickets. Peer SSD reads use
+  exact-generation, bounded source-side io_uring staging before the same
+  Mooncake transfer path; physical two-host qualification remains open.
 
 See [supported deployments](docs/deployment.md) and
 [model qualification](docs/models.md) before selecting a checkpoint and topology.
@@ -142,7 +144,8 @@ FlexKV and Mooncake mechanisms to deployment and validation work. The next miles
 uses measured path costs and resource budgets across local tiers and Mooncake
 TE transfers. Independent replicas, P/D handoff and TP/PP have separate
 completion and recovery contracts. Bounded Rust cost observations, raw-copy
-shadow predictions and independent SSD read routes are implemented. SSD route
+shadow predictions, independent local SSD read routes and a fixed-priority peer
+SSD route are implemented. SSD route
 shadow compares complete restoration to GPU readiness without changing execution.
 This is the first source/path separation, not a completed planner across all tiers.
 Dynamic cost selection remains planned, and observations remain off by default:

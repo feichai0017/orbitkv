@@ -1,9 +1,9 @@
 use super::*;
 use orbitkv_state::{ReplicaLocation, ReplicaRepresentation, StateKey};
 
-fn metadata() -> orbitkv_state::ReplicaMetadata {
+fn metadata(medium: orbitkv_state::ReplicaMedium) -> orbitkv_state::ReplicaMetadata {
     orbitkv_state::ReplicaMetadata {
-        medium: orbitkv_state::ReplicaMedium::Dram,
+        medium,
         representation: orbitkv_state::ReplicaRepresentation::Raw,
         stored_bytes: Some(4096),
     }
@@ -11,7 +11,7 @@ fn metadata() -> orbitkv_state::ReplicaMetadata {
 
 fn row(hash: u8, owners: &[&str]) -> ReplicaSet {
     let mut row = ReplicaSet::new(StateKey::new("ns".into(), vec![hash]));
-    row.set_peer_dram(
+    row.set_peers(
         owners
             .iter()
             .map(|owner| ReplicaLocation {
@@ -20,7 +20,7 @@ fn row(hash: u8, owners: &[&str]) -> ReplicaSet {
                     incarnation: uuid::Uuid::from_u128(1),
                 },
                 sequence: u64::from(hash),
-                metadata: metadata(),
+                metadata: metadata(orbitkv_state::ReplicaMedium::Dram),
             })
             .collect(),
     );
@@ -36,7 +36,7 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
         row(4, &[]),
         row(5, &["a"]),
     ];
-    let plan = FetchPlan::new(&mut rows, 1).unwrap();
+    let plan = FetchPlan::new(&mut rows, 1, PeerSource::Dram).unwrap();
     assert_eq!(plan.block_count(), 3);
     let first = plan.next_segment(0).unwrap();
     assert_eq!(first.owner.endpoint, "b");
@@ -51,7 +51,7 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
         .map(|_| row(1, &["a"]))
         .collect::<Vec<_>>();
     assert_eq!(
-        FetchPlan::new(&mut rows, 1)
+        FetchPlan::new(&mut rows, 1, PeerSource::Dram)
             .unwrap()
             .next_segment(0)
             .unwrap()
@@ -61,7 +61,7 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
     );
     rows[0].key.hash = vec![1; DISCOVERY_MAX_BYTES - 2];
     assert_eq!(
-        FetchPlan::new(&mut rows, 1)
+        FetchPlan::new(&mut rows, 1, PeerSource::Dram)
             .unwrap()
             .next_segment(0)
             .unwrap()
@@ -72,7 +72,7 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
 
     rows[0].key.hash = vec![1; DISCOVERY_MAX_BYTES];
     assert!(
-        FetchPlan::new(&mut rows, 1)
+        FetchPlan::new(&mut rows, 1, PeerSource::Dram)
             .unwrap()
             .next_segment(0)
             .is_none()
@@ -82,8 +82,12 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
 #[test]
 fn unknown_peer_shape_stays_unknown_instead_of_becoming_zero() {
     let mut row = row(1, &["a"]);
-    let location = row.peer_dram().next().unwrap().clone();
-    row.set_peer_dram(vec![ReplicaLocation {
+    let location = row
+        .peer(orbitkv_state::ReplicaMedium::Dram)
+        .next()
+        .unwrap()
+        .clone();
+    row.set_peers(vec![ReplicaLocation {
         metadata: orbitkv_state::ReplicaMetadata {
             medium: orbitkv_state::ReplicaMedium::Dram,
             representation: ReplicaRepresentation::Unknown,
@@ -92,7 +96,7 @@ fn unknown_peer_shape_stays_unknown_instead_of_becoming_zero() {
         ..location
     }]);
     let mut rows = vec![row];
-    let segment = FetchPlan::new(&mut rows, 1)
+    let segment = FetchPlan::new(&mut rows, 1, PeerSource::Dram)
         .unwrap()
         .next_segment(0)
         .unwrap();
@@ -103,14 +107,14 @@ fn unknown_peer_shape_stays_unknown_instead_of_becoming_zero() {
 #[test]
 fn selected_source_records_keep_its_versions_and_rejection_preserves_alternatives() {
     let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"])];
-    rows[0].set_peer_dram(vec![
+    rows[0].set_peers(vec![
         ReplicaLocation {
             owner: CacheOwner {
                 endpoint: "a".into(),
                 incarnation: uuid::Uuid::from_u128(1),
             },
             sequence: 11,
-            metadata: metadata(),
+            metadata: metadata(orbitkv_state::ReplicaMedium::Dram),
         },
         ReplicaLocation {
             owner: CacheOwner {
@@ -118,17 +122,17 @@ fn selected_source_records_keep_its_versions_and_rejection_preserves_alternative
                 incarnation: uuid::Uuid::from_u128(2),
             },
             sequence: 21,
-            metadata: metadata(),
+            metadata: metadata(orbitkv_state::ReplicaMedium::Dram),
         },
     ]);
-    rows[1].set_peer_dram(vec![
+    rows[1].set_peers(vec![
         ReplicaLocation {
             owner: CacheOwner {
                 endpoint: "a".into(),
                 incarnation: uuid::Uuid::from_u128(1),
             },
             sequence: 12,
-            metadata: metadata(),
+            metadata: metadata(orbitkv_state::ReplicaMedium::Dram),
         },
         ReplicaLocation {
             owner: CacheOwner {
@@ -136,10 +140,10 @@ fn selected_source_records_keep_its_versions_and_rejection_preserves_alternative
                 incarnation: uuid::Uuid::from_u128(2),
             },
             sequence: 22,
-            metadata: metadata(),
+            metadata: metadata(orbitkv_state::ReplicaMedium::Dram),
         },
     ]);
-    let mut plan = FetchPlan::new(&mut rows, 2).unwrap();
+    let mut plan = FetchPlan::new(&mut rows, 2, PeerSource::Dram).unwrap();
     let first = plan.next_segment(0).unwrap();
     assert_eq!(
         first.records.iter().map(|r| r.sequence).collect::<Vec<_>>(),
@@ -152,5 +156,47 @@ fn selected_source_records_keep_its_versions_and_rejection_preserves_alternative
     assert_eq!(
         next.records.iter().map(|r| r.sequence).collect::<Vec<_>>(),
         [21, 22]
+    );
+}
+
+#[test]
+fn peer_ssd_plan_is_explicit_and_never_mixes_source_media() {
+    let owner = |endpoint: &str, medium| ReplicaLocation {
+        owner: CacheOwner {
+            endpoint: endpoint.into(),
+            incarnation: uuid::Uuid::from_u128(endpoint.as_bytes()[0] as u128),
+        },
+        sequence: 7,
+        metadata: metadata(medium),
+    };
+    let mut rows: Vec<_> = [1, 2]
+        .into_iter()
+        .map(|hash| {
+            let mut row = ReplicaSet::new(StateKey::new("ns".into(), vec![hash]));
+            row.set_peers(vec![
+                owner("dram", orbitkv_state::ReplicaMedium::Dram),
+                owner("ssd", orbitkv_state::ReplicaMedium::Ssd),
+            ]);
+            row
+        })
+        .collect();
+
+    {
+        let dram = FetchPlan::new(&mut rows, 2, PeerSource::Dram).unwrap();
+        let segment = dram.next_segment(0).unwrap();
+        assert_eq!(segment.source, PeerSource::Dram);
+        assert!(segment.records.iter().all(|record| {
+            record.metadata.unwrap().medium == orbitkv_state::ReplicaMedium::Dram
+        }));
+    }
+
+    let ssd = FetchPlan::new(&mut rows, 2, PeerSource::Ssd).unwrap();
+    let segment = ssd.next_segment(0).unwrap();
+    assert_eq!(segment.source, PeerSource::Ssd);
+    assert!(
+        segment
+            .records
+            .iter()
+            .all(|record| { record.metadata.unwrap().medium == orbitkv_state::ReplicaMedium::Ssd })
     );
 }

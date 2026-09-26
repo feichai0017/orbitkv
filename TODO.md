@@ -91,8 +91,8 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   pin the exact advertised extent generation, reserve rounded pinned-allocation
   bytes before staging, atomically replace the estimate with actual allocation
   footprint, and retain reservation/extent ownership through cancellation and
-  detached I/O drain. Keep requester peer-SSD selection off until its route and
-  two-host qualification land.
+  detached I/O drain. Requester planning now uses this executor only after peer
+  DRAM and an eligible local SSD route; two-host qualification remains open.
 - [x] Retain unresolved candidates within each admitted query batch; distinguish
   host preparation from engine restoration, borrow SSD/peer plans over the same
   records, and hand exact source versions to existing query/completion owners.
@@ -155,7 +155,7 @@ qualification remain open. See the
 - [x] Add explicit demand-route controls and shadow full-restore estimates for
   both eligible SSD routes. Keep default selection and DRAM preparation unchanged.
 - [x] Separate metadata residency candidates from acquisition: preserve local
-  DRAM/SSD and cached peer DRAM evidence, and revalidate the exact SSD generation
+  DRAM/SSD and cached peer DRAM/SSD evidence, and revalidate the exact SSD generation
   before pinning. Discovery does not read or reserve payloads.
 - [x] Complete [current route correctness and lifecycle validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence)
   across both engines, same-generation raw/ANS recovery, cancellation and remote
@@ -475,9 +475,10 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   obsolete executables, Python launcher and fixed-directory APIs.
 - [ ] D2: implement versioned shard placement, replicated evidence, handoff and
   bounded subscriptions; qualify partitions and coordinator/catalog failure.
-- [ ] D3: enable and qualify requester peer-SSD routes plus measured source
-  selection without recursive peer fetches or unbounded staging. Source-local
-  io_uring staging and its two-phase byte/session admission are implemented.
+- [ ] D3: qualify requester peer-SSD routes and add measured source selection
+  without recursive peer fetches or unbounded staging. Fixed-priority peer-SSD
+  planning, source-local io_uring staging and two-phase byte/session admission
+  are implemented; two-host TCP/RDMA evidence is still required.
 - [x] D3 prerequisite: distinguish owner/resource and HBM/DRAM/SSD residence in
   candidate/inventory records; preserve surviving SSD evidence after DRAM
   eviction. Keep temporary staging private unless explicitly admitted. Engine

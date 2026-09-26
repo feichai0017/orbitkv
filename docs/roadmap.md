@@ -48,7 +48,7 @@ the later general semantic compiler.
 | First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TE path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
 | Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; separately integrate and qualify SGLang's native handoff lifecycle. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
 | Before production distributed deployment: catalog HA | Add replicated catalog evidence, versioned placement, handoff/repair and operational failure handling. | Three catalog failure domains, partitions, lease expiry, etcd outage and placement changes; bounded replay, source holds and staging. Replicating etcd alone does not replicate the catalog. |
-| Later expansion | Remote SSD staging, peer source selection using shared cost observations, broader model recovery, copy/compute overlap and optional Dynamo routing. | Each has its own recovery, resource and performance gate; cross-host TP/PP, resharding and cross-engine format conversion are separate capabilities. |
+| Later expansion | Calibrated peer selection over the implemented remote DRAM/SSD routes, broader model recovery, copy/compute overlap and optional Dynamo routing. | Each has its own recovery, resource and performance gate; remote SSD still needs two-host qualification, while cross-host TP/PP, resharding and cross-engine format conversion are separate capabilities. |
 
 Start the two-host DP harness once the ordinary-demand lifetime gate passes;
 local preparation and retention tuning can continue alongside it. A warming
@@ -274,8 +274,8 @@ Deliver in order:
   serving and orphaned-transfer revocation qualification remain open;
 - D2: versioned rendezvous shard placement, replicated evidence, handoff,
   bounded subscriptions and failure recovery;
-- D3: remote SSD staging and calibrated source selection under sender and
-  receiver budgets.
+- D3: qualify the implemented remote SSD staging route and add calibrated source
+  selection under sender and receiver budgets.
 
 The requesting Manager plans transfers. Source Managers validate and pin data;
 directory hints cannot authorize reads. Per-block operations do not use etcd.

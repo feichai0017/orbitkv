@@ -1,17 +1,12 @@
 use std::sync::Weak;
 
+use orbitkv_state::ReplicaMedium;
 #[cfg(feature = "mooncake")]
 use orbitkv_state::{DISCOVERY_MAX_REPLICAS, ReplicaLocation};
 use smallvec::SmallVec;
 
 use crate::block::{SealedBlock, StateKey};
 use crate::storage::ssd::SsdReadCandidate;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Medium {
-    Dram,
-    Ssd,
-}
 
 enum Evidence {
     Memory(Weak<SealedBlock>),
@@ -23,14 +18,14 @@ enum Evidence {
 /// A location/version hint. Its evidence owns no payload or transfer permission.
 /// Medium and acquisition authority are independent: peer evidence is not a tier.
 pub(crate) struct ReplicaCandidate {
-    medium: Medium,
+    medium: ReplicaMedium,
     evidence: Evidence,
 }
 
 impl ReplicaCandidate {
     pub(crate) fn ssd(candidate: SsdReadCandidate) -> Self {
         Self {
-            medium: Medium::Ssd,
+            medium: ReplicaMedium::Ssd,
             evidence: Evidence::Extent(candidate),
         }
     }
@@ -46,7 +41,7 @@ impl ReplicaCandidate {
 
     pub(crate) fn local_ssd(&self) -> Option<&SsdReadCandidate> {
         match &self.evidence {
-            Evidence::Extent(candidate) if self.medium == Medium::Ssd => Some(candidate),
+            Evidence::Extent(candidate) if self.medium == ReplicaMedium::Ssd => Some(candidate),
             _ => None,
         }
     }
@@ -60,9 +55,9 @@ impl ReplicaCandidate {
     }
 
     #[cfg(feature = "mooncake")]
-    fn peer_dram(&self) -> Option<&ReplicaLocation> {
+    fn peer(&self, medium: ReplicaMedium) -> Option<&ReplicaLocation> {
         match &self.evidence {
-            Evidence::Peer(location) if self.medium == Medium::Dram => Some(location),
+            Evidence::Peer(location) if self.medium == medium => Some(location),
             _ => None,
         }
     }
@@ -84,7 +79,7 @@ impl ReplicaSet {
 
     pub(crate) fn set_memory(&mut self, block: Weak<SealedBlock>) {
         self.set_local(ReplicaCandidate {
-            medium: Medium::Dram,
+            medium: ReplicaMedium::Dram,
             evidence: Evidence::Memory(block),
         });
     }
@@ -99,19 +94,27 @@ impl ReplicaSet {
         self.replicas.push(candidate);
     }
 
-    /// Today's catalog describes DRAM only. Unknown peer sizes/encoding remain
-    /// absent from the evidence; no HBM/SSD capability is inferred from TE support.
+    /// Retain only peer media with an implemented source authorization path.
+    /// Unknown and HBM evidence never becomes executable from TE availability.
     #[cfg(feature = "mooncake")]
-    pub(crate) fn set_peer_dram(&mut self, replicas: Vec<ReplicaLocation>) {
+    pub(crate) fn set_peers(&mut self, replicas: Vec<ReplicaLocation>) {
         self.replicas.retain(|replica| !replica.is_peer());
         for location in replicas
             .into_iter()
-            .filter(|location| location.metadata.medium == orbitkv_state::ReplicaMedium::Dram)
+            .filter(|location| {
+                matches!(
+                    location.metadata.medium,
+                    ReplicaMedium::Dram | ReplicaMedium::Ssd
+                )
+            })
             .take(DISCOVERY_MAX_REPLICAS)
         {
-            if !self.peer_dram().any(|peer| peer.owner == location.owner) {
+            if !self
+                .peer(location.metadata.medium)
+                .any(|peer| peer.owner == location.owner)
+            {
                 self.replicas.push(ReplicaCandidate {
-                    medium: Medium::Dram,
+                    medium: location.metadata.medium,
                     evidence: Evidence::Peer(location),
                 });
             }
@@ -119,14 +122,18 @@ impl ReplicaSet {
     }
 
     #[cfg(feature = "mooncake")]
-    pub(crate) fn peer_dram(&self) -> impl Iterator<Item = &ReplicaLocation> {
-        self.replicas.iter().filter_map(ReplicaCandidate::peer_dram)
+    pub(crate) fn peer(&self, medium: ReplicaMedium) -> impl Iterator<Item = &ReplicaLocation> {
+        self.replicas
+            .iter()
+            .filter_map(move |candidate| candidate.peer(medium))
     }
 
     #[cfg(feature = "mooncake")]
     pub(crate) fn reject_peer(&mut self, owner: &orbitkv_state::CacheOwner) {
-        self.replicas
-            .retain(|replica| replica.peer_dram().is_none_or(|peer| &peer.owner != owner));
+        self.replicas.retain(|replica| match &replica.evidence {
+            Evidence::Peer(peer) => &peer.owner != owner,
+            _ => true,
+        });
     }
 
     pub(crate) fn local_ssd(&self) -> Option<&SsdReadCandidate> {

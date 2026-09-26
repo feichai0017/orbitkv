@@ -45,7 +45,7 @@ pub(crate) async fn discover(
     if let Some(catalog) = catalog {
         for (candidate, cached) in candidates.iter_mut().zip(catalog.cached_blocks(&keys)) {
             if let Some(cached) = cached {
-                candidate.set_peer_dram(cached.replicas);
+                candidate.set_peers(cached.replicas);
             }
         }
         let missing: Vec<_> = candidates
@@ -75,7 +75,7 @@ pub(crate) async fn discover(
                 if let Some(candidate) = candidate
                     && candidates[i].key == candidate.key
                 {
-                    candidates[i].set_peer_dram(candidate.replicas);
+                    candidates[i].set_peers(candidate.replicas);
                 }
             }
         }

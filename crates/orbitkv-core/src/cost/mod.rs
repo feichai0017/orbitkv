@@ -63,6 +63,8 @@ pub(crate) enum CostPath {
     RemoteRead,
     #[cfg(feature = "mooncake")]
     RemoteAuthorization,
+    #[cfg(feature = "mooncake")]
+    RemoteSsdAuthorization,
 }
 
 impl CostPath {
@@ -91,7 +93,9 @@ impl CostPath {
             | Self::SsdCufileWrite
             | Self::SsdPrefetch => SampleBoundary::SubmittedToCompletion,
             #[cfg(feature = "mooncake")]
-            Self::RemoteRead | Self::RemoteAuthorization => SampleBoundary::SubmittedToCompletion,
+            Self::RemoteRead | Self::RemoteAuthorization | Self::RemoteSsdAuthorization => {
+                SampleBoundary::SubmittedToCompletion
+            }
         }
     }
 
@@ -126,6 +130,8 @@ impl CostPath {
             Self::RemoteRead => "remote_read",
             #[cfg(feature = "mooncake")]
             Self::RemoteAuthorization => "remote_authorization",
+            #[cfg(feature = "mooncake")]
+            Self::RemoteSsdAuthorization => "remote_ssd_authorization",
         }
     }
 }

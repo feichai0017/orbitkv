@@ -504,8 +504,11 @@ async fn discovery_deadline_spans_batches_and_keeps_later_local_and_cached_candi
             for (offset, mut candidate) in rows.into_iter().enumerate() {
                 let position = batch * DISCOVERY_MAX_KEYS + offset;
                 if position == 129 {
-                    assert_eq!(candidate.peer_dram().count(), 1);
-                    candidate.set_peer_dram(Vec::new());
+                    assert_eq!(
+                        candidate.peer(orbitkv_state::ReplicaMedium::Dram).count(),
+                        1
+                    );
+                    candidate.set_peers(Vec::new());
                     assert!(candidate.is_available());
                 }
                 if candidate.is_available() {

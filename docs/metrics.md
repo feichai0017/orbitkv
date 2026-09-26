@@ -56,6 +56,10 @@ queueing and host materialization/H2D or GPU staging/scatter/decode. Other paths
 continue to estimate service from submission to observed completion; stage
 histograms retain their queue/admission/service/total meanings. Neither failed
 nor cancelled, timed-out or abandoned work trains successful estimates.
+Peer DRAM authorization uses `path="remote_authorization"`; peer SSD uses
+`path="remote_ssd_authorization"`, whose service interval also includes
+source-local io_uring staging. The following `remote_read` remains the Mooncake
+TE payload interval for either source medium.
 
 Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
 DMA-coalesced ranges. Actual execution samples and shadow candidates use the

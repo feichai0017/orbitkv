@@ -496,10 +496,10 @@ Explicit-path qualification disables warming/preparation because aggregate I/O
 counters cannot distinguish their legal host reads from demand reads. An io_uring
 control never qualifies native GDS reads, including when cuFile writes are healthy.
 
-This does not complete a planner across all tiers. General shared-cache peer
-recovery remains peer DRAM → local DRAM → engine HBM; the experimental GPU P/D
-handoff is separate. Dynamic cross-tier/path selection, native GDS qualification,
-remote SSD staging and general peer-HBM cache sourcing remain open. Observations
+At this evidence boundary the planner still covered peer DRAM only; later
+increments below add peer SSD source staging and requester execution. Dynamic
+cross-tier/path selection, native GDS qualification and general peer-HBM cache
+sourcing remain open. The experimental GPU P/D handoff is separate. Observations
 stay off by default, and the earlier SGLang ANS SSD overhead gate remains open.
 
 Validation ran in the existing container with its exposed NVIDIA H20,
@@ -747,6 +747,8 @@ comparisons remain opt-in; dynamic selection and the earlier SGLang ANS SSD
 overhead gate remain open. cuFile used forced CPU compatibility and peers used
 same-host TCP; these results do not qualify native GDS, GPUDirect RDMA or
 physical two-host deployment, nor implement general remote SSD/HBM sources.
+The later source-staging and requester-route increments below implement peer SSD
+over host staging; their physical two-host qualification remains open.
 
 Only this final summary is tracked. Frozen artifacts, exact commands, logs and
 machine-readable results remain in ignored
@@ -887,7 +889,7 @@ alignment before GPU gates. GPU recovery, native GDS/RDMA and matched serving
 overhead were not requalified.
 
 The source-staging increment makes advertised SSD evidence executable inside
-the owning Manager without yet exposing it to requester planning. Authorization
+the owning Manager. Authorization
 revalidates and pins every exact SSD generation, reserves a ticket session plus
 the allocator-rounded host footprint before allocation, and moves that
 reservation into the io_uring batch. `BatchContext` retains the reservation and
@@ -897,8 +899,7 @@ allocations and publishes the existing transfer grant only after successful
 result handoff. A concurrent release fences publication but cannot free staging
 early; allocation, queue, partial-read and failed-handoff paths roll back. The
 returned registered DRAM ranges continue through the existing Mooncake TE READ.
-Requester peer-SSD enumeration, route costing and two-host TCP/RDMA evidence
-remain disabled gates.
+At this commit boundary requester peer-SSD enumeration remained disabled.
 
 Validation for this increment: strict all-target Core and Server Clippy passed
 with CUDA 13 bindings and the staged CPU-Mooncake libraries. Six staging/source
@@ -906,6 +907,22 @@ tests and six cancellation/drain tests passed; three footprint tests cover
 rounding, estimate replacement and over-budget growth. A separate existing
 pinned-allocation test still returns `cudaErrorNoDevice` in this container and
 does not invalidate the host-safe ownership tests.
+
+The requester-route increment retains peer SSD evidence and constructs a
+`FetchPlan` bound to one explicit source medium. Segments cannot combine peer
+DRAM and SSD records. Existing priorities remain conservative: eligible direct
+local SSD restoration precedes host planning; host planning tries peer DRAM,
+local io_uring and then peer SSD. If local extent acquisition loses its exact
+generation, the same request can use already-retained peer SSD evidence without
+another directory lookup. SSD authorization has a separate 30-second deadline
+and `remote_ssd_authorization` observation, while DRAM setup and completion RPCs
+retain their three-second boundary. The payload response still contains only
+registered memory ranges and always moves through Mooncake TE.
+
+Focused host-safe tests cover media isolation, unsupported HBM filtering,
+longest-cover/stable-owner selection, source-version retention, local priority
+and stale-local fallback. This enables the route but does not qualify physical
+two-host TCP/RDMA behavior or measured cross-source selection.
 
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
@@ -971,8 +988,8 @@ bounded replica collection and SSD/peer plans. Complete
 the consumed owner/node/resource, representation and byte descriptors while
 preserving immutable versions and explicit unknown evidence. Locality is relative
 to the consumer; io_uring/cuFile/Mooncake are access methods. Preserve the current
-physical namespace, and do not expose unsupported peer SSD/HBM as executable
-candidates. Source and destination engine HBM need real page-lifetime grants;
+physical namespace, and do not expose unsupported peer HBM as an executable
+candidate. Source and destination engine HBM need real page-lifetime grants;
 Manager staging is not automatically a retained replica.
 
 Build on batch-owned candidate retention, declared preparation/restore targets

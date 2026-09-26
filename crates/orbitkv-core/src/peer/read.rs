@@ -21,7 +21,7 @@ use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resou
 use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
 use crate::peer::catalog::CatalogClient;
-use crate::planning::peer::{FetchPlan, FetchSegment};
+use crate::planning::peer::{FetchPlan, FetchSegment, PeerSource};
 use crate::storage::MaterializedBlocks;
 
 /// Minimum usable transfer timeout. If the server's lock timeout minus the
@@ -68,7 +68,10 @@ impl SegmentFetcher for PeerReader {
         });
         let mut authorization_observation = Observation::new(
             CostKey::new(
-                CostPath::RemoteAuthorization,
+                match segment.source {
+                    PeerSource::Dram => CostPath::RemoteAuthorization,
+                    PeerSource::Ssd => CostPath::RemoteSsdAuthorization,
+                },
                 resource,
                 segment.representation,
                 segment.stored_bytes.unwrap_or(0),
@@ -244,7 +247,7 @@ impl PeerReader {
     /// alternatives. Directory hints still require authoritative source grants.
     pub(crate) async fn discover(&self, rows: &mut [crate::planning::replica::ReplicaSet]) {
         for row in rows.iter_mut() {
-            row.set_peer_dram(Vec::new());
+            row.set_peers(Vec::new());
         }
         if !self.membership.permits(self.membership.owner()) || rows.is_empty() {
             return;
@@ -268,7 +271,7 @@ impl PeerReader {
             candidate
                 .replicas
                 .retain(|replica| self.membership.permits(&replica.owner));
-            row.set_peer_dram(candidate.replicas);
+            row.set_peers(candidate.replicas);
         }
     }
 

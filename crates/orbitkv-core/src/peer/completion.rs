@@ -17,11 +17,12 @@ use uuid::Uuid;
 
 use crate::metrics::core_metrics;
 use crate::peer::export::TRANSFER_WINDOW_SLOTS;
-use crate::planning::peer::FetchSegment;
+use crate::planning::peer::{FetchSegment, PeerSource};
 
 const MAX_COMPLETIONS: usize = 1024;
 const CACHED_PEERS: usize = 64;
 const RPC_TIMEOUT: Duration = Duration::from_secs(3);
+const SSD_AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MIN_RETRY: Duration = Duration::from_millis(100);
 const MAX_RETRY: Duration = Duration::from_secs(5);
 
@@ -81,7 +82,6 @@ impl TransferCompletions {
         let channel = Endpoint::from_shared(url)
             .map_err(|e| Status::invalid_argument(e.to_string()))?
             .connect_timeout(RPC_TIMEOUT)
-            .timeout(RPC_TIMEOUT)
             .connect_lazy();
         const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
         let peer = Arc::new(Peer {
@@ -182,10 +182,14 @@ impl TransferCompletions {
             residency_sequences: segment.records.iter().map(|r| r.sequence).collect(),
             ticket: completion.ticket(),
         };
+        let timeout = match segment.source {
+            PeerSource::Dram => RPC_TIMEOUT,
+            PeerSource::Ssd => SSD_AUTHORIZATION_TIMEOUT,
+        };
         // The ticket is already known: dropping this future can safely close it
         // even if the RPC is still queued or its successful reply never arrives.
         let response = tokio::time::timeout(
-            RPC_TIMEOUT,
+            timeout,
             completion
                 .peer
                 .client

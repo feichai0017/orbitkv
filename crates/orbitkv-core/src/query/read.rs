@@ -279,6 +279,20 @@ impl ReadCoordinator {
             None => {}
         }
 
+        // Local SSD acquisition can lose its exact generation after route
+        // selection. Reuse the retained evidence once without re-discovery;
+        // peer SSD remains behind its independently authorized source route.
+        #[cfg(feature = "mooncake")]
+        if let Some(remote) = &self.remote_fetch
+            && let Some(HostReadRoute::Peer(route)) =
+                plan.host_route(true, false, self.codec_budget)
+        {
+            return (
+                Some(AttributionSource::Remote),
+                remote.fetch_plan(route, req_id).await,
+            );
+        }
+
         #[cfg(feature = "mooncake")]
         if plan.wait_for_full_prefix
             && let Some(remote) = &self.remote_fetch

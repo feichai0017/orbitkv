@@ -180,6 +180,7 @@ impl Fixture {
     fn segment(&self) -> FetchSegment {
         FetchSegment {
             owner: self.owner.clone(),
+            source: crate::planning::peer::PeerSource::Dram,
             records: vec![orbitkv_state::InventoryRecord {
                 key: StateKey::new("ns".into(), vec![1]),
                 sequence: 1,

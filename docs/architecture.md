@@ -149,7 +149,8 @@ independent access routes; peer transport is not a storage medium. `PeerExports`
 checks live owner/version evidence and holds source memory until completion.
 The Mooncake registration owner retains its pinned pool through unregister.
 Cost observations and shadow comparisons remain opt-in and do not select a new
-execution route. Remote SSD/HBM and GPU-direct cache endpoints remain future work.
+execution route. Peer SSD uses source io_uring staging plus Mooncake TE; remote
+HBM and GPU-direct cache endpoints remain future work.
 Instance-owned GPU workers share the bounded GPU SSD-write admission for their
 physical CUDA device; the permit remains with the submitted save until its
 completion owner releases it.
@@ -392,10 +393,11 @@ but this does not prove safe source failure or partitions. See the
 [implemented protocol and limits](../crates/orbitkv-catalog/README.md).
 
 The next stages add replicated placement generations, controlled handoff,
-subscriptions and requester-side remote SSD routing. Source-local SSD staging
-is implemented with exact-generation leases and two-phase byte/session
-admission, but SSD discovery evidence alone still does not authorize a file or
-memory transfer. These are target features in the diagram below.
+subscriptions and measured remote source selection. Peer SSD routes now use
+source-local exact-generation staging with two-phase byte/session admission,
+but SSD discovery evidence alone still does not authorize a file or memory
+transfer. Cross-host qualification remains a separate gate. These are target
+features in the diagram below.
 The [distributed cache design](distributed-cache.md) defines the acceptance gates.
 A later KV-aware router can consume replica summaries and engine load events
 without entering the transfer path. Metadata replicas do not imply KV payload

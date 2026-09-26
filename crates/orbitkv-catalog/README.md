@@ -106,6 +106,7 @@ bounded accounting. Private units stay under `tests/unit/`; the cleanup workload
 [benches/catalog.rs](../../benches/catalog.rs).
 
 Each shard currently has one metadata copy. Replication, weighted/versioned
-handoff, subscriptions and remote SSD discovery remain planned. Recovery rebuilds
+handoff and subscriptions remain planned. DRAM/SSD discovery is implemented;
+peer SSD execution still needs physical two-host qualification. Recovery rebuilds
 metadata from surviving owners; it does not recover lost payloads or revoke
 orphaned source transfers. Single-host tests do not qualify cross-host HA.

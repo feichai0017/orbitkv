@@ -2,8 +2,24 @@ use orbitkv_state::{CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_KEYS, Invento
 
 use super::replica::ReplicaSet;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PeerSource {
+    Dram,
+    Ssd,
+}
+
+impl PeerSource {
+    pub(crate) fn medium(self) -> orbitkv_state::ReplicaMedium {
+        match self {
+            Self::Dram => orbitkv_state::ReplicaMedium::Dram,
+            Self::Ssd => orbitkv_state::ReplicaMedium::Ssd,
+        }
+    }
+}
+
 pub(crate) struct FetchSegment {
     pub(crate) owner: CacheOwner,
+    pub(crate) source: PeerSource,
     pub(crate) records: Vec<InventoryRecord>,
     pub(crate) stored_bytes: Option<u64>,
     pub(crate) representation: orbitkv_state::ReplicaRepresentation,
@@ -11,24 +27,34 @@ pub(crate) struct FetchSegment {
 
 pub(crate) struct FetchPlan<'a> {
     rows: &'a mut [ReplicaSet],
+    source: PeerSource,
 }
 
 impl<'a> FetchPlan<'a> {
     #[cfg(test)]
-    pub(crate) fn new(rows: &'a mut [ReplicaSet], required: usize) -> Option<Self> {
-        let prefix = Self::prefix_len(rows);
-        (prefix > 0 && prefix >= required).then(|| Self::from_prefix(rows, prefix))
+    pub(crate) fn new(
+        rows: &'a mut [ReplicaSet],
+        required: usize,
+        source: PeerSource,
+    ) -> Option<Self> {
+        let prefix = Self::prefix_len(rows, source);
+        (prefix > 0 && prefix >= required).then(|| Self::from_prefix(rows, prefix, source))
     }
 
-    pub(super) fn prefix_len(rows: &[ReplicaSet]) -> usize {
+    pub(super) fn prefix_len(rows: &[ReplicaSet], source: PeerSource) -> usize {
         rows.iter()
-            .take_while(|row| row.peer_dram().next().is_some())
+            .take_while(|row| row.peer(source.medium()).next().is_some())
             .count()
     }
 
-    pub(super) fn from_prefix(rows: &'a mut [ReplicaSet], prefix: usize) -> Self {
+    pub(super) fn from_prefix(
+        rows: &'a mut [ReplicaSet],
+        prefix: usize,
+        source: PeerSource,
+    ) -> Self {
         Self {
             rows: &mut rows[..prefix],
+            source,
         }
     }
 
@@ -47,13 +73,14 @@ impl<'a> FetchPlan<'a> {
 
         let row = rows.get(start)?;
         let mut best: Option<(&CacheOwner, usize)> = None;
-        for candidate in row.peer_dram() {
+        for candidate in row.peer(self.source.medium()) {
             let mut bytes = row.key.namespace.len();
             let count = rows[start..]
                 .iter()
                 .take(DISCOVERY_MAX_KEYS)
                 .map_while(|row| {
-                    row.peer_dram().find(|r| r.owner == candidate.owner)?;
+                    row.peer(self.source.medium())
+                        .find(|r| r.owner == candidate.owner)?;
                     bytes = bytes.saturating_add(row.key.hash.len());
                     (bytes <= DISCOVERY_MAX_BYTES).then_some(())
                 })
@@ -72,7 +99,9 @@ impl<'a> FetchPlan<'a> {
         let mut stored_bytes = Some(0u64);
         let mut representation = None;
         for row in &rows[start..start + count] {
-            let replica = row.peer_dram().find(|replica| &replica.owner == owner)?;
+            let replica = row
+                .peer(self.source.medium())
+                .find(|replica| &replica.owner == owner)?;
             stored_bytes = stored_bytes
                 .zip(replica.metadata.stored_bytes)
                 .and_then(|(total, bytes)| total.checked_add(bytes));
@@ -97,6 +126,7 @@ impl<'a> FetchPlan<'a> {
         }
         Some(FetchSegment {
             owner: owner.clone(),
+            source: self.source,
             records,
             stored_bytes,
             representation: representation.unwrap_or_default(),

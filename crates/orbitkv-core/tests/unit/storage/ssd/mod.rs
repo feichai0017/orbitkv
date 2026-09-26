@@ -515,7 +515,7 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
                     matches!(plan.target, ReadTarget::HostReady) == (mode == QueryMode::Prepare)
                 );
                 #[cfg(feature = "mooncake")]
-                plan.rows[0].set_peer_dram(vec![orbitkv_state::ReplicaLocation {
+                plan.rows[0].set_peers(vec![orbitkv_state::ReplicaLocation {
                     owner: orbitkv_state::CacheOwner {
                         endpoint: "source".into(),
                         incarnation: uuid::Uuid::from_u128(1),
@@ -558,6 +558,59 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
             }
         }
     }
+}
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
+    use crate::QueryMode;
+    use crate::planning::peer::PeerSource;
+    use crate::planning::read::{HostReadRoute, ReadPlan};
+
+    let (store, queued) = queued_read_store();
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let peer_ssd = orbitkv_state::ReplicaLocation {
+        owner: orbitkv_state::CacheOwner {
+            endpoint: "source".into(),
+            incarnation: uuid::Uuid::from_u128(1),
+        },
+        sequence: 1,
+        metadata: orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Ssd,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(SSD_ALIGNMENT as u64),
+        },
+    };
+
+    let mut local = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Demand, Some(&store));
+    local.rows[0].set_peers(vec![peer_ssd.clone()]);
+    let Some(HostReadRoute::Ssd(local_route)) = local.host_route(true, true, 0) else {
+        panic!("local SSD must remain ahead of peer SSD");
+    };
+    let old = store.inner.lock().ring.get(&key).unwrap().clone();
+    {
+        let mut inner = store.inner.lock();
+        for next in [StateKey::new("queued-lease".into(), vec![1]), key.clone()] {
+            inner
+                .ring
+                .reserve(&next, old.slots.clone(), index::Encoding::Raw)
+                .unwrap();
+            assert!(inner.ring.commit(&next, true));
+        }
+    }
+    assert!(local_route.acquire(0).is_none());
+    let Some(HostReadRoute::Peer(fallback)) = local.host_route(true, false, 0) else {
+        panic!("stale local SSD evidence must preserve the peer SSD fallback");
+    };
+    assert_eq!(fallback.next_segment(0).unwrap().source, PeerSource::Ssd);
+
+    let mut remote = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Demand, Some(&store));
+    remote.rows[0].set_peers(vec![peer_ssd]);
+    let Some(HostReadRoute::Peer(route)) = remote.host_route(true, false, 0) else {
+        panic!("peer SSD should be executable when local host staging is disabled");
+    };
+    assert_eq!(route.next_segment(0).unwrap().source, PeerSource::Ssd);
+    assert_eq!(queued.len(), 0, "planning cannot stage either source");
 }
 
 #[tokio::test]
@@ -816,7 +869,10 @@ async fn batched_host_reads_hold_selected_generations_and_reject_foreign_stores(
 #[tokio::test]
 async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions() {
     use crate::QueryMode;
-    use crate::planning::{peer::FetchPlan, read::ReadPlan};
+    use crate::planning::{
+        peer::{FetchPlan, PeerSource},
+        read::ReadPlan,
+    };
     use orbitkv_state::{CacheOwner, ReplicaLocation};
 
     let (store, queued) = queued_read_store();
@@ -837,13 +893,18 @@ async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions
             stored_bytes: Some(4096),
         },
     };
-    plan.rows[0].set_peer_dram(vec![location]);
-    assert!(FetchPlan::new(&mut plan.rows, 2).is_none());
-    let mut route = FetchPlan::new(&mut plan.rows, 1).unwrap();
+    plan.rows[0].set_peers(vec![location]);
+    assert!(FetchPlan::new(&mut plan.rows, 2, PeerSource::Dram).is_none());
+    let mut route = FetchPlan::new(&mut plan.rows, 1, PeerSource::Dram).unwrap();
     let segment = route.next_segment(0).unwrap();
     route.reject(0, &segment);
     assert!(route.next_segment(0).is_none());
-    assert!(plan.rows[0].peer_dram().next().is_none());
+    assert!(
+        plan.rows[0]
+            .peer(orbitkv_state::ReplicaMedium::Dram)
+            .next()
+            .is_none()
+    );
     assert_eq!(
         plan.rows.len(),
         2,

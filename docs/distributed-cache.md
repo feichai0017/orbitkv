@@ -4,9 +4,9 @@ Status: D0 inventory recovery and the D1 candidate index, source validation,
 leased membership and embedded catalog are implemented. Managers host 16 fixed
 logical shards, each with one directory copy, and route through cached member
 information. The standalone MetaServer has been removed. Replication, online
-placement changes, requester-side remote SSD route enablement and cross-host
-serving qualification remain open. Source Managers can materialize an exact SSD
-generation into bounded pinned DRAM; Mooncake TE carries all remote KV bytes.
+placement changes, measured peer selection and cross-host serving qualification
+remain open. Source Managers can materialize an exact SSD generation into
+bounded pinned DRAM; Mooncake TE carries all remote KV bytes.
 
 Owners retain bounded journals and recover each shard independently using
 paginated snapshots and a complete delta interval. Catalog epochs and member
@@ -22,8 +22,9 @@ Implemented discovery behavior:
   the request across gaps; empty rows do not prove global absence.
 - An owner advertises live DRAM ahead of its committed SSD copy. SSD commit,
   DRAM eviction, ring overwrite and corruption update the same ordered stream;
-  requesters currently reject SSD evidence until peer-SSD route planning and
-  two-host qualification are complete.
+  requesters accept DRAM and SSD evidence but still reject unknown/HBM media.
+  Peer SSD is a fixed-priority fallback behind peer DRAM and eligible local SSD,
+  not a cost-selected or two-host-qualified route.
 - Managers retain positive hints in an LRU index with a 16 MiB logical byte
   budget and a five-second TTL. Reads do not extend the TTL. Misses are not
   cached. A failed directory lookup preserves any already-known prefix.
@@ -239,8 +240,9 @@ reservation until every read drains. Successful materialization replaces the
 estimate with deduplicated actual allocation bytes and publishes the existing
 transfer grant only after handing the result to the authorization owner.
 Release-before-completion fences publication without freeing in-flight memory;
-allocation, partial-read, queue and cancelled-receiver paths roll back. The
-requester route remains disabled, so this is not yet a deployed remote SSD claim.
+allocation, partial-read, queue and cancelled-receiver paths roll back. Requester
+plans bind every segment to either peer DRAM or peer SSD and never mix media;
+two-host TCP/RDMA correctness and performance are not yet qualified.
 
 Restoring a peer replica creates destination state; retaining it in destination
 DRAM or SSD is a separate admission decision. Copies may coexist and expire
