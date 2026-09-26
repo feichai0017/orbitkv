@@ -421,6 +421,17 @@ completion; caller cancellation cannot return capacity early. A full shared
 budget preserves the existing host-publication fallback. Shared read/staging
 admission and fair shares remain separate work.
 
+The first staging-owner boundary distinguishes automatic SSD demand from an
+explicit route control. Automatic demand prefers cuFile when capability is
+present but may switch the same immutable extent to io_uring before any worker
+submission if another instance owns this CUDA device's persistent staging.
+Explicit cuFile is a qualification contract and fails closed instead. One pool
+per device owns the persistent two-slot cuFile worker and codec/direct-write
+staging until all of its lanes drain; this bounds instance-multiplied HBM while
+keeping registered resources warm for its serving lifetime. Idle handoff and
+fair device shares remain later work and must be measured before relaxing this
+owner model.
+
 ```text
 orbitkv-state/       shared state/recovery and consumed descriptor contracts
 orbitkv-core/

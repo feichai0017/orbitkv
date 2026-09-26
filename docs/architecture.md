@@ -153,6 +153,11 @@ execution route. Remote SSD/HBM and GPU-direct cache endpoints remain future wor
 Instance-owned GPU workers share the bounded GPU SSD-write admission for their
 physical CUDA device; the permit remains with the submitted save until its
 completion owner releases it.
+One instance worker pool at a time owns that device's persistent cuFile and
+codec staging. Automatic SSD demand may switch to io_uring before submission
+when another pool owns staging; an explicit cuFile route never switches. The
+owner covers read and GPU-write workers and is released only after all lanes of
+that pool drain.
 
 Restore returns one completion receiver after all submitted DMA drains. The old
 shared-memory completion state and its second load API have been removed.

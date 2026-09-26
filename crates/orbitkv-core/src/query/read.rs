@@ -109,6 +109,7 @@ impl ReadCoordinator {
             && let Some(route) = plan.deferred_ssd(ssd, self.codec_budget)
         {
             let path = route.path;
+            let allow_uring_fallback = route.allow_uring_fallback;
             if let Some(leases) = route.acquire(self.codec_budget) {
                 let count = hit + leases.len();
                 ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
@@ -122,11 +123,11 @@ impl ReadCoordinator {
                     blocks: prefix_blocks
                         .into_iter()
                         .map(RestoreSource::Memory)
-                        .chain(
-                            leases
-                                .into_iter()
-                                .map(|lease| RestoreSource::Ssd { lease, path }),
-                        )
+                        .chain(leases.into_iter().map(|lease| RestoreSource::Ssd {
+                            lease,
+                            path,
+                            allow_uring_fallback,
+                        }))
                         .collect(),
                     missing: keys.len() - count,
                 };

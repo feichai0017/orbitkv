@@ -364,6 +364,7 @@ async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
     let cufile = crate::RestoreSource::Ssd {
         lease: Arc::clone(&lease),
         path: crate::SsdReadPath::Cufile,
+        allow_uring_fallback: false,
     };
     let plan = crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &cufile)]).unwrap();
     assert_eq!(plan.device_id(), 2);
@@ -372,9 +373,21 @@ async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
     assert_eq!(plan.ssd_source_fragments(), 1);
     assert!(!plan.has_memory());
 
+    let automatic = crate::RestoreSource::Ssd {
+        lease: Arc::clone(&lease),
+        path: crate::SsdReadPath::Cufile,
+        allow_uring_fallback: true,
+    };
+    assert!(
+        crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &automatic)])
+            .unwrap_err()
+            .contains("fallback policies")
+    );
+
     let uring = crate::RestoreSource::Ssd {
         lease,
         path: crate::SsdReadPath::Uring,
+        allow_uring_fallback: false,
     };
     assert!(
         crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &uring)])

@@ -827,6 +827,18 @@ move into `LoadTask` and drain at terminal completion. Seven focused tests cover
 target binding, source deduplication, mixed-route rejection, host-route behavior
 and unchanged shared reads; strict local-only and CPU-Mooncake Clippy passed.
 
+The device-staging increment carries whether an SSD route was selected
+automatically or explicitly. One instance pool per CUDA device owns persistent
+cuFile read staging and codec/direct-write GPU storage resources. Contending
+automatic reads change their consumed plan and payloads to io_uring before
+submission; explicit cuFile returns an error. Optional GPU writes keep their
+existing host-publication fallback. The owner permit is returned only after
+load/save, SSD, SSD-host and codec-write lanes all acknowledge drain. Seven
+host-safe tests cover route policy, per-device isolation, saturation fallback,
+owner release and source-plan invariants; strict local-only and CPU-Mooncake
+Clippy passed. This bounds persistent staging owners but does not establish
+fair idle handoff or matched multi-instance performance.
+
 Validation for the cost-evidence increment: strict Core all-target Clippy passed in local-only
 and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
 peer-plan, io_uring completion and worker-ownership tests passed 26 cases;

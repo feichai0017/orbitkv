@@ -9,6 +9,7 @@ use crate::block::RestoreSource;
 pub(crate) struct RestorePlan {
     device_id: i32,
     ssd_path: Option<SsdReadPath>,
+    allow_uring_fallback: bool,
     ssd_source_bytes: u64,
     ssd_source_fragments: usize,
     has_memory: bool,
@@ -26,16 +27,26 @@ impl RestorePlan {
         let mut plan = Self {
             device_id,
             ssd_path: None,
+            allow_uring_fallback: false,
             ssd_source_bytes: 0,
             ssd_source_fragments: 0,
             has_memory: false,
         };
         for (source_id, source) in sources {
-            if let RestoreSource::Ssd { path, .. } = source {
+            if let RestoreSource::Ssd {
+                path,
+                allow_uring_fallback,
+                ..
+            } = source
+            {
                 if plan.ssd_path.is_some_and(|selected| selected != *path) {
                     return Err("one restore plan cannot mix SSD read routes".into());
                 }
+                if plan.ssd_path.is_some() && plan.allow_uring_fallback != *allow_uring_fallback {
+                    return Err("one restore plan cannot mix SSD fallback policies".into());
+                }
                 plan.ssd_path = Some(*path);
+                plan.allow_uring_fallback = *allow_uring_fallback;
             }
             if !seen.insert(source_id) {
                 continue;
@@ -65,6 +76,18 @@ impl RestorePlan {
 
     pub(crate) fn ssd_path(&self) -> Option<SsdReadPath> {
         self.ssd_path
+    }
+
+    pub(crate) fn fallback_from_cufile(&mut self) -> Result<bool, String> {
+        if self.ssd_path != Some(SsdReadPath::Cufile) {
+            return Ok(false);
+        }
+        if !self.allow_uring_fallback {
+            return Err("explicit cuFile restore has no device staging owner".into());
+        }
+        self.ssd_path = Some(SsdReadPath::Uring);
+        self.allow_uring_fallback = false;
+        Ok(true)
     }
 
     pub(crate) fn ssd_source_bytes(&self) -> u64 {

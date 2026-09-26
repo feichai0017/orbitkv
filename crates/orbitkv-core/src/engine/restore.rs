@@ -186,9 +186,11 @@ impl OrbitKVEngine {
                                 slot_id,
                                 offset: host_offset,
                             },
-                            RestoreSource::Ssd { lease, path } => TransferPayload::Ssd {
+                            RestoreSource::Ssd { lease, .. } => TransferPayload::Ssd {
                                 source: Arc::clone(lease),
-                                path: *path,
+                                path: restore_plan
+                                    .ssd_path()
+                                    .expect("SSD source supplied the restore route"),
                                 slot_id,
                                 offset: host_offset,
                             },

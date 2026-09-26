@@ -44,6 +44,9 @@ pub enum RestoreSource {
     Ssd {
         lease: Arc<crate::storage::ssd::SsdReadLease>,
         path: crate::SsdReadPath,
+        /// Automatic cuFile choice may fall back before submission when this
+        /// target device has no staging owner. Explicit route controls cannot.
+        allow_uring_fallback: bool,
     },
 }
 

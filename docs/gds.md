@@ -34,6 +34,10 @@ types need separate qualification and an explicit `cufile` selection.
 On a GPU storage buffer or I/O failure in `auto`, the Manager stops admitting
 new cuFile work. With no read-route override, subsequent operations use io_uring
 until restart; an explicit cuFile read route does not silently switch routes.
+When several engine instances share one Manager, one pool owns each CUDA
+device's persistent cuFile/codec staging until its lanes drain. Another
+instance's automatically selected read may use io_uring over the same extent;
+an explicit cuFile read fails instead so qualification cannot pass on fallback.
 Submitted work retains its file/extent/page ownership and completes or reports
 its error; changing the backend does not revoke DMA or silently replay an
 already submitted restore. The failing operation retains normal error semantics.

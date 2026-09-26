@@ -10,6 +10,7 @@ use super::replica::ReplicaSet;
 pub(crate) struct SsdReadPlan<'a> {
     rows: &'a [ReplicaSet],
     pub(crate) path: SsdReadPath,
+    pub(crate) allow_uring_fallback: bool,
     required: usize,
 }
 
@@ -19,15 +20,24 @@ impl ReadPlan {
         store: &SsdStore,
         codec_budget: usize,
     ) -> Option<SsdReadPlan<'_>> {
-        if self.target != ReadTarget::EngineRestore
-            || (store.read_path.is_none() && !store.gpu_io.available())
-        {
+        if self.target != ReadTarget::EngineRestore {
             return None;
         }
-        self.ssd(store.read_path.unwrap_or(SsdReadPath::Cufile), codec_budget)
+        let (path, allow_uring_fallback) =
+            deferred_route(store.read_path, store.gpu_io.available())?;
+        self.ssd_route(path, codec_budget, allow_uring_fallback)
     }
 
     pub(crate) fn ssd(&self, path: SsdReadPath, codec_budget: usize) -> Option<SsdReadPlan<'_>> {
+        self.ssd_route(path, codec_budget, false)
+    }
+
+    fn ssd_route(
+        &self,
+        path: SsdReadPath,
+        codec_budget: usize,
+        allow_uring_fallback: bool,
+    ) -> Option<SsdReadPlan<'_>> {
         let count = self
             .rows
             .iter()
@@ -48,8 +58,20 @@ impl ReadPlan {
         Some(SsdReadPlan {
             rows,
             path,
+            allow_uring_fallback,
             required: self.required,
         })
+    }
+}
+
+fn deferred_route(
+    explicit: Option<SsdReadPath>,
+    cufile_available: bool,
+) -> Option<(SsdReadPath, bool)> {
+    match explicit {
+        Some(path) => Some((path, false)),
+        None if cufile_available => Some((SsdReadPath::Cufile, true)),
+        None => None,
     }
 }
 
@@ -71,3 +93,7 @@ impl SsdReadPlan<'_> {
         Some(leases)
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/planning/ssd.rs"]
+mod tests;

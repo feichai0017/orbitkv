@@ -243,6 +243,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         let planned_source = RestoreSource::Ssd {
             lease: Arc::clone(&source),
             path,
+            allow_uring_fallback: false,
         };
         worker
             .submit_load(LoadTask {

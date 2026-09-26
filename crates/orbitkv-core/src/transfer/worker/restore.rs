@@ -29,6 +29,14 @@ pub(super) fn validate_plan(task: &LoadTask) -> Result<(), EngineError> {
     Ok(())
 }
 
+pub(super) fn set_ssd_path(layers: &mut [LayerTransferData], path: SsdReadPath) {
+    for block in layers.iter_mut().flat_map(|layer| &mut layer.blocks) {
+        if let TransferPayload::Ssd { path: selected, .. } = &mut block.block {
+            *selected = path;
+        }
+    }
+}
+
 pub(super) fn cost_key(
     task: &LoadTask,
     mode: TransferMode,

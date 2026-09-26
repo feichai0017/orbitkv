@@ -96,6 +96,10 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   registered on the same CUDA device. Acquire without blocking, retain the
   permit inside `SaveTask` through terminal completion, and preserve host
   publication fallback when the shared device budget is full.
+- [x] Distinguish automatic and explicit SSD read routes, and assign one
+  persistent cuFile/codec staging owner per CUDA device. Automatic restores
+  fall back to the same extent's io_uring route before submission; explicit
+  cuFile remains fail-closed. Retain ownership until every instance lane drains.
 - [ ] Separate operation observations from complete-route estimates and attach
   live resource evidence, without double-counting queue time or composite stages.
 - [x] Make operation/route sample boundaries explicit and distinguish GPU,

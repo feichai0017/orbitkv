@@ -134,6 +134,8 @@ pub(crate) struct GpuWorkerPool {
     ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_write_admission: Arc<Semaphore>,
+    cufile_worker_admission: Arc<Semaphore>,
+    cufile_worker_owner: Mutex<Option<OwnedSemaphorePermit>>,
     load_tx: mpsc::UnboundedSender<WorkerCommand>,
     save_tx: mpsc::UnboundedSender<WorkerCommand>,
     closed: Mutex<bool>,
@@ -155,6 +157,21 @@ fn device_ssd_write_admission(device_id: i32) -> Arc<Semaphore> {
     admission
 }
 
+/// A cuFile worker owns two persistent registered GPU staging slots. Until
+/// staging is shared directly, one instance worker may own those slots per GPU.
+fn device_cufile_worker_admission(device_id: i32) -> Arc<Semaphore> {
+    static ADMISSIONS: LazyLock<Mutex<HashMap<i32, Weak<Semaphore>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut admissions = ADMISSIONS.lock();
+    admissions.retain(|_, admission| admission.strong_count() > 0);
+    if let Some(admission) = admissions.get(&device_id).and_then(Weak::upgrade) {
+        return admission;
+    }
+    let admission = Arc::new(Semaphore::new(1));
+    admissions.insert(device_id, Arc::downgrade(&admission));
+    admission
+}
+
 impl GpuWorkerPool {
     pub(crate) fn new(
         device_id: i32,
@@ -171,6 +188,8 @@ impl GpuWorkerPool {
             ssd_host_tx: Mutex::new(None),
             codec_write_tx: Mutex::new(None),
             ssd_write_admission: device_ssd_write_admission(device_id),
+            cufile_worker_admission: device_cufile_worker_admission(device_id),
+            cufile_worker_owner: Mutex::new(None),
             closed: Mutex::new(false),
             drained: OnceCell::new(),
         })
@@ -250,7 +269,21 @@ impl GpuWorkerPool {
         })
     }
 
-    pub(crate) fn submit_load(&self, task: LoadTask) -> Result<(), EngineError> {
+    fn own_cufile_worker(&self) -> bool {
+        let mut owner = self.cufile_worker_owner.lock();
+        if owner.is_some() {
+            return true;
+        }
+        match Arc::clone(&self.cufile_worker_admission).try_acquire_owned() {
+            Ok(permit) => {
+                *owner = Some(permit);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub(crate) fn submit_load(&self, mut task: LoadTask) -> Result<(), EngineError> {
         if task.plan.device_id() != self.device_id {
             return Err(EngineError::InvalidArgument(format!(
                 "restore plan targets device {} but worker owns device {}",
@@ -275,7 +308,7 @@ impl GpuWorkerPool {
         }
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
         restore::validate_plan(&task)?;
-        let ssd_path = task.plan.ssd_path();
+        let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
             && task.layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
                 matches!(&block.block, TransferPayload::Ssd { source, .. } if !source.cufile_eligible(task.codec_budget))
@@ -283,6 +316,15 @@ impl GpuWorkerPool {
         {
             return Err(EngineError::Storage("cuFile read route is no longer eligible".into()));
         }
+        if ssd_path == Some(crate::SsdReadPath::Cufile) && !self.own_cufile_worker() {
+            task.plan
+                .fallback_from_cufile()
+                .map_err(EngineError::Storage)?;
+            restore::set_ssd_path(&mut task.layers, crate::SsdReadPath::Uring);
+            core_metrics().ssd_gpu_read_fallbacks.add(1, &[]);
+            ssd_path = task.plan.ssd_path();
+        }
+        restore::validate_plan(&task)?;
         let disk = ssd_path.is_some();
         let observation = if enabled() {
             let (mut key, bytes) = transfer_key(
@@ -311,6 +353,11 @@ impl GpuWorkerPool {
         storage: Option<Arc<crate::storage::Storage>>,
     ) -> Result<Vec<LayerTransferData>, EngineError> {
         let (reply, receiver) = oneshot::channel();
+        if (!ssd_writes.is_empty() || !codec_groups.is_empty()) && !self.own_cufile_worker() {
+            ssd_writes.clear();
+            codec_groups.clear();
+            core_metrics().ssd_gpu_write_fallbacks.add(1, &[]);
+        }
         let ssd_admission = if ssd_writes.is_empty() && codec_groups.is_empty() {
             None
         } else {
@@ -394,6 +441,7 @@ impl GpuWorkerPool {
                         .await
                         .map_err(|_| "GPU worker exited before draining".to_owned())??;
                 }
+                self.cufile_worker_owner.lock().take();
                 Ok(())
             })
             .await

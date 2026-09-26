@@ -365,6 +365,7 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 - **orbitkv_ssd_gpu_staging_bytes** (Gauge) - Registered GPU storage staging memory.
 - **orbitkv_ssd_cufile_inflight_batches** (Gauge) - Occupied staging slots until I/O and scatter completion, at most two per instance/device.
 - **orbitkv_ssd_gpu_write_fallbacks_total** (Counter) - Write jobs using host publication after the eight-job GPU write admission limit is reached.
+- **orbitkv_ssd_gpu_read_fallbacks_total** (Counter) - Automatically selected cuFile restores changed to io_uring before submission because another instance owns this CUDA device's persistent staging. Explicit cuFile routes do not increment this counter or switch paths.
 - **orbitkv_ssd_pinned_write_skips_total** (Counter) - Reservations rejected to
   protect an active SSD read or write. See [GPU storage recovery](gds.md).
 - **orbitkv_ssd_write_bytes_total** (Counter) - Bytes written to SSD cache

@@ -29,6 +29,20 @@ fn gpu_ssd_write_admission_is_shared_per_device_and_recreated_after_release() {
 }
 
 #[test]
+fn cufile_worker_ownership_is_shared_per_device() {
+    let first = device_cufile_worker_admission(i32::MAX - 10);
+    let same = device_cufile_worker_admission(i32::MAX - 10);
+    let other = device_cufile_worker_admission(i32::MAX - 11);
+    assert!(Arc::ptr_eq(&first, &same));
+    assert!(!Arc::ptr_eq(&first, &other));
+    let owner = Arc::clone(&first).try_acquire_owned().unwrap();
+    assert!(Arc::clone(&same).try_acquire_owned().is_err());
+    assert!(Arc::clone(&other).try_acquire_owned().is_ok());
+    drop(owner);
+    assert!(Arc::clone(&same).try_acquire_owned().is_ok());
+}
+
+#[test]
 fn save_task_owns_shared_admission_until_terminal_drop() {
     let admission = device_ssd_write_admission(i32::MAX - 2);
     let permit = Arc::clone(&admission).try_acquire_owned().unwrap();
@@ -54,45 +68,59 @@ fn save_task_owns_shared_admission_until_terminal_drop() {
 
 #[tokio::test]
 async fn shared_admission_saturation_falls_back_before_worker_submission() {
-    let admission = device_ssd_write_admission(i32::MAX - 3);
-    let permits = (0..ssd::MAX_WRITES)
-        .map(|_| Arc::clone(&admission).try_acquire_owned().unwrap())
-        .collect::<Vec<_>>();
-    let (load_tx, _load_rx) = mpsc::unbounded_channel();
-    let (save_tx, mut save_rx) = mpsc::unbounded_channel();
-    let pool = GpuWorkerPool {
-        device_id: i32::MAX - 3,
-        numa_node: NumaNode::UNKNOWN,
-        transfer_mode: TransferMode::Direct,
-        ssd_tx: Mutex::new(None),
-        ssd_host_tx: Mutex::new(None),
-        codec_write_tx: Mutex::new(None),
-        ssd_write_admission: Arc::clone(&admission),
-        load_tx,
-        save_tx,
-        closed: Mutex::new(false),
-        drained: OnceCell::new(),
-    };
-    let mut saving = Box::pin(pool.batch_save(
-        Vec::new(),
-        Vec::new(),
-        vec![SaveGroup {
-            key: crate::block::StateKey::new("shared-admission".into(), vec![1]),
-            blocks: Vec::new(),
-        }],
-        None,
-    ));
-    assert!(futures::poll!(saving.as_mut()).is_pending());
-    let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
-        panic!("saturated GPU write must use the ordinary save lane")
-    };
-    assert!(task.codec_groups.is_empty());
-    assert!(task.ssd_writes.is_empty());
-    assert!(task.ssd_admission.is_none());
-    assert!(task.reply.send(Ok(task.layers)).is_ok());
-    saving.await.unwrap();
-    drop(permits);
-    assert_eq!(admission.available_permits(), ssd::MAX_WRITES);
+    for blocked_cufile_owner in [false, true] {
+        let write_admission = Arc::new(Semaphore::new(ssd::MAX_WRITES));
+        let cufile_admission = Arc::new(Semaphore::new(1));
+        let write_permits = if blocked_cufile_owner {
+            Vec::new()
+        } else {
+            (0..ssd::MAX_WRITES)
+                .map(|_| Arc::clone(&write_admission).try_acquire_owned().unwrap())
+                .collect::<Vec<_>>()
+        };
+        let cufile_permit = blocked_cufile_owner
+            .then(|| Arc::clone(&cufile_admission).try_acquire_owned().unwrap());
+        let (load_tx, _load_rx) = mpsc::unbounded_channel();
+        let (save_tx, mut save_rx) = mpsc::unbounded_channel();
+        let pool = GpuWorkerPool {
+            device_id: i32::MAX - 3,
+            numa_node: NumaNode::UNKNOWN,
+            transfer_mode: TransferMode::Direct,
+            ssd_tx: Mutex::new(None),
+            ssd_host_tx: Mutex::new(None),
+            codec_write_tx: Mutex::new(None),
+            ssd_write_admission: Arc::clone(&write_admission),
+            cufile_worker_admission: Arc::clone(&cufile_admission),
+            cufile_worker_owner: Mutex::new(None),
+            load_tx,
+            save_tx,
+            closed: Mutex::new(false),
+            drained: OnceCell::new(),
+        };
+        let mut saving = Box::pin(pool.batch_save(
+            Vec::new(),
+            Vec::new(),
+            vec![SaveGroup {
+                key: crate::block::StateKey::new("shared-admission".into(), vec![1]),
+                blocks: Vec::new(),
+            }],
+            None,
+        ));
+        assert!(futures::poll!(saving.as_mut()).is_pending());
+        let Some(WorkerCommand::Save(task, _)) = save_rx.recv().await else {
+            panic!("saturated GPU write must use the ordinary save lane")
+        };
+        assert!(task.codec_groups.is_empty());
+        assert!(task.ssd_writes.is_empty());
+        assert!(task.ssd_admission.is_none());
+        assert!(task.reply.send(Ok(task.layers)).is_ok());
+        saving.await.unwrap();
+        drop(pool);
+        drop(write_permits);
+        drop(cufile_permit);
+        assert_eq!(write_admission.available_permits(), ssd::MAX_WRITES);
+        assert_eq!(cufile_admission.available_permits(), 1);
+    }
 }
 
 #[test]
@@ -107,6 +135,8 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
         ssd_host_tx: Mutex::new(None),
         codec_write_tx: Mutex::new(None),
         ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        cufile_worker_admission: Arc::new(Semaphore::new(1)),
+        cufile_worker_owner: Mutex::new(None),
         load_tx,
         save_tx,
         closed: Mutex::new(false),
@@ -157,6 +187,8 @@ fn restore_plan_must_target_the_worker_device() {
         ssd_host_tx: Mutex::new(None),
         codec_write_tx: Mutex::new(None),
         ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        cufile_worker_admission: Arc::new(Semaphore::new(1)),
+        cufile_worker_owner: Mutex::new(None),
         load_tx,
         save_tx,
         closed: Mutex::new(false),
@@ -186,6 +218,8 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let (ssd_tx, mut ssd_rx) = mpsc::unbounded_channel();
     let (ssd_host_tx, mut ssd_host_rx) = mpsc::unbounded_channel();
     let (codec_write_tx, mut codec_write_rx) = mpsc::unbounded_channel();
+    let cufile_admission = Arc::new(Semaphore::new(1));
+    let cufile_owner = Arc::clone(&cufile_admission).try_acquire_owned().unwrap();
     let pool = Arc::new(GpuWorkerPool {
         device_id: 0,
         numa_node: NumaNode::UNKNOWN,
@@ -194,6 +228,8 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         ssd_host_tx: Mutex::new(Some(ssd_host_tx)),
         codec_write_tx: Mutex::new(Some(codec_write_tx)),
         ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        cufile_worker_admission: Arc::clone(&cufile_admission),
+        cufile_worker_owner: Mutex::new(Some(cufile_owner)),
         load_tx,
         save_tx,
         closed: Mutex::new(false),
@@ -264,6 +300,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     );
     ssd_host_ack.send(Ok(())).unwrap();
     waiter.await.unwrap().unwrap();
+    assert_eq!(cufile_admission.available_permits(), 1);
     pool.drain().await.unwrap();
 }
 
