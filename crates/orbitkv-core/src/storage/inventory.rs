@@ -3,11 +3,64 @@ use std::ops::Bound::{Excluded, Unbounded};
 use std::sync::Arc;
 
 use orbitkv_state::{
-    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord, ReplicaMetadata, StateKey,
+    CATALOG_SHARDS, INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord,
+    ReplicaMetadata, StateKey, catalog_shard,
 };
+use parking_lot::Mutex;
 use tokio::sync::Notify;
 
 pub const DEFAULT_INVENTORY_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
+
+pub(crate) struct ResidencyInventory {
+    shards: Mutex<[Inventory; CATALOG_SHARDS]>,
+}
+
+impl ResidencyInventory {
+    pub(crate) fn new(byte_limit: usize) -> Self {
+        Self {
+            shards: Mutex::new(std::array::from_fn(|_| {
+                Inventory::new(byte_limit / CATALOG_SHARDS)
+            })),
+        }
+    }
+
+    pub(crate) fn change(&self, key: &StateKey, metadata: Option<ReplicaMetadata>) {
+        self.shards.lock()[catalog_shard(key)].change(key, metadata);
+    }
+
+    pub(crate) fn sequence(&self, shard: usize) -> u64 {
+        self.shards.lock()[shard].sequence()
+    }
+
+    pub(crate) fn changed(&self, shard: usize) -> Arc<Notify> {
+        self.shards.lock()[shard].changed()
+    }
+
+    pub(crate) fn page(
+        &self,
+        shard: usize,
+        after: Option<&StateKey>,
+    ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
+        self.shards.lock()[shard].snapshot_page(after)
+    }
+
+    pub(crate) fn changes(
+        &self,
+        shard: usize,
+        after: u64,
+        through: u64,
+    ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
+        self.shards.lock()[shard].changes(after, through)
+    }
+
+    pub(crate) fn covers(&self, shard: usize, after: u64) -> bool {
+        self.shards.lock()[shard].covers(after)
+    }
+
+    pub(crate) fn contains_record(&self, record: &InventoryRecord) -> bool {
+        self.shards.lock()[catalog_shard(&record.key)].contains_record(record)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InventoryReadError {
@@ -162,5 +215,5 @@ fn bounded_records(
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/storage/dram/inventory.rs"]
+#[path = "../../tests/unit/storage/dram/inventory.rs"]
 mod tests;

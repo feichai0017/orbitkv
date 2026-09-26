@@ -28,7 +28,7 @@ cluster, not network authentication. TLS/auth integration remains open.
 
 ## Inventory recovery
 
-Each Manager maintains an independently ordered DRAM inventory and bounded
+Each Manager maintains an independently ordered residency inventory and bounded
 journal per shard. Actual insertions and removals update residency, sequence,
 representation family and known stored bytes under the cache lock. Duplicate
 insertions and rejected admissions produce no event; journals retain no payload

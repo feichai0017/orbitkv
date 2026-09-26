@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use super::*;
+use orbitkv_state::catalog_shard;
 
 fn make_cache() -> DramStore {
     DramStore::new(1 << 20, false, None, None, 0)

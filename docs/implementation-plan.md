@@ -856,6 +856,15 @@ Core inventory/planning tests passed. The source-only Python gate passed 364
 tests with one skip. Website check, build and link/search tests passed. This is
 metadata and cost-shape qualification, not two-host transfer or RDMA evidence.
 
+The residency-owner refactor moves the bounded journal from `storage/dram` to
+`storage/` behind one `ResidencyInventory`. DRAM insertion/removal and source
+version checks still update/read it while holding the resident cache lock, so
+the existing authorization invariant is unchanged. Catalog synchronization
+continues through the same API. This creates one sequence owner for later
+DRAM-to-SSD fallback evidence instead of adding a second SSD directory stream.
+Strict Core Clippy and 13 inventory, source-fencing and Catalog replay tests
+passed with CPU-Mooncake; behavior and wire contents are unchanged.
+
 Validation for the cost-evidence increment: strict Core all-target Clippy passed in local-only
 and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
 peer-plan, io_uring completion and worker-ownership tests passed 26 cases;

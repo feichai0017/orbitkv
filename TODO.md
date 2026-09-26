@@ -81,6 +81,9 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   bytes through owner inventory, Catalog storage and bounded discovery rows.
   Populate current DRAM evidence, feed peer authorization cost shape, and keep
   advertised SSD/HBM evidence ineligible until their executors and grants exist.
+- [x] Move the residency journal owner from `storage/dram` to `storage/` while
+  preserving atomic DRAM transitions, inventory replay and source version
+  checks. This establishes one sequence owner for later DRAM/SSD transitions.
 - [x] Retain unresolved candidates within each admitted query batch; distinguish
   host preparation from engine restoration, borrow SSD/peer plans over the same
   records, and hand exact source versions to existing query/completion owners.

@@ -35,7 +35,7 @@ pub use peer::export::{PeerError, PeerExports, TransferTicket};
 pub use query::lease::QueryLeaseId;
 pub use query::{QueryAdmission, QueryMode, QueryOwner, QueryReservation};
 pub use storage::MemoryCacheCleanupStats;
-pub use storage::dram::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES;
+pub use storage::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES;
 pub use storage::ssd::metadata::SlotMeta;
 pub use storage::ssd::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,

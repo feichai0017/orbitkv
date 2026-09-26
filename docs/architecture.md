@@ -132,8 +132,8 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 | --- | --- |
 | `engine/` | Instance registration, `EngineConfig`, Publish orchestration, demand validation and restore handoff |
 | `memory/` | NUMA placement, pinned allocations and pools |
-| `storage/` | Residency assembly and allocator-driven reclamation; `publish.rs` owns queued sealing and publication |
-| `storage/dram/` | Resident images, eviction/admission policy, exact insertion versions and inventory |
+| `storage/` | Residency assembly, shared replica inventory and allocator-driven reclamation; `publish.rs` owns queued sealing and publication |
+| `storage/dram/` | Resident images, eviction/admission policy and exact insertion versions |
 | `storage/ssd/` | Files, index, immutable extent leases, io_uring/cuFile I/O and registered staging |
 | `planning/` | Metadata-only discovery, batch replica evidence, bounded host routes and device-bound consumed restore plans |
 | `query/` | Admission budgets, shared reads, host materialization, query phases and leases |

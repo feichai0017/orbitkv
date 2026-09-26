@@ -440,8 +440,9 @@ No router service is required for this distributed cache milestone.
 `orbitkv-catalog` owns placement, cached membership, indexed evidence and the
 receiving peer catalog service. `orbitkv-server/cluster` owns etcd registration,
 renewal and Watch, while Manager orchestration serves catalog and source RPCs
-on one endpoint. Core owns residency transitions, per-shard inventory replay,
-candidate lookup, source holds, staging and query budgets. Outbound catalog RPCs
+on one endpoint. Core `storage/` owns residency transitions and the shared
+journal; peer code owns per-shard replay, candidate lookup, source holds,
+staging and query budgets. Outbound catalog RPCs
 still live alongside core's inventory synchronization; moving this boundary is
 separate from adding a forwarding client. The transfer crate owns TE integration.
 The standalone directory crate/executables and compatibility flags are removed.

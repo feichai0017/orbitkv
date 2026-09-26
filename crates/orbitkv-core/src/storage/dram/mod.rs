@@ -1,4 +1,3 @@
-pub(crate) mod inventory;
 pub(crate) mod policy;
 
 use std::{
@@ -8,11 +7,11 @@ use std::{
 };
 
 use hashlink::LruCache;
-use orbitkv_state::{CATALOG_SHARDS, InventoryRecord, catalog_shard};
+use orbitkv_state::InventoryRecord;
 use parking_lot::Mutex;
 use tokio::sync::Notify;
 
-use self::inventory::{Inventory, InventoryReadError};
+use crate::storage::inventory::{InventoryReadError, ResidencyInventory};
 
 use crate::block::{SealedBlock, StateKey};
 use crate::metrics::{
@@ -26,7 +25,7 @@ pub(crate) struct DramStore {
 }
 
 struct DramStoreInner {
-    inventory: Option<[Inventory; CATALOG_SHARDS]>,
+    inventory: Option<Arc<ResidencyInventory>>,
     cache: TinyLfuCache<StateKey, Arc<SealedBlock>>,
     reclaimable: LruCache<StateKey, ResidentMetadata>,
     probationary: LruCache<StateKey, ResidentMetadata>,
@@ -56,6 +55,7 @@ enum ResidentClass {
 }
 
 impl DramStore {
+    #[cfg(test)]
     pub(crate) fn new(
         capacity_bytes: usize,
         enable_lfu_admission: bool,
@@ -63,12 +63,29 @@ impl DramStore {
         inventory_journal_bytes: Option<usize>,
         protected_limit: u64,
     ) -> Self {
+        let inventory =
+            inventory_journal_bytes.map(|bytes| Arc::new(ResidencyInventory::new(bytes)));
+        Self::with_inventory(
+            capacity_bytes,
+            enable_lfu_admission,
+            value_size_hint,
+            inventory,
+            protected_limit,
+        )
+    }
+
+    pub(crate) fn with_inventory(
+        capacity_bytes: usize,
+        enable_lfu_admission: bool,
+        value_size_hint: Option<usize>,
+        inventory: Option<Arc<ResidencyInventory>>,
+        protected_limit: u64,
+    ) -> Self {
         let cache =
             TinyLfuCache::new_unbounded(capacity_bytes, enable_lfu_admission, value_size_hint);
         Self {
             inner: Mutex::new(DramStoreInner {
-                inventory: inventory_journal_bytes
-                    .map(|bytes| std::array::from_fn(|_| Inventory::new(bytes / CATALOG_SHARDS))),
+                inventory,
                 cache,
                 reclaimable: LruCache::new_unbounded(),
                 probationary: LruCache::new_unbounded(),
@@ -80,21 +97,11 @@ impl DramStore {
     }
 
     pub(crate) fn inventory_sequence(&self, shard: usize) -> u64 {
-        self.inner
-            .lock()
-            .inventory
-            .as_ref()
-            .expect("inventory enabled")[shard]
-            .sequence()
+        self.inventory().sequence(shard)
     }
 
     pub(crate) fn inventory_changed(&self, shard: usize) -> Arc<Notify> {
-        self.inner
-            .lock()
-            .inventory
-            .as_ref()
-            .expect("inventory enabled")[shard]
-            .changed()
+        self.inventory().changed(shard)
     }
 
     pub(crate) fn inventory_page(
@@ -102,12 +109,7 @@ impl DramStore {
         shard: usize,
         after: Option<&StateKey>,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
-        self.inner
-            .lock()
-            .inventory
-            .as_ref()
-            .expect("inventory enabled")[shard]
-            .snapshot_page(after)
+        self.inventory().page(shard, after)
     }
 
     pub(crate) fn inventory_changes(
@@ -116,21 +118,21 @@ impl DramStore {
         after: u64,
         through: u64,
     ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
-        self.inner
-            .lock()
-            .inventory
-            .as_ref()
-            .expect("inventory enabled")[shard]
-            .changes(after, through)
+        self.inventory().changes(shard, after, through)
     }
 
     pub(crate) fn inventory_covers(&self, shard: usize, after: u64) -> bool {
-        self.inner
-            .lock()
-            .inventory
-            .as_ref()
-            .expect("inventory enabled")[shard]
-            .covers(after)
+        self.inventory().covers(shard, after)
+    }
+
+    fn inventory(&self) -> Arc<ResidencyInventory> {
+        Arc::clone(
+            self.inner
+                .lock()
+                .inventory
+                .as_ref()
+                .expect("inventory enabled"),
+        )
     }
 
     pub(crate) fn contains_keys(&self, keys: &[StateKey]) -> Vec<bool> {
@@ -226,7 +228,7 @@ impl DramStore {
         if records.is_empty()
             || !records
                 .iter()
-                .all(|r| inventory[catalog_shard(&r.key)].contains_record(r))
+                .all(|record| inventory.contains_record(record))
         {
             return None;
         }
@@ -314,7 +316,7 @@ impl DramStore {
                 .collect::<Vec<_>>();
             if let Some(inventory) = &mut inner.inventory {
                 for entry in &removed {
-                    inventory[catalog_shard(&entry.key)].change(&entry.key, None);
+                    inventory.change(&entry.key, None);
                 }
             }
             debug_assert_eq!(
@@ -350,9 +352,11 @@ impl DramStore {
     pub(crate) fn mark_reclaimable_records(&self, records: &[InventoryRecord]) {
         let mut inner = self.inner.lock();
         for record in records {
-            if inner.inventory.as_ref().is_some_and(|inventory| {
-                inventory[catalog_shard(&record.key)].contains_record(record)
-            }) {
+            if inner
+                .inventory
+                .as_ref()
+                .is_some_and(|inventory| inventory.contains_record(record))
+            {
                 mark_reclaimable(&mut inner, &record.key);
             }
         }
@@ -389,7 +393,7 @@ fn insert_block(
     match outcome {
         CacheInsertOutcome::InsertedNew => {
             if let Some(inventory) = &mut inner.inventory {
-                inventory[catalog_shard(&key)].change(&key, Some(replica_metadata));
+                inventory.change(&key, Some(replica_metadata));
             }
             class_lru(inner, class).insert(
                 key,
@@ -541,7 +545,7 @@ fn remove_lru(inner: &mut DramStoreInner, class: ResidentClass) -> Option<Remove
             continue;
         };
         if let Some(inventory) = &mut inner.inventory {
-            inventory[catalog_shard(&key)].change(&key, None);
+            inventory.change(&key, None);
         }
         let metrics = core_metrics();
         if class == ResidentClass::Retained {

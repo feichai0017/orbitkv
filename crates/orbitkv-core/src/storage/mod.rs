@@ -1,4 +1,5 @@
 pub(crate) mod dram;
+pub(crate) mod inventory;
 pub(crate) mod publish;
 pub(crate) mod ssd;
 
@@ -117,14 +118,16 @@ impl Storage {
         };
 
         // Sub-components
-        let dram = Arc::new(DramStore::new(
+        let inventory = config.membership.as_ref().map(|_| {
+            Arc::new(inventory::ResidencyInventory::new(
+                config.inventory_journal_bytes,
+            ))
+        });
+        let dram = Arc::new(DramStore::with_inventory(
             capacity_bytes,
             config.enable_lfu_admission,
             value_size_hint,
-            config
-                .membership
-                .as_ref()
-                .map(|_| config.inventory_journal_bytes),
+            inventory,
             (capacity_bytes as u128 * config.cache_protected_percent as u128 / 100) as u64,
         ));
 
