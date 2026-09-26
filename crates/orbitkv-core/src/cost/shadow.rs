@@ -4,10 +4,13 @@ use crate::metrics::core_metrics;
 use opentelemetry::KeyValue;
 use std::time::Instant;
 
+// A shadow-only threshold, not a qualified execution-selection policy.
+const MIN_RELATIVE_GAIN: f64 = 0.05;
+
 /// Inspect only candidates already proven feasible by the execution owner.
 /// No source reads, alternative backend launches, or execution changes occur.
 pub(crate) fn shadow(candidates: &[CostKey], selected: usize) {
-    if !*ENABLED || selected >= candidates.len() || candidates.is_empty() {
+    if !*ENABLED || selected >= candidates.len() || candidates.len() > 8 {
         return;
     }
     let now = Instant::now();
@@ -22,9 +25,6 @@ pub(crate) fn shadow(candidates: &[CostKey], selected: usize) {
             .and_then(|&key| estimates.predict(key, now))
     });
     drop(estimates);
-    if candidates.len() > predictions.len() {
-        return;
-    }
     let metrics = core_metrics();
     for (key, prediction) in candidates.iter().zip(predictions) {
         let attributes = [
@@ -56,26 +56,48 @@ pub(crate) fn shadow(candidates: &[CostKey], selected: usize) {
                 .record(prediction.absolute_error, &attributes);
         }
     }
-    let decision = recommendation(&predictions[..candidates.len()], selected);
+    let decision = recommendation(candidates, &predictions[..candidates.len()], selected);
     metrics
         .cost_shadow_decisions
         .add(1, &[KeyValue::new("decision", decision)]);
 }
 
-fn recommendation(predictions: &[Option<Estimate>], selected: usize) -> &'static str {
-    if predictions.len() < 2 || predictions.iter().any(Option::is_none) {
+fn recommendation(
+    candidates: &[CostKey],
+    predictions: &[Option<Estimate>],
+    selected: usize,
+) -> &'static str {
+    let Some(&current_key) = candidates.get(selected) else {
+        return "unknown";
+    };
+    if candidates.len() < 2
+        || candidates.len() != predictions.len()
+        || predictions.iter().any(Option::is_none)
+    {
         return "unknown";
     }
-    let best = predictions
-        .iter()
-        .enumerate()
-        .filter_map(|(i, e)| e.map(|e| (i, e.seconds)))
-        .min_by(|a, b| a.1.total_cmp(&b.1));
-    if best.is_some_and(|(i, _)| i == selected) {
-        "agree"
-    } else {
-        "different"
+    if candidates.iter().any(|&key| !current_key.comparable(key)) {
+        return "incomparable";
     }
+    let Some(current) = predictions[selected] else {
+        return "unknown";
+    };
+    let mut faster = false;
+    for (index, candidate) in predictions.iter().enumerate() {
+        let Some(candidate) = candidate else {
+            return "unknown";
+        };
+        if index == selected || candidate.seconds >= current.seconds {
+            continue;
+        }
+        faster = true;
+        let gain = (current.seconds - current.absolute_error).max(0.0)
+            - (candidate.seconds + candidate.absolute_error);
+        if gain > current.seconds * MIN_RELATIVE_GAIN {
+            return "different";
+        }
+    }
+    if faster { "within_margin" } else { "agree" }
 }
 
 #[cfg(test)]

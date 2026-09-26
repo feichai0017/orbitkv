@@ -86,6 +86,11 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   coverage across groups/ranks, with actual destination and staging admission.
 - [ ] Separate operation observations from complete-route estimates and attach
   live resource evidence, without double-counting queue time or composite stages.
+- [x] Make operation/route sample boundaries explicit and distinguish GPU,
+  SSD store/file and peer-incarnation cost resources. Guard existing same-source
+  shadow comparisons by completion family, resource and shape buckets; require
+  a gain beyond both empirical errors and a declared shadow margin. This does
+  not complete live resource admission or enable execution selection.
 - [x] Establish the [ownership layout](docs/state-planning.md#code-ownership-and-migration):
   DRAM/SSD residency under `storage/`, peer workflows under `peer/`, inbound RPC
   adaptation in Server, shared reads in `query/`, publication in its worker,

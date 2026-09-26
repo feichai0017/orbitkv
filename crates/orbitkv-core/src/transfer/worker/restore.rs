@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::cost::{CostKey, CostPath};
+use crate::cost::{CostKey, CostPath, Resource};
 use crate::{EngineError, SsdReadPath, TransferMode};
 
 use super::{LayerTransferData, LoadTask, TransferPayload};
@@ -72,7 +72,12 @@ pub(super) fn cost_key(
         .iter()
         .flat_map(|layer| &layer.blocks)
         .any(|block| !matches!(block.block, TransferPayload::Ssd { .. }));
-    let resource = crate::cost::resource_id(&(device, mode as u8, resources, has_memory));
+    let resource = Resource::SsdRestore {
+        device: device as u64,
+        copy_backend: mode as u8,
+        stores: crate::cost::resource_id(&resources),
+        has_memory,
+    };
     shape
         .with_ssd_shape(
             source_bytes,

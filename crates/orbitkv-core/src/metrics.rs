@@ -322,7 +322,7 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_boundaries(cost_seconds_boundaries())
                 .build(),
             cost_shadow_decisions: meter.u64_counter("orbitkv_cost_shadow_decisions")
-                .with_description("Shadow agreement only; unknown evidence never ranks a candidate")
+                .with_description("Shadow agreement with compatibility, empirical-error and gain-margin checks; never selects execution")
                 .build(),
             cost_estimate_samples: meter.u64_histogram("orbitkv_cost_estimate_samples")
                 .with_description("Completed samples behind shadow predictions")

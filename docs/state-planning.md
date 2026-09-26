@@ -652,6 +652,28 @@ unknown. Route totals overlap child operation timers and must not be added to
 them. Dynamic route, representation and legal-boundary selection remain later
 work. No measured speedup is attributed to an unexecuted path.
 
+The observer explicitly distinguishes submission-to-completion operation samples
+from enqueue-to-completion SSD-route samples. Resource keys separate GPU,
+SSD store/file and peer-incarnation identities; a complete SSD route retains
+its destination GPU, copy backend, source-store set and mixed DRAM presence.
+These are internal cost identities, not exported labels, live resource credits
+or full replica endpoint descriptors.
+
+Shadow now rejects incompatible comparison families, resource identities,
+representations or shape buckets. It accepts only the existing load-copy,
+save-copy and SSD-restore pairs derived by their execution owners from the same
+actual work. Matching estimator buckets alone does not prove equal demand.
+Cross-source local/peer comparisons still require a separate complete-route and
+admission contract; they cannot reuse this same-source check blindly.
+
+The declared shadow margin is 5% of the current estimate. A different path is
+suggested only if its mean plus empirical error is below the current mean minus
+its error by more than that margin. Faster means inside this guard report
+`within_margin`, incompatible evidence reports `incomparable`, and missing
+estimates remain `unknown`. This refines the observation experiment; it does
+not qualify the margin for execution selection or enable a path switch. See
+[cost metrics](metrics.md#bounded-cost-observations) for the complete labels.
+
 Observations and shadow work are **off by default**. Set
 `ORBITKV_COST_OBSERVATIONS=1` before starting the Manager to enable them;
 unset or `0` preserves the disabled baseline. The earlier observation-only matrix

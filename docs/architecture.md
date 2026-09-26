@@ -140,7 +140,7 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 | `peer/` | Catalog client, cached candidates, authoritative exports, requester READs and completion recovery |
 | `transfer/` | Registered engine layouts, GPU copies/codecs and completion-drained workers |
 | `codec/` | Representation validation and encoding/decoding |
-| `cost/` | Operation observations, bounded estimates and same-target shadow comparisons |
+| `cost/` | Explicit operation/route sample boundaries, bounded resource-scoped estimates and guarded same-target shadow comparisons |
 
 `lib.rs` defines the public API. Tests mirror these modules under
 `crates/orbitkv-core/tests/unit/`; GPU integration gates stay in `tests/`.

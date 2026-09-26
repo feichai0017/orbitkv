@@ -46,7 +46,7 @@ request and state identities are kept out of the exported series.
 | `orbitkv_cost_io_bytes_total` / `orbitkv_cost_io_unknown_total` | Known physical bytes, including short I/O, versus unknown counts; same path/outcome labels |
 | `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-GPU-terminal total for the two SSD restore routes |
 | `orbitkv_cost_shadow_candidates_total` / `orbitkv_cost_shadow_prediction_seconds` | Feasible raw-copy or SSD restore-route candidates, labelled by path and known/unknown evidence |
-| `orbitkv_cost_shadow_decisions_total` | agree, different or unknown; execution never follows this result |
+| `orbitkv_cost_shadow_decisions_total` | agree, different, within_margin, incomparable or unknown; execution never follows this result |
 | `orbitkv_cost_estimate_samples`, `orbitkv_cost_estimate_age_seconds`, `orbitkv_cost_estimate_error_seconds` | Count, sample age and EWMA absolute error supporting known shadow predictions |
 | `orbitkv_cost_estimate_evictions_total` / `orbitkv_cost_estimate_dropped_total` | Fixed-capacity eviction and skipped updates on estimator contention |
 
@@ -62,6 +62,22 @@ DMA-coalesced ranges. Actual execution samples and shadow candidates use the
 same shape from the validated copy list; the executor's merge iterator supplies
 the range count. Refining that key does not restart queue/admission timing.
 These fields are bounded estimator dimensions, not additional metric labels.
+
+Shadow compares only the existing load DMA/kernel pair, save DMA/kernel pair,
+or complete io_uring/cuFile restore pair. Matching resource identity, known
+representation and every shape bucket are required. The execution owner still
+supplies alternatives for the same actual work; matching buckets alone do not
+prove equal demand or authorize a different source. Resource keys distinguish
+GPU, SSD store/file and peer runtime identities. SSD-route keys additionally
+retain destination GPU, copy backend, source-store set and mixed DRAM presence.
+
+`different` requires the alternative's mean plus empirical error to beat the
+current mean minus its error by more than 5% of the current mean. A faster mean
+that fails this guard yields `within_margin`; a fastest or tied current mean
+yields `agree`. Missing samples yield `unknown`, and incompatible comparison
+families/resources/shapes or unknown representation yield `incomparable` when
+all estimates are present. The 5% margin is a declared shadow threshold, not a
+qualified execution policy or a statistical confidence bound.
 
 The bounded SSD-route key includes buckets for the complete stored source image's
 bytes/fragments and the SSD-derived portion of target bytes/fragments, alongside

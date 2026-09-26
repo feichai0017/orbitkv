@@ -1,12 +1,12 @@
 use super::*;
-use crate::cost::{CostPath, Representation};
+use crate::cost::{CostPath, Representation, Resource};
 use crate::cost::{MIN_SAMPLES, enabled};
 use std::time::Duration;
 
 fn key(resource: u64) -> CostKey {
     CostKey::new(
         CostPath::GpuLoadDirect,
-        resource,
+        Resource::Gpu(resource),
         Representation::Raw,
         65536,
         4,

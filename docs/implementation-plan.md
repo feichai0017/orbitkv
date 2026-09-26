@@ -43,12 +43,11 @@ an OrbitKV implementation or qualification item.
 The implementation in [PR #182](https://github.com/feichai0017/orbitkv/pull/182)
 was merged at `b1aef401`; the design in
 [PR #183](https://github.com/feichai0017/orbitkv/pull/183) was merged at `13ac3a9d`.
-The first structural implementation is in
-[PR #184](https://github.com/feichai0017/orbitkv/pull/184), on
-`refactor/replica-route-planning`, based on that merge. Batch candidate retention
-and source acquisition follow in [PR #185](https://github.com/feichai0017/orbitkv/pull/185).
-The ownership refactor in [PR #186](https://github.com/feichai0017/orbitkv/pull/186)
-follows the implemented
+The first structural implementation in
+[PR #184](https://github.com/feichai0017/orbitkv/pull/184), batch candidate retention
+and source acquisition in [PR #185](https://github.com/feichai0017/orbitkv/pull/185),
+and the ownership refactor in [PR #186](https://github.com/feichai0017/orbitkv/pull/186)
+are merged into `main` at `03374d71`. They establish the implemented
 [Core layout](architecture.md#core-module-ownership): DRAM/SSD, peer, planning,
 query, publication and costs have distinct owners; old `backing/` and `internode/`
 trees are removed. Recheck Git status before working and preserve existing changes. P4.1
@@ -756,15 +755,66 @@ machine-readable results remain in ignored
 [shared-cache gates](shared-cache-qualification.md#restart-and-ownership-gates),
 using the matching prebuilt Manager/client and no concurrent native builds.
 
+## Resource-scoped cost evidence
+
+The next increment keeps execution unchanged while tightening the evidence used
+by the current raw-copy and SSD-route shadow consumers:
+
+- Resource identities distinguish local GPU, SSD store/file and peer runtime
+  domains. Complete SSD-route identities preserve destination GPU, copy backend,
+  source-store set and mixed DRAM presence. They do not grant source access or
+  reserve device capacity.
+- Sample boundaries explicitly distinguish submitted operation service from
+  enqueue-to-GPU-terminal SSD restore time. Existing inclusive timers remain
+  non-additive.
+- Comparisons require an existing supported pair, matching resource and shape
+  buckets, and known representation. Execution owners supply the same actual
+  work; buckets alone cannot prove complete demand. Missing estimates remain
+  unknown. Incompatible evidence cannot produce a faster-path recommendation.
+- A different shadow path requires a gain exceeding both empirical errors and
+  5% of the current mean. The margin is an observation-experiment threshold,
+  not a qualified execution policy. See [metric outcomes](metrics.md#bounded-cost-observations).
+
+This is cost-evidence work within the existing tier/source plan. Full consumed
+replica endpoint descriptors, live device admission, cross-source local/peer
+comparisons and calibration of unexecuted paths remain open. The same-source
+shadow guard must not be reused as a general cross-source selection policy.
+No new peer source, configuration switch or Python callback is introduced.
+
+Validation for this increment: strict Core all-target Clippy passed in local-only
+and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
+peer-plan, io_uring completion and worker-ownership tests passed 26 cases;
+the cost-observation benchmark harness passed 39 cases. Website check, the
+40-page build and both link/search tests passed. The existing
+`transfer_cost_shape_uses_logical_ranges_and_actual_encoding` test requires CUDA
+pinned memory and could not run on this host (`cudaErrorNoDevice`). GPU recovery,
+native GDS/RDMA and matched serving overhead were not requalified.
+
+The CPU-Mooncake check uses `--no-default-features --features
+mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
+the pinned Mooncake native library is built with CUDA disabled. This is a build
+and host-test configuration, not a GPU serving qualification. Reproduce the
+focused host tests after building that configuration:
+
+```bash
+cargo test --locked -p orbitkv-core --no-default-features \
+  --features mooncake,cudarc/cuda-12080,cudarc/nvrtc --lib -- \
+  cost:: planning:: peer::execute::tests:: storage::ssd::uring::tests:: \
+  transfer::worker::drain_tests:: \
+  --skip transfer_cost_shape_uses_logical_ranges_and_actual_encoding
+```
+
 ## Session startup and working constraints
 
 Read [AGENTS.md](../AGENTS.md), this plan, the affected owners and the relevant
-test gates. In the current environment the repository is `/workspace/orbitkv`,
+test gates. The recorded GPU qualification environment uses `/workspace/orbitkv`,
 with one H20 and Qwen3-8B under `/workspace/models/qwen3-8b`. Engine environments
 are `.venv/vllm-release` and `.venv/sglang-release`. Source references are available
 at `/workspace/benchmarks/dependencies/lmcache-0.5.5` and
 `/workspace/benchmarks/dependencies/flexkv`; verify their commits and clean status.
-These paths are conveniences, not portable test prerequisites.
+These paths describe historical qualification. Check the current checkout,
+toolchain and available devices before choosing gates; they are not portable
+test prerequisites.
 
 The user has no available bare-metal/two-host entry point for native acceptance.
 Continue implementation and reproducible scripts while that hardware gate is

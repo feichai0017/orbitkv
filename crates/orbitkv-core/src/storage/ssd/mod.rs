@@ -9,7 +9,7 @@ use mea::oneshot;
 use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resource};
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
@@ -93,7 +93,7 @@ impl SsdReadLease {
             })
     }
 
-    pub(crate) fn cost_resource(&self) -> u64 {
+    pub(crate) fn cost_resource(&self) -> Resource {
         self.store.io.cost_resource
     }
 

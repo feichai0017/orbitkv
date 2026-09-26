@@ -18,7 +18,9 @@ pub(super) struct Estimate {
 
 impl Estimate {
     fn reliable(self, now: Instant) -> bool {
-        self.count >= MIN_SAMPLES && now.saturating_duration_since(self.updated) <= MAX_AGE
+        self.count >= MIN_SAMPLES
+            && self.updated <= now
+            && now.duration_since(self.updated) <= MAX_AGE
     }
 }
 
@@ -33,6 +35,9 @@ impl Estimates {
     }
 
     pub(super) fn observe(&mut self, key: CostKey, seconds: f64, now: Instant) -> bool {
+        if !seconds.is_finite() || seconds < 0.0 {
+            return false;
+        }
         let mut evicted = false;
         if !self.entries.contains_key(&key)
             && self.entries.len() == CAPACITY

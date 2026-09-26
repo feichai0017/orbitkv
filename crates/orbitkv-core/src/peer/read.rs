@@ -17,7 +17,7 @@ use super::completion::{TransferCompletions, TransferLockGuard};
 use super::execute::{SegmentFetcher, SegmentOutcome, execute_fetch_plan};
 use super::transport::MooncakeTransport;
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, resource_id};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resource, resource_id};
 use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
 use crate::peer::catalog::CatalogClient;
@@ -62,11 +62,11 @@ impl SegmentFetcher for PeerReader {
 
         // Query the OrbitKV authority before exposing any physical addresses.
         let query_start = Instant::now();
-        let resource = if crate::cost::enabled() {
+        let resource = Resource::Peer(if crate::cost::enabled() {
             resource_id(&segment.owner)
         } else {
             0
-        };
+        });
         let mut authorization_observation = Observation::new(
             CostKey::new(
                 CostPath::RemoteAuthorization,
@@ -316,7 +316,7 @@ async fn fetch_blocks_via_mooncake(
     blocks: &[TransferBlockInfo],
     transfer_timeout: Duration,
     lock_guard: TransferLockGuard,
-    resource: u64,
+    resource: Resource,
 ) -> Result<(MaterializedBlocks, TransferTiming), String> {
     if blocks.is_empty() {
         return Ok((Vec::new(), TransferTiming::default()));

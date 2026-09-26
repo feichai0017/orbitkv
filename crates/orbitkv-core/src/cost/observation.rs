@@ -1,5 +1,5 @@
 use super::estimates::{ESTIMATES, Estimate};
-use super::{CostKey, ENABLED};
+use super::{CostKey, ENABLED, SampleBoundary};
 use crate::metrics::core_metrics;
 use opentelemetry::KeyValue;
 use std::time::Instant;
@@ -50,7 +50,7 @@ impl Observation {
             return Self(None);
         }
         let now = Instant::now();
-        let prediction = if key.path.is_restore_route() {
+        let prediction = if key.path.sample_boundary() == SampleBoundary::EnqueuedToCompletion {
             ESTIMATES
                 .try_lock()
                 .and_then(|estimates| estimates.predict(key, now))
@@ -94,7 +94,7 @@ impl Observation {
             let now = Instant::now();
             running.admitted.get_or_insert(now);
             running.submitted = Some(now);
-            if !running.key.path.is_restore_route() {
+            if running.key.path.sample_boundary() == SampleBoundary::SubmittedToCompletion {
                 running.prediction = ESTIMATES
                     .try_lock()
                     .and_then(|estimates| estimates.predict(running.key, now));
@@ -124,13 +124,13 @@ impl Drop for Observation {
 
 impl Running {
     fn estimate_sample(&self, outcome: Outcome, now: Instant) -> Option<f64> {
-        self.service_sample(outcome, now).map(|service| {
-            if self.key.path.is_restore_route() {
-                now.saturating_duration_since(self.enqueued).as_secs_f64()
-            } else {
-                service
-            }
-        })
+        self.service_sample(outcome, now)
+            .map(|service| match self.key.path.sample_boundary() {
+                SampleBoundary::EnqueuedToCompletion => {
+                    now.saturating_duration_since(self.enqueued).as_secs_f64()
+                }
+                SampleBoundary::SubmittedToCompletion => service,
+            })
     }
 
     fn service_sample(&self, outcome: Outcome, now: Instant) -> Option<f64> {

@@ -49,6 +49,8 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   active GPU transfers. Cancellation retains submitted I/O until completion.
 - **Observable behavior.** Inspect Prometheus metrics and optional request
   timelines, and reproduce the published latency and throughput measurements.
+  Opt-in cost observations compare matching copy/SSD-route evidence in shadow,
+  with resource identity and uncertainty checks before suggesting a change.
 - **Experimental shared cache.** Embedded catalog shards locate peer replicas,
   Mooncake Transfer Engine moves bytes, and etcd tracks cluster membership.
   Source allocations remain budgeted through timeout; bounded completion records

@@ -24,7 +24,7 @@ use std::thread::JoinHandle;
 use tokio::sync::oneshot;
 
 use super::SSD_ALIGNMENT;
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, resource_id};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resource, resource_id};
 
 const DEFAULT_URING_THREADS: usize = 16;
 static NEXT_ENGINE: AtomicU64 = AtomicU64::new(1);
@@ -228,7 +228,7 @@ impl UringShard {
 pub(super) struct UringIoEngine {
     fds: Vec<RawFd>,
     resources: Vec<u64>,
-    pub(super) cost_resource: u64,
+    pub(super) cost_resource: Resource,
     txs: Vec<mpsc::SyncSender<IoCtx>>,
     write_shards: usize,
     next_read: AtomicUsize,
@@ -298,7 +298,7 @@ impl UringIoEngine {
         // worker idle for a single cache file, and submit_and_wait can strand
         // a newly queued read behind an unrelated write already in flight.
         let write_shards = fds.len().min((cfg.threads / 2).max(1));
-        let cost_resource = resource_id(&resources);
+        let cost_resource = Resource::SsdStore(resource_id(&resources));
         Ok(Self {
             fds,
             resources,
@@ -408,7 +408,7 @@ impl UringIoEngine {
             observation: Observation::new(
                 CostKey::new(
                     CostPath::SsdRead,
-                    self.resources[shard_id],
+                    Resource::SsdFile(self.resources[shard_id]),
                     Representation::Unknown,
                     requested_bytes,
                     iovec_count,
@@ -479,7 +479,7 @@ impl UringIoEngine {
             observation: Observation::new(
                 CostKey::new(
                     CostPath::SsdWrite,
-                    self.resources[shard_id],
+                    Resource::SsdFile(self.resources[shard_id]),
                     Representation::Unknown,
                     requested_bytes,
                     iovec_count,

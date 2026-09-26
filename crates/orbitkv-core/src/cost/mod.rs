@@ -3,7 +3,6 @@
 //! A path is one measurement boundary, not an additive edge: codec, prefetch
 //! and SSD restore paths include child operations. No device timing is inferred.
 
-use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -21,10 +20,25 @@ pub(crate) fn enabled() -> bool {
 
 mod estimates;
 mod observation;
+mod resource;
 mod shadow;
 
 pub(crate) use observation::{Observation, Outcome};
+pub(crate) use resource::{Resource, resource_id};
 pub(crate) use shadow::shadow;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SampleBoundary {
+    SubmittedToCompletion,
+    EnqueuedToCompletion,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Comparison {
+    GpuLoad,
+    GpuSave,
+    SsdRestore,
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CostPath {
@@ -58,8 +72,35 @@ impl CostPath {
         )
     }
 
-    fn is_restore_route(self) -> bool {
-        matches!(self, Self::SsdUringRestore | Self::SsdCufileRestore)
+    fn sample_boundary(self) -> SampleBoundary {
+        match self {
+            Self::SsdUringRestore | Self::SsdCufileRestore => SampleBoundary::EnqueuedToCompletion,
+            Self::GpuLoadDirect
+            | Self::GpuLoadKernel
+            | Self::GpuSaveDirect
+            | Self::GpuSaveKernel
+            | Self::GpuDecode
+            | Self::GpuEncode
+            | Self::GpuSsdLoad
+            | Self::GpuSsdSave
+            | Self::SsdRead
+            | Self::SsdWrite
+            | Self::SsdWriteBatch
+            | Self::SsdCufileRead
+            | Self::SsdCufileWrite
+            | Self::SsdPrefetch => SampleBoundary::SubmittedToCompletion,
+            #[cfg(feature = "mooncake")]
+            Self::RemoteRead | Self::RemoteAuthorization => SampleBoundary::SubmittedToCompletion,
+        }
+    }
+
+    fn comparison(self) -> Option<Comparison> {
+        match self {
+            Self::GpuLoadDirect | Self::GpuLoadKernel => Some(Comparison::GpuLoad),
+            Self::GpuSaveDirect | Self::GpuSaveKernel => Some(Comparison::GpuSave),
+            Self::SsdUringRestore | Self::SsdCufileRestore => Some(Comparison::SsdRestore),
+            _ => None,
+        }
     }
 
     fn label(self) -> &'static str {
@@ -115,7 +156,7 @@ impl From<orbitkv_state::StorageFormat> for Representation {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct CostKey {
     path: CostPath,
-    resource: u64,
+    resource: Resource,
     representation: Representation,
     size: u8,
     fragments: u8,
@@ -127,6 +168,13 @@ pub(crate) struct CostKey {
 }
 
 impl CostKey {
+    fn comparable(self, other: Self) -> bool {
+        self.path.comparison().is_some()
+            && self.path.comparison() == other.path.comparison()
+            && self.representation != Representation::Unknown
+            && self.with_path(other.path) == other
+    }
+
     pub(crate) fn with_dma_ranges(self, ranges: usize) -> Self {
         Self {
             dma_ranges: bucket(ranges as u64),
@@ -152,7 +200,7 @@ impl CostKey {
             ..self
         }
     }
-    pub(crate) fn with_path_resource(self, path: CostPath, resource: u64) -> Self {
+    pub(crate) fn with_path_resource(self, path: CostPath, resource: Resource) -> Self {
         Self {
             path,
             resource,
@@ -161,7 +209,7 @@ impl CostKey {
     }
     pub(crate) fn new(
         path: CostPath,
-        resource: u64,
+        resource: Resource,
         representation: Representation,
         bytes: u64,
         fragments: usize,
@@ -183,10 +231,4 @@ impl CostKey {
 
 fn bucket(value: u64) -> u8 {
     (u64::BITS - value.leading_zeros()) as u8
-}
-
-pub(crate) fn resource_id(value: &impl Hash) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }

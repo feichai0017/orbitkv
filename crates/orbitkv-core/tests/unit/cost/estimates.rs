@@ -1,12 +1,12 @@
 use super::*;
 use crate::cost::bucket;
-use crate::cost::{CostPath, Representation};
+use crate::cost::{CostPath, Representation, Resource};
 use std::time::Duration;
 
 fn key(resource: u64) -> CostKey {
     CostKey::new(
         CostPath::GpuLoadDirect,
-        resource,
+        Resource::Gpu(resource),
         Representation::Raw,
         65536,
         4,
@@ -35,7 +35,7 @@ fn estimates_are_bounded_and_isolate_resource_representation_and_shape() {
     );
     for different in [
         CostKey {
-            resource: 10000,
+            resource: Resource::Gpu(10000),
             ..retained
         },
         CostKey {
@@ -92,4 +92,75 @@ fn replay_requires_recent_samples_and_reports_preupdate_error() {
     assert!(estimates.predict(key(1), stale).is_none());
     assert_eq!(estimates.entries[&key(1)].count, 1);
     assert_eq!(estimates.entries[&key(1)].seconds, 0.5);
+}
+
+#[test]
+fn invalid_samples_do_not_replace_evidence_and_future_samples_are_not_fresh() {
+    let start = Instant::now();
+    let mut estimates = Estimates::default();
+    for _ in 0..MIN_SAMPLES {
+        estimates.observe(key(1), 0.01, start);
+    }
+    for sample in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.1] {
+        assert!(!estimates.observe(key(1), sample, start));
+        assert!(!estimates.observe(key(2), sample, start));
+    }
+    assert_eq!(estimates.entries.len(), 1);
+    let retained = estimates.predict(key(1), start).unwrap();
+    assert_eq!(retained.seconds, 0.01);
+    assert_eq!(retained.count, MIN_SAMPLES);
+    assert!(
+        estimates
+            .predict(key(1), start - Duration::from_millis(1))
+            .is_none()
+    );
+}
+
+#[test]
+fn resource_domains_and_peer_incarnations_never_share_samples() {
+    let start = Instant::now();
+    let mut estimates = Estimates::default();
+    let resources = [
+        Resource::Gpu(1),
+        Resource::SsdStore(1),
+        Resource::SsdFile(1),
+    ];
+    for (index, resource) in resources.into_iter().enumerate() {
+        for _ in 0..MIN_SAMPLES {
+            estimates.observe(CostKey { resource, ..key(1) }, index as f64, start);
+        }
+    }
+    for (index, resource) in resources.into_iter().enumerate() {
+        assert_eq!(
+            estimates
+                .predict(CostKey { resource, ..key(1) }, start)
+                .unwrap()
+                .seconds,
+            index as f64
+        );
+    }
+
+    #[cfg(feature = "mooncake")]
+    {
+        use crate::cost::resource_id;
+        let owner = orbitkv_state::CacheOwner {
+            endpoint: "same-address".into(),
+            incarnation: uuid::Uuid::from_u128(1),
+        };
+        let old =
+            key(1).with_path_resource(CostPath::RemoteRead, Resource::Peer(resource_id(&owner)));
+        for _ in 0..MIN_SAMPLES {
+            estimates.observe(old, 0.1, start);
+        }
+        let replacement = orbitkv_state::CacheOwner {
+            incarnation: uuid::Uuid::from_u128(2),
+            ..owner
+        };
+        let new = old.with_path_resource(
+            CostPath::RemoteRead,
+            Resource::Peer(resource_id(&replacement)),
+        );
+        assert!(estimates.predict(old, start).is_some());
+        assert!(estimates.predict(new, start).is_none());
+    }
 }

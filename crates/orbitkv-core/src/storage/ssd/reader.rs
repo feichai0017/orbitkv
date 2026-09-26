@@ -1,6 +1,6 @@
 use super::{SsdStore, index::SsdIndexEntry, uring::UringIoEngine};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation};
+use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resource};
 use crate::metrics::core_metrics;
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, warn};
@@ -31,7 +31,7 @@ impl PrefetchBatch {
     pub(super) fn new(
         requests: Vec<Arc<super::SsdReadLease>>,
         done_tx: oneshot::Sender<crate::storage::MaterializedBlocks>,
-        resource: u64,
+        resource: Resource,
     ) -> Self {
         if !crate::cost::enabled() {
             return Self {
