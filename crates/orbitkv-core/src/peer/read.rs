@@ -70,8 +70,8 @@ impl SegmentFetcher for PeerReader {
             CostKey::new(
                 CostPath::RemoteAuthorization,
                 resource,
-                Representation::Unknown,
-                0,
+                segment.representation,
+                segment.stored_bytes.unwrap_or(0),
                 segment.records.len(),
             ),
             None,
@@ -111,6 +111,7 @@ impl SegmentFetcher for PeerReader {
                         &orbitkv_state::ReplicaLocation {
                             owner: segment.owner.clone(),
                             sequence: record.sequence,
+                            metadata: record.metadata.expect("planned peer metadata"),
                         },
                     );
                 }

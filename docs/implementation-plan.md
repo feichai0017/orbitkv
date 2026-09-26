@@ -839,6 +839,23 @@ owner release and source-plan invariants; strict local-only and CPU-Mooncake
 Clippy passed. This bounds persistent staging owners but does not establish
 fair idle handoff or matched multi-instance performance.
 
+The first distributed-evidence increment adds replica medium, representation
+family and optional stored bytes to the versioned inventory and discovery wire
+contract. Sealed DRAM publications populate those fields; removals carry no
+payload metadata. Catalogs retain evidence per owner/key/version and return it
+with bounded candidates. Peer planning aggregates selected records into known
+wire bytes and representation for authorization cost keys. Unknown evidence
+stays unknown, while SSD/HBM advertisements are rejected by the current
+peer-DRAM executor until source preparation or engine page grants exist. The
+directory still carries no address, rkey or transfer permission; all remote
+payload remains behind source authorization and Mooncake TE.
+
+Validation for this increment: strict all-target workspace Clippy passed with
+CPU-Mooncake; 15 state-contract, 2 wire-conversion, 11 Catalog and 12 focused
+Core inventory/planning tests passed. The source-only Python gate passed 364
+tests with one skip. Website check, build and link/search tests passed. This is
+metadata and cost-shape qualification, not two-host transfer or RDMA evidence.
+
 Validation for the cost-evidence increment: strict Core all-target Clippy passed in local-only
 and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
 peer-plan, io_uring completion and worker-ownership tests passed 26 cases;

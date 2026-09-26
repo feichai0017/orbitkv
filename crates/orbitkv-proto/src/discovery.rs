@@ -1,8 +1,9 @@
 use orbitkv_state::{
     BlockCandidates, CacheOwner, DISCOVERY_MAX_ENDPOINT_BYTES, DISCOVERY_MAX_REPLICAS,
-    ReplicaLocation, StateKey,
+    ReplicaLocation, ReplicaMedium, StateKey,
 };
 
+use crate::inventory::{metadata_from_wire, metadata_to_wire};
 use crate::proto::engine as wire;
 
 impl From<BlockCandidates> for wire::BlockCandidates {
@@ -16,6 +17,7 @@ impl From<BlockCandidates> for wire::BlockCandidates {
                     endpoint: r.owner.endpoint,
                     incarnation: r.owner.incarnation.to_string(),
                     sequence: r.sequence,
+                    metadata: Some(metadata_to_wire(r.metadata)),
                 })
                 .collect(),
         }
@@ -50,9 +52,17 @@ impl wire::BlockCandidates {
             if owner.incarnation.is_nil() || replicas.iter().any(|r| r.owner == owner) {
                 return Err("duplicate or invalid discovery owner");
             }
+            let metadata = replica
+                .metadata
+                .map(metadata_from_wire)
+                .ok_or("missing discovery replica metadata")?;
+            if metadata.medium == ReplicaMedium::Unknown {
+                return Err("invalid discovery replica medium");
+            }
             replicas.push(ReplicaLocation {
                 owner,
                 sequence: replica.sequence,
+                metadata,
             });
         }
         Ok(BlockCandidates { key, replicas })

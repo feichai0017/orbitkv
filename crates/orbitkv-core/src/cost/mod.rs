@@ -24,6 +24,7 @@ mod resource;
 mod shadow;
 
 pub(crate) use observation::{Observation, Outcome};
+pub(crate) use orbitkv_state::ReplicaRepresentation as Representation;
 pub(crate) use resource::{Resource, resource_id};
 pub(crate) use shadow::shadow;
 
@@ -125,28 +126,6 @@ impl CostPath {
             Self::RemoteRead => "remote_read",
             #[cfg(feature = "mooncake")]
             Self::RemoteAuthorization => "remote_authorization",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum Representation {
-    Raw,
-    Ans,
-    Fp8,
-    TurboQuant,
-    Mixed,
-    Unknown,
-}
-
-impl From<orbitkv_state::StorageFormat> for Representation {
-    fn from(format: orbitkv_state::StorageFormat) -> Self {
-        use orbitkv_state::StorageFormat;
-        match format {
-            StorageFormat::Ans | StorageFormat::Ans16 | StorageFormat::AnsFp8 => Self::Ans,
-            StorageFormat::Fp8FromBf16 | StorageFormat::Fp8FromFp16 => Self::Fp8,
-            StorageFormat::TurboQuant { .. } => Self::TurboQuant,
-            _ => Self::Raw,
         }
     }
 }

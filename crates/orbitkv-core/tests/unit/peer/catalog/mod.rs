@@ -529,6 +529,11 @@ async fn discovery_deadline_spans_batches_and_keeps_later_local_and_cached_candi
                             incarnation: Uuid::from_u128(2),
                         },
                         sequence: 1,
+                        metadata: orbitkv_state::ReplicaMetadata {
+                            medium: orbitkv_state::ReplicaMedium::Dram,
+                            representation: orbitkv_state::ReplicaRepresentation::Raw,
+                            stored_bytes: Some(4096),
+                        },
                     }],
                 },
                 std::time::Instant::now(),

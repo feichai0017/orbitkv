@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound::{Excluded, Unbounded};
 use std::sync::Arc;
 
-use orbitkv_state::{INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord, StateKey};
+use orbitkv_state::{
+    INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord, ReplicaMetadata, StateKey,
+};
 use tokio::sync::Notify;
 
 pub const DEFAULT_INVENTORY_JOURNAL_BYTES: usize = 16 * 1024 * 1024;
@@ -14,12 +16,18 @@ pub(crate) enum InventoryReadError {
 }
 
 pub(super) struct Inventory {
-    residents: BTreeMap<StateKey, u64>,
+    residents: BTreeMap<StateKey, ResidentEvidence>,
     journal: VecDeque<InventoryRecord>,
     sequence: u64,
     journal_bytes: usize,
     byte_limit: usize,
     changed: Arc<Notify>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ResidentEvidence {
+    sequence: u64,
+    metadata: ReplicaMetadata,
 }
 
 impl Inventory {
@@ -34,7 +42,8 @@ impl Inventory {
         }
     }
 
-    pub(super) fn change(&mut self, key: &StateKey, present: bool) {
+    pub(super) fn change(&mut self, key: &StateKey, metadata: Option<ReplicaMetadata>) {
+        let present = metadata.is_some();
         if self.residents.contains_key(key) == present {
             return;
         }
@@ -43,7 +52,13 @@ impl Inventory {
             .checked_add(1)
             .expect("inventory sequence exhausted");
         if present {
-            self.residents.insert(key.clone(), self.sequence);
+            self.residents.insert(
+                key.clone(),
+                ResidentEvidence {
+                    sequence: self.sequence,
+                    metadata: metadata.expect("present residency has metadata"),
+                },
+            );
         } else {
             self.residents.remove(key);
         }
@@ -51,6 +66,7 @@ impl Inventory {
             key: key.clone(),
             sequence: self.sequence,
             present,
+            metadata,
         };
         self.journal_bytes += record.estimated_size();
         self.journal.push_back(record);
@@ -71,7 +87,11 @@ impl Inventory {
     }
 
     pub(super) fn contains_record(&self, record: &InventoryRecord) -> bool {
-        record.present && self.residents.get(&record.key) == Some(&record.sequence)
+        record.present
+            && self
+                .residents
+                .get(&record.key)
+                .is_some_and(|resident| resident.sequence == record.sequence)
     }
 
     pub(super) fn covers(&self, after: u64) -> bool {
@@ -91,10 +111,11 @@ impl Inventory {
         bounded_records(
             self.residents
                 .range::<StateKey, _>(bounds)
-                .map(|(key, sequence)| InventoryRecord {
+                .map(|(key, resident)| InventoryRecord {
                     key: key.clone(),
-                    sequence: *sequence,
+                    sequence: resident.sequence,
                     present: true,
+                    metadata: Some(resident.metadata),
                 }),
         )
     }

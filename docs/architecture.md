@@ -370,7 +370,8 @@ assigned Node ID to a current endpoint and runtime UUID. Ordinary block operatio
 perform no etcd I/O.
 
 Managers asynchronously synchronize independently ordered DRAM inventory streams
-per shard. Bounded snapshots and deltas reconstruct lost evidence; incomplete
+per shard, including representation family and known stored bytes. Bounded
+snapshots and deltas reconstruct lost evidence; incomplete
 replacement views stay hidden until commit. After a local miss, the requester
 checks its bounded positive candidate index and queries only missing shards.
 It plans source spans and obtains exact runtime/residency authorization before

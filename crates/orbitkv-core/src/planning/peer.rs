@@ -5,6 +5,8 @@ use super::replica::ReplicaSet;
 pub(crate) struct FetchSegment {
     pub(crate) owner: CacheOwner,
     pub(crate) records: Vec<InventoryRecord>,
+    pub(crate) stored_bytes: Option<u64>,
+    pub(crate) representation: orbitkv_state::ReplicaRepresentation,
 }
 
 pub(crate) struct FetchPlan<'a> {
@@ -67,17 +69,37 @@ impl<'a> FetchPlan<'a> {
         }
         let (owner, count) = best?;
         let mut records = Vec::with_capacity(count);
+        let mut stored_bytes = Some(0u64);
+        let mut representation = None;
         for row in &rows[start..start + count] {
             let replica = row.peer_dram().find(|replica| &replica.owner == owner)?;
+            stored_bytes = stored_bytes
+                .zip(replica.metadata.stored_bytes)
+                .and_then(|(total, bytes)| total.checked_add(bytes));
+            let next = replica.metadata.representation;
+            representation = Some(match representation {
+                None => next,
+                Some(orbitkv_state::ReplicaRepresentation::Unknown) => {
+                    orbitkv_state::ReplicaRepresentation::Unknown
+                }
+                Some(_) if next == orbitkv_state::ReplicaRepresentation::Unknown => {
+                    orbitkv_state::ReplicaRepresentation::Unknown
+                }
+                Some(previous) if previous == next => previous,
+                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+            });
             records.push(InventoryRecord {
                 key: row.key.clone(),
                 sequence: replica.sequence,
                 present: true,
+                metadata: Some(replica.metadata),
             });
         }
         Some(FetchSegment {
             owner: owner.clone(),
             records,
+            stored_bytes,
+            representation: representation.unwrap_or_default(),
         })
     }
 }

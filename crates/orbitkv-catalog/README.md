@@ -29,9 +29,10 @@ cluster, not network authentication. TLS/auth integration remains open.
 ## Inventory recovery
 
 Each Manager maintains an independently ordered DRAM inventory and bounded
-journal per shard. Actual insertions and removals update residency and sequence
-under the cache lock. Duplicate insertions and rejected admissions produce no
-event; journals retain no payload references. SSD-only replicas are not advertised.
+journal per shard. Actual insertions and removals update residency, sequence,
+representation family and known stored bytes under the cache lock. Duplicate
+insertions and rejected admissions produce no event; journals retain no payload
+references. SSD-only replicas are not advertised.
 
 The [schema](../orbitkv-proto/proto/engine.proto) exposes `HeartbeatNode`,
 `SyncInventory`, `LocateBlocks`, and `UnregisterNode` on the Manager's peer port.
@@ -64,7 +65,7 @@ not wait for this barrier; remote visibility is asynchronous.
 | Catalog index admission | `--catalog-budget`, default 256 MiB, divided across assigned shards |
 | Inventory page/delta | 1,024 records, 512 KiB of accounted record bytes |
 | Cold discovery batch | 128 keys, 64 KiB of namespace/hash bytes, one catalog host |
-| Candidate row | At most four endpoint/incarnation/insertion-sequence hints |
+| Candidate row | At most four endpoint/incarnation/sequence/medium/representation/byte hints |
 | Cold query | Three-second deadline including coalescing; at most four hosts queried concurrently |
 | Catalog gRPC message | 4 MiB |
 | Concurrent catalog operations | 16 per Manager |

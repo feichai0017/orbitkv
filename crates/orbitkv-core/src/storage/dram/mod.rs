@@ -314,7 +314,7 @@ impl DramStore {
                 .collect::<Vec<_>>();
             if let Some(inventory) = &mut inner.inventory {
                 for entry in &removed {
-                    inventory[catalog_shard(&entry.key)].change(&entry.key, false);
+                    inventory[catalog_shard(&entry.key)].change(&entry.key, None);
                 }
             }
             debug_assert_eq!(
@@ -379,6 +379,7 @@ fn insert_block(
         return CacheInsertOutcome::AlreadyExists;
     }
     let footprint_bytes = block.memory_footprint();
+    let replica_metadata = block.replica_metadata();
     let class = if inner.protected_limit > 0 && class == ResidentClass::Retained {
         ResidentClass::Probationary
     } else {
@@ -388,7 +389,7 @@ fn insert_block(
     match outcome {
         CacheInsertOutcome::InsertedNew => {
             if let Some(inventory) = &mut inner.inventory {
-                inventory[catalog_shard(&key)].change(&key, true);
+                inventory[catalog_shard(&key)].change(&key, Some(replica_metadata));
             }
             class_lru(inner, class).insert(
                 key,
@@ -540,7 +541,7 @@ fn remove_lru(inner: &mut DramStoreInner, class: ResidentClass) -> Option<Remove
             continue;
         };
         if let Some(inventory) = &mut inner.inventory {
-            inventory[catalog_shard(&key)].change(&key, false);
+            inventory[catalog_shard(&key)].change(&key, None);
         }
         let metrics = core_metrics();
         if class == ResidentClass::Retained {

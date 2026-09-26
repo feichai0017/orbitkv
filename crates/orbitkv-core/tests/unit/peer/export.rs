@@ -312,6 +312,7 @@ fn export_rejects_invalid_evidence_before_reserving_resources() {
         key: StateKey::new("ns".into(), vec![1]),
         sequence: 1,
         present: true,
+        metadata: None,
     };
     let mut mixed = valid.clone();
     mixed.key.namespace = "other".into();

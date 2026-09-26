@@ -250,7 +250,9 @@ Core's `planning/` uses a bounded `ReplicaSet` for local DRAM, local SSD and
 peer DRAM. Each record separates medium from acquisition evidence: weak DRAM
 ownership, an SSD index version, or peer owner/incarnation and inventory sequence.
 Peer refresh preserves local evidence and the directory's replica bound. Current
-peer evidence describes DRAM only; unknown peer size/encoding stays unknown.
+owner inventory advertises DRAM medium, representation family and known stored
+bytes. Unknown values remain explicit, and advertised SSD/HBM records do not
+become executable peer-DRAM routes.
 
 `ReadPlan` now retains unresolved candidates for an admitted query batch and
 declares host-ready preparation or engine restoration. The coordinator keeps

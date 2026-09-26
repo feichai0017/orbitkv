@@ -10,6 +10,11 @@ fn row(hash: u8, sequence: u64) -> BlockCandidates {
                 incarnation: uuid::Uuid::from_u128(1),
             },
             sequence,
+            metadata: orbitkv_state::ReplicaMetadata {
+                medium: orbitkv_state::ReplicaMedium::Dram,
+                representation: orbitkv_state::ReplicaRepresentation::Raw,
+                stored_bytes: Some(4096),
+            },
         }],
     }
 }

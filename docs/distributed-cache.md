@@ -16,7 +16,8 @@ Upgrade all Managers together; there is no old-protocol fallback.
 Implemented discovery behavior:
 
 - Each row carries the exact StateKey and up to four candidates, qualified by
-  owner endpoint, runtime UUID and insertion sequence. Rows remain aligned with
+  owner endpoint, runtime UUID, insertion sequence, medium, representation and
+  known stored bytes. Rows remain aligned with
   the request across gaps; empty rows do not prove global absence.
 - Managers retain positive hints in an LRU index with a 16 MiB logical byte
   budget and a five-second TTL. Reads do not extend the TTL. Misses are not
@@ -180,8 +181,8 @@ The protocol needs distinct identifiers with distinct lifetimes:
 | Replica generation | Distinguishes successive residency episodes for a key and residence |
 | Transfer operation/token | Identifies pinned source data and one transfer lifetime |
 
-A candidate records StateKey, owner incarnation, tier, replica generation,
-owner sequence and byte size. Endpoints and topology labels come from the member
+A candidate records StateKey, owner incarnation, medium/representation evidence,
+owner sequence and known stored bytes. Endpoints and topology labels come from the member
 view. Publish DRAM evidence only after the block is sealed and resident; publish
 SSD evidence only after the write has completed successfully. Preparing data is
 not ready data. Candidates contain no reusable raw memory address.

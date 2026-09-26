@@ -264,6 +264,22 @@ impl RawBlock {
     pub(crate) fn memory_footprint(&self) -> u64 {
         self.total_size as u64
     }
+
+    fn representation(&self) -> orbitkv_state::ReplicaRepresentation {
+        let Some(metadata) = &self.encoding else {
+            return orbitkv_state::ReplicaRepresentation::Raw;
+        };
+        let mut representation = None;
+        for segment in metadata {
+            let next = orbitkv_state::ReplicaRepresentation::from(segment.format);
+            representation = Some(match representation {
+                None => next,
+                Some(previous) if previous == next => previous,
+                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+            });
+        }
+        representation.unwrap_or_default()
+    }
 }
 
 // ============================================================================
@@ -398,6 +414,23 @@ impl SealedBlock {
 
     pub(crate) fn memory_footprint(&self) -> u64 {
         self.footprint
+    }
+
+    pub(crate) fn replica_metadata(&self) -> orbitkv_state::ReplicaMetadata {
+        let mut representation = None;
+        for slot in &self.slots {
+            let next = slot.representation();
+            representation = Some(match representation {
+                None => next,
+                Some(previous) if previous == next => previous,
+                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+            });
+        }
+        orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Dram,
+            representation: representation.unwrap_or_default(),
+            stored_bytes: Some(self.footprint),
+        }
     }
 
     pub(crate) fn pinned_allocations(&self) -> impl Iterator<Item = (usize, u64)> + '_ {

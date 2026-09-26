@@ -7,6 +7,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+fn metadata() -> orbitkv_state::ReplicaMetadata {
+    orbitkv_state::ReplicaMetadata {
+        medium: orbitkv_state::ReplicaMedium::Dram,
+        representation: orbitkv_state::ReplicaRepresentation::Raw,
+        stored_bytes: Some(4096),
+    }
+}
+
 fn row(hash: u8, owners: &[&str]) -> ReplicaSet {
     let mut row = ReplicaSet::new(StateKey::new("ns".into(), vec![hash]));
     row.set_peer_dram(
@@ -18,6 +26,7 @@ fn row(hash: u8, owners: &[&str]) -> ReplicaSet {
                     incarnation: uuid::Uuid::from_u128(1),
                 },
                 sequence: u64::from(hash),
+                metadata: metadata(),
             })
             .collect(),
     );

@@ -9,7 +9,7 @@ use dashmap::{DashMap, mapref::entry::Entry};
 use orbitkv_state::{
     BlockCandidates, CacheOwner, DISCOVERY_MAX_REPLICAS, INVENTORY_BATCH_BYTES,
     INVENTORY_BATCH_RECORDS, InventoryOperation, InventoryRecord, InventoryStatus, ReplicaLocation,
-    StateKey,
+    ReplicaMedium, ReplicaMetadata, StateKey,
 };
 use parking_lot::Mutex;
 use uuid::Uuid;
@@ -74,13 +74,19 @@ struct NodeInventory {
     last_seen: Instant,
     retired: bool,
     progress: InventoryStatus,
-    entries: BTreeMap<StateKey, u64>,
+    entries: BTreeMap<StateKey, InventoryEntry>,
     bytes: usize,
     snapshot_max_sequence: u64,
     last_key: Option<StateKey>,
     replaying: bool,
     /// Only the immediately preceding operation may be retried verbatim.
     last_operation: Option<InventoryOperation>,
+}
+
+#[derive(Clone, Copy)]
+struct InventoryEntry {
+    sequence: u64,
+    metadata: ReplicaMetadata,
 }
 
 impl NodeInventory {
@@ -378,7 +384,7 @@ impl BlockHashStore {
         for record in records {
             let current = projected
                 .entry(&record.key)
-                .or_insert_with(|| state.entries.get(&record.key).copied());
+                .or_insert_with(|| state.entries.get(&record.key).map(|entry| entry.sequence));
             if current.is_some_and(|sequence| sequence > record.sequence) {
                 continue;
             }
@@ -386,8 +392,8 @@ impl BlockHashStore {
                 return Err(StoreError::InvalidInventory);
             }
             match (current.is_some(), record.present) {
-                (false, true) => bytes += key_bytes(&record.key),
-                (true, false) => bytes -= key_bytes(&record.key),
+                (false, true) => bytes += entry_bytes(&record.key),
+                (true, false) => bytes -= entry_bytes(&record.key),
                 _ => {}
             }
             *current = record.present.then_some(record.sequence);
@@ -401,24 +407,30 @@ impl BlockHashStore {
         if state
             .entries
             .get(&record.key)
-            .is_some_and(|s| *s > record.sequence)
+            .is_some_and(|entry| entry.sequence > record.sequence)
         {
             return;
         }
         if record.present {
             if state
                 .entries
-                .insert(record.key.clone(), record.sequence)
+                .insert(
+                    record.key.clone(),
+                    InventoryEntry {
+                        sequence: record.sequence,
+                        metadata: record.metadata.expect("validated present metadata"),
+                    },
+                )
                 .is_none()
             {
-                state.bytes += key_bytes(&record.key);
+                state.bytes += entry_bytes(&record.key);
                 let mut owners = self.blocks.entry(record.key.clone()).or_default();
                 let before = owners.len();
                 owners.insert(Arc::from(node));
                 self.redundancy.adjust(before as u64, owners.len() as u64);
             }
         } else if state.entries.remove(&record.key).is_some() {
-            state.bytes -= key_bytes(&record.key);
+            state.bytes -= entry_bytes(&record.key);
             self.remove_owner(node, &record.key);
         }
     }
@@ -474,12 +486,14 @@ impl BlockHashStore {
                 {
                     return None;
                 }
+                let entry = state.entries.get(key)?;
                 Some(ReplicaLocation {
                     owner: CacheOwner {
                         endpoint: endpoint.to_string(),
                         incarnation: state.node_id,
                     },
-                    sequence: *state.entries.get(key)?,
+                    sequence: entry.sequence,
+                    metadata: entry.metadata,
                 })
             })
             .take(DISCOVERY_MAX_REPLICAS)
@@ -601,6 +615,10 @@ fn key_bytes(key: &StateKey) -> usize {
     192 + 2 * (key.namespace.len() + key.hash.len())
 }
 
+fn entry_bytes(key: &StateKey) -> usize {
+    key_bytes(key) + std::mem::size_of::<InventoryEntry>()
+}
+
 fn validate_records(records: &[InventoryRecord]) -> Result<(), StoreError> {
     if records.is_empty()
         || records.len() > INVENTORY_BATCH_RECORDS
@@ -609,9 +627,14 @@ fn validate_records(records: &[InventoryRecord]) -> Result<(), StoreError> {
             .map(InventoryRecord::estimated_size)
             .sum::<usize>()
             > INVENTORY_BATCH_BYTES
-        || records
-            .iter()
-            .any(|r| r.sequence == 0 || r.key.namespace.is_empty() || r.key.hash.is_empty())
+        || records.iter().any(|r| {
+            r.sequence == 0
+                || r.key.namespace.is_empty()
+                || r.key.hash.is_empty()
+                || r.present != r.metadata.is_some()
+                || r.metadata
+                    .is_some_and(|metadata| metadata.medium == ReplicaMedium::Unknown)
+        })
     {
         Err(StoreError::InvalidInventory)
     } else {

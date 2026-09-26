@@ -1,10 +1,16 @@
 use super::*;
+use orbitkv_state::{ReplicaMedium, ReplicaMetadata, ReplicaRepresentation};
 
 fn record(key: u8, sequence: u64, present: bool) -> InventoryRecord {
     InventoryRecord {
         key: StateKey::new("ns".into(), vec![key]),
         sequence,
         present,
+        metadata: present.then_some(ReplicaMetadata {
+            medium: ReplicaMedium::Dram,
+            representation: ReplicaRepresentation::Raw,
+            stored_bytes: Some(4096),
+        }),
     }
 }
 
@@ -233,7 +239,7 @@ fn snapshot_cut_preserves_newer_samples_and_replays_evictions() {
 fn malformed_batches_are_atomic_and_shard_budget_is_enforced() {
     let store = BlockHashStore::with_config(StoreConfig {
         metadata_bytes: node_bytes("a")
-            + key_bytes(&record(1, 1, true).key)
+            + entry_bytes(&record(1, 1, true).key)
             + 64
             + 2 * record(1, 1, true).estimated_size(),
         ..StoreConfig::default()
@@ -307,9 +313,18 @@ fn malformed_batches_are_atomic_and_shard_budget_is_enforced() {
         vec![record(1, 0, true)],
         vec![record(1, 1, false)],
         vec![InventoryRecord {
+            metadata: None,
+            ..record(1, 1, true)
+        }],
+        vec![InventoryRecord {
             key: StateKey::new("ns".into(), vec![1; INVENTORY_BATCH_BYTES]),
             sequence: 1,
             present: true,
+            metadata: Some(ReplicaMetadata {
+                medium: ReplicaMedium::Dram,
+                representation: ReplicaRepresentation::Raw,
+                stored_bytes: Some(4096),
+            }),
         }],
     ] {
         assert!(
@@ -501,6 +516,11 @@ fn discovery_is_position_aligned_bounded_and_preserves_source_versions() {
                 incarnation: id
             },
             sequence: 2,
+            metadata: ReplicaMetadata {
+                medium: ReplicaMedium::Dram,
+                representation: ReplicaRepresentation::Raw,
+                stored_bytes: Some(4096),
+            },
         }]
     );
 }

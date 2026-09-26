@@ -104,7 +104,11 @@ impl ReplicaSet {
     #[cfg(feature = "mooncake")]
     pub(crate) fn set_peer_dram(&mut self, replicas: Vec<ReplicaLocation>) {
         self.replicas.retain(|replica| !replica.is_peer());
-        for location in replicas.into_iter().take(DISCOVERY_MAX_REPLICAS) {
+        for location in replicas
+            .into_iter()
+            .filter(|location| location.metadata.medium == orbitkv_state::ReplicaMedium::Dram)
+            .take(DISCOVERY_MAX_REPLICAS)
+        {
             if !self.peer_dram().any(|peer| peer.owner == location.owner) {
                 self.replicas.push(ReplicaCandidate {
                     medium: Medium::Dram,

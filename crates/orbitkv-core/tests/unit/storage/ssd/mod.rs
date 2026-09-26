@@ -316,6 +316,11 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
                         incarnation: uuid::Uuid::from_u128(1),
                     },
                     sequence: 1,
+                    metadata: orbitkv_state::ReplicaMetadata {
+                        medium: orbitkv_state::ReplicaMedium::Dram,
+                        representation: orbitkv_state::ReplicaRepresentation::Raw,
+                        stored_bytes: Some(4096),
+                    },
                 }]);
                 let route = plan.host_route(peer_available, allow_ssd, 0);
                 let expected_peer = cfg!(feature = "mooncake") && peer_available;
@@ -621,6 +626,11 @@ async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions
             incarnation: uuid::Uuid::from_u128(1),
         },
         sequence: 7,
+        metadata: orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Dram,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(4096),
+        },
     };
     plan.rows[0].set_peer_dram(vec![location]);
     assert!(FetchPlan::new(&mut plan.rows, 2).is_none());

@@ -35,6 +35,11 @@ fn peer_evidence_is_bounded_by_runtime_identity_and_preserves_local_memory() {
                 incarnation: uuid::Uuid::from_u128(i as u128 + 1),
             },
             sequence: i as u64 + 1,
+            metadata: orbitkv_state::ReplicaMetadata {
+                medium: orbitkv_state::ReplicaMedium::Dram,
+                representation: orbitkv_state::ReplicaRepresentation::Raw,
+                stored_bytes: Some(4096),
+            },
         })
         .collect();
     replicas.set_peer_dram(peers.clone());
@@ -46,6 +51,19 @@ fn peer_evidence_is_bounded_by_runtime_identity_and_preserves_local_memory() {
     assert!(replicas.peer_dram().all(|p| p.owner != peers[0].owner));
     replicas.set_peer_dram(vec![peers[1].clone(), peers[1].clone()]);
     assert_eq!(replicas.peer_dram().count(), 1);
+    replicas.set_peer_dram(vec![ReplicaLocation {
+        metadata: orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Ssd,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(4096),
+        },
+        ..peers[1].clone()
+    }]);
+    assert_eq!(
+        replicas.peer_dram().count(),
+        0,
+        "advertising a medium does not create an unsupported executor"
+    );
     replicas.set_peer_dram(Vec::new());
     assert!(
         replicas.is_available(),

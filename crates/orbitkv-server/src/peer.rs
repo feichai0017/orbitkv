@@ -143,6 +143,7 @@ impl Engine for P2pTransferService {
                 key: orbitkv_state::StateKey::new(req.namespace.clone(), hash.clone()),
                 sequence,
                 present: true,
+                metadata: None,
             })
             .collect();
         let ticket = Self::parse_ticket(req.ticket)?;

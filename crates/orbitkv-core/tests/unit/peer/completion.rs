@@ -184,7 +184,10 @@ impl Fixture {
                 key: StateKey::new("ns".into(), vec![1]),
                 sequence: 1,
                 present: true,
+                metadata: None,
             }],
+            stored_bytes: None,
+            representation: orbitkv_state::ReplicaRepresentation::Unknown,
         }
     }
 }

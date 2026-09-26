@@ -151,11 +151,34 @@ service Engine {
   rpc Health(HealthRequest) returns (HealthResponse);
 }
 
+enum ReplicaMedium {
+  REPLICA_MEDIUM_UNKNOWN = 0;
+  REPLICA_MEDIUM_DRAM = 1;
+  REPLICA_MEDIUM_SSD = 2;
+  REPLICA_MEDIUM_HBM = 3;
+}
+
+enum ReplicaRepresentation {
+  REPLICA_REPRESENTATION_UNKNOWN = 0;
+  REPLICA_REPRESENTATION_RAW = 1;
+  REPLICA_REPRESENTATION_ANS = 2;
+  REPLICA_REPRESENTATION_FP8 = 3;
+  REPLICA_REPRESENTATION_TURBO_QUANT = 4;
+  REPLICA_REPRESENTATION_MIXED = 5;
+}
+
+message ReplicaMetadata {
+  ReplicaMedium medium = 1;
+  ReplicaRepresentation representation = 2;
+  optional uint64 stored_bytes = 3;
+}
+
 message InventoryRecord {
   string namespace = 1;
   bytes block_hash = 2;
   uint64 sequence = 3;
   bool present = 4;
+  ReplicaMetadata metadata = 5;
 }
 
 message InventoryBegin { uint64 sequence = 1; }
@@ -213,6 +236,7 @@ message ReplicaLocation {
   string endpoint = 1;
   string incarnation = 2;
   uint64 sequence = 3;
+  ReplicaMetadata metadata = 4;
 }
 
 message BlockCandidates {
