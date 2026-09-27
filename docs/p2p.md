@@ -76,6 +76,30 @@ geometry. Source authorization, rather than metadata freshness, protects memory
 reads. Validate vLLM-to-vLLM and SGLang-to-SGLang separately; these tests do not
 establish cross-engine byte compatibility or hybrid-state completeness.
 
+Set `ORBITKV_PEER_PIPELINE=1` on the requesting Manager to authorize the next
+planned segment while the current segment's READ runs. The default is sequential.
+Only one READ and one following authorization can be active per fetch plan;
+the following segment allocates destination memory only when consumed. A failed
+or partial current READ discards the unused grant. A speculative authorization
+failure is retried on demand after the current READ drains, subject to the
+existing admission limits. On resource exhaustion, authorization may wait up to
+three seconds for that peer's releases already in progress before the attempt,
+then retry once. It does not wait for unrelated active READs; a rejected ticket's
+own cleanup cannot satisfy that wait. This also applies in sequential mode.
+The three-second bound covers only this release wait; authorization RPCs retain
+their own existing deadlines.
+Cancellation uses the existing known-ticket cleanup
+owner, including when the authorization response was lost.
+
+Source grants awaiting release acknowledgement can outlive those two active
+stages; the existing per-source 64 and global 1024 completion limits bound them.
+Lookahead can retain source memory earlier, so benchmark with identical source
+budgets and delayed release ACKs. `prepared_wait` records residence between
+authorization and consumption; speculative grants do not train the sequential
+composite route estimate. No distributed throughput improvement is claimed yet.
+See the [communication implementation sequence](communication-plan.md) for
+batched metadata and engine-side execution work that remains planned.
+
 ## Failure and configuration behavior
 
 - Registration rejects an already live Node ID. etcd persists restart counters
@@ -173,7 +197,10 @@ MC_FORCE_TCP=1 cargo test --release -p orbitkv-server \
 The first gate covers duplicate identities, epochs, Watch/compaction repair,
 coordinator stalls, membership bounds and immutable placement fencing. The second
 hosts catalog and source control on one Manager endpoint, verifies actual
-Mooncake/CUDA bytes, and checks local loads after remote admission is fenced.
+Mooncake/CUDA bytes across 260 blocks and multiple authorization segments, and
+checks local loads after remote admission is fenced. Run its
+`p2p_mooncake_remote_fetch_roundtrip` case with both `ORBITKV_PEER_PIPELINE=0`
+and `ORBITKV_PEER_PIPELINE=1` under the same source budget.
 The ordinary Rust suite also exercises two catalog endpoints and restart repair.
 These are same-host gates; multi-host serving and HA qualification remain next.
 

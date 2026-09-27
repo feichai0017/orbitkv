@@ -71,3 +71,95 @@ def test_batched_completion_is_linked_without_counting_each_request_as_a_transfe
         "p95": 3.5,
         "p99": 3.5,
     }
+    assert summary["completion_coverage"]["linked_restore_batches"] == 1
+    assert summary["completion_coverage"]["batches_with_legacy_delivery"] == 1
+    assert summary["completion_coverage"]["batches_without_delivery_timing"] == 0
+
+
+def test_shared_memory_completion_reports_client_latency_and_missing_delivery_timing(tmp_path):
+    events = []
+    for rid, key in (("a", "manager:1:2"), ("b", "manager:1:2"), ("c", "manager:1:3")):
+        events.extend(
+            [
+                {"request_id": rid, "stage": "restore_submit", "pid": 2, "monotonic_ns": 100},
+                {"request_id": rid, "stage": "restore_link", "restore_key": key},
+            ]
+        )
+        if rid != "c":
+            events.append(
+                {
+                    "request_id": rid,
+                    "stage": "gpu_ready",
+                    "pid": 2,
+                    "monotonic_ns": 3_000_100,
+                }
+            )
+    (tmp_path / "engine.log").write_text(
+        "\n".join("cache_timeline " + json.dumps(event) for event in events)
+    )
+    (tmp_path / "manager.log").write_text(
+        "\n".join(
+            "cache_timeline "
+            + json.dumps({"stage": stage, "restore_key": "manager:1:2", "elapsed_us": elapsed})
+            for stage, elapsed in (("restore_complete", 1500), ("restore_notification", 250))
+        )
+    )
+    samples = [{"request_id": rid} for rid in ("a", "b", "c")]
+    summary = collect(tmp_path, samples)
+    assert summary["completion_coverage"] == {
+        "linked_restore_batches": 2,
+        "batches_with_worker_terminal": 1,
+        "batches_with_notification": 1,
+        "batches_with_legacy_delivery": 0,
+        "batches_without_delivery_timing": 2,
+        "client_restore_submissions": 3,
+        "client_restore_intervals": 2,
+    }
+    assert summary["intervals"]["restore_ms"] == {
+        "count": 2,
+        "p50": 3,
+        "p95": 3,
+        "p99": 3,
+    }
+    assert summary["intervals"]["manager_restore_ms"]["count"] == 1
+    assert summary["intervals"]["completion_signal_ms"]["p50"] == 0.25
+    assert summary["intervals"]["completion_delivery_ms"] == {
+        "count": 0,
+        "p50": None,
+        "p95": None,
+        "p99": None,
+    }
+    assert json.loads((tmp_path / "timeline-summary.json").read_text()) == summary
+
+    # Mixed historical/current logs retain the measured sample without treating
+    # the second restore batch as either observed or zero-latency delivery.
+    with (tmp_path / "manager.log").open("a") as output:
+        output.write(
+            '\ncache_timeline {"stage":"restore_delivered",'
+            '"restore_key":"manager:1:2","elapsed_us":500}'
+        )
+    mixed = collect(tmp_path, samples)
+    assert mixed["completion_coverage"]["batches_with_legacy_delivery"] == 1
+    assert mixed["completion_coverage"]["batches_without_delivery_timing"] == 1
+    assert mixed["intervals"]["completion_delivery_ms"]["count"] == 1
+    assert mixed["intervals"]["completion_delivery_ms"]["p50"] == 0.5
+
+
+def test_equal_pids_in_distinct_logs_do_not_create_a_restore_interval(tmp_path):
+    for filename, stage, now in (
+        ("manager.log", "restore_submit", 100),
+        ("engine.log", "gpu_ready", 1_000_100),
+    ):
+        (tmp_path / filename).write_text(
+            "cache_timeline "
+            + json.dumps({"request_id": "a", "stage": stage, "pid": 1, "monotonic_ns": now})
+        )
+    summary = collect(tmp_path, [{"request_id": "a"}])
+    assert summary["intervals"]["restore_ms"] == {
+        "count": 0,
+        "p50": None,
+        "p95": None,
+        "p99": None,
+    }
+    assert summary["completion_coverage"]["client_restore_submissions"] == 0
+    assert summary["completion_coverage"]["client_restore_intervals"] == 0

@@ -57,7 +57,9 @@ and lock release. Process
 IPC supports query, publish, asynchronous restore completion, and lease
 release:
 iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
-passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
+passes sealed descriptor and restore-result memfds, and supplies an eventfd for
+wakeups. Restore completion is read and acknowledged from its shared record;
+the GPU outcome waiter publishes it directly without a dispatcher scan or terminal RPC.
 The vLLM adapter requires this path and fails fast if the Cache Manager socket
 is missing. Each inference process must reach a Cache Manager on its own host.
 Pending queries return `Loading` and continue on Tokio. The endpoint owns one

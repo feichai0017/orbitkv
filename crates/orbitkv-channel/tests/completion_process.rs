@@ -1,0 +1,162 @@
+#![cfg(target_os = "linux")]
+
+use std::process::{Child, Command};
+use std::time::{Duration, Instant};
+
+use orbitkv_channel::{
+    BootstrapServer, CacheClient, CallOptions, CommandCode, RESPONSE_FLAG_REQUEST_CONSUMED,
+    Response, RestoreRequest, RestoreResponse, RestoreState, TransportServer,
+};
+
+struct ChildGuard(Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn native_wait_consumes_success_and_error_across_processes_without_poll_rpc() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = ChildGuard(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "shared_completion_child", "--nocapture"])
+            .env("ORBITKV_COMPLETION_TEST_DIRECTORY", dir.path())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !dir.path().join("ready").exists() {
+        assert!(Instant::now() < deadline, "child did not start");
+        assert!(child.0.try_wait().unwrap().is_none(), "child exited early");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let client =
+        CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
+    let handles: Vec<_> = ["success", "failure"]
+        .into_iter()
+        .map(|instance| {
+            client
+                .start_restore(&RestoreRequest {
+                    instance_id: instance.into(),
+                    tp_rank: 0,
+                    device_id: 0,
+                    layer_groups: vec![],
+                    loads: vec![],
+                })
+                .unwrap()
+        })
+        .collect();
+    for &handle in &handles {
+        assert_eq!(
+            client.poll_restore(handle).unwrap().state,
+            RestoreState::Pending
+        );
+    }
+    std::fs::write(dir.path().join("complete"), b"").unwrap();
+    assert_eq!(
+        client
+            .wait_restore(handles[0], Duration::from_secs(5))
+            .unwrap()
+            .state,
+        RestoreState::Succeeded
+    );
+    let failed = client
+        .wait_restore(handles[1], Duration::from_secs(5))
+        .unwrap();
+    assert_eq!(failed.state, RestoreState::Failed);
+    assert_eq!(failed.message, "GPU copy failed after drain: 错误");
+    assert!(
+        client.poll_restore(handles[0]).is_err(),
+        "terminal records are consumed once"
+    );
+    client.close();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "child did not observe disconnect"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn shared_completion_child() {
+    let Some(directory) = std::env::var_os("ORBITKV_COMPLETION_TEST_DIRECTORY") else {
+        return;
+    };
+    let directory = std::path::PathBuf::from(directory);
+    let name = format!("orbitkv/test/completions/{}", std::process::id());
+    let server = TransportServer::bind(&name).unwrap();
+    let bootstrap =
+        BootstrapServer::bind(directory.join("cache.sock"), &name, 91, 65536, 4096).unwrap();
+    std::fs::write(directory.join("ready"), b"").unwrap();
+    let mut session = bootstrap.accept().unwrap();
+    let mut next = 1;
+    let mut pending = Vec::new();
+    let mut calls = 0;
+    while session.is_alive().unwrap() {
+        server
+            .try_serve_for_epoch(91, |command| {
+                assert_eq!(command.code, CommandCode::Restore);
+                let slot = bootstrap
+                    .descriptor_slot(command.descriptor.offset)
+                    .unwrap();
+                session
+                    .validate_request(command.descriptor, command.arg0, slot)
+                    .unwrap();
+                // Any obsolete Poll command fails this decode. Only two Submits are allowed.
+                let request =
+                    RestoreRequest::decode(&bootstrap.arena().read(command.descriptor).unwrap())
+                        .unwrap();
+                calls += 1;
+                assert!(calls <= 2);
+                let id = session.completions().reserve(&mut next).unwrap();
+                pending.push((id, request.instance_id == "failure"));
+                let payload = RestoreResponse {
+                    operation_id: id,
+                    state: RestoreState::Pending,
+                    message: String::new(),
+                }
+                .encode()
+                .unwrap();
+                let mut response = Response::ok(command);
+                response.descriptor = bootstrap
+                    .arena()
+                    .write_response(command.descriptor, &payload)
+                    .unwrap();
+                response.value1 = RESPONSE_FLAG_REQUEST_CONSUMED;
+                session.complete_request().unwrap();
+                response
+            })
+            .unwrap();
+        if directory.join("complete").exists() && !pending.is_empty() {
+            for (id, failed) in pending.drain(..) {
+                session
+                    .completions()
+                    .complete(
+                        id,
+                        if failed {
+                            Err("GPU copy failed after drain: 错误".into())
+                        } else {
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+            }
+            session.notify().unwrap();
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        calls, 2,
+        "completion consumption must not issue Poll requests"
+    );
+}

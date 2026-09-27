@@ -278,7 +278,11 @@ the next architectural performance step.
 1. **Observe completion promptly.** The SGLang load worker used to sleep for
    10 ms between restore polls. It now waits on the existing completion
    notification, with a 50 ms fallback poll if a notification is lost. The
-   shared client owns the deadline. Timeout or transport failure still leaves
+   shared client owns the deadline. Terminal polling now reads a shared result
+   record directly, and an outcome waiter publishes and notifies without the
+   endpoint's idle scan. Submission still uses iceoryx2 and its existing dispatch
+   scheduling. The historical tables above do not measure this new path.
+   Timeout or transport failure still leaves
    destination ownership unresolved and faults the engine; neither condition
    means GPU pages can be reused.
 2. **Measure transfer fragmentation before choosing a backend.** Record

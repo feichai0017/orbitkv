@@ -274,12 +274,6 @@ fn restore_request_and_response_round_trip() {
         RestoreResponse::decode(&response.encode().unwrap()).unwrap(),
         response
     );
-
-    let poll = RestoreCommand::Poll { operation_id: 42 };
-    assert_eq!(
-        RestoreCommand::decode(&poll.encode().unwrap()).unwrap(),
-        poll
-    );
 }
 
 #[test]

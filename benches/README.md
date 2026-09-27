@@ -20,6 +20,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `concurrent.py` | Closed-loop bursts, shared/mixed prefixes, batch counters and sampled memory peaks |
 | `sustained.py` | Bounded continuous traffic mixing reusable prefixes with cold requests |
 | `metrics.py` | Cache-source evidence and statistical summaries |
+| `timeline.py` | Request-linked preparation/restore intervals and explicit completion measurement coverage |
 | `report.py` | Offline CSV/JSON reports from complete raw runs |
 | `serving.sh` | vLLM serving measurements against an already running endpoint |
 | `sharegpt.py` | Multi-turn workload using the pinned vLLM benchmark scripts |
@@ -339,7 +340,10 @@ request ID for correlating measured traffic with the logs.
 `timeline.jsonl` extracts only measured requests; `timeline-summary.json` reports
 stage coverage and preparation/restore/queue intervals. Durations use one
 process's monotonic clock or Manager-local elapsed time, never a subtraction
-of clocks on different hosts. Missing stages are not counted as zero latency.
+of clocks on different hosts. Missing restore/completion intervals have
+`count: 0` and null quantiles. `completion_coverage` counts linked restore batches,
+observed worker/notification/legacy-delivery events and client restore intervals;
+missing stages are not counted as zero latency.
 The [initial Qwen3-8B pressure controls](../docs/queued-warming.md#initial-pressure-controls)
 increased SSD bytes per request without a throughput gain. These results also
 retain a native HBM control for SGLang's prepared-reference output differences.
@@ -456,14 +460,25 @@ Add `--trace-transfers` to either engine's OrbitKV run for request-correlated
 discovery, host-read, restore and completion observations in `timeline.jsonl`
 and `timeline-summary.json`. Manager restore time includes dispatch and worker
 queueing; the load histogram separately measures the H2D worker task including
-stream synchronization. Completion signal and delivery intervals start at the
-GPU worker's terminal timestamp. A signal event records the notification attempt,
-whereas delivery records the terminal poll response. These are distinct from
-the engine's own restore-submit to GPU-ready interval. Shared restore batches
-are counted once, using the Manager epoch and operation ID. Dense ordinary
-queries combine candidate discovery and reading; missing separate discovery
-samples do not mean discovery takes zero time. No subtraction between process
-clocks is used, and these overlapping intervals must not be added to obtain TTFT.
+stream synchronization. `completion_signal_ms` starts at the GPU worker's terminal
+timestamp and records the notification attempt, including the completion record
+publication. Shared-memory completion consumes no Manager poll RPC, so current
+logs do not contain an isolated consumer-delivery timer. The parser preserves
+historical `restore_delivered` events as `completion_delivery_ms` (worker terminal
+to Manager terminal-poll response); current runs report count zero and null
+quantiles for this interval. `completion_coverage` exposes partial historical
+coverage when a log contains both kinds of record.
+
+For current revision comparisons, use `restore_ms`: the engine's same-process
+restore-submit to GPU-ready observation. It includes submission, restore work,
+waiting and consumer scheduling, and does not isolate completion delivery. Compare
+matched workloads with tracing enabled on both revisions; retain interval counts,
+TTFT and Manager restore/copy observations. Do not subtract their percentiles to
+estimate delivery latency. Shared Manager restore batches count once, using the
+Manager epoch and operation ID; engine intervals count per request and process.
+Dense ordinary queries combine candidate discovery and reading; missing separate
+discovery samples do not mean discovery takes zero time. No subtraction between
+process clocks is used, and overlapping intervals must not be added to obtain TTFT.
 
 ## Report existing runs
 

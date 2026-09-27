@@ -11,7 +11,7 @@ prefetch, or can be fetched from a peer with Mooncake.
 | Boundary | Control | Payload | Status |
 | --- | --- | --- | --- |
 | inference process to local Cache Manager | iceoryx2 request/response and UDS lifecycle | registered CUDA IPC pages | integrated |
-| local bootstrap and lifecycle | Unix socket with credential and file-descriptor passing | memfd/eventfd handles and registration metadata | implemented; explicit region protocol planned |
+| local bootstrap and lifecycle | Unix socket with credential and file-descriptor passing | descriptor/result memfds, eventfd and registration metadata | implemented; payload region protocol planned |
 | Cache Manager to Cache Manager | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | stable Mooncake runtime integrated |
 | replica directory | soft-state network API | no KV bytes | embedded fixed shards; replication planned |
 | administration | HTTP | no KV bytes | existing |
@@ -51,12 +51,12 @@ process-death detection.
 
 The Cache Manager process endpoint supports `Ping`, `QueryBundle`,
 stale-session fencing, and `Shutdown`. `ChannelClient` obtains the service
-identity, an exclusive arena slot, a client token, the arena memfd, and a
+identity, an exclusive arena slot, a client token, descriptor and restore-result memfds, and a
 notification eventfd through a mode-0600 Unix socket. `SO_PEERCRED` restricts the
 bootstrap to the Cache Manager's uid. Each request has an odd generation and each
 response advances it by one; reconnecting to a reused slot starts beyond the
-prior generation, so delayed commands cannot target a new occupant. The memfd
-is sealed against growth and shrinking. The eventfd wakes clients when an
+prior generation, so delayed commands cannot target a new occupant. Both memfds
+are sealed against growth and shrinking. The eventfd wakes clients when an
 asynchronous restore reaches a terminal state; ordinary control responses still
 arrive through iceoryx2's request/response channel.
 
@@ -70,11 +70,17 @@ runs on Tokio. The dispatcher can serve other requests during D2H, but the
 caller still waits: success means D2H copies have completed and host
 publication has been queued. A later query observes the blocks after the write
 pipeline seals them. `Restore` submits
-the existing in-process GPU load, returns an operation ID, signals its session's
-eventfd at terminal completion, and is consumed through a follow-up poll. The native Python
+the existing in-process GPU load and returns an operation ID. A task awaits the
+worker's drained outcome, publishes a shared result, then signals the session's
+eventfd. The dispatcher no longer scans restores to discover completion. The native Python
 `CacheManagerClient` exposes `start_restore`/`poll_restore`, a notification fd,
-and `wait_restore`. Rust owns eventfd waiting and the 50 ms lost-notification
-fallback. A handle is bound to the issuing client, including clients connected
+and `wait_restore`. Polling reads and acknowledges the matching shared record;
+there is no terminal Poll RPC. Rust owns eventfd waiting and the 50 ms lost-notification
+fallback. Each session has 1024 result slots, each with a generation and a bounded
+4096-byte UTF-8 error payload. A slot is reused only after terminal acknowledgement.
+The Manager retains up to 64 mappings, including disconnected sessions retained
+by outcome tasks; a disconnected client's own retained FDs are outside that
+Manager budget. A handle is bound to the issuing client, including clients connected
 to the same Manager epoch. A timeout leaves its GPU ownership unresolved.
 Both adapters use these operations through their same-host Cache Manager; KV
 payload bytes do not travel through the descriptor arena. The adapter exposes
@@ -92,7 +98,8 @@ scheduler topology this requires all configured TP shards to be on the scheduler
 host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
-returns `Loading`. Channel ABI 5 separates query submission from ticket polling.
+returns `Loading`. Channel ABI 6 retains separate query submission and ticket polling
+and uses shared restore results.
 Query schema 5 distinguishes metadata-only discovery from leased payload reads
 and marks selected recovery reads so HLL counts the logical discovery only once.
 Discovery returns `Candidates`, never a restore lease, and uses bounded query
@@ -174,7 +181,7 @@ the manager terminates instead of publishing a terminal result and recycling
 potentially active memory. This is a transfer lifetime fence; allocator-owned
 per-page generations and graceful cancellation remain separate work.
 
-The bootstrap protocol is version 2. After FD exchange, its UDS also carries
+The bootstrap protocol is version 3, passing three FDs. After FD exchange, its UDS also carries
 versioned, epoch-checked lifecycle frames with a 16 MiB metadata limit. These
 frames reuse the registration protobuf schema without a gRPC channel or HTTP/2.
 Malformed frames close the connection; application errors preserve framing.

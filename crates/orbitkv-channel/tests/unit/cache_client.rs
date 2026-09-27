@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     BootstrapServer, BootstrapSession, Command, CommandCode, RESPONSE_FLAG_REQUEST_CONSUMED,
-    Response, RestoreCommand, TransportServer,
+    Response, TransportServer,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -406,23 +406,29 @@ fn rejected_revision_retires_the_previous_interest_without_reusing_its_ticket() 
 
 #[test]
 fn restore_deadline_and_lost_notification_preserve_ownership_and_reject_other_clients() {
-    let completed = Arc::new(AtomicBool::new(false));
-    let done = Arc::clone(&completed);
-    let peer = Peer::new(move |command, payload, _| {
+    let (submitted_tx, submitted_rx) = mpsc::channel();
+    let calls = Arc::new(AtomicU64::new(0));
+    let observed_calls = Arc::clone(&calls);
+    let peer = Peer::new(move |command, payload, session| {
         assert_eq!(
             command.code,
             CommandCode::Restore,
-            "a timeout must never release pages"
+            "timeout must never release pages"
         );
-        RestoreCommand::decode(payload).unwrap();
+        assert_eq!(
+            observed_calls.fetch_add(1, Ordering::Relaxed),
+            0,
+            "poll/wait must not issue control requests"
+        );
+        RestoreRequest::decode(payload).unwrap();
+        let operation_id = session.completions().reserve(&mut 9).unwrap();
+        submitted_tx
+            .send((Arc::clone(session.completions()), operation_id))
+            .unwrap();
         Some(
             RestoreResponse {
-                operation_id: 9,
-                state: if done.load(Ordering::Acquire) {
-                    RestoreState::Succeeded
-                } else {
-                    RestoreState::Pending
-                },
+                operation_id,
+                state: RestoreState::Pending,
                 message: String::new(),
             }
             .encode()
@@ -445,10 +451,11 @@ fn restore_deadline_and_lost_notification_preserve_ownership_and_reject_other_cl
         client.wait_restore(handle, Duration::from_millis(2)),
         Err(ChannelError::RestoreTimeout { .. })
     ));
+    let (records, id) = submitted_rx.recv().unwrap();
     thread::scope(|scope| {
         scope.spawn(|| {
             thread::sleep(Duration::from_millis(10));
-            completed.store(true, Ordering::Release);
+            records.complete(id, Ok(())).unwrap(); // Deliberately lose the eventfd notification.
         });
         assert_eq!(
             client
@@ -712,4 +719,63 @@ fn prepared_prefix_claims_partial_hits_without_an_extra_payload_query() {
     assert!(!released.load(Ordering::Acquire));
     client.release(ready.lease).unwrap();
     assert!(released.load(Ordering::Acquire));
+}
+
+#[test]
+fn manager_disconnect_rejects_pending_without_inventing_a_terminal_result() {
+    for terminal_before_disconnect in [false, true] {
+        let (submitted_tx, submitted_rx) = mpsc::channel();
+        let peer = Peer::new(move |command, payload, session| {
+            assert_eq!(command.code, CommandCode::Restore);
+            RestoreRequest::decode(payload).unwrap();
+            let id = session.completions().reserve(&mut 1).unwrap();
+            submitted_tx
+                .send((Arc::clone(session.completions()), id))
+                .unwrap();
+            Some(
+                RestoreResponse {
+                    operation_id: id,
+                    state: RestoreState::Pending,
+                    message: String::new(),
+                }
+                .encode()
+                .unwrap(),
+            )
+        });
+        let client = peer.client();
+        let handle = client
+            .start_restore(&RestoreRequest {
+                instance_id: "m".into(),
+                tp_rank: 0,
+                device_id: 0,
+                layer_groups: vec![],
+                loads: vec![],
+            })
+            .unwrap();
+        let (records, id) = submitted_rx.recv().unwrap();
+        if terminal_before_disconnect {
+            records.complete(id, Ok(())).unwrap();
+        }
+        drop(peer);
+        if terminal_before_disconnect {
+            assert!(
+                client
+                    .restore_completions_ready(Duration::from_secs(1))
+                    .unwrap()
+            );
+            assert_eq!(
+                client
+                    .wait_restore(handle, Duration::from_secs(1))
+                    .unwrap()
+                    .state,
+                RestoreState::Succeeded
+            );
+        } else {
+            assert!(matches!(
+                client.poll_restore(handle),
+                Err(ChannelError::SessionRequiresReconnect)
+            ));
+            assert_eq!(records.poll(id).unwrap().state, RestoreState::Pending);
+        }
+    }
 }

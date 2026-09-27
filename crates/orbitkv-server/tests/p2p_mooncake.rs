@@ -279,7 +279,9 @@ fn mooncake_nics() -> Vec<String> {
 
 // ── Test ────────────────────────────────────────────────────────────────────
 
-const NUM_BLOCKS: usize = 4;
+// Cross multiple discovery/authorization segments so the opt-in lookahead path
+// also exercises real source-budget pressure and Mooncake READ ownership.
+const NUM_BLOCKS: usize = orbitkv_state::DISCOVERY_MAX_KEYS * 2 + 4;
 const BLOCK_SIZE: usize = 1024;
 const TOTAL_SIZE: usize = NUM_BLOCKS * BLOCK_SIZE;
 const NAMESPACE: &str = "test-p2p";
@@ -397,6 +399,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // Source authorization fences both restarts and individual residency episodes.
     let evidence = locate(&stores, &cache_namespace, &stored_hashes, "requester");
+    let grant_blocks = orbitkv_state::DISCOVERY_MAX_KEYS;
     let mut peer = EngineClient::connect(format!("http://127.0.0.1:{port_a}"))
         .await
         .unwrap();
@@ -416,10 +419,13 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     };
     let authorization = QueryBlocksForTransferRequest {
         namespace: cache_namespace.clone(),
-        block_hashes: stored_hashes.clone(),
+        block_hashes: stored_hashes[..grant_blocks].to_vec(),
         ticket: Some(ticket.clone()),
         owner_incarnation: evidence[0].replicas[0].owner.incarnation.to_string(),
-        residency_sequences: evidence.iter().map(|r| r.replicas[0].sequence).collect(),
+        residency_sequences: evidence[..grant_blocks]
+            .iter()
+            .map(|r| r.replicas[0].sequence)
+            .collect(),
     };
     assert!(membership_a.renew(Instant::now(), Duration::from_secs(300)));
     let mut stale_runtime = authorization.clone();
@@ -440,7 +446,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(granted.blocks.len(), NUM_BLOCKS);
+    assert_eq!(granted.blocks.len(), grant_blocks);
     assert_eq!(engine_a.expire_transfer_locks(), 1);
     assert_eq!(engine_a.expire_transfer_locks(), 0);
     assert_eq!(
@@ -694,13 +700,13 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     let fresh = locate(&stores, &cache_namespace, &stored_hashes, "requester");
     let fresh_authorization = QueryBlocksForTransferRequest {
         namespace: cache_namespace.clone(),
-        block_hashes: stored_hashes.clone(),
+        block_hashes: stored_hashes[..grant_blocks].to_vec(),
         ticket: Some(TransferTicket {
             generation: 3,
             ..ticket.clone()
         }),
         owner_incarnation: membership_a.owner().incarnation.to_string(),
-        residency_sequences: fresh
+        residency_sequences: fresh[..grant_blocks]
             .iter()
             .map(|row| {
                 row.replicas

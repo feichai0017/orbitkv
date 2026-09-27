@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use log::{info, warn};
-use orbitkv_proto::proto::engine::TransferBlockInfo;
+use orbitkv_proto::proto::engine::{QueryBlocksForTransferResponse, TransferBlockInfo};
 use orbitkv_transfer::{TransferOp, TransferSlice};
 
 use crate::memory::numa::NumaNode;
@@ -14,7 +14,9 @@ use crate::memory::numa::NumaNode;
 use opentelemetry::KeyValue;
 
 use super::completion::{TransferCompletions, TransferLockGuard};
-use super::execute::{FetchResult, SegmentFetcher, SegmentOutcome, execute_fetch_plan};
+use super::execute::{
+    AuthorizationError, AuthorizationMode, FetchResult, SegmentFetcher, execute_fetch_plan,
+};
 use super::transport::MooncakeTransport;
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resource, resource_id};
@@ -36,6 +38,10 @@ const LOCK_TIMEOUT_MARGIN: Duration = Duration::from_secs(60);
 /// whole-prefix slab can force eviction of far more bytes than the fetch needs.
 const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Opt in after comparing with sequential authorization/READ on the workload.
+static PEER_PIPELINE: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("ORBITKV_PEER_PIPELINE").as_deref() == Ok("1"));
+
 /// Mooncake remote block fetch backing store.
 ///
 /// When all requested blocks are missing locally, queries Catalog for their
@@ -49,16 +55,32 @@ pub(crate) struct PeerReader {
     allocate_fn: AllocateFn,
 }
 
+pub(super) struct AuthorizedSegment {
+    response: QueryBlocksForTransferResponse,
+    lock_guard: TransferLockGuard,
+    authorized_at: Instant,
+    query_elapsed: Duration,
+    resource: Resource,
+    route_observation: Observation,
+}
+
 #[tonic::async_trait]
 impl SegmentFetcher for PeerReader {
-    async fn fetch_segment(&self, segment: &FetchSegment, req_id: &str) -> SegmentOutcome {
+    type Grant = AuthorizedSegment;
+
+    async fn authorize_segment(
+        &self,
+        segment: &FetchSegment,
+        mode: AuthorizationMode,
+    ) -> Result<Self::Grant, AuthorizationError> {
         if !self.membership.permits(&segment.owner) {
-            return SegmentOutcome::Rejected;
+            return Err(AuthorizationError::Rejected);
         }
         let remote_addr = &segment.owner.endpoint;
-        let namespace = &segment.records[0].key.namespace;
-        let t0 = Instant::now();
-        let mut route_observation = if crate::cost::enabled() {
+        // A prepared grant can wait for the preceding READ. That residence time
+        // is not this route's service cost; keep leaf authorization/READ samples
+        // but train the composite route only on demand-authorized segments.
+        let mut route_observation = if mode == AuthorizationMode::Demand && crate::cost::enabled() {
             Observation::new(segment.cost_key(), None)
         } else {
             Observation::disabled()
@@ -126,7 +148,7 @@ impl SegmentFetcher for PeerReader {
                         },
                     );
                 }
-                return SegmentOutcome::Rejected;
+                return Err(AuthorizationError::Rejected);
             }
             Err(error)
                 if matches!(
@@ -138,7 +160,7 @@ impl SegmentFetcher for PeerReader {
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "rejected")]);
-                return SegmentOutcome::Rejected;
+                return Err(AuthorizationError::Rejected);
             }
             Err(e) => {
                 route_observation.finish(
@@ -155,7 +177,7 @@ impl SegmentFetcher for PeerReader {
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "error")]);
-                return SegmentOutcome::Failed;
+                return Err(AuthorizationError::Failed);
             }
         };
 
@@ -175,8 +197,37 @@ impl SegmentFetcher for PeerReader {
             core_metrics()
                 .remote_fetch_total
                 .add(1, &[KeyValue::new("status", "error")]);
-            return SegmentOutcome::Failed;
+            return Err(AuthorizationError::Failed);
         }
+
+        Ok(AuthorizedSegment {
+            response,
+            lock_guard,
+            authorized_at: Instant::now(),
+            query_elapsed,
+            resource,
+            route_observation,
+        })
+    }
+
+    async fn fetch_segment(
+        &self,
+        segment: &FetchSegment,
+        grant: Self::Grant,
+        req_id: &str,
+    ) -> Result<MaterializedBlocks, ()> {
+        let AuthorizedSegment {
+            response,
+            lock_guard,
+            authorized_at,
+            query_elapsed,
+            resource,
+            route_observation,
+        } = grant;
+        let prepared_wait = authorized_at.elapsed();
+        let transfer_start = Instant::now();
+        let remote_addr = &segment.owner.endpoint;
+        let namespace = &segment.records[0].key.namespace;
 
         // Mooncake READ all blocks + build SealedBlocks.
         let transfer_timeout = transfer_timeout_from_server(response.lock_timeout_secs);
@@ -208,12 +259,14 @@ impl SegmentFetcher for PeerReader {
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "error")]);
-                return SegmentOutcome::Failed;
+                return Err(());
             }
         };
         route_observation.finish(Outcome::Completed, Some(total_bytes));
 
-        let elapsed = t0.elapsed();
+        // Retain authorization + payload service timing. Lookahead residence
+        // belongs to the pipeline queue, not the READ or its throughput sample.
+        let elapsed = query_elapsed + transfer_start.elapsed();
         let mb = total_bytes as f64 / (1024.0 * 1024.0);
         let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
         let throughput_mib_s = if elapsed.as_secs_f64() > 0.0 {
@@ -230,8 +283,9 @@ impl SegmentFetcher for PeerReader {
             transfer_timing.numa_slab_count,
         );
         info!(
-            "Mooncake fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
+            "Mooncake fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} prepared_wait_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
             query_elapsed.as_secs_f64() * 1000.0,
+            prepared_wait.as_secs_f64() * 1000.0,
             transfer_timing.build_transfer_tasks.as_secs_f64() * 1000.0,
             transfer_timing.mooncake_wait.as_secs_f64() * 1000.0,
             transfer_timing.rebuild.as_secs_f64() * 1000.0,
@@ -252,6 +306,7 @@ impl SegmentFetcher for PeerReader {
             }
         }
         for (stage, duration) in [
+            ("prepared_wait", prepared_wait),
             ("allocation", transfer_timing.build_transfer_tasks),
             ("read", transfer_timing.mooncake_wait),
             ("rebuild", transfer_timing.rebuild),
@@ -261,7 +316,7 @@ impl SegmentFetcher for PeerReader {
                 &[KeyValue::new("stage", stage), KeyValue::new("status", "ok")],
             );
         }
-        SegmentOutcome::Fetched(result)
+        Ok(result)
     }
 }
 
@@ -320,7 +375,7 @@ impl PeerReader {
     pub(crate) async fn fetch_plan(&self, plan: FetchPlan<'_>, req_id: &str) -> FetchResult {
         let planned_blocks = plan.block_count();
         let started_at = Instant::now();
-        let result = execute_fetch_plan(self, plan, req_id).await;
+        let result = execute_fetch_plan(self, plan, req_id, *PEER_PIPELINE).await;
         let metrics = core_metrics();
         metrics
             .remote_fetch_plan_segments

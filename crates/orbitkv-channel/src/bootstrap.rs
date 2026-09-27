@@ -5,7 +5,7 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use rustix::event::{EventfdFlags, eventfd};
@@ -17,13 +17,16 @@ use rustix::net::{
 use rustix::process::geteuid;
 use thiserror::Error;
 
-use crate::{ArenaError, DescriptorArena, DescriptorRef};
+use crate::{ArenaError, CompletionError, DescriptorArena, DescriptorRef, RestoreCompletions};
 
 const BOOTSTRAP_MAGIC: u32 = 0x4f52_4242; // ORBB
-// Version 2 requires lifecycle framing on the persistent bootstrap socket.
-const BOOTSTRAP_VERSION: u16 = 2;
+// Version 3 adds a session-owned restore completion memfd.
+const BOOTSTRAP_VERSION: u16 = 3;
 const BOOTSTRAP_BYTES: usize = 256;
-const BOOTSTRAP_FD_COUNT: usize = 2;
+const BOOTSTRAP_FD_COUNT: usize = 3;
+// Match the iceoryx2 client limit. Detached restore publishers also hold this
+// budget until completion, even after the bootstrap session disconnects.
+const MAX_COMPLETION_SESSIONS: usize = 64;
 const SERVICE_NAME_OFFSET: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +54,10 @@ pub enum BootstrapError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Arena(#[from] ArenaError),
+    #[error(transparent)]
+    Completion(#[from] CompletionError),
+    #[error("restore completion session budget exhausted")]
+    CompletionBudget,
     #[error("peer uid {actual} is not permitted; expected {expected}")]
     PeerUid { expected: u32, actual: u32 },
     #[error("invalid bootstrap magic: {0:#x}")]
@@ -92,6 +99,7 @@ pub struct BootstrapServer {
     session_epoch: u64,
     slots: Arc<Mutex<Vec<bool>>>,
     next_client_token: AtomicU64,
+    completion_maps: Mutex<Vec<Weak<RestoreCompletions>>>,
 }
 
 impl BootstrapServer {
@@ -121,6 +129,7 @@ impl BootstrapServer {
             session_epoch,
             slots,
             next_client_token: AtomicU64::new(session_epoch.rotate_left(17) | 1),
+            completion_maps: Mutex::new(Vec::new()),
         })
     }
 
@@ -153,6 +162,13 @@ impl BootstrapServer {
                 return Err(std::io::Error::from(error).into());
             }
         };
+        let completions = match self.create_completions(client_token, notification) {
+            Ok(completions) => completions,
+            Err(error) => {
+                self.release_slot(slot_index);
+                return Err(error);
+            }
+        };
         let info = BootstrapInfo {
             service_name: self.service_name.clone(),
             session_epoch: self.session_epoch,
@@ -163,7 +179,13 @@ impl BootstrapServer {
             initial_generation,
             client_token,
         };
-        if let Err(error) = send_bootstrap(&stream, &info, self.arena.file(), &notification) {
+        if let Err(error) = send_bootstrap(
+            &stream,
+            &info,
+            self.arena.file(),
+            completions.notification_fd(),
+            completions.file(),
+        ) {
             self.release_slot(slot_index);
             return Err(error);
         }
@@ -174,12 +196,34 @@ impl BootstrapServer {
         Ok(BootstrapSession {
             stream,
             credentials,
-            notification,
+            completions,
             slot_index,
             client_token,
             next_request_generation: initial_generation,
             slots: Arc::clone(&self.slots),
         })
+    }
+
+    fn create_completions(
+        &self,
+        token: u64,
+        notification: std::os::fd::OwnedFd,
+    ) -> Result<Arc<RestoreCompletions>, BootstrapError> {
+        let mut maps = self
+            .completion_maps
+            .lock()
+            .map_err(|_| ArenaError::Poisoned)?;
+        maps.retain(|map| map.strong_count() != 0);
+        if maps.len() >= MAX_COMPLETION_SESSIONS {
+            return Err(BootstrapError::CompletionBudget);
+        }
+        let completions = Arc::new(RestoreCompletions::create(
+            self.session_epoch,
+            token,
+            notification,
+        )?);
+        maps.push(Arc::downgrade(&completions));
+        Ok(completions)
     }
 
     pub fn arena(&self) -> &DescriptorArena {
@@ -264,9 +308,9 @@ impl SocketIdentity {
 }
 
 pub struct BootstrapSession {
+    completions: Arc<RestoreCompletions>,
     stream: UnixStream,
     credentials: PeerCredentials,
-    notification: std::os::fd::OwnedFd,
     slot_index: usize,
     client_token: u64,
     next_request_generation: u64,
@@ -274,6 +318,10 @@ pub struct BootstrapSession {
 }
 
 impl BootstrapSession {
+    pub fn completions(&self) -> &Arc<RestoreCompletions> {
+        &self.completions
+    }
+
     pub fn credentials(&self) -> PeerCredentials {
         self.credentials
     }
@@ -283,22 +331,11 @@ impl BootstrapSession {
     }
 
     pub fn notification_fd(&self) -> &std::os::fd::OwnedFd {
-        &self.notification
+        self.completions.notification_fd()
     }
 
     pub fn notify(&self) -> Result<(), BootstrapError> {
-        let written = match rustix::io::write(&self.notification, &1u64.to_ne_bytes()) {
-            Ok(written) => written,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
-            Err(error) => return Err(std::io::Error::from(error).into()),
-        };
-        if written != std::mem::size_of::<u64>() {
-            return Err(BootstrapError::PayloadLength {
-                expected: std::mem::size_of::<u64>(),
-                actual: written,
-            });
-        }
-        Ok(())
+        self.completions.notify().map_err(Into::into)
     }
 
     pub fn slot_index(&self) -> usize {
@@ -367,23 +404,51 @@ impl Drop for BootstrapSession {
 }
 
 pub struct BootstrapClient {
+    completions: RestoreCompletions,
     stream: UnixStream,
     arena: DescriptorArena,
-    notification: std::os::fd::OwnedFd,
     info: BootstrapInfo,
     next_generation: Mutex<u64>,
 }
 
 impl BootstrapClient {
+    pub fn completions(&self) -> &RestoreCompletions {
+        &self.completions
+    }
+
+    pub fn is_alive(&self) -> Result<bool, BootstrapError> {
+        let mut byte = [0u8; 1];
+        match rustix::net::recv(
+            &self.stream,
+            &mut byte,
+            RecvFlags::PEEK | RecvFlags::DONTWAIT,
+        ) {
+            Ok((_, 0)) => Ok(false),
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(true),
+            Err(error) => Err(std::io::Error::from(error).into()),
+        }
+    }
+
     pub fn connect(socket_path: impl AsRef<Path>) -> Result<Self, BootstrapError> {
         let stream = UnixStream::connect(socket_path)?;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         let (info, mut fds) = receive_bootstrap(&stream)?;
+        let completion_fd = fds.pop().ok_or(BootstrapError::FileDescriptorCount {
+            expected: BOOTSTRAP_FD_COUNT,
+            actual: 0,
+        })?;
         let notification = fds.pop().ok_or(BootstrapError::FileDescriptorCount {
             expected: BOOTSTRAP_FD_COUNT,
             actual: 0,
         })?;
+        let completions = RestoreCompletions::open(
+            completion_fd,
+            notification,
+            info.session_epoch,
+            info.client_token,
+        )?;
         let arena_fd = fds.pop().ok_or(BootstrapError::FileDescriptorCount {
             expected: BOOTSTRAP_FD_COUNT,
             actual: 1,
@@ -392,8 +457,8 @@ impl BootstrapClient {
         Ok(Self {
             stream,
             arena,
-            notification,
             next_generation: Mutex::new(info.initial_generation),
+            completions,
             info,
         })
     }
@@ -415,7 +480,7 @@ impl BootstrapClient {
     }
 
     pub fn notification_fd(&self) -> &std::os::fd::OwnedFd {
-        &self.notification
+        self.completions.notification_fd()
     }
 
     pub fn wait_for_notification(&self, timeout: Duration) -> Result<bool, BootstrapError> {
@@ -427,15 +492,27 @@ impl BootstrapClient {
             })?,
             tv_nsec: timeout.subsec_nanos().into(),
         };
-        let mut fds = [rustix::event::PollFd::new(
-            &self.notification,
-            rustix::event::PollFlags::IN,
-        )];
+        let mut fds = [
+            rustix::event::PollFd::new(
+                self.completions.notification_fd(),
+                rustix::event::PollFlags::IN,
+            ),
+            rustix::event::PollFd::new(&self.stream, rustix::event::PollFlags::empty()),
+        ];
         if rustix::event::poll(&mut fds, Some(&timeout)).map_err(std::io::Error::from)? == 0 {
             return Ok(false);
         }
+        if fds[1]
+            .revents()
+            .intersects(rustix::event::PollFlags::HUP | rustix::event::PollFlags::ERR)
+        {
+            // Rescan results first: a terminal record remains valid even if
+            // the Manager closes immediately after publication. Pending polls
+            // separately reject the disconnected session.
+            return Ok(true);
+        }
         let mut value = [0u8; 8];
-        let read = match rustix::io::read(&self.notification, &mut value) {
+        let read = match rustix::io::read(self.completions.notification_fd(), &mut value) {
             Ok(read) => read,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(false),
             Err(error) => return Err(std::io::Error::from(error).into()),
@@ -537,9 +614,14 @@ fn send_bootstrap(
     info: &BootstrapInfo,
     arena_fd: &impl std::os::fd::AsFd,
     notification_fd: &impl std::os::fd::AsFd,
+    completion_fd: &impl std::os::fd::AsFd,
 ) -> Result<(), BootstrapError> {
     let payload = encode_info(info)?;
-    let borrowed = [arena_fd.as_fd(), notification_fd.as_fd()];
+    let borrowed = [
+        arena_fd.as_fd(),
+        notification_fd.as_fd(),
+        completion_fd.as_fd(),
+    ];
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(BOOTSTRAP_FD_COUNT))];
     let mut control = SendAncillaryBuffer::new(&mut space);
     if !control.push(SendAncillaryMessage::ScmRights(&borrowed)) {

@@ -144,3 +144,34 @@ fn session_rejects_wrong_identity_and_replayed_generation() {
         Err(BootstrapError::UnexpectedGeneration { .. })
     ));
 }
+
+#[test]
+fn detached_publishers_retain_the_global_completion_mapping_budget() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = BootstrapServer::bind(
+        temp.path().join("budget.sock"),
+        "orbitkv/test/budget",
+        99,
+        16384,
+        1024,
+    )
+    .unwrap();
+    let mut held = Vec::new();
+    for token in 1..=MAX_COMPLETION_SESSIONS {
+        held.push(
+            server
+                .create_completions(token as u64, eventfd(0, EventfdFlags::NONBLOCK).unwrap())
+                .unwrap(),
+        );
+    }
+    assert!(matches!(
+        server.create_completions(100, eventfd(0, EventfdFlags::NONBLOCK).unwrap()),
+        Err(BootstrapError::CompletionBudget)
+    ));
+    held.pop();
+    assert!(
+        server
+            .create_completions(100, eventfd(0, EventfdFlags::NONBLOCK).unwrap())
+            .is_ok()
+    );
+}

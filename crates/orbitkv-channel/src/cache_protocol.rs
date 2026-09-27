@@ -8,7 +8,6 @@ const CANCEL_QUERY_MAGIC: u32 = 0x4f52_5143; // ORQC
 const RELEASE_REQUEST_MAGIC: u32 = 0x4f52_4c51; // ORLQ
 const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
-const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
 const QUERY_VERSION: u16 = 6;
 const REQUEST_HEADER_BYTES: usize = 40;
@@ -144,54 +143,6 @@ pub struct RestoreRequest {
     pub device_id: i32,
     pub layer_groups: Vec<Vec<String>>,
     pub loads: Vec<RestoreLease>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RestoreCommand {
-    Submit(RestoreRequest),
-    Poll { operation_id: u64 },
-}
-
-impl RestoreCommand {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
-        match self {
-            Self::Submit(request) => request.encode(),
-            Self::Poll { operation_id } => {
-                let mut bytes = Vec::with_capacity(16);
-                push_u32(&mut bytes, RESTORE_POLL_MAGIC);
-                push_u16(&mut bytes, QUERY_VERSION);
-                push_u16(&mut bytes, 0);
-                push_u64(&mut bytes, *operation_id);
-                Ok(bytes)
-            }
-        }
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
-        let magic = bytes
-            .get(0..4)
-            .ok_or(QueryCodecError::Truncated)
-            .map(|value| u32::from_le_bytes(value.try_into().expect("fixed slice")))?;
-        if magic == RESTORE_REQUEST_MAGIC {
-            return Ok(Self::Submit(RestoreRequest::decode(bytes)?));
-        }
-        if magic != RESTORE_POLL_MAGIC {
-            return Err(QueryCodecError::InvalidMagic(magic));
-        }
-        let mut decoder = Decoder::new(bytes);
-        decoder.expect_magic(RESTORE_POLL_MAGIC)?;
-        decoder.expect_version()?;
-        let flags = decoder.u16()?;
-        if flags != 0 {
-            return Err(QueryCodecError::InvalidFlags(flags));
-        }
-        let operation_id = decoder.u64()?;
-        decoder.finish()?;
-        if operation_id == 0 {
-            return Err(QueryCodecError::ZeroOperationId);
-        }
-        Ok(Self::Poll { operation_id })
-    }
 }
 
 impl RestoreRequest {

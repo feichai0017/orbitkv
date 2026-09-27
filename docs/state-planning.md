@@ -1104,7 +1104,7 @@ Identical prefix reads can be shared with independent owners and leases; SSD
 queue pressure waits for space. A too-large individual query bypasses restore.
 Expired replies drop resources while retaining a bounded tombstone until poll,
 cancel, or session teardown. Both adapters cancel superseded queries. Channel
-ABI 5 requires rebuilding the manager and client together.
+ABI 6 requires rebuilding the manager and client together.
 
 Deterministic [fault gates](fault-qualification.md) cover delayed SSD completion,
 cancelled ownership, lost completion notifications, stuck/malformed Publish

@@ -635,8 +635,7 @@ impl CacheClient {
         if handle.owner != self.owner || handle.session_epoch != self.channel.session_epoch() {
             return Err(ChannelError::SessionRequiresReconnect);
         }
-        self.channel
-            .restore_poll(next_id(&self.requests)?, handle.operation_id)
+        self.channel.restore_poll(handle.operation_id)
     }
 
     pub fn restore_completions_ready(&self, timeout: Duration) -> Result<bool, ChannelError> {

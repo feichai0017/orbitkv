@@ -13,8 +13,7 @@ use crate::lifecycle::{LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader
 use crate::{
     BootstrapClient, BootstrapError, CallOptions, Command, CommandCode, PublishRequest,
     QueryBundleResponse, QueryCodecError, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest,
-    RestoreCommand, RestoreRequest, RestoreResponse, RestoreState, StatusCode, TransportClient,
-    TransportError,
+    RestoreRequest, RestoreResponse, RestoreState, StatusCode, TransportClient, TransportError,
 };
 
 #[derive(Debug, Error)]
@@ -27,6 +26,8 @@ pub enum ChannelError {
     Recovery(#[from] orbitkv_state::RecoveryError),
     #[error(transparent)]
     Codec(#[from] QueryCodecError),
+    #[error(transparent)]
+    Completion(#[from] crate::CompletionError),
     #[error("cache request returned {0:?}")]
     Status(StatusCode),
     #[error("cache session is ambiguous after a failed call; reconnect required")]
@@ -215,7 +216,7 @@ impl ChannelClient {
         request_id: u64,
         request: &RestoreRequest,
     ) -> Result<u64, ChannelError> {
-        let payload = RestoreCommand::Submit(request.clone()).encode()?;
+        let payload = request.encode()?;
         let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload)?;
         let response = RestoreResponse::decode(&payload)?;
         match response.state {
@@ -228,14 +229,16 @@ impl ChannelClient {
         }
     }
 
-    pub fn restore_poll(
-        &self,
-        request_id: u64,
-        operation_id: u64,
-    ) -> Result<RestoreResponse, ChannelError> {
-        let payload = RestoreCommand::Poll { operation_id }.encode()?;
-        let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload)?;
-        Ok(RestoreResponse::decode(&payload)?)
+    pub fn restore_poll(&self, operation_id: u64) -> Result<RestoreResponse, ChannelError> {
+        if self.poisoned.load(Ordering::Acquire) {
+            return Err(ChannelError::SessionRequiresReconnect);
+        }
+        let response = self.bootstrap.completions().poll(operation_id)?;
+        if response.state == RestoreState::Pending && !self.bootstrap.is_alive()? {
+            self.close();
+            return Err(ChannelError::SessionRequiresReconnect);
+        }
+        Ok(response)
     }
 
     fn call_descriptor(
