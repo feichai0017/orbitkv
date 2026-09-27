@@ -88,7 +88,9 @@ remote hit. This gate proves recovery, not throughput superiority.
 
 Run this as a separate result from the DRAM baseline. Configure SSD on the
 source Manager with write policy `all`; the target may use its ordinary local
-configuration. For each prompt:
+configuration. Add `--source-medium ssd` to the command above; the driver
+performs the synchronization, DRAM-only cleanup and source/target evidence
+checks below. For each prompt:
 
 1. Execute it on the source, call `POST /cache/sync`, and verify the SSD write
    completed before changing residency.

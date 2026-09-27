@@ -948,6 +948,13 @@ five peer-planner tests include an end-to-end estimator-driven owner change.
 Strict Core Clippy passed in local-only and CPU-Mooncake configurations, and
 strict Server Clippy passed with CPU-Mooncake.
 
+The shared-cache benchmark now accepts `--source-medium ssd`. It verifies a new
+source SSD commit, evicts only source DRAM, resynchronizes inventory, requires
+source io_uring bytes and successes alongside target Mooncake/GPU restore, and
+checks both nodes' extent/session/query/completion counters drain. Run it on the
+container-external H20 deployment first with forced TCP and then with the actual
+RDMA rails; those runtime results are not produced by this container.
+
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
 the pinned Mooncake native library is built with CUDA disabled. This is a build
