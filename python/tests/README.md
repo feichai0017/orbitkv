@@ -43,6 +43,7 @@ hybrid recovery E2Es continue to qualify ordinary selected-range reads.
 | Peer transfer, source ownership, catalog recovery or either engine adapter | Shared-replica serving gate | `ETCD_BIN=/path/to/etcd ORBITKV_CACHE_MANAGER_BINARY=/path/to/manager pytest -m e2e tests/e2e/test_shared_cache.py -k vllm --model /path/to/qwen3-8b` | Repeat in SGLang's environment with `-k sglang`; checks remote bytes, output, catalog replay, source restart and reservation drain. Same-host TCP only. |
 | vLLM connector correctness, cache semantics, save/load/hit behavior, release candidate confidence | vLLM correctness E2E | `../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model` | Native prefix-cache control follows the same prompt plan; `long_warm` must load saved KV after vLLM restart. |
 | SGLang direct GPU linker, CUDA IPC layout, or plugin registration | SGLang direct E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Restores after HBM flush and engine restart, with DRAM/forced-SSD byte counters. Output IDs and finite log probabilities match native HBM reuse; a changed identity matches cold computation. |
+| SGLang P/D adapter, TENT registration or transfer completion | SGLang P/D E2E | `../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_pd_e2e.py --model /path/to/model` | Requires two visible GPUs. Runs SGLang's prefill, decode and router processes over forced TCP, asserts both workers installed OrbitKV TENT, and compares output with a monolithic control. Repeat on two hosts with RDMA counters separately. |
 | Warm-hit pressure, pending lease release, scheduler/cache concurrency | Stress | `uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Real vLLM cache pressure regression |
 | Wheel, loader path, installed console script, target CUDA runtime, published package | Release smoke | See Release Smoke | Packaging, loader, final artifact, or runtime contract regression |
 
@@ -177,6 +178,14 @@ environment. It checks exact generated text, a nonzero external prefix hit
 after `/flush_cache`, and an actual Cache Manager GPU load after the SGLang
 process restarts while the Cache Manager remains alive. A separate namespace
 provides a true cold inference control for the restarted process.
+
+SGLang P/D payload-engine changes additionally require
+`tests/e2e/test_sglang_pd_e2e.py`. That gate intentionally does not start a
+Cache Manager: it isolates SGLang's request handoff and proves that its HBM
+page grants use OrbitKV's Rust/TENT engine. It needs two visible GPUs and starts
+prefill, decode, router and then a monolithic control sequentially. The local
+gate forces TCP; cross-host RDMA/GPUDirect claims require a separate run with
+`MC_FORCE_TCP` unset, explicit NIC selection, and external NIC/device evidence.
 
 Use `--cache-protected-percent 80` to qualify demand protection in either E2E.
 For the SGLang DRAM/SSD gate, add `--ssd-write-policy reuse` to exercise

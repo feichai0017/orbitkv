@@ -291,6 +291,29 @@ CPU and CUDA variants are built separately from the same pinned source; the
 CUDA variant includes CUDA/GDS/NVLink-capable TENT components. Missing TENT
 artifacts fail startup and never fall back to `libtransfer_engine.so`.
 
+### TENT versus the legacy Transfer Engine
+
+The important change is the execution contract, not just a renamed shared
+library. TENT exposes one segment and batch model across CPU, CUDA, file and
+network-capable transports; extended registration carries memory location and
+permission, while topology and rail selection remain inside Mooncake. Its C ABI
+also exposes per-task terminal status, cancellation, notifications and NIC-load
+snapshots. OrbitKV can therefore retain each allocation until the exact batch
+has drained and can feed live resource pressure into planning without owning an
+RDMA implementation.
+
+The legacy wrapper primarily exposed submit/poll/free around the older
+TransferEngine object. In particular, freeing its batch handle was too easy to
+misread as a completion fence, and its Python integrations commonly held only
+raw addresses rather than registration owners. OrbitKV's TENT path instead
+uses Rust RAII registration tokens and a cancel-then-drain state machine. This
+does not make every transfer automatically faster: HBM-to-HBM speed still
+depends on the selected transport, topology, registration cost and chunking.
+It does make the ownership and observability needed for safe high-performance
+selection explicit. Because the current C ABI has no per-batch transport
+receipt, RDMA or GPUDirect must still be proven with runtime logs and hardware
+counters rather than inferred from a successful call.
+
 OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
 the cache engine handles versioned model/storage keys and leases above Mooncake.
 The common recovery plan additionally includes:
@@ -311,6 +334,9 @@ bytes before transfer. Fixed shards and owner replay are implemented; directory 
   pinned memory before restoring into framework HBM;
 - the experimental vLLM P/D connector uses Mooncake WRITE into the decode
   worker's allocated GPU pages and waits for completion notification;
+- the SGLang `0.5.20` P/D adapter retains SGLang's native bootstrap and room
+  state machine but replaces its payload engine with OrbitKV's Rust TENT owner;
+  the upstream `mooncake` CLI key is only a dispatch name in this mode;
 - proactive replica placement, retry across replicas, and bundle-aware
   publication are planning targets, not current guarantees.
 

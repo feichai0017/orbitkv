@@ -235,6 +235,13 @@ qualification remain open. See the
 - [x] Bind `orbitkv-channel` Publish to the shared core save path.
 - [x] Bind `orbitkv-channel` Restore to core oneshot completion and eventfd wakeup.
 - [x] Add Python bindings for the iceoryx2 local client.
+- [x] Bind SGLang 0.5.20's native P/D room and page-grant lifecycle to the
+  shared Rust TENT registration/completion owner without copying its state
+  machine into Python.
+- [ ] Qualify SGLang P/D on two external H20 GPUs with forced TCP, then on two
+  hosts with RDMA counters; cover abort, worker restart and partial failure.
+- [ ] Expose TENT peer-liveness probing through its stable C ABI before enabling
+  SGLang's optional failed-session recovery probe.
 - [x] Reject SGLang representations without a complete recovery contract.
 - [ ] Add cold-miss, partial-prefix, warm-hit, cancellation, and restart tests.
 - [x] Run one real SGLang model E2E, including restore after radix-cache flush.

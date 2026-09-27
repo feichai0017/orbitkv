@@ -336,6 +336,25 @@ follow-up remain in [SSD results](ssd-performance.md). The first
 [bounded queued-warming path](queued-warming.md) is implemented; cost selection
 remains in [state demand and transfer planning](state-planning.md).
 
+### P/D handoff
+
+The SGLang P/D path is deliberately separate from the external-cache linker.
+Pinned SGLang `0.5.20` owns bootstrap rooms, destination page allocation,
+parallel-rank mapping, chunk scheduling and request completion. With
+`ORBITKV_SGLANG_TENT=1`, the OrbitKV plugin replaces only SGLang's shared
+payload-engine constructor before initialization. The resulting adapter lowers
+SGLang's registered pointer ranges and WRITE batches into the same PyO3-backed
+Rust TENT owner as the vLLM P/D connector. It does not introduce another Python
+request state machine or send payload through the Cache Manager/control plane.
+
+Rust registration tokens retain HBM/host registrations, and Rust batch
+completion retains all submitted addresses until each TENT task is terminal.
+On a transfer error the adapter invalidates the cached segment and returns
+failure to SGLang's room owner. The SGLang CLI still spells the backend
+`mooncake` because that is its fixed dispatch key; OrbitKV packages and loads
+only `libtent_shared.so`. See [P/D transfer](pd.md) for operation and current
+qualification limits.
+
 ### Future: Radix lifecycle bridge for routing
 
 Publish prefix materialization, match, release, promotion, demotion, and removal

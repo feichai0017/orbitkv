@@ -1,4 +1,4 @@
-# Prefill/decode transfer and NIXL
+# Prefill/decode transfer
 
 P/D (prefill/decode disaggregation) places the prompt prefill and token decode
 phases on different inference workers. The decode worker needs the prefill
@@ -18,7 +18,8 @@ The NIXL integration described here is
 | Path | Trigger | KV destination | Discovery/control | OrbitKV status |
 | --- | --- | --- | --- | --- |
 | OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; experimental remote Catalog + peer lease | GPU-validated locally; multi-node experimental |
-| OrbitKV `PdConnector` | P-to-D request handoff | Decode worker's GPU KV pages | P/D request handshake and proxy; Mooncake TENT moves bytes | Experimental vLLM adapter |
+| OrbitKV vLLM `PdConnector` | P-to-D request handoff | Decode worker's GPU KV pages | OrbitKV handshake and proxy; Mooncake TENT moves bytes | Experimental vLLM adapter |
+| OrbitKV SGLang TENT adapter | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | Implemented; external H20 qualification pending |
 | vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
 
 The OrbitKV P/D connector lives in `orbitkv.vllm.pd` and uses Mooncake to push
@@ -36,13 +37,71 @@ request, while OrbitKV can save completed blocks for reuse by later requests.
 The two paths have different ownership and failure modes. See the
 [deployment example](deployment.md).
 
-SGLang has its own disaggregated-serving facilities (including NIXL), but OrbitKV currently
-provides **only** an SGLang external-cache linker. It does not provide a
-SGLang P/D adapter or NIXL connector. P/D support for SGLang would require a
-separate integration against SGLang's handoff protocol and a tested recovery
-contract.
+## SGLang P/D over TENT
 
-Neither OrbitKV's P/D path nor the current Catalog provides production KV-aware
+The pinned SGLang `0.5.20` release already owns the hard framework-specific
+parts of disaggregation: bootstrap rooms, decode-page grants, TP/PP/CP mapping,
+chunking, staging, request polling and terminal failure propagation. OrbitKV
+does not copy that state machine. When `ORBITKV_SGLANG_TENT=1`, the SGLang
+plugin installs `orbitkv.sglang.pd.SGLangTentTransferEngine` before SGLang
+creates its process-wide transfer engine. SGLang's control plane remains in
+place while its registered HBM/host regions and every payload batch are handed
+to the same Rust TENT owner used by the rest of OrbitKV.
+
+The upstream CLI value remains `--disaggregation-transfer-backend mooncake`
+because that is SGLang's fixed backend routing key. It does **not** select the
+legacy Transfer Engine when the OrbitKV opt-in is set: the wheel loads only
+`libtent_shared.so`, and startup fails if TENT is unavailable. Registration is
+RAII-owned in Rust. A synchronous SGLang batch returns success only after every
+TENT task is terminal; timeout and partial-submit paths request cancellation,
+drain the batch, retain the source/destination regions until the drain ends,
+and invalidate the failed peer segment before SGLang marks the room failed.
+
+For a same-host, two-GPU correctness run, enable TENT's TCP path and launch the
+pinned SGLang processes with the OrbitKV plugin installed:
+
+```bash
+export ORBITKV_SGLANG_TENT=1
+export MC_FORCE_TCP=1
+
+python -m sglang.launch_server --model-path /path/to/model \
+  --host 127.0.0.1 --port 31000 --base-gpu-id 0 \
+  --disaggregation-mode prefill --disaggregation-bootstrap-port 31500 \
+  --disaggregation-transfer-backend mooncake
+
+python -m sglang.launch_server --model-path /path/to/model \
+  --host 127.0.0.1 --port 32000 --base-gpu-id 1 \
+  --disaggregation-mode decode --disaggregation-bootstrap-port 31500 \
+  --disaggregation-transfer-backend mooncake
+
+python -m sglang_router.launch_router --pd-disaggregation --mini-lb \
+  --prefill http://127.0.0.1:31000 --decode http://127.0.0.1:32000 \
+  --host 127.0.0.1 --port 30000
+```
+
+For RDMA, unset `MC_FORCE_TCP` and pass the appropriate
+`--disaggregation-ib-device` value on both workers; the adapter resolves
+SGLang's per-GPU mapping and supplies it as TENT's NIC filter. A transfer
+timeout defaults to 30 seconds and can be changed with
+`ORBITKV_SGLANG_TENT_TIMEOUT_S`. SGLang's optional failed-session background
+probe must remain disabled for this revision (it is disabled by default): the
+current TENT C ABI does not expose its peer-liveness probe. Ordinary transfer
+failure, cancellation and room teardown are supported and fail closed.
+
+The external two-GPU correctness gate is:
+
+```bash
+cd python
+../.venv/sglang-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_sglang_pd_e2e.py --model /path/to/model
+```
+
+It compares greedy P/D output with a monolithic SGLang control and asserts that
+both P and D processes installed OrbitKV's Rust/TENT engine. Run forced TCP
+first, then repeat the deployment on two hosts with RDMA and external NIC
+counters before claiming GPUDirect.
+
+Neither OrbitKV's P/D paths nor the current Catalog provides production KV-aware
 request routing. Production qualification still needs real multi-GPU and
 cross-machine correctness, cancellation/restart tests, and throughput/latency
 comparison against the vLLM NIXL baseline.

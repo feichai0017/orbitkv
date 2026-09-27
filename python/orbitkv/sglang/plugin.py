@@ -13,7 +13,9 @@ def register() -> None:
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     from .admission import abort_request, admit_request, enqueue_request
+    from .pd import install_sglang_tent_backend
 
+    install_sglang_tent_backend()
     register_radix_cache_backend("orbitkv", create_cache)
     HookRegistry.register(
         "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",

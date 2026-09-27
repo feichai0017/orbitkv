@@ -23,6 +23,8 @@ adapters use CUDA IPC for GPU transfers and the same Cache Manager API.
 - Native query ownership, byte budgets and completion fences.
 - Prometheus metrics and optional request timelines.
 - Experimental peer cache sharing through Mooncake TENT.
+- Experimental vLLM and SGLang P/D payload transfer through the same Rust TENT
+  runtime; SGLang retains its native handoff control plane.
 
 Validated engine releases: **vLLM 0.29.0** and **SGLang 0.5.20**. See
 [model qualification](https://feichai0017.github.io/orbitkv/docs/models/)

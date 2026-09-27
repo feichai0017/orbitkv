@@ -58,6 +58,10 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   using reusable windows and generation-fenced tickets. Peer SSD reads use
   exact-generation, bounded source-side io_uring staging before the same
   Mooncake transfer path; physical two-host qualification remains open.
+- **Experimental P/D handoff.** vLLM uses OrbitKV's connector protocol;
+  SGLang `0.5.20` keeps its native bootstrap/room protocol and can opt into the
+  same Rust TENT payload owner with `ORBITKV_SGLANG_TENT=1`. SGLang external
+  H20 qualification remains open.
 
 See [supported deployments](docs/deployment.md) and
 [model qualification](docs/models.md) before selecting a checkpoint and topology.
@@ -142,7 +146,7 @@ remote fetches; physical placement stays inside the Cache Manager.
 The [implementation plan](docs/implementation-plan.md) maps pinned LMCache,
 FlexKV and Mooncake mechanisms to deployment and validation work. The next milestone
 uses measured path costs and resource budgets across local tiers and Mooncake
-TE transfers. Independent replicas, P/D handoff and TP/PP have separate
+TENT transfers. Independent replicas, P/D handoff and TP/PP have separate
 completion and recovery contracts. Bounded Rust cost observations, raw-copy
 shadow predictions, independent local SSD read routes and a fixed-priority peer
 SSD route are implemented. SSD route
