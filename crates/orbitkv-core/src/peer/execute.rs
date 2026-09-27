@@ -62,7 +62,6 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
     fetcher: &F,
     mut plan: FetchPlan<'_>,
     req_id: &str,
-    pipeline: bool,
 ) -> FetchResult {
     let mut fetched = Vec::with_capacity(plan.block_count());
     let mut attempts = 0;
@@ -103,9 +102,7 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
         // At most one READ and one following authorization are in flight. The
         // latter allocates no destination buffers and stays in this future, so
         // a failed prefix or cancellation drops its known-ticket cleanup owner.
-        let next = pipeline
-            .then(|| plan.next_segment(fetched.len() + segment.records.len()))
-            .flatten();
+        let next = plan.next_segment(fetched.len() + segment.records.len());
         let read = fetcher.fetch_segment(&segment, grant, req_id);
         let authorize_next = async {
             let Some(next) = &next else {

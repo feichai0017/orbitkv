@@ -149,6 +149,11 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 `backing/` and `internode/` have been removed. There is one SSD store with
 independent access routes; peer transport is not a storage medium. `PeerExports`
 checks live owner/version evidence and holds source memory until completion.
+Every pinned-pool shard has a size-sealed memfd backing mapped with `MAP_SHARED`;
+regular and huge pages share the same NUMA first-touch and CUDA registration
+path. This makes the backing shareable but does not yet export payload mappings
+to inference processes. The [engine-local restore design](engine-local-restore.md)
+defines the allocation grants and destination ownership needed for that cutover.
 The Mooncake registration owner retains its pinned pool through unregister.
 Each registered region is represented by an RAII token that also retains the
 TransferEngine; Core clears these tokens before releasing the pinned-pool

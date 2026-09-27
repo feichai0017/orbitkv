@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::ptr::NonNull;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{info, warn};
@@ -37,10 +37,6 @@ const LOCK_TIMEOUT_MARGIN: Duration = Duration::from_secs(60);
 /// LRU reclaim must carve a contiguous hole of the requested size, so a
 /// whole-prefix slab can force eviction of far more bytes than the fetch needs.
 const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
-
-/// Opt in after comparing with sequential authorization/READ on the workload.
-static PEER_PIPELINE: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("ORBITKV_PEER_PIPELINE").as_deref() == Ok("1"));
 
 /// Mooncake remote block fetch backing store.
 ///
@@ -375,7 +371,7 @@ impl PeerReader {
     pub(crate) async fn fetch_plan(&self, plan: FetchPlan<'_>, req_id: &str) -> FetchResult {
         let planned_blocks = plan.block_count();
         let started_at = Instant::now();
-        let result = execute_fetch_plan(self, plan, req_id, *PEER_PIPELINE).await;
+        let result = execute_fetch_plan(self, plan, req_id).await;
         let metrics = core_metrics();
         metrics
             .remote_fetch_plan_segments

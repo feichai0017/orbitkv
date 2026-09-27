@@ -826,7 +826,7 @@ fn pipeline_reader(
                 .collect::<Vec<_>>();
             let plan =
                 crate::planning::peer::FetchPlan::new(&mut rows, 1, PeerSource::Dram).unwrap();
-            crate::peer::execute::execute_fetch_plan(reader.as_ref(), plan, "tickets", true).await
+            crate::peer::execute::execute_fetch_plan(reader.as_ref(), plan, "tickets").await
         })
     };
     (reader, finish, task)

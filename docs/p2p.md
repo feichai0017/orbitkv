@@ -76,8 +76,8 @@ geometry. Source authorization, rather than metadata freshness, protects memory
 reads. Validate vLLM-to-vLLM and SGLang-to-SGLang separately; these tests do not
 establish cross-engine byte compatibility or hybrid-state completeness.
 
-Set `ORBITKV_PEER_PIPELINE=1` on the requesting Manager to authorize the next
-planned segment while the current segment's READ runs. The default is sequential.
+The requesting Manager authorizes the next planned segment while the current
+segment's READ runs. There is one execution strategy, with bounded lookahead.
 Only one READ and one following authorization can be active per fetch plan;
 the following segment allocates destination memory only when consumed. A failed
 or partial current READ discards the unused grant. A speculative authorization
@@ -85,7 +85,7 @@ failure is retried on demand after the current READ drains, subject to the
 existing admission limits. On resource exhaustion, authorization may wait up to
 three seconds for that peer's releases already in progress before the attempt,
 then retry once. It does not wait for unrelated active READs; a rejected ticket's
-own cleanup cannot satisfy that wait. This also applies in sequential mode.
+own cleanup cannot satisfy that wait.
 The three-second bound covers only this release wait; authorization RPCs retain
 their own existing deadlines.
 Cancellation uses the existing known-ticket cleanup
@@ -198,9 +198,11 @@ The first gate covers duplicate identities, epochs, Watch/compaction repair,
 coordinator stalls, membership bounds and immutable placement fencing. The second
 hosts catalog and source control on one Manager endpoint, verifies actual
 Mooncake/CUDA bytes across 260 blocks and multiple authorization segments, and
-checks local loads after remote admission is fenced. Run its
-`p2p_mooncake_remote_fetch_roundtrip` case with both `ORBITKV_PEER_PIPELINE=0`
-and `ORBITKV_PEER_PIPELINE=1` under the same source budget.
+checks local loads after remote admission is fenced. Compare its
+`p2p_mooncake_remote_fetch_roundtrip` case with the sequential baseline at commit
+`82a93448` with its pipeline disabled, under the same source budget and block count;
+the current implementation
+does not retain a sequential runtime switch.
 The ordinary Rust suite also exercises two catalog endpoints and restart repair.
 These are same-host gates; multi-host serving and HA qualification remain next.
 

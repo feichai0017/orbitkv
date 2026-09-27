@@ -75,24 +75,18 @@ def collect(directory: Path, samples: list[dict]) -> dict:
             "discovery_ready",
             "restore_complete",
             "restore_notification",
-            "restore_delivered",
         ):
             labels = {
                 "discovery_ready": "candidate_discovery_ms",
                 "restore_complete": "manager_restore_ms",
                 "restore_notification": "completion_signal_ms",
-                "restore_delivered": "completion_delivery_ms",
             }
             intervals[labels[event["stage"]]].append(event["elapsed_us"] / 1000)
 
-    # Keep the measurement contract visible after removing Manager-side poll RPCs.
-    # No delivery event means unavailable timing, even when other restore stages
-    # were observed. Historical logs still retain their original delivery samples.
     for label in (
         "restore_ms",
         "manager_restore_ms",
         "completion_signal_ms",
-        "completion_delivery_ms",
     ):
         intervals.setdefault(label, [])
     stage_counts = Counter(event["stage"] for event in events)
@@ -102,7 +96,7 @@ def collect(directory: Path, samples: list[dict]) -> dict:
             for event in events
             if event["stage"] == stage and event.get("restore_key") in restores
         }
-        for stage in ("restore_complete", "restore_notification", "restore_delivered")
+        for stage in ("restore_complete", "restore_notification")
     }
 
     with (directory / "timeline.jsonl").open("w") as output:
@@ -116,9 +110,11 @@ def collect(directory: Path, samples: list[dict]) -> dict:
             "linked_restore_batches": len(restores),
             "batches_with_worker_terminal": len(completion_batches["restore_complete"]),
             "batches_with_notification": len(completion_batches["restore_notification"]),
-            "batches_with_legacy_delivery": len(completion_batches["restore_delivered"]),
-            "batches_without_delivery_timing": len(
-                restores.keys() - completion_batches["restore_delivered"]
+            "batches_without_worker_terminal": len(
+                restores.keys() - completion_batches["restore_complete"]
+            ),
+            "batches_without_notification": len(
+                restores.keys() - completion_batches["restore_notification"]
             ),
             "client_restore_submissions": sum(
                 event["stage"] == "restore_submit" and event["source"] == "engine.log"
@@ -139,8 +135,7 @@ def collect(directory: Path, samples: list[dict]) -> dict:
             "Durations use one process's monotonic clock or Manager-local elapsed_us. "
             "Manager restore includes submission/worker queue and synchronized copy; completion "
             "signal starts at the worker's terminal timestamp and measures the notification attempt. "
-            "completion_delivery_ms is available only from historical Manager terminal-poll response "
-            "events; shared-memory completion consumption has no isolated delivery timer. "
+            "Shared-memory completion consumption has no isolated delivery timer. "
             "Use restore_ms for the engine's submit-to-gpu_ready observation, including submission, "
             "restore work and consumer scheduling; it is not a pure delivery interval. "
             "Manager batches are counted once even when several requests share them; client restore "

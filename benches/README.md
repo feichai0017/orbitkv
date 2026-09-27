@@ -342,7 +342,7 @@ stage coverage and preparation/restore/queue intervals. Durations use one
 process's monotonic clock or Manager-local elapsed time, never a subtraction
 of clocks on different hosts. Missing restore/completion intervals have
 `count: 0` and null quantiles. `completion_coverage` counts linked restore batches,
-observed worker/notification/legacy-delivery events and client restore intervals;
+observed worker/notification events and client restore intervals;
 missing stages are not counted as zero latency.
 The [initial Qwen3-8B pressure controls](../docs/queued-warming.md#initial-pressure-controls)
 increased SSD bytes per request without a throughput gain. These results also
@@ -462,12 +462,11 @@ and `timeline-summary.json`. Manager restore time includes dispatch and worker
 queueing; the load histogram separately measures the H2D worker task including
 stream synchronization. `completion_signal_ms` starts at the GPU worker's terminal
 timestamp and records the notification attempt, including the completion record
-publication. Shared-memory completion consumes no Manager poll RPC, so current
-logs do not contain an isolated consumer-delivery timer. The parser preserves
-historical `restore_delivered` events as `completion_delivery_ms` (worker terminal
-to Manager terminal-poll response); current runs report count zero and null
-quantiles for this interval. `completion_coverage` exposes partial historical
-coverage when a log contains both kinds of record.
+publication. Shared-memory completion consumes no Manager poll RPC, so the
+report has no isolated consumer-delivery timer. `completion_coverage` counts
+worker outcomes, notification attempts, missing observations and client restore
+intervals. Regenerate reports with the code revision that produced their logs;
+the current parser has no decoder for retired completion events.
 
 For current revision comparisons, use `restore_ms`: the engine's same-process
 restore-submit to GPU-ready observation. It includes submission, restore work,

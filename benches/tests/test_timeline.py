@@ -59,24 +59,26 @@ def test_batched_completion_is_linked_without_counting_each_request_as_a_transfe
     (tmp_path / "manager.log").write_text(
         "\n".join(
             "cache_timeline "
-            + json.dumps({"stage": "restore_delivered", "restore_key": key, "elapsed_us": elapsed})
+            + json.dumps(
+                {"stage": "restore_notification", "restore_key": key, "elapsed_us": elapsed}
+            )
             for key, elapsed in (("manager:1:2", 3500), ("manager:2:2", 999999))
         )
     )
     summary = collect(tmp_path, [{"request_id": "a"}, {"request_id": "b"}])
     assert summary["traced_requests"] == 2
-    assert summary["intervals"]["completion_delivery_ms"] == {
+    assert summary["intervals"]["completion_signal_ms"] == {
         "count": 1,
         "p50": 3.5,
         "p95": 3.5,
         "p99": 3.5,
     }
     assert summary["completion_coverage"]["linked_restore_batches"] == 1
-    assert summary["completion_coverage"]["batches_with_legacy_delivery"] == 1
-    assert summary["completion_coverage"]["batches_without_delivery_timing"] == 0
+    assert summary["completion_coverage"]["batches_with_notification"] == 1
+    assert summary["completion_coverage"]["batches_without_notification"] == 0
 
 
-def test_shared_memory_completion_reports_client_latency_and_missing_delivery_timing(tmp_path):
+def test_shared_memory_completion_reports_client_latency_and_missing_observations(tmp_path):
     events = []
     for rid, key in (("a", "manager:1:2"), ("b", "manager:1:2"), ("c", "manager:1:3")):
         events.extend(
@@ -110,8 +112,8 @@ def test_shared_memory_completion_reports_client_latency_and_missing_delivery_ti
         "linked_restore_batches": 2,
         "batches_with_worker_terminal": 1,
         "batches_with_notification": 1,
-        "batches_with_legacy_delivery": 0,
-        "batches_without_delivery_timing": 2,
+        "batches_without_worker_terminal": 1,
+        "batches_without_notification": 1,
         "client_restore_submissions": 3,
         "client_restore_intervals": 2,
     }
@@ -123,26 +125,7 @@ def test_shared_memory_completion_reports_client_latency_and_missing_delivery_ti
     }
     assert summary["intervals"]["manager_restore_ms"]["count"] == 1
     assert summary["intervals"]["completion_signal_ms"]["p50"] == 0.25
-    assert summary["intervals"]["completion_delivery_ms"] == {
-        "count": 0,
-        "p50": None,
-        "p95": None,
-        "p99": None,
-    }
     assert json.loads((tmp_path / "timeline-summary.json").read_text()) == summary
-
-    # Mixed historical/current logs retain the measured sample without treating
-    # the second restore batch as either observed or zero-latency delivery.
-    with (tmp_path / "manager.log").open("a") as output:
-        output.write(
-            '\ncache_timeline {"stage":"restore_delivered",'
-            '"restore_key":"manager:1:2","elapsed_us":500}'
-        )
-    mixed = collect(tmp_path, samples)
-    assert mixed["completion_coverage"]["batches_with_legacy_delivery"] == 1
-    assert mixed["completion_coverage"]["batches_without_delivery_timing"] == 1
-    assert mixed["intervals"]["completion_delivery_ms"]["count"] == 1
-    assert mixed["intervals"]["completion_delivery_ms"]["p50"] == 0.5
 
 
 def test_equal_pids_in_distinct_logs_do_not_create_a_restore_interval(tmp_path):

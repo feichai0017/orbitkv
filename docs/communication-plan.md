@@ -22,6 +22,11 @@ membership expiry is not evidence of DMA completion.
 
 ## Current increment
 
+There is one supported implementation of each completed path. Protocol changes
+require clients and Managers from the same revision; retired wire decoders and
+runtime implementation selectors are removed. Performance controls run the
+baseline revision in a separate checkout with matched workloads and budgets.
+
 ### Shared restore completions
 
 Restore submission still uses the authenticated iceoryx2 command channel.
@@ -38,15 +43,32 @@ not touch error pages. The Manager admits at most 64 mappings, including
 disconnected sessions still retained by outcome waiters. Clients and Managers must be
 rebuilt together after the bootstrap and command ABI change.
 
-The existing completion timeline distinguishes worker completion from result
-publication/notification. There is no server-side terminal Poll delivery event
-on this path. Missing delivery observations are not zero delivery latency.
+The completion timeline distinguishes worker completion from result
+publication/notification and reports missing observations explicitly. The
+terminal-Poll event decoder and its report fields have been removed. Reproduce
+historical reports with the revision that produced their logs.
+
+### Shared pinned payload backing
+
+Every pinned-pool shard now uses a size-sealed memfd and `MAP_SHARED`. Manager
+NUMA first-touch runs before its CUDA registration. Regular and reserved huge
+pages are page policies of the same backing; private anonymous mappings,
+`cudaHostAlloc` pool allocation and the `cpu_readable` selector are removed.
+Existing allocation owners and TENT memory-registration owners still determine
+when the Manager may reuse or unregister its mapping.
+
+The memfd can outlive the allocating process through another process's own
+mapping and CUDA registration. This establishes backing lifetime, not permission
+to read an allocation that the Manager might reuse. Production bootstrap does
+not yet export payload FDs or execute restore plans in the engine process.
+Arena identity, allocation generations and source grants belong to the next
+connected implementation, not unused public APIs in this increment.
 
 ### One-segment peer authorization lookahead
 
-`ORBITKV_PEER_PIPELINE=1` allows the authorization of the next planned segment
-to overlap the current segment's READ. The default remains sequential for
-matched comparisons. There is at most one speculative grant per fetch plan;
+Authorization of the next planned segment overlaps the current segment's READ.
+Bounded lookahead is the single execution strategy. There is at most one
+speculative grant per fetch plan;
 destination allocation waits until that segment is consumed. Existing global
 and per-source completion limits continue to bound grants and cleanup.
 
@@ -59,7 +81,7 @@ If resource pressure coincides with source releases already in progress before
 an authorization attempt, authorization waits up to three seconds for those
 release ACKs and retries once. It neither waits for active READs nor moves the
 release RPC onto the blocking payload transfer's completion path. The same
-bounded pressure recovery applies to sequential operation.
+bounded pressure recovery also covers ordinary demand authorization.
 The three-second bound is for release waiting, not the entire fetch; each
 authorization retains its own RPC deadline. `release_wait` records this wait,
 and fetch-plan attempt counts describe logical segment attempts rather than
@@ -76,11 +98,10 @@ The smallest useful slice is exact/raw DRAM-to-HBM restoration on one GPU.
 The Manager remains the allocator and source-lease owner; a native executor in
 the engine process owns CUDA submission using the engine's current GPU pages.
 
-This requires a shared backing for KV payload allocations. The existing
-descriptor memfd is not a payload pool, and current private anonymous/pinned
-allocations cannot be handed to another process merely by sending an offset.
-The shared pool must establish per-process mappings, CUDA registration,
-NUMA placement, and allocation-generation validation before executing plans.
+The shared backing is implemented. The next boundary exports payload FDs and
+establishes per-process mappings, CUDA registration, arena identity and
+allocation-generation validation before executing plans. The descriptor memfd
+and restore-result memfd remain separate control-plane resources.
 
 A prepared plan holds its sources and describes bounded arena ranges. Engine
 destination pages are bound and validated when allocated. The executor first
@@ -90,25 +111,52 @@ Both eager execution and the supported CUDA graph replay modes must pass the
 same page-reuse and cancellation gates. Moving CUDA submission into the engine
 does not remove the physical HBM/host-memory transfer.
 
+The [engine-local restore design](engine-local-restore.md) specifies source and
+destination ownership, prepared/claimed/drained transitions, process-death
+quarantine, the exact/raw first slice, layer-group dependencies and graph gates.
+
 ## Next: batched remote metadata messages
 
 Keep etcd membership, epochs and placement outside the per-request lookup
 path. Retain ordinary RPC for bootstrap and low-frequency management. Define
 batched grant, completion, acknowledgement and credit messages around the
-existing source authority, then compare TENT notifications with the existing
-RPC path and a UCX Active Messages implementation if needed.
+existing source authority on one bounded TENT control session. Replace the
+hot source-control RPC methods when that session passes its qualification gates;
+do not retain a second runtime protocol or an automatic gRPC fallback.
 
-The pinned TENT source contains an RDMA SEND/RECV notification backend. Its
-TCP backend uses a control RPC. A production adapter needs bounded receive
-queues, binary-safe framing, message-size limits, reconnect epochs and
-application acknowledgements. A successful notification send is not proof
-that the receiver consumed it or that a separate payload READ drained.
+The pinned TENT source contains an RDMA SEND/RECV notification backend, but its
+current C ABI truncates C strings, its native receive queues are unbounded,
+and notification transport selection is not peer-specific. Its TCP backend
+uses a control RPC. Native length-aware framing, bounded queues, peer transport
+selection and bounded submission must be implemented before moving OrbitKV's
+metadata authority onto it. A bounded Rust channel alone does not bound native
+memory. A successful notification send is not proof that the receiver consumed
+it or that a separate payload READ drained.
 
 Only after revocation/drain is qualified should hotspot grants be issued ahead
 of demand. Each grant must hold the precise source allocation and consume a
 bounded budget. A local directory hint is not an authorization. Unused and
 in-flight grants need distinct retirement paths; lease expiry cannot release
 memory still accessible to submitted READs.
+
+The [peer-control design](peer-control.md) defines the target messages, credits,
+epochs, acknowledgements, native prerequisites and source-control cutover.
+
+## Implementation and deletion gates
+
+| Step | Deliverable | Remove at cutover | Acceptance |
+| --- | --- | --- | --- |
+| Completed: local completion | Shared terminal records and direct eventfd signal | Terminal Poll command, dispatcher restore scan, retired timeline decoder | Cross-process results, stale IDs, missing notifications, real GPU faults |
+| Completed: payload backing | Shared memfd for every pool shard | Private anonymous and `cudaHostAlloc` pool paths, `cpu_readable` plumbing | FD transfer, independent registration and GPU bytes after producer mapping teardown |
+| Completed: peer lookahead | One active READ plus one next authorization | Sequential runtime selector | Prefix integrity, cancelled/lost grants, release pressure, real multi-segment TENT bytes |
+| Next: raw engine restore | Payload FD attachment, owned source grants and a native engine executor | Manager submission for the same exact/raw host plan | Partial submission, destination retention, both process deaths, source budget and reconnect fencing |
+| Next: execution overlap | Layer-group dependencies with one final retirement fence | Whole-restore waits from engine consumption sites covered by qualified group dependencies | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
+| Next: native metadata | Bounded binary notification API and per-peer transport selection | Unsafe string framing and first-transport notification dispatch | Size/queue limits, unreachable peer, mixed transports and native shutdown |
+| Next: peer session | Batched lookup/grant/completion with application ACK and credits | Corresponding hot gRPC methods, retry owner and protobuf messages | Loss, duplication, reorder, restart, corruption, slow peer and multi-host qualification |
+
+Each cutover replaces its old implementation and updates all callers in the
+same change. Capability-specific SSD preparation or codec work remains with
+its resource owner; it is not a fallback copy of the exact/raw executor.
 
 ## Qualification
 
@@ -119,7 +167,7 @@ the existing Manager/native-client GPU integration and fault gates after the
 ABI update.
 
 For peer lookahead, use deterministic synchronization to prove authorization
-actually overlaps a blocked READ. Compare sequential and pipelined results,
+actually overlaps a blocked READ. Compare with the sequential baseline revision,
 including partial prefixes, rejection, failed reads and cancellation. On real
 peers compare segment counts, authorization/READ timing, source bytes held,
 outstanding completion records and end-to-end restore latency, then serving

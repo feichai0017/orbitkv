@@ -100,7 +100,7 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
         };
         let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"])];
         let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-        let result = execute_fetch_plan(&fetcher, plan, "test-request", true).await;
+        let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
         assert_eq!(result.blocks.len(), expected);
         assert_eq!(
             result.status,
@@ -125,7 +125,7 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
     };
     let mut rows = vec![row(1, &["a", "b", "c", "d"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    let result = execute_fetch_plan(&fetcher, plan, "test-request", true).await;
+    let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
     assert!(result.blocks.is_empty());
     assert_eq!(result.status, FetchStatus::AuthorizationExhausted);
     assert!(result.can_replan());
@@ -149,7 +149,7 @@ async fn malformed_or_short_segment_never_skips_a_gap() {
     };
     let mut rows = vec![row(1, &["a"]), row(2, &["a"]), row(3, &["b"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    let result = execute_fetch_plan(&fetcher, plan, "test-request", true).await;
+    let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
     assert_eq!(result.blocks.len(), 1);
     assert_eq!(result.status, FetchStatus::PayloadFailed);
     assert!(!result.can_replan());
@@ -259,7 +259,7 @@ fn run_pipeline(
 ) -> tokio::task::JoinHandle<FetchResult> {
     tokio::spawn(async move {
         let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-        execute_fetch_plan(fetcher.as_ref(), plan, "pipeline", true).await
+        execute_fetch_plan(fetcher.as_ref(), plan, "pipeline").await
     })
 }
 
@@ -357,28 +357,26 @@ async fn speculative_admission_failure_retries_same_owner_after_current_read() {
 }
 
 #[tokio::test]
-async fn sequential_and_pipelined_execution_preserve_prefix_and_fallback_semantics() {
-    for pipeline in [false, true] {
-        let fetcher = Fetcher {
-            responses: Mutex::new(VecDeque::from([SegmentOutcome::Rejected])),
-            calls: Mutex::new(Vec::new()),
-        };
-        let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"]), row(3, &["c"])];
-        let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-        let result = execute_fetch_plan(&fetcher, plan, "ablation", pipeline).await;
-        assert_eq!(result.status, FetchStatus::Complete);
-        assert_eq!(result.attempts, 3);
-        assert_eq!(result.completed_segments, 2);
-        assert_eq!(
-            result
-                .blocks
-                .iter()
-                .map(|(key, _)| key.hash.clone())
-                .collect::<Vec<_>>(),
-            [vec![1], vec![2], vec![3]],
-        );
-        assert_eq!(*fetcher.calls.lock().unwrap(), ["a", "b", "c"]);
-    }
+async fn pipelined_execution_preserves_prefix_and_owner_fallback() {
+    let fetcher = Fetcher {
+        responses: Mutex::new(VecDeque::from([SegmentOutcome::Rejected])),
+        calls: Mutex::new(Vec::new()),
+    };
+    let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"]), row(3, &["c"])];
+    let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
+    let result = execute_fetch_plan(&fetcher, plan, "owner-fallback").await;
+    assert_eq!(result.status, FetchStatus::Complete);
+    assert_eq!(result.attempts, 3);
+    assert_eq!(result.completed_segments, 2);
+    assert_eq!(
+        result
+            .blocks
+            .iter()
+            .map(|(key, _)| key.hash.clone())
+            .collect::<Vec<_>>(),
+        [vec![1], vec![2], vec![3]],
+    );
+    assert_eq!(*fetcher.calls.lock().unwrap(), ["a", "b", "c"]);
 }
 
 #[tokio::test]
@@ -402,7 +400,7 @@ async fn demand_rejection_after_speculation_falls_back_without_losing_completed_
     };
     let mut rows = vec![row(1, &["x"]), row(2, &["a", "b"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    let result = execute_fetch_plan(&fetcher, plan, "busy-source", true).await;
+    let result = execute_fetch_plan(&fetcher, plan, "busy-source").await;
     assert_eq!(result.status, FetchStatus::Complete);
     assert_eq!(result.blocks.len(), 2);
     assert_eq!(result.attempts, 4);
