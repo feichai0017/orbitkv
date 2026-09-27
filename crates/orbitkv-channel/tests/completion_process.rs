@@ -5,7 +5,7 @@ use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use orbitkv_channel::{
-    BootstrapServer, CacheClient, CallOptions, ChannelError, CommandCode,
+    BootstrapServer, CacheClient, CallOptions, ChannelError, CommandCode, GrantState,
     RESPONSE_FLAG_REQUEST_CONSUMED, Response, RestoreRequest, RestoreState, TransportServer,
 };
 
@@ -128,6 +128,74 @@ fn pending_restore_reports_actual_peer_process_exit_without_fabricating_completi
 }
 
 #[test]
+fn local_grants_remain_pending_until_engine_drain_and_manager_reaping() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = ChildGuard::start(dir.path());
+    let client =
+        CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
+    let handle = client
+        .start_restore(&RestoreRequest {
+            instance_id: "local".into(),
+            tp_rank: 0,
+            device_id: 0,
+            layer_groups: vec![],
+            loads: vec![],
+        })
+        .unwrap();
+    assert_eq!(
+        client.claim_local_restore(handle).unwrap().unwrap(),
+        b"cross-process bounded plan"
+    );
+    assert_eq!(
+        client.poll_restore(handle).unwrap().state,
+        RestoreState::Pending
+    );
+    client.finish_local_restore(handle, Ok(())).unwrap();
+    assert_eq!(
+        client
+            .wait_restore(handle, Duration::from_secs(5))
+            .unwrap()
+            .state,
+        RestoreState::Succeeded
+    );
+    client.close();
+    child.wait_for_success();
+}
+
+#[test]
+fn manager_process_death_does_not_fence_active_engine_dma() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = ChildGuard::start(dir.path());
+    let client =
+        CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
+    let handle = client
+        .start_restore(&RestoreRequest {
+            instance_id: "local".into(),
+            tp_rank: 0,
+            device_id: 0,
+            layer_groups: vec![],
+            loads: vec![],
+        })
+        .unwrap();
+    client.claim_local_restore(handle).unwrap().unwrap();
+    std::fs::write(dir.path().join("exit"), b"").unwrap();
+    child.wait_for_success();
+    assert_eq!(
+        client.poll_restore(handle).unwrap().state,
+        RestoreState::Pending
+    );
+    assert!(matches!(
+        client.wait_restore(handle, Duration::from_millis(2)),
+        Err(ChannelError::RestoreTimeout { .. })
+    ));
+    client.finish_local_restore(handle, Ok(())).unwrap();
+    assert!(matches!(
+        client.poll_restore(handle),
+        Err(ChannelError::SessionRequiresReconnect)
+    ));
+}
+
+#[test]
 fn shared_completion_child() {
     let Some(directory) = std::env::var_os("ORBITKV_COMPLETION_TEST_DIRECTORY") else {
         return;
@@ -159,7 +227,16 @@ fn shared_completion_child() {
                 assert!(calls <= 2);
                 let id = command.arg1;
                 session.completions().claim(id).unwrap();
-                pending.push((id, request.instance_id == "failure"));
+                if request.instance_id == "local" {
+                    session
+                        .completions()
+                        .publish_local(id, b"cross-process bounded plan")
+                        .unwrap();
+                    session.notify().unwrap();
+                } else {
+                    session.completions().start_managed(id).unwrap();
+                    pending.push((id, request.instance_id == "failure"));
+                }
                 let mut response = Response::ok(command);
                 response.value1 = RESPONSE_FLAG_REQUEST_CONSUMED;
                 session.complete_request().unwrap();
@@ -168,11 +245,12 @@ fn shared_completion_child() {
             .unwrap();
         if directory.join("exit").exists() {
             assert_eq!(calls, 1);
-            assert_eq!(pending.len(), 1);
-            assert_eq!(
-                session.completions().poll(pending[0].0).unwrap().state,
-                RestoreState::Pending
-            );
+            for (id, _) in &pending {
+                assert_eq!(
+                    session.completions().poll(*id).unwrap().state,
+                    RestoreState::Pending
+                );
+            }
             return;
         }
         if directory.join("complete").exists() && !pending.is_empty() {
@@ -191,10 +269,17 @@ fn shared_completion_child() {
             }
             session.notify().unwrap();
         }
+        for (id, state) in session.completions().manager_updates().unwrap() {
+            match state {
+                GrantState::Active => session.completions().release_plan(id).unwrap(),
+                GrantState::Drained => session.completions().reap(id).unwrap(),
+                _ => panic!("unexpected grant state: {state:?}"),
+            }
+        }
         std::thread::yield_now();
     }
-    assert_eq!(
-        calls, 2,
+    assert!(
+        (1..=2).contains(&calls),
         "completion consumption must not issue Poll requests"
     );
 }

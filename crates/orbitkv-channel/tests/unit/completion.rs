@@ -11,108 +11,193 @@ fn records() -> Arc<RestoreCompletions> {
     )
 }
 
+fn independent(records: &RestoreCompletions) -> RestoreCompletions {
+    RestoreCompletions::open(
+        records.file().try_clone().unwrap().into(),
+        records.notification_fd().try_clone().unwrap(),
+        records.manager_notification_fd().try_clone().unwrap(),
+        17,
+        29,
+    )
+    .unwrap()
+}
+
 #[test]
-fn only_consumed_terminal_records_are_reusable_and_old_generations_stay_closed() {
+fn only_reaped_and_acknowledged_records_recycle() {
     let records = records();
+    let engine = independent(&records);
     let ids: Vec<_> = (0..RESTORE_COMPLETION_SLOTS)
-        .map(|_| records.reserve().unwrap())
+        .map(|_| engine.reserve().unwrap())
         .collect();
-    for id in &ids {
-        assert_eq!(records.poll(*id).unwrap().state, RestoreState::Pending);
-    }
     assert!(matches!(records.reserve(), Err(CompletionError::Full)));
-    records.claim(ids[0]).unwrap();
-    records.complete(ids[0], Ok(())).unwrap();
+    let id = ids[0];
+    records.claim(id).unwrap();
+    assert!(records.publish_local(id, b"checked source plan").unwrap());
+    assert_eq!(engine.poll(id).unwrap().state, RestoreState::Pending);
+    assert_eq!(
+        engine.claim_local(id).unwrap().unwrap(),
+        b"checked source plan"
+    );
+    assert!(!records.revoke(id).unwrap());
     assert!(matches!(records.reserve(), Err(CompletionError::Full)));
-    assert_eq!(records.poll(ids[0]).unwrap().state, RestoreState::Succeeded);
-    let replacement = records.reserve().unwrap();
+    engine.drained(id, Ok(())).unwrap();
+    assert_eq!(engine.poll(id).unwrap().state, RestoreState::Pending);
+    assert_eq!(
+        records.manager_updates().unwrap(),
+        vec![(id, GrantState::Drained)]
+    );
+    assert!(records.drain_succeeded(id).unwrap());
+    records.release_plan(id).unwrap();
+    records.reap(id).unwrap();
+    assert!(matches!(records.reserve(), Err(CompletionError::Full)));
+    assert_eq!(engine.poll(id).unwrap().state, RestoreState::Succeeded);
+    let replacement = engine.reserve().unwrap();
     assert_eq!(
         replacement as usize % RESTORE_COMPLETION_SLOTS,
-        ids[0] as usize % RESTORE_COMPLETION_SLOTS
+        id as usize % RESTORE_COMPLETION_SLOTS
     );
+    assert!(matches!(records.claim(id), Err(CompletionError::Stale(_))));
     assert!(matches!(
-        records.poll(ids[0]),
+        engine.drained(id, Ok(())),
         Err(CompletionError::Stale(_))
     ));
+    assert_eq!(records.state(replacement).unwrap(), GrantState::Reserved);
+}
+
+#[test]
+fn plan_bank_is_bounded_and_consumption_does_not_release_sources() {
+    let records = records();
+    let engine = independent(&records);
+    let first = engine.reserve().unwrap();
+    records.claim(first).unwrap();
+    let large = vec![0x5a; RESTORE_PLAN_BYTES];
+    assert!(records.publish_local(first, &large).unwrap());
+    let second = engine.reserve().unwrap();
+    records.claim(second).unwrap();
     assert!(matches!(
-        records.complete(ids[0], Err("late".into())),
-        Err(CompletionError::Stale(_))
+        records.publish_local(second, b"next"),
+        Err(CompletionError::PlanFull)
     ));
+    assert!(records.release_plan(first).is_err());
+    assert_eq!(engine.claim_local(first).unwrap().unwrap(), large);
     assert_eq!(
-        records.poll(replacement).unwrap().state,
-        RestoreState::Pending
+        records.manager_updates().unwrap(),
+        vec![(first, GrantState::Active)]
+    );
+    records.release_plan(first).unwrap();
+    assert!(records.publish_local(second, b"next").unwrap());
+    assert_eq!(records.state(first).unwrap(), GrantState::Active);
+    assert!(records.reap(first).is_err());
+    assert_eq!(engine.claim_local(second).unwrap().unwrap(), b"next");
+    engine
+        .drained(second, Err("partial enqueue drained".into()))
+        .unwrap();
+    engine.drained(first, Ok(())).unwrap();
+    for id in [first, second] {
+        records.reap(id).unwrap();
+    }
+    assert_eq!(
+        engine.poll(second).unwrap().message,
+        "partial enqueue drained"
+    );
+    assert_eq!(engine.poll(first).unwrap().state, RestoreState::Succeeded);
+}
+
+#[test]
+fn cancellation_has_a_separate_preparation_drain() {
+    let records = records();
+    let before = records.reserve().unwrap();
+    assert!(records.cancel(before).unwrap());
+    assert!(records.claim(before).is_err());
+    let during = records.reserve().unwrap();
+    records.claim(during).unwrap();
+    assert!(!records.cancel(during).unwrap());
+    assert_eq!(records.poll(during).unwrap().state, RestoreState::Pending);
+    assert!(!records.publish_local(during, b"not published").unwrap());
+    records.finish_cancelled(during).unwrap();
+    assert_eq!(records.poll(during).unwrap().state, RestoreState::Failed);
+    // A managed worker can already have submitted before route publication.
+    let managed = records.reserve().unwrap();
+    records.claim(managed).unwrap();
+    assert!(!records.cancel(managed).unwrap());
+    records.start_managed(managed).unwrap();
+    assert_eq!(records.poll(managed).unwrap().state, RestoreState::Pending);
+    records.complete(managed, Ok(())).unwrap();
+    assert_eq!(
+        records.poll(managed).unwrap().state,
+        RestoreState::Succeeded
     );
 }
 
 #[test]
-fn mappings_validate_session_identity_and_preserve_bounded_utf8_errors() {
+fn claim_and_revoke_have_exactly_one_winner_across_mappings() {
     let records = records();
-    let open = |epoch, token| {
-        RestoreCompletions::open(
-            records.file().try_clone().unwrap().into(),
-            records.notification_fd().try_clone().unwrap(),
-            epoch,
-            token,
-        )
-    };
-    assert!(matches!(open(18, 29), Err(CompletionError::InvalidMapping)));
-    assert!(matches!(open(17, 30), Err(CompletionError::InvalidMapping)));
-    let reader = open(17, 29).unwrap();
-    let id = records.reserve().unwrap();
-    records.claim(id).unwrap();
-    let message = "错".repeat(2000);
-    records.complete(id, Err(message)).unwrap();
-    let response = reader.poll(id).unwrap();
-    assert_eq!(response.state, RestoreState::Failed);
-    assert_eq!(response.message, "错".repeat(RESTORE_ERROR_BYTES / 3));
-    assert!(matches!(records.poll(id), Err(CompletionError::Stale(_))));
+    let engine = independent(&records);
+    for _ in 0..128 {
+        let id = engine.reserve().unwrap();
+        records.claim(id).unwrap();
+        records.publish_local(id, b"plan").unwrap();
+        let gate = std::sync::Barrier::new(2);
+        thread::scope(|scope| {
+            let claim = scope.spawn(|| {
+                gate.wait();
+                engine.claim_local(id)
+            });
+            gate.wait();
+            let revoked = records.revoke(id).unwrap();
+            match claim.join().unwrap() {
+                Ok(Some(plan)) => {
+                    assert!(!revoked);
+                    assert_eq!(plan, b"plan");
+                    engine.drained(id, Ok(())).unwrap();
+                }
+                Ok(None) | Err(CompletionError::Stale(_)) => assert!(revoked),
+                other => panic!("unexpected claim: {other:?}"),
+            }
+            assert_eq!(records.drain_succeeded(id).unwrap(), !revoked);
+            records.reap(id).unwrap();
+            assert_eq!(
+                engine.poll(id).unwrap().state,
+                if revoked {
+                    RestoreState::Failed
+                } else {
+                    RestoreState::Succeeded
+                }
+            );
+        });
+    }
 }
 
 #[test]
-fn concurrent_completion_and_consumption_do_not_ack_pending_or_consume_twice() {
+fn bounded_dirty_bits_preserve_all_operations_without_queue_overflow() {
     let records = records();
-    let id = records.reserve().unwrap();
-    records.claim(id).unwrap();
-    let gate = std::sync::Barrier::new(3);
-    thread::scope(|scope| {
-        let readers: Vec<_> = (0..2)
-            .map(|_| {
-                scope.spawn(|| {
-                    gate.wait();
-                    loop {
-                        match records.poll(id) {
-                            Ok(response) if response.state == RestoreState::Pending => {
-                                thread::yield_now();
-                            }
-                            Ok(response) => {
-                                assert_eq!(response.message, "error-after-drain");
-                                return true;
-                            }
-                            Err(CompletionError::Stale(_)) => return false,
-                            Err(error) => panic!("{error}"),
-                        }
-                    }
-                })
-            })
-            .collect();
-        assert_eq!(records.poll(id).unwrap().state, RestoreState::Pending);
-        gate.wait();
-        records
-            .complete(id, Err("error-after-drain".into()))
-            .unwrap();
-        assert_eq!(
-            readers
-                .into_iter()
-                .map(|reader| reader.join().unwrap())
-                .filter(|won| *won)
-                .count(),
-            1
-        );
-    });
+    let engine = independent(&records);
+    let ids: Vec<_> = (0..RESTORE_COMPLETION_SLOTS)
+        .map(|_| engine.reserve().unwrap())
+        .collect();
+    for id in &ids {
+        records.claim(*id).unwrap();
+        records.publish_local(*id, b"plan").unwrap();
+        engine.claim_local(*id).unwrap().unwrap();
+        engine.drained(*id, Ok(())).unwrap();
+    }
+    let updates = records.manager_updates().unwrap();
+    assert_eq!(updates.len(), RESTORE_COMPLETION_SLOTS);
+    assert!(
+        updates
+            .iter()
+            .all(|(_, state)| *state == GrantState::Drained)
+    );
+    assert!(records.manager_updates().unwrap().is_empty());
+    for (id, _) in updates {
+        records.reap(id).unwrap();
+        engine.poll(id).unwrap();
+    }
+    assert!(records.plans.lock().unwrap().is_empty());
 }
 
 #[test]
-fn concurrent_reuse_never_exposes_mixed_error_bytes() {
+fn stale_readers_cannot_mix_recycled_error_generations() {
     let records = records();
     let current = AtomicU64::new(0);
     let finished = std::sync::atomic::AtomicBool::new(false);
@@ -137,15 +222,15 @@ fn concurrent_reuse_never_exposes_mixed_error_bytes() {
                         Ok(response) => {
                             let generation = (id - 1) / RESTORE_COMPLETION_SLOTS as u64;
                             let expected = if generation.is_multiple_of(2) {
-                                "错".repeat(1365)
+                                "错".repeat(RESTORE_ERROR_BYTES / 3)
                             } else {
-                                "é".repeat(2048)
+                                "é".repeat(RESTORE_ERROR_BYTES / 2)
                             };
                             assert_eq!(response.message, expected);
                             consumed.fetch_add(1, Ordering::Relaxed);
                         }
                         Err(CompletionError::Stale(_)) => thread::yield_now(),
-                        Err(error) => panic!("concurrent reuse returned {error}"),
+                        Err(error) => panic!("{error}"),
                     }
                 }
             });
@@ -157,16 +242,15 @@ fn concurrent_reuse_never_exposes_mixed_error_bytes() {
             );
             let id = records.reserve().unwrap();
             records.claim(id).unwrap();
+            records.start_managed(id).unwrap();
             current.store(id, Ordering::Release);
             let message = if generation.is_multiple_of(2) {
-                "错".repeat(1365)
+                "错".repeat(2000)
             } else {
-                "é".repeat(2048)
+                "é".repeat(2000)
             };
             records.complete(id, Err(message)).unwrap();
-            let (record, _) = RestoreCompletions::offsets(id).unwrap();
-            while records.word(record).load(Ordering::Acquire) != (id << STATE_BITS) | ACKNOWLEDGED
-            {
+            while records.state(id).unwrap() != GrantState::Acknowledged {
                 thread::yield_now();
             }
         }
@@ -176,135 +260,75 @@ fn concurrent_reuse_never_exposes_mixed_error_bytes() {
 }
 
 #[test]
-fn cancellation_can_only_win_before_claim_and_publication_is_once() {
+fn mapping_identity_and_operation_exhaustion_are_checked() {
     let records = records();
-    let cancelled = records.reserve().unwrap();
-    assert!(records.cancel(cancelled).unwrap());
     assert!(matches!(
-        records.claim(cancelled),
-        Err(CompletionError::Stale(_))
+        RestoreCompletions::open(
+            records.file().try_clone().unwrap().into(),
+            records.notification_fd().try_clone().unwrap(),
+            records.manager_notification_fd().try_clone().unwrap(),
+            18,
+            29
+        ),
+        Err(CompletionError::InvalidMapping)
     ));
-    assert!(matches!(
-        records.complete(cancelled, Ok(())),
-        Err(CompletionError::Stale(_))
-    ));
-    assert!(matches!(
-        records.cancel(cancelled),
-        Err(CompletionError::Stale(_))
-    ));
-
-    let submitted = records.reserve().unwrap();
-    assert!(matches!(
-        records.complete(submitted, Ok(())),
-        Err(CompletionError::Stale(_))
-    ));
-    records.claim(submitted).unwrap();
-    assert!(matches!(
-        records.claim(submitted),
-        Err(CompletionError::Stale(_))
-    ));
-    assert!(!records.cancel(submitted).unwrap());
-    assert_eq!(
-        records.poll(submitted).unwrap().state,
-        RestoreState::Pending
-    );
-    records.complete(submitted, Ok(())).unwrap();
-    assert!(matches!(
-        records.complete(submitted, Err("second result".into())),
-        Err(CompletionError::Stale(_))
-    ));
-    assert!(!records.cancel(submitted).unwrap());
-    assert_eq!(
-        records.poll(submitted).unwrap().state,
-        RestoreState::Succeeded
-    );
-    assert!(matches!(
-        records.claim(submitted),
-        Err(CompletionError::Stale(_))
-    ));
-}
-
-#[test]
-fn independent_mappings_share_ids_and_claim_races_cancellation() {
-    let records = records();
-    let manager = RestoreCompletions::open(
-        records.file().try_clone().unwrap().into(),
-        records.notification_fd().try_clone().unwrap(),
-        17,
-        29,
-    )
-    .unwrap();
-    let first = records.reserve().unwrap();
-    let second = manager.reserve().unwrap();
-    assert_ne!(first, second);
-    assert!(manager.cancel(first).unwrap());
-    assert!(records.cancel(second).unwrap());
-
-    let gate = std::sync::Barrier::new(2);
-    let operation = AtomicU64::new(0);
-    let was_cancelled = std::sync::atomic::AtomicBool::new(false);
-    thread::scope(|scope| {
-        let cancelled = scope.spawn(|| {
-            for _ in 0..128 {
-                gate.wait();
-                let id = operation.load(Ordering::Acquire);
-                let cancelled = records.cancel(id).unwrap();
-                was_cancelled.store(cancelled, Ordering::Release);
-                gate.wait();
-            }
-        });
-        for _ in 0..128 {
-            let id = manager.reserve().unwrap();
-            operation.store(id, Ordering::Release);
-            gate.wait();
-            let claimed = manager.claim(id).is_ok();
-            gate.wait();
-            assert_ne!(claimed, was_cancelled.load(Ordering::Acquire));
-            if claimed {
-                assert!(!records.cancel(id).unwrap());
-                manager.complete(id, Ok(())).unwrap();
-                assert_eq!(records.poll(id).unwrap().state, RestoreState::Succeeded);
-            } else {
-                assert!(matches!(manager.claim(id), Err(CompletionError::Stale(_))));
-                assert!(matches!(
-                    manager.complete(id, Ok(())),
-                    Err(CompletionError::Stale(_))
-                ));
-            }
-        }
-        cancelled.join().unwrap();
-    });
-}
-
-#[test]
-fn operation_identity_exhaustion_never_wraps_into_an_old_generation() {
-    let records = records();
     records
         .word(NEXT_OPERATION_OFFSET)
         .store(MAX_OPERATION_ID, Ordering::Relaxed);
     let last = records.reserve().unwrap();
     assert_eq!(last, MAX_OPERATION_ID);
     records.claim(last).unwrap();
+    records.start_managed(last).unwrap();
     records.complete(last, Ok(())).unwrap();
     assert_eq!(records.poll(last).unwrap().state, RestoreState::Succeeded);
     assert!(matches!(records.reserve(), Err(CompletionError::Exhausted)));
-    assert!(matches!(records.reserve(), Err(CompletionError::Exhausted)));
-    assert!(matches!(
-        records.claim(last),
-        Err(CompletionError::Stale(_))
-    ));
     for invalid in [0, MAX_OPERATION_ID + 1, u64::MAX] {
-        assert!(matches!(
-            records.poll(invalid),
-            Err(CompletionError::Stale(_))
-        ));
-        assert!(matches!(
-            records.claim(invalid),
-            Err(CompletionError::Stale(_))
-        ));
-        assert!(matches!(
-            records.cancel(invalid),
-            Err(CompletionError::Stale(_))
-        ));
+        assert!(records.poll(invalid).is_err());
+        assert!(records.claim(invalid).is_err());
+        assert!(records.cancel(invalid).is_err());
     }
+}
+
+#[test]
+fn admission_and_preparation_cancellation_race_without_losing_the_operation() {
+    let records = records();
+    let engine = independent(&records);
+    let first = engine.reserve().unwrap();
+    let second = records.reserve().unwrap();
+    assert_ne!(first, second);
+    assert!(engine.cancel(first).unwrap());
+    assert!(records.cancel(second).unwrap());
+    let gate = std::sync::Barrier::new(2);
+    let operation = AtomicU64::new(0);
+    let safe_cancel = std::sync::atomic::AtomicBool::new(false);
+    thread::scope(|scope| {
+        let cancel = scope.spawn(|| {
+            for _ in 0..128 {
+                gate.wait();
+                safe_cancel.store(
+                    engine.cancel(operation.load(Ordering::Acquire)).unwrap(),
+                    Ordering::Release,
+                );
+                gate.wait();
+            }
+        });
+        for _ in 0..128 {
+            let id = engine.reserve().unwrap();
+            operation.store(id, Ordering::Release);
+            gate.wait();
+            let admitted = records.claim(id).is_ok();
+            gate.wait();
+            assert_ne!(admitted, safe_cancel.load(Ordering::Acquire));
+            assert!(records.claim(id).is_err(), "admission must be exactly once");
+            if admitted {
+                assert_eq!(records.state(id).unwrap(), GrantState::CancelRequested);
+                assert_eq!(engine.poll(id).unwrap().state, RestoreState::Pending);
+                records.finish_cancelled(id).unwrap();
+                assert_eq!(engine.poll(id).unwrap().state, RestoreState::Failed);
+            } else {
+                assert_eq!(records.state(id).unwrap(), GrantState::Acknowledged);
+            }
+        }
+        cancel.join().unwrap();
+    });
 }

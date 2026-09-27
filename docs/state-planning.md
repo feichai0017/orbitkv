@@ -1104,7 +1104,7 @@ Identical prefix reads can be shared with independent owners and leases; SSD
 queue pressure waits for space. A too-large individual query bypasses restore.
 Expired replies drop resources while retaining a bounded tombstone until poll,
 cancel, or session teardown. Both adapters cancel superseded queries. Channel
-ABI 8 requires rebuilding the manager and client together.
+ABI 9 requires rebuilding the manager and client together.
 
 Deterministic [fault gates](fault-qualification.md) cover delayed SSD completion,
 cancelled ownership, lost completion notifications, stuck/malformed Publish
@@ -1243,8 +1243,8 @@ events; incrementing an adapter transfer counter does not supply that evidence.
 Qualify full-attention first. Hybrid checkpoints, sliding windows, MLA and
 auxiliary state each require their own complete recovery gate.
 
-P6 adds per-layer-group completion dependencies to Core's `transfer/worker/`, the backing
-pipeline, and both adapters. Start with whole-prefix SSD preparation plus
+P6 adds per-layer-group completion dependencies to the engine-local raw executor,
+the remaining Manager SSD/codec workers, the backing pipeline, and both adapters. Start with whole-prefix SSD preparation plus
 layer-group H2D/compute overlap; only then pipeline SSD chunks through a bounded
 staging ring. The current serialized full restore remains the reference for
 byte correctness during evaluation. GPU execution must wait on a dependency

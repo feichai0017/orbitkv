@@ -38,7 +38,7 @@ pub struct MemoryCacheCleanupStats {
 }
 
 pub(crate) struct Storage {
-    allocator: Arc<PinnedAllocator>,
+    pub(crate) allocator: Arc<PinnedAllocator>,
     pub(crate) codec: crate::StorageCodec,
     pub(crate) codec_budget: usize,
     pub(crate) dram: Arc<DramStore>,

@@ -175,6 +175,10 @@ impl PinnedMemory {
         })
     }
 
+    pub(crate) fn export_fd(&self) -> io::Result<OwnedFd> {
+        self.fd.try_clone()
+    }
+
     /// Get a raw pointer to the allocated memory.
     #[inline]
     pub(crate) fn as_ptr(&self) -> *const u8 {

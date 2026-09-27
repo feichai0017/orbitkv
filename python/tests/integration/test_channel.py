@@ -110,28 +110,31 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
     assert (
         orbitkv_native.QueryReady(result.num_hit_blocks, lease, result.hit_positions).lease == lease
     )
-    operation_id = query_client.start_restore(
+    restore_client = channel_client_context.client
+    operation_id = restore_client.start_restore(
         instance_id=channel_client_context.instance_id,
         tp_rank=0,
         device_id=0,
         layer_groups=[channel_client_context._layer_names],
         loads=[(lease, [[2, 3]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
-    readable, _, _ = select.select([query_client.notification_fd], [], [], 5)
-    assert readable == [query_client.notification_fd]
-    assert int.from_bytes(os.read(query_client.notification_fd, 8), byteorder=sys.byteorder) >= 1
-    status = query_client.poll_restore(operation_id)
+    readable, _, _ = select.select([restore_client.notification_fd], [], [], 5)
+    assert readable == [restore_client.notification_fd]
+    assert int.from_bytes(os.read(restore_client.notification_fd, 8), byteorder=sys.byteorder) >= 1
+    status = restore_client.poll_restore(operation_id)
     assert status.success, status.message
     restored = channel_client_context.get_kv_cache()[:, 2:4].cpu()
     assert restored.equal(expected)
-    rejected = query_client.start_restore(
+    rejected = restore_client.start_restore(
         instance_id=channel_client_context.instance_id,
         tp_rank=0,
         device_id=0,
         layer_groups=[channel_client_context._layer_names],
         loads=[(result.lease, [[0, 1]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
-    status = query_client.wait_restore(rejected, timeout=5)
+    status = restore_client.wait_restore(rejected, timeout=5)
     assert status.done and not status.success
     assert "lease" in status.message.lower()
 
@@ -143,14 +146,15 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
     assert isinstance(second, orbitkv_native.QueryReady)
     channel_client_context.get_kv_cache()[:, 0:2].zero_()
     torch.cuda.synchronize()
-    second_restore = query_client.start_restore(
+    second_restore = restore_client.start_restore(
         instance_id=channel_client_context.instance_id,
         tp_rank=0,
         device_id=0,
         layer_groups=[channel_client_context._layer_names],
         loads=[(second.lease, [[0, 1]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
-    assert query_client.wait_restore(second_restore, timeout=5).success
+    assert restore_client.wait_restore(second_restore, timeout=5).success
     assert channel_client_context.get_kv_cache()[:, 0:2].cpu().equal(expected)
 
     third = query(

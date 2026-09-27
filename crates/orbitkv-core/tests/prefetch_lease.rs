@@ -171,6 +171,9 @@ async fn rejected_restore_batch_preserves_leases_and_gpu_pages() {
             &[(first, first_targets), (second, second_targets)],
         )
         .expect("corrected batch uses both original leases");
-    wait_for_load(completion, LOAD_WAIT_TIMEOUT).await;
+    env.restore_outcome(completion)
+        .await
+        .result
+        .expect("restore failed");
     env.data().assert_gpu_matches_expected();
 }

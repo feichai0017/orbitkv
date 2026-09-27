@@ -253,7 +253,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
             .submit_load(LoadTask {
                 plan: crate::planning::restore::RestorePlan::new(0, [(0, &planned_source)])
                     .unwrap(),
-                payload: crate::transfer::worker::LoadPayload::Layers(vec![LayerTransferData {
+                layers: vec![LayerTransferData {
                     layer_name: "attention".into(),
                     layout: layout.clone(),
                     blocks: vec![TransferBlock {
@@ -265,7 +265,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
                             offset: 0,
                         },
                     }],
-                }]),
+                }],
                 completion,
                 reservations: vec![],
                 codec_budget: CODEC_BUDGET,

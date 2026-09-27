@@ -169,8 +169,8 @@ impl Queries {
     }
 }
 
-/// A GPU restore remains owned after a wait deadline. Only a terminal reply
-/// or confirmed Manager death permits the engine to reuse its destinations.
+/// A GPU restore remains owned after a wait deadline. Engine-local destinations
+/// remain leased until the native executor proves its own DMA drain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RestoreHandle {
     pub operation_id: u64,
@@ -643,6 +643,43 @@ impl CacheClient {
             return Err(ChannelError::SessionRequiresReconnect);
         }
         self.channel.restore_poll(handle.operation_id)
+    }
+
+    pub fn restore_completions(&self) -> Arc<crate::RestoreCompletions> {
+        self.channel.restore_completions()
+    }
+
+    pub fn claim_local_restore(
+        &self,
+        handle: RestoreHandle,
+    ) -> Result<Option<Vec<u8>>, ChannelError> {
+        if handle.owner != self.owner
+            || handle.session_token != self.channel.session_token()
+            || handle.session_epoch != self.channel.session_epoch()
+        {
+            return Err(ChannelError::SessionRequiresReconnect);
+        }
+        self.channel
+            .restore_completions()
+            .claim_local(handle.operation_id)
+            .map_err(Into::into)
+    }
+
+    pub fn finish_local_restore(
+        &self,
+        handle: RestoreHandle,
+        result: Result<(), String>,
+    ) -> Result<(), ChannelError> {
+        if handle.owner != self.owner
+            || handle.session_token != self.channel.session_token()
+            || handle.session_epoch != self.channel.session_epoch()
+        {
+            return Err(ChannelError::SessionRequiresReconnect);
+        }
+        self.channel
+            .restore_completions()
+            .drained(handle.operation_id, result)
+            .map_err(Into::into)
     }
 
     pub fn restore_completions_ready(&self, timeout: Duration) -> Result<bool, ChannelError> {

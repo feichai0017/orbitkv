@@ -444,7 +444,11 @@ def test_scheduler_rejects_invalid_shard_query_results_without_leaking_lease(inv
         second.release.assert_called_once_with(invalid_ready.lease)
 
 
-def test_worker_selects_the_lease_for_its_local_server():
+def test_worker_selects_the_lease_for_its_local_server(monkeypatch):
+    monkeypatch.setattr(
+        "orbitkv.vllm.worker.torch.cuda.current_stream",
+        lambda _device=None: SimpleNamespace(cuda_stream=17),
+    )
     engine_client = MagicMock()
     engine_client.start_restore.return_value = SimpleNamespace(key="restore-1")
     context = _context(

@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use cudarc::driver::CudaContext;
 use cudarc::driver::sys;
 use orbitkv_catalog::{BlockHashStore, CatalogService, MembershipView, Placement};
+use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePlan};
 use orbitkv_core::*;
 use orbitkv_proto::proto::engine::{
     OpenTransferWindowRequest, QueryBlocksForTransferRequest, ReleaseTransferLockRequest,
@@ -110,6 +111,50 @@ fn make_block_hashes(num_blocks: usize, salt: u8) -> Vec<Vec<u8>> {
             hash
         })
         .collect()
+}
+
+async fn restore_and_wait(
+    engine: &OrbitKVEngine,
+    gpu: &GpuBuffer,
+    layer: &str,
+    blocks: usize,
+    execution: RestoreExecution,
+) {
+    match execution {
+        RestoreExecution::Local(grant) => {
+            let tensor = LocalTensor::new(
+                layer.into(),
+                gpu.as_u64(),
+                gpu.len,
+                0,
+                blocks,
+                gpu.len / blocks,
+                0,
+                1,
+            )
+            .expect("local destination geometry");
+            let mut executor = LocalRestoreExecutor::new(
+                0,
+                vec![tensor],
+                engine.payload_arenas().expect("export payload arenas"),
+                TransferMode::Direct,
+            )
+            .expect("import source payload arenas");
+            let plan =
+                RawRestorePlan::decode(grant.encoded_plan()).expect("decode local Restore plan");
+            let result = executor.execute(&plan);
+            grant.finish(result.is_ok());
+            result.expect("local Restore failed");
+        }
+        RestoreExecution::Managed(receiver) => {
+            tokio::time::timeout(Duration::from_secs(5), receiver)
+                .await
+                .expect("restore timeout")
+                .expect("restore worker disappeared")
+                .result
+                .expect("restore failed");
+        }
+    }
 }
 
 // ── Infrastructure ──────────────────────────────────────────────────────────
@@ -776,12 +821,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         )
         .expect("batch_load on engine B");
 
-    tokio::time::timeout(Duration::from_secs(5), receiver)
-        .await
-        .expect("restore timeout")
-        .expect("restore worker disappeared")
-        .result
-        .expect("restore failed");
+    restore_and_wait(&engine_b, &gpu_b, LAYER, NUM_BLOCKS, receiver).await;
 
     // ── 11. Verify data integrity ──
     let loaded = gpu_b.copy_to_host();
@@ -946,13 +986,10 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
             );
             let lease = engine.create_query_lease(id, result.blocks).unwrap();
             gpu.zero();
-            engine
+            let execution = engine
                 .restore(id, 0, 0, &[vec!["layer"]], &[(lease, vec![vec![Some(0)]])])
-                .unwrap()
-                .await
-                .unwrap()
-                .result
                 .unwrap();
+            restore_and_wait(engine, gpu, "layer", 1, execution).await;
             images.push(gpu.copy_to_host());
         }
         assert_eq!(

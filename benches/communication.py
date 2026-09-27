@@ -220,6 +220,8 @@ def sample(
     idle,
     timeout,
 ):
+    import torch
+
     query_calls = 0
     if operation == "restore":
         loads = []
@@ -261,7 +263,14 @@ def sample(
     process_start = time.process_time_ns()
     started = time.perf_counter_ns()
     if operation in {"restore", "restore_empty"}:
-        handle = client.start_restore(instance, 0, device, [layers], loads)
+        handle = client.start_restore(
+            instance,
+            0,
+            device,
+            [layers],
+            loads,
+            ready_stream=torch.cuda.current_stream().cuda_stream,
+        )
         submitted = time.perf_counter_ns()
         thread_submitted = time.thread_time_ns()
         process_submitted = time.process_time_ns()
@@ -496,6 +505,7 @@ def main(argv: list[str] | None = None) -> None:
                 [segments] * args.layers,
                 "direct",
                 False,
+                tensors=[pages[index] for index in range(args.layers)],
             )
             if not ok:
                 raise RuntimeError(f"registration failed: {message}")

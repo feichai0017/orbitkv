@@ -52,6 +52,7 @@ def main() -> int:
         [segments],
         "direct",
         False,
+        tensors=[kv],
     )
     if not ok:
         print(f"register_context_batch failed: {msg}", file=sys.stderr)

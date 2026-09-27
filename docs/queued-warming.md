@@ -78,7 +78,7 @@ The explicit `CacheManagerClient.warm_prefix()` API always attempts the supplied
 hint; the environment switch controls automatic engine enqueue hooks only.
 Transport failures in this optional enqueue hint are logged by the adapters
 without raising out of the already-accepted request's queue callback.
-Manager and Python extension must both use channel ABI 8; earlier ABIs are not supported.
+Manager and Python extension must both use channel ABI 9; earlier ABIs are not supported.
 
 ## Observing the path
 

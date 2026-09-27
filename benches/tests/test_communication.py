@@ -1,5 +1,6 @@
 """Protect timing boundaries and source ownership in the communication harness."""
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +14,17 @@ from benches.communication import (
     sample,
     verify_bytes,
 )
+
+
+@pytest.fixture(autouse=True)
+def local_ready_stream(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            cuda=SimpleNamespace(current_stream=lambda: SimpleNamespace(cuda_stream=17))
+        ),
+    )
 
 
 @pytest.mark.parametrize("values", [[], [float("nan")], [float("inf")], [-1]])
@@ -55,8 +67,9 @@ def test_lease_setup_and_idle_are_outside_restore_timer_and_query_release_is_out
 
     monkeypatch.setattr("benches.communication.query_ready", ready)
 
-    def submit(*args):
+    def submit(*args, ready_stream):
         events.append("submit")
+        assert ready_stream == 17
         assert args[-1] == [
             (lease, [batch_targets])
             for lease, (_, batch_targets) in zip(acquired, restore_batches, strict=True)
@@ -111,7 +124,7 @@ def test_ambiguous_restore_never_releases_its_source_or_returns_a_timing(monkeyp
         raise TimeoutError("GPU completion is unknown")
 
     client = SimpleNamespace(
-        start_restore=wait if failure == "submit" else lambda *args: "accepted",
+        start_restore=wait if failure == "submit" else lambda *args, **kwargs: "accepted",
         wait_restore=wait,
         release=released.append,
     )

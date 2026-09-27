@@ -46,7 +46,8 @@ pub use cache_protocol::{
 pub use client::{ChannelClient, ChannelError};
 #[cfg(target_os = "linux")]
 pub use completion::{
-    CompletionError, RESTORE_COMPLETION_SLOTS, RESTORE_ERROR_BYTES, RestoreCompletions,
+    CompletionError, GrantState, RESTORE_COMPLETION_SLOTS, RESTORE_ERROR_BYTES, RESTORE_PLAN_BYTES,
+    RestoreCompletions,
 };
 pub use protocol::{
     ABI_VERSION, Command, CommandCode, DescriptorRef, ProtocolError,

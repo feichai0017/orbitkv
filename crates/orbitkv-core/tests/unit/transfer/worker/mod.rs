@@ -124,7 +124,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
 }
 
 #[test]
-fn restore_targets_are_validated_and_raw_copies_sorted_before_dispatch() {
+fn managed_restore_rejects_overlapping_targets_before_dispatch() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
@@ -154,7 +154,7 @@ fn restore_targets_are_validated_and_raw_copies_sorted_before_dispatch() {
             let (completion, _) = oneshot::channel();
             let task = LoadTask {
                 plan: empty_restore_plan(0),
-                payload: LoadPayload::Layers(vec![LayerTransferData {
+                layers: vec![LayerTransferData {
                     layer_name: "attention".into(),
                     layout: layout.clone(),
                     blocks: indices
@@ -165,7 +165,7 @@ fn restore_targets_are_validated_and_raw_copies_sorted_before_dispatch() {
                             block: TransferPayload::Pending,
                         })
                         .collect(),
-                }]),
+                }],
                 completion,
                 reservations: vec![],
                 codec_budget,
@@ -178,67 +178,6 @@ fn restore_targets_are_validated_and_raw_copies_sorted_before_dispatch() {
             ));
         }
     }
-    let mut host = [0u8; 32];
-    let mut make_copy = |device, offset| CopyDesc {
-        device,
-        host: host.as_mut_ptr().wrapping_add(offset),
-        host_device: 0x3000 + offset as u64,
-        size: 8,
-        device_allocation: 1,
-        host_allocation: 2,
-    };
-    for devices in [
-        [0x1000, 0x1000],
-        [0x1000, 0x1004],
-        [0, 0x1000],
-        [u64::MAX - 3, 0x1000],
-    ] {
-        let (completion, _) = oneshot::channel();
-        let task = LoadTask {
-            plan: empty_restore_plan(0),
-            payload: LoadPayload::Raw {
-                copies: vec![make_copy(devices[0], 0), make_copy(devices[1], 8)],
-                sources: vec![],
-            },
-            completion,
-            reservations: vec![],
-            codec_budget: 0,
-        };
-        assert!(pool.submit_load(task).is_err());
-        assert!(matches!(
-            load_rx.try_recv(),
-            Err(mpsc::error::TryRecvError::Empty)
-        ));
-    }
-    let (completion, _receiver) = oneshot::channel();
-    pool.submit_load(LoadTask {
-        plan: empty_restore_plan(0),
-        payload: LoadPayload::Raw {
-            // Reverse block order; K/V are separated GPU and host slabs.
-            copies: vec![
-                make_copy(0x1008, 8),
-                make_copy(0x2008, 24),
-                make_copy(0x1000, 0),
-                make_copy(0x2000, 16),
-            ],
-            sources: vec![],
-        },
-        completion,
-        reservations: vec![],
-        codec_budget: 0,
-    })
-    .unwrap();
-    let WorkerCommand::Load(task, _) = load_rx.try_recv().unwrap() else {
-        panic!("raw load must use memory lane")
-    };
-    let LoadPayload::Raw { copies, .. } = task.payload else {
-        panic!("raw descriptors must not expand into layers")
-    };
-    assert_eq!(
-        copies.iter().map(|copy| copy.device).collect::<Vec<_>>(),
-        [0x1000, 0x1008, 0x2000, 0x2008]
-    );
-    assert_eq!(crate::transfer::memcpy::merged_ranges(&copies).count(), 2);
 }
 
 #[test]
@@ -264,10 +203,7 @@ fn restore_plan_must_target_the_worker_device() {
     let error = pool
         .submit_load(LoadTask {
             plan: empty_restore_plan(1),
-            payload: LoadPayload::Raw {
-                copies: Vec::new(),
-                sources: Vec::new(),
-            },
+            layers: Vec::new(),
             completion,
             reservations: Vec::new(),
             codec_budget: 0,
@@ -307,7 +243,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let (reply, _result) = oneshot::channel();
     pool.submit_load(LoadTask {
         plan: empty_restore_plan(0),
-        payload: LoadPayload::Layers(vec![]),
+        layers: vec![],
         completion: reply,
         reservations: vec![],
         codec_budget: 64 * 1024 * 1024,
@@ -338,7 +274,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     assert!(
         pool.submit_load(LoadTask {
             plan: empty_restore_plan(0),
-            payload: LoadPayload::Layers(vec![]),
+            layers: vec![],
             completion: reply,
             reservations: vec![],
             codec_budget: 64 * 1024 * 1024,
@@ -573,7 +509,7 @@ fn raw_source_ranges_are_checked_before_appending_descriptors() {
 }
 
 #[test]
-fn raw_restore_retains_sources_and_reservations_through_partial_submission_drain() {
+fn managed_restore_retains_sources_and_reservations_through_partial_submission_drain() {
     use std::num::NonZeroU64;
     use std::time::Duration;
 
@@ -581,7 +517,6 @@ fn raw_restore_retains_sources_and_reservations_through_partial_submission_drain
 
     use crate::block::Segment;
     use crate::memory::pool::PinnedAllocator;
-    use crate::transfer::layout::BlockCopy;
 
     struct Gate {
         entered: std_mpsc::Sender<()>,
@@ -637,18 +572,6 @@ fn raw_restore_retains_sources_and_reservations_through_partial_submission_drain
     // SAFETY: this test uniquely owns all 32 bytes before sealing them.
     unsafe { allocation.as_non_null().as_ptr().write_bytes(0x5a, 32) };
     let raw = RawBlock::single_segment(Segment::new(allocation.as_non_null(), 32, allocation));
-    let mut copies = Vec::new();
-    append_copy_descs(
-        &mut copies,
-        0,
-        BlockCopies::Contiguous(BlockCopy {
-            addr: device,
-            bytes: 32,
-        }),
-        &raw,
-        0,
-    )
-    .unwrap();
     let source = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
     let weak = Arc::downgrade(&source);
     let budget = crate::query::QueryBudget::new(32, 32).unwrap();
@@ -665,10 +588,23 @@ fn raw_restore_retains_sources_and_reservations_through_partial_submission_drain
     drop(planned_source);
     let task = LoadTask {
         plan,
-        payload: LoadPayload::Raw {
-            copies,
-            sources: vec![source],
-        },
+        layers: vec![LayerTransferData {
+            layer_name: "raw".into(),
+            layout: KVCacheLayout::bind(
+                device,
+                32,
+                crate::transfer::layout::KVCacheGeometry::new(1, 32, 0, 1, None, 1).unwrap(),
+            )
+            .unwrap(),
+            blocks: vec![TransferBlock {
+                block_idx: 0,
+                block: TransferPayload::Cached {
+                    sealed: source,
+                    slot_id: 0,
+                    offset: 0,
+                },
+            }],
+        }],
         completion,
         reservations: vec![reservation],
         codec_budget: 0,

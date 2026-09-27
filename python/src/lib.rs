@@ -13,6 +13,7 @@ use std::time::Duration;
 mod mooncake;
 
 mod client;
+mod local_restore;
 mod recovery;
 
 // Custom Python exceptions for error classification

@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use orbitkv_core::*;
 
@@ -97,17 +97,4 @@ pub fn make_block_hashes(num_blocks: usize, salt: u8) -> Vec<Vec<u8>> {
             hash
         })
         .collect()
-}
-
-/// Await terminal transfer evidence within the test deadline.
-pub async fn wait_for_load(
-    receiver: tokio::sync::oneshot::Receiver<orbitkv_core::LoadOutcome>,
-    timeout: Duration,
-) {
-    tokio::time::timeout(timeout, receiver)
-        .await
-        .expect("restore timeout")
-        .expect("restore worker disappeared")
-        .result
-        .expect("restore failed");
 }

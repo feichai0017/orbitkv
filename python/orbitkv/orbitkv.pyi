@@ -152,6 +152,8 @@ class CacheManagerClient:
         layer_group_ids: list[int] | None = None,
         layer_formats: list[str] | None = None,
         layer_attention: list[tuple[int, str, int, int]] | None = None,
+        *,
+        tensors: list[object],
     ) -> tuple[bool, str]: ...
     @property
     def transport(self) -> str: ...
@@ -221,16 +223,20 @@ class CacheManagerClient:
         device_id: int,
         layer_groups: list[list[str]],
         loads: list[tuple[bytes, list[list[int | None]]]],
+        *,
+        ready_stream: int,
     ) -> RestoreHandle:
         """Reserve an operation before submission; claimed errors arrive in RestoreStatus.
 
-        A lost submission ACK retains the handle if the Manager claimed it.
-        Hold destination pages until its terminal result, including after timeout.
+        The caller supplies its previous-user CUDA stream in ready_stream.
+        Native code retains registered tensors and captures that stream before
+        submission. Hold destination pages until the terminal result, including
+        after timeout. A lost submission ACK retains any claimed operation.
         """
         ...
     def poll_restore(self, handle: RestoreHandle) -> RestoreStatus: ...
     def wait_restore(self, handle: RestoreHandle, *, timeout: float) -> RestoreStatus:
-        """Wait without the GIL; timeout keeps GPU destinations owned."""
+        """Consume the terminal result without the GIL; timeout preserves ownership."""
         ...
     def restore_completions_ready(self, *, timeout: float = 0.0) -> bool: ...
 

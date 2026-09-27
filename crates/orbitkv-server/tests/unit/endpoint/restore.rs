@@ -121,6 +121,7 @@ async fn malformed_and_rejected_requests_publish_claimed_results_without_respons
             command,
             &server,
             &mut sessions,
+            &std::collections::HashMap::new(),
             &engine,
             &tokio::runtime::Handle::current(),
         );
@@ -161,6 +162,7 @@ async fn authentication_and_claim_guard_restore_execution_and_other_operation_re
         command,
         &server,
         &mut sessions,
+        &std::collections::HashMap::new(),
         &engine,
         &tokio::runtime::Handle::current(),
     );
@@ -178,6 +180,7 @@ async fn authentication_and_claim_guard_restore_execution_and_other_operation_re
             command,
             &server,
             &mut sessions,
+            &std::collections::HashMap::new(),
             &engine,
             &tokio::runtime::Handle::current(),
         );
@@ -193,6 +196,7 @@ async fn authentication_and_claim_guard_restore_execution_and_other_operation_re
             Err(CompletionError::Stale(stale)) if stale == id
         ));
     }
+    records.start_managed(active).unwrap();
     records.complete(active, Ok(())).unwrap();
     assert_eq!(
         client.completions().poll(active).unwrap().state,

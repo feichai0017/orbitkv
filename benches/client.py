@@ -77,6 +77,7 @@ def main() -> None:
                 [2],
                 "direct",
                 False,
+                tensors=[pages],
             )
             client.save("poll-bench", 0, 0, 0, [("layer", list(range(1024)), hashes)])
             demand = BlockHashes(hashes)

@@ -446,6 +446,7 @@ fn restore_deadline_and_lost_notification_preserve_ownership_and_reject_other_cl
         RestoreRequest::decode(payload).unwrap();
         let operation_id = command.arg1;
         session.completions().claim(operation_id).unwrap();
+        session.completions().start_managed(operation_id).unwrap();
         submitted_tx
             .send((Arc::clone(session.completions()), operation_id))
             .unwrap();
@@ -757,6 +758,7 @@ fn equal_restore_ids_in_live_sessions_keep_results_and_handle_ownership_separate
                 assert_eq!(command.code, CommandCode::Restore);
                 RestoreRequest::decode(payload).unwrap();
                 session.completions().claim(command.arg1).unwrap();
+                session.completions().start_managed(command.arg1).unwrap();
                 submitted_tx
                     .send((session.client_token(), Arc::clone(session.completions())))
                     .unwrap();
@@ -821,6 +823,7 @@ fn lost_restore_acknowledgement_recovers_the_claimed_operation_without_resubmiss
         RestoreRequest::decode(payload).unwrap();
         assert_eq!(observed_calls.fetch_add(1, Ordering::Relaxed), 0);
         session.completions().claim(command.arg1).unwrap();
+        session.completions().start_managed(command.arg1).unwrap();
         submitted_tx
             .send((Arc::clone(session.completions()), command.arg1))
             .unwrap();
@@ -917,6 +920,7 @@ fn closed_lifecycle_socket_preserves_pending_restore_until_the_live_peer_complet
             RestoreRequest::decode(payload).unwrap();
             let id = command.arg1;
             session.completions().claim(id).unwrap();
+            session.completions().start_managed(id).unwrap();
             submitted_tx
                 .send((Arc::clone(session.completions()), id))
                 .unwrap();

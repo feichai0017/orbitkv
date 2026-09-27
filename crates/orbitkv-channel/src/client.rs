@@ -1,15 +1,17 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rustix::net::sockopt::socket_peercred;
 use rustix::process::{PidfdFlags, pidfd_open};
 use thiserror::Error;
 
-use crate::lifecycle::{LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader};
+use crate::lifecycle::{
+    LifecycleCommand, LifecycleHeader, LifecycleReply, receive_lifecycle_reply,
+};
 use crate::{
     BootstrapClient, BootstrapError, CallOptions, Command, CommandCode, PublishRequest,
     QueryBundleResponse, QueryCodecError, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest,
@@ -84,7 +86,11 @@ impl ChannelClient {
     }
 
     /// Registration and liveness metadata use UDS, independently of the hot descriptor slot.
-    pub fn lifecycle(&self, command: LifecycleCommand, payload: &[u8]) -> Result<(), ChannelError> {
+    pub fn lifecycle(
+        &self,
+        command: LifecycleCommand,
+        payload: &[u8],
+    ) -> Result<LifecycleReply, ChannelError> {
         let _guard = self
             .lifecycle_lock
             .lock()
@@ -92,7 +98,7 @@ impl ChannelClient {
         if self.poisoned.load(Ordering::Acquire) {
             return Err(ChannelError::SessionRequiresReconnect);
         }
-        let exchange = || -> std::io::Result<(u16, Vec<u8>)> {
+        let exchange = || -> std::io::Result<(u16, LifecycleReply)> {
             let header = LifecycleHeader {
                 code: command as u16,
                 epoch: self.session_epoch(),
@@ -109,28 +115,29 @@ impl ChannelClient {
             stream.set_read_timeout(Some(timeout))?;
             stream.write_all(&header)?;
             stream.write_all(payload)?;
-            let mut header = [0; LIFECYCLE_HEADER_BYTES];
-            stream.read_exact(&mut header)?;
-            let header = LifecycleHeader::decode(header)?;
+            let (header, reply) = receive_lifecycle_reply(stream)?;
             if header.epoch != self.session_epoch() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "stale lifecycle session",
                 ));
             }
-            let mut body = vec![0; header.payload_len];
-            stream.read_exact(&mut body)?;
-            Ok((header.code, body))
+            if !matches!(command, LifecycleCommand::Register)
+                && (!reply.payload.is_empty() || !reply.fds.is_empty())
+                && header.code == 0
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unexpected lifecycle attachments",
+                ));
+            }
+            Ok((header.code, reply))
         };
         match exchange() {
-            Ok((0, body)) if body.is_empty() => Ok(()),
-            Ok((0, _)) => Err(ChannelError::Lifecycle {
-                code: 0,
-                message: "unexpected lifecycle response body".to_string(),
-            }),
-            Ok((code, message)) => Err(ChannelError::Lifecycle {
+            Ok((0, reply)) => Ok(reply),
+            Ok((code, reply)) => Err(ChannelError::Lifecycle {
                 code,
-                message: String::from_utf8_lossy(&message).into_owned(),
+                message: String::from_utf8_lossy(&reply.payload).into_owned(),
             }),
             Err(error) => {
                 self.close();
@@ -258,9 +265,15 @@ impl ChannelClient {
             if final_response.state != RestoreState::Pending {
                 return Ok(final_response);
             }
-            return Err(ChannelError::SessionRequiresReconnect);
+            if self.bootstrap.completions().state(operation_id)? != crate::GrantState::Active {
+                return Err(ChannelError::SessionRequiresReconnect);
+            }
         }
         Ok(response)
+    }
+
+    pub fn restore_completions(&self) -> Arc<crate::RestoreCompletions> {
+        Arc::clone(self.bootstrap.completions())
     }
 
     fn call_descriptor(

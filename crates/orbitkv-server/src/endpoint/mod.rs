@@ -94,6 +94,7 @@ impl ProcessEndpoint {
                     bootstrap_socket.display()
                 );
                 let mut sessions = HashMap::new();
+                let mut grants = HashMap::new();
                 let mut queries = pending::PendingQueries::default();
                 queries.read_batch_bytes = read_batch_bytes;
                 queries.read_timeout = read_timeout;
@@ -106,6 +107,7 @@ impl ProcessEndpoint {
                         accept_pending_sessions(
                             &bootstrap,
                             &mut sessions,
+                            &mut grants,
                             &runtime,
                             &lifecycle,
                             session_epoch,
@@ -121,6 +123,7 @@ impl ProcessEndpoint {
                                 false
                             }
                         });
+                        grants.retain(|token, _| sessions.contains_key(token));
                         queries.retain_sessions(&engine, |token| sessions.contains_key(&token));
                         next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
                     }
@@ -141,6 +144,7 @@ impl ProcessEndpoint {
                                 command,
                                 &bootstrap,
                                 &mut sessions,
+                                &grants,
                                 &engine,
                                 &runtime,
                                 &hll_tracker,
@@ -195,6 +199,7 @@ impl Drop for ProcessEndpoint {
 fn accept_pending_sessions(
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
+    grants: &mut HashMap<u64, restore::LocalGrants>,
     runtime: &Handle,
     lifecycle: &crate::cache::lifecycle::LifecycleService,
     epoch: u64,
@@ -209,6 +214,15 @@ fn accept_pending_sessions(
                     session.credentials().uid,
                     session.slot_index()
                 );
+                match restore::LocalGrants::start(Arc::clone(session.completions()), runtime) {
+                    Ok(owner) => {
+                        grants.insert(session.client_token(), owner);
+                    }
+                    Err(error) => {
+                        error!("Cannot start restore grant reaper: {error}");
+                        continue;
+                    }
+                }
                 match session.stream().try_clone() {
                     Ok(stream) => {
                         runtime.spawn(session::serve(
@@ -220,6 +234,7 @@ fn accept_pending_sessions(
                     }
                     Err(error) => {
                         error!("Cannot start process-channel lifecycle: {error}");
+                        grants.remove(&session.client_token());
                         continue;
                     }
                 }
@@ -242,6 +257,7 @@ fn dispatch(
     command: Command,
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
+    grants: &HashMap<u64, restore::LocalGrants>,
     engine: &Arc<OrbitKVEngine>,
     runtime: &Handle,
     hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
@@ -273,7 +289,7 @@ fn dispatch(
         }
         CommandCode::Publish => unreachable!("publish uses deferred response handling"),
         CommandCode::Restore => {
-            response = dispatch_restore(command, bootstrap, sessions, engine, runtime);
+            response = dispatch_restore(command, bootstrap, sessions, grants, engine, runtime);
         }
     }
     response
@@ -283,6 +299,7 @@ fn dispatch_restore(
     command: Command,
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
+    grants: &HashMap<u64, restore::LocalGrants>,
     engine: &OrbitKVEngine,
     runtime: &Handle,
 ) -> Response {
@@ -321,7 +338,15 @@ fn dispatch_restore(
         .map_err(|error| error.to_string())
     })();
     match prepared {
-        Ok(receiver) => {
+        Ok(orbitkv_core::RestoreExecution::Local(grant)) => {
+            if let Some(owner) = grants.get(&command.arg0) {
+                owner.install(operation_id, grant);
+            } else {
+                drop(grant);
+                let _ = completions.reject(operation_id, "restore session is closed".into());
+            }
+        }
+        Ok(orbitkv_core::RestoreExecution::Managed(receiver)) => {
             runtime.spawn(restore::publish(
                 receiver,
                 completions,
@@ -332,10 +357,8 @@ fn dispatch_restore(
             ));
         }
         Err(error) => {
-            if let Err(error) = completions.complete(operation_id, Err(error)) {
+            if let Err(error) = completions.reject(operation_id, error) {
                 error!("Cannot publish rejected restore completion: {error}");
-            } else if let Err(error) = completions.notify() {
-                error!("Cannot notify rejected restore completion: {error}");
             }
         }
     }

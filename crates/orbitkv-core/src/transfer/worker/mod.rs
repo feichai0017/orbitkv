@@ -29,18 +29,10 @@ use ssd::GpuWrite;
 /// A task to restore KV blocks from leased sources to GPU layers
 pub(crate) struct LoadTask {
     pub plan: RestorePlan,
-    pub payload: LoadPayload,
+    pub layers: Vec<LayerTransferData>,
     pub completion: oneshot::Sender<LoadOutcome>,
     pub reservations: Vec<crate::QueryReservation>,
     pub codec_budget: usize,
-}
-
-pub(crate) enum LoadPayload {
-    Raw {
-        copies: Vec<CopyDesc>,
-        sources: Vec<Arc<SealedBlock>>,
-    },
-    Layers(Vec<LayerTransferData>),
 }
 
 /// Terminal GPU transfer evidence, timestamped before notifying the dispatcher.
@@ -299,49 +291,7 @@ impl GpuWorkerPool {
                 self.device_id
             )));
         }
-        if let LoadPayload::Raw { copies, .. } = &mut task.payload {
-            if task.plan.ssd_path().is_some() {
-                return Err(EngineError::InvalidArgument(
-                    "raw restore descriptors cannot execute an SSD source plan".into(),
-                ));
-            }
-            copies.sort_unstable_by_key(|copy| copy.device);
-            let mut previous_end = 0;
-            for copy in copies.iter() {
-                let end = copy
-                    .device
-                    .checked_add(copy.size as u64)
-                    .filter(|_| {
-                        copy.device != 0 && copy.size != 0 && isize::try_from(copy.size).is_ok()
-                    })
-                    .ok_or_else(|| {
-                        EngineError::Storage("invalid GPU restore target range".into())
-                    })?;
-                if copy.device < previous_end {
-                    return Err(EngineError::Storage(
-                        "GPU restore target ranges overlap".into(),
-                    ));
-                }
-                previous_end = end;
-            }
-            let observation = if enabled() {
-                let (keys, bytes) = raw_copy_keys(copies, self.device_id as u64, false);
-                let selected = usize::from(self.transfer_mode == TransferMode::Kernel);
-                let candidates = if copies.iter().all(|copy| copy.host_device != 0) {
-                    &keys[..]
-                } else {
-                    &keys[..1]
-                };
-                shadow(candidates, selected);
-                Observation::new(keys[selected], Some(bytes))
-            } else {
-                Observation::disabled()
-            };
-            return self.submit(WorkerCommand::Load(task, observation), false);
-        }
-        let LoadPayload::Layers(layers) = &mut task.payload else {
-            unreachable!("raw restore submitted above")
-        };
+        let layers = &mut task.layers;
         let mut targets = Vec::new();
         for layer in layers.iter() {
             for block in &layer.blocks {
@@ -608,17 +558,7 @@ fn worker_loop(
                         cancelled = true;
                         return Err(EngineError::Storage("GPU transfer consumer closed".into()));
                     }
-                    if let LoadPayload::Raw { copies, .. } = &task.payload {
-                        observation.submitted();
-                        finish_gpu_transfer(
-                            &runtime.stream,
-                            runtime.backend.h2d(copies, &runtime.stream),
-                        )?;
-                        return Ok(copies.iter().map(|copy| copy.size).sum());
-                    }
-                    let LoadPayload::Layers(layers) = &mut task.payload else {
-                        unreachable!("raw restore executed above")
-                    };
+                    let layers = &mut task.layers;
                     if host_staged {
                         observation.submitted();
                         restore::materialize_host(layers)?;
@@ -676,10 +616,7 @@ fn worker_loop(
                 let actual_io = (enabled()
                     && result.is_ok()
                     && runtime.backend.name() == "direct"
-                    && match &task.payload {
-                        LoadPayload::Raw { .. } => true,
-                        LoadPayload::Layers(layers) => !has_encoded(layers),
-                    })
+                    && !has_encoded(&task.layers))
                 .then_some(bytes as u64);
                 if host_staged {
                     gpu_observation.finish(outcome, actual_io);
@@ -1025,19 +962,10 @@ fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usiz
 /// Publish completion only after the worker establishes that all GPU access has ended.
 fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant, bytes: usize) {
     if result.is_ok() {
-        match &task.payload {
-            LoadPayload::Raw { sources, .. } => {
-                for source in sources {
-                    source.mark_warmup_restored();
-                }
-            }
-            LoadPayload::Layers(layers) => {
-                for layer in layers {
-                    for block in &layer.blocks {
-                        if let TransferPayload::Cached { sealed, .. } = &block.block {
-                            sealed.mark_warmup_restored();
-                        }
-                    }
+        for layer in &task.layers {
+            for block in &layer.blocks {
+                if let TransferPayload::Cached { sealed, .. } = &block.block {
+                    sealed.mark_warmup_restored();
                 }
             }
         }
@@ -1051,7 +979,7 @@ fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant
         error!("GPU restore failed: {error}");
         core_metrics().load_failures.add(1, &[]);
     }
-    drop(task.payload);
+    drop(task.layers);
     drop(task.reservations);
     let _ = task.completion.send(LoadOutcome {
         result,

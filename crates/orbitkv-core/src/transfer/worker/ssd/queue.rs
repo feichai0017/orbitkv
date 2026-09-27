@@ -16,7 +16,7 @@ use super::decode::{DecodeCommand, DecodeRange, DecodeReply};
 use crate::transfer::finish_gpu_transfer;
 
 use super::super::{
-    LoadPayload, LoadTask, SaveTask, WorkerCommand, WorkerRuntime, build_copy_descs, finish_load,
+    LoadTask, SaveTask, WorkerCommand, WorkerRuntime, build_copy_descs, finish_load,
 };
 
 pub(in crate::transfer::worker) const MAX_WRITES: usize = 8;
@@ -89,11 +89,7 @@ impl Job {
         let planned = (|| {
             match &mut job.task {
                 Task::Load(task) => {
-                    let LoadPayload::Layers(layers) = &task.payload else {
-                        return Err(EngineError::InvalidArgument(
-                            "raw restore reached the SSD lane".into(),
-                        ));
-                    };
+                    let layers = &task.layers;
                     let plans = super::plan(layers)?;
                     job.encoded = plans.encoded.into();
                     for (file, batches) in plans.raw {
@@ -146,11 +142,7 @@ impl Job {
         self.observation.submitted();
         let layers = match &self.task {
             Task::Load(task) => {
-                let LoadPayload::Layers(layers) = &task.payload else {
-                    return Err(EngineError::InvalidArgument(
-                        "raw restore reached the SSD lane".into(),
-                    ));
-                };
+                let layers = &task.layers;
                 self.bytes += super::super::codec::restore(
                     runtime,
                     layers,

@@ -2,10 +2,11 @@ use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     num::NonZeroU64,
+    os::fd::OwnedFd,
     ptr::NonNull,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -16,6 +17,17 @@ use crate::memory::allocator::{Allocation, ScaledOffsetAllocator};
 use crate::memory::numa::{NumaNode, run_on_numa};
 use crate::memory::pinned::{PagePolicy, PinnedMemory};
 use crate::metrics::core_metrics;
+use crate::transfer::local::SourceRange;
+
+static NEXT_ARENA_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Size-sealed payload backing exported once to a GPU session.
+#[derive(Debug)]
+pub struct PayloadArena {
+    pub id: u64,
+    pub size: u64,
+    pub fd: OwnedFd,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct MappedPinnedPtr {
@@ -56,6 +68,7 @@ impl MappedPinnedPtr {
 /// RAII guard for a pinned memory allocation.
 /// Automatically frees the allocation when dropped.
 pub struct PinnedAllocation {
+    id: u64,
     allocation: Allocation,
     ptr: NonNull<u8>,
     device_ptr: NonNull<u8>,
@@ -69,6 +82,33 @@ unsafe impl Send for PinnedAllocation {}
 unsafe impl Sync for PinnedAllocation {}
 
 impl PinnedAllocation {
+    pub(crate) fn source_range(
+        &self,
+        host: NonNull<u8>,
+        size: usize,
+    ) -> Result<SourceRange, String> {
+        let offset = (host.as_ptr() as usize)
+            .checked_sub(self.ptr.as_ptr() as usize)
+            .ok_or_else(|| "source begins before its pinned allocation".to_string())?
+            as u64;
+        let size = size as u64;
+        if size == 0
+            || offset
+                .checked_add(size)
+                .is_none_or(|end| end > self.size_bytes())
+        {
+            return Err("source exceeds its pinned allocation".into());
+        }
+        Ok(SourceRange {
+            arena_id: self.pool.id,
+            allocation_id: self.id,
+            allocation_offset: self.allocation.offset_bytes,
+            allocation_size: self.size_bytes(),
+            offset: self.allocation.offset_bytes + offset,
+            size,
+        })
+    }
+
     pub(crate) fn size_bytes(&self) -> u64 {
         self.allocation.size_bytes.get()
     }
@@ -124,6 +164,8 @@ impl Drop for PinnedAllocation {
 /// Manages a CUDA pinned memory pool and a byte-addressable allocator.
 #[derive(Debug)]
 pub(crate) struct PinnedMemoryPool {
+    id: u64,
+    next_allocation_id: AtomicU64,
     /// Backing pinned memory (handles mmap + cudaHostRegister)
     backing: PinnedMemory,
     allocator: Mutex<ScaledOffsetAllocator>,
@@ -211,6 +253,10 @@ impl PinnedMemoryPool {
         });
 
         Self {
+            id: NEXT_ARENA_ID
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .expect("payload arena identity exhausted"),
+            next_allocation_id: AtomicU64::new(1),
             backing,
             allocator: Mutex::new(allocator),
             allocatable_bytes,
@@ -220,6 +266,10 @@ impl PinnedMemoryPool {
     /// Allocate pinned memory from the pool. Returns None when the allocation cannot be satisfied.
     /// Returns a RAII guard that automatically frees the allocation when dropped.
     fn allocate(self: &Arc<Self>, size: NonZeroU64) -> Option<PinnedAllocation> {
+        let id = self
+            .next_allocation_id
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .ok()?;
         // Allocation is done under lock, metrics and pointer computation outside lock
         let allocation = {
             let mut allocator = self.allocator.lock();
@@ -261,6 +311,7 @@ impl PinnedMemoryPool {
         }
 
         Some(PinnedAllocation {
+            id,
             allocation,
             ptr,
             device_ptr,
@@ -719,6 +770,25 @@ impl PinnedAllocator {
     /// Check if this is a NUMA allocator.
     pub(crate) fn is_numa(&self) -> bool {
         matches!(self, Self::Numa(_))
+    }
+
+    pub(crate) fn payload_arenas(&self) -> std::io::Result<Vec<PayloadArena>> {
+        let shards: Vec<_> = match self {
+            Self::Global(pool) => pool.shards.iter().collect(),
+            Self::Numa(pools) => pools.pools.values().flat_map(|pool| &pool.shards).collect(),
+        };
+        let mut arenas = shards
+            .into_iter()
+            .map(|shard| {
+                Ok(PayloadArena {
+                    id: shard.id,
+                    size: shard.backing.size() as u64,
+                    fd: shard.backing.export_fd()?,
+                })
+            })
+            .collect::<std::io::Result<Vec<_>>>()?;
+        arenas.sort_unstable_by_key(|arena| arena.id);
+        Ok(arenas)
     }
 
     /// Return all backing memory regions as `(ptr, len)` pairs.

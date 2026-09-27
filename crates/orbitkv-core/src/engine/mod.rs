@@ -5,6 +5,7 @@ pub(crate) mod instance;
 mod publish;
 mod query;
 mod restore;
+pub use restore::{RawRestoreGrant, RestoreExecution};
 
 use std::{
     collections::HashMap,

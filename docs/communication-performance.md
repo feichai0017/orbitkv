@@ -1,17 +1,142 @@
 # Local communication measurements
 
-## Client-reserved Restore identity (current increment)
+## Engine-local raw Restore: functional cutover, measured latency regression
+
+On 2026-09-27, unencoded resident Restore moved CUDA submission into the
+inference process. The Manager retains source grants and query reservations;
+local stream drain releases the engine's destination fence before asynchronous
+Manager source retirement. vLLM and SGLang now provide retained tensors and an
+explicit readiness stream. The obsolete Manager raw execution branch is removed,
+with no compatibility switch or fallback. SSD, codec and mixed routes retain
+workers that own their actual I/O and decode operations. See the
+[execution and lifetime contract](engine-local-restore.md).
+
+**This cutover is functionally qualified on the tested single-GPU process paths,
+but it regresses serial Restore latency. It is not a performance win.** Moving
+submission alone adds readiness, plan transport and native scheduling costs.
+The measurements below do not isolate the contribution of each stage, and do
+not demonstrate inference serving, compute overlap, or superiority to an
+engine's native KV cache.
+
+### Matched comparison
+
+The baseline is `e36161d8500bb00dd7fe616a39d64fc03bd0ab2e`, frozen as
+`identity-production`; the candidate is `local-executor-production`. Each has a
+release Manager and matching extension without test hooks. H20, CPU affinity
+`8,10,12,14`, a 256 MiB pool, 150 samples after 20 warmups, and zero/1 ms
+prescribed idle match the preceding experiment. Each workload used three pairs
+in `A1 B1 B2 A2 A3 B3` order, with a fresh Manager per run:
+
+- One contiguous layer and one lease: 4 KiB, 256 KiB and 4 MiB.
+- 36 split K/V layers and 32 leases: 18 MiB logical payload.
+
+The candidate harness adds the required `tensors` registration and
+`ready_stream` submission arguments; the baseline uses its revision's API.
+Current-stream lookup and native readiness handling remain inside candidate
+Restore timing. Lease lookup remains outside that timing. Thus these are
+matched workloads across the API cutover, not identical harness binaries.
+No source-retirement wait was added to the local destination fence.
+
+All twelve accepted runs passed exact copy-counter and GPU-byte checks. An
+external main-checkout build interrupted two preliminary matrices; neither is
+included. The final runner observed Cargo/rustc every 100 ms, waited for five
+seconds without an observed build before starting, and excluded/retried four
+runs with observed build activity, regardless of their latency. Attempt logs
+and process audits are retained. No build was observed during any accepted
+run; this is sampled process evidence, not a system-wide isolation guarantee.
+No qualification tests or builds from this task ran during measurement.
+
+Values are medians of three per-run percentiles, not pooled samples. Times are
+microseconds, without prescribed idle:
+
+| Operation / shape | Manager executor p50 / p99 | Local executor p50 / p99 |
+| --- | ---: | ---: |
+| Restore, contiguous 4 KiB | 26.51 / 62.94 | 67.13 / 125.78 |
+| Restore, contiguous 256 KiB | 38.63 / 54.15 | 88.79 / 137.25 |
+| Restore, contiguous 4 MiB | 222.78 / 238.12 | 415.42 / 500.45 |
+| Restore, split 18 MiB, 32 leases | 1,362.37 / 1,413.61 | 3,037.25 / 3,248.23 |
+| Publish, contiguous 4 KiB | 64.83 / 91.41 | 63.53 / 99.03 |
+| Publish, contiguous 256 KiB | 109.42 / 143.05 | 111.36 / 163.92 |
+| Publish, contiguous 4 MiB | 768.76 / 819.54 | 761.66 / 861.00 |
+| Publish, split 18 MiB | 2,940.39 / 3,160.90 | 2,892.54 / 3,124.70 |
+
+The four Restore p50 values regress by approximately 2.53x, 2.30x, 1.86x and
+2.23x respectively. With 1 ms prescribed idle they are 42.33 → 90.20 us,
+51.39 → 106.78 us, 229.07 → 436.66 us and 1,368.07 → 3,068.71 us.
+Submission-only p50 without idle is 8.94 → 41.03 us, 14.48 → 46.73 us,
+109.04 → 177.74 us and 376.41 → 679.34 us. Submission is not GPU completion.
+An empty single-layer Restore also regresses, 17.75 → 59.07 us, showing fixed
+operation overhead even without payload copies. Publish is a control path and
+remains broadly similar; its tail variation is included rather than interpreted
+as a change to that unchanged executor.
+
+Across the three runs, 4 KiB Restore p50 ranges from 25.79–29.35 us at baseline
+and 64.30–70.65 us in the candidate. Split 18 MiB ranges from
+1,356.28–1,365.10 us and 3,027.07–3,109.93 us. The regression is present in all
+pairs, while these short runs remain insufficient for stable tail estimates.
+For the 150-sample split Restore cohort, client CPU time grows from 0.101 to
+0.479 seconds; Manager CPU falls from 0.250 to 0.180 seconds. Those cohort CPU
+figures include untimed lease setup; Manager accounting has clock-tick
+resolution. They show work moving to the engine process, not a total CPU saving.
+
+### Evidence and next work
+
+| Bundle | Manager SHA-256 | Extension SHA-256 |
+| --- | --- | --- |
+| `identity-production` | `308dc6b2590ed2445af4575ee0bf94c0bff9b4429414020467d34b28ed49b7cb` | `ee569e0eba40b7953afc785f24a2d0e30d5d5631151dee414406f37101f4b734` |
+| `local-executor-production` | `ddf2a7d61e8220923a25dcb9c9bbd4bdabe396988deb1d042694a0ac73a20b02` | `861ae3bb224ad5f7b1ac27b6ef623b0be20b102e3a95bb2da09e03a258b9eeb1` |
+
+The candidate source patch SHA-256 is
+`c65318e0f36f1bcae491f5448a5c3bbcb5301aa0431a4138df1d8886c913ce57`.
+Its manifest also hashes and retains the new source files absent from that
+tracked-file patch. The baseline harness SHA-256 is
+`06b0d99c105f8d8ff04d818d963c8031ad00a0aec95cd50aa26ad01fc975f040`;
+the candidate harness SHA-256 is
+`3f91d3d63da4d0eed403fcd80d9873b74767ec9bd624c480c2b28bce3bb0b9f5`.
+Post-freeze changes are documentation only. Per-run samples, manifests, CPU
+accounting, accepted-run links, excluded attempts and `summary.json` remain in
+`/workspace/.orbitkv-tools/communication-microbench/runs/local-executor-audited/`.
+The workspace reproduction scripts are
+`/workspace/.orbitkv-tools/run-local-restore-audited.py` and
+`/workspace/.orbitkv-tools/summarize-local-restore-comparison.py`; they use the
+same command shape and CUDA setup documented below, paired with these bundles.
+
+The final workspace release gate passed 486 tests, with 38 ignored; the new
+CUDA context gate was also run explicitly and passed. Python units passed 374
+cases and benchmark units passed 199. All-target Clippy denied warnings. The
+production native channel/client suite passed seven cases. The separate frozen
+fault build passed 38 cases, with 30 cuFile configuration skips. Raw peer READ
+round trips passed with both pipeline modes, and the encoded peer round trip
+passed on same-host Mooncake TCP. See [fault qualification](fault-qualification.md#engine-local-raw-restore-gates)
+for binary identities and the exact process-death evidence boundary.
+
+The next performance work should measure readiness, queue handoff, plan encode/
+decode, submission and drain separately before changing their contracts. Current
+code creates a readiness event per call, repeats layer/allocation metadata in
+every copy, transports plan bytes through per-byte atomics, and rebuilds local
+copy scratch each time. Reusing owned resources and compacting this plan are
+concrete candidates, not measured fixes yet. Oversized plans also need bounded
+partitioning under one retained source grant and final drain; the current 1 MiB
+limit rejects the existing 32,768-block CPU benchmark before consuming leases.
+
+No pinned vLLM/SGLang serving environments or model artifacts were available.
+Serving correctness/TTFT/ITL, group overlap, graph replay, multiple GPUs,
+huge-page imports and cross-host RDMA remain unqualified. The new executors
+provide the ownership boundary needed for further work; these results do not
+justify calling the single-node path fully optimized.
+
+## Client-reserved Restore identity (preceding increment)
 
 On 2026-09-27, the Restore submission protocol moved identity reservation to the
 client and added atomic Manager claim versus client cancellation. An accepted
 operation keeps its handle after a lost or malformed submission ACK. The ACK no
 longer carries an encoded RestoreResponse; terminal results and preparation
-errors use the shared completion mapping. See [the implementation contract](communication-plan.md#restore-identity-and-ambiguous-submission).
+errors use the shared completion mapping. See [the implementation contract](communication-plan.md#operation-identity-and-source-retirement).
 
 This increment establishes recoverable submission identity, **not a measured
 throughput improvement**. Median Restore latency is close to the preceding
 revision, with a small 4 KiB regression and some higher p99 values. Removing
-response encoding did not establish an overall latency win. CUDA submission
+response encoding did not establish an overall latency win. In these two measured revisions, CUDA submission
 still belongs to the Manager; engine-local execution and model serving speedups
 are not demonstrated by these measurements.
 

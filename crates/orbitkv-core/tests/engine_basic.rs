@@ -108,9 +108,8 @@ async fn hybrid_groups_load_to_distinct_block_ids() {
             )],
         )
         .expect("load hybrid groups");
-    completion
+    env.restore_outcome(completion)
         .await
-        .expect("load worker must reply")
         .result
         .expect("load hybrid groups");
 
@@ -269,7 +268,8 @@ async fn split_restore_permuted_leases_preserve_sources_and_skipped_pages() {
         Some(1),
         Some(3),
     ];
-    env.engine
+    let completion = env
+        .engine
         .restore(
             &env.instance_id,
             0,
@@ -280,9 +280,9 @@ async fn split_restore_permuted_leases_preserve_sources_and_skipped_pages() {
                 (second, vec![destinations[4..].to_vec()]),
             ],
         )
-        .expect("submit permuted leases")
+        .expect("submit permuted leases");
+    env.restore_outcome(completion)
         .await
-        .expect("worker outcome")
         .result
         .expect("restore permuted leases");
 
