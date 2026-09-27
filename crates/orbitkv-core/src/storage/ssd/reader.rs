@@ -65,11 +65,9 @@ impl PrefetchBatch {
         }
         let mut logical_bytes = Some(0u64);
         let mut stored_bytes = 0u64;
-        let mut fragments = 0;
         let mut representation = None;
         for request in &requests {
             for slot in &request.entry.slots {
-                fragments += slot.num_segments();
                 stored_bytes = stored_bytes.saturating_add(slot.total_size());
                 if let Some(metadata) = &slot.encoding {
                     if metadata.len() != slot.num_segments() {
@@ -98,11 +96,11 @@ impl PrefetchBatch {
         }
         let observation = Observation::new(
             CostKey::new(
-                CostPath::SsdPrefetch,
+                CostPath::LocalSsdHostReady,
                 resource,
                 representation.unwrap_or(Representation::Unknown),
-                logical_bytes.unwrap_or(stored_bytes),
-                fragments,
+                stored_bytes,
+                requests.len(),
             ),
             logical_bytes,
         );

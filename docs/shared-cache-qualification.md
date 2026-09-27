@@ -114,6 +114,12 @@ latencies and peak sender/receiver memory. A successful same-host or TCP run
 does not qualify RDMA, and a remote byte increase without a source SSD-read
 increase does not qualify the peer-SSD route.
 
+For cost evidence, first set only `ORBITKV_COST_OBSERVATIONS=1`. Keep
+`ORBITKV_COST_SELECTION` unset so the fixed route remains the control. Record
+`local_ssd_host_ready`, `peer_dram_host_ready`, `peer_ssd_host_ready` and shadow
+decisions for identical stored-byte/block shapes. Multi-owner or different-
+coverage rows are not valid cross-medium comparisons.
+
 ## Restart and ownership gates
 
 The repository's model-serving test starts etcd, two Managers and two replicas

@@ -564,6 +564,7 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
 #[tokio::test]
 async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
     use crate::QueryMode;
+    use crate::cost::{CostKey, CostPath, Representation};
     use crate::planning::peer::PeerSource;
     use crate::planning::read::{HostReadRoute, ReadPlan};
 
@@ -587,6 +588,16 @@ async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
     let Some(HostReadRoute::Ssd(local_route)) = local.host_route(true, true, 0) else {
         panic!("local SSD must remain ahead of peer SSD");
     };
+    assert_eq!(
+        local_route.cost_key(),
+        Some(CostKey::new(
+            CostPath::LocalSsdHostReady,
+            store.io.cost_resource,
+            Representation::Raw,
+            SSD_ALIGNMENT as u64,
+            1,
+        ))
+    );
     let old = store.inner.lock().ring.get(&key).unwrap().clone();
     {
         let mut inner = store.inner.lock();

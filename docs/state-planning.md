@@ -743,6 +743,10 @@ Set `ORBITKV_COST_SELECTION=1` in addition to observations to allow the guarded
 same-medium peer-owner choice. Either variable absent or unequal to `1` keeps
 the stable longest-coverage/owner ordering. Selection never expands candidate
 coverage, bypasses authorization or treats a prediction as a resource permit.
+With observations alone, equal-coverage local SSD, peer DRAM and peer SSD routes
+also enter a complete HostReady shadow when each peer alternative has one source
+owner. Different coverage, unknown shape and multi-owner prefixes do not compare.
+This cross-medium shadow never changes the fixed host-route order.
 There are no Python hot-loop callbacks, extra GPU synchronizations or payload
 reads for telemetry. See [the paired workload](../benches/README.md#cost-observation-overhead)
 for the predeclared overhead budget and final qualification evidence.

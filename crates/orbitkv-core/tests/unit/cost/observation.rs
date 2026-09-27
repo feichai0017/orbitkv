@@ -83,7 +83,7 @@ fn failed_cancelled_and_unsubmitted_operations_never_train_estimates() {
 }
 
 #[test]
-fn ssd_routes_compare_enqueue_to_completion_despite_different_internal_admission() {
+fn complete_routes_compare_enqueue_to_completion_despite_different_internal_admission() {
     let start = Instant::now();
     let end = start + Duration::from_millis(130);
     let mut running = Running {
@@ -99,6 +99,7 @@ fn ssd_routes_compare_enqueue_to_completion_despite_different_internal_admission
     for (path, submitted_ms, service) in [
         (CostPath::SsdUringRestore, 30, 0.1),
         (CostPath::SsdCufileRestore, 80, 0.05),
+        (CostPath::LocalSsdHostReady, 60, 0.07),
     ] {
         running.key.path = path;
         running.submitted = Some(start + Duration::from_millis(submitted_ms));
@@ -111,7 +112,7 @@ fn ssd_routes_compare_enqueue_to_completion_despite_different_internal_admission
 }
 
 #[test]
-fn ssd_route_submission_preserves_the_prediction_taken_at_enqueue() {
+fn complete_route_submission_preserves_the_prediction_taken_at_enqueue() {
     let start = Instant::now();
     let prediction = Estimate {
         count: MIN_SAMPLES,
@@ -119,7 +120,11 @@ fn ssd_route_submission_preserves_the_prediction_taken_at_enqueue() {
         absolute_error: 0.03,
         updated: start,
     };
-    for path in [CostPath::SsdUringRestore, CostPath::SsdCufileRestore] {
+    for path in [
+        CostPath::SsdUringRestore,
+        CostPath::SsdCufileRestore,
+        CostPath::LocalSsdHostReady,
+    ] {
         let mut observation = Observation(Some(Running {
             key: CostKey { path, ..key(9998) },
             logical_bytes: Some(4096),

@@ -51,6 +51,13 @@ pub(crate) struct FetchPlan<'a> {
     source: PeerSource,
 }
 
+struct PeerChoice<'a> {
+    owner: &'a CacheOwner,
+    count: usize,
+    stored_bytes: Option<u64>,
+    representation: orbitkv_state::ReplicaRepresentation,
+}
+
 impl<'a> FetchPlan<'a> {
     #[cfg(test)]
     pub(crate) fn new(
@@ -90,13 +97,47 @@ impl<'a> FetchPlan<'a> {
     }
 
     pub(crate) fn next_segment(&self, start: usize) -> Option<FetchSegment> {
-        let rows = &self.rows;
+        let choice = self.selected_choice(start)?;
+        let mut records = Vec::with_capacity(choice.count);
+        for row in &self.rows[start..start + choice.count] {
+            let replica = row
+                .peer(self.source.medium())
+                .find(|replica| &replica.owner == choice.owner)?;
+            records.push(InventoryRecord {
+                key: row.key.clone(),
+                sequence: replica.sequence,
+                present: true,
+                metadata: Some(replica.metadata),
+            });
+        }
+        Some(FetchSegment {
+            owner: choice.owner.clone(),
+            source: self.source,
+            records,
+            stored_bytes: choice.stored_bytes,
+            representation: choice.representation,
+        })
+    }
 
-        let row = rows.get(start)?;
+    pub(crate) fn complete_cost_key(&self) -> Option<CostKey> {
+        let choice = self.selected_choice(0)?;
+        (choice.count == self.rows.len()).then(|| {
+            CostKey::new(
+                self.source.cost_path(),
+                Resource::Peer(resource_id(choice.owner)),
+                choice.representation,
+                choice.stored_bytes.unwrap_or(0),
+                choice.count,
+            )
+        })
+    }
+
+    fn selected_choice(&self, start: usize) -> Option<PeerChoice<'_>> {
+        let row = self.rows.get(start)?;
         let mut candidates: SmallVec<[(&CacheOwner, usize); 4]> = SmallVec::new();
         for candidate in row.peer(self.source.medium()) {
             let mut bytes = row.key.namespace.len();
-            let count = rows[start..]
+            let count = self.rows[start..]
                 .iter()
                 .take(DISCOVERY_MAX_KEYS)
                 .map_while(|row| {
@@ -139,22 +180,9 @@ impl<'a> FetchPlan<'a> {
         };
         let owner = candidates.get(selected)?.0;
         let (stored_bytes, representation) = self.shape_for_owner(start, count, owner)?;
-        let mut records = Vec::with_capacity(count);
-        for row in &rows[start..start + count] {
-            let replica = row
-                .peer(self.source.medium())
-                .find(|replica| &replica.owner == owner)?;
-            records.push(InventoryRecord {
-                key: row.key.clone(),
-                sequence: replica.sequence,
-                present: true,
-                metadata: Some(replica.metadata),
-            });
-        }
-        Some(FetchSegment {
-            owner: owner.clone(),
-            source: self.source,
-            records,
+        Some(PeerChoice {
+            owner,
+            count,
             stored_bytes,
             representation: representation.unwrap_or_default(),
         })

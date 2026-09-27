@@ -948,6 +948,22 @@ five peer-planner tests include an end-to-end estimator-driven owner change.
 Strict Core Clippy passed in local-only and CPU-Mooncake configurations, and
 strict Server Clippy passed with CPU-Mooncake.
 
+The cross-medium shadow increment renames the io_uring preparation composite to
+`local_ssd_host_ready` and measures from enqueue through host-block
+reconstruction. Its key uses stored bytes and block count, matching peer
+HostReady evidence. Equal-coverage local SSD, peer DRAM and peer SSD routes enter
+shadow only when each peer route has one complete owner; unknown shape,
+different coverage and multi-owner prefixes remain incomparable. Fixed route
+priority is unchanged. Peer execution now returns `Complete`,
+`AuthorizationExhausted` or `PayloadFailed`: only the pre-payload authorization
+case can replan retained local/peer evidence, while a submitted Mooncake failure
+terminates that materialization attempt.
+
+Focused validation covers the normalized local SSD key, cross-resource
+HostReady compatibility, multi-owner exclusion, stable default priority and all
+three peer execution outcomes. Cost, planning and peer-execution test groups
+remain host-safe; strict local-only and CPU-Mooncake Clippy pass.
+
 The shared-cache benchmark now accepts `--source-medium ssd`. It verifies a new
 source SSD commit, evicts only source DRAM, resynchronizes inventory, requires
 source io_uring bytes and successes alongside target Mooncake/GPU restore, and

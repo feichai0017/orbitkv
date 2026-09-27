@@ -39,7 +39,7 @@ mod resource;
 mod shadow;
 
 #[cfg(feature = "mooncake")]
-pub(crate) use decision::select_route;
+pub(crate) use decision::{select_route, shadow_routes};
 pub(crate) use observation::{Observation, Outcome};
 pub(crate) use orbitkv_state::ReplicaRepresentation as Representation;
 pub(crate) use resource::{Resource, resource_id};
@@ -77,7 +77,7 @@ pub(crate) enum CostPath {
     SsdWriteBatch,
     SsdCufileRead,
     SsdCufileWrite,
-    SsdPrefetch,
+    LocalSsdHostReady,
     #[cfg(feature = "mooncake")]
     RemoteRead,
     #[cfg(feature = "mooncake")]
@@ -100,7 +100,9 @@ impl CostPath {
 
     fn sample_boundary(self) -> SampleBoundary {
         match self {
-            Self::SsdUringRestore | Self::SsdCufileRestore => SampleBoundary::EnqueuedToCompletion,
+            Self::SsdUringRestore | Self::SsdCufileRestore | Self::LocalSsdHostReady => {
+                SampleBoundary::EnqueuedToCompletion
+            }
             Self::GpuLoadDirect
             | Self::GpuLoadKernel
             | Self::GpuSaveDirect
@@ -113,8 +115,7 @@ impl CostPath {
             | Self::SsdWrite
             | Self::SsdWriteBatch
             | Self::SsdCufileRead
-            | Self::SsdCufileWrite
-            | Self::SsdPrefetch => SampleBoundary::SubmittedToCompletion,
+            | Self::SsdCufileWrite => SampleBoundary::SubmittedToCompletion,
             #[cfg(feature = "mooncake")]
             Self::RemoteRead | Self::RemoteAuthorization | Self::RemoteSsdAuthorization => {
                 SampleBoundary::SubmittedToCompletion
@@ -132,7 +133,9 @@ impl CostPath {
             Self::GpuSaveDirect | Self::GpuSaveKernel => Some(Comparison::GpuSave),
             Self::SsdUringRestore | Self::SsdCufileRestore => Some(Comparison::SsdRestore),
             #[cfg(feature = "mooncake")]
-            Self::PeerDramHostReady | Self::PeerSsdHostReady => Some(Comparison::HostReady),
+            Self::LocalSsdHostReady | Self::PeerDramHostReady | Self::PeerSsdHostReady => {
+                Some(Comparison::HostReady)
+            }
             _ => None,
         }
     }
@@ -154,7 +157,7 @@ impl CostPath {
             Self::SsdWriteBatch => "ssd_write_batch",
             Self::SsdCufileRead => "ssd_cufile_read",
             Self::SsdCufileWrite => "ssd_cufile_write",
-            Self::SsdPrefetch => "ssd_prefetch",
+            Self::LocalSsdHostReady => "local_ssd_host_ready",
             #[cfg(feature = "mooncake")]
             Self::RemoteRead => "remote_read",
             #[cfg(feature = "mooncake")]

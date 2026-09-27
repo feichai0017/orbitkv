@@ -14,7 +14,7 @@ use crate::memory::numa::NumaNode;
 use opentelemetry::KeyValue;
 
 use super::completion::{TransferCompletions, TransferLockGuard};
-use super::execute::{SegmentFetcher, SegmentOutcome, execute_fetch_plan};
+use super::execute::{FetchResult, SegmentFetcher, SegmentOutcome, execute_fetch_plan};
 use super::transport::MooncakeTransport;
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resource, resource_id};
@@ -308,24 +308,27 @@ impl PeerReader {
         }
     }
 
-    pub(crate) async fn fetch_plan(&self, plan: FetchPlan<'_>, req_id: &str) -> MaterializedBlocks {
+    pub(crate) async fn fetch_plan(&self, plan: FetchPlan<'_>, req_id: &str) -> FetchResult {
         let planned_blocks = plan.block_count();
         let started_at = Instant::now();
-        let (fetched, attempts, completed) = execute_fetch_plan(self, plan, req_id).await;
+        let result = execute_fetch_plan(self, plan, req_id).await;
         let metrics = core_metrics();
         metrics
             .remote_fetch_plan_segments
-            .record(attempts as u64, &[]);
+            .record(result.attempts as u64, &[]);
         metrics
             .remote_fetch_plan_completed_segments
-            .record(completed as u64, &[]);
+            .record(result.completed_segments as u64, &[]);
         info!(
-            "Mooncake fetch plan: req_id={req_id} attempted_segments={attempts} completed_segments={completed} planned_blocks={} fetched_blocks={} total_ms={:.2}",
+            "Mooncake fetch plan: req_id={req_id} attempted_segments={} completed_segments={} status={:?} planned_blocks={} fetched_blocks={} total_ms={:.2}",
+            result.attempts,
+            result.completed_segments,
+            result.status,
             planned_blocks,
-            fetched.len(),
+            result.blocks.len(),
             started_at.elapsed().as_secs_f64() * 1000.0
         );
-        fetched
+        result
     }
 }
 

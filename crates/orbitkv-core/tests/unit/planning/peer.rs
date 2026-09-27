@@ -47,6 +47,10 @@ fn planner_selects_longest_cover_then_stable_owner_and_stops_at_gap() {
         [1, 2]
     );
     assert_eq!(plan.next_segment(2).unwrap().owner.endpoint, "d");
+    assert!(
+        plan.complete_cost_key().is_none(),
+        "a multi-owner prefix has no single complete-route resource identity"
+    );
     let mut rows = (0..=DISCOVERY_MAX_KEYS)
         .map(|_| row(1, &["a"]))
         .collect::<Vec<_>>();

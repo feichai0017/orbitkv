@@ -8,6 +8,10 @@ use crate::storage::ssd::SsdStore;
 use super::peer::{FetchPlan, PeerSource};
 use super::replica::ReplicaSet;
 use super::ssd::SsdReadPlan;
+#[cfg(feature = "mooncake")]
+use crate::cost::{CostKey, shadow_routes};
+#[cfg(feature = "mooncake")]
+use smallvec::SmallVec;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadTarget {
@@ -23,6 +27,7 @@ pub(crate) enum HostReadRoute<'a> {
     Peer(FetchPlan<'a>),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum HostReadSelection {
     Ssd,
     #[cfg(feature = "mooncake")]
@@ -110,6 +115,13 @@ impl ReadPlan {
         #[cfg(not(feature = "mooncake"))]
         let selected = local_ssd.then_some(HostReadSelection::Ssd);
 
+        #[cfg(feature = "mooncake")]
+        if crate::cost::enabled()
+            && let Some(selected) = selected
+        {
+            self.shadow_host_routes(selected, peer_dram, local_ssd, peer_ssd, codec_budget);
+        }
+
         match selected? {
             HostReadSelection::Ssd => self
                 .ssd(crate::SsdReadPath::Uring, codec_budget)
@@ -119,5 +131,65 @@ impl ReadPlan {
                 FetchPlan::from_prefix(&mut self.rows, prefix, source),
             )),
         }
+    }
+
+    #[cfg(feature = "mooncake")]
+    fn shadow_host_routes(
+        &mut self,
+        selected: HostReadSelection,
+        peer_dram: Option<usize>,
+        local_ssd: bool,
+        peer_ssd: Option<usize>,
+        codec_budget: usize,
+    ) {
+        let local_count = local_ssd
+            .then(|| self.ssd(crate::SsdReadPath::Uring, codec_budget))
+            .flatten()
+            .map(|route| route.block_count());
+        let selected_count = match selected {
+            HostReadSelection::Ssd => local_count,
+            HostReadSelection::Peer { prefix, .. } => Some(prefix),
+        };
+        let Some(selected_count) = selected_count else {
+            return;
+        };
+
+        let mut routes: SmallVec<[(HostReadSelection, CostKey); 3]> = SmallVec::new();
+        if peer_dram == Some(selected_count) {
+            let plan = FetchPlan::from_prefix(&mut self.rows, selected_count, PeerSource::Dram);
+            if let Some(key) = plan.complete_cost_key() {
+                routes.push((
+                    HostReadSelection::Peer {
+                        prefix: selected_count,
+                        source: PeerSource::Dram,
+                    },
+                    key,
+                ));
+            }
+        }
+        if local_count == Some(selected_count)
+            && let Some(key) = self
+                .ssd(crate::SsdReadPath::Uring, codec_budget)
+                .and_then(|route| route.cost_key())
+        {
+            routes.push((HostReadSelection::Ssd, key));
+        }
+        if peer_ssd == Some(selected_count) {
+            let plan = FetchPlan::from_prefix(&mut self.rows, selected_count, PeerSource::Ssd);
+            if let Some(key) = plan.complete_cost_key() {
+                routes.push((
+                    HostReadSelection::Peer {
+                        prefix: selected_count,
+                        source: PeerSource::Ssd,
+                    },
+                    key,
+                ));
+            }
+        }
+        let Some(selected_index) = routes.iter().position(|(route, _)| *route == selected) else {
+            return;
+        };
+        let keys: SmallVec<[CostKey; 3]> = routes.iter().map(|(_, key)| *key).collect();
+        shadow_routes(&keys, selected_index);
     }
 }

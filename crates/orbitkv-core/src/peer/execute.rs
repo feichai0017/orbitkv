@@ -12,6 +12,26 @@ pub(super) enum SegmentOutcome {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FetchStatus {
+    Complete,
+    AuthorizationExhausted,
+    PayloadFailed,
+}
+
+pub(crate) struct FetchResult {
+    pub(crate) blocks: MaterializedBlocks,
+    pub(crate) status: FetchStatus,
+    pub(crate) attempts: usize,
+    pub(crate) completed_segments: usize,
+}
+
+impl FetchResult {
+    pub(crate) fn can_replan(&self) -> bool {
+        self.status == FetchStatus::AuthorizationExhausted && self.blocks.is_empty()
+    }
+}
+
 #[tonic::async_trait]
 pub(super) trait SegmentFetcher {
     async fn fetch_segment(&self, segment: &FetchSegment, req_id: &str) -> SegmentOutcome;
@@ -21,11 +41,12 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
     fetcher: &F,
     mut plan: FetchPlan<'_>,
     req_id: &str,
-) -> (MaterializedBlocks, usize, usize) {
+) -> FetchResult {
     let mut fetched = Vec::with_capacity(plan.block_count());
     let mut attempts = 0;
     let mut completed = 0;
     let mut rejected = 0;
+    let mut status = FetchStatus::AuthorizationExhausted;
     while let Some(segment) = plan.next_segment(fetched.len()) {
         attempts += 1;
         match fetcher.fetch_segment(&segment, req_id).await {
@@ -37,7 +58,10 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
                     break;
                 }
             }
-            SegmentOutcome::Failed => break,
+            SegmentOutcome::Failed => {
+                status = FetchStatus::PayloadFailed;
+                break;
+            }
             SegmentOutcome::Fetched(returned) => {
                 let contiguous = returned
                     .iter()
@@ -47,13 +71,22 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
                 let returned_count = returned.len();
                 fetched.extend(returned.into_iter().take(contiguous));
                 if contiguous != segment.records.len() || returned_count != segment.records.len() {
+                    status = FetchStatus::PayloadFailed;
                     break;
                 }
                 completed += 1;
             }
         }
     }
-    (fetched, attempts, completed)
+    if fetched.len() == plan.block_count() {
+        status = FetchStatus::Complete;
+    }
+    FetchResult {
+        blocks: fetched,
+        status,
+        attempts,
+        completed_segments: completed,
+    }
 }
 
 #[cfg(test)]

@@ -179,6 +179,13 @@ qualification remain open. See the
   incarnation; require every estimate to be fresh and compatible plus a gain
   beyond empirical error and 5%. Keep it behind both cost opt-ins and replan on
   stale or temporarily resource-exhausted source authorization.
+- [x] Normalize io_uring host materialization as `local_ssd_host_ready`, using
+  enqueue-to-reconstruction time plus stored-byte/block shape. Compare it in
+  shadow with equal-coverage single-owner peer DRAM/SSD routes; keep fixed
+  cross-medium execution until external H20 evidence qualifies switching.
+- [x] Distinguish complete peer fetch, exhausted pre-payload authorization and
+  submitted-payload failure. Replan retained local/peer evidence only for the
+  authorization case; never retry another medium after a Mooncake payload error.
 - [ ] Implement the [Manager-owned cluster decision loop](docs/state-planning.md#cache-manager-decisions-below-the-engine):
   bounded residence/resource evidence with freshness, joint local/peer route
   ranking, source credit admission and bounded replanning. Qualify without a

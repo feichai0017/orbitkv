@@ -256,41 +256,37 @@ impl ReadCoordinator {
         #[cfg(not(feature = "mooncake"))]
         let _ = req_id;
 
-        match plan.host_route(peer_available, allow_ssd_prefetch, self.codec_budget) {
-            #[cfg(feature = "mooncake")]
-            Some(HostReadRoute::Peer(route)) => {
-                if let Some(remote) = &self.remote_fetch {
-                    return (
-                        Some(AttributionSource::Remote),
-                        remote.fetch_plan(route, req_id).await,
-                    );
+        let mut allow_local_ssd = allow_ssd_prefetch;
+        for _ in 0..3 {
+            match plan.host_route(peer_available, allow_local_ssd, self.codec_budget) {
+                #[cfg(feature = "mooncake")]
+                Some(HostReadRoute::Peer(route)) => {
+                    if let Some(remote) = &self.remote_fetch {
+                        let result = remote.fetch_plan(route, req_id).await;
+                        if !result.can_replan() {
+                            return (Some(AttributionSource::Remote), result.blocks);
+                        }
+                        // No payload was submitted. Replan from the retained
+                        // local/peer evidence after rejected source admission.
+                        continue;
+                    }
                 }
-            }
-            Some(HostReadRoute::Ssd(route)) => {
-                if let Some(ssd) = &self.ssd_store
-                    && let Some(leases) = route.acquire(self.codec_budget)
-                {
-                    return (
-                        Some(AttributionSource::Ssd),
-                        ssd.read_host_batch(leases).await.unwrap_or_default(),
-                    );
+                Some(HostReadRoute::Ssd(route)) => {
+                    if let Some(ssd) = &self.ssd_store
+                        && let Some(leases) = route.acquire(self.codec_budget)
+                    {
+                        return (
+                            Some(AttributionSource::Ssd),
+                            ssd.read_host_batch(leases).await.unwrap_or_default(),
+                        );
+                    }
+                    // This exact local generation disappeared after planning.
+                    // Do not select it again; peer alternatives remain eligible.
+                    allow_local_ssd = false;
+                    continue;
                 }
+                None => break,
             }
-            None => {}
-        }
-
-        // Local SSD acquisition can lose its exact generation after route
-        // selection. Reuse the retained evidence once without re-discovery;
-        // peer SSD remains behind its independently authorized source route.
-        #[cfg(feature = "mooncake")]
-        if let Some(remote) = &self.remote_fetch
-            && let Some(HostReadRoute::Peer(route)) =
-                plan.host_route(true, false, self.codec_budget)
-        {
-            return (
-                Some(AttributionSource::Remote),
-                remote.fetch_plan(route, req_id).await,
-            );
         }
 
         #[cfg(feature = "mooncake")]
@@ -306,10 +302,10 @@ impl ReadCoordinator {
                 {
                     // A submitted payload failure completes this query; only
                     // missing advertisements participate in producer waiting.
-                    return (
-                        Some(AttributionSource::Remote),
-                        remote.fetch_plan(route, req_id).await,
-                    );
+                    let result = remote.fetch_plan(route, req_id).await;
+                    if !result.can_replan() {
+                        return (Some(AttributionSource::Remote), result.blocks);
+                    }
                 }
             }
             warn!(

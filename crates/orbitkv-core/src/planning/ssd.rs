@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use crate::SsdReadPath;
+#[cfg(feature = "mooncake")]
+use crate::cost::{CostKey, CostPath};
 use crate::storage::ssd::{SsdReadLease, SsdStore};
 
 use super::read::{ReadPlan, ReadTarget};
@@ -76,6 +78,47 @@ fn deferred_route(
 }
 
 impl SsdReadPlan<'_> {
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn block_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn cost_key(&self) -> Option<CostKey> {
+        let first = self.rows.first()?.local_ssd()?;
+        let resource = first.cost_resource()?;
+        let mut bytes = 0u64;
+        let mut representation = None;
+        for row in self.rows {
+            let candidate = row.local_ssd()?;
+            if candidate.cost_resource()? != resource {
+                return None;
+            }
+            let metadata = candidate.replica_metadata();
+            bytes = bytes.checked_add(metadata.stored_bytes?)?;
+            representation = Some(match representation {
+                None => metadata.representation,
+                Some(orbitkv_state::ReplicaRepresentation::Unknown) => {
+                    orbitkv_state::ReplicaRepresentation::Unknown
+                }
+                Some(_)
+                    if metadata.representation == orbitkv_state::ReplicaRepresentation::Unknown =>
+                {
+                    orbitkv_state::ReplicaRepresentation::Unknown
+                }
+                Some(previous) if previous == metadata.representation => previous,
+                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+            });
+        }
+        Some(CostKey::new(
+            CostPath::LocalSsdHostReady,
+            resource,
+            representation.unwrap_or_default(),
+            bytes,
+            self.rows.len(),
+        ))
+    }
+
     pub(crate) fn acquire(self, codec_budget: usize) -> Option<Vec<Arc<SsdReadLease>>> {
         let leases: Vec<_> = self
             .rows

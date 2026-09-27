@@ -488,7 +488,8 @@ preparation time alone as an improvement.
 
 With `ORBITKV_COST_OBSERVATIONS=1`, the `ssd_uring_restore` and
 `ssd_cufile_restore` cost paths measure complete restore totals. Child
-`ssd_prefetch`, `ssd_read` and cuFile/copy/codec observations overlap these totals;
+`local_ssd_host_ready`, `ssd_read` and cuFile/copy/codec observations overlap
+these totals;
 do not add them or count their physical bytes twice. Observations remain off by
 default while the earlier SGLang ANS overhead gate is open. The route changes have
 [separate validation](implementation-plan.md#ssd-sourcepath-separation-final-evidence);

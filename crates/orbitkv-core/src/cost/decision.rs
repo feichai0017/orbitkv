@@ -38,6 +38,68 @@ pub(crate) fn select_route(candidates: &[CostKey], default: usize) -> usize {
     selected
 }
 
+/// Compare complete HostReady routes without changing the selected execution.
+pub(crate) fn shadow_routes(candidates: &[CostKey], selected: usize) {
+    if !*ENABLED
+        || selected >= candidates.len()
+        || candidates.len() < 2
+        || candidates.len() > MAX_CANDIDATES
+    {
+        return;
+    }
+    let now = Instant::now();
+    let Some(estimates) = ESTIMATES.try_lock() else {
+        core_metrics().cost_estimate_dropped.add(1, &[]);
+        return;
+    };
+    let predictions: [_; MAX_CANDIDATES] = std::array::from_fn(|index| {
+        candidates
+            .get(index)
+            .and_then(|&key| estimates.predict(key, now))
+    });
+    drop(estimates);
+    let metrics = core_metrics();
+    for (key, prediction) in candidates.iter().zip(predictions) {
+        let attributes = [
+            KeyValue::new("path", key.path.label()),
+            KeyValue::new(
+                "evidence",
+                if prediction.is_some() {
+                    "known"
+                } else {
+                    "unknown"
+                },
+            ),
+        ];
+        metrics.cost_shadow_candidates.add(1, &attributes);
+        if let Some(prediction) = prediction {
+            metrics
+                .cost_shadow_prediction_seconds
+                .record(prediction.seconds, &attributes);
+            metrics
+                .cost_estimate_samples
+                .record(prediction.count, &attributes);
+            metrics.cost_estimate_age_seconds.record(
+                now.saturating_duration_since(prediction.updated)
+                    .as_secs_f64(),
+                &attributes,
+            );
+            metrics
+                .cost_estimate_error_seconds
+                .record(prediction.absolute_error, &attributes);
+        }
+    }
+    let (_, decision) = choose(candidates, &predictions[..candidates.len()], selected);
+    let decision = match decision {
+        "selected" => "different",
+        "default" => "agree",
+        other => other,
+    };
+    metrics
+        .cost_shadow_decisions
+        .add(1, &[KeyValue::new("decision", decision)]);
+}
+
 fn choose(
     candidates: &[CostKey],
     predictions: &[Option<Estimate>],

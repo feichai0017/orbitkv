@@ -69,8 +69,16 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
         };
         let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"])];
         let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-        let (fetched, _, _) = execute_fetch_plan(&fetcher, plan, "test-request").await;
-        assert_eq!(fetched.len(), expected);
+        let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
+        assert_eq!(result.blocks.len(), expected);
+        assert_eq!(
+            result.status,
+            if expected == 2 {
+                FetchStatus::Complete
+            } else {
+                FetchStatus::PayloadFailed
+            }
+        );
         assert_eq!(
             fetcher.calls.lock().unwrap().len(),
             if expected == 2 { 2 } else { 1 }
@@ -86,12 +94,10 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
     };
     let mut rows = vec![row(1, &["a", "b", "c", "d"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    assert!(
-        execute_fetch_plan(&fetcher, plan, "test-request")
-            .await
-            .0
-            .is_empty()
-    );
+    let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
+    assert!(result.blocks.is_empty());
+    assert_eq!(result.status, FetchStatus::AuthorizationExhausted);
+    assert!(result.can_replan());
     assert_eq!(fetcher.calls.lock().unwrap().len(), 3);
 }
 
@@ -112,12 +118,9 @@ async fn malformed_or_short_segment_never_skips_a_gap() {
     };
     let mut rows = vec![row(1, &["a"]), row(2, &["a"]), row(3, &["b"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    assert_eq!(
-        execute_fetch_plan(&fetcher, plan, "test-request")
-            .await
-            .0
-            .len(),
-        1
-    );
+    let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
+    assert_eq!(result.blocks.len(), 1);
+    assert_eq!(result.status, FetchStatus::PayloadFailed);
+    assert!(!result.can_replan());
     assert_eq!(*fetcher.calls.lock().unwrap(), ["a"]);
 }

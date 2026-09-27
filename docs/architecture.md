@@ -151,8 +151,10 @@ The Mooncake registration owner retains its pinned pool through unregister.
 Cost observations and shadow comparisons remain opt-in; shadow results never
 select execution. A second opt-in may choose among equal-coverage owners of one
 peer medium using complete HostReady evidence, while broader cross-route choice
-remains open. Peer SSD uses source io_uring staging plus Mooncake TE; remote HBM
-and GPU-direct cache endpoints remain future work.
+remains open. Local SSD and single-owner peer routes now share stored-byte/block
+HostReady shadow keys, without changing their fixed priority. Peer SSD uses
+source io_uring staging plus Mooncake TE; remote HBM and GPU-direct cache
+endpoints remain future work.
 Instance-owned GPU workers share the bounded GPU SSD-write admission for their
 physical CUDA device; the permit remains with the submitted save until its
 completion owner releases it.

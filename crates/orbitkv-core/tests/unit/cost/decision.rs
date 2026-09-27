@@ -41,6 +41,24 @@ fn selection_requires_complete_compatible_fresh_evidence() {
         ),
         (0, "incomparable")
     );
+    assert_eq!(
+        choose(
+            &[
+                candidates[0],
+                CostKey::new(
+                    CostPath::LocalSsdHostReady,
+                    Resource::SsdStore(9),
+                    Representation::Raw,
+                    4096,
+                    2,
+                ),
+            ],
+            &[Some(estimate(0.02, 0.0)), Some(estimate(0.01, 0.0)),],
+            0,
+        ),
+        (1, "selected"),
+        "different resources and media remain comparable for the same HostReady demand"
+    );
 }
 
 #[test]

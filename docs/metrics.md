@@ -44,7 +44,7 @@ request and state identities are kept out of the exported series.
 | `orbitkv_cost_stage_seconds` | `path`, `outcome`, `stage`: queue, admission, completed service or inclusive total; microsecond-to-second buckets |
 | `orbitkv_cost_logical_bytes_total` / `orbitkv_cost_logical_unknown_total` | Known attempted logical bytes versus unavailable unpadded sizes; do not sum nested owners |
 | `orbitkv_cost_io_bytes_total` / `orbitkv_cost_io_unknown_total` | Known physical bytes, including short I/O, versus unknown counts; same path/outcome labels |
-| `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-GPU-terminal total for the two SSD restore routes |
+| `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-terminal total for complete SSD restore and HostReady routes |
 | `orbitkv_cost_shadow_candidates_total` / `orbitkv_cost_shadow_prediction_seconds` | Feasible raw-copy or SSD restore-route candidates, labelled by path and known/unknown evidence |
 | `orbitkv_cost_shadow_decisions_total` | agree, different, within_margin, incomparable or unknown; execution never follows this result |
 | `orbitkv_cost_route_decisions_total` | `default`, `selected`, `within_margin`, `unknown`, `incomparable` or `contention` for opt-in equal-coverage peer-owner execution choices |
@@ -64,6 +64,10 @@ TE payload interval for either source medium.
 `peer_dram_host_ready` and `peer_ssd_host_ready` are non-additive composite
 samples from authorization start through destination block reconstruction.
 They alone feed the narrow peer-owner execution selector.
+`local_ssd_host_ready` spans queue admission, host allocation, io_uring reads,
+validation and host-block reconstruction. It uses stored bytes and block count,
+matching the peer HostReady shape. Equal-coverage, single-owner alternatives
+enter cross-medium shadow only; they do not change execution.
 
 Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
 DMA-coalesced ranges. Actual execution samples and shadow candidates use the
@@ -71,13 +75,14 @@ same shape from the validated copy list; the executor's merge iterator supplies
 the range count. Refining that key does not restart queue/admission timing.
 These fields are bounded estimator dimensions, not additional metric labels.
 
-Shadow compares only the existing load DMA/kernel pair, save DMA/kernel pair,
-or complete io_uring/cuFile restore pair. Matching resource identity, known
-representation and every shape bucket are required. The execution owner still
-supplies alternatives for the same actual work; matching buckets alone do not
-prove equal demand or authorize a different source. Resource keys distinguish
-GPU, SSD store/file and peer runtime identities. SSD-route keys additionally
-retain destination GPU, copy backend, source-store set and mixed DRAM presence.
+Shadow compares the existing load DMA/kernel pair, save DMA/kernel pair,
+complete io_uring/cuFile restore pair, and equal-coverage HostReady alternatives.
+The first three require matching resource identity. HostReady shadow permits
+different SSD-store/peer resources but still requires known representation and
+identical byte/block shape. Multi-owner peer prefixes have no single resource
+identity and are excluded. Matching buckets never authorize a source or prove
+resource admission. SSD GPU-restore keys additionally retain destination GPU,
+copy backend, source-store set and mixed DRAM presence.
 
 `different` requires the alternative's mean plus empirical error to beat the
 current mean minus its error by more than 5% of the current mean. A faster mean
