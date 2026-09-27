@@ -16,6 +16,9 @@ static ENABLED: LazyLock<bool> =
 #[cfg(feature = "mooncake")]
 static SELECTION_ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ORBITKV_COST_SELECTION").as_deref() == Ok("1"));
+#[cfg(feature = "mooncake")]
+static CROSS_MEDIUM_SELECTION_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("ORBITKV_CROSS_MEDIUM_SELECTION").as_deref() == Ok("1"));
 
 pub(crate) fn enabled() -> bool {
     *ENABLED
@@ -24,6 +27,11 @@ pub(crate) fn enabled() -> bool {
 #[cfg(feature = "mooncake")]
 pub(crate) fn selection_enabled() -> bool {
     *ENABLED && *SELECTION_ENABLED
+}
+
+#[cfg(feature = "mooncake")]
+pub(crate) fn cross_medium_selection_enabled() -> bool {
+    selection_enabled() && *CROSS_MEDIUM_SELECTION_ENABLED
 }
 
 #[cfg(all(test, feature = "mooncake"))]
@@ -39,7 +47,7 @@ mod resource;
 mod shadow;
 
 #[cfg(feature = "mooncake")]
-pub(crate) use decision::{select_route, shadow_routes};
+pub(crate) use decision::{SelectionScope, select_route, shadow_routes};
 pub(crate) use observation::{Observation, Outcome};
 pub(crate) use orbitkv_state::ReplicaRepresentation as Representation;
 pub(crate) use resource::{Resource, resource_id};

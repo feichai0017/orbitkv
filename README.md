@@ -150,8 +150,9 @@ shadow compares complete restoration to GPU readiness without changing execution
 This is not yet a completed planner across all tiers. An opt-in selector can
 choose between equal-coverage owners of the same peer medium using fresh complete
 HostReady observations. Equal-coverage local SSD and single-owner peer routes
-also share an observation-only cross-medium shadow; actual cross-medium selection
-remains planned, and observations plus execution selection remain off by default:
+also share a cross-medium shadow. A third, explicitly experimental opt-in can
+execute that choice, but it is not qualified until the external H20 TCP/RDMA
+matrix passes. All observations and execution selection remain off by default:
 the [earlier overhead qualification](docs/implementation-plan.md#p41-final-evidence)
 has one open SGLang ANS SSD latency gate. The route changes require their own
 [validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence).

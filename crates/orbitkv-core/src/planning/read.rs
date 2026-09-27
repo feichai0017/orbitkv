@@ -9,7 +9,9 @@ use super::peer::{FetchPlan, PeerSource};
 use super::replica::ReplicaSet;
 use super::ssd::SsdReadPlan;
 #[cfg(feature = "mooncake")]
-use crate::cost::{CostKey, shadow_routes};
+use crate::cost::{
+    CostKey, SelectionScope, cross_medium_selection_enabled, select_route, shadow_routes,
+};
 #[cfg(feature = "mooncake")]
 use smallvec::SmallVec;
 
@@ -100,7 +102,7 @@ impl ReadPlan {
         let local_ssd = allow_ssd && self.ssd(crate::SsdReadPath::Uring, codec_budget).is_some();
 
         #[cfg(feature = "mooncake")]
-        let selected = peer_dram
+        let mut selected = peer_dram
             .map(|prefix| HostReadSelection::Peer {
                 prefix,
                 source: PeerSource::Dram,
@@ -117,9 +119,15 @@ impl ReadPlan {
 
         #[cfg(feature = "mooncake")]
         if crate::cost::enabled()
-            && let Some(selected) = selected
+            && let Some(default_selection) = selected
         {
-            self.shadow_host_routes(selected, peer_dram, local_ssd, peer_ssd, codec_budget);
+            selected = Some(self.evaluate_host_routes(
+                default_selection,
+                peer_dram,
+                local_ssd,
+                peer_ssd,
+                codec_budget,
+            ));
         }
 
         match selected? {
@@ -134,14 +142,14 @@ impl ReadPlan {
     }
 
     #[cfg(feature = "mooncake")]
-    fn shadow_host_routes(
+    fn evaluate_host_routes(
         &mut self,
         selected: HostReadSelection,
         peer_dram: Option<usize>,
         local_ssd: bool,
         peer_ssd: Option<usize>,
         codec_budget: usize,
-    ) {
+    ) -> HostReadSelection {
         let local_count = local_ssd
             .then(|| self.ssd(crate::SsdReadPath::Uring, codec_budget))
             .flatten()
@@ -151,8 +159,12 @@ impl ReadPlan {
             HostReadSelection::Peer { prefix, .. } => Some(prefix),
         };
         let Some(selected_count) = selected_count else {
-            return;
+            return selected;
         };
+
+        let expected_routes = usize::from(peer_dram == Some(selected_count))
+            + usize::from(local_count == Some(selected_count))
+            + usize::from(peer_ssd == Some(selected_count));
 
         let mut routes: SmallVec<[(HostReadSelection, CostKey); 3]> = SmallVec::new();
         if peer_dram == Some(selected_count) {
@@ -187,9 +199,16 @@ impl ReadPlan {
             }
         }
         let Some(selected_index) = routes.iter().position(|(route, _)| *route == selected) else {
-            return;
+            return selected;
         };
         let keys: SmallVec<[CostKey; 3]> = routes.iter().map(|(_, key)| *key).collect();
         shadow_routes(&keys, selected_index);
+        if !cross_medium_selection_enabled() || routes.len() != expected_routes {
+            return selected;
+        }
+        let selected_index = select_route(&keys, selected_index, SelectionScope::CrossMedium);
+        routes
+            .get(selected_index)
+            .map_or(selected, |(route, _)| *route)
     }
 }

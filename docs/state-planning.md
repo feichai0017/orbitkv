@@ -746,7 +746,11 @@ coverage, bypasses authorization or treats a prediction as a resource permit.
 With observations alone, equal-coverage local SSD, peer DRAM and peer SSD routes
 also enter a complete HostReady shadow when each peer alternative has one source
 owner. Different coverage, unknown shape and multi-owner prefixes do not compare.
-This cross-medium shadow never changes the fixed host-route order.
+This shadow does not change the fixed host-route order. Experimental execution
+requires the two flags above plus `ORBITKV_CROSS_MEDIUM_SELECTION=1`; every
+equal-coverage candidate must have fresh compatible evidence. The selected
+source still performs authoritative acquisition/admission. Pre-payload rejection
+can replan; submitted payload failure cannot switch media.
 There are no Python hot-loop callbacks, extra GPU synchronizations or payload
 reads for telemetry. See [the paired workload](../benches/README.md#cost-observation-overhead)
 for the predeclared overhead budget and final qualification evidence.

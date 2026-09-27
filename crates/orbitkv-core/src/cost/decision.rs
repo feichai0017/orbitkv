@@ -9,10 +9,25 @@ use crate::metrics::core_metrics;
 const MAX_CANDIDATES: usize = 8;
 const MIN_RELATIVE_GAIN: f64 = 0.05;
 
+#[derive(Clone, Copy)]
+pub(crate) enum SelectionScope {
+    PeerOwner,
+    CrossMedium,
+}
+
+impl SelectionScope {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PeerOwner => "peer_owner",
+            Self::CrossMedium => "cross_medium",
+        }
+    }
+}
+
 /// Select among routes already proven to have the same HostReady demand.
 /// Missing, stale, incompatible or contended evidence preserves the planner's
 /// deterministic default; this function never acquires execution resources.
-pub(crate) fn select_route(candidates: &[CostKey], default: usize) -> usize {
+pub(crate) fn select_route(candidates: &[CostKey], default: usize, scope: SelectionScope) -> usize {
     if !*ENABLED || !*SELECTION_ENABLED {
         return default;
     }
@@ -32,9 +47,13 @@ pub(crate) fn select_route(candidates: &[CostKey], default: usize) -> usize {
             core_metrics().cost_estimate_dropped.add(1, &[]);
             (default, "contention")
         };
-    core_metrics()
-        .cost_route_decisions
-        .add(1, &[KeyValue::new("decision", decision)]);
+    core_metrics().cost_route_decisions.add(
+        1,
+        &[
+            KeyValue::new("decision", decision),
+            KeyValue::new("scope", scope.label()),
+        ],
+    );
     selected
 }
 

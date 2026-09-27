@@ -624,6 +624,75 @@ async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
     assert_eq!(queued.len(), 0, "planning cannot stage either source");
 }
 
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
+    const CHILD: &str = "ORBITKV_TEST_CROSS_MEDIUM_ROUTE_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        use crate::QueryMode;
+        use crate::cost::{CostKey, CostPath, Representation, Resource, resource_id};
+        use crate::planning::peer::{FetchPlan, PeerSource};
+        use crate::planning::read::{HostReadRoute, ReadPlan};
+
+        let (store, _queued) = queued_read_store();
+        let key = StateKey::new("queued-lease".into(), vec![0]);
+        let owner = orbitkv_state::CacheOwner {
+            endpoint: "peer".into(),
+            incarnation: uuid::Uuid::from_u128(44),
+        };
+        let mut plan = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Demand, Some(&store));
+        plan.rows[0].set_peers(vec![orbitkv_state::ReplicaLocation {
+            owner: owner.clone(),
+            sequence: 1,
+            metadata: orbitkv_state::ReplicaMetadata {
+                medium: orbitkv_state::ReplicaMedium::Dram,
+                representation: orbitkv_state::ReplicaRepresentation::Raw,
+                stored_bytes: Some(SSD_ALIGNMENT as u64),
+            },
+        }]);
+        let local_key = plan.ssd(SsdReadPath::Uring, 0).unwrap().cost_key().unwrap();
+        let peer_key = CostKey::new(
+            CostPath::PeerDramHostReady,
+            Resource::Peer(resource_id(&owner)),
+            Representation::Raw,
+            SSD_ALIGNMENT as u64,
+            1,
+        );
+        for _ in 0..4 {
+            crate::cost::observe_for_test(local_key, 0.01, std::time::Instant::now());
+            crate::cost::observe_for_test(peer_key, 0.02, std::time::Instant::now());
+        }
+        {
+            let peer = FetchPlan::new(&mut plan.rows, 1, PeerSource::Dram).unwrap();
+            assert_eq!(peer.complete_cost_key(), Some(peer_key));
+        }
+        assert!(matches!(
+            plan.host_route(true, true, 0),
+            Some(HostReadRoute::Ssd(_))
+        ));
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "storage::ssd::tests::cross_medium_selection_is_explicit_and_preserves_equal_coverage",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("ORBITKV_COST_OBSERVATIONS", "1")
+        .env("ORBITKV_COST_SELECTION", "1")
+        .env("ORBITKV_CROSS_MEDIUM_SELECTION", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 #[tokio::test]
 async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
     let (store, _queued) = queued_read_store();

@@ -112,7 +112,7 @@ fn execution_selection_requires_both_explicit_switches() {
             ESTIMATES.lock().observe(candidates[1], 0.01, now);
         }
         assert_eq!(
-            select_route(&candidates, 0),
+            select_route(&candidates, 0, SelectionScope::PeerOwner),
             expected.parse::<usize>().unwrap()
         );
         return;
@@ -146,6 +146,53 @@ fn execution_selection_requires_both_explicit_switches() {
         assert!(
             output.status.success(),
             "observations={observations:?} selection={selection:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+}
+
+#[test]
+fn cross_medium_selection_requires_three_explicit_switches() {
+    const CHILD: &str = "ORBITKV_TEST_CROSS_MEDIUM_SELECTION_CHILD";
+    if let Ok(expected) = std::env::var(CHILD) {
+        assert_eq!(
+            super::super::cross_medium_selection_enabled(),
+            expected == "1"
+        );
+        return;
+    }
+
+    for (observations, selection, cross_medium, expected) in [
+        (None, None, None, false),
+        (Some("1"), Some("1"), None, false),
+        (Some("1"), None, Some("1"), false),
+        (None, Some("1"), Some("1"), false),
+        (Some("1"), Some("1"), Some("1"), true),
+    ] {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "cost::decision::tests::cross_medium_selection_requires_three_explicit_switches",
+                "--nocapture",
+            ])
+            .env(CHILD, if expected { "1" } else { "0" });
+        for (name, value) in [
+            ("ORBITKV_COST_OBSERVATIONS", observations),
+            ("ORBITKV_COST_SELECTION", selection),
+            ("ORBITKV_CROSS_MEDIUM_SELECTION", cross_medium),
+        ] {
+            if let Some(value) = value {
+                child.env(name, value);
+            } else {
+                child.env_remove(name);
+            }
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "observations={observations:?} selection={selection:?} cross={cross_medium:?}: {}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         );

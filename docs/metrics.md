@@ -47,7 +47,7 @@ request and state identities are kept out of the exported series.
 | `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-terminal total for complete SSD restore and HostReady routes |
 | `orbitkv_cost_shadow_candidates_total` / `orbitkv_cost_shadow_prediction_seconds` | Feasible raw-copy or SSD restore-route candidates, labelled by path and known/unknown evidence |
 | `orbitkv_cost_shadow_decisions_total` | agree, different, within_margin, incomparable or unknown; execution never follows this result |
-| `orbitkv_cost_route_decisions_total` | `default`, `selected`, `within_margin`, `unknown`, `incomparable` or `contention` for opt-in equal-coverage peer-owner execution choices |
+| `orbitkv_cost_route_decisions_total` | `decision` is `default`, `selected`, `within_margin`, `unknown`, `incomparable` or `contention`; `scope` distinguishes `peer_owner` from `cross_medium` |
 | `orbitkv_cost_estimate_samples`, `orbitkv_cost_estimate_age_seconds`, `orbitkv_cost_estimate_error_seconds` | Count, sample age and EWMA absolute error supporting known shadow predictions |
 | `orbitkv_cost_estimate_evictions_total` / `orbitkv_cost_estimate_dropped_total` | Fixed-capacity eviction and skipped updates on estimator contention |
 
@@ -67,7 +67,8 @@ They alone feed the narrow peer-owner execution selector.
 `local_ssd_host_ready` spans queue admission, host allocation, io_uring reads,
 validation and host-block reconstruction. It uses stored bytes and block count,
 matching the peer HostReady shape. Equal-coverage, single-owner alternatives
-enter cross-medium shadow only; they do not change execution.
+enter cross-medium shadow. They affect execution only under the separate
+three-flag experiment gate.
 
 Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
 DMA-coalesced ranges. Actual execution samples and shadow candidates use the
@@ -108,6 +109,10 @@ observations in serving.
 Execution selection additionally requires `ORBITKV_COST_SELECTION=1`. It is
 currently limited to equal-coverage owners of one peer medium; it does not use
 nested authorization/READ timers as additive costs.
+Cross-medium execution additionally requires
+`ORBITKV_CROSS_MEDIUM_SELECTION=1`. The same `orbitkv_cost_route_decisions_total`
+reports its guarded decision; deployment labels and external transport/NIC
+evidence remain necessary to interpret the result.
 
 ### Storage encoding
 

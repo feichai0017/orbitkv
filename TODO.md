@@ -186,6 +186,11 @@ qualification remain open. See the
 - [x] Distinguish complete peer fetch, exhausted pre-payload authorization and
   submitted-payload failure. Replan retained local/peer evidence only for the
   authorization case; never retry another medium after a Mooncake payload error.
+- [x] Add a separate `ORBITKV_CROSS_MEDIUM_SELECTION=1` experiment gate. Require
+  both existing cost opt-ins, equal coverage, complete single-owner resource
+  identity and fresh compatible estimates; preserve fixed defaults otherwise.
+- [ ] Qualify cross-medium execution on the external H20 TCP/RDMA matrix before
+  recommending or enabling it in ordinary deployments.
 - [ ] Implement the [Manager-owned cluster decision loop](docs/state-planning.md#cache-manager-decisions-below-the-engine):
   bounded residence/resource evidence with freshness, joint local/peer route
   ranking, source credit admission and bounded replanning. Qualify without a

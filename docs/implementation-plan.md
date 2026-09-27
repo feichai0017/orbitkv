@@ -959,10 +959,20 @@ priority is unchanged. Peer execution now returns `Complete`,
 case can replan retained local/peer evidence, while a submitted Mooncake failure
 terminates that materialization attempt.
 
+Cross-medium execution is present only as a third experiment gate:
+`ORBITKV_CROSS_MEDIUM_SELECTION=1` requires both observation and base-selection
+opt-ins. The planner requires equal coverage and a complete cost key for every
+candidate; multi-owner, unknown, stale or incompatible alternatives preserve
+the fixed order. Acquisition and source authorization still revalidate the
+choice. This is implementation readiness, not H20 TCP/RDMA qualification or a
+recommended deployment setting.
+
 Focused validation covers the normalized local SSD key, cross-resource
 HostReady compatibility, multi-owner exclusion, stable default priority and all
-three peer execution outcomes. Cost, planning and peer-execution test groups
-remain host-safe; strict local-only and CPU-Mooncake Clippy pass.
+three peer execution outcomes. Subprocess tests prove all three opt-ins are
+required and exercise an actual peer-to-local route change from seeded complete
+evidence. Cost, planning and peer-execution test groups remain host-safe; strict
+local-only and CPU-Mooncake Clippy pass.
 
 The shared-cache benchmark now accepts `--source-medium ssd`. It verifies a new
 source SSD commit, evicts only source DRAM, resynchronizes inventory, requires

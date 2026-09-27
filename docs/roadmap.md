@@ -63,7 +63,8 @@ gate, without claiming cross-host tensor parallelism.
    estimator, raw-copy shadow and full SSD-route shadow are implemented as an opt-in.
    Equal-coverage owners of one peer medium also have a separately gated,
    opt-in complete-HostReady selector. Equal-coverage local SSD and single-owner
-   peer routes now share a cross-medium shadow; actual cross-medium choice is still open.
+   peer routes share a cross-medium shadow and a third experimental execution
+   gate; external H20 qualification remains open before ordinary use.
    Use explicit demand-read controls over one SSD store for route ablations;
    default execution and DRAM preparation remain unchanged. Close
    the SGLang ANS SSD overhead gate before default enablement. Begin with

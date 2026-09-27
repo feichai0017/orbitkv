@@ -120,6 +120,14 @@ For cost evidence, first set only `ORBITKV_COST_OBSERVATIONS=1`. Keep
 decisions for identical stored-byte/block shapes. Multi-owner or different-
 coverage rows are not valid cross-medium comparisons.
 
+Only after that control passes, run a separately labelled experiment with all
+three variables set to `1`: `ORBITKV_COST_OBSERVATIONS`,
+`ORBITKV_COST_SELECTION`, and `ORBITKV_CROSS_MEDIUM_SELECTION`. Require positive
+`orbitkv_cost_route_decisions_total{decision="selected",scope="cross_medium"}`
+evidence, the same
+output/byte/drain checks, and a matched fixed-route control. Do not carry the
+third flag into ordinary serving until both engines pass TCP and RDMA cells.
+
 ## Restart and ownership gates
 
 The repository's model-serving test starts etcd, two Managers and two replicas

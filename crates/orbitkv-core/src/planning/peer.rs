@@ -2,7 +2,9 @@ use orbitkv_state::{CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_KEYS, Invento
 use smallvec::SmallVec;
 
 use super::replica::ReplicaSet;
-use crate::cost::{CostKey, CostPath, Resource, resource_id, select_route, selection_enabled};
+use crate::cost::{
+    CostKey, CostPath, Resource, SelectionScope, resource_id, select_route, selection_enabled,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PeerSource {
@@ -174,7 +176,7 @@ impl<'a> FetchPlan<'a> {
                     ))
                 })
                 .collect::<Option<_>>()?;
-            select_route(&keys, 0)
+            select_route(&keys, 0, SelectionScope::PeerOwner)
         } else {
             0
         };
