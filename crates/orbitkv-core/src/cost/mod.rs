@@ -59,13 +59,40 @@ enum SampleBoundary {
     EnqueuedToCompletion,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Comparison {
-    GpuLoad,
-    GpuSave,
-    SsdRestore,
-    #[cfg(feature = "mooncake")]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum CompletionIntent {
     HostReady,
+    EngineRestore,
+    SourceRelease,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CompletionTarget {
+    intent: CompletionIntent,
+    resource: Option<Resource>,
+}
+
+impl CompletionTarget {
+    const fn host_ready() -> Self {
+        Self {
+            intent: CompletionIntent::HostReady,
+            resource: None,
+        }
+    }
+
+    const fn engine_restore(device: u64) -> Self {
+        Self {
+            intent: CompletionIntent::EngineRestore,
+            resource: Some(Resource::Gpu(device)),
+        }
+    }
+
+    const fn source_release(device: u64) -> Self {
+        Self {
+            intent: CompletionIntent::SourceRelease,
+            resource: Some(Resource::Gpu(device)),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -135,14 +162,21 @@ impl CostPath {
         }
     }
 
-    fn comparison(self) -> Option<Comparison> {
-        match self {
-            Self::GpuLoadDirect | Self::GpuLoadKernel => Some(Comparison::GpuLoad),
-            Self::GpuSaveDirect | Self::GpuSaveKernel => Some(Comparison::GpuSave),
-            Self::SsdUringRestore | Self::SsdCufileRestore => Some(Comparison::SsdRestore),
+    fn completion_target(self, resource: Resource) -> Option<CompletionTarget> {
+        match (self, resource) {
+            (Self::GpuLoadDirect | Self::GpuLoadKernel, Resource::Gpu(device)) => {
+                Some(CompletionTarget::engine_restore(device))
+            }
+            (Self::GpuSaveDirect | Self::GpuSaveKernel, Resource::Gpu(device)) => {
+                Some(CompletionTarget::source_release(device))
+            }
+            (
+                Self::SsdUringRestore | Self::SsdCufileRestore,
+                Resource::SsdRestore { device, .. },
+            ) => Some(CompletionTarget::engine_restore(device)),
             #[cfg(feature = "mooncake")]
-            Self::LocalSsdHostReady | Self::PeerDramHostReady | Self::PeerSsdHostReady => {
-                Some(Comparison::HostReady)
+            (Self::LocalSsdHostReady | Self::PeerDramHostReady | Self::PeerSsdHostReady, _) => {
+                Some(CompletionTarget::host_ready())
             }
             _ => None,
         }
@@ -186,6 +220,7 @@ impl CostPath {
 pub(crate) struct CostKey {
     path: CostPath,
     resource: Resource,
+    completion: Option<CompletionTarget>,
     representation: Representation,
     size: u8,
     fragments: u8,
@@ -198,16 +233,16 @@ pub(crate) struct CostKey {
 
 impl CostKey {
     fn comparable(self, other: Self) -> bool {
-        self.path.comparison().is_some()
-            && self.path.comparison() == other.path.comparison()
+        self.completion.is_some()
+            && self.completion == other.completion
             && self.representation != Representation::Unknown
             && self.with_path(other.path) == other
     }
 
     #[cfg(feature = "mooncake")]
     fn route_comparable(self, other: Self) -> bool {
-        self.path.comparison() == Some(Comparison::HostReady)
-            && other.path.comparison() == Some(Comparison::HostReady)
+        self.completion.is_some()
+            && self.completion == other.completion
             && self.representation != Representation::Unknown
             && self.with_path_resource(other.path, other.resource) == other
     }
@@ -220,7 +255,11 @@ impl CostKey {
     }
 
     pub(crate) fn with_path(self, path: CostPath) -> Self {
-        Self { path, ..self }
+        Self {
+            completion: path.completion_target(self.resource),
+            path,
+            ..self
+        }
     }
     pub(crate) fn with_ssd_shape(
         self,
@@ -241,6 +280,7 @@ impl CostKey {
         Self {
             path,
             resource,
+            completion: path.completion_target(resource),
             ..self
         }
     }
@@ -251,9 +291,11 @@ impl CostKey {
         bytes: u64,
         fragments: usize,
     ) -> Self {
+        let completion = path.completion_target(resource);
         Self {
             path,
             resource,
+            completion,
             representation,
             size: bucket(bytes),
             fragments: bucket(fragments as u64),

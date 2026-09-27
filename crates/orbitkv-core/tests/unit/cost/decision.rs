@@ -99,6 +99,45 @@ fn selection_requires_gain_beyond_error_and_margin() {
 }
 
 #[test]
+fn engine_ready_routes_require_the_same_destination_device() {
+    let direct = CostKey::new(
+        CostPath::GpuLoadDirect,
+        Resource::Gpu(7),
+        Representation::Raw,
+        4096,
+        2,
+    );
+    let ssd = CostKey::new(
+        CostPath::SsdUringRestore,
+        Resource::SsdRestore {
+            device: 7,
+            copy_backend: 0,
+            stores: 11,
+            has_memory: false,
+        },
+        Representation::Raw,
+        4096,
+        2,
+    );
+    let predictions = [Some(estimate(0.02, 0.0)), Some(estimate(0.01, 0.0))];
+    assert_eq!(choose(&[direct, ssd], &predictions, 0), (1, "selected"));
+
+    let other_device = ssd.with_path_resource(
+        CostPath::SsdUringRestore,
+        Resource::SsdRestore {
+            device: 8,
+            copy_backend: 0,
+            stores: 11,
+            has_memory: false,
+        },
+    );
+    assert_eq!(
+        choose(&[direct, other_device], &predictions, 0),
+        (0, "incomparable")
+    );
+}
+
+#[test]
 fn execution_selection_requires_both_explicit_switches() {
     const CHILD: &str = "ORBITKV_TEST_ROUTE_SELECTION_CHILD";
     if let Ok(expected) = std::env::var(CHILD) {

@@ -33,17 +33,11 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
         ("composite", alternative.with_path(CostPath::GpuDecode)),
         (
             "device",
-            CostKey {
-                resource: Resource::Gpu(2),
-                ..alternative
-            },
+            alternative.with_path_resource(alternative.path, Resource::Gpu(2)),
         ),
         (
             "owner domain",
-            CostKey {
-                resource: Resource::SsdStore(1),
-                ..alternative
-            },
+            alternative.with_path_resource(alternative.path, Resource::SsdStore(1)),
         ),
         (
             "representation",
@@ -107,6 +101,21 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
             0
         ),
         "different",
+    );
+
+    let other_device = ssd.with_path_resource(
+        CostPath::SsdCufileRestore,
+        Resource::SsdRestore {
+            device: 2,
+            copy_backend: 0,
+            stores: 123,
+            has_memory: true,
+        },
+    );
+    assert_eq!(
+        recommendation(&[ssd, other_device], &predictions, 0),
+        "incomparable",
+        "routes for different destination devices cannot share EngineRestore evidence",
     );
 }
 

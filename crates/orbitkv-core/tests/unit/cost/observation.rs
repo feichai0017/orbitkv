@@ -126,7 +126,7 @@ fn complete_route_submission_preserves_the_prediction_taken_at_enqueue() {
         CostPath::LocalSsdHostReady,
     ] {
         let mut observation = Observation(Some(Running {
-            key: CostKey { path, ..key(9998) },
+            key: key(9998).with_path(path),
             logical_bytes: Some(4096),
             enqueued: start,
             admitted: None,

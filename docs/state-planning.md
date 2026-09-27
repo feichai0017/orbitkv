@@ -368,6 +368,15 @@ every cluster resource or search an unrestricted transfer graph. Use bounded
 cached evidence and demand-driven directory queries; capability/health evidence
 filters routes before costing, and acquisition revalidates the chosen version.
 
+`CostKey` now carries that completion target explicitly as an intent plus its
+target resource. HostReady has no engine resource, EngineRestore names the
+destination GPU, and GPU save completion names the source whose pages become
+reusable. Rewriting a candidate path or resource recomputes this field, so an
+SSD restore for GPU 1 cannot accidentally reuse evidence collected for GPU 0.
+This is already enforced by raw-copy/SSD shadow and host-route selection. Future
+direct-to-D and prefill-restore-plus-handoff candidates must both end at the
+same DecodeReady device identity before entering the comparison set.
+
 ### Cost model for complete routes
 
 Keep the shared measurement substrate and make its two boundaries explicit:

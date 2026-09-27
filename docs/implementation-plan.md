@@ -967,6 +967,14 @@ the fixed order. Acquisition and source authorization still revalidate the
 choice. This is implementation readiness, not H20 TCP/RDMA qualification or a
 recommended deployment setting.
 
+Comparable cost keys now carry an explicit completion intent and target
+resource. HostReady remains resource-neutral; EngineRestore identifies the
+destination GPU; GPU save completion identifies the source device whose pages
+become reusable. Path/resource rewrites recompute the target, preventing an
+estimate for one GPU from entering another GPU's comparison. This closes the
+target-identity prerequisite for future DecodeReady comparison but does not yet
+invent P/D alternatives without real admission and timing observations.
+
 Focused validation covers the normalized local SSD key, cross-resource
 HostReady compatibility, multi-owner exclusion, stable default priority and all
 three peer execution outcomes. Subprocess tests prove all three opt-ins are

@@ -34,10 +34,7 @@ fn estimates_are_bounded_and_isolate_resource_representation_and_shape() {
             .is_some()
     );
     for different in [
-        CostKey {
-            resource: Resource::Gpu(10000),
-            ..retained
-        },
+        retained.with_path_resource(retained.path, Resource::Gpu(10000)),
         CostKey {
             representation: Representation::Ans,
             ..retained
@@ -57,10 +54,7 @@ fn estimates_are_bounded_and_isolate_resource_representation_and_shape() {
         retained.with_ssd_shape(131072, 8, 32768, 4),
         retained.with_ssd_shape(131072, 8, 65536, 2),
         retained.with_dma_ranges(4),
-        CostKey {
-            path: CostPath::GpuLoadKernel,
-            ..retained
-        },
+        retained.with_path(CostPath::GpuLoadKernel),
     ] {
         assert!(estimates.predict(different, start).is_none());
     }
@@ -127,13 +121,20 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
     ];
     for (index, resource) in resources.into_iter().enumerate() {
         for _ in 0..MIN_SAMPLES {
-            estimates.observe(CostKey { resource, ..key(1) }, index as f64, start);
+            estimates.observe(
+                key(1).with_path_resource(CostPath::GpuLoadDirect, resource),
+                index as f64,
+                start,
+            );
         }
     }
     for (index, resource) in resources.into_iter().enumerate() {
         assert_eq!(
             estimates
-                .predict(CostKey { resource, ..key(1) }, start)
+                .predict(
+                    key(1).with_path_resource(CostPath::GpuLoadDirect, resource),
+                    start,
+                )
                 .unwrap()
                 .seconds,
             index as f64

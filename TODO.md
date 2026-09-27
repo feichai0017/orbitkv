@@ -108,6 +108,9 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   full-prefix coverage requirements and immutable source versions.
 - [ ] Extend batch plans into complete-route comparisons and joint demand
   coverage across groups/ranks, with actual destination and staging admission.
+- [x] Add explicit completion intent and target resource to every comparable
+  cost key; recompute it when paths/resources change and reject evidence for a
+  different GPU before future DecodeReady route comparison.
 - [x] Build a consumed `RestorePlan` at the Rust engine boundary from only
   sources with real destinations. Bind its EngineRestore target to the CUDA
   device, deduplicate source geometry, preserve one SSD route, and make worker

@@ -24,7 +24,7 @@ impl SelectionScope {
     }
 }
 
-/// Select among routes already proven to have the same HostReady demand.
+/// Select among routes already proven to have the same completion target.
 /// Missing, stale, incompatible or contended evidence preserves the planner's
 /// deterministic default; this function never acquires execution resources.
 pub(crate) fn select_route(candidates: &[CostKey], default: usize, scope: SelectionScope) -> usize {
@@ -57,7 +57,7 @@ pub(crate) fn select_route(candidates: &[CostKey], default: usize, scope: Select
     selected
 }
 
-/// Compare complete HostReady routes without changing the selected execution.
+/// Compare complete routes with one target without changing selected execution.
 pub(crate) fn shadow_routes(candidates: &[CostKey], selected: usize) {
     if !*ENABLED
         || selected >= candidates.len()
