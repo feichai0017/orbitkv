@@ -314,7 +314,7 @@ impl PreparedRestore {
                     groups.iter().flat_map(|group| &group.targets)
                         .map(|&(_, index)| (index, sources[index])),
                 ).map_err(EngineError::InvalidArgument)?;
-                let raw = Self::raw_plan(&groups, &sources, layouts)?;
+                let raw = Self::raw_plan(&mut groups, &sources, layouts)?;
                 Ok((plan, raw))
             })?;
         for reservation in &reservations {
@@ -330,7 +330,7 @@ impl PreparedRestore {
     }
 
     fn raw_plan(
-        groups: &[RestoreGroup],
+        groups: &mut [RestoreGroup],
         sources: &[&RestoreSource],
         layouts: &[KVCacheLayout],
     ) -> Result<Option<(Vec<u8>, u64)>, EngineError> {
@@ -345,85 +345,90 @@ impl PreparedRestore {
             return Ok(None);
         }
         let mut plan_size = 8usize;
-        let mut layouts_iter = layouts.iter();
-        for group in groups {
-            for layer in &group.layers {
-                let layout = layouts_iter
-                    .next()
-                    .ok_or_else(|| EngineError::Storage("missing restore layout".into()))?;
-                let copies = group
-                    .targets
-                    .len()
-                    .checked_mul(if layout.geometry().is_split() { 2 } else { 1 });
-                plan_size = copies.and_then(|count| (58usize.checked_add(layer.name.len())?).checked_mul(count))
-                    .and_then(|bytes| plan_size.checked_add(bytes))
-                    .filter(|size| *size <= MAX_PLAN_BYTES)
-                    .ok_or_else(|| EngineError::InvalidArgument("raw restore plan exceeds the bounded plan bank; split the restore batch".into()))?;
-            }
-        }
-        let mut copies = Vec::new();
+        let mut copies: Vec<RawCopy> = Vec::new();
         let mut bytes = 0u64;
         let mut layouts = layouts.iter();
         let mut targets = Vec::new();
         for group in groups {
+            group.targets.sort_unstable_by_key(|&(block, _)| block);
             for layer in &group.layers {
                 let layout = layouts
                     .next()
                     .ok_or_else(|| EngineError::Storage("missing restore layout".into()))?;
-                for &(block, source) in &group.targets {
-                    let RestoreSource::Memory(sealed) = sources[source] else {
-                        unreachable!("raw sources checked above")
-                    };
-                    let slot = sealed
-                        .get_slot(layer.slot_id)
-                        .ok_or_else(|| EngineError::Storage("missing raw source slot".into()))?;
-                    let mut append = |segment,
-                                      host_offset,
-                                      destination: std::ops::Range<usize>|
-                     -> Result<(), EngineError> {
+                let layer_start = copies.len();
+                // Segment-major traversal exposes contiguous K and V runs before
+                // encoding, without materializing a descriptor for every page.
+                for segment in 0..if layout.geometry().is_split() { 2 } else { 1 } {
+                    for &(block, source) in &group.targets {
+                        let RestoreSource::Memory(sealed) = sources[source] else {
+                            unreachable!("raw sources checked above")
+                        };
+                        let slot = sealed.get_slot(layer.slot_id).ok_or_else(|| {
+                            EngineError::Storage("missing raw source slot".into())
+                        })?;
+                        let (host_segment, host_offset, destination) = match layout
+                            .geometry()
+                            .block_ranges(block)
+                            .map_err(EngineError::Storage)?
+                        {
+                            BlockRanges::Contiguous(range) => (0, layer.host_offset, range),
+                            BlockRanges::Split { k, v } if segment == 1 => {
+                                if slot.num_segments() > 1 {
+                                    (1, layer.host_offset, v)
+                                } else {
+                                    let offset = layer
+                                        .host_offset
+                                        .checked_add(k.len())
+                                        .ok_or_else(|| {
+                                            EngineError::Storage(
+                                                "raw source offset overflow".into(),
+                                            )
+                                        })?;
+                                    (0, offset, v)
+                                }
+                            }
+                            BlockRanges::Split { k, .. } => (0, layer.host_offset, k),
+                        };
                         let source = slot
-                            .source_range(segment, host_offset, destination.len())
+                            .source_range(host_segment, host_offset, destination.len())
                             .map_err(EngineError::Storage)?;
                         bytes = bytes.checked_add(source.size).ok_or_else(|| {
                             EngineError::Storage("restore byte count overflow".into())
                         })?;
+                        if let Some(previous) = copies[layer_start..].last_mut()
+                            && previous.source.arena_id == source.arena_id
+                            && previous.source.allocation_id == source.allocation_id
+                            && previous.source.allocation_offset == source.allocation_offset
+                            && previous.source.allocation_size == source.allocation_size
+                            && previous.source.offset.checked_add(previous.source.size)
+                                == Some(source.offset)
+                            && previous
+                                .destination_offset
+                                .checked_add(previous.source.size)
+                                == Some(destination.start as u64)
+                        {
+                            previous.source.size += source.size;
+                            continue;
+                        }
+                        plan_size = plan_size.checked_add(58).and_then(|size| size.checked_add(layer.name.len()))
+                            .filter(|size| *size <= MAX_PLAN_BYTES)
+                            .ok_or_else(|| EngineError::InvalidArgument("raw restore plan exceeds the bounded plan bank; split the restore batch".into()))?;
                         copies.push(RawCopy {
                             source,
                             layer: layer.name.clone(),
                             destination_offset: destination.start as u64,
                         });
-                        Ok(())
-                    };
-                    match layout
-                        .geometry()
-                        .block_ranges(block)
-                        .map_err(EngineError::Storage)?
-                    {
-                        BlockRanges::Contiguous(range) => append(0, layer.host_offset, range)?,
-                        BlockRanges::Split { k, v } => {
-                            let (segment, offset) = if slot.num_segments() > 1 {
-                                (1, layer.host_offset)
-                            } else {
-                                (
-                                    0,
-                                    layer.host_offset.checked_add(k.len()).ok_or_else(|| {
-                                        EngineError::Storage("raw source offset overflow".into())
-                                    })?,
-                                )
-                            };
-                            append(0, layer.host_offset, k)?;
-                            append(segment, offset, v)?;
-                        }
-                    }
-                    match layout.block_copies(block).map_err(EngineError::Storage)? {
-                        crate::transfer::layout::BlockCopies::Contiguous(copy) => {
-                            targets.push((copy.addr, copy.bytes));
-                        }
-                        crate::transfer::layout::BlockCopies::Split { k, v } => {
-                            targets.extend([(k.addr, k.bytes), (v.addr, v.bytes)]);
-                        }
                     }
                 }
+                let base = match layout.block_copies(0).map_err(EngineError::Storage)? {
+                    crate::transfer::layout::BlockCopies::Contiguous(copy) => copy.addr,
+                    crate::transfer::layout::BlockCopies::Split { k, .. } => k.addr,
+                };
+                targets.extend(
+                    copies[layer_start..]
+                        .iter()
+                        .map(|copy| (base + copy.destination_offset, copy.source.size as usize)),
+                );
             }
         }
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;

@@ -52,8 +52,9 @@ of a local raw operation does not invoke another executor or an old protocol.
 metadata. Successful GPU registration attaches payload FDs once over UDS.
 `start_restore` requires `ready_stream`, captured from the actual engine stream
 whose previous destination-page users must finish. The native implementation
-records and waits on a readiness event before preparing the restore, then uses
-one copy stream. Both vLLM and SGLang call this path. Repeated registration of
+queries that stream before preparation: idle means prior users completed;
+busy records and waits on a reusable readiness event. It then uses one copy
+stream. Both vLLM and SGLang call this path. Repeated registration of
 the same binding is rejected; unregister and close drain accepted operations
 before releasing their tensor and CUDA owners. Python keeps framework callback
 and layout work, while Rust owns the operation state machines and waiting.
@@ -63,11 +64,12 @@ It does not establish layer/group overlap, replay-time CUDA graph dependencies,
 or serving qualification of the new execution path. The exact ownership and
 remaining gates are described in [engine-local Restore](engine-local-restore.md).
 
-The first matched microbenchmarks regress Restore p50 by 1.86x–2.53x across the
-tested shapes. This is a functional executor cutover, not a measured speedup.
-Profile readiness, native scheduling and plan encoding/decoding, then reduce
-their fixed and per-copy costs before extending execution overlap. The
-[measurement report](communication-performance.md) retains the complete results.
+The initial executor cutover regressed serial Restore. The subsequent idle
+readiness and plan-compaction changes recover dense-transfer performance, while
+small-payload handoff overhead remains. The [measurement report](communication-performance.md)
+compares the Manager executor, initial local executor, and optimized local
+executor with the same workloads. These measurements do not qualify serving
+performance or compute overlap.
 
 ### Operation identity and source retirement
 
@@ -109,10 +111,12 @@ own eventfd, and engine-local result notification does not wait on a Manager
 terminal RPC. The old terminal Poll RPC and old result wire codec remain deleted.
 
 A full shared plan bank defers prepared grants until space returns. Individual
-encoded plans larger than 1 MiB are rejected before consuming leases. Automatic
-bounded suboperation partitioning is still missing; the existing
-`cpu_path/load_submit_wait` 32,768-block case exceeds this limit. Do not claim
-that workload is supported or hide it through a Manager raw fallback.
+encoded plans larger than 1 MiB after compaction are rejected before consuming
+leases. Preparation sorts destinations and merges only consecutive source and
+destination ranges within the same layer and allocation identity/bounds. The
+existing `cpu_path/load_submit_wait/32768` case now passes its GPU submission/
+drain smoke. Automatic bounded partitioning remains missing for fragmented
+plans; no Manager raw fallback is retained.
 
 ### Shared payload arenas
 
@@ -242,8 +246,9 @@ epochs, acknowledgements, native prerequisites and source-control cutover.
 | Completed: payload backing | Shared memfd for every pool shard | Private anonymous and `cudaHostAlloc` pool paths, `cpu_readable` plumbing | FD transfer, independent registration and GPU bytes after producer mapping teardown |
 | Completed: peer lookahead | One active READ plus one next authorization | Sequential runtime selector | Prefix integrity, cancelled/lost grants, release pressure, real multi-segment TENT bytes |
 | Implemented, single-GPU process gates passed: raw engine restore | Payload FD attachment, retained source grants, tensor ownership, native CUDA execution and local results | Manager raw-descriptor submission and `LoadPayload` enum | [Process fault evidence](fault-qualification.md#engine-local-raw-restore-gates); serving, graph replay and extended environments remain unqualified |
-| Next: raw execution overhead | Profile and reduce readiness, scheduling and plan costs | Proven redundant event/scratch allocation and repeated wire metadata | Repeated matched measurements, unchanged source/destination drain guarantees and failure gates |
-| Next: large raw plans | Bounded suboperations with a parent whole-operation fence | Current rejection above the 1 MiB per-plan limit | Large-prefix bytes, cancellation between partitions, bounded plan/source credits and existing large-block benchmark |
+| Completed: raw plan and idle readiness | Allocation-aware run compaction before encoding; query idle streams and reuse the busy-stream event | Per-page descriptors for contiguous runs and redundant GPU event submission on idle streams | [Matched measurements](communication-performance.md), large dense plan bytes, lease preservation on oversized fragmented plans, and reused-event readiness |
+| Next: residual raw overhead | Profile native scheduling, fragmented plans and scratch reuse | Measured redundant work in the remaining path | Small-payload latency, unchanged source/destination drain guarantees and failure gates |
+| Next: large raw plans | Bounded suboperations with a parent whole-operation fence | Current rejection above the 1 MiB per-plan limit | Fragmented large-prefix bytes, cancellation between partitions and bounded plan/source credits |
 | Next: execution overlap | Layer-group dependencies with one final retirement fence | Whole-restore waits from engine consumption sites covered by qualified group dependencies | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
 | Next: native metadata | Bounded binary notification API and per-peer transport selection | Unsafe string framing and first-transport notification dispatch | Size/queue limits, unreachable peer, mixed transports and native shutdown |
 | Next: peer session | Batched lookup/grant/completion with application ACK and credits | Corresponding hot gRPC methods, retry owner and protobuf messages | Loss, duplication, reorder, restart, corruption, slow peer and multi-host qualification |

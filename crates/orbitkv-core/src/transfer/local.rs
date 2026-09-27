@@ -5,7 +5,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use cudarc::driver::{CudaContext, CudaStream, result, sys};
+use cudarc::driver::{CudaContext, CudaEvent, CudaStream, result, sys};
 
 use super::layout::{KVCacheGeometry, KVCacheLayout};
 use super::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
@@ -262,6 +262,7 @@ impl Drop for ImportedArena {
 pub struct LocalRestoreExecutor {
     context: Arc<CudaContext>,
     stream: Arc<CudaStream>,
+    readiness: CudaEvent,
     backend: Box<dyn TransferBackend>,
     tensors: HashMap<String, LocalTensor>,
     arenas: HashMap<u64, ImportedArena>,
@@ -337,6 +338,9 @@ impl LocalRestoreExecutor {
             imported.insert(id, ImportedArena::new(arena, Arc::clone(&context))?);
         }
         let stream = context.new_stream().map_err(|e| e.to_string())?;
+        let readiness = context
+            .new_event(Some(sys::CUevent_flags::CU_EVENT_BLOCKING_SYNC))
+            .map_err(|e| e.to_string())?;
         let backend: Box<dyn TransferBackend> = match mode {
             TransferMode::Direct => Box::new(MemcpyBackend),
             TransferMode::Kernel => Box::new(KernelBackend::new(&context)?),
@@ -344,6 +348,7 @@ impl LocalRestoreExecutor {
         Ok(Self {
             context,
             stream,
+            readiness,
             backend,
             tensors: bindings,
             arenas: imported,
@@ -352,7 +357,7 @@ impl LocalRestoreExecutor {
 
     /// Capture the caller's actual previous-user stream and fence it before
     /// requesting a plan (which may select a Manager-owned codec/SSD route).
-    pub fn wait_for_destination(&self, ready_stream: u64) -> Result<(), String> {
+    pub fn wait_for_destination(&mut self, ready_stream: u64) -> Result<(), String> {
         let _caller_context = CallerContext::capture()?;
         self.context.bind_to_thread().map_err(|e| e.to_string())?;
         let stream = ready_stream as sys::CUstream;
@@ -363,13 +368,18 @@ impl LocalRestoreExecutor {
         if stream_context != self.context.cu_ctx() {
             return Err("Restore readiness stream belongs to another CUDA context".into());
         }
-        let event = self
-            .context
-            .new_event(Some(sys::CUevent_flags::CU_EVENT_BLOCKING_SYNC))
-            .map_err(|e| e.to_string())?;
+        // An idle stream already proves all preceding users have finished.
+        // Do not submit an otherwise unnecessary event to the GPU in that case.
+        // SAFETY: stream was validated in this context and remains caller-owned.
+        match unsafe { sys::cuStreamQuery(stream) } {
+            sys::CUresult::CUDA_SUCCESS => return Ok(()),
+            sys::CUresult::CUDA_ERROR_NOT_READY => {}
+            error => return Err(format!("Restore readiness query failed: {error:?}")),
+        }
         // SAFETY: event belongs to this context and stream was verified above.
-        unsafe { result::event::record(event.cu_event(), stream) }.map_err(|e| e.to_string())?;
-        event.synchronize().map_err(|e| e.to_string())
+        unsafe { result::event::record(self.readiness.cu_event(), stream) }
+            .map_err(|e| e.to_string())?;
+        self.readiness.synchronize().map_err(|e| e.to_string())
     }
 
     /// Caller holds the Active grant until this method returns and publishes

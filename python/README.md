@@ -34,7 +34,7 @@ Pinned engine releases: **vLLM 0.29.0** and **SGLang 0.5.20**. The new
 [engine-local Restore path](../docs/engine-local-restore.md) has separate serving,
 process-death, multiple-GPU, and huge-page qualification gates; earlier engine
 results do not qualify this execution cutover. See
-[the measured serial Restore regression](../docs/communication-performance.md),
+[the measured Restore improvements and remaining overhead](../docs/communication-performance.md),
 [model qualification](https://feichai0017.github.io/orbitkv/docs/models/)
 and [deployment support](https://feichai0017.github.io/orbitkv/docs/deployment/).
 Interfaces may change before 1.0.
@@ -55,8 +55,10 @@ binding is rejected; unregister and close drain accepted operations first.
 
 Build the native client and Manager together: this cutover uses bootstrap 6,
 channel ABI 9, and lifecycle 4, with no old-wire compatibility path. An encoded
-raw Restore plan above 1 MiB is rejected before consuming its leases; automatic
-partitioning, layer overlap, and graph replay dependencies remain future work.
+raw Restore plan above 1 MiB after allocation-aware compaction is rejected
+before consuming its leases. Idle destination streams need no additional GPU
+event; busy streams are fenced with a reusable event. Automatic partitioning,
+layer overlap, and graph replay dependencies remain future work.
 
 ## Installation
 

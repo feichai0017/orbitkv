@@ -1,5 +1,129 @@
 # Local communication measurements
 
+## Compacted raw plans and idle-stream readiness
+
+The next increment after `d25abcf7` removes two measured costs from engine-local
+raw Restore. The executor queries the actual engine stream before preparation:
+an idle stream already establishes readiness, while a busy stream records and
+waits on one reusable event. The Manager sorts destination pages and traverses
+K/V separately, merging consecutive source and destination ranges within the
+same layer and allocation identity/bounds **before encoding**. That avoids
+per-page descriptor/string construction and repeated transport/decode work for
+contiguous runs. The raw plan wire format and grant/drain ownership are unchanged;
+no old executor, compatibility switch, or forwarding wrapper was added.
+
+A separate 1,000-sample stage probe (100 warmups) measured idle-stream readiness
+p50 at 11.44 → 1.39 us. Reusing an event while still recording/waiting took
+10.76 us, so the idle query matters more than event reuse alone. These are
+isolated stage measurements, not an additive attribution of the end-to-end gains.
+The probe sources and logs are retained under
+`/workspace/.orbitkv-tools/local-restore-stages-{baseline,compact}.{rs,log}`.
+
+### Three-way matched comparison
+
+The production bundles are `identity-production` (Manager executor,
+`e36161d8`), `local-executor-production` (initial local executor, `d25abcf7`),
+and `compact-restore-production` (this increment). All use the same H20, CPU
+set `8,10,12,14`, 256 MiB pool, 150 samples after 20 warmups, and prescribed
+idle of zero or 1 ms. Per workload the order is `A1 B1 C1 C2 B2 A2 A3 C3 B3`,
+with a fresh Manager each time. The Manager bundle uses its old API harness;
+both local bundles use the identical current harness, including tensor binding
+and timed readiness handling. Lease lookup stays outside Restore timing.
+
+All **18 accepted runs** passed exact GPU-byte and copy-counter checks. Cargo/
+rustc was sampled every 100 ms, with a five-second quiet period before each
+attempt. No build activity was observed in these runs, so no attempt was
+excluded; the exclusion rule was independent of measured latency. No build or qualification run from this
+task overlapped these measurements. This process audit does not establish
+exclusive use of the whole machine.
+
+Values below are medians of three per-run percentiles, not pooled samples.
+Times are microseconds with no prescribed idle:
+
+| Operation / shape | Manager executor p50 / p99 | Initial local executor p50 / p99 | Optimized local executor p50 / p99 |
+| --- | ---: | ---: | ---: |
+| Restore, contiguous 4 KiB | 26.06 / 53.17 | 69.59 / 128.51 | 51.90 / 93.58 |
+| Restore, contiguous 256 KiB | 38.39 / 66.51 | 93.39 / 144.58 | 59.05 / 99.23 |
+| Restore, contiguous 4 MiB | 223.18 / 246.77 | 454.53 / 506.36 | 217.33 / 282.20 |
+| Restore, split 18 MiB, 32 leases | 1,363.76 / 1,424.39 | 3,062.31 / 3,264.71 | 1,186.18 / 1,300.72 |
+| Publish, contiguous 4 KiB | 66.64 / 105.03 | 64.28 / 98.45 | 80.48 / 124.24 |
+| Publish, contiguous 256 KiB | 109.97 / 162.36 | 109.04 / 139.44 | 109.03 / 137.10 |
+| Publish, contiguous 4 MiB | 772.23 / 825.07 | 755.53 / 808.42 | 766.42 / 853.02 |
+| Publish, split 18 MiB | 2,947.07 / 3,076.04 | 2,942.34 / 3,149.52 | 2,909.64 / 3,100.77 |
+
+Relative to the initial local executor, Restore p50 falls by
+25.4%, 36.8%, 52.2% and 61.3% respectively.
+Against the pre-migration Manager executor, the 4 MiB result is close
+(223.18 → 217.33 us), and the 18 MiB batch improves
+(1363.76 → 1186.18 us). **Small operations remain slower than
+that Manager baseline**: 26.06 → 51.90 us at 4 KiB and
+38.39 → 59.05 us at 256 KiB. This increment recovers much of the
+cutover regression; it does not make every shape faster than the earlier design.
+The 18 MiB Restore p50 ranges are 1363.46–1363.90 us for the Manager and
+1186.01–1193.18 us for the optimized executor. The 4 MiB p50 ranges overlap
+(223.02–225.27 versus 216.97–224.00 us), and its p99 is still worse than the
+Manager: 246.77 → 282.20 us. Treat that shape as recovery to similar median
+latency, not a demonstrated tail improvement.
+
+Publish keeps its existing executor, but its 4 KiB no-idle p50 rises from
+64.28 to 80.48 us against the initial local bundle. Its per-run p50 ranges are
+62.96–64.89 versus 64.86–83.07 us; with 1 ms idle, the medians are 65.31 and
+65.68 us. The cause is not isolated. Retain this adverse control result when
+evaluating the increment rather than claiming an all-path latency win.
+
+For the 150-sample 18 MiB Restore cohort, initial/optimized client CPU time is
+0.482/0.223 seconds and Manager CPU time is 0.180/0.070 seconds. These figures
+include untimed lease setup; Manager accounting has clock-tick resolution.
+The engine process still uses more CPU than the old Manager-executor client
+(0.101 seconds), despite the combined CPU reduction in this cohort.
+
+With 1 ms prescribed idle, the Manager / initial local / optimized Restore p50
+values are 43.32 / 92.50 / 62.08; 53.04 / 108.17 / 78.87;
+228.93 / 436.24 / 227.32; and 1371.95 / 3058.82 / 1191.95 us
+in the same four-shape order. Submission-only medians and every per-run p50/p99
+remain in `summary.json`. These short samples do not establish stable serving
+tails. Compaction requires contiguous source and destination runs in the same
+allocation; fragmented layouts need separate performance qualification.
+
+### Bounds, correctness and reproduction
+
+The 1 MiB cap now applies to the compacted plan. A 32,768-page dense unit fixture
+encodes one 71-byte plan; adjacent distinct allocation IDs cannot merge.
+Oversized fragmented plans still reject before consuming leases. The existing
+`cpu_path/load_submit_wait/32768` GPU smoke passes Criterion `--test` mode,
+proving submission/drain rather than byte validation or a throughput result.
+Automatic bounded partitioning remains open.
+
+The release workspace passed 488 tests (38 ignored), the explicit CUDA context
+gate passed, Python units passed 374 and benchmark units 199, and all-target
+Clippy denied warnings. The production native suite passed seven cases; the
+separate fault suite passed 38 with 30 cuFile configuration skips. Busy-stream
+event reuse and same-host raw/encoded peer GPU bytes passed. See
+[artifact-specific fault qualification](fault-qualification.md#engine-local-raw-restore-gates).
+
+| Optimized production artifact | SHA-256 |
+| --- | --- |
+| Manager | `3435bf33ada1927a419420fa104cc2e8cf75fce3ca8e294416253614aa6da638` |
+| Native extension | `978bd219c77e544100e87f0add4ee39a919766e59cbb83af055439d02dbb2db4` |
+
+The base revision is `d25abcf70c72d3635ebcc61c929766ddd527a425`;
+the frozen source-patch hash is
+`bc1010b8d606c0ca86904e51eb105fd0675fecd2ac4ee96900901d1bc3a01fbb`.
+Code/test source hashes match the fault and production bundles; subsequent edits are documentation only. Baseline binary identities
+are retained in the preceding-cutover evidence below. Harness hashes are
+`06b0d99c105f8d8ff04d818d963c8031ad00a0aec95cd50aa26ad01fc975f040` and
+`3f91d3d63da4d0eed403fcd80d9873b74767ec9bd624c480c2b28bce3bb0b9f5`.
+
+Raw samples, manifests, per-run CPU accounting, process audits, and `summary.json`
+are under `/workspace/.orbitkv-tools/communication-microbench/runs/compact-restore-final/`.
+Workspace reproduction uses `/workspace/.orbitkv-tools/run-compact-restore-final.py`
+and `/workspace/.orbitkv-tools/summarize-compact-restore-final.py` with the named
+frozen bundles and the CUDA environment described below. The next measurements
+should isolate small-operation queue handoff and fragmented-plan costs before
+changing execution overlap. Pinned vLLM/SGLang serving environments and models
+remain unavailable here; these results do not prove TTFT/ITL gains or superiority
+to an engine's resident GPU KV cache.
+
 ## Engine-local raw Restore: functional cutover, measured latency regression
 
 On 2026-09-27, unencoded resident Restore moved CUDA submission into the
@@ -11,7 +135,7 @@ with no compatibility switch or fallback. SSD, codec and mixed routes retain
 workers that own their actual I/O and decode operations. See the
 [execution and lifetime contract](engine-local-restore.md).
 
-**This cutover is functionally qualified on the tested single-GPU process paths,
+**This initial cutover is functionally qualified on the tested single-GPU process paths,
 but it regresses serial Restore latency. It is not a performance win.** Moving
 submission alone adds readiness, plan transport and native scheduling costs.
 The measurements below do not isolate the contribution of each stage, and do
@@ -110,14 +234,12 @@ round trips passed with both pipeline modes, and the encoded peer round trip
 passed on same-host Mooncake TCP. See [fault qualification](fault-qualification.md#engine-local-raw-restore-gates)
 for binary identities and the exact process-death evidence boundary.
 
-The next performance work should measure readiness, queue handoff, plan encode/
-decode, submission and drain separately before changing their contracts. Current
-code creates a readiness event per call, repeats layer/allocation metadata in
-every copy, transports plan bytes through per-byte atomics, and rebuilds local
-copy scratch each time. Reusing owned resources and compacting this plan are
-concrete candidates, not measured fixes yet. Oversized plans also need bounded
-partitioning under one retained source grant and final drain; the current 1 MiB
-limit rejects the existing 32,768-block CPU benchmark before consuming leases.
+At this initial revision, readiness created an event per call, layer/allocation
+metadata repeated in every copy, plan transport used 64-bit atomics, and local
+copy scratch was rebuilt each time. The 1 MiB limit rejected the existing
+32,768-block CPU benchmark before consuming leases. The subsequent compaction
+and readiness measurements above supersede these performance observations;
+fragmented-plan partitioning and native handoff overhead remain open.
 
 No pinned vLLM/SGLang serving environments or model artifacts were available.
 Serving correctness/TTFT/ITL, group overlap, graph replay, multiple GPUs,

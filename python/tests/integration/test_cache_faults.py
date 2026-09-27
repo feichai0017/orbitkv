@@ -1538,18 +1538,19 @@ def test_local_restore_fences_previous_use_on_nondefault_stream(fault_cache):
     tensor = ctx.get_kv_cache()
     expected = tensor[:, 0:1].cpu().clone()
     assert publish(client, ctx, [b"stream-order"])[0]
-    ready = query(client, ctx, [b"stream-order"], "stream-order")
-    previous = torch.cuda.Stream()
-    with torch.cuda.stream(previous):
-        torch.cuda._sleep(20_000_000)
-        tensor[:, 2:3].fill_(37)
-    handle = client.start_restore(
-        ctx.instance_id,
-        0,
-        0,
-        [ctx._layer_names],
-        [(ready.lease, [[2]])],
-        ready_stream=previous.cuda_stream,
-    )
-    assert client.wait_restore(handle, timeout=10).success
-    assert torch.equal(tensor[:, 2:3].cpu(), expected)
+    for attempt in range(2):
+        ready = query(client, ctx, [b"stream-order"], f"stream-order-{attempt}")
+        previous = torch.cuda.Stream()
+        with torch.cuda.stream(previous):
+            torch.cuda._sleep(20_000_000)
+            tensor[:, 2:3].fill_(37 + attempt)
+        handle = client.start_restore(
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(ready.lease, [[2]])],
+            ready_stream=previous.cuda_stream,
+        )
+        assert client.wait_restore(handle, timeout=10).success
+        assert torch.equal(tensor[:, 2:3].cpu(), expected)

@@ -35,16 +35,16 @@ and cover shared-record capacity, generation reuse, and duplicate claim rejectio
 
 ## Engine-local raw Restore gates
 
-The frozen `local-executor-final-fault` bundle passed the selected real
+The frozen `compact-restore-final-fault` bundle passed the selected real
 Manager/native-client integration and fault suite: **38 passed, 30 skipped in
-97.06 seconds**. The skipped cases require the cuFile configuration, which was
-not selected. All new single-GPU local Restore lifecycle cases listed below
+97.05 seconds**. The skipped cases require the cuFile configuration, which was
+not selected. All selected single-GPU local Restore lifecycle cases listed below
 passed with bootstrap 6/channel ABI 9/lifecycle 4.
 
 | Frozen artifact | SHA-256 |
 | --- | --- |
-| Cache Manager | `d5b316a84087f3c0010f4510eb28c27ca40507824b045582b55f0bd206dd3b42` |
-| Python native extension | `2a3b80aa66d6a67fb98c89f78a2150377bec842b82d60fe01ef8b8258ff837a4` |
+| Cache Manager | `c60b7a780bc24a8eaa9e95f4f7d8aabd9c6498afed6cc9ff64d772d78c0ffbbc` |
+| Python native extension | `fee45f97cfda2a8980b2cdb33f76782c434ff6dc89511950c024efc86e9a2806` |
 
 The cases are implemented in
 [`test_cache_faults.py`](../python/tests/integration/test_cache_faults.py).
@@ -56,7 +56,7 @@ Earlier Manager-owned Restore results remain separate from this evidence.
 | `test_local_partial_enqueue_failure_drains_before_page_reuse` | Inject failure after an accepted copy; the failed result permits page reuse only after stream drain, and Manager source reservations eventually retire. |
 | `test_engine_death_after_claim_quarantines_source_reservation` | Kill a separate engine process after claim; the live Manager retains its charged sources despite UDS loss. |
 | `test_local_restore_retains_tensor_when_caller_drops_handle_and_tensor` | Dropping Python tensor references and the handle cannot free the native binding during a pending copy; unregister releases it after drain. |
-| `test_local_restore_fences_previous_use_on_nondefault_stream` | A previous write on a nondefault engine stream completes before Restore overwrites the destination, with exact expected bytes afterwards. |
+| `test_local_restore_fences_previous_use_on_nondefault_stream` | Two successive restores use different busy nondefault engine streams. Each previous write finishes before Restore overwrites the destination; exact bytes prove that the reused event does not substitute an earlier completion. |
 
 The CUDA unit test
 `caller_context_survives_registration_and_readiness_success_and_failure` in
@@ -64,14 +64,20 @@ The CUDA unit test
 also passed, covering restoration of the caller's CUDA context after both
 successful and rejected registration/readiness paths.
 
-The final release workspace gate passed **486 tests / 38 ignored**, excluding
+The final release workspace gate passed **488 tests / 38 ignored**, excluding
 nested child-helper invocations from the pass count. The context test above was
 also run explicitly outside that default gate. Python unit tests passed **374**
 cases and benchmark-tool units passed **199**. The matching production Manager
 and extension passed all **7** ordinary channel/client GPU integration cases.
-The same-host Mooncake TCP raw round trip passed with both peer pipeline modes;
-the encoded peer round trip also passed. These remote checks qualify data
-correctness through the new local executor, not cross-host RDMA performance.
+The same-host Mooncake TCP raw and encoded peer round trips also passed. These
+remote checks qualify data correctness through the new local executor, not
+cross-host RDMA performance.
+
+The compaction unit gates cover permuted dense/sparse destinations, split K/V,
+adjacent distinct allocation IDs, destination overlap, a 32,768-page dense plan,
+and lease preservation for oversized fragmented plans. The existing 32,768-block
+GPU benchmark passes Criterion `--test` mode; it checks submission/drain, while
+the matched communication runs separately verify GPU bytes and copy counters.
 
 The `local_restore_dma` barrier is reached after the first enqueue call. It
 proves that Manager death does not manufacture local completion, and that

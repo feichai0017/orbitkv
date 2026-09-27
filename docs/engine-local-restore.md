@@ -37,13 +37,19 @@ serving speedup.
    each size-sealed memfd and registers that mapping with its CUDA primary
    context. Registration is per arena and GPU binding, not per restored block.
 3. `start_restore(..., ready_stream=...)` reserves native operation ownership
-   and establishes destination readiness using an event recorded on the supplied
-   engine stream. The first slice synchronizes that event before preparation;
-   it does not yet overlap destination readiness with the copy stream.
+   and queries the supplied engine stream. An idle stream already proves prior
+   destination users completed. A busy stream records and synchronizes the
+   executor-owned reusable event before preparation; readiness does not yet
+   overlap with the copy stream.
 4. The client reserves a shared operation identity before sending the Restore
    descriptor. The Manager authenticates and claims it before decoding or
    consuming leases. Validation compiles a bounded raw plan before lease
    consumption, then moves the selected source owners into `RawRestoreGrant`.
+   Within each layer, preparation sorts destination pages, traverses K and V
+   separately, and merges consecutive source/destination ranges only within
+   the same arena and allocation identity/bounds. Global destination-overlap
+   validation still runs before consuming leases. This reduces descriptors
+   before encoding and shared-memory transport, without changing the wire format.
 5. The Manager installs the grant owner before publishing `Granted`. The native
    worker wins `Granted → Active`, copies the plan locally, validates source
    and destination ranges, and submits through the existing memcpy or mapped
@@ -185,18 +191,23 @@ returns capacity. Source references and query reservations remain held while
 they wait. Quarantined grants likewise retain their source-byte and record
 credits; dropping a session does not make those resources reusable.
 
-An individual encoded plan larger than 1 MiB is currently rejected **before
-lease consumption**. Automatic partitioning into bounded suboperations with one
-parent completion fence is not implemented. Consequently, the existing
-`cpu_path/load_submit_wait` 32,768-block benchmark exceeds this first-slice
-limit; it is not a qualified workload. Large-prefix support must address this
-limit rather than silently retrying through the removed Manager raw executor.
+The 1 MiB individual-plan limit applies **after allocation-aware compaction**;
+an oversized fragmented plan is rejected **before lease consumption**. The
+32,768-page dense unit fixture now encodes one 71-byte descriptor plan, and the
+existing `cpu_path/load_submit_wait/32768` GPU benchmark passes in Criterion
+`--test` mode. That smoke proves submission and drain, not byte validation or
+serving performance. Automatic partitioning into bounded suboperations with
+one parent completion fence remains unimplemented for fragmented large plans;
+there is no retry through the removed Manager raw executor.
 
 ## CUDA readiness, failures, and shutdown
 
 `ready_stream` must identify the actual engine stream whose earlier users of
-the destination pages need to finish. Native code records and waits on its
-local event in the tensor's primary CUDA context. A background thread's default
+the destination pages need to finish. Native code validates its CUDA context
+and queries completion in the tensor's primary context. An idle stream needs
+no new GPU event; a busy stream records and waits on the retained local event.
+Query errors reject preparation. Calls serialize access to this event, and each
+busy-stream call records a fresh completion point. A background thread's default
 stream does not substitute for the engine dependency. Publish has its own
 producer-stream fence and keeps the existing Manager-side transfer owner.
 
@@ -227,13 +238,13 @@ retention rule.
 
 ## Remaining design
 
-The first matched measurements show a serial Restore latency regression; see
-[the measured cutover](communication-performance.md#engine-local-raw-restore-functional-cutover-measured-latency-regression).
-Before extending overlap, profile readiness, native scheduling and plan handling;
-reduce repeated event/scratch allocation and repeated layer/allocation metadata
-where measurements justify it. These changes must preserve the same ownership
-and drain proofs. Bounded plan partitioning must also remove the current large
-batch rejection without consuming leases more than once.
+Idle-stream queries, reusable busy-stream events, and plan compaction now
+reduce raw Restore overhead; see [matched measurements](communication-performance.md).
+Small operations still carry native scheduling and cross-process handoff costs.
+Profile these costs and fragmented-plan handling before extending overlap.
+Scratch reuse must preserve the same ownership and drain proofs. Bounded plan
+partitioning must also handle large fragmented batches without consuming leases
+more than once.
 
 The subsequent execution step is group readiness: compile real framework dependency
 groups, publish each group's event after all required copies, and let its

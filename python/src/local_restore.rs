@@ -278,7 +278,7 @@ impl LocalRestoreWorker {
             .executor
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| "local Restore worker is stopped".to_string())
             .and_then(|executor| executor.wait_for_destination(ready_stream));
         if ready.is_err() {

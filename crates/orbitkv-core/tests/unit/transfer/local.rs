@@ -68,7 +68,7 @@ fn caller_context_survives_registration_and_readiness_success_and_failure() {
         LocalTensor::new("layer".into(), pointer, 64, pointer as usize, 1, 64, 0, 1).unwrap()
     };
 
-    let executor =
+    let mut executor =
         LocalRestoreExecutor::new(0, vec![binding(address)], Vec::new(), TransferMode::Direct)
             .unwrap();
     assert_eq!(current(), Some(caller.cu_ctx()));
