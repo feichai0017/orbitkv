@@ -39,6 +39,12 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--block-bytes", type=int, default=4096)
     parser.add_argument("--layers", type=int, default=1)
     parser.add_argument(
+        "--layout",
+        choices=("contiguous", "split"),
+        default="contiguous",
+        help="GPU layout; split places equally sized K/V halves in separate block arrays",
+    )
+    parser.add_argument(
         "--restore-batch-size",
         type=int,
         default=1,
@@ -60,6 +66,8 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("block-bytes/pool-mib/layers must be positive and device nonnegative")
     if args.restore_batch_size < 1:
         parser.error("restore-batch-size must be positive")
+    if args.layout == "split" and args.block_bytes % 2:
+        parser.error("split layout requires an even block-bytes value for equal K/V halves")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
     if not math.isfinite(args.idle_seconds) or args.idle_seconds <= 0:
@@ -307,8 +315,8 @@ def sample(
 
 
 def verify_bytes(torch, tensor, expected, start, count) -> None:
-    actual = tensor[:, start : start + count].cpu()
-    if not torch.equal(actual, expected[:, :count]):
+    actual = tensor[:, :, start : start + count].cpu()
+    if not torch.equal(actual, expected[:, :, :count]):
         raise AssertionError("GPU restore bytes differ from the independently retained source")
 
 
@@ -424,7 +432,7 @@ def main(argv: list[str] | None = None) -> None:
             "restore": "one start_restore through native wait_restore ready; equal, nonoverlapping query leases partition the unchanged total payload; hash views and target chunks are precomputed, all lease acquisition is outside latency",
             "publish": "save acknowledgement including metadata chunking and actual D2H of fresh keys; sealing synchronization and cache eviction are outside sample latency",
             "cpu": "sample CPU is caller thread/process; Manager cohort CPU includes preparation queries, releases, Publish sealing/cleanup HTTP, Python loop gaps and prescribed idle intervals, excludes warmup and byte validation; /proc tick-quantized totals are not precise per-RPC CPU measurements",
-            "payload": "raw uint8 contiguous layers, 4 KiB blocks by default; --payload-bytes is per layer, output payload_bytes is total across layers; Query reports logical payload and 32-byte hash count, not transported KV bytes",
+            "payload": "raw uint8 layers with contiguous or split K/V GPU storage, 4 KiB logical blocks by default; split K/V each holds half of block-bytes, preserving total payload; --payload-bytes is per layer, output payload_bytes is total across layers; Query reports logical payload and 32-byte hash count, not transported KV bytes",
             "ready": "client observation of terminal GPU transfer evidence, not an isolated CUDA duration or completion-delivery interval",
             "instrumentation": "clock-read overhead retained; no percentile subtraction or cross-process clock subtraction",
         },
@@ -447,22 +455,29 @@ def main(argv: list[str] | None = None) -> None:
             client = native.CacheManagerClient(f"/tmp/orbitkv-{port}.sock")
             instance = f"communication-{os.getpid()}"
             count = max(args.payload_bytes) // args.block_bytes
+            segments = 2 if args.layout == "split" else 1
+            segment_bytes = args.block_bytes // segments
             layers = [f"layer-{index}" for index in range(args.layers)]
-            expected = torch.empty((args.layers, count, args.block_bytes), dtype=torch.uint8)
+            expected = torch.empty((args.layers, segments, count, segment_bytes), dtype=torch.uint8)
             for layer in range(args.layers):
-                expected[layer].copy_(
-                    (torch.arange(count * args.block_bytes, dtype=torch.int64) + layer * 17)
-                    .remainder_(251)
-                    .to(torch.uint8)
-                    .reshape(count, args.block_bytes)
-                )
+                for segment in range(segments):
+                    expected[layer, segment].copy_(
+                        (
+                            torch.arange(count * segment_bytes, dtype=torch.int64)
+                            + layer * 17
+                            + segment * 71
+                        )
+                        .remainder_(251)
+                        .to(torch.uint8)
+                        .reshape(count, segment_bytes)
+                    )
             pages = torch.full(
-                (args.layers, count * 2, args.block_bytes),
+                (args.layers, segments, count * 2, segment_bytes),
                 253,
                 dtype=torch.uint8,
                 device=f"cuda:{args.device}",
             )
-            pages[:, :count].copy_(expected)
+            pages[:, :, :count].copy_(expected)
             torch.cuda.synchronize()
             client.start_session_watcher(instance, instance, 1, 1)
             ok, message = client.register_context_batch(
@@ -476,9 +491,9 @@ def main(argv: list[str] | None = None) -> None:
                 layers,
                 [gpu.serialize_gpu_buffer(pages[index]) for index in range(args.layers)],
                 [count * 2] * args.layers,
-                [args.block_bytes] * args.layers,
-                [0] * args.layers,
-                [1] * args.layers,
+                [segment_bytes] * args.layers,
+                [count * 2 * segment_bytes if segments == 2 else 0] * args.layers,
+                [segments] * args.layers,
                 "direct",
                 False,
             )
@@ -511,7 +526,7 @@ def main(argv: list[str] | None = None) -> None:
                     targets,
                     restore_batches,
                 )
-                pages[:, count : count + blocks].fill_(253)
+                pages[:, :, count : count + blocks].fill_(253)
                 torch.cuda.synchronize()
                 sample(
                     client,
@@ -533,6 +548,7 @@ def main(argv: list[str] | None = None) -> None:
                 "passed": True,
                 "bytes_per_layer": args.payload_bytes,
                 "layers": args.layers,
+                "layout": args.layout,
                 "restore_batch_size": args.restore_batch_size,
             }
             idle_before = process_usage(manager.pid)
@@ -585,7 +601,7 @@ def main(argv: list[str] | None = None) -> None:
                             if operation == "publish":
                                 cleanup_published(f"http://127.0.0.1:{http}", args.timeout)
                         if operation == "restore":
-                            pages[:, count : count + len(targets)].fill_(253)
+                            pages[:, :, count : count + len(targets)].fill_(253)
                             torch.cuda.synchronize()
                         counter = {
                             "restore": "orbitkv_load_bytes_total",
@@ -638,6 +654,7 @@ def main(argv: list[str] | None = None) -> None:
                             "payload_bytes": size * args.layers,
                             "bytes_per_layer": size,
                             "layers": args.layers,
+                            "layout": args.layout,
                             "blocks": len(targets),
                             "hash_bytes": len(targets) * 32,
                             "restore_batch_size": len(restore_batches)
@@ -663,7 +680,7 @@ def main(argv: list[str] | None = None) -> None:
                             }
                         )
                         print(
-                            f"{args.label} repeat={repeat} {operation} bytes={size} leases={key['restore_batch_size']} idle_ms={idle_ms:g} p50_us={cohorts[-1]['samples']['wall_us']['p50']:.2f} p99_us={cohorts[-1]['samples']['wall_us']['p99']:.2f}",
+                            f"{args.label} repeat={repeat} {operation} layout={args.layout} bytes={size} leases={key['restore_batch_size']} idle_ms={idle_ms:g} p50_us={cohorts[-1]['samples']['wall_us']['p50']:.2f} p99_us={cohorts[-1]['samples']['wall_us']['p99']:.2f}",
                             flush=True,
                         )
             ok, message = client.unregister_context(instance)

@@ -11,7 +11,7 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
                     std::iter::empty::<(usize, &crate::RestoreSource)>(),
                 )
                 .unwrap(),
-                layers: Vec::new(),
+                payload: crate::transfer::worker::LoadPayload::Layers(Vec::new()),
                 completion,
                 reservations: Vec::new(),
                 codec_budget: 64 << 20,

@@ -16,7 +16,7 @@ use super::decode::{DecodeCommand, DecodeRange, DecodeReply};
 use crate::transfer::finish_gpu_transfer;
 
 use super::super::{
-    LoadTask, SaveTask, WorkerCommand, WorkerRuntime, build_copy_descs, finish_load,
+    LoadPayload, LoadTask, SaveTask, WorkerCommand, WorkerRuntime, build_copy_descs, finish_load,
 };
 
 pub(in crate::transfer::worker) const MAX_WRITES: usize = 8;
@@ -89,7 +89,12 @@ impl Job {
         let planned = (|| {
             match &mut job.task {
                 Task::Load(task) => {
-                    let plans = super::plan(&task.layers)?;
+                    let LoadPayload::Layers(layers) = &task.payload else {
+                        return Err(EngineError::InvalidArgument(
+                            "raw restore reached the SSD lane".into(),
+                        ));
+                    };
+                    let plans = super::plan(layers)?;
                     job.encoded = plans.encoded.into();
                     for (file, batches) in plans.raw {
                         for batch in batches {
@@ -139,17 +144,22 @@ impl Job {
         // The route estimate starts before staging/codec work and ends only
         // at engine-visible completion, just like the io_uring host route.
         self.observation.submitted();
-        if let Task::Load(task) = &self.task {
-            self.bytes += super::super::codec::restore(
-                runtime,
-                &task.layers,
-                task.codec_budget,
-                &mut self.observation,
-            )
-            .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
-        }
         let layers = match &self.task {
-            Task::Load(task) => &task.layers,
+            Task::Load(task) => {
+                let LoadPayload::Layers(layers) = &task.payload else {
+                    return Err(EngineError::InvalidArgument(
+                        "raw restore reached the SSD lane".into(),
+                    ));
+                };
+                self.bytes += super::super::codec::restore(
+                    runtime,
+                    layers,
+                    task.codec_budget,
+                    &mut self.observation,
+                )
+                .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
+                layers
+            }
             Task::Save(task) => &task.layers,
         };
         let (copies, bytes) = build_copy_descs(layers)?;

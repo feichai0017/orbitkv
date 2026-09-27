@@ -11,7 +11,8 @@ use crate::planning::restore::RestorePlan;
 use crate::query::lease::{QueryLeaseId, QueryLeaseManager};
 use crate::transfer::layout::KVCacheLayout;
 use crate::transfer::worker::{
-    LayerTransferData, LoadOutcome, LoadTask, TransferBlock, TransferPayload,
+    LayerTransferData, LoadOutcome, LoadPayload, LoadTask, TransferBlock, TransferPayload,
+    append_copy_descs,
 };
 
 struct RestoreLayer {
@@ -103,8 +104,13 @@ impl OrbitKVEngine {
         trace_drop!(lookup);
         trace_scope!("load.build_tasks");
         let (completion, receiver) = oneshot::channel();
-        let task = prepared.bind(layouts, completion, self.storage.codec_budget);
-        if task.layers.is_empty() {
+        let task = prepared.bind(layouts, completion, self.storage.codec_budget)?;
+        let empty = match &task.payload {
+            LoadPayload::Raw { copies, .. } => copies.is_empty(),
+            LoadPayload::Layers(layers) => layers.is_empty(),
+        };
+        if empty {
+            drop(task.payload);
             drop(task.reservations);
             let _ = task.completion.send(LoadOutcome {
                 result: Ok(()),
@@ -234,51 +240,111 @@ impl PreparedRestore {
         layouts: Vec<KVCacheLayout>,
         completion: oneshot::Sender<LoadOutcome>,
         codec_budget: usize,
-    ) -> LoadTask {
+    ) -> Result<LoadTask, EngineError> {
         debug_assert_eq!(
             layouts.len(),
             self.groups.iter().map(|g| g.layers.len()).sum::<usize>()
         );
-        let mut layers = Vec::with_capacity(layouts.len());
-        let mut layouts = layouts.into_iter();
-        for group in self.groups {
-            for (layer, layout) in group.layers.into_iter().zip(&mut layouts) {
-                if group.targets.is_empty() {
-                    continue;
+        let raw = self.groups.iter().all(|group| {
+            group.targets.iter().all(|&(_, source_index)| {
+                matches!(&self.sources[source_index], RestoreSource::Memory(sealed)
+                    if group.layers.iter().all(|layer| sealed.get_slot(layer.slot_id)
+                        .is_some_and(|slot| slot.encoding.is_none())))
+            })
+        });
+        let payload = if raw {
+            let count = self
+                .groups
+                .iter()
+                .flat_map(|group| group.layers.iter().map(move |_| group.targets.len()))
+                .zip(&layouts)
+                .map(|(count, layout)| count * if layout.geometry().is_split() { 2 } else { 1 })
+                .sum();
+            let mut copies = Vec::with_capacity(count);
+            let mut used = vec![false; self.sources.len()];
+            let mut layouts = layouts.into_iter().enumerate();
+            for group in self.groups {
+                for &(_, source_index) in &group.targets {
+                    used[source_index] = true;
                 }
-                let blocks = group
-                    .targets
-                    .iter()
-                    .map(|&(block_idx, source_index)| TransferBlock {
-                        block_idx,
-                        block: match &self.sources[source_index] {
-                            RestoreSource::Memory(sealed) => TransferPayload::Cached {
-                                sealed: Arc::clone(sealed),
-                                slot_id: layer.slot_id,
-                                offset: layer.host_offset,
-                            },
-                            RestoreSource::Ssd { lease, path, .. } => TransferPayload::Ssd {
-                                source: Arc::clone(lease),
-                                path: *path,
-                                slot_id: layer.slot_id,
-                                offset: layer.host_offset,
-                            },
-                        },
-                    })
-                    .collect();
-                layers.push(LayerTransferData {
-                    layer_name: layer.name,
-                    layout,
-                    blocks,
-                });
+                for (layer, (allocation, layout)) in group.layers.into_iter().zip(&mut layouts) {
+                    for &(block_index, source_index) in &group.targets {
+                        let RestoreSource::Memory(sealed) = &self.sources[source_index] else {
+                            unreachable!("raw source selection checked above")
+                        };
+                        let slot = sealed.get_slot(layer.slot_id).ok_or_else(|| {
+                            EngineError::Storage(format!("missing source slot for {}", layer.name))
+                        })?;
+                        append_copy_descs(
+                            &mut copies,
+                            allocation,
+                            layout
+                                .block_copies(block_index)
+                                .map_err(EngineError::Storage)?,
+                            slot,
+                            layer.host_offset,
+                        )?;
+                    }
+                }
             }
-        }
-        LoadTask {
+            let sources = self
+                .sources
+                .into_iter()
+                .zip(used)
+                .filter_map(|(source, used)| {
+                    if !used {
+                        return None;
+                    }
+                    let RestoreSource::Memory(sealed) = source else {
+                        unreachable!("raw source selection checked above")
+                    };
+                    Some(sealed)
+                })
+                .collect();
+            LoadPayload::Raw { copies, sources }
+        } else {
+            let mut layers = Vec::with_capacity(layouts.len());
+            let mut layouts = layouts.into_iter();
+            for group in self.groups {
+                for (layer, layout) in group.layers.into_iter().zip(&mut layouts) {
+                    if group.targets.is_empty() {
+                        continue;
+                    }
+                    let blocks = group
+                        .targets
+                        .iter()
+                        .map(|&(block_idx, source_index)| TransferBlock {
+                            block_idx,
+                            block: match &self.sources[source_index] {
+                                RestoreSource::Memory(sealed) => TransferPayload::Cached {
+                                    sealed: Arc::clone(sealed),
+                                    slot_id: layer.slot_id,
+                                    offset: layer.host_offset,
+                                },
+                                RestoreSource::Ssd { lease, path, .. } => TransferPayload::Ssd {
+                                    source: Arc::clone(lease),
+                                    path: *path,
+                                    slot_id: layer.slot_id,
+                                    offset: layer.host_offset,
+                                },
+                            },
+                        })
+                        .collect();
+                    layers.push(LayerTransferData {
+                        layer_name: layer.name,
+                        layout,
+                        blocks,
+                    });
+                }
+            }
+            LoadPayload::Layers(layers)
+        };
+        Ok(LoadTask {
             plan: self.plan,
-            layers,
+            payload,
             completion,
             reservations: self.reservations,
             codec_budget,
-        }
+        })
     }
 }

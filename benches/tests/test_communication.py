@@ -3,9 +3,16 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
-from benches.communication import arguments, distribution, manager_environment, sample
+from benches.communication import (
+    arguments,
+    distribution,
+    manager_environment,
+    sample,
+    verify_bytes,
+)
 
 
 @pytest.mark.parametrize("values", [[], [float("nan")], [float("inf")], [-1]])
@@ -195,12 +202,69 @@ def test_restore_batch_requires_equal_nonempty_parts_of_every_payload(batch_size
 
 
 def test_restore_batch_defaults_to_one():
-    assert (
-        arguments(
-            ["--manager", "/manager", "--label", "batch", "--output", "/results"]
-        ).restore_batch_size
-        == 1
+    args = arguments(["--manager", "/manager", "--label", "batch", "--output", "/results"])
+    assert args.restore_batch_size == 1
+    assert args.layout == "contiguous"
+
+
+@pytest.mark.parametrize(
+    ("layout", "block_bytes", "valid"),
+    [
+        ("contiguous", 3, True),
+        ("split", 2, True),
+        ("split", 4096, True),
+        ("split", 1, False),
+        ("split", 4095, False),
+        ("unknown", 4096, False),
+    ],
+)
+def test_split_layout_requires_two_equal_nonempty_segments(layout, block_bytes, valid):
+    argv = [
+        "--manager",
+        "/manager",
+        "--label",
+        "layout",
+        "--output",
+        "/results",
+        "--layout",
+        layout,
+        "--block-bytes",
+        str(block_bytes),
+        "--payload-bytes",
+        str(block_bytes * 4),
+    ]
+    if valid:
+        args = arguments(argv)
+        assert args.layout == layout
+        assert args.block_bytes == block_bytes
+        assert args.payload_bytes == [block_bytes * 4]
+    else:
+        with pytest.raises(SystemExit):
+            arguments(argv)
+
+
+@pytest.mark.parametrize("segments", [1, 2], ids=["contiguous", "split"])
+def test_restore_byte_validation_checks_every_layer_and_segment_in_the_target_range(segments):
+    class Tensor(np.ndarray):
+        def cpu(self):
+            return np.asarray(self)
+
+    count, block_bytes = 4, 8
+    expected = np.arange(2 * count * block_bytes, dtype=np.uint8).reshape(
+        2, segments, count, block_bytes // segments
     )
+    pages = np.full((2, segments, count * 2, block_bytes // segments), 253, dtype=np.uint8).view(
+        Tensor
+    )
+    pages[:, :, count:] = expected
+    torch = SimpleNamespace(equal=np.array_equal)
+    verify_bytes(torch, pages, expected, count, count)
+    for layer in range(2):
+        for segment in range(segments):
+            pages[layer, segment, count, 0] ^= 1
+            with pytest.raises(AssertionError, match="GPU restore bytes differ"):
+                verify_bytes(torch, pages, expected, count, count)
+            pages[layer, segment, count, 0] ^= 1
 
 
 def test_publish_uses_new_keys_per_sample_and_complete_matching_layer_sets():

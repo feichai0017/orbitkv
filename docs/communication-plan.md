@@ -29,6 +29,25 @@ baseline revision in a separate checkout with matched workloads and budgets.
 
 ### Restore preparation and destination binding
 
+Raw resident Restore now compiles GPU/host copy descriptors directly from the
+prepared sources and validated layouts. Its worker task retains each selected
+leased source once, instead of expanding source `Arc`s into every layer/block
+pair and rebuilding the same descriptors in the worker. Encoded, SSD and mixed
+plans retain their layer metadata for the physical work that still needs it;
+they are selected from source representation, not after a failed raw submission.
+
+Raw admission sorts descriptors by device address and rejects invalid or
+overlapping destinations before enqueueing GPU work. This groups split K/V
+regions so adjacent ranges can coalesce without changing a source/destination
+pairing. Merging still requires the same
+host and device allocation identities. The shared descriptor builder checks
+every host subrange, including page-first offsets and split segments, before
+pointer arithmetic. Descriptor construction/admission follows lease consumption;
+failures there consume the prepared batch, as previous worker admission did.
+Source owners and byte reservations remain held until GPU
+drain, including partial enqueue failures. CUDA submission still runs in the
+Manager; this is not the engine-local grant protocol.
+
 The existing Restore command now resolves group/TP/page-first geometry once,
 checks registered GPU destinations before consuming leases, and prepares source
 ownership separately from local GPU address binding. `PreparedRestore` owns the

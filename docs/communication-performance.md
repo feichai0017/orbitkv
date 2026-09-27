@@ -1,6 +1,145 @@
 # Local communication measurements
 
-## Restore preparation (current increment)
+## Raw descriptors and split K/V coalescing (current increment)
+
+On 2026-09-27, compiling raw resident Restore directly into owned copy
+batches and ordering independent descriptors by GPU address reduced the
+36-layer, 18 MiB split K/V Restore p50 from **24.70 ms to 1.36 ms** (18.1×,
+94.5% lower). Split Publish p50 fell from **24.18 ms to 2.95 ms** (8.2×).
+The same-size contiguous Restore improved **14.7%**, while 4 KiB Restore
+remained approximately unchanged. These are matched local communication
+microbenchmarks; CUDA submission still runs in the Manager. They do not
+establish serving TTFT/ITL, compute overlap, or superiority to native engines.
+
+### Implementation and comparison
+
+The baseline is commit `76cbde7cffd75446ba5e402d7ab4c9d797135066`, frozen as
+`prepared-production`. The candidate is `descriptor-production`. Both bundles
+contain matching release Managers and Python extensions without test hooks.
+There is no runtime old/new implementation switch.
+
+Raw Restore holds each selected leased source once, builds its checked copy
+ranges directly, and keeps those owners and query reservations through GPU
+drain. It removes the layer × block source-reference expansion, worker-side raw
+descriptor reconstruction, raw codec/SSD scans, temporary target-range array,
+and repeated raw cost-shape computation. Encoded, SSD and mixed routes keep
+the layer information their execution requires; raw errors never retry through
+a second implementation. Host subranges are checked before pointer arithmetic.
+
+The old split order was K0, V0, K1, V1, which prevented adjacent K ranges or V
+ranges from coalescing. Sorting paired descriptors groups those ranges while
+preserving each source/destination association. Raw admission rejects overlapping
+destinations before GPU submission. Publish and mixed restores share the same
+checked descriptor builder and ordering. Merging remains restricted to the
+same host and GPU allocation identities. In this dense split workload, each
+layer's K and V slabs can coalesce separately; scattered allocations or
+page-first host layouts do not promise the same gain.
+
+### Matched workload and results
+
+The [harness](../benches/communication.py) adds `--layout split` as a workload
+shape. Each logical 4 KiB block has separate 2 KiB K and V regions with distinct
+expected bytes. Logical payload, hashes, destination pages and H2D/D2H counters
+are equal to the contiguous shape. Every run checks both regions on the GPU.
+
+All eighteen fresh-Manager sessions passed byte/counter validation. The H20 and
+CPU affinity `8,10,12,14` match the environment described below. Each matrix used
+`A1 B1 B2 A2 A3 B3`, 150 measured samples after 20 warmups, zero and 1 ms prescribed
+idle, and a 256 MiB pool. The three matrices were:
+
+- One contiguous layer, one lease, 4 KiB / 256 KiB / 4 MiB.
+- 36 contiguous layers × 128 blocks × 4 KiB = 18 MiB, 32 leases.
+- The same 36-layer payload and 32 leases with split K/V storage.
+
+Lease acquisition stays outside Restore timing. Submit-to-ready includes client
+encoding, IPC, source preparation/admission, CUDA work and terminal observation.
+No build or qualification test ran during measurements. Values are **medians of
+three per-run percentiles**, not pooled samples; no timing overhead is subtracted.
+
+All times below are µs, with no prescribed idle:
+
+| Operation / shape | Baseline p50 / p99 | Candidate p50 / p99 |
+| --- | ---: | ---: |
+| Restore, contiguous 4 KiB | 26.90 / 66.96 | 27.07 / 53.39 |
+| Restore, contiguous 256 KiB | 40.87 / 57.17 | 38.98 / 59.17 |
+| Restore, contiguous 4 MiB | 233.90 / 267.03 | 222.29 / 255.03 |
+| Restore, contiguous 18 MiB / 32 leases | 952.77 / 1051.64 | 812.88 / 866.41 |
+| Restore, split 18 MiB / 32 leases | 24699.86 / 25063.66 | 1362.71 / 1492.91 |
+| Publish, contiguous 4 MiB | 765.29 / 875.05 | 772.59 / 843.55 |
+| Publish, contiguous 18 MiB | 2374.63 / 2537.23 | 2385.71 / 2525.68 |
+| Publish, split 18 MiB | 24184.95 / 24337.91 | 2953.76 / 3217.27 |
+
+The three split Restore p50s were 24643.48–24746.57 µs for the baseline and
+1354.78–1369.55 µs for the candidate. Contiguous 18 MiB Restore was
+951.44–953.68 µs versus 811.64–813.42 µs. These gains repeat across all pairs.
+Small-request and contiguous Publish results do not show uniform improvement:
+4 KiB Restore p50 increased 0.17 µs, 256 KiB Restore p99 increased 2.00 µs,
+and contiguous 4 MiB / 18 MiB Publish p50 increased 7.29 / 11.08 µs. The measured
+4 KiB Publish p50 was 75.74 → 63.99 µs, but baseline runs ranged 64.09–85.01 µs;
+that median alone is not evidence of a reliable tiny-Publish gain.
+
+Descriptor compilation now occurs before worker enqueue. Split Restore's
+submission-only p50 increased **334.60 → 372.71 µs**, despite the much larger
+complete-operation gain. Contiguous 4 MiB submission increased 103.88 → 108.92 µs;
+contiguous 18 MiB submission decreased 140.13 → 137.92 µs. Phase percentiles must
+not be added or subtracted to infer GPU time or pure IPC overhead.
+
+With 1 ms idle, contiguous 18 MiB Restore p50/p99 was 964.63/1022.02 →
+820.94/860.39 µs; split Restore was 24711.82/25085.60 → 1368.56/1451.94 µs.
+Contiguous 18 MiB Publish regressed from 2327.25/2474.66 to 2383.69/2508.44 µs.
+
+Manager CPU seconds per 150-sample, zero-idle cohort fell from **3.76 to 0.25**
+for split Restore and **3.73 to 0.52** for split Publish. Client CPU for those
+cohorts was 0.098 → 0.099 s and 0.319 → 0.307 s, respectively. Contiguous 18 MiB
+Restore Manager CPU was 0.19 → 0.16 s, while Publish was 0.43 → 0.44 s.
+These are medians of cohort totals, including preparation queries and cleanup,
+not per-RPC CPU measurements; Manager accounting has 10 ms `/proc` resolution.
+
+### Artifacts, reproduction and qualification
+
+Results, raw samples, byte/counter checks, manifests and `summary.json` are under
+`/workspace/.orbitkv-tools/communication-microbench/runs/raw-descriptors`.
+Each bundle retains its source patch and SHA-256 manifest. The native extension
+hash is unchanged because the changed execution code is linked into the Manager.
+
+| Measured artifact | SHA-256 |
+| --- | --- |
+| Harness | `06b0d99c105f8d8ff04d818d963c8031ad00a0aec95cd50aa26ad01fc975f040` |
+| Candidate Manager | `0ea5dc4df3f0afd0c1e6e645eee8b95e190152105b5cf25f818b24c4ed38bfc8` |
+| Candidate extension | `69e1b911af8ae1d8abf986e6f61fe146dd1c0a9ea367760c69a154916c78ae5a` |
+
+Use the established CUDA/Python environment, select the frozen
+`prepared-production` or `descriptor-production` bundle, and use a fresh output
+path. Repeat in the paired order above:
+
+```bash
+PYTHONPATH="$BENCH_BUNDLE/python" taskset -c 8,10,12,14 \
+  python3 -m benches.communication \
+  --manager "$BENCH_BUNDLE/orbitkv-cache-manager" \
+  --label "$BENCH_LABEL" --output "$BENCH_OUTPUT" \
+  --iterations 150 --warmup 20 --repeats 1 --layout contiguous
+```
+
+For the layered matrix append `--layers 36 --payload-bytes 524288
+--restore-batch-size 32`; repeat with `--layout split` for K/V separation.
+Keep the default idle matrix and quiet window. The local runner is
+`/workspace/.orbitkv-tools/run-descriptor-comparison.py`.
+
+Validation: release workspace 470 passed / 37 ignored; after the equivalent
+Clippy boundary-check cleanup, worker tests 22 passed / 2 ignored and workspace
+all-target Clippy passed. Python unit tests passed 374; benchmark tests passed
+199. Native integration/fault qualification passed 30 distinct cases, with 30
+configuration-dependent skips. The initial ANS setup failure was resolved by
+installing the documented `nvidia-libnvcomp-cu13==5.3.0.16` into an isolated tools
+directory; the formerly blocked ANS case then passed. The separate
+`descriptor-fault` bundle contains test hooks and is excluded from performance.
+The gates include actual partial GPU submission, dropped completion receiver,
+source/budget retention, split target permutation/skipped pages, host bounds,
+SSD/codec recovery, timeouts, lost notification and Manager restart. No cuFile
+qualification, engine serving E2E, engine-local executor or cross-host result is
+claimed by this increment.
+
+## Earlier restore preparation increment
 
 On 2026-09-27, the preparation/geometry refactor reduced the measured submission
 p50 for a 32-lease, 36-layer, 18 MiB Restore from **176.25 to 141.14 µs** (19.9%).

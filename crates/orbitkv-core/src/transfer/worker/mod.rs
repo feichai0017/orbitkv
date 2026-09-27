@@ -29,10 +29,18 @@ use ssd::GpuWrite;
 /// A task to restore KV blocks from leased sources to GPU layers
 pub(crate) struct LoadTask {
     pub plan: RestorePlan,
-    pub layers: Vec<LayerTransferData>,
+    pub payload: LoadPayload,
     pub completion: oneshot::Sender<LoadOutcome>,
     pub reservations: Vec<crate::QueryReservation>,
     pub codec_budget: usize,
+}
+
+pub(crate) enum LoadPayload {
+    Raw {
+        copies: Vec<CopyDesc>,
+        sources: Vec<Arc<SealedBlock>>,
+    },
+    Layers(Vec<LayerTransferData>),
 }
 
 /// Terminal GPU transfer evidence, timestamped before notifying the dispatcher.
@@ -291,8 +299,51 @@ impl GpuWorkerPool {
                 self.device_id
             )));
         }
+        if let LoadPayload::Raw { copies, .. } = &mut task.payload {
+            if task.plan.ssd_path().is_some() {
+                return Err(EngineError::InvalidArgument(
+                    "raw restore descriptors cannot execute an SSD source plan".into(),
+                ));
+            }
+            copies.sort_unstable_by_key(|copy| copy.device);
+            let mut previous_end = 0;
+            for copy in copies.iter() {
+                let end = copy
+                    .device
+                    .checked_add(copy.size as u64)
+                    .filter(|_| {
+                        copy.device != 0 && copy.size != 0 && isize::try_from(copy.size).is_ok()
+                    })
+                    .ok_or_else(|| {
+                        EngineError::Storage("invalid GPU restore target range".into())
+                    })?;
+                if copy.device < previous_end {
+                    return Err(EngineError::Storage(
+                        "GPU restore target ranges overlap".into(),
+                    ));
+                }
+                previous_end = end;
+            }
+            let observation = if enabled() {
+                let (keys, bytes) = raw_copy_keys(copies, self.device_id as u64, false);
+                let selected = usize::from(self.transfer_mode == TransferMode::Kernel);
+                let candidates = if copies.iter().all(|copy| copy.host_device != 0) {
+                    &keys[..]
+                } else {
+                    &keys[..1]
+                };
+                shadow(candidates, selected);
+                Observation::new(keys[selected], Some(bytes))
+            } else {
+                Observation::disabled()
+            };
+            return self.submit(WorkerCommand::Load(task, observation), false);
+        }
+        let LoadPayload::Layers(layers) = &mut task.payload else {
+            unreachable!("raw restore submitted above")
+        };
         let mut targets = Vec::new();
-        for layer in &task.layers {
+        for layer in layers.iter() {
             for block in &layer.blocks {
                 match layer
                     .layout
@@ -307,10 +358,10 @@ impl GpuWorkerPool {
             }
         }
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
-        restore::validate_plan(&task)?;
+        restore::validate_plan(&task.plan, layers)?;
         let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
-            && task.layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
+            && layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
                 matches!(&block.block, TransferPayload::Ssd { source, .. } if !source.cufile_eligible(task.codec_budget))
             })
         {
@@ -320,23 +371,17 @@ impl GpuWorkerPool {
             task.plan
                 .fallback_from_cufile()
                 .map_err(EngineError::Storage)?;
-            restore::set_ssd_path(&mut task.layers, crate::SsdReadPath::Uring);
+            restore::set_ssd_path(layers, crate::SsdReadPath::Uring);
             core_metrics().ssd_gpu_read_fallbacks.add(1, &[]);
             ssd_path = task.plan.ssd_path();
         }
-        restore::validate_plan(&task)?;
         let disk = ssd_path.is_some();
         let observation = if enabled() {
-            let (mut key, bytes) = transfer_key(
-                &task.layers,
-                self.device_id,
-                self.transfer_mode,
-                false,
-                disk,
-            );
+            let (mut key, bytes) =
+                transfer_key(layers, self.device_id, self.transfer_mode, false, disk);
             if let Some(path) = ssd_path {
-                key = restore::cost_key(&task, self.transfer_mode, path, key);
-                restore::shadow(&task, path, key);
+                key = restore::cost_key(&task.plan, layers, self.transfer_mode, path, key);
+                restore::shadow(layers, task.codec_budget, path, key);
             }
             Observation::new(key, Some(bytes))
         } else {
@@ -563,9 +608,20 @@ fn worker_loop(
                         cancelled = true;
                         return Err(EngineError::Storage("GPU transfer consumer closed".into()));
                     }
+                    if let LoadPayload::Raw { copies, .. } = &task.payload {
+                        observation.submitted();
+                        finish_gpu_transfer(
+                            &runtime.stream,
+                            runtime.backend.h2d(copies, &runtime.stream),
+                        )?;
+                        return Ok(copies.iter().map(|copy| copy.size).sum());
+                    }
+                    let LoadPayload::Layers(layers) = &mut task.payload else {
+                        unreachable!("raw restore executed above")
+                    };
                     if host_staged {
                         observation.submitted();
-                        restore::materialize_host(&mut task)?;
+                        restore::materialize_host(layers)?;
                         if task.completion.is_closed() {
                             cancelled = true;
                             return Err(EngineError::Storage(
@@ -578,8 +634,7 @@ fn worker_loop(
                             } else {
                                 TransferMode::Direct
                             };
-                            let (key, bytes) =
-                                transfer_key(&task.layers, device_id, mode, false, false);
+                            let (key, bytes) = transfer_key(layers, device_id, mode, false, false);
                             gpu_observation = Observation::new(key, Some(bytes));
                             gpu_observation.admitted();
                         }
@@ -590,11 +645,12 @@ fn worker_loop(
                         &mut observation
                     };
                     let decoded_bytes =
-                        codec::restore(&runtime, &task.layers, task.codec_budget, gpu_cost)
-                            .inspect_err(|_| {
+                        codec::restore(&runtime, layers, task.codec_budget, gpu_cost).inspect_err(
+                            |_| {
                                 core_metrics().storage_codec_decode_failures.add(1, &[]);
-                            })?;
-                    let (copies, bytes) = build_copy_descs(&task.layers)?;
+                            },
+                        )?;
+                    let (copies, bytes) = build_copy_descs(layers)?;
                     if decoded_bytes == 0 {
                         observe_raw_copies(
                             &copies,
@@ -620,7 +676,10 @@ fn worker_loop(
                 let actual_io = (enabled()
                     && result.is_ok()
                     && runtime.backend.name() == "direct"
-                    && !has_encoded(&task.layers))
+                    && match &task.payload {
+                        LoadPayload::Raw { .. } => true,
+                        LoadPayload::Layers(layers) => !has_encoded(layers),
+                    })
                 .then_some(bytes as u64);
                 if host_staged {
                     gpu_observation.finish(outcome, actual_io);
@@ -853,97 +912,132 @@ fn observe_raw_copies(
     shadow(candidates, selected);
 }
 
-/// Build one `CopyDesc` per GPU segment of every block across all layers,
-/// pairing device ranges from the layout with the host segments of each
-/// block's `RawBlock`. Direction-agnostic: load and save submit the same
-/// descriptors to `h2d`/`d2h` respectively.
-///
-/// Returns `(copies, total_bytes)`.
+/// Bind validated device ranges to checked host segments without changing direction.
+/// Appends only when every segment fits and returns the actual transfer byte count.
+pub(crate) fn append_copy_descs(
+    copies: &mut Vec<CopyDesc>,
+    device_allocation: usize,
+    block_copies: BlockCopies,
+    raw: &RawBlock,
+    host_offset: usize,
+) -> Result<usize, EngineError> {
+    if raw.encoding.is_some() {
+        return Err(EngineError::InvalidArgument(
+            "encoded source cannot be submitted as raw copies".into(),
+        ));
+    }
+    let descriptor = |segment: usize, offset: usize, device, size: usize| {
+        let invalid = || EngineError::Storage("raw copy exceeds its host segment".into());
+        let end = offset.checked_add(size).ok_or_else(invalid)?;
+        let segment_size = raw.segment_size(segment).ok_or_else(invalid)?;
+        if end > segment_size {
+            return Err(invalid());
+        }
+        let ptr = raw
+            .segment_mapped_ptr(segment)
+            .ok_or_else(invalid)?
+            .add(offset);
+        Ok(CopyDesc {
+            device,
+            host: ptr.host().as_ptr(),
+            host_device: ptr.device().as_ptr() as u64,
+            size,
+            device_allocation,
+            host_allocation: raw.segment_allocation_id(segment).ok_or_else(invalid)?,
+        })
+    };
+    match block_copies {
+        BlockCopies::Contiguous(copy) => {
+            copies.push(descriptor(0, host_offset, copy.addr, copy.bytes)?);
+            Ok(copy.bytes)
+        }
+        BlockCopies::Split { k, v } => {
+            let k_copy = descriptor(0, host_offset, k.addr, k.bytes)?;
+            let (v_segment, v_offset) = if raw.num_segments() > 1 {
+                (1, host_offset)
+            } else {
+                (
+                    0,
+                    host_offset.checked_add(k.bytes).ok_or_else(|| {
+                        EngineError::Storage("raw copy host offset overflow".into())
+                    })?,
+                )
+            };
+            let v_copy = descriptor(v_segment, v_offset, v.addr, v.bytes)?;
+            let bytes = k
+                .bytes
+                .checked_add(v.bytes)
+                .ok_or_else(|| EngineError::Storage("raw copy byte count overflow".into()))?;
+            copies.extend([k_copy, v_copy]);
+            Ok(bytes)
+        }
+    }
+}
+
+/// Encoded/SSD restore and Publish retain layer payloads until their physical route
+/// is ready; compile their remaining raw ranges with the same source-bound checks.
 fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usize), EngineError> {
-    let mut copies: Vec<CopyDesc> = Vec::new();
+    let capacity = layers
+        .iter()
+        .map(|layer| {
+            layer.blocks.len()
+                * if layer.layout.geometry().is_split() {
+                    2
+                } else {
+                    1
+                }
+        })
+        .sum();
+    let mut copies = Vec::with_capacity(capacity);
     let mut total_bytes = 0usize;
-
     for (layer_index, layer) in layers.iter().enumerate() {
-        let layer_name = &layer.layer_name;
-
         for block in &layer.blocks {
             if matches!(block.block, TransferPayload::Ssd { .. }) {
                 continue;
             }
-            if block.block.raw().encoding.is_some() {
+            let raw = block.block.raw();
+            if raw.encoding.is_some() {
                 continue;
             }
-            let block_copies = layer
+            let ranges = layer
                 .layout
                 .block_copies(block.block_idx)
-                .map_err(|e| EngineError::Storage(format!("layer {layer_name}: {e}")))?;
-
-            // Page-first reads/writes every layer from one slot at its byte
-            // offset; layer-first leaves this 0 (slot == layer).
-            let host_offset = block.block.host_offset();
-
-            match block_copies {
-                BlockCopies::Split { k, v } => {
-                    let raw = block.block.raw();
-                    let k_ptr = raw.segment_mapped_ptr(0).unwrap().add(host_offset);
-                    // SAFETY: For a contiguous host block (segment 1 absent), the
-                    // allocation is 2 * segment size, so k + k.bytes is in bounds.
-                    let v_ptr = raw
-                        .segment_mapped_ptr(1)
-                        .map(|p| p.add(host_offset))
-                        .unwrap_or_else(|| k_ptr.add(k.bytes));
-
-                    copies.push(CopyDesc {
-                        device: k.addr,
-                        host: k_ptr.host().as_ptr(),
-                        host_device: k_ptr.device().as_ptr() as u64,
-                        size: k.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: raw.segment_allocation_id(0).unwrap(),
-                    });
-                    copies.push(CopyDesc {
-                        device: v.addr,
-                        host: v_ptr.host().as_ptr(),
-                        host_device: v_ptr.device().as_ptr() as u64,
-                        size: v.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: raw
-                            .segment_allocation_id(1)
-                            .unwrap_or_else(|| raw.segment_allocation_id(0).unwrap()),
-                    });
-                    total_bytes += k.bytes + v.bytes;
-                }
-                BlockCopies::Contiguous(c) => {
-                    let ptr = block
-                        .block
-                        .raw()
-                        .segment_mapped_ptr(0)
-                        .unwrap()
-                        .add(host_offset);
-                    copies.push(CopyDesc {
-                        device: c.addr,
-                        host: ptr.host().as_ptr(),
-                        host_device: ptr.device().as_ptr() as u64,
-                        size: c.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: block.block.raw().segment_allocation_id(0).unwrap(),
-                    });
-                    total_bytes += c.bytes;
-                }
-            }
+                .map_err(|error| {
+                    EngineError::Storage(format!("layer {}: {error}", layer.layer_name))
+                })?;
+            let bytes = append_copy_descs(
+                &mut copies,
+                layer_index,
+                ranges,
+                raw,
+                block.block.host_offset(),
+            )?;
+            total_bytes = total_bytes
+                .checked_add(bytes)
+                .ok_or_else(|| EngineError::Storage("raw transfer byte count overflow".into()))?;
         }
     }
-
+    // Copy ownership IDs prevent coalescing across distinct allocations.
+    copies.sort_unstable_by_key(|copy| copy.device);
     Ok((copies, total_bytes))
 }
 
 /// Publish completion only after the worker establishes that all GPU access has ended.
 fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant, bytes: usize) {
     if result.is_ok() {
-        for layer in &task.layers {
-            for block in &layer.blocks {
-                if let TransferPayload::Cached { sealed, .. } = &block.block {
-                    sealed.mark_warmup_restored();
+        match &task.payload {
+            LoadPayload::Raw { sources, .. } => {
+                for source in sources {
+                    source.mark_warmup_restored();
+                }
+            }
+            LoadPayload::Layers(layers) => {
+                for layer in layers {
+                    for block in &layer.blocks {
+                        if let TransferPayload::Cached { sealed, .. } = &block.block {
+                            sealed.mark_warmup_restored();
+                        }
+                    }
                 }
             }
         }
@@ -957,7 +1051,7 @@ fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant
         error!("GPU restore failed: {error}");
         core_metrics().load_failures.add(1, &[]);
     }
-    drop(task.layers);
+    drop(task.payload);
     drop(task.reservations);
     let _ = task.completion.send(LoadOutcome {
         result,

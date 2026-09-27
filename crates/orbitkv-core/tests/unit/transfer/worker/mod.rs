@@ -124,7 +124,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
 }
 
 #[test]
-fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
+fn restore_targets_are_validated_and_raw_copies_sorted_before_dispatch() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
@@ -154,7 +154,7 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
             let (completion, _) = oneshot::channel();
             let task = LoadTask {
                 plan: empty_restore_plan(0),
-                layers: vec![LayerTransferData {
+                payload: LoadPayload::Layers(vec![LayerTransferData {
                     layer_name: "attention".into(),
                     layout: layout.clone(),
                     blocks: indices
@@ -165,7 +165,7 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
                             block: TransferPayload::Pending,
                         })
                         .collect(),
-                }],
+                }]),
                 completion,
                 reservations: vec![],
                 codec_budget,
@@ -178,6 +178,67 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
             ));
         }
     }
+    let mut host = [0u8; 32];
+    let mut make_copy = |device, offset| CopyDesc {
+        device,
+        host: host.as_mut_ptr().wrapping_add(offset),
+        host_device: 0x3000 + offset as u64,
+        size: 8,
+        device_allocation: 1,
+        host_allocation: 2,
+    };
+    for devices in [
+        [0x1000, 0x1000],
+        [0x1000, 0x1004],
+        [0, 0x1000],
+        [u64::MAX - 3, 0x1000],
+    ] {
+        let (completion, _) = oneshot::channel();
+        let task = LoadTask {
+            plan: empty_restore_plan(0),
+            payload: LoadPayload::Raw {
+                copies: vec![make_copy(devices[0], 0), make_copy(devices[1], 8)],
+                sources: vec![],
+            },
+            completion,
+            reservations: vec![],
+            codec_budget: 0,
+        };
+        assert!(pool.submit_load(task).is_err());
+        assert!(matches!(
+            load_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+    let (completion, _receiver) = oneshot::channel();
+    pool.submit_load(LoadTask {
+        plan: empty_restore_plan(0),
+        payload: LoadPayload::Raw {
+            // Reverse block order; K/V are separated GPU and host slabs.
+            copies: vec![
+                make_copy(0x1008, 8),
+                make_copy(0x2008, 24),
+                make_copy(0x1000, 0),
+                make_copy(0x2000, 16),
+            ],
+            sources: vec![],
+        },
+        completion,
+        reservations: vec![],
+        codec_budget: 0,
+    })
+    .unwrap();
+    let WorkerCommand::Load(task, _) = load_rx.try_recv().unwrap() else {
+        panic!("raw load must use memory lane")
+    };
+    let LoadPayload::Raw { copies, .. } = task.payload else {
+        panic!("raw descriptors must not expand into layers")
+    };
+    assert_eq!(
+        copies.iter().map(|copy| copy.device).collect::<Vec<_>>(),
+        [0x1000, 0x1008, 0x2000, 0x2008]
+    );
+    assert_eq!(crate::transfer::memcpy::merged_ranges(&copies).count(), 2);
 }
 
 #[test]
@@ -203,7 +264,10 @@ fn restore_plan_must_target_the_worker_device() {
     let error = pool
         .submit_load(LoadTask {
             plan: empty_restore_plan(1),
-            layers: Vec::new(),
+            payload: LoadPayload::Raw {
+                copies: Vec::new(),
+                sources: Vec::new(),
+            },
             completion,
             reservations: Vec::new(),
             codec_budget: 0,
@@ -243,7 +307,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let (reply, _result) = oneshot::channel();
     pool.submit_load(LoadTask {
         plan: empty_restore_plan(0),
-        layers: vec![],
+        payload: LoadPayload::Layers(vec![]),
         completion: reply,
         reservations: vec![],
         codec_budget: 64 * 1024 * 1024,
@@ -274,7 +338,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     assert!(
         pool.submit_load(LoadTask {
             plan: empty_restore_plan(0),
-            layers: vec![],
+            payload: LoadPayload::Layers(vec![]),
             completion: reply,
             reservations: vec![],
             codec_budget: 64 * 1024 * 1024,
@@ -438,4 +502,218 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
         }
         assert_ne!(merged_keys, raw_copy_keys(&contiguous, 3, !write).0);
     }
+}
+
+#[test]
+fn raw_source_ranges_are_checked_before_appending_descriptors() {
+    use std::num::NonZeroU64;
+
+    use crate::block::Segment;
+    use crate::memory::pool::PinnedAllocator;
+    use crate::transfer::layout::BlockCopy;
+
+    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let segment = |bytes| {
+        let allocation = pool
+            .allocate(NonZeroU64::new(bytes as u64).unwrap(), NumaNode::UNKNOWN)
+            .unwrap();
+        Segment::new(allocation.as_non_null(), bytes, allocation)
+    };
+    let contiguous = RawBlock::single_segment(segment(32));
+    let split = RawBlock::two_segments(segment(16), segment(12));
+    let ranges = || BlockCopies::Split {
+        k: BlockCopy {
+            addr: 0x1000,
+            bytes: 8,
+        },
+        v: BlockCopy {
+            addr: 0x2000,
+            bytes: 8,
+        },
+    };
+    let mut copies = Vec::new();
+    for (raw, offset) in [(&contiguous, 17), (&split, 5), (&split, usize::MAX)] {
+        assert!(append_copy_descs(&mut copies, 7, ranges(), raw, offset).is_err());
+        assert!(
+            copies.is_empty(),
+            "invalid second segment must not append K"
+        );
+    }
+    assert_eq!(
+        append_copy_descs(&mut copies, 7, ranges(), &contiguous, 16).unwrap(),
+        16
+    );
+    assert_eq!(copies[1].host, copies[0].host.wrapping_add(8));
+    assert_eq!(copies[0].host_allocation, copies[1].host_allocation);
+    copies.clear();
+    assert_eq!(
+        append_copy_descs(&mut copies, 7, ranges(), &split, 4).unwrap(),
+        16
+    );
+    assert_eq!(
+        copies[1].host,
+        split.segment_ptr(1).unwrap().as_ptr().wrapping_add(4)
+    );
+    assert_ne!(copies[0].host_allocation, copies[1].host_allocation);
+    copies.clear();
+    assert!(
+        append_copy_descs(
+            &mut copies,
+            7,
+            BlockCopies::Contiguous(BlockCopy {
+                addr: 0x1000,
+                bytes: 33
+            }),
+            &contiguous,
+            0,
+        )
+        .is_err()
+    );
+    assert!(copies.is_empty());
+}
+
+#[test]
+fn raw_restore_retains_sources_and_reservations_through_partial_submission_drain() {
+    use std::num::NonZeroU64;
+    use std::time::Duration;
+
+    use cudarc::driver::DevicePtr;
+
+    use crate::block::Segment;
+    use crate::memory::pool::PinnedAllocator;
+    use crate::transfer::layout::BlockCopy;
+
+    struct Gate {
+        entered: std_mpsc::Sender<()>,
+        release: std_mpsc::Receiver<()>,
+    }
+    unsafe extern "C" fn hold_stream(data: *mut std::ffi::c_void) {
+        // SAFETY: successful launch transfers this Box to one callback.
+        let gate = unsafe { Box::from_raw(data.cast::<Gate>()) };
+        let _ = gate.entered.send(());
+        let _ = gate.release.recv_timeout(Duration::from_secs(5));
+    }
+    struct PartialBackend {
+        gate: Mutex<Option<Gate>>,
+        submitted: std_mpsc::Sender<()>,
+    }
+    impl TransferBackend for PartialBackend {
+        fn h2d(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String> {
+            let gate = Box::into_raw(Box::new(self.gate.lock().take().unwrap()));
+            // SAFETY: the callback owns the gate until it returns and does not call CUDA.
+            let launched = unsafe {
+                cudarc::driver::result::stream::launch_host_function(
+                    stream.cu_stream(),
+                    hold_stream,
+                    gate.cast(),
+                )
+            };
+            if let Err(error) = launched {
+                // SAFETY: a rejected launch did not take ownership of the callback.
+                unsafe { drop(Box::from_raw(gate)) };
+                return Err(error.to_string());
+            }
+            MemcpyBackend.h2d(copies, stream)?;
+            self.submitted.send(()).unwrap();
+            Err("injected failure after accepting a copy".into())
+        }
+        fn d2h(&self, _: &[CopyDesc], _: &Arc<CudaStream>) -> Result<(), String> {
+            unreachable!("restore test")
+        }
+        fn name(&self) -> &'static str {
+            "direct"
+        }
+    }
+
+    let context = CudaContext::new(0).unwrap();
+    let stream = context.new_stream().unwrap();
+    let target = stream.alloc_zeros::<u8>(32).unwrap();
+    let device = target.device_ptr(&stream).0;
+    stream.synchronize().unwrap();
+    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let allocation = pool
+        .allocate(NonZeroU64::new(32).unwrap(), NumaNode::UNKNOWN)
+        .unwrap();
+    // SAFETY: this test uniquely owns all 32 bytes before sealing them.
+    unsafe { allocation.as_non_null().as_ptr().write_bytes(0x5a, 32) };
+    let raw = RawBlock::single_segment(Segment::new(allocation.as_non_null(), 32, allocation));
+    let mut copies = Vec::new();
+    append_copy_descs(
+        &mut copies,
+        0,
+        BlockCopies::Contiguous(BlockCopy {
+            addr: device,
+            bytes: 32,
+        }),
+        &raw,
+        0,
+    )
+    .unwrap();
+    let source = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
+    let weak = Arc::downgrade(&source);
+    let budget = crate::query::QueryBudget::new(32, 32).unwrap();
+    let crate::QueryAdmission::Admitted(reservation) =
+        budget.reserve("raw", "ns", 32, crate::QueryMode::Demand)
+    else {
+        panic!("budget available")
+    };
+    reservation.ready(32).unwrap();
+    reservation.restoring();
+    let (completion, result) = oneshot::channel();
+    let planned_source = crate::RestoreSource::Memory(Arc::clone(&source));
+    let plan = RestorePlan::new(0, [(0, &planned_source)]).unwrap();
+    drop(planned_source);
+    let task = LoadTask {
+        plan,
+        payload: LoadPayload::Raw {
+            copies,
+            sources: vec![source],
+        },
+        completion,
+        reservations: vec![reservation],
+        codec_budget: 0,
+    };
+    let (entered_tx, entered_rx) = std_mpsc::channel();
+    let (release_tx, release_rx) = std_mpsc::channel();
+    let (submitted_tx, submitted_rx) = std_mpsc::channel();
+    let (sender, receiver) = mpsc::unbounded_channel();
+    sender
+        .send(WorkerCommand::Load(task, Observation::disabled()))
+        .unwrap();
+    drop(sender);
+    let worker = std::thread::spawn(move || {
+        let mut runtime = init_worker(0, TransferMode::Direct).unwrap();
+        runtime.backend = Box::new(PartialBackend {
+            gate: Mutex::new(Some(Gate {
+                entered: entered_tx,
+                release: release_rx,
+            })),
+            submitted: submitted_tx,
+        });
+        worker_loop(0, receiver, runtime);
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    submitted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    drop(result);
+    let retained = weak.upgrade().is_some();
+    let charged = matches!(
+        budget.reserve("raw", "ns", 1, crate::QueryMode::Demand),
+        crate::QueryAdmission::Busy
+    );
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
+    assert!(
+        retained,
+        "dropping the completion receiver must not release active raw sources"
+    );
+    assert!(
+        charged,
+        "submitted DMA must retain its query byte reservation"
+    );
+    assert!(weak.upgrade().is_none());
+    assert!(matches!(
+        budget.reserve("raw", "ns", 32, crate::QueryMode::Demand),
+        crate::QueryAdmission::Admitted(_)
+    ));
+    assert_eq!(stream.clone_dtoh(&target).unwrap(), vec![0x5a; 32]);
 }

@@ -8,7 +8,10 @@ publishes terminal results into the shared completion mapping. The payload pool
 now uses size-sealed memfd backing for regular and reserved huge-page policies;
 private mappings and the `cudaHostAlloc` allocation branch have been removed.
 Source preparation and pointer-free geometry now have separate owners, consumed
-by the current Manager worker path. An engine-local executor, payload-arena
+by the current Manager worker path. Raw resident plans compile directly into
+copy descriptors and retain each selected leased source once through GPU drain;
+the worker no longer needs layer/block source expansion for that route.
+An engine-local executor, payload-arena
 grants, and the protocol described below are **not implemented**. The implementation sequence is tracked in
 [the communication plan](communication-plan.md).
 
@@ -30,8 +33,10 @@ The existing ownership behavior provides the starting point:
 
 - [Engine restore](../crates/orbitkv-core/src/engine/restore.rs) consumes query
   leases atomically in a batch, prepares topology/group/slot ownership without
-  GPU addresses, then binds prevalidated local destinations and submits a
-  `LoadTask`. Invalid preparation does not consume any valid lease share.
+  GPU addresses, then binds prevalidated local destinations. Raw resident
+  sources produce an owned copy-descriptor batch; encoded/SSD/mixed routes keep
+  the layer metadata their workers need. Invalid preparation does not consume
+  any valid lease share.
 - [Query leases](../crates/orbitkv-core/src/query/lease.rs) transfer source
   references and `QueryReservation` into the task. Lease expiry and session
   cleanup apply to leases still in the lease table.

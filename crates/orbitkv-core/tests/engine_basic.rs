@@ -231,6 +231,75 @@ async fn save_query_load_roundtrip_split_storage() {
     env.data().assert_gpu_matches_expected();
 }
 
+/// Descriptor sorting must preserve each lease's source/destination association,
+/// including skipped blocks and separate K/V regions with different bytes.
+#[tokio::test]
+async fn split_restore_permuted_leases_preserve_sources_and_skipped_pages() {
+    const SEGMENT: usize = 512;
+    const STRIDE: usize = 8192;
+    let env = TestEnvBuilder::new("test-split-permutation", "test-ns")
+        .split_layer("layer_0", 8, SEGMENT, STRIDE)
+        .build();
+    let hashes = env.hashes(0);
+    let mut original = env.data().expected_bytes().to_vec();
+    for byte in &mut original[STRIDE..] {
+        *byte += 64;
+    }
+    // SAFETY: this test owns the registered GPU allocation, the source covers
+    // its complete extent, and this synchronous call finishes before saving.
+    let result = unsafe {
+        cudarc::driver::sys::cuMemcpyHtoD_v2(
+            env.data().ptr(),
+            original.as_ptr().cast(),
+            original.len(),
+        )
+    };
+    assert_eq!(result, cudarc::driver::sys::cudaError_enum::CUDA_SUCCESS);
+    env.save_and_wait(&hashes).await;
+    env.data().zero_gpu();
+    let first = env.assert_all_hit_lease(&hashes[..4]).await;
+    let second = env.assert_all_hit_lease(&hashes[4..]).await;
+    let destinations = [
+        Some(6),
+        None,
+        Some(2),
+        Some(0),
+        Some(7),
+        Some(5),
+        Some(1),
+        Some(3),
+    ];
+    env.engine
+        .restore(
+            &env.instance_id,
+            0,
+            0,
+            &[vec!["layer_0"]],
+            &[
+                (first, vec![destinations[..4].to_vec()]),
+                (second, vec![destinations[4..].to_vec()]),
+            ],
+        )
+        .expect("submit permuted leases")
+        .await
+        .expect("worker outcome")
+        .result
+        .expect("restore permuted leases");
+
+    let mut expected = vec![0; original.len()];
+    for (source, destination) in destinations.into_iter().enumerate() {
+        if let Some(destination) = destination {
+            for region in [0, STRIDE] {
+                expected[region + destination * SEGMENT..region + (destination + 1) * SEGMENT]
+                    .copy_from_slice(
+                        &original[region + source * SEGMENT..region + (source + 1) * SEGMENT],
+                    );
+            }
+        }
+    }
+    env.data().assert_gpu_matches(&expected);
+}
+
 /// Kernel backend round-trip over real mapped pinned allocations.
 ///
 /// Split storage exercises both K and V segment descriptors, so this covers the
