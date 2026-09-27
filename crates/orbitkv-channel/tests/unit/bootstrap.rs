@@ -25,11 +25,17 @@ fn bootstrap_passes_arena_and_notification_descriptors() {
             assert_eq!(session.credentials().uid, geteuid().as_raw());
             assert!(session.credentials().pid > 0);
             session.notify().unwrap();
+            rustix::io::write(
+                session.reply_notification_fd().as_ref(),
+                &1u64.to_ne_bytes(),
+            )
+            .unwrap();
             session
         })
     };
 
     let client = BootstrapClient::connect(&path).unwrap();
+    let session = server_thread.join().unwrap();
     assert_eq!(client.info().session_epoch, 29);
     assert_eq!(client.info().service_name, "orbitkv/test/bootstrap");
     assert_ne!(client.info().client_token, 0);
@@ -38,6 +44,27 @@ fn bootstrap_passes_arena_and_notification_descriptors() {
             .wait_for_notification(Duration::from_secs(1))
             .unwrap()
     );
+    // Consuming Restore completion notifications must not steal Publish wakes.
+    let mut notification = [0u8; 8];
+    assert_eq!(
+        rustix::io::read(client.reply_notification_fd(), &mut notification).unwrap(),
+        8
+    );
+    assert_eq!(u64::from_ne_bytes(notification), 1);
+    assert!(!client.wait_for_notification(Duration::ZERO).unwrap());
+    // The reverse direction is independent too when one ChannelClient mixes
+    // an outstanding Restore with a Publish command.
+    session.notify().unwrap();
+    rustix::io::write(
+        session.reply_notification_fd().as_ref(),
+        &1u64.to_ne_bytes(),
+    )
+    .unwrap();
+    assert_eq!(
+        rustix::io::read(client.reply_notification_fd(), &mut notification).unwrap(),
+        8
+    );
+    assert!(client.wait_for_notification(Duration::ZERO).unwrap());
     let descriptor = client.write_request(b"query").unwrap();
     assert_eq!(
         server.descriptor_slot(descriptor.offset).unwrap(),
@@ -52,7 +79,7 @@ fn bootstrap_passes_arena_and_notification_descriptors() {
     assert_eq!(response.generation, descriptor.generation + 1);
 
     drop(client);
-    server_thread.join().unwrap();
+    drop(session);
 }
 
 #[test]

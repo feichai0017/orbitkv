@@ -12,6 +12,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from argparse import Namespace
 from pathlib import Path
@@ -70,14 +71,54 @@ def server(
             raise TimeoutError(f"Server startup timed out: {log}")
         yield process
     finally:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
-        try:
-            process.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=10)
+        stop_owned_process(process)
+
+
+def stop_owned_process(process: subprocess.Popen) -> None:
+    """Reap the service before callers can release exported GPU allocations."""
+    interrupted = False
+
+    def defer_interrupt(signum, frame):
+        nonlocal interrupted
+        interrupted = True
+
+    previous = signal.getsignal(signal.SIGINT)
+    defer_sigint = (
+        threading.current_thread() is threading.main_thread() and previous != signal.SIG_IGN
+    )
+    if defer_sigint:
+        signal.signal(signal.SIGINT, defer_interrupt)
+    graceful = True
+    warned = False
+    try:
+        while True:
+            try:
+                # Sending SIGKILL is a request, not evidence that a process stuck
+                # in a driver has exited. Keep this scope alive until wait reaps it.
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGTERM if graceful else signal.SIGKILL)
+                process.wait(timeout=30 if graceful else 10)
+                break
+            except subprocess.TimeoutExpired:
+                if not graceful and not warned:
+                    with contextlib.suppress(OSError, ValueError):
+                        print(
+                            f"Waiting for killed service {process.pid} to exit; GPU owners remain held",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    warned = True
+                graceful = False
+            except KeyboardInterrupt:
+                # Also covers a wait interrupted outside the main thread or an
+                # exception raised by a custom wait implementation.
+                interrupted = True
+                graceful = False
+    finally:
+        if defer_sigint:
+            signal.signal(signal.SIGINT, previous)
+    if interrupted:
+        raise KeyboardInterrupt
 
 
 def storage_manifest(pid: int, cache_path: Path) -> dict:

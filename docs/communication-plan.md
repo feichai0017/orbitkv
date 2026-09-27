@@ -27,6 +27,27 @@ require clients and Managers from the same revision; retired wire decoders and
 runtime implementation selectors are removed. Performance controls run the
 baseline revision in a separate checkout with matched workloads and budgets.
 
+### Request dispatch and encoding
+
+A required iceoryx2 request event wakes the Manager after a command is enqueued.
+The Manager clears stale events, briefly spins on the request queue, then waits
+until an event or its next maintenance deadline. The fixed 50 us idle sleep is removed;
+notification failure after enqueue never permits early Publish source reuse.
+Ordinary replies remain on the request/response queue. A dedicated per-session
+reply eventfd wakes Publish after its response is queued; the client waits on
+that FD and the Manager pidfd instead of sleeping for 100 us. Restore completion
+keeps its separate eventfd so the two waiters cannot consume each other's wakes.
+Bootstrap version 4 and channel ABI 7
+reject previous clients rather than retaining a runtime polling mode.
+
+Request encoding uses exact payload sizes. Oversized Publish requests are
+partitioned by their encoded lengths and encoded from borrowed block ranges,
+without repeatedly cloning and encoding binary-search candidates. Each channel
+still owns one descriptor slot, so its request/response lock remains necessary.
+
+The [measured local comparison](communication-performance.md) records matched
+Query, Publish, Restore and raw IPC latency with CPU accounting.
+
 ### Shared restore completions
 
 Restore submission still uses the authenticated iceoryx2 command channel.
@@ -146,6 +167,7 @@ epochs, acknowledgements, native prerequisites and source-control cutover.
 
 | Step | Deliverable | Remove at cutover | Acceptance |
 | --- | --- | --- | --- |
+| Completed: local dispatch | Required request event, bounded spin before sleep and independent Publish reply eventfd | Fixed Manager 50 us idle poll, Publish 100 us reply sleep and forwarding descriptor helpers | Microbenchmarks with CPU/latency, process-boundary wake races, Publish faults and independent notification counters |
 | Completed: local completion | Shared terminal records and direct eventfd signal | Terminal Poll command, dispatcher restore scan, retired timeline decoder | Cross-process results, stale IDs, missing notifications, real GPU faults |
 | Completed: payload backing | Shared memfd for every pool shard | Private anonymous and `cudaHostAlloc` pool paths, `cpu_readable` plumbing | FD transfer, independent registration and GPU bytes after producer mapping teardown |
 | Completed: peer lookahead | One active READ plus one next authorization | Sequential runtime selector | Prefix integrity, cancelled/lost grants, release pressure, real multi-segment TENT bytes |

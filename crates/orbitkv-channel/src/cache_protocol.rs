@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use orbitkv_state::{RecoveryDemand, TokenRange};
 use thiserror::Error;
 
@@ -108,7 +110,7 @@ impl QueryCommand {
 
 impl CancelQueryRequest {
     pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
-        let mut bytes = Vec::new();
+        let mut bytes = Vec::with_capacity(24);
         push_u32(&mut bytes, CANCEL_QUERY_MAGIC);
         push_u16(&mut bytes, QUERY_VERSION);
         push_u16(&mut bytes, 0);
@@ -148,7 +150,24 @@ pub struct RestoreRequest {
 impl RestoreRequest {
     pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
         let instance = self.instance_id.as_bytes();
-        let mut bytes = Vec::with_capacity(RESTORE_HEADER_BYTES + instance.len());
+        let mut size = RESTORE_HEADER_BYTES;
+        add_encoded_size(&mut size, instance.len(), 1)?;
+        for group in &self.layer_groups {
+            add_encoded_size(&mut size, 1, 4)?;
+            for layer in group {
+                add_encoded_size(&mut size, 1, 4)?;
+                add_encoded_size(&mut size, layer.len(), 1)?;
+            }
+        }
+        for load in &self.loads {
+            add_encoded_size(&mut size, 1, 8)?;
+            add_encoded_size(&mut size, load.lease.len(), 1)?;
+            for targets in &load.block_ids_by_group {
+                add_encoded_size(&mut size, 1, 4)?;
+                add_encoded_size(&mut size, targets.len(), 4)?;
+            }
+        }
+        let mut bytes = Vec::with_capacity(size);
         push_u32(&mut bytes, RESTORE_REQUEST_MAGIC);
         push_u16(&mut bytes, QUERY_VERSION);
         push_u16(&mut bytes, 0);
@@ -337,9 +356,49 @@ pub struct PublishRequest {
 
 impl PublishRequest {
     pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+        self.encode_range(None)
+    }
+
+    pub(crate) fn encoded_len(
+        &self,
+        range: Option<Range<usize>>,
+    ) -> Result<usize, QueryCodecError> {
         validate_publish_layers(&self.layers)?;
+        checked_u32(self.instance_id.len(), "instance_id")?;
+        checked_u32(self.layers.len(), "layers")?;
+        let mut size = PUBLISH_HEADER_BYTES;
+        add_encoded_size(&mut size, self.instance_id.len(), 1)?;
+        for layer in &self.layers {
+            let selected = match &range {
+                Some(range) => {
+                    let end = range.end.min(layer.block_ids.len());
+                    if range.start >= end {
+                        continue;
+                    }
+                    range.start..end
+                }
+                None => 0..layer.block_ids.len(),
+            };
+            checked_u32(layer.layer_name.len(), "layer_name")?;
+            checked_u32(selected.len(), "block_ids")?;
+            add_encoded_size(&mut size, 1, 8)?;
+            add_encoded_size(&mut size, layer.layer_name.len(), 1)?;
+            add_encoded_size(&mut size, selected.len(), 8)?;
+            for hash in &layer.block_hashes[selected] {
+                checked_u32(hash.len(), "block_hash")?;
+                add_encoded_size(&mut size, hash.len(), 1)?;
+            }
+        }
+        Ok(size)
+    }
+
+    pub(crate) fn encode_range(
+        &self,
+        range: Option<Range<usize>>,
+    ) -> Result<Vec<u8>, QueryCodecError> {
+        let size = self.encoded_len(range.clone())?;
         let instance = self.instance_id.as_bytes();
-        let mut bytes = Vec::with_capacity(PUBLISH_HEADER_BYTES + instance.len());
+        let mut bytes = Vec::with_capacity(size);
         push_u32(&mut bytes, PUBLISH_REQUEST_MAGIC);
         push_u16(&mut bytes, QUERY_VERSION);
         push_u16(&mut bytes, 0);
@@ -347,20 +406,53 @@ impl PublishRequest {
         push_u32(&mut bytes, self.pp_rank);
         push_i32(&mut bytes, self.device_id);
         push_u32(&mut bytes, checked_u32(instance.len(), "instance_id")?);
-        push_u32(&mut bytes, checked_u32(self.layers.len(), "layers")?);
+        let layer_count = self
+            .layers
+            .iter()
+            .filter(|layer| {
+                range
+                    .as_ref()
+                    .is_none_or(|range| range.start < range.end.min(layer.block_ids.len()))
+            })
+            .count();
+        push_u32(&mut bytes, checked_u32(layer_count, "layers")?);
         bytes.extend_from_slice(instance);
         for layer in &self.layers {
+            let selected = match &range {
+                Some(range) => {
+                    let end = range.end.min(layer.block_ids.len());
+                    if range.start >= end {
+                        continue;
+                    }
+                    range.start..end
+                }
+                None => 0..layer.block_ids.len(),
+            };
             let name = layer.layer_name.as_bytes();
             push_u32(&mut bytes, checked_u32(name.len(), "layer_name")?);
-            push_u32(&mut bytes, checked_u32(layer.block_ids.len(), "block_ids")?);
+            push_u32(&mut bytes, checked_u32(selected.len(), "block_ids")?);
             bytes.extend_from_slice(name);
-            for (block_id, hash) in layer.block_ids.iter().zip(&layer.block_hashes) {
+            for (block_id, hash) in layer.block_ids[selected.clone()]
+                .iter()
+                .zip(&layer.block_hashes[selected])
+            {
                 push_u32(&mut bytes, *block_id);
                 push_u32(&mut bytes, checked_u32(hash.len(), "block_hash")?);
                 bytes.extend_from_slice(hash);
             }
         }
         Ok(bytes)
+    }
+
+    pub(crate) fn block_payload_len(&self, index: usize) -> Result<usize, QueryCodecError> {
+        let mut size = 0;
+        for layer in &self.layers {
+            if let Some(hash) = layer.block_hashes.get(index) {
+                add_encoded_size(&mut size, 1, 8)?;
+                add_encoded_size(&mut size, hash.len(), 1)?;
+            }
+        }
+        Ok(size)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
@@ -494,16 +586,18 @@ impl QueryBundleRequest {
         }
         let instance = self.instance_id.as_bytes();
         let request = self.request_id.as_bytes();
-        let mut bytes = Vec::with_capacity(
-            REQUEST_HEADER_BYTES
-                + instance.len()
-                + request.len()
-                + self
-                    .block_hashes
-                    .iter()
-                    .map(|hash| 4 + hash.len())
-                    .sum::<usize>(),
-        );
+        let mut size = REQUEST_HEADER_BYTES;
+        add_encoded_size(&mut size, instance.len(), 1)?;
+        add_encoded_size(&mut size, request.len(), 1)?;
+        add_encoded_size(&mut size, self.block_hashes.len(), 4)?;
+        for hash in &self.block_hashes {
+            add_encoded_size(&mut size, hash.len(), 1)?;
+        }
+        if let Some(demand) = &self.demand {
+            add_encoded_size(&mut size, 1, 28)?;
+            add_encoded_size(&mut size, demand.groups.len(), 20)?;
+        }
+        let mut bytes = Vec::with_capacity(size);
         push_u32(&mut bytes, QUERY_REQUEST_MAGIC);
         push_u16(&mut bytes, QUERY_VERSION);
         push_u16(
@@ -852,6 +946,18 @@ impl<'a> Decoder<'a> {
 
 fn checked_u32(value: usize, field: &'static str) -> Result<u32, QueryCodecError> {
     u32::try_from(value).map_err(|_| QueryCodecError::FieldTooLarge { field, len: value })
+}
+
+fn add_encoded_size(size: &mut usize, count: usize, width: usize) -> Result<(), QueryCodecError> {
+    *size = count
+        .checked_mul(width)
+        .and_then(|bytes| size.checked_add(bytes))
+        .filter(|bytes| isize::try_from(*bytes).is_ok())
+        .ok_or(QueryCodecError::FieldTooLarge {
+            field: "payload",
+            len: usize::MAX,
+        })?;
+    Ok(())
 }
 
 fn push_u16(bytes: &mut Vec<u8>, value: u16) {

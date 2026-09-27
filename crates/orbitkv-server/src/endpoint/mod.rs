@@ -30,7 +30,6 @@ use crate::cache::operations::{
     execute_publish, execute_release, execute_restore,
 };
 
-const IDLE_POLL_INTERVAL: Duration = Duration::from_micros(50);
 const BOOTSTRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LIVENESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 #[derive(Debug, Error)]
@@ -157,12 +156,17 @@ impl ProcessEndpoint {
                             shutdown.notify_waiters();
                             break;
                         }
-                        Ok(true) => {}
-                        Ok(false) => thread::sleep(IDLE_POLL_INTERVAL),
-                        Err(error) => {
-                            error!("Process channel request failed: {error}");
-                            thread::sleep(IDLE_POLL_INTERVAL);
-                        }
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(error) => error!("Process channel request failed: {error}"),
+                    }
+                    let maintenance = next_bootstrap_poll.min(next_liveness_poll);
+                    if let Err(error) = server
+                        .wait_for_request(maintenance.saturating_duration_since(Instant::now()))
+                    {
+                        error!("Process channel request wait failed: {error}");
+                        shutdown.notify_waiters();
+                        break;
                     }
                 }
                 info!("Process channel endpoint stopped: service={thread_service}");
@@ -422,15 +426,22 @@ fn dispatch_publish(
     runtime: &Handle,
     reply: DeferredResponse,
 ) -> Result<(), TransportError> {
+    let reply_notification = sessions
+        .get(&command.arg0)
+        .map(|session| Arc::clone(session.reply_notification_fd()));
+    let send_reply = move |response| match reply_notification.as_deref() {
+        Some(notification) => reply.send_and_notify(response, notification),
+        None => reply.send(response),
+    };
     let mut response = Response::ok(command);
     response.value1 = 0;
     let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
         Ok(payload) => payload,
-        Err(response) => return reply.send(response),
+        Err(response) => return send_reply(response),
     };
     let request = match ChannelPublishRequest::decode(&payload) {
         Ok(request) => request,
-        Err(error) => return reply.send(error_response(response, StatusCode::Invalid, &error)),
+        Err(error) => return send_reply(error_response(response, StatusCode::Invalid, &error)),
     };
     let layers = request
         .layers
@@ -444,7 +455,7 @@ fn dispatch_publish(
     match bootstrap.arena().write_response(command.descriptor, &[]) {
         Ok(descriptor) => response.descriptor = descriptor,
         Err(error) => {
-            return reply.send(error_response(response, arena_error_status(&error), &error));
+            return send_reply(error_response(response, arena_error_status(&error), &error));
         }
     }
     let engine = Arc::clone(engine);
@@ -469,7 +480,7 @@ fn dispatch_publish(
         if orbitkv_core::test_faults::active("publish_ack") {
             response.value1 = 0;
         }
-        if let Err(error) = reply.send(response) {
+        if let Err(error) = send_reply(response) {
             error!("Failed to reply to completed publish: {error}");
         }
     });

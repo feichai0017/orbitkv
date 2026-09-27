@@ -42,8 +42,13 @@ Each cache client gets a query/restore iceoryx2 endpoint and opens a separate
 publish endpoint on its first save. The Cache Manager exclusively
 creates and owns the server endpoint; clients only open it. The endpoint uses
 iceoryx2's thread-safe IPC service because the server owns it on a dedicated
-control thread. Calls spin only for a bounded number of iterations and then
-yield. The server uses a short idle sleep instead of consuming a core. The
+control thread. Ordinary calls spin for a bounded number of iterations and
+then yield; Publish has a separate blocking reply wait. Every channel has a required companion iceoryx2 request event service.
+Clients enqueue before notifying; the Manager briefly spins on the request
+queue before sleeping on that event until its next maintenance deadline.
+Expired deadlines return without entering the socket wait. The fixed 50 us idle sleep is removed. Notifications are hints, not request ownership or DMA
+completion: a failed notification after enqueue never releases Publish sources.
+Maintenance also rechecks the queue if a notification is lost. The
 measurements below are historical baselines, not a latency guarantee for this
 revision.
 UDS remains necessary for bootstrap, `SO_PEERCRED`, memfd/eventfd passing, and
@@ -51,13 +56,16 @@ process-death detection.
 
 The Cache Manager process endpoint supports `Ping`, `QueryBundle`,
 stale-session fencing, and `Shutdown`. `ChannelClient` obtains the service
-identity, an exclusive arena slot, a client token, descriptor and restore-result memfds, and a
-notification eventfd through a mode-0600 Unix socket. `SO_PEERCRED` restricts the
+identity, an exclusive arena slot and a client token through a mode-0600 Unix
+socket. Bootstrap passes four FDs: descriptor and restore-result memfds, a
+restore-completion eventfd and a Publish-reply eventfd. `SO_PEERCRED` restricts the
 bootstrap to the Cache Manager's uid. Each request has an odd generation and each
 response advances it by one; reconnecting to a reused slot starts beyond the
 prior generation, so delayed commands cannot target a new occupant. Both memfds
-are sealed against growth and shrinking. The eventfd wakes clients when an
-asynchronous restore reaches a terminal state; ordinary control responses still
+are sealed against growth and shrinking. The restore eventfd wakes clients when an
+asynchronous restore reaches a terminal state. A separate reply eventfd wakes
+Publish waiters after their iceoryx2 response is queued. Restore and Publish
+never consume the same notification counter; ordinary control responses still
 arrive through iceoryx2's request/response channel.
 
 `QueryBundle` has a framework-neutral binary schema for instance identity,
@@ -69,7 +77,10 @@ without gRPC. Publish now retains its iceoryx2 reply handle while the core save
 runs on Tokio. The dispatcher can serve other requests during D2H, but the
 caller still waits: success means D2H copies have completed and host
 publication has been queued. A later query observes the blocks after the write
-pipeline seals them. `Restore` submits
+pipeline seals them. After bounded spinning, Publish waits on its reply eventfd
+and the Manager pidfd rather than sleeping for 100 us. The response queue is
+authoritative; a 10 ms recheck recovers a missing notification without releasing
+source pages early. `Restore` submits
 the existing in-process GPU load and returns an operation ID. A task awaits the
 worker's drained outcome, publishes a shared result, then signals the session's
 eventfd. The dispatcher no longer scans restores to discover completion. The native Python
@@ -98,7 +109,7 @@ scheduler topology this requires all configured TP shards to be on the scheduler
 host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
-returns `Loading`. Channel ABI 6 retains separate query submission and ticket polling
+returns `Loading`. Channel ABI 7 retains separate query submission and ticket polling
 and uses shared restore results.
 Query schema 5 distinguishes metadata-only discovery from leased payload reads
 and marks selected recovery reads so HLL counts the logical discovery only once.
@@ -181,7 +192,9 @@ the manager terminates instead of publishing a terminal result and recycling
 potentially active memory. This is a transfer lifetime fence; allocator-owned
 per-page generations and graceful cancellation remain separate work.
 
-The bootstrap protocol is version 3, passing three FDs. After FD exchange, its UDS also carries
+The bootstrap protocol is version 4, passing four FDs: the descriptor memfd,
+restore-completion memfd, restore eventfd and Publish reply eventfd. After FD
+exchange, its UDS also carries
 versioned, epoch-checked lifecycle frames with a 16 MiB metadata limit. These
 frames reuse the registration protobuf schema without a gRPC channel or HTTP/2.
 Malformed frames close the connection; application errors preserve framing.
@@ -199,6 +212,10 @@ workers before service exit.
 
 ## Measured process-channel baseline
 
+The [current communication measurements](communication-performance.md) compare
+request events, Publish reply notification and encoding changes against the
+preceding revision, including CPU cost and raw-ping regressions.
+
 Measurements were collected on one H20 node with two Linux processes and a
 64-byte request/response descriptor, before bootstrap version 2. They are
 engineering evidence for the transport choice, not measurements of this
@@ -210,11 +227,11 @@ revision or end-to-end serving results.
 | real Python/PyO3 local `QueryBundle` | 106.861 us | 107.404 us | 114.390 us | 120.635 us | 9,358 |
 | real Python/PyO3 gRPC `QueryBundle` | 489.575 us | 485.715 us | 547.946 us | 635.653 us | 2,043 |
 
-The real local path is about 4.58x faster than gRPC by both mean RTT and
-sequential throughput. Its roughly 107 us RTT is still far above the 4 us
-iceoryx2 substrate, so the next local optimization target is descriptor
-encode/decode, Python/PyO3 crossings, and the Cache Manager's 50 us idle poll, not a
-replacement IPC library. The benchmark is sequential because the scheduler
+In that historical run, the real local path was about 4.58x faster than gRPC by
+both mean RTT and sequential throughput. Its roughly 107 us RTT was far above
+the 4 us iceoryx2 substrate. The current request event removes the fixed 50 us
+idle poll, and request encoding removes repeated allocation and speculative
+Publish chunk copies. The benchmark is sequential because the scheduler
 needs one answer before committing a recovery boundary.
 
 The iceoryx2 result can be reproduced with the two binaries documented in

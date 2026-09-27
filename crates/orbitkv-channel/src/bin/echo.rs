@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::time::Duration;
 
 use orbitkv_channel::{CommandCode, Response, StatusCode, TransportServer};
 
@@ -27,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             response
         })? {
-            std::thread::yield_now();
+            server.wait_for_request(Duration::from_millis(10))?;
         }
     }
     Ok(())

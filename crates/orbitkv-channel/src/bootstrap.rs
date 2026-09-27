@@ -20,10 +20,10 @@ use thiserror::Error;
 use crate::{ArenaError, CompletionError, DescriptorArena, DescriptorRef, RestoreCompletions};
 
 const BOOTSTRAP_MAGIC: u32 = 0x4f52_4242; // ORBB
-// Version 3 adds a session-owned restore completion memfd.
-const BOOTSTRAP_VERSION: u16 = 3;
+// Version 4 requires request doorbells and a separate Publish reply eventfd.
+const BOOTSTRAP_VERSION: u16 = 4;
 const BOOTSTRAP_BYTES: usize = 256;
-const BOOTSTRAP_FD_COUNT: usize = 3;
+const BOOTSTRAP_FD_COUNT: usize = 4;
 // Match the iceoryx2 client limit. Detached restore publishers also hold this
 // budget until completion, even after the bootstrap session disconnects.
 const MAX_COMPLETION_SESSIONS: usize = 64;
@@ -162,6 +162,13 @@ impl BootstrapServer {
                 return Err(std::io::Error::from(error).into());
             }
         };
+        let reply_notification = match eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK) {
+            Ok(notification) => Arc::new(notification),
+            Err(error) => {
+                self.release_slot(slot_index);
+                return Err(std::io::Error::from(error).into());
+            }
+        };
         let completions = match self.create_completions(client_token, notification) {
             Ok(completions) => completions,
             Err(error) => {
@@ -185,6 +192,7 @@ impl BootstrapServer {
             self.arena.file(),
             completions.notification_fd(),
             completions.file(),
+            reply_notification.as_ref(),
         ) {
             self.release_slot(slot_index);
             return Err(error);
@@ -197,6 +205,7 @@ impl BootstrapServer {
             stream,
             credentials,
             completions,
+            reply_notification,
             slot_index,
             client_token,
             next_request_generation: initial_generation,
@@ -309,6 +318,7 @@ impl SocketIdentity {
 
 pub struct BootstrapSession {
     completions: Arc<RestoreCompletions>,
+    reply_notification: Arc<std::os::fd::OwnedFd>,
     stream: UnixStream,
     credentials: PeerCredentials,
     slot_index: usize,
@@ -320,6 +330,10 @@ pub struct BootstrapSession {
 impl BootstrapSession {
     pub fn completions(&self) -> &Arc<RestoreCompletions> {
         &self.completions
+    }
+
+    pub fn reply_notification_fd(&self) -> &Arc<std::os::fd::OwnedFd> {
+        &self.reply_notification
     }
 
     pub fn credentials(&self) -> PeerCredentials {
@@ -405,6 +419,7 @@ impl Drop for BootstrapSession {
 
 pub struct BootstrapClient {
     completions: RestoreCompletions,
+    reply_notification: std::os::fd::OwnedFd,
     stream: UnixStream,
     arena: DescriptorArena,
     info: BootstrapInfo,
@@ -435,6 +450,10 @@ impl BootstrapClient {
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         let (info, mut fds) = receive_bootstrap(&stream)?;
+        let reply_notification = fds.pop().ok_or(BootstrapError::FileDescriptorCount {
+            expected: BOOTSTRAP_FD_COUNT,
+            actual: 0,
+        })?;
         let completion_fd = fds.pop().ok_or(BootstrapError::FileDescriptorCount {
             expected: BOOTSTRAP_FD_COUNT,
             actual: 0,
@@ -459,6 +478,7 @@ impl BootstrapClient {
             arena,
             next_generation: Mutex::new(info.initial_generation),
             completions,
+            reply_notification,
             info,
         })
     }
@@ -481,6 +501,10 @@ impl BootstrapClient {
 
     pub fn notification_fd(&self) -> &std::os::fd::OwnedFd {
         self.completions.notification_fd()
+    }
+
+    pub(crate) fn reply_notification_fd(&self) -> &std::os::fd::OwnedFd {
+        &self.reply_notification
     }
 
     pub fn wait_for_notification(&self, timeout: Duration) -> Result<bool, BootstrapError> {
@@ -615,12 +639,14 @@ fn send_bootstrap(
     arena_fd: &impl std::os::fd::AsFd,
     notification_fd: &impl std::os::fd::AsFd,
     completion_fd: &impl std::os::fd::AsFd,
+    reply_notification_fd: &impl std::os::fd::AsFd,
 ) -> Result<(), BootstrapError> {
     let payload = encode_info(info)?;
     let borrowed = [
         arena_fd.as_fd(),
         notification_fd.as_fd(),
         completion_fd.as_fd(),
+        reply_notification_fd.as_fd(),
     ];
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(BOOTSTRAP_FD_COUNT))];
     let mut control = SendAncillaryBuffer::new(&mut space);

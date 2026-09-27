@@ -2,6 +2,8 @@ use std::os::fd::OwnedFd;
 use std::time::{Duration, Instant};
 
 use iceoryx2::active_request::ActiveRequest;
+use iceoryx2::port::listener::{Listener, ListenerWaitError};
+use iceoryx2::port::notifier::Notifier;
 use iceoryx2::prelude::*;
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use thiserror::Error;
@@ -67,6 +69,7 @@ pub enum TransportError {
 
 pub struct TransportClient {
     client: IpcClient,
+    request_notifier: Notifier<ThreadSafeIpcService>,
     _service: IpcService,
     _node: iceoryx2::node::Node<ThreadSafeIpcService>,
 }
@@ -90,8 +93,24 @@ impl TransportClient {
             .client_builder()
             .create()
             .map_err(|error| TransportError::Port(error.to_string()))?;
+        let request_name: ServiceName = format!("{service_name}/requests")
+            .as_str()
+            .try_into()
+            .map_err(|error: iceoryx2::service::service_name::ServiceNameError| {
+                TransportError::InvalidServiceName(error.to_string())
+            })?;
+        let request_events = node
+            .service_builder(&request_name)
+            .event()
+            .open()
+            .map_err(|error| TransportError::Service(error.to_string()))?;
+        let request_notifier = request_events
+            .notifier_builder()
+            .create()
+            .map_err(|error| TransportError::Port(error.to_string()))?;
         Ok(Self {
             client,
+            request_notifier,
             _service: service,
             _node: node,
         })
@@ -109,27 +128,42 @@ impl TransportClient {
         command: Command,
         options: CallOptions,
         peer: &OwnedFd,
+        reply_notification: &OwnedFd,
     ) -> Result<Response, TransportError> {
-        self.call_inner(command, options, Some(peer))
+        self.call_inner(command, options, Some((peer, reply_notification)))
     }
 
     fn call_inner(
         &self,
         command: Command,
         options: CallOptions,
-        peer: Option<&OwnedFd>,
+        publish: Option<(&OwnedFd, &OwnedFd)>,
     ) -> Result<Response, TransportError> {
         let pending = self
             .client
             .send_copy(command.encode())
             .map_err(|error| TransportError::Send(error.to_string()))?;
+        // The request is already submitted. A missed doorbell cannot return a
+        // pre-submission error or let a Publish caller release its GPU pages.
+        // Manager maintenance also rechecks the queue, independently of wakes.
+        match self.request_notifier.notify() {
+            Ok(0) => log::warn!(
+                "request {} is queued but its Manager notification has no listener",
+                command.request_id
+            ),
+            Ok(_) => {}
+            Err(error) => log::warn!(
+                "request {} is queued but its Manager notification failed: {error}",
+                command.request_id
+            ),
+        }
         let started = Instant::now();
-        let deadline = peer.is_none().then(|| started + options.timeout);
+        let deadline = publish.is_none().then(|| started + options.timeout);
         let mut next_warning = started + options.timeout;
-        let mut next_peer_check = Instant::now();
+        let mut peer_gone = false;
         let mut spins = 0;
         loop {
-            if peer.is_some() && Instant::now() >= next_warning {
+            if publish.is_some() && Instant::now() >= next_warning {
                 log::warn!(
                     "publish request {} is still pending after {:?}; retaining source pages until completion or Cache Manager exit",
                     command.request_id,
@@ -158,15 +192,12 @@ impl TransportClient {
                 }
                 return Ok(response);
             }
-            if let Some(peer) = peer
-                && Instant::now() >= next_peer_check
-            {
-                if peer_exited(peer)? {
-                    return Err(TransportError::PeerExited {
-                        request_id: command.request_id,
-                    });
-                }
-                next_peer_check = Instant::now() + Duration::from_millis(10);
+            // A response queued before Manager exit is still authoritative.
+            // Always inspect it before acting on the previous poll's pidfd.
+            if peer_gone {
+                return Err(TransportError::PeerExited {
+                    request_id: command.request_id,
+                });
             }
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 return Err(TransportError::Timeout {
@@ -176,8 +207,44 @@ impl TransportClient {
             if spins < options.spin_iterations {
                 spins += 1;
                 std::hint::spin_loop();
-            } else if peer.is_some() {
-                std::thread::sleep(Duration::from_micros(100));
+            } else if let Some((peer, reply_notification)) = publish {
+                let mut fds = [
+                    PollFd::new(reply_notification, PollFlags::IN),
+                    PollFd::new(peer, PollFlags::IN),
+                ];
+                // Notifications are hints. A lost wake only delays the next
+                // response check; it cannot end Publish or release its pages.
+                let timeout = Timespec {
+                    tv_sec: 0,
+                    tv_nsec: 10_000_000,
+                };
+                match poll(&mut fds, Some(&timeout)) {
+                    Ok(_) => {}
+                    Err(rustix::io::Errno::INTR) => continue,
+                    Err(error) => return Err(TransportError::Receive(error.to_string())),
+                }
+                peer_gone = fds[1].revents().contains(PollFlags::IN);
+                if fds
+                    .iter()
+                    .any(|fd| fd.revents().intersects(PollFlags::ERR | PollFlags::NVAL))
+                {
+                    return Err(TransportError::Receive(
+                        "invalid Publish notification or Manager pidfd".to_string(),
+                    ));
+                }
+                if fds[0].revents().contains(PollFlags::IN) {
+                    let mut value = [0u8; 8];
+                    match rustix::io::read(reply_notification, &mut value) {
+                        Ok(8) => {}
+                        Err(rustix::io::Errno::AGAIN | rustix::io::Errno::INTR) => {}
+                        Ok(_) => {
+                            return Err(TransportError::Receive(
+                                "invalid Publish notification length".to_string(),
+                            ));
+                        }
+                        Err(error) => return Err(TransportError::Receive(error.to_string())),
+                    }
+                }
             } else {
                 std::thread::yield_now();
             }
@@ -208,6 +275,7 @@ fn peer_exited(peer: &OwnedFd) -> Result<bool, TransportError> {
 
 pub struct TransportServer {
     server: IpcServer,
+    request_listener: Listener<ThreadSafeIpcService>,
     _service: IpcService,
     _node: iceoryx2::node::Node<ThreadSafeIpcService>,
 }
@@ -221,6 +289,24 @@ impl DeferredResponse {
         self.0
             .send_copy(response.encode())
             .map_err(|error| TransportError::Send(error.to_string()))
+    }
+
+    /// Publish the response before waking its waiter. Notification failure is
+    /// not a send failure: the client also rechecks the response periodically.
+    pub fn send_and_notify(
+        self,
+        response: Response,
+        notification: &OwnedFd,
+    ) -> Result<(), TransportError> {
+        self.send(response)?;
+        match rustix::io::write(notification, &1u64.to_ne_bytes()) {
+            Ok(_) | Err(rustix::io::Errno::AGAIN) => {}
+            Err(error) => log::warn!(
+                "response {} is queued but its Publish notification failed: {error}",
+                response.request_id
+            ),
+        }
+        Ok(())
     }
 }
 
@@ -247,11 +333,69 @@ impl TransportServer {
             .server_builder()
             .create()
             .map_err(|error| TransportError::Port(error.to_string()))?;
+        let request_name: ServiceName = format!("{service_name}/requests")
+            .as_str()
+            .try_into()
+            .map_err(|error: iceoryx2::service::service_name::ServiceNameError| {
+                TransportError::InvalidServiceName(error.to_string())
+            })?;
+        let request_events = node
+            .service_builder(&request_name)
+            .event()
+            .max_nodes(65)
+            .max_notifiers(64)
+            .max_listeners(1)
+            .event_id_max_value(0)
+            .disable_notifier_created_event()
+            .disable_notifier_dropped_event()
+            .disable_notifier_dead_event()
+            .create()
+            .map_err(|error| TransportError::Service(error.to_string()))?;
+        let request_listener = request_events
+            .listener_builder()
+            .create()
+            .map_err(|error| TransportError::Port(error.to_string()))?;
         Ok(Self {
             server,
+            request_listener,
             _service: service,
             _node: node,
         })
+    }
+
+    /// Briefly spin for a hot producer, then sleep until a request doorbell or
+    /// the next maintenance deadline.
+    /// A wake is only a hint; callers always retry the authoritative request queue.
+    pub fn wait_for_request(&self, timeout: Duration) -> Result<(), TransportError> {
+        let started = Instant::now();
+        // Clear old/coalesced notifications before the queue check. A producer
+        // enqueues before notifying: arrivals before this check are visible in
+        // the queue, and later notifications persist through timed_wait.
+        match self.request_listener.try_wait(|_| {}) {
+            Ok(_) => {}
+            Err(ListenerWaitError::InterruptSignal) => return Ok(()),
+            Err(error) => return Err(TransportError::Receive(error.to_string())),
+        }
+        for _ in 0..64 {
+            if self
+                .server
+                .has_requests()
+                .map_err(|error| TransportError::Receive(error.to_string()))?
+            {
+                return Ok(());
+            }
+            std::hint::spin_loop();
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        // iceoryx2's Unix datagram wait truncates to SO_RCVTIMEO microseconds.
+        // A zero timeval disables that timeout and would block maintenance.
+        if remaining < Duration::from_micros(1) {
+            return Ok(());
+        }
+        match self.request_listener.timed_wait(|_| {}, remaining) {
+            Ok(_) | Err(ListenerWaitError::InterruptSignal) => Ok(()),
+            Err(error) => Err(TransportError::Receive(error.to_string())),
+        }
     }
 
     pub fn try_serve(

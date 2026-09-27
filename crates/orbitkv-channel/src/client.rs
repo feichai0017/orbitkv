@@ -69,7 +69,7 @@ impl ChannelClient {
             .stream()
             .set_write_timeout(Some(options.timeout))
             .map_err(BootstrapError::Io)?;
-        let client = TransportClient::connect(&bootstrap.info().service_name)?;
+        let client = TransportClient::connect(&bootstrap.info_ref().service_name)?;
         Ok(Self {
             bootstrap,
             client,
@@ -170,7 +170,7 @@ impl ChannelClient {
         request: &crate::QueryCommand,
     ) -> Result<QueryBundleResponse, ChannelError> {
         let payload = request.encode()?;
-        let payload = self.call_descriptor(CommandCode::QueryBundle, request_id, &payload)?;
+        let payload = self.call_descriptor(CommandCode::QueryBundle, request_id, &payload, None)?;
         match QueryBundleResponse::decode(&payload) {
             Ok(response) => Ok(response),
             Err(error) => {
@@ -186,13 +186,13 @@ impl ChannelClient {
         request: &crate::CancelQueryRequest,
     ) -> Result<(), ChannelError> {
         let payload = request.encode()?;
-        self.call_descriptor(CommandCode::CancelQuery, request_id, &payload)?;
+        self.call_descriptor(CommandCode::CancelQuery, request_id, &payload, None)?;
         Ok(())
     }
 
     pub fn release(&self, request_id: u64, lease: Vec<u8>) -> Result<(), ChannelError> {
         let payload = ReleaseRequest { lease }.encode()?;
-        let _ = self.call_descriptor(CommandCode::Release, request_id, &payload)?;
+        let _ = self.call_descriptor(CommandCode::Release, request_id, &payload, None)?;
         Ok(())
     }
 
@@ -205,8 +205,7 @@ impl ChannelClient {
         for payload in payloads {
             // One logical publish can use several descriptor generations.
             // Every chunk retains the source pages until its D2H completes.
-            let _ =
-                self.call_descriptor_with_peer(CommandCode::Publish, request_id, &payload, peer)?;
+            let _ = self.call_descriptor(CommandCode::Publish, request_id, &payload, Some(peer))?;
         }
         Ok(())
     }
@@ -217,7 +216,7 @@ impl ChannelClient {
         request: &RestoreRequest,
     ) -> Result<u64, ChannelError> {
         let payload = request.encode()?;
-        let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload)?;
+        let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload, None)?;
         let response = RestoreResponse::decode(&payload)?;
         match response.state {
             RestoreState::Pending => Ok(response.operation_id),
@@ -246,25 +245,6 @@ impl ChannelClient {
         code: CommandCode,
         request_id: u64,
         payload: &[u8],
-    ) -> Result<Vec<u8>, ChannelError> {
-        self.call_descriptor_inner(code, request_id, payload, None)
-    }
-
-    fn call_descriptor_with_peer(
-        &self,
-        code: CommandCode,
-        request_id: u64,
-        payload: &[u8],
-        peer: &OwnedFd,
-    ) -> Result<Vec<u8>, ChannelError> {
-        self.call_descriptor_inner(code, request_id, payload, Some(peer))
-    }
-
-    fn call_descriptor_inner(
-        &self,
-        code: CommandCode,
-        request_id: u64,
-        payload: &[u8],
         peer: Option<&OwnedFd>,
     ) -> Result<Vec<u8>, ChannelError> {
         let _call = self
@@ -275,7 +255,7 @@ impl ChannelClient {
             return Err(ChannelError::SessionRequiresReconnect);
         }
         let descriptor = self.bootstrap.write_request(payload)?;
-        let info = self.bootstrap.info();
+        let info = self.bootstrap.info_ref();
         let command = Command {
             code,
             request_id,
@@ -285,9 +265,12 @@ impl ChannelClient {
             arg1: 0,
         };
         let call = match peer {
-            Some(peer) => self
-                .client
-                .call_until_peer_exit(command, self.options, peer),
+            Some(peer) => self.client.call_until_peer_exit(
+                command,
+                self.options,
+                peer,
+                self.bootstrap.reply_notification_fd(),
+            ),
             None => self.client.call(command, self.options),
         };
         let response = match call {
@@ -342,9 +325,9 @@ fn publish_payloads(
     request: &PublishRequest,
     capacity: usize,
 ) -> Result<Vec<Vec<u8>>, ChannelError> {
-    let payload = request.encode()?;
-    if payload.len() <= capacity {
-        return Ok(vec![payload]);
+    let payload_len = request.encoded_len(None)?;
+    if payload_len <= capacity {
+        return Ok(vec![request.encode()?]);
     }
     let too_large = |len| {
         ChannelError::Bootstrap(BootstrapError::Arena(crate::ArenaError::PayloadTooLarge {
@@ -359,51 +342,28 @@ fn publish_payloads(
         .max()
         .unwrap_or(0);
     if block_count == 0 {
-        return Err(too_large(payload.len()));
+        return Err(too_large(payload_len));
     }
 
     let mut payloads = Vec::new();
     let mut start = 0;
     while start < block_count {
-        let mut low = start + 1;
-        let mut high = block_count;
-        let mut selected = None;
-        while low <= high {
-            let end = low + (high - low) / 2;
-            // Slice the same block range across layers so each completed
-            // chunk can seal full pages, including page-first registrations.
-            let layers = request
-                .layers
-                .iter()
-                .filter_map(|layer| {
-                    let end = end.min(layer.block_ids.len());
-                    (start < end).then(|| crate::PublishLayer {
-                        layer_name: layer.layer_name.clone(),
-                        block_ids: layer.block_ids[start..end].to_vec(),
-                        block_hashes: layer.block_hashes[start..end].to_vec(),
-                    })
-                })
-                .collect();
-            let chunk = PublishRequest {
-                instance_id: request.instance_id.clone(),
-                tp_rank: request.tp_rank,
-                pp_rank: request.pp_rank,
-                device_id: request.device_id,
-                layers,
-            }
-            .encode()?;
-            if chunk.len() <= capacity {
-                selected = Some((end, chunk));
-                low = end + 1;
-            } else {
-                if end == start + 1 {
-                    return Err(too_large(chunk.len()));
-                }
-                high = end - 1;
-            }
+        let mut end = start + 1;
+        let mut chunk_len = request.encoded_len(Some(start..end))?;
+        if chunk_len > capacity {
+            return Err(too_large(chunk_len));
         }
-        let (end, chunk) = selected.ok_or_else(|| too_large(payload.len()))?;
-        payloads.push(chunk);
+        // The first block accounts for every layer active at this start.
+        // Later blocks add only IDs/hashes; ragged layers can end, not join.
+        while end < block_count {
+            let block_len = request.block_payload_len(end)?;
+            if block_len > capacity - chunk_len {
+                break;
+            }
+            chunk_len += block_len;
+            end += 1;
+        }
+        payloads.push(request.encode_range(Some(start..end))?);
         start = end;
     }
     Ok(payloads)

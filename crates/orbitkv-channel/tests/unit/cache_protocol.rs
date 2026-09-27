@@ -296,3 +296,22 @@ fn candidate_hints_cannot_carry_leases_or_ambiguous_positions() {
         );
     }
 }
+
+#[test]
+fn encoded_size_rejects_overflow_without_changing_the_budget() {
+    for (initial, count, width) in [
+        (0, usize::MAX, 2),
+        (usize::MAX, 1, 1),
+        (isize::MAX as usize, 1, 1),
+    ] {
+        let mut size = initial;
+        assert!(matches!(
+            add_encoded_size(&mut size, count, width),
+            Err(QueryCodecError::FieldTooLarge {
+                field: "payload",
+                ..
+            })
+        ));
+        assert_eq!(size, initial);
+    }
+}
