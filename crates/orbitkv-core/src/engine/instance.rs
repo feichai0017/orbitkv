@@ -536,9 +536,9 @@ impl InstanceContext {
         for gpu in gpus() {
             for (name, layout) in &gpu.kv_caches {
                 let geometry = (
-                    layout.segment_bytes(),
-                    layout.is_split(),
-                    layout.padded_block_bytes(),
+                    layout.geometry().segment_bytes(),
+                    layout.geometry().is_split(),
+                    layout.geometry().padded_block_bytes(),
                     layout.storage_format,
                 );
                 match geometry_by_name.insert(name, geometry) {
@@ -550,9 +550,9 @@ impl InstanceContext {
                              segment_bytes={existing_bytes} split={existing_split} \
                              padded_block_bytes={existing_padded} format={existing_format:?} vs \
                              segment_bytes={} split={} padded_block_bytes={} format={:?} on device {}",
-                            layout.segment_bytes(),
-                            layout.is_split(),
-                            layout.padded_block_bytes(),
+                            layout.geometry().segment_bytes(),
+                            layout.geometry().is_split(),
+                            layout.geometry().padded_block_bytes(),
                             layout.storage_format,
                             gpu.device_id(),
                         )));
@@ -709,9 +709,9 @@ impl InstanceContext {
                             group: gpu.group_of_layer(name),
                             tp_rank: gpu.tp_rank,
                             pp_rank: gpu.pp_rank,
-                            segment_bytes: layout.segment_bytes(),
-                            padded_block_bytes: layout.padded_block_bytes(),
-                            split: layout.is_split(),
+                            segment_bytes: layout.geometry().segment_bytes(),
+                            padded_block_bytes: layout.geometry().padded_block_bytes(),
+                            split: layout.geometry().is_split(),
                         })
                     })
                     .collect(),

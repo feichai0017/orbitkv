@@ -47,13 +47,11 @@ fn gpu_registration_with_segment_bytes(
 ) -> GpuRegistration {
     let mut kv_caches = HashMap::new();
     for (index, name) in layers.iter().enumerate() {
-        let layout = KVCacheLayout::new(
+        let layout = KVCacheLayout::bind(
             0x1000 + index as u64 * 0x10000,
             1024 * 1024,
-            100,
-            segment_bytes,
-            0,
-            1,
+            crate::transfer::layout::KVCacheGeometry::new(100, segment_bytes, 0, 1, None, 1)
+                .unwrap(),
         )
         .unwrap();
         kv_caches.insert((*name).to_string(), layout);
@@ -124,7 +122,7 @@ fn single_worker_registration_seals_topology() {
     // The registered layer is retrievable with its original layout.
     let gpu = instance.get_gpu(0).expect("get gpu context");
     let layout = gpu.get_layout("layer_b").expect("get layout");
-    assert_eq!(layout.num_blocks(), 100);
+    assert_eq!(layout.geometry().num_blocks(), 100);
     match layout.block_copies(0).expect("block 0 in range") {
         BlockCopies::Contiguous(c) => assert_eq!(c.addr, 0x1000),
         BlockCopies::Split { .. } => panic!("dense test layout must be contiguous"),

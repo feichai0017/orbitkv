@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::block::RestoreSource;
-use crate::{QueryOwner, QueryReservation};
+use crate::{EngineError, QueryOwner, QueryReservation};
 
 const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(600);
 const DEFAULT_LEASE_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
@@ -119,44 +119,69 @@ impl QueryLeaseManager {
         }
     }
 
-    pub(crate) fn consume(
+    /// Validate the whole batch before consuming any lease share. The validator
+    /// runs under the lease lock and must not perform I/O or re-enter this manager.
+    pub(crate) fn consume_batch<T>(
         &self,
         instance_id: &str,
-        token: &QueryLeaseId,
-    ) -> Result<(Vec<RestoreSource>, Option<QueryReservation>), String> {
-        self.sweep_expired();
+        tokens: &[QueryLeaseId],
+        validate: impl FnOnce(&[&[RestoreSource]]) -> Result<T, EngineError>,
+    ) -> Result<(T, Vec<RestoreSource>, Vec<QueryReservation>), EngineError> {
         let mut leases = self
             .inner
             .leases
             .lock()
             .expect("query leases lock poisoned");
-        let lease = leases
-            .get_mut(token)
-            .ok_or_else(|| "query lease is unknown or expired".to_string())?;
-        if lease.instance_id != instance_id {
-            return Err(format!(
-                "query lease belongs to instance {}, got {}",
-                lease.instance_id, instance_id
-            ));
+        let now = Instant::now();
+        let mut seen = HashSet::with_capacity(tokens.len());
+        for token in tokens {
+            if !seen.insert(*token) {
+                return Err(EngineError::InvalidArgument(
+                    "restore batch contains duplicate query lease".to_string(),
+                ));
+            }
+            let lease = leases
+                .get(token)
+                .filter(|lease| lease.expires_at > now)
+                .ok_or_else(|| {
+                    EngineError::Storage("query lease is unknown or expired".to_string())
+                })?;
+            if lease.instance_id != instance_id {
+                return Err(EngineError::Storage(format!(
+                    "query lease belongs to instance {}, got {}",
+                    lease.instance_id, instance_id
+                )));
+            }
         }
-        if lease.remaining_consumers > 1 {
-            lease.remaining_consumers -= 1;
-            return Ok((
-                lease.blocks.clone(),
-                lease
-                    .ownership
-                    .as_ref()
-                    .map(|(_, reservation)| reservation.clone()),
-            ));
-        }
+        let sources: Vec<_> = tokens
+            .iter()
+            .map(|token| leases[token].blocks.as_slice())
+            .collect();
+        let validated = validate(&sources)?;
 
-        let lease = leases
-            .remove(token)
-            .expect("query lease disappeared during consume");
-        Ok((
-            lease.blocks,
-            lease.ownership.map(|(_, reservation)| reservation),
-        ))
+        let mut blocks = Vec::with_capacity(sources.iter().map(|blocks| blocks.len()).sum());
+        let mut reservations = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            let lease = leases
+                .get_mut(token)
+                .expect("validated query lease disappeared during consume");
+            if lease.remaining_consumers > 1 {
+                lease.remaining_consumers -= 1;
+                blocks.extend(lease.blocks.iter().cloned());
+                if let Some((_, reservation)) = &lease.ownership {
+                    reservations.push(reservation.clone());
+                }
+            } else {
+                let lease = leases
+                    .remove(token)
+                    .expect("validated query lease disappeared during consume");
+                blocks.extend(lease.blocks);
+                if let Some((_, reservation)) = lease.ownership {
+                    reservations.push(reservation);
+                }
+            }
+        }
+        Ok((validated, blocks, reservations))
     }
 
     pub(crate) fn release(&self, token: &QueryLeaseId) -> bool {

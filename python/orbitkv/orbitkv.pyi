@@ -49,6 +49,8 @@ class QueryLoading:
     def __init__(self, admitted: bool = True) -> None: ...
 
 class QueryReady:
+    """Query result whose lease token is returned as owned, immutable bytes."""
+
     num_hit_blocks: int
     lease: bytes
     hit_positions: list[int]

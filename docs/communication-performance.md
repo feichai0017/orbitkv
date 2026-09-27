@@ -1,5 +1,84 @@
 # Local communication measurements
 
+## Restore preparation (current increment)
+
+On 2026-09-27, the preparation/geometry refactor reduced the measured submission
+p50 for a 32-lease, 36-layer, 18 MiB Restore from **176.25 to 141.14 µs** (19.9%).
+The complete submit-to-ready p50 decreased from **987.73 to 955.09 µs** (3.3%).
+Single-lease 4 KiB Restore increased from **26.20 to 27.33 µs** (4.3%, 1.13 µs).
+This increment improves the measured batch path; it is not a universal latency
+improvement or a serving TTFT/ITL result. CUDA submission still runs in the Manager.
+
+The baseline is `b0f953eb851add59f7c4f50b54f40f9307a1ed0c`, the frozen
+`verified-final` bundle from the notification increment below. The candidate is
+`prepared-production`, with one matching release Manager and extension and no
+`test-hooks` feature on either side. It separates source preparation from local
+GPU address binding, validates/consumes all leases under one lock, avoids a
+whole-table expiry sweep per lease, and removes redundant clones/wrappers.
+
+The same extended [harness](../benches/communication.py) ran twelve fresh-Manager
+sessions on the H20, with CPU affinity `8,10,12,14`. Each matrix used
+`A1 B1 B2 A2 A3 B3`, 150 measured samples after 20 warmups, zero and 1 ms prescribed
+idle, one repeat, and a 256 MiB pool. The single-lease matrix used one layer and
+4 KiB/256 KiB/4 MiB payloads. The batch matrix used 36 layers × 128 blocks ×
+4 KiB = 18 MiB, partitioned into 32 nonoverlapping leases in one Restore command.
+Native hash views and target chunks are prepared in advance; all lease queries
+are outside Restore latency. Total payload and transfer counters are unchanged
+by the number of leases. All twelve runs passed GPU byte and H2D/D2H counter checks.
+
+Numbers below are **medians of three per-run percentiles**, not pooled samples.
+Times are µs, with no prescribed idle:
+
+| Operation / shape | Baseline p50 / p99 | Candidate p50 / p99 |
+| --- | ---: | ---: |
+| Restore, 4 KiB / 1 lease | 26.20 / 59.31 | 27.33 / 51.75 |
+| Restore, 256 KiB / 1 lease | 40.43 / 58.42 | 40.83 / 59.34 |
+| Restore, 4 MiB / 1 lease | 236.72 / 265.71 | 234.73 / 263.91 |
+| Restore, 18 MiB / 36 layers / 32 leases | 987.73 / 1056.78 | 955.09 / 1047.27 |
+| Submission portion of that 32-lease Restore | 176.25 / 213.97 | 141.14 / 179.07 |
+
+The submission measurement includes client encoding, IPC, Manager preparation
+and admission; it does not isolate one function. Phase percentiles must not be
+added or subtracted to infer GPU copy time. One candidate 4 MiB run had a
+277.30 µs p50; the other two were 233.42 and 234.73 µs, versus baseline runs
+233.96–237.07 µs. The small median change is not evidence of a reliable 4 MiB gain.
+
+With 1 ms prescribed idle, 32-lease Restore p50 was 991.48 → 959.56 µs while p99
+was 1037.96 → 1063.49 µs. Single-lease 4 KiB p50 was 39.78 → 41.75 µs.
+The batch median gain does not establish uniformly improved tail latency.
+The benchmark does not qualify inference scheduling/compute overlap, native
+engine parity, cross-host traffic, or a new engine-local executor.
+
+The dataset is
+`/workspace/.orbitkv-tools/communication-microbench/runs/prepared-production`,
+with `single-a/b1..3`, `batch32-a/b1..3`, manifests, raw samples and `summary.json`.
+An earlier `runs/prepared-restore` experiment used a candidate with test hooks,
+was stopped on detecting that mismatch, and is excluded entirely. Its fault-test
+bundle (`prepared-final`) remains separate from the production comparison.
+
+| Measured artifact | SHA-256 |
+| --- | --- |
+| Harness | `5fc32e3f07cf0c99c9812e43b3c8296e0de269d5e15dddf98de1a5e99e564b4d` |
+| Candidate production Manager | `19e9bf5499f517d64528a989bae8ed7e013f19049def452be29fceefb2c315e7` |
+| Candidate production extension | `69e1b911af8ae1d8abf986e6f61fe146dd1c0a9ea367760c69a154916c78ae5a` |
+
+Reproduce using the frozen `verified-final` and `prepared-production` bundles,
+the established CUDA/Python environment, and a fresh output path for every run:
+
+```bash
+PYTHONPATH="$BENCH_BUNDLE/python" taskset -c 8,10,12,14 \
+  python3 -m benches.communication \
+  --manager "$BENCH_BUNDLE/orbitkv-cache-manager" \
+  --label "$BENCH_LABEL" --output "$BENCH_OUTPUT" \
+  --iterations 150 --warmup 20 --repeats 1
+```
+
+For the batch matrix append `--layers 36 --payload-bytes 524288
+--restore-batch-size 32`. Retain the default idle matrix and two-second quiet
+window; do not rebuild native libraries while measurements are running.
+
+## Earlier request-notification increment
+
 On 2026-09-27, replacing periodic Manager/Publish waits with notifications
 reduced the measured 4 KiB Query-hit p50 from 108.42 to 6.87 µs and Restore
 submit-to-ready p50 from 127.58 to 26.75 µs. A 36-layer Publish fell from
@@ -7,7 +86,7 @@ submit-to-ready p50 from 127.58 to 26.75 µs. A 36-layer Publish fell from
 its p99 improved. The tradeoff is reported below. These are local microbenchmarks,
 not serving TTFT/ITL or an engine-local GPU executor qualification.
 
-## Compared implementations
+### Compared implementations
 
 The baseline is `d3c156ea667819ac8964e6b05d15a0c3d0e3f5ae`, frozen as the
 `baseline` artifact bundle. The candidate is the `verified-final` bundle built from
@@ -30,7 +109,7 @@ baseline. Their earlier implementation is not a newly measured benefit here.
 GPU restore still executes in the Manager. The
 [engine-local design](engine-local-restore.md) remains subsequent work.
 
-## Workload and controls
+### Workload and controls
 
 The [harness](../benches/communication.py) ran twelve fresh-Manager sessions:
 three baseline/candidate pairs for one layer and three for 36 layers, ordered
@@ -65,7 +144,7 @@ observation. Publish uses fresh hashes to force D2H; sealing synchronization and
 cache cleanup occur between samples, outside latency. Thus zero prescribed idle
 does not mean uninterrupted Publish traffic.
 
-## Latency
+### Latency
 
 Cells are **median of three per-run p50 / median of three per-run p99**, in µs.
 Samples are not pooled. Main-harness quantiles use linear interpolation.
@@ -111,7 +190,7 @@ baseline despite lower p50. Candidate 36-layer Publish p50 was
 a 100-sample p99 is close to the largest observations. The results do not
 separate each code change's effect.
 
-## CPU and the raw-channel tradeoff
+### CPU and the raw-channel tradeoff
 
 In two-second quiet windows, baseline Manager use was 0.045–0.050 CPU cores;
 candidate one-layer windows were 0–0.005 cores. None of the three layered
@@ -130,7 +209,7 @@ The pair occupied approximately two cores during this saturated workload.
 The notification path improves the real Manager workload and idle CPU here;
 it does not improve the tightest raw ping's median or establish universally lower CPU.
 
-## Artifact identity and reproduction
+### Artifact identity and reproduction
 
 SHA-256 identifies the measured files; it does not assert that subsequent
 rebuilds are byte-identical. The frozen candidate hashes remain authoritative.

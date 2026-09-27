@@ -32,6 +32,11 @@ completion use separate notification counters.
 Each result mapping has 1024 records and at most 4096 error bytes per record;
 mapping admission includes disconnected sessions retained by outstanding work.
 
+Restore batches validate all lease tokens and source geometry before consuming
+any lease share. Duplicate tokens are rejected. Preparation failures preserve
+valid leases; worker admission and GPU execution are subsequent ownership stages,
+so this does not make the whole restore operation retryable after submission.
+
 Run the two-process latency harness in separate terminals:
 
 ```bash

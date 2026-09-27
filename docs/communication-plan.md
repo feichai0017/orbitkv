@@ -27,6 +27,35 @@ require clients and Managers from the same revision; retired wire decoders and
 runtime implementation selectors are removed. Performance controls run the
 baseline revision in a separate checkout with matched workloads and budgets.
 
+### Restore preparation and destination binding
+
+The existing Restore command now resolves group/TP/page-first geometry once,
+checks registered GPU destinations before consuming leases, and prepares source
+ownership separately from local GPU address binding. `PreparedRestore` owns the
+source references, reservations, selected route and group targets; consuming it
+builds the current worker task without another topology lookup. This is the
+preparation boundary for an engine-local executor, not that executor itself.
+
+A batch consumes leases under one lock after all tokens, source counts, storage
+slots and route choices validate. Repeated tokens in one batch are rejected.
+Validation failure preserves every valid lease's remaining consumer count;
+subsequent worker admission failure still consumes the successfully prepared
+batch. The hot path checks only requested leases for expiry, leaving table-wide
+reclamation to the existing sweep/create/release paths. Session cleanup cannot
+revoke sources or reservations already transferred to preparation or GPU work.
+
+`KVCacheGeometry` validates final strides, split ranges and host padding without
+GPU addresses. `KVCacheLayout::bind` checks a process-local allocation against
+that geometry. Registration, Publish and Restore use this single implementation;
+the old layout constructor, mutating stride/padding builders and forwarding
+geometry getters are removed. No alternate wire protocol or executor selector
+is introduced. Arena/allocation identifiers will be added with their actual
+cross-process grant consumer rather than as unused fields.
+
+The native Python result also no longer wraps a lease byte vector in a second
+type or clones it before constructing Python `bytes`. Query intent moves into
+the request state machine, and the unused cloning bootstrap getter is removed.
+
 ### Request dispatch and encoding
 
 A required iceoryx2 request event wakes the Manager after a command is enqueued.

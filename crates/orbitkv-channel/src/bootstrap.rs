@@ -483,10 +483,6 @@ impl BootstrapClient {
         })
     }
 
-    pub fn info(&self) -> BootstrapInfo {
-        self.info.clone()
-    }
-
     pub fn info_ref(&self) -> &BootstrapInfo {
         &self.info
     }

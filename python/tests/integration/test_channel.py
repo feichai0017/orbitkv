@@ -105,13 +105,18 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
         assert time.monotonic() < deadline, f"cache query never became ready: {result!r}"
         time.sleep(0.05)
 
-    assert result.lease
+    lease = result.lease
+    assert isinstance(lease, bytes) and lease
+    assert (
+        orbitkv_native.QueryReady(result.num_hit_blocks, lease, result.hit_positions).lease
+        == lease
+    )
     operation_id = query_client.start_restore(
         instance_id=channel_client_context.instance_id,
         tp_rank=0,
         device_id=0,
         layer_groups=[channel_client_context._layer_names],
-        loads=[(result.lease, [[2, 3]])],
+        loads=[(lease, [[2, 3]])],
     )
     readable, _, _ = select.select([query_client.notification_fd], [], [], 5)
     assert readable == [query_client.notification_fd]

@@ -142,7 +142,12 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
         closed: Mutex::new(false),
         drained: OnceCell::new(),
     };
-    let mut layout = KVCacheLayout::new(0x10000, 257 * 4096, 257, 4096, 0, 1).unwrap();
+    let mut layout = KVCacheLayout::bind(
+        0x10000,
+        257 * 4096,
+        crate::transfer::layout::KVCacheGeometry::new(257, 4096, 0, 1, None, 1).unwrap(),
+    )
+    .unwrap();
     layout.storage_format = orbitkv_state::StorageFormat::Fp8FromBf16;
     for codec_budget in [4096, 64 * 1024 * 1024] {
         for indices in [vec![0, 0], (0..257).chain([0]).collect()] {
@@ -331,9 +336,12 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
     }]);
     let layers = vec![LayerTransferData {
         layer_name: "split".into(),
-        layout: KVCacheLayout::new(0x10000, 4096, 2, 300, 2048, 2)
-            .unwrap()
-            .with_ssd_padding(512),
+        layout: KVCacheLayout::bind(
+            0x10000,
+            4096,
+            crate::transfer::layout::KVCacheGeometry::new(2, 300, 2048, 2, None, 512).unwrap(),
+        )
+        .unwrap(),
         blocks: vec![
             TransferBlock {
                 block_idx: 0,

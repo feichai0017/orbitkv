@@ -68,3 +68,109 @@ async fn query_then_load_consumes_reservation_budget() {
             .contains("query lease is unknown or expired")
     );
 }
+
+/// Preparation rejects an entire malformed batch without consuming earlier
+/// leases or touching destination pages. A corrected batch can reuse both leases.
+#[tokio::test]
+async fn rejected_restore_batch_preserves_leases_and_gpu_pages() {
+    use orbitkv_core::QueryLeaseId;
+
+    let env = TestEnvBuilder::new("restore-batch-validation", "restore-batch-ns")
+        .layer("layer_0", 4, 1024)
+        .build();
+    let hashes = env.hashes(77);
+    env.save_and_wait(&hashes).await;
+    env.data().zero_gpu();
+    let first = env.assert_all_hit_lease(&hashes[..2]).await;
+    let second = env.assert_all_hit_lease(&hashes[2..]).await;
+    let first_targets = vec![vec![Some(0), Some(1)]];
+    let second_targets = vec![vec![Some(2), Some(3)]];
+    for (name, rank, groups, loads, expected) in [
+        (
+            "unknown later lease",
+            0,
+            vec![vec!["layer_0"]],
+            vec![
+                (first, first_targets.clone()),
+                (QueryLeaseId::fresh(), second_targets.clone()),
+            ],
+            "query lease is unknown or expired",
+        ),
+        (
+            "later source shape",
+            0,
+            vec![vec!["layer_0"]],
+            vec![
+                (first, first_targets.clone()),
+                (second, vec![vec![Some(2)]]),
+            ],
+            "destination block count",
+        ),
+        (
+            "later group shape",
+            0,
+            vec![vec!["layer_0"]],
+            vec![(first, first_targets.clone()), (second, vec![])],
+            "load group count",
+        ),
+        (
+            "later destination bounds",
+            0,
+            vec![vec!["layer_0"]],
+            vec![
+                (first, first_targets.clone()),
+                (second, vec![vec![Some(2), Some(4)]]),
+            ],
+            "out of range",
+        ),
+        (
+            "duplicate lease",
+            0,
+            vec![vec!["layer_0"]],
+            vec![
+                (first, first_targets.clone()),
+                (first, second_targets.clone()),
+            ],
+            "duplicate query lease",
+        ),
+        (
+            "duplicate layer",
+            0,
+            vec![vec!["layer_0", "layer_0"]],
+            vec![
+                (first, first_targets.clone()),
+                (second, second_targets.clone()),
+            ],
+            "layer names must be unique",
+        ),
+        (
+            "wrong device rank",
+            1,
+            vec![vec!["layer_0"]],
+            vec![
+                (first, first_targets.clone()),
+                (second, second_targets.clone()),
+            ],
+            "represents tp_rank",
+        ),
+    ] {
+        let error = env
+            .engine
+            .restore(&env.instance_id, rank, 0, &groups, &loads)
+            .expect_err(name);
+        assert!(error.to_string().contains(expected), "{name}: {error}");
+        env.data().assert_gpu_matches(&[0; 4096]);
+    }
+    let completion = env
+        .engine
+        .restore(
+            &env.instance_id,
+            0,
+            0,
+            &[vec!["layer_0"]],
+            &[(first, first_targets), (second, second_targets)],
+        )
+        .expect("corrected batch uses both original leases");
+    wait_for_load(completion, LOAD_WAIT_TIMEOUT).await;
+    env.data().assert_gpu_matches_expected();
+}

@@ -60,10 +60,10 @@ fn prepare_gpu_writes(
                     .shard_page_size(layer.slot_id)
                     .expect("page layout") as u64
             ]
-        } else if layer.layout.is_split() {
-            smallvec::smallvec![layer.layout.padded_segment_bytes() as u64; 2]
+        } else if layer.layout.geometry().is_split() {
+            smallvec::smallvec![layer.layout.geometry().padded_segment_bytes() as u64; 2]
         } else {
-            smallvec::smallvec![layer.layout.padded_block_bytes() as u64]
+            smallvec::smallvec![layer.layout.geometry().padded_block_bytes() as u64]
         };
         for (block, hash) in &layer.blocks_to_save {
             let (_, copies) = objects
@@ -88,7 +88,7 @@ fn prepare_gpu_writes(
                         bytes: k.bytes,
                     });
                     copies.push(CopyRange {
-                        file_offset: layer.layout.padded_segment_bytes() as u64,
+                        file_offset: layer.layout.geometry().padded_segment_bytes() as u64,
                         device: v.addr,
                         bytes: v.bytes,
                     });
@@ -214,7 +214,7 @@ impl OrbitKVEngine {
         // across layers, so this invariant holds for MLA saves.
         let reference = &layer_contexts[0].blocks_to_save;
         for ctx in layer_contexts {
-            if ctx.layout.is_split() {
+            if ctx.layout.geometry().is_split() {
                 return Err(EngineError::InvalidArgument(format!(
                     "page-first save does not support split K/V (layer {})",
                     ctx.layer_name
@@ -383,7 +383,7 @@ impl OrbitKVEngine {
             let slot_id = topology.slot_index(layer_id, tp_rank)?;
             let group = topology.group_of_layer(layer_id);
 
-            let num_blocks = layout.num_blocks();
+            let num_blocks = layout.geometry().num_blocks();
 
             let blocks_to_save: Vec<(usize, Vec<u8>)> = block_ids
                 .into_iter()
@@ -537,8 +537,8 @@ impl OrbitKVEngine {
                 // use actual (unpadded) sizes; initialize padding before codec/SSD reads.
                 let mut raw_blocks: Vec<RawBlock> = Vec::with_capacity(num_blocks);
                 for _ in 0..alloc_count {
-                    if layout.is_split() {
-                        let stride = layout.padded_segment_bytes();
+                    if layout.geometry().is_split() {
+                        let stride = layout.geometry().padded_segment_bytes();
                         let k_alloc = alloc_pinned(stride, "K segment buffer")?;
                         let v_alloc = alloc_pinned(stride, "V segment buffer")?;
                         for i in 0..blocks_per_alloc {
@@ -548,10 +548,10 @@ impl OrbitKVEngine {
                                 unsafe {
                                     alloc
                                         .mapped_ptr()
-                                        .add(offset + layout.segment_bytes())
+                                        .add(offset + layout.geometry().segment_bytes())
                                         .host()
                                         .as_ptr()
-                                        .write_bytes(0, stride - layout.segment_bytes());
+                                        .write_bytes(0, stride - layout.geometry().segment_bytes());
                                 }
                             }
                             // Safety: offsets are within the just-made allocations.
@@ -569,7 +569,7 @@ impl OrbitKVEngine {
                             ));
                         }
                     } else {
-                        let stride = layout.padded_block_bytes();
+                        let stride = layout.geometry().padded_block_bytes();
                         let alloc = alloc_pinned(stride, "block buffer")?;
                         for i in 0..blocks_per_alloc {
                             // SAFETY: only the padding tail, before the GPU writes the payload.
@@ -679,7 +679,7 @@ impl OrbitKVEngine {
         let mut total_bytes = 0u64;
         for ctx in &layer_contexts {
             let num_blocks = ctx.blocks_to_save.len();
-            let bytes = (ctx.layout.padded_block_bytes() as u64)
+            let bytes = (ctx.layout.geometry().padded_block_bytes() as u64)
                 .checked_mul(num_blocks as u64)
                 .unwrap_or(0);
             total_bytes += bytes;
@@ -768,7 +768,7 @@ impl OrbitKVEngine {
                             .collect();
                         RawSaveLayer {
                             slot_id: ctx.slot_id,
-                            padded_block_size: ctx.layout.padded_block_bytes(),
+                            padded_block_size: ctx.layout.geometry().padded_block_bytes(),
                             blocks: ctx.raw_blocks,
                             block_hashes,
                         }

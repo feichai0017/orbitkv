@@ -7,8 +7,9 @@ process. The Manager currently submits restores through its GPU workers and
 publishes terminal results into the shared completion mapping. The payload pool
 now uses size-sealed memfd backing for regular and reserved huge-page policies;
 private mappings and the `cudaHostAlloc` allocation branch have been removed.
-An engine-local executor, payload-arena grants, and the protocol described below
-are **not implemented**. The implementation sequence is tracked in
+Source preparation and pointer-free geometry now have separate owners, consumed
+by the current Manager worker path. An engine-local executor, payload-arena
+grants, and the protocol described below are **not implemented**. The implementation sequence is tracked in
 [the communication plan](communication-plan.md).
 
 The shared-backing GPU gate has passed with separate exec processes on the same
@@ -28,8 +29,9 @@ holding memory alive.
 The existing ownership behavior provides the starting point:
 
 - [Engine restore](../crates/orbitkv-core/src/engine/restore.rs) consumes query
-  leases, validates topology and group slots, binds destinations, and submits a
-  `LoadTask`.
+  leases atomically in a batch, prepares topology/group/slot ownership without
+  GPU addresses, then binds prevalidated local destinations and submits a
+  `LoadTask`. Invalid preparation does not consume any valid lease share.
 - [Query leases](../crates/orbitkv-core/src/query/lease.rs) transfer source
   references and `QueryReservation` into the task. Lease expiry and session
   cleanup apply to leases still in the lease table.
@@ -144,8 +146,9 @@ never contains a dereferenceable Manager virtual address. Destination GPU
 pointers are bound from an engine-local registration, not accepted from a
 Manager response.
 
-Refactor [the affine layout implementation](../crates/orbitkv-core/src/transfer/layout.rs)
-into validated geometry plus a local pointer binding. Reuse its contiguous,
+[The affine layout implementation](../crates/orbitkv-core/src/transfer/layout.rs)
+now separates validated `KVCacheGeometry` from `KVCacheLayout` pointer binding.
+An engine executor must reuse its contiguous,
 split K/V, fused-stride, and page-first rules when producing `CopyDesc` batches.
 Do not duplicate these formulas in Python or create a second cache planner in
 the native executor.
@@ -439,10 +442,13 @@ types or an executor that no connector can invoke.
    regular pages, the same GPU, and normal producer-owner drop as described
    above. This is the backing prerequisite; it does not add a production engine
    import or executor.
-2. **Separate preparation from GPU binding.** Move source acquisition and
-   layout geometry out of `Engine::restore` into the owner used by the new grant
-   path. Keep one implementation of lease consumption and group validation.
-   Add stable arena/allocation identities at their actual owners.
+2. **Separate preparation from GPU binding — implemented for the current worker
+   consumer.** `PreparedRestore` owns the leased sources, reservations, group
+   targets and physical route before binding GPU addresses. Batched lease
+   validation/consumption and pointer-free geometry each have one implementation.
+   Stable arena/allocation identities remain part of the next grant increment,
+   where they acquire a real cross-process consumer. SSD materialization still
+   belongs to the current worker and must migrate with that route.
 3. **Connect the raw native executor end to end.** Change channel ABI, UDS FD
    registration, Manager grant ownership, PyO3 tensor registration, and native
    restore submission in one executable slice. Connect both vLLM and SGLang to

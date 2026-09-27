@@ -267,13 +267,13 @@ impl CacheClient {
             self.cancel(query.ticket)?;
         }
         let previous = queries.pending.get(&key).map(|query| query.ticket);
-        let command = queries.prepare(&key, hashes, intent.clone())?;
+        let discover = intent == QueryIntent::Candidates;
+        let command = queries.prepare(&key, hashes, intent)?;
         let response = self
             .channel
             .query_bundle(next_id(&self.requests)?, &command);
         match response {
             Ok(response) => {
-                let discover = intent == QueryIntent::Candidates;
                 if (discover && response.outcome == QueryOutcomeCode::Ready)
                     || response.outcome == QueryOutcomeCode::Candidates
                         && (!discover

@@ -4,11 +4,12 @@
 //! MLA single-segment, K/V split) is a parameterization of one affine formula:
 //! `addr = data_ptr + block_idx * block_stride + segment_idx * kv_stride`.
 //!
-//! All validation happens at construction. After that,
-//! [`KVCacheLayout::block_copies`] is the only layout question the GPU copy
-//! paths ask, and it cannot produce an out-of-bounds range for a valid block
-//! index. Padded sizes govern pinned-memory strides and SSD iovecs; GPU copies
-//! always use actual (unpadded) sizes.
+//! Geometry validates pointer-free byte ranges once. A local binding then
+//! checks that those ranges fit its GPU allocation before exposing copies.
+//! Padded sizes govern pinned-memory strides and SSD iovecs; GPU copies always
+//! use actual (unpadded) sizes.
+
+use std::ops::Range;
 
 /// How a block's segments are addressed on the GPU.
 #[derive(Debug, Clone, Copy)]
@@ -36,20 +37,15 @@ pub(crate) enum BlockCopies {
     Split { k: BlockCopy, v: BlockCopy },
 }
 
-/// Layout of one layer's KV cache: GPU addressing plus the host-side block
-/// shape derived from it.
+/// Validated layout geometry, independent of a process's GPU virtual addresses.
 #[derive(Debug, Clone)]
-pub(crate) struct KVCacheLayout {
-    pub(crate) storage_format: orbitkv_state::StorageFormat,
-    /// GPU memory base pointer for this layer's KV cache.
-    data_ptr: u64,
-    /// Total size of the registered GPU memory region in bytes.
-    size_bytes: usize,
+pub(crate) struct KVCacheGeometry {
+    /// Exclusive end of the highest addressed byte range.
+    extent_bytes: usize,
     /// Number of blocks in this layer's cache.
     num_blocks: usize,
     /// Byte step between consecutive blocks (per segment region for split
-    /// layouts). Defaults to `segment_bytes` (dense); overridden via
-    /// [`KVCacheLayout::with_block_stride`] for fused buffers.
+    /// layouts). Determined from the final registration, including fused buffers.
     block_stride_bytes: usize,
     /// GPU-side segment size in bytes (one of K or V).
     segment_bytes: usize,
@@ -61,36 +57,24 @@ pub(crate) struct KVCacheLayout {
     seg: SegmentLayout,
 }
 
-impl KVCacheLayout {
-    /// Construct and validate a layout. Rejects null/oversized regions and
-    /// overlapping segment configurations (crash early instead of copying
-    /// garbage later).
-    ///
-    /// `segment_bytes` is the size of ONE segment — for K/V split layouts
-    /// that is K or V alone, not the whole block. (The registration RPC calls
-    /// this field `bytes_per_block` for historical reasons; passing a whole
-    /// split block here would mostly pass validation with every address
-    /// wrong.)
+impl KVCacheGeometry {
+    /// Validate the final block stride, segment separation and host padding.
+    /// `segment_bytes` is ONE segment (K or V for split layouts).
+    /// `None` selects dense block spacing; alignment 1 disables host padding.
     pub(crate) fn new(
-        data_ptr: u64,
-        size_bytes: usize,
         num_blocks: usize,
         segment_bytes: usize,
         kv_stride_bytes: usize,
         segments: usize,
+        block_stride: Option<usize>,
+        host_alignment: usize,
     ) -> Result<Self, String> {
-        if data_ptr == 0 {
-            return Err("data_ptr must not be null".into());
-        }
-        if size_bytes == 0 {
-            return Err("size_bytes must be > 0".into());
-        }
         if segment_bytes == 0 || num_blocks == 0 || segments == 0 {
             return Err("segment_bytes, num_blocks, and segments must be non-zero".into());
         }
-        data_ptr
-            .checked_add(size_bytes as u64)
-            .ok_or_else(|| "data_ptr + size_bytes overflows the address space".to_string())?;
+        if host_alignment == 0 {
+            return Err("host alignment must be > 0".into());
+        }
         let block_bytes = segment_bytes
             .checked_mul(segments)
             .ok_or_else(|| "block size overflow".to_string())?;
@@ -113,57 +97,30 @@ impl KVCacheLayout {
             ));
         };
 
-        let layout = Self {
-            storage_format: Default::default(),
-            data_ptr,
-            size_bytes,
+        let padded_segment_bytes = segment_bytes
+            .checked_next_multiple_of(host_alignment)
+            .ok_or_else(|| "padded segment size overflow".to_string())?;
+        padded_segment_bytes
+            .checked_mul(segments)
+            .ok_or_else(|| "padded block size overflow".to_string())?;
+        let mut geometry = Self {
+            extent_bytes: 0,
             num_blocks,
-            block_stride_bytes: match seg {
+            block_stride_bytes: block_stride.unwrap_or(match seg {
                 SegmentLayout::Contiguous => block_bytes,
                 SegmentLayout::Split { .. } => segment_bytes,
-            },
+            }),
             segment_bytes,
             segments,
-            padded_segment_bytes: segment_bytes,
+            padded_segment_bytes,
             seg,
         };
-        layout.check_bounds()?;
-        Ok(layout)
+        geometry.extent_bytes = geometry.validate_extent()?;
+        Ok(geometry)
     }
 
-    /// Override the per-block stride for a non-contiguous per-layer view —
-    /// e.g. one layer's blocks inside a fused buffer holding all layers per
-    /// block, where consecutive blocks sit `stride` apart but each copy spans
-    /// only the layer's own bytes.
-    ///
-    /// # Errors
-    /// Stride smaller than a block's extent (blocks would overlap), or the
-    /// strided layout exceeds the registered region.
-    pub(crate) fn with_block_stride(mut self, stride: usize) -> Result<Self, String> {
-        let min_stride = match self.seg {
-            SegmentLayout::Contiguous => self.block_bytes(),
-            SegmentLayout::Split { .. } => self.segment_bytes,
-        };
-        if stride < min_stride {
-            return Err(format!(
-                "block_stride {stride} must be >= {min_stride}: blocks would overlap"
-            ));
-        }
-        self.block_stride_bytes = stride;
-        self.check_bounds()?;
-        Ok(self)
-    }
-
-    /// Apply SSD alignment padding to the host-side segment stride so every
-    /// iovec in a split writev is independently aligned.
-    pub(crate) fn with_ssd_padding(mut self, alignment: usize) -> Self {
-        self.padded_segment_bytes = self.segment_bytes.next_multiple_of(alignment);
-        self
-    }
-
-    /// Validate that all addressed bytes fit in `size_bytes` and no two block
-    /// ranges alias the same device memory.
-    fn check_bounds(&self) -> Result<(), String> {
+    /// Prove that all offsets are representable and block ranges never alias.
+    fn validate_extent(&self) -> Result<usize, String> {
         let end = match self.seg {
             SegmentLayout::Contiguous => {
                 let block_bytes = self.block_bytes();
@@ -195,13 +152,7 @@ impl KVCacheLayout {
                     .ok_or_else(|| "memory layout overflow".to_string())?
             }
         };
-        if end > self.size_bytes {
-            return Err(format!(
-                "registered memory too small: need {end} bytes, got {}",
-                self.size_bytes
-            ));
-        }
-        Ok(())
+        Ok(end)
     }
 
     fn check_split_segments_disjoint(&self, kv_stride_bytes: usize) -> Result<(), String> {
@@ -226,32 +177,21 @@ impl KVCacheLayout {
         Ok(())
     }
 
-    /// Device address ranges for `block_idx`.
-    ///
-    /// Construction already proved the last block fits, so any valid index is
-    /// in bounds and the arithmetic below cannot overflow.
-    pub(crate) fn block_copies(&self, block_idx: usize) -> Result<BlockCopies, String> {
+    /// Pointer-free ranges for one block. Construction proved the last block's
+    /// extent, so valid indices cannot overflow the arithmetic below.
+    pub(crate) fn block_ranges(&self, block_idx: usize) -> Result<BlockRanges, String> {
         if block_idx >= self.num_blocks {
             return Err(format!(
                 "block {block_idx} out of range ({} blocks)",
                 self.num_blocks
             ));
         }
-        let base = self.data_ptr + (block_idx * self.block_stride_bytes) as u64;
+        let base = block_idx * self.block_stride_bytes;
         Ok(match self.seg {
-            SegmentLayout::Contiguous => BlockCopies::Contiguous(BlockCopy {
-                addr: base,
-                bytes: self.block_bytes(),
-            }),
-            SegmentLayout::Split { kv_stride_bytes } => BlockCopies::Split {
-                k: BlockCopy {
-                    addr: base,
-                    bytes: self.segment_bytes,
-                },
-                v: BlockCopy {
-                    addr: base + kv_stride_bytes as u64,
-                    bytes: self.segment_bytes,
-                },
+            SegmentLayout::Contiguous => BlockRanges::Contiguous(base..base + self.block_bytes()),
+            SegmentLayout::Split { kv_stride_bytes } => BlockRanges::Split {
+                k: base..base + self.segment_bytes,
+                v: base + kv_stride_bytes..base + kv_stride_bytes + self.segment_bytes,
             },
         })
     }
@@ -284,6 +224,69 @@ impl KVCacheLayout {
     /// `RawBlock.total_size` → `SlotMeta.total_size()` for SSD I/O.
     pub(crate) fn padded_block_bytes(&self) -> usize {
         self.padded_segment_bytes * self.segments
+    }
+}
+
+/// Validated byte ranges relative to an allocation's local base address.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BlockRanges {
+    Contiguous(Range<usize>),
+    Split { k: Range<usize>, v: Range<usize> },
+}
+
+/// One process's GPU address binding for validated cache geometry.
+#[derive(Debug, Clone)]
+pub(crate) struct KVCacheLayout {
+    pub(crate) storage_format: orbitkv_state::StorageFormat,
+    data_ptr: u64,
+    geometry: KVCacheGeometry,
+}
+
+impl KVCacheLayout {
+    pub(crate) fn bind(
+        data_ptr: u64,
+        size_bytes: usize,
+        geometry: KVCacheGeometry,
+    ) -> Result<Self, String> {
+        if data_ptr == 0 {
+            return Err("data_ptr must not be null".into());
+        }
+        if size_bytes == 0 {
+            return Err("size_bytes must be > 0".into());
+        }
+        data_ptr
+            .checked_add(size_bytes as u64)
+            .ok_or_else(|| "data_ptr + size_bytes overflows the address space".to_string())?;
+        if geometry.extent_bytes > size_bytes {
+            return Err(format!(
+                "registered memory too small: need {} bytes, got {size_bytes}",
+                geometry.extent_bytes
+            ));
+        }
+        Ok(Self {
+            storage_format: Default::default(),
+            data_ptr,
+            geometry,
+        })
+    }
+
+    pub(crate) fn geometry(&self) -> &KVCacheGeometry {
+        &self.geometry
+    }
+
+    /// Bind already validated relative ranges to this process's GPU addresses.
+    pub(crate) fn block_copies(&self, block_idx: usize) -> Result<BlockCopies, String> {
+        let copy = |range: Range<usize>| BlockCopy {
+            addr: self.data_ptr + range.start as u64,
+            bytes: range.end - range.start,
+        };
+        Ok(match self.geometry.block_ranges(block_idx)? {
+            BlockRanges::Contiguous(range) => BlockCopies::Contiguous(copy(range)),
+            BlockRanges::Split { k, v } => BlockCopies::Split {
+                k: copy(k),
+                v: copy(v),
+            },
+        })
     }
 }
 

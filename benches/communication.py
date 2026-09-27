@@ -7,6 +7,7 @@ This harness never builds artifacts or switches implementations at runtime.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib
 import json
@@ -37,6 +38,12 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--payload-bytes", type=int, nargs="+", default=[4096, 262144, 4194304])
     parser.add_argument("--block-bytes", type=int, default=4096)
     parser.add_argument("--layers", type=int, default=1)
+    parser.add_argument(
+        "--restore-batch-size",
+        type=int,
+        default=1,
+        help="independent query leases submitted together for the same total restore payload",
+    )
     parser.add_argument("--idle-ms", type=float, nargs="+", default=[0.0, 1.0])
     parser.add_argument("--idle-seconds", type=float, default=2.0)
     parser.add_argument("--pool-mib", type=int, default=256)
@@ -51,6 +58,8 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("iterations/repeats must be positive and warmup nonnegative")
     if args.block_bytes < 1 or args.pool_mib < 1 or args.layers < 1 or args.device < 0:
         parser.error("block-bytes/pool-mib/layers must be positive and device nonnegative")
+    if args.restore_batch_size < 1:
+        parser.error("restore-batch-size must be positive")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
     if not math.isfinite(args.idle_seconds) or args.idle_seconds <= 0:
@@ -61,6 +70,14 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("payload-bytes values must be positive multiples of block-bytes")
     if max(args.payload_bytes) // args.block_bytes > 1024:
         parser.error("at most 1024 blocks per operation; increase block-bytes for larger payloads")
+    if any(
+        size // args.block_bytes < args.restore_batch_size
+        or (size // args.block_bytes) % args.restore_batch_size
+        for size in args.payload_bytes
+    ):
+        parser.error(
+            "each payload's block count must be at least and divisible by restore-batch-size"
+        )
     if max(args.payload_bytes) * args.layers * 2 > args.pool_mib * 1024**2:
         parser.error("pool must hold at least twice the largest payload across all layers")
     if len(set(args.idle_ms)) != len(args.idle_ms) or len(set(args.payload_bytes)) != len(
@@ -182,14 +199,42 @@ def query_ready(client, native, instance, hashes, request, expected_blocks, time
 
 
 def sample(
-    client, native, instance, device, layers, hashes, targets, operation, request, idle, timeout
+    client,
+    native,
+    instance,
+    device,
+    layers,
+    hashes,
+    targets,
+    restore_batches,
+    operation,
+    request,
+    idle,
+    timeout,
 ):
     query_calls = 0
     if operation == "restore":
-        ready, query_calls = query_ready(
-            client, native, instance, hashes, request, len(targets), timeout
-        )
-        loads = [(ready.lease, [targets])]
+        loads = []
+        try:
+            for index, (batch_hashes, batch_targets) in enumerate(restore_batches):
+                ready, calls = query_ready(
+                    client,
+                    native,
+                    instance,
+                    batch_hashes,
+                    f"{request}-lease-{index}",
+                    len(batch_targets),
+                    timeout,
+                )
+                query_calls += calls
+                loads.append((ready.lease, [batch_targets]))
+        except BaseException:
+            # No restore was submitted. Retire leases acquired before a failed
+            # query; session teardown handles any failed cleanup RPC.
+            for lease, _ in loads:
+                with contextlib.suppress(Exception):
+                    client.release(lease)
+            raise
     elif operation == "restore_empty":
         loads = []
     elif operation == "publish":
@@ -376,7 +421,7 @@ def main(argv: list[str] | None = None) -> None:
         "percentiles": "linear interpolation at (n - 1) * q; computed independently per cohort",
         "scope": {
             "query": "submit through QueryReady, including native polling; release is outside latency",
-            "restore": "start_restore through native wait_restore ready; lease acquisition is outside latency",
+            "restore": "one start_restore through native wait_restore ready; equal, nonoverlapping query leases partition the unchanged total payload; hash views and target chunks are precomputed, all lease acquisition is outside latency",
             "publish": "save acknowledgement including metadata chunking and actual D2H of fresh keys; sealing synchronization and cache eviction are outside sample latency",
             "cpu": "sample CPU is caller thread/process; Manager cohort CPU includes preparation queries, releases, Publish sealing/cleanup HTTP, Python loop gaps and prescribed idle intervals, excludes warmup and byte validation; /proc tick-quantized totals are not precise per-RPC CPU measurements",
             "payload": "raw uint8 contiguous layers, 4 KiB blocks by default; --payload-bytes is per layer, output payload_bytes is total across layers; Query reports logical payload and 32-byte hash count, not transported KV bytes",
@@ -455,7 +500,17 @@ def main(argv: list[str] | None = None) -> None:
                 blocks = size // args.block_bytes
                 targets = list(range(count, count + blocks))
                 hit_hashes = native.BlockHashes(hashes[:blocks])
-                batches[size] = (hit_hashes, native.BlockHashes(misses[:blocks]), targets)
+                chunk = blocks // args.restore_batch_size
+                restore_batches = [
+                    (hit_hashes[start : start + chunk], targets[start : start + chunk])
+                    for start in range(0, blocks, chunk)
+                ]
+                batches[size] = (
+                    hit_hashes,
+                    native.BlockHashes(misses[:blocks]),
+                    targets,
+                    restore_batches,
+                )
                 pages[:, count : count + blocks].fill_(253)
                 torch.cuda.synchronize()
                 sample(
@@ -466,17 +521,19 @@ def main(argv: list[str] | None = None) -> None:
                     layers,
                     hit_hashes,
                     targets,
+                    restore_batches,
                     "restore",
                     f"verify-{size}",
                     0,
                     args.timeout,
                 )
                 verify_bytes(torch, pages, expected, count, blocks)
-            batches[0] = (native.BlockHashes([]), native.BlockHashes([]), [])
+            batches[0] = (native.BlockHashes([]), native.BlockHashes([]), [], [])
             manifest["gpu_byte_validation"] = {
                 "passed": True,
                 "bytes_per_layer": args.payload_bytes,
                 "layers": args.layers,
+                "restore_batch_size": args.restore_batch_size,
             }
             idle_before = process_usage(manager.pid)
             idle_started = time.perf_counter_ns()
@@ -503,7 +560,7 @@ def main(argv: list[str] | None = None) -> None:
                     for case_index, (operation, size, idle_ms) in enumerate(
                         cases if repeat % 2 == 0 else reversed(cases)
                     ):
-                        hit_hashes, miss_hashes, targets = batches[size]
+                        hit_hashes, miss_hashes, targets, restore_batches = batches[size]
                         demand = miss_hashes if operation == "query_miss" else hit_hashes
                         prefix = f"r{repeat}-c{case_index}"
                         if operation in {"query_hit", "restore"}:
@@ -519,6 +576,7 @@ def main(argv: list[str] | None = None) -> None:
                                 layers,
                                 demand,
                                 targets,
+                                restore_batches,
                                 operation,
                                 f"{prefix}-warm-{index}",
                                 idle_ms / 1000,
@@ -550,6 +608,7 @@ def main(argv: list[str] | None = None) -> None:
                                     layers,
                                     demand,
                                     targets,
+                                    restore_batches,
                                     operation,
                                     f"{prefix}-sample-{index}",
                                     idle_ms / 1000,
@@ -581,6 +640,9 @@ def main(argv: list[str] | None = None) -> None:
                             "layers": args.layers,
                             "blocks": len(targets),
                             "hash_bytes": len(targets) * 32,
+                            "restore_batch_size": len(restore_batches)
+                            if operation == "restore"
+                            else 0,
                             "idle_ms": idle_ms,
                         }
                         for index, row in enumerate(rows):
@@ -601,7 +663,7 @@ def main(argv: list[str] | None = None) -> None:
                             }
                         )
                         print(
-                            f"{args.label} repeat={repeat} {operation} bytes={size} idle_ms={idle_ms:g} p50_us={cohorts[-1]['samples']['wall_us']['p50']:.2f} p99_us={cohorts[-1]['samples']['wall_us']['p99']:.2f}",
+                            f"{args.label} repeat={repeat} {operation} bytes={size} leases={key['restore_batch_size']} idle_ms={idle_ms:g} p50_us={cohorts[-1]['samples']['wall_us']['p50']:.2f} p99_us={cohorts[-1]['samples']['wall_us']['p99']:.2f}",
                             flush=True,
                         )
             ok, message = client.unregister_context(instance)
