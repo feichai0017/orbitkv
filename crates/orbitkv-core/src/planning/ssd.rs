@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::SsdReadPath;
 #[cfg(feature = "mooncake")]
-use crate::cost::{CostKey, CostPath};
+use crate::cost::{CostEstimateKey, CostObservationKind};
 use crate::storage::ssd::{SsdReadLease, SsdStore};
 
 use super::read::{ReadPlan, ReadTarget};
@@ -84,7 +84,7 @@ impl SsdReadPlan<'_> {
     }
 
     #[cfg(feature = "mooncake")]
-    pub(crate) fn cost_key(&self) -> Option<CostKey> {
+    pub(crate) fn cost_estimate_key(&self) -> Option<CostEstimateKey> {
         let first = self.rows.first()?.local_ssd()?;
         let resource = first.cost_resource()?;
         let mut bytes = 0u64;
@@ -110,8 +110,8 @@ impl SsdReadPlan<'_> {
                 Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
             });
         }
-        Some(CostKey::new(
-            CostPath::LocalSsdHostReady,
+        Some(CostEstimateKey::new(
+            CostObservationKind::LocalSsdHostReady,
             resource,
             representation.unwrap_or_default(),
             bytes,

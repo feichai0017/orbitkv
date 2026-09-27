@@ -21,7 +21,7 @@ use orbitkv_channel::{
 };
 use orbitkv_core::{
     CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
-    CompletionPath, EngineError, OrbitKVEngine,
+    CompletionRoute, EngineError, OrbitKVEngine,
 };
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -343,9 +343,9 @@ fn dispatch_completion_observation(
             orbitkv_channel::CompletionIntent::EngineRestore => CompletionIntent::EngineRestore,
             orbitkv_channel::CompletionIntent::SourceRelease => CompletionIntent::SourceRelease,
         },
-        path: match request.path {
-            orbitkv_channel::CompletionPath::PrefillToDecodeHandoff => {
-                CompletionPath::PrefillToDecodeHandoff
+        route: match request.route {
+            orbitkv_channel::CompletionRoute::PrefillToDecodeHandoff => {
+                CompletionRoute::PrefillToDecodeHandoff
             }
         },
         representation: request.representation,

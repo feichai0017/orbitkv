@@ -1,11 +1,11 @@
 use super::*;
 use crate::cost::bucket;
-use crate::cost::{CostPath, ExecutionResource, Representation};
+use crate::cost::{CostObservationKind, ExecutionResource, Representation};
 use std::time::Duration;
 
-fn key(resource: u64) -> CostKey {
-    CostKey::new(
-        CostPath::GpuLoadDirect,
+fn key(resource: u64) -> CostEstimateKey {
+    CostEstimateKey::new(
+        CostObservationKind::GpuLoadDirect,
         ExecutionResource::Gpu(resource),
         Representation::Raw,
         65536,
@@ -34,16 +34,16 @@ fn estimates_are_bounded_and_isolate_resource_representation_and_shape() {
             .is_some()
     );
     for different in [
-        retained.with_path_resource(retained.path, ExecutionResource::Gpu(10000)),
-        CostKey {
+        retained.with_observation_kind_and_resource(retained.kind, ExecutionResource::Gpu(10000)),
+        CostEstimateKey {
             representation: Representation::Ans,
             ..retained
         },
-        CostKey {
+        CostEstimateKey {
             size: retained.size + 1,
             ..retained
         },
-        CostKey {
+        CostEstimateKey {
             fragments: retained.fragments + 1,
             ..retained
         },
@@ -54,7 +54,7 @@ fn estimates_are_bounded_and_isolate_resource_representation_and_shape() {
         retained.with_ssd_shape(131072, 8, 32768, 4),
         retained.with_ssd_shape(131072, 8, 65536, 2),
         retained.with_dma_ranges(4),
-        retained.with_path(CostPath::GpuLoadKernel),
+        retained.with_observation_kind(CostObservationKind::GpuLoadKernel),
     ] {
         assert!(estimates.predict(different, start).is_none());
     }
@@ -122,7 +122,10 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
     for (index, resource) in resources.into_iter().enumerate() {
         for _ in 0..MIN_SAMPLES {
             estimates.observe(
-                key(1).with_path_resource(CostPath::GpuLoadDirect, resource),
+                key(1).with_observation_kind_and_resource(
+                    CostObservationKind::GpuLoadDirect,
+                    resource,
+                ),
                 index as f64,
                 start,
             );
@@ -132,7 +135,10 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
         assert_eq!(
             estimates
                 .predict(
-                    key(1).with_path_resource(CostPath::GpuLoadDirect, resource),
+                    key(1).with_observation_kind_and_resource(
+                        CostObservationKind::GpuLoadDirect,
+                        resource
+                    ),
                     start,
                 )
                 .unwrap()
@@ -148,8 +154,8 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
             endpoint: "same-address".into(),
             incarnation: uuid::Uuid::from_u128(1),
         };
-        let old = key(1).with_path_resource(
-            CostPath::RemoteRead,
+        let old = key(1).with_observation_kind_and_resource(
+            CostObservationKind::RemoteRead,
             ExecutionResource::Peer(resource_id(&owner)),
         );
         for _ in 0..MIN_SAMPLES {
@@ -159,8 +165,8 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
             incarnation: uuid::Uuid::from_u128(2),
             ..owner
         };
-        let new = old.with_path_resource(
-            CostPath::RemoteRead,
+        let new = old.with_observation_kind_and_resource(
+            CostObservationKind::RemoteRead,
             ExecutionResource::Peer(resource_id(&replacement)),
         );
         assert!(estimates.predict(old, start).is_some());

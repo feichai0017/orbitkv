@@ -1,5 +1,5 @@
 use super::estimates::{ESTIMATES, Estimate};
-use super::{CostKey, ENABLED};
+use super::{CostEstimateKey, ENABLED};
 use crate::metrics::core_metrics;
 use opentelemetry::KeyValue;
 use std::time::Instant;
@@ -9,7 +9,7 @@ const MIN_RELATIVE_GAIN: f64 = 0.05;
 
 /// Inspect only candidates already proven feasible by the execution owner.
 /// No source reads, alternative backend launches, or execution changes occur.
-pub(crate) fn shadow(candidates: &[CostKey], selected: usize) {
+pub(crate) fn shadow(candidates: &[CostEstimateKey], selected: usize) {
     if !*ENABLED || selected >= candidates.len() || candidates.len() > 8 {
         return;
     }
@@ -28,7 +28,7 @@ pub(crate) fn shadow(candidates: &[CostKey], selected: usize) {
     let metrics = core_metrics();
     for (key, prediction) in candidates.iter().zip(predictions) {
         let attributes = [
-            KeyValue::new("path", key.path.label()),
+            KeyValue::new("path", key.kind.label()),
             KeyValue::new(
                 "evidence",
                 if prediction.is_some() {
@@ -63,7 +63,7 @@ pub(crate) fn shadow(candidates: &[CostKey], selected: usize) {
 }
 
 fn recommendation(
-    candidates: &[CostKey],
+    candidates: &[CostEstimateKey],
     predictions: &[Option<Estimate>],
     selected: usize,
 ) -> &'static str {

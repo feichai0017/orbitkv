@@ -368,10 +368,11 @@ every cluster resource or search an unrestricted transfer graph. Use bounded
 cached evidence and demand-driven directory queries; capability/health evidence
 filters routes before costing, and acquisition revalidates the chosen version.
 
-`CostKey` now carries that completion target explicitly as an intent plus its
+`CostEstimateKey` now carries that completion target explicitly as an intent plus its
 target resource. HostReady has no engine resource, EngineRestore names the
 destination GPU, and GPU save completion names the source whose pages become
-reusable. Rewriting a candidate path or resource recomputes this field, so an
+reusable. Rewriting a candidate observation kind or execution resource
+recomputes this field, so an
 SSD restore for GPU 1 cannot accidentally reuse evidence collected for GPU 0.
 This is already enforced by raw-copy/SSD shadow and host-route selection. Future
 direct-to-D and prefill-restore-plus-handoff candidates must both end at the
@@ -397,8 +398,8 @@ Keep the shared measurement substrate and make its two boundaries explicit:
 operation samples describe individual I/O/copy/codec work; complete-route samples
 describe a named start-to-declared-target completion interval. Engine-visible
 restore and host-ready preparation use distinct targets and estimate keys. The
-existing `CostPath` enum includes both operation and composite boundaries. It is
-not yet a set of additive graph-edge costs.
+`CostObservationKind` includes both operation and composite boundaries. It is
+not a set of additive graph-edge costs.
 
 The planner's estimate should report a predicted ready time, measured uncertainty
 and freshness, and the resources needed to execute. Resource demand includes

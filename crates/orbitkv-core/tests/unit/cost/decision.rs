@@ -1,8 +1,8 @@
 use super::*;
-use crate::cost::{CostPath, ExecutionResource, Representation};
+use crate::cost::{CostObservationKind, ExecutionResource, Representation};
 
-fn key(path: CostPath, peer: u64) -> CostKey {
-    CostKey::new(
+fn key(path: CostObservationKind, peer: u64) -> CostEstimateKey {
+    CostEstimateKey::new(
         path,
         ExecutionResource::Peer(peer),
         Representation::Raw,
@@ -23,8 +23,8 @@ fn estimate(seconds: f64, error: f64) -> Estimate {
 #[test]
 fn selection_requires_complete_compatible_fresh_evidence() {
     let candidates = [
-        key(CostPath::PeerDramHostReady, 1),
-        key(CostPath::PeerDramHostReady, 2),
+        key(CostObservationKind::PeerDramHostReady, 1),
+        key(CostObservationKind::PeerDramHostReady, 2),
     ];
     assert_eq!(
         choose(&candidates, &[Some(estimate(0.02, 0.0)), None], 0),
@@ -34,8 +34,8 @@ fn selection_requires_complete_compatible_fresh_evidence() {
         choose(
             &[
                 candidates[0],
-                CostKey::new(
-                    CostPath::PeerSsdHostReady,
+                CostEstimateKey::new(
+                    CostObservationKind::PeerSsdHostReady,
                     ExecutionResource::Peer(2),
                     Representation::Ans,
                     4096,
@@ -51,8 +51,8 @@ fn selection_requires_complete_compatible_fresh_evidence() {
         choose(
             &[
                 candidates[0],
-                CostKey::new(
-                    CostPath::LocalSsdHostReady,
+                CostEstimateKey::new(
+                    CostObservationKind::LocalSsdHostReady,
                     ExecutionResource::SsdStore(9),
                     Representation::Raw,
                     4096,
@@ -70,9 +70,9 @@ fn selection_requires_complete_compatible_fresh_evidence() {
 #[test]
 fn selection_requires_gain_beyond_error_and_margin() {
     let candidates = [
-        key(CostPath::PeerDramHostReady, 1),
-        key(CostPath::PeerDramHostReady, 2),
-        key(CostPath::PeerDramHostReady, 3),
+        key(CostObservationKind::PeerDramHostReady, 1),
+        key(CostObservationKind::PeerDramHostReady, 2),
+        key(CostObservationKind::PeerDramHostReady, 3),
     ];
     assert_eq!(
         choose(
@@ -106,15 +106,15 @@ fn selection_requires_gain_beyond_error_and_margin() {
 
 #[test]
 fn engine_ready_routes_require_the_same_destination_device() {
-    let direct = CostKey::new(
-        CostPath::GpuLoadDirect,
+    let direct = CostEstimateKey::new(
+        CostObservationKind::GpuLoadDirect,
         ExecutionResource::Gpu(7),
         Representation::Raw,
         4096,
         2,
     );
-    let ssd = CostKey::new(
-        CostPath::SsdUringRestore,
+    let ssd = CostEstimateKey::new(
+        CostObservationKind::SsdUringRestore,
         ExecutionResource::SsdRestore {
             device: 7,
             copy_backend: 0,
@@ -128,8 +128,8 @@ fn engine_ready_routes_require_the_same_destination_device() {
     let predictions = [Some(estimate(0.02, 0.0)), Some(estimate(0.01, 0.0))];
     assert_eq!(choose(&[direct, ssd], &predictions, 0), (1, "selected"));
 
-    let other_device = ssd.with_path_resource(
-        CostPath::SsdUringRestore,
+    let other_device = ssd.with_observation_kind_and_resource(
+        CostObservationKind::SsdUringRestore,
         ExecutionResource::SsdRestore {
             device: 8,
             copy_backend: 0,
@@ -145,16 +145,16 @@ fn engine_ready_routes_require_the_same_destination_device() {
 
 #[test]
 fn prefill_handoff_waits_for_a_matching_complete_direct_route() {
-    let direct = CostKey::new(
-        CostPath::GpuLoadDirect,
+    let direct = CostEstimateKey::new(
+        CostObservationKind::GpuLoadDirect,
         ExecutionResource::Gpu(7),
         Representation::Raw,
         4096,
         2,
     )
     .with_wire_bytes(4096);
-    let handoff = CostKey::new(
-        CostPath::PrefillToDecodeHandoff,
+    let handoff = CostEstimateKey::new(
+        CostObservationKind::PrefillToDecodeHandoff,
         ExecutionResource::PrefillToDecodeHandoff {
             source_endpoint_hash: 11,
             destination_device: 7,
@@ -170,8 +170,8 @@ fn prefill_handoff_waits_for_a_matching_complete_direct_route() {
         (0, "incomparable")
     );
 
-    let other_device = handoff.with_path_resource(
-        CostPath::PrefillToDecodeHandoff,
+    let other_device = handoff.with_observation_kind_and_resource(
+        CostObservationKind::PrefillToDecodeHandoff,
         ExecutionResource::PrefillToDecodeHandoff {
             source_endpoint_hash: 11,
             destination_device: 8,
@@ -188,8 +188,8 @@ fn execution_selection_requires_both_explicit_switches() {
     const CHILD: &str = "ORBITKV_TEST_ROUTE_SELECTION_CHILD";
     if let Ok(expected) = std::env::var(CHILD) {
         let candidates = [
-            key(CostPath::PeerDramHostReady, 101),
-            key(CostPath::PeerDramHostReady, 102),
+            key(CostObservationKind::PeerDramHostReady, 101),
+            key(CostObservationKind::PeerDramHostReady, 102),
         ];
         let now = Instant::now();
         for _ in 0..super::super::MIN_SAMPLES {

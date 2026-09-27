@@ -8,7 +8,7 @@ fn observation() -> CompletionObservation {
         source_endpoint: "tent://prefill-3".into(),
         notification_generation: 7,
         intent: CompletionIntent::EngineRestore,
-        path: CompletionPath::PrefillToDecodeHandoff,
+        route: CompletionRoute::PrefillToDecodeHandoff,
         representation: ReplicaRepresentation::Raw,
         logical_bytes: 8192,
         wire_bytes: 8192,

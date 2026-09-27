@@ -79,8 +79,8 @@ fn observed_completion_preserves_short_reads_errors_and_detached_delivery() {
     ] {
         let (complete, receiver) = oneshot::channel();
         let mut observation = Observation::new(
-            CostKey::new(
-                CostPath::SsdRead,
+            CostEstimateKey::new(
+                CostObservationKind::SsdRead,
                 ExecutionResource::SsdFile(101),
                 Representation::Unknown,
                 SSD_ALIGNMENT as u64,

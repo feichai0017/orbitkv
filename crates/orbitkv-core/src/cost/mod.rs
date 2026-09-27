@@ -37,7 +37,7 @@ pub(crate) fn cross_medium_selection_enabled() -> bool {
 }
 
 #[cfg(all(test, feature = "mooncake"))]
-pub(crate) fn observe_for_test(key: CostKey, seconds: f64, now: std::time::Instant) {
+pub(crate) fn observe_for_test(key: CostEstimateKey, seconds: f64, now: std::time::Instant) {
     estimates::ESTIMATES.lock().observe(key, seconds, now);
 }
 
@@ -50,7 +50,7 @@ mod shadow;
 
 #[cfg(feature = "mooncake")]
 pub(crate) use decision::{SelectionScope, select_route, shadow_routes};
-pub(crate) use observation::{Observation, Outcome};
+pub(crate) use observation::{Observation, Outcome, record_completion_observation};
 pub(crate) use orbitkv_state::ReplicaRepresentation as Representation;
 pub(crate) use resource::{ExecutionResource, resource_id};
 pub(crate) use shadow::shadow;
@@ -91,7 +91,7 @@ impl CompletionTarget {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum CostPath {
+pub(crate) enum CostObservationKind {
     GpuLoadDirect,
     GpuLoadKernel,
     GpuSaveDirect,
@@ -121,7 +121,7 @@ pub(crate) enum CostPath {
     PrefillToDecodeHandoff,
 }
 
-impl CostPath {
+impl CostObservationKind {
     #[cfg(feature = "mooncake")]
     fn is_prefill_to_decode_handoff(self) -> bool {
         self == Self::PrefillToDecodeHandoff
@@ -226,8 +226,8 @@ impl CostPath {
 /// Neither request IDs nor state keys belong here. Resources identify a GPU,
 /// disk owner or peer incarnation; they are never exported as metric labels.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct CostKey {
-    path: CostPath,
+pub(crate) struct CostEstimateKey {
+    kind: CostObservationKind,
     resource: ExecutionResource,
     completion: Option<CompletionTarget>,
     representation: Representation,
@@ -241,21 +241,21 @@ pub(crate) struct CostKey {
     ssd_fragments: u8,
 }
 
-impl CostKey {
+impl CostEstimateKey {
     fn comparable(self, other: Self) -> bool {
         self.completion.is_some()
             && self.completion == other.completion
             && self.representation != Representation::Unknown
-            && self.with_path(other.path) == other
+            && self.with_observation_kind(other.kind) == other
     }
 
     #[cfg(feature = "mooncake")]
     fn route_comparable(self, other: Self) -> bool {
         self.completion.is_some()
             && self.completion == other.completion
-            && self.path.is_prefill_to_decode_handoff() == other.path.is_prefill_to_decode_handoff()
+            && self.kind.is_prefill_to_decode_handoff() == other.kind.is_prefill_to_decode_handoff()
             && self.representation != Representation::Unknown
-            && self.with_path_resource(other.path, other.resource) == other
+            && self.with_observation_kind_and_resource(other.kind, other.resource) == other
     }
 
     pub(crate) fn with_dma_ranges(self, ranges: usize) -> Self {
@@ -265,10 +265,10 @@ impl CostKey {
         }
     }
 
-    pub(crate) fn with_path(self, path: CostPath) -> Self {
+    pub(crate) fn with_observation_kind(self, kind: CostObservationKind) -> Self {
         Self {
-            completion: path.completion_target(self.resource),
-            path,
+            completion: kind.completion_target(self.resource),
+            kind,
             ..self
         }
     }
@@ -293,24 +293,28 @@ impl CostKey {
             ..self
         }
     }
-    pub(crate) fn with_path_resource(self, path: CostPath, resource: ExecutionResource) -> Self {
+    pub(crate) fn with_observation_kind_and_resource(
+        self,
+        kind: CostObservationKind,
+        resource: ExecutionResource,
+    ) -> Self {
         Self {
-            path,
+            kind,
             resource,
-            completion: path.completion_target(resource),
+            completion: kind.completion_target(resource),
             ..self
         }
     }
     pub(crate) fn new(
-        path: CostPath,
+        kind: CostObservationKind,
         resource: ExecutionResource,
         representation: Representation,
         bytes: u64,
         fragments: usize,
     ) -> Self {
-        let completion = path.completion_target(resource);
+        let completion = kind.completion_target(resource);
         Self {
-            path,
+            kind,
             resource,
             completion,
             representation,
@@ -328,15 +332,4 @@ impl CostKey {
 
 fn bucket(value: u64) -> u8 {
     (u64::BITS - value.leading_zeros()) as u8
-}
-
-pub(crate) fn record_completion_observation(
-    key: CostKey,
-    logical_bytes: u64,
-    wire_bytes: u64,
-    elapsed: Duration,
-    admitted: bool,
-    outcome: Outcome,
-) {
-    observation::record_external(key, logical_bytes, wire_bytes, elapsed, admitted, outcome);
 }

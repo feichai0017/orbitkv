@@ -22,8 +22,8 @@ fn staging_reservation(
 fn cancelled_batch_releases_results_and_finishes_after_every_reader() {
     let (done_tx, done_rx) = oneshot::channel();
     let observation = Observation::new(
-        CostKey::new(
-            CostPath::LocalSsdHostReady,
+        CostEstimateKey::new(
+            CostObservationKind::LocalSsdHostReady,
             ExecutionResource::SsdStore(99),
             Representation::Raw,
             4096,

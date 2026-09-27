@@ -350,8 +350,8 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
     assert_eq!(bytes, 1200);
     assert_eq!(
         key,
-        CostKey::new(
-            CostPath::GpuDecode,
+        CostEstimateKey::new(
+            CostObservationKind::GpuDecode,
             ExecutionResource::Gpu(2),
             Representation::Mixed,
             1200,
@@ -361,8 +361,8 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
     let (key, _) = transfer_key(&layers, 2, TransferMode::Direct, false, true);
     assert_eq!(
         key,
-        CostKey::new(
-            CostPath::GpuSsdLoad,
+        CostEstimateKey::new(
+            CostObservationKind::GpuSsdLoad,
             ExecutionResource::Gpu(2),
             Representation::Mixed,
             1200,
@@ -406,14 +406,20 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
         let (merged_keys, bytes) = raw_copy_keys(&contiguous, 3, write);
         assert_eq!(bytes, 16);
         let paths = if write {
-            [CostPath::GpuSaveDirect, CostPath::GpuSaveKernel]
+            [
+                CostObservationKind::GpuSaveDirect,
+                CostObservationKind::GpuSaveKernel,
+            ]
         } else {
-            [CostPath::GpuLoadDirect, CostPath::GpuLoadKernel]
+            [
+                CostObservationKind::GpuLoadDirect,
+                CostObservationKind::GpuLoadKernel,
+            ]
         };
         for (key, path) in merged_keys.iter().zip(paths) {
             assert_eq!(
                 *key,
-                CostKey::new(path, ExecutionResource::Gpu(3), Representation::Raw, 16, 4)
+                CostEstimateKey::new(path, ExecutionResource::Gpu(3), Representation::Raw, 16, 4)
                     .with_dma_ranges(1)
             );
         }
@@ -424,8 +430,14 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
                 assert_ne!(*key, merged_key);
                 assert_eq!(
                     *key,
-                    CostKey::new(path, ExecutionResource::Gpu(3), Representation::Raw, 16, 4)
-                        .with_dma_ranges(4)
+                    CostEstimateKey::new(
+                        path,
+                        ExecutionResource::Gpu(3),
+                        Representation::Raw,
+                        16,
+                        4
+                    )
+                    .with_dma_ranges(4)
                 );
             }
         }

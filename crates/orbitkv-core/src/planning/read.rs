@@ -10,7 +10,7 @@ use super::replica::ReplicaSet;
 use super::ssd::SsdReadPlan;
 #[cfg(feature = "mooncake")]
 use crate::cost::{
-    CostKey, SelectionScope, cross_medium_selection_enabled, select_route, shadow_routes,
+    CostEstimateKey, SelectionScope, cross_medium_selection_enabled, select_route, shadow_routes,
 };
 #[cfg(feature = "mooncake")]
 use smallvec::SmallVec;
@@ -166,10 +166,10 @@ impl ReadPlan {
             + usize::from(local_count == Some(selected_count))
             + usize::from(peer_ssd == Some(selected_count));
 
-        let mut routes: SmallVec<[(HostReadSelection, CostKey); 3]> = SmallVec::new();
+        let mut routes: SmallVec<[(HostReadSelection, CostEstimateKey); 3]> = SmallVec::new();
         if peer_dram == Some(selected_count) {
             let plan = FetchPlan::from_prefix(&mut self.rows, selected_count, PeerSource::Dram);
-            if let Some(key) = plan.complete_cost_key() {
+            if let Some(key) = plan.complete_cost_estimate_key() {
                 routes.push((
                     HostReadSelection::Peer {
                         prefix: selected_count,
@@ -182,13 +182,13 @@ impl ReadPlan {
         if local_count == Some(selected_count)
             && let Some(key) = self
                 .ssd(crate::SsdReadPath::Uring, codec_budget)
-                .and_then(|route| route.cost_key())
+                .and_then(|route| route.cost_estimate_key())
         {
             routes.push((HostReadSelection::Ssd, key));
         }
         if peer_ssd == Some(selected_count) {
             let plan = FetchPlan::from_prefix(&mut self.rows, selected_count, PeerSource::Ssd);
-            if let Some(key) = plan.complete_cost_key() {
+            if let Some(key) = plan.complete_cost_estimate_key() {
                 routes.push((
                     HostReadSelection::Peer {
                         prefix: selected_count,
@@ -201,7 +201,7 @@ impl ReadPlan {
         let Some(selected_index) = routes.iter().position(|(route, _)| *route == selected) else {
             return selected;
         };
-        let keys: SmallVec<[CostKey; 3]> = routes.iter().map(|(_, key)| *key).collect();
+        let keys: SmallVec<[CostEstimateKey; 3]> = routes.iter().map(|(_, key)| *key).collect();
         shadow_routes(&keys, selected_index);
         if !cross_medium_selection_enabled() || routes.len() != expected_routes {
             return selected;

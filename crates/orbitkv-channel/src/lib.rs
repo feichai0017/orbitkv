@@ -33,7 +33,7 @@ pub use bootstrap::{
 pub use cache_client::{BlockHashes, CacheClient, QueryIntent, RecoveryRead, RestoreHandle};
 pub use cache_protocol::{
     CacheProtocolError, CancelQueryRequest, CompletionAdmission, CompletionIntent,
-    CompletionObservationRequest, CompletionOutcome, CompletionPath, PublishLayer, PublishRequest,
+    CompletionObservationRequest, CompletionOutcome, CompletionRoute, PublishLayer, PublishRequest,
     QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode, QueryTicket,
     ReleaseRequest, RestoreCommand, RestoreLease, RestoreRequest, RestoreResponse, RestoreState,
 };

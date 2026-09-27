@@ -45,17 +45,17 @@ impl TryFrom<u16> for CompletionIntent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
-pub enum CompletionPath {
+pub enum CompletionRoute {
     PrefillToDecodeHandoff = 1,
 }
 
-impl TryFrom<u16> for CompletionPath {
+impl TryFrom<u16> for CompletionRoute {
     type Error = CacheProtocolError;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             1 => Ok(Self::PrefillToDecodeHandoff),
-            _ => Err(CacheProtocolError::UnknownCompletionPath(value)),
+            _ => Err(CacheProtocolError::UnknownCompletionRoute(value)),
         }
     }
 }
@@ -113,7 +113,7 @@ pub struct CompletionObservationRequest {
     pub source_endpoint: String,
     pub notification_generation: u64,
     pub intent: CompletionIntent,
-    pub path: CompletionPath,
+    pub route: CompletionRoute,
     pub representation: ReplicaRepresentation,
     pub logical_bytes: u64,
     pub wire_bytes: u64,
@@ -135,7 +135,7 @@ impl CompletionObservationRequest {
         push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
         push_u16(&mut bytes, 0);
         push_u16(&mut bytes, self.intent as u16);
-        push_u16(&mut bytes, self.path as u16);
+        push_u16(&mut bytes, self.route as u16);
         push_u16(&mut bytes, representation_code(self.representation));
         push_u16(&mut bytes, self.admission as u16);
         push_u16(&mut bytes, self.outcome as u16);
@@ -169,7 +169,7 @@ impl CompletionObservationRequest {
             return Err(CacheProtocolError::InvalidFlags(flags));
         }
         let intent = CompletionIntent::try_from(decoder.u16()?)?;
-        let path = CompletionPath::try_from(decoder.u16()?)?;
+        let route = CompletionRoute::try_from(decoder.u16()?)?;
         let representation = decode_representation(decoder.u16()?)?;
         let admission = CompletionAdmission::try_from(decoder.u16()?)?;
         let outcome = CompletionOutcome::try_from(decoder.u16()?)?;
@@ -200,7 +200,7 @@ impl CompletionObservationRequest {
             source_endpoint,
             notification_generation,
             intent,
-            path,
+            route,
             representation,
             logical_bytes,
             wire_bytes,
@@ -246,7 +246,7 @@ impl CompletionObservationRequest {
         if self.representation == ReplicaRepresentation::Unknown {
             return Err(CacheProtocolError::UnknownCompletionRepresentation(0));
         }
-        if self.path == CompletionPath::PrefillToDecodeHandoff
+        if self.route == CompletionRoute::PrefillToDecodeHandoff
             && self.intent != CompletionIntent::EngineRestore
         {
             return Err(CacheProtocolError::InvalidCompletionTarget);
@@ -1098,8 +1098,8 @@ pub enum CacheProtocolError {
     ZeroOperationId,
     #[error("unknown completion intent: {0}")]
     UnknownCompletionIntent(u16),
-    #[error("unknown completion path: {0}")]
-    UnknownCompletionPath(u16),
+    #[error("unknown completion route: {0}")]
+    UnknownCompletionRoute(u16),
     #[error("unknown completion representation: {0}")]
     UnknownCompletionRepresentation(u16),
     #[error("unknown completion admission: {0}")]
@@ -1118,7 +1118,7 @@ pub enum CacheProtocolError {
     ZeroCompletionField(&'static str),
     #[error("completion destination device must be non-negative, got {0}")]
     InvalidCompletionDevice(i32),
-    #[error("completion path and target intent are inconsistent")]
+    #[error("completion route and target intent are inconsistent")]
     InvalidCompletionTarget,
     #[error("completion admission, outcome and wire bytes are inconsistent")]
     InvalidCompletionState,

@@ -3,8 +3,8 @@ use smallvec::SmallVec;
 
 use super::replica::ReplicaSet;
 use crate::cost::{
-    CostKey, CostPath, ExecutionResource, SelectionScope, resource_id, select_route,
-    selection_enabled,
+    CostEstimateKey, CostObservationKind, ExecutionResource, SelectionScope, resource_id,
+    select_route, selection_enabled,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,10 +21,10 @@ impl PeerSource {
         }
     }
 
-    fn cost_path(self) -> CostPath {
+    fn cost_observation_kind(self) -> CostObservationKind {
         match self {
-            Self::Dram => CostPath::PeerDramHostReady,
-            Self::Ssd => CostPath::PeerSsdHostReady,
+            Self::Dram => CostObservationKind::PeerDramHostReady,
+            Self::Ssd => CostObservationKind::PeerSsdHostReady,
         }
     }
 }
@@ -38,9 +38,9 @@ pub(crate) struct FetchSegment {
 }
 
 impl FetchSegment {
-    pub(crate) fn cost_key(&self) -> CostKey {
-        CostKey::new(
-            self.source.cost_path(),
+    pub(crate) fn cost_estimate_key(&self) -> CostEstimateKey {
+        CostEstimateKey::new(
+            self.source.cost_observation_kind(),
             ExecutionResource::Peer(resource_id(&self.owner)),
             self.representation,
             self.stored_bytes.unwrap_or(0),
@@ -122,11 +122,11 @@ impl<'a> FetchPlan<'a> {
         })
     }
 
-    pub(crate) fn complete_cost_key(&self) -> Option<CostKey> {
+    pub(crate) fn complete_cost_estimate_key(&self) -> Option<CostEstimateKey> {
         let choice = self.selected_choice(0)?;
         (choice.count == self.rows.len()).then(|| {
-            CostKey::new(
-                self.source.cost_path(),
+            CostEstimateKey::new(
+                self.source.cost_observation_kind(),
                 ExecutionResource::Peer(resource_id(choice.owner)),
                 choice.representation,
                 choice.stored_bytes.unwrap_or(0),
@@ -163,13 +163,13 @@ impl<'a> FetchPlan<'a> {
         let count = candidates.first()?.1;
         candidates.retain(|(_, coverage)| *coverage == count);
         let selected = if selection_enabled() {
-            let keys: SmallVec<[CostKey; 4]> = candidates
+            let keys: SmallVec<[CostEstimateKey; 4]> = candidates
                 .iter()
                 .map(|(owner, _)| {
                     let (stored_bytes, representation) =
                         self.shape_for_owner(start, count, owner)?;
-                    Some(CostKey::new(
-                        self.source.cost_path(),
+                    Some(CostEstimateKey::new(
+                        self.source.cost_observation_kind(),
                         ExecutionResource::Peer(resource_id(owner)),
                         representation.unwrap_or_default(),
                         stored_bytes.unwrap_or(0),

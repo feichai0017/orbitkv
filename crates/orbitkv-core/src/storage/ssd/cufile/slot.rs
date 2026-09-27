@@ -6,7 +6,7 @@ use std::time::Instant;
 use cudarc::driver::{CudaContext, CudaEvent, CudaStream, result, sys};
 
 use super::{Cufile, CufileFile, IoBatch, STAGING_BYTES};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation};
+use crate::cost::{CostEstimateKey, CostObservationKind, Observation, Outcome, Representation};
 use crate::metrics::core_metrics;
 use crate::transfer::finish_gpu_transfer;
 
@@ -98,11 +98,11 @@ impl GpuSlot {
             }
         };
         let mut observation = Observation::new(
-            CostKey::new(
+            CostEstimateKey::new(
                 if write {
-                    CostPath::SsdCufileWrite
+                    CostObservationKind::SsdCufileWrite
                 } else {
-                    CostPath::SsdCufileRead
+                    CostObservationKind::SsdCufileRead
                 },
                 file.cost_resource,
                 Representation::Unknown,

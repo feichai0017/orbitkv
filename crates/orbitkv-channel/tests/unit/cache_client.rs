@@ -319,7 +319,7 @@ fn completion_observation_uses_the_authenticated_descriptor_session() {
         source_endpoint: "tent://prefill".into(),
         notification_generation: 2,
         intent: crate::CompletionIntent::EngineRestore,
-        path: crate::CompletionPath::PrefillToDecodeHandoff,
+        route: crate::CompletionRoute::PrefillToDecodeHandoff,
         representation: orbitkv_state::ReplicaRepresentation::Raw,
         logical_bytes: 4096,
         wire_bytes: 4096,

@@ -2,9 +2,12 @@ use orbitkv_state::ReplicaRepresentation;
 
 use super::{EngineError, OrbitKVEngine};
 use crate::completion::{
-    CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome, CompletionPath,
+    CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
+    CompletionRoute,
 };
-use crate::cost::{self, CostKey, CostPath, ExecutionResource, Outcome, resource_id};
+use crate::cost::{
+    self, CostEstimateKey, CostObservationKind, ExecutionResource, Outcome, resource_id,
+};
 
 impl OrbitKVEngine {
     /// Accept measured completion evidence from a registered local engine.
@@ -28,8 +31,8 @@ impl OrbitKVEngine {
         }
 
         let source_endpoint_hash = resource_id(&observation.source_endpoint);
-        let key = CostKey::new(
-            CostPath::PrefillToDecodeHandoff,
+        let key = CostEstimateKey::new(
+            CostObservationKind::PrefillToDecodeHandoff,
             ExecutionResource::PrefillToDecodeHandoff {
                 source_endpoint_hash,
                 destination_device: observation.destination_device_id as u64,
@@ -87,7 +90,7 @@ fn validate_observation(observation: &CompletionObservation) -> Result<(), Engin
     if observation.representation == ReplicaRepresentation::Unknown {
         return Err(invalid("completion representation must be known"));
     }
-    if observation.path == CompletionPath::PrefillToDecodeHandoff
+    if observation.route == CompletionRoute::PrefillToDecodeHandoff
         && observation.intent != CompletionIntent::EngineRestore
     {
         return Err(invalid(

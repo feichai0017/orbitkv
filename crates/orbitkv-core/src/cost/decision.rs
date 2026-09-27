@@ -3,7 +3,7 @@ use std::time::Instant;
 use opentelemetry::KeyValue;
 
 use super::estimates::{ESTIMATES, Estimate};
-use super::{CostKey, ENABLED, SELECTION_ENABLED};
+use super::{CostEstimateKey, ENABLED, SELECTION_ENABLED};
 use crate::metrics::core_metrics;
 
 const MAX_CANDIDATES: usize = 8;
@@ -27,7 +27,11 @@ impl SelectionScope {
 /// Select among routes already proven to have the same completion target.
 /// Missing, stale, incompatible or contended evidence preserves the planner's
 /// deterministic default; this function never acquires execution resources.
-pub(crate) fn select_route(candidates: &[CostKey], default: usize, scope: SelectionScope) -> usize {
+pub(crate) fn select_route(
+    candidates: &[CostEstimateKey],
+    default: usize,
+    scope: SelectionScope,
+) -> usize {
     if !*ENABLED || !*SELECTION_ENABLED {
         return default;
     }
@@ -58,7 +62,7 @@ pub(crate) fn select_route(candidates: &[CostKey], default: usize, scope: Select
 }
 
 /// Compare complete routes with one target without changing selected execution.
-pub(crate) fn shadow_routes(candidates: &[CostKey], selected: usize) {
+pub(crate) fn shadow_routes(candidates: &[CostEstimateKey], selected: usize) {
     if !*ENABLED
         || selected >= candidates.len()
         || candidates.len() < 2
@@ -80,7 +84,7 @@ pub(crate) fn shadow_routes(candidates: &[CostKey], selected: usize) {
     let metrics = core_metrics();
     for (key, prediction) in candidates.iter().zip(predictions) {
         let attributes = [
-            KeyValue::new("path", key.path.label()),
+            KeyValue::new("path", key.kind.label()),
             KeyValue::new(
                 "evidence",
                 if prediction.is_some() {
@@ -120,7 +124,7 @@ pub(crate) fn shadow_routes(candidates: &[CostKey], selected: usize) {
 }
 
 fn choose(
-    candidates: &[CostKey],
+    candidates: &[CostEstimateKey],
     predictions: &[Option<Estimate>],
     default: usize,
 ) -> (usize, &'static str) {

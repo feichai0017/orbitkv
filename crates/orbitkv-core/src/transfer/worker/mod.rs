@@ -12,7 +12,8 @@ use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use crate::EngineError;
 use crate::block::{RawBlock, SealedBlock};
 use crate::cost::{
-    CostKey, CostPath, ExecutionResource, Observation, Outcome, Representation, enabled, shadow,
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+    enabled, shadow,
 };
 use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::metrics::core_metrics;
@@ -335,7 +336,7 @@ impl GpuWorkerPool {
                 disk,
             );
             if let Some(path) = ssd_path {
-                key = restore::cost_key(&task, self.transfer_mode, path, key);
+                key = restore::cost_estimate_key(&task, self.transfer_mode, path, key);
                 restore::shadow(&task, path, key);
             }
             Observation::new(key, Some(bytes))
@@ -746,18 +747,18 @@ fn transfer_key(
     mode: TransferMode,
     write: bool,
     disk: bool,
-) -> (CostKey, u64) {
+) -> (CostEstimateKey, u64) {
     let (bytes, fragments) = transfer_shape(layers);
     let encoded = has_encoded(layers);
     let path = match (disk, encoded, write, mode) {
-        (true, _, false, _) => CostPath::GpuSsdLoad,
-        (true, _, true, _) => CostPath::GpuSsdSave,
-        (false, true, false, _) => CostPath::GpuDecode,
-        (false, true, true, _) => CostPath::GpuEncode,
-        (false, false, false, TransferMode::Direct) => CostPath::GpuLoadDirect,
-        (false, false, false, TransferMode::Kernel) => CostPath::GpuLoadKernel,
-        (false, false, true, TransferMode::Direct) => CostPath::GpuSaveDirect,
-        (false, false, true, TransferMode::Kernel) => CostPath::GpuSaveKernel,
+        (true, _, false, _) => CostObservationKind::GpuSsdLoad,
+        (true, _, true, _) => CostObservationKind::GpuSsdSave,
+        (false, true, false, _) => CostObservationKind::GpuDecode,
+        (false, true, true, _) => CostObservationKind::GpuEncode,
+        (false, false, false, TransferMode::Direct) => CostObservationKind::GpuLoadDirect,
+        (false, false, false, TransferMode::Kernel) => CostObservationKind::GpuLoadKernel,
+        (false, false, true, TransferMode::Direct) => CostObservationKind::GpuSaveDirect,
+        (false, false, true, TransferMode::Kernel) => CostObservationKind::GpuSaveKernel,
     };
     let mut representation = None;
     let mut add_format = |format| {
@@ -795,7 +796,7 @@ fn transfer_key(
         }
     }
     (
-        CostKey::new(
+        CostEstimateKey::new(
             path,
             ExecutionResource::Gpu(device as u64),
             representation.unwrap_or(Representation::Raw),
@@ -806,18 +807,24 @@ fn transfer_key(
     )
 }
 
-fn raw_copy_keys(copies: &[CopyDesc], device: u64, write: bool) -> ([CostKey; 2], u64) {
+fn raw_copy_keys(copies: &[CopyDesc], device: u64, write: bool) -> ([CostEstimateKey; 2], u64) {
     let bytes = copies
         .iter()
         .fold(0u64, |bytes, copy| bytes.saturating_add(copy.size as u64));
     let dma_ranges = crate::transfer::memcpy::merged_ranges(copies).count();
     let paths = if write {
-        [CostPath::GpuSaveDirect, CostPath::GpuSaveKernel]
+        [
+            CostObservationKind::GpuSaveDirect,
+            CostObservationKind::GpuSaveKernel,
+        ]
     } else {
-        [CostPath::GpuLoadDirect, CostPath::GpuLoadKernel]
+        [
+            CostObservationKind::GpuLoadDirect,
+            CostObservationKind::GpuLoadKernel,
+        ]
     };
     let keys = paths.map(|path| {
-        CostKey::new(
+        CostEstimateKey::new(
             path,
             ExecutionResource::Gpu(device),
             Representation::Raw,

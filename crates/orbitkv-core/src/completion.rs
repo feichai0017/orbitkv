@@ -10,7 +10,7 @@ pub enum CompletionIntent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum CompletionPath {
+pub enum CompletionRoute {
     PrefillToDecodeHandoff,
 }
 
@@ -40,7 +40,7 @@ pub struct CompletionObservation {
     pub source_endpoint: String,
     pub notification_generation: u64,
     pub intent: CompletionIntent,
-    pub path: CompletionPath,
+    pub route: CompletionRoute,
     pub representation: ReplicaRepresentation,
     pub logical_bytes: u64,
     pub wire_bytes: u64,

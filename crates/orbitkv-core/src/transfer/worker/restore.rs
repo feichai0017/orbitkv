@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::cost::{CostKey, CostPath, ExecutionResource};
+use crate::cost::{CostEstimateKey, CostObservationKind, ExecutionResource};
 use crate::{EngineError, SsdReadPath, TransferMode};
 
 use super::{LayerTransferData, LoadTask, TransferPayload};
@@ -37,12 +37,12 @@ pub(super) fn set_ssd_path(layers: &mut [LayerTransferData], path: SsdReadPath) 
     }
 }
 
-pub(super) fn cost_key(
+pub(super) fn cost_estimate_key(
     task: &LoadTask,
     mode: TransferMode,
     path: SsdReadPath,
-    shape: CostKey,
-) -> CostKey {
+    shape: CostEstimateKey,
+) -> CostEstimateKey {
     let mut resources: Vec<_> = task
         .layers
         .iter()
@@ -90,18 +90,18 @@ pub(super) fn cost_key(
             target_bytes,
             target_fragments,
         )
-        .with_path_resource(
+        .with_observation_kind_and_resource(
             match path {
-                SsdReadPath::Uring => CostPath::SsdUringRestore,
-                SsdReadPath::Cufile => CostPath::SsdCufileRestore,
+                SsdReadPath::Uring => CostObservationKind::SsdUringRestore,
+                SsdReadPath::Cufile => CostObservationKind::SsdCufileRestore,
             },
             resource,
         )
 }
 
-pub(super) fn shadow(task: &LoadTask, selected: SsdReadPath, key: CostKey) {
-    let uring = key.with_path(CostPath::SsdUringRestore);
-    let cufile = key.with_path(CostPath::SsdCufileRestore);
+pub(super) fn shadow(task: &LoadTask, selected: SsdReadPath, key: CostEstimateKey) {
+    let uring = key.with_observation_kind(CostObservationKind::SsdUringRestore);
+    let cufile = key.with_observation_kind(CostObservationKind::SsdCufileRestore);
     let cufile_eligible = task
         .layers
         .iter()

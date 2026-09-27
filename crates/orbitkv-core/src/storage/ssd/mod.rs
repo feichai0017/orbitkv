@@ -9,7 +9,9 @@ use mea::oneshot;
 use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
-use crate::cost::{CostKey, CostPath, ExecutionResource, Observation, Outcome, Representation};
+use crate::cost::{
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+};
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
@@ -625,8 +627,8 @@ impl SsdStore {
         }
         let len = admitted.len();
         let observation = Observation::new(
-            CostKey::new(
-                CostPath::SsdWriteBatch,
+            CostEstimateKey::new(
+                CostObservationKind::SsdWriteBatch,
                 self.io.cost_resource,
                 representation.unwrap_or(Representation::Unknown),
                 logical_bytes.unwrap_or(stored_bytes),

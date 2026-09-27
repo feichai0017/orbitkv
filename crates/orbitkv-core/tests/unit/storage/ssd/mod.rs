@@ -564,7 +564,7 @@ async fn host_routes_preserve_source_priority_permissions_and_complete_coverage(
 #[tokio::test]
 async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
     use crate::QueryMode;
-    use crate::cost::{CostKey, CostPath, Representation};
+    use crate::cost::{CostEstimateKey, CostObservationKind, Representation};
     use crate::planning::peer::PeerSource;
     use crate::planning::read::{HostReadRoute, ReadPlan};
 
@@ -589,9 +589,9 @@ async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
         panic!("local SSD must remain ahead of peer SSD");
     };
     assert_eq!(
-        local_route.cost_key(),
-        Some(CostKey::new(
-            CostPath::LocalSsdHostReady,
+        local_route.cost_estimate_key(),
+        Some(CostEstimateKey::new(
+            CostObservationKind::LocalSsdHostReady,
             store.io.cost_resource,
             Representation::Raw,
             SSD_ALIGNMENT as u64,
@@ -630,7 +630,9 @@ async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
     const CHILD: &str = "ORBITKV_TEST_CROSS_MEDIUM_ROUTE_CHILD";
     if std::env::var_os(CHILD).is_some() {
         use crate::QueryMode;
-        use crate::cost::{CostKey, CostPath, ExecutionResource, Representation, resource_id};
+        use crate::cost::{
+            CostEstimateKey, CostObservationKind, ExecutionResource, Representation, resource_id,
+        };
         use crate::planning::peer::{FetchPlan, PeerSource};
         use crate::planning::read::{HostReadRoute, ReadPlan};
 
@@ -650,9 +652,13 @@ async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
                 stored_bytes: Some(SSD_ALIGNMENT as u64),
             },
         }]);
-        let local_key = plan.ssd(SsdReadPath::Uring, 0).unwrap().cost_key().unwrap();
-        let peer_key = CostKey::new(
-            CostPath::PeerDramHostReady,
+        let local_key = plan
+            .ssd(SsdReadPath::Uring, 0)
+            .unwrap()
+            .cost_estimate_key()
+            .unwrap();
+        let peer_key = CostEstimateKey::new(
+            CostObservationKind::PeerDramHostReady,
             ExecutionResource::Peer(resource_id(&owner)),
             Representation::Raw,
             SSD_ALIGNMENT as u64,
@@ -664,7 +670,7 @@ async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
         }
         {
             let peer = FetchPlan::new(&mut plan.rows, 1, PeerSource::Dram).unwrap();
-            assert_eq!(peer.complete_cost_key(), Some(peer_key));
+            assert_eq!(peer.complete_cost_estimate_key(), Some(peer_key));
         }
         assert!(matches!(
             plan.host_route(true, true, 0),

@@ -25,7 +25,8 @@ use tokio::sync::oneshot;
 
 use super::SSD_ALIGNMENT;
 use crate::cost::{
-    CostKey, CostPath, ExecutionResource, Observation, Outcome, Representation, resource_id,
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+    resource_id,
 };
 
 const DEFAULT_URING_THREADS: usize = 16;
@@ -408,8 +409,8 @@ impl UringIoEngine {
             iovecs: Some(iovecs_libc),
             requested_bytes,
             observation: Observation::new(
-                CostKey::new(
-                    CostPath::SsdRead,
+                CostEstimateKey::new(
+                    CostObservationKind::SsdRead,
                     ExecutionResource::SsdFile(self.resources[shard_id]),
                     Representation::Unknown,
                     requested_bytes,
@@ -479,8 +480,8 @@ impl UringIoEngine {
             iovecs: Some(iovecs_libc),
             requested_bytes,
             observation: Observation::new(
-                CostKey::new(
-                    CostPath::SsdWrite,
+                CostEstimateKey::new(
+                    CostObservationKind::SsdWrite,
                     ExecutionResource::SsdFile(self.resources[shard_id]),
                     Representation::Unknown,
                     requested_bytes,

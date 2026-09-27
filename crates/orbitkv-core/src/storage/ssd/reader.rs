@@ -1,6 +1,8 @@
 use super::{SsdStore, index::SsdIndexEntry, uring::UringIoEngine};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::cost::{CostKey, CostPath, ExecutionResource, Observation, Outcome, Representation};
+use crate::cost::{
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+};
 use crate::metrics::core_metrics;
 use crate::peer::export::{PeerError, StagingReservation};
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -95,8 +97,8 @@ impl PrefetchBatch {
             }
         }
         let observation = Observation::new(
-            CostKey::new(
-                CostPath::LocalSsdHostReady,
+            CostEstimateKey::new(
+                CostObservationKind::LocalSsdHostReady,
                 resource,
                 representation.unwrap_or(Representation::Unknown),
                 stored_bytes,

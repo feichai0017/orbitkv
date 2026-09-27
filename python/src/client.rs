@@ -3,7 +3,7 @@ use std::time::Duration;
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{
     BlockHashes, CacheClient, CallOptions, ChannelError, CompletionAdmission, CompletionIntent,
-    CompletionObservationRequest, CompletionOutcome, CompletionPath, PublishLayer, PublishRequest,
+    CompletionObservationRequest, CompletionOutcome, CompletionRoute, PublishLayer, PublishRequest,
     QueryIntent, RestoreHandle, RestoreLease, RestoreRequest, RestoreState,
 };
 use orbitkv_proto::proto::engine::{
@@ -321,7 +321,7 @@ impl PyCacheManagerClient {
             source_endpoint,
             notification_generation,
             intent: CompletionIntent::EngineRestore,
-            path: CompletionPath::PrefillToDecodeHandoff,
+            route: CompletionRoute::PrefillToDecodeHandoff,
             representation,
             logical_bytes,
             wire_bytes,

@@ -18,7 +18,8 @@ use super::execute::{FetchResult, SegmentFetcher, SegmentOutcome, execute_fetch_
 use super::transport::MooncakeTransport;
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
 use crate::cost::{
-    CostKey, CostPath, ExecutionResource, Observation, Outcome, Representation, resource_id,
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+    resource_id,
 };
 use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
@@ -61,7 +62,7 @@ impl SegmentFetcher for PeerReader {
         let namespace = &segment.records[0].key.namespace;
         let t0 = Instant::now();
         let mut route_observation = if crate::cost::enabled() {
-            Observation::new(segment.cost_key(), None)
+            Observation::new(segment.cost_estimate_key(), None)
         } else {
             Observation::disabled()
         };
@@ -76,10 +77,10 @@ impl SegmentFetcher for PeerReader {
             0
         });
         let mut authorization_observation = Observation::new(
-            CostKey::new(
+            CostEstimateKey::new(
                 match segment.source {
-                    PeerSource::Dram => CostPath::RemoteAuthorization,
-                    PeerSource::Ssd => CostPath::RemoteSsdAuthorization,
+                    PeerSource::Dram => CostObservationKind::RemoteAuthorization,
+                    PeerSource::Ssd => CostObservationKind::RemoteSsdAuthorization,
                 },
                 resource,
                 segment.representation,
@@ -483,8 +484,8 @@ async fn fetch_blocks_via_mooncake(
         (0, None, Representation::Unknown)
     };
     let mut observation = Observation::new(
-        CostKey::new(
-            CostPath::RemoteRead,
+        CostEstimateKey::new(
+            CostObservationKind::RemoteRead,
             resource,
             representation,
             logical_bytes.unwrap_or(stored_bytes),

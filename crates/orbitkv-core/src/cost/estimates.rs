@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::time::Instant;
 
-use super::{ALPHA, CAPACITY, CostKey, MAX_AGE, MIN_SAMPLES};
+use super::{ALPHA, CAPACITY, CostEstimateKey, MAX_AGE, MIN_SAMPLES};
 
 pub(super) static ESTIMATES: LazyLock<Mutex<Estimates>> =
     LazyLock::new(|| Mutex::new(Estimates::default()));
@@ -26,15 +26,15 @@ impl Estimate {
 
 #[derive(Default)]
 pub(super) struct Estimates {
-    entries: HashMap<CostKey, Estimate>,
+    entries: HashMap<CostEstimateKey, Estimate>,
 }
 
 impl Estimates {
-    pub(super) fn predict(&self, key: CostKey, now: Instant) -> Option<Estimate> {
+    pub(super) fn predict(&self, key: CostEstimateKey, now: Instant) -> Option<Estimate> {
         self.entries.get(&key).copied().filter(|e| e.reliable(now))
     }
 
-    pub(super) fn observe(&mut self, key: CostKey, seconds: f64, now: Instant) -> bool {
+    pub(super) fn observe(&mut self, key: CostEstimateKey, seconds: f64, now: Instant) -> bool {
         if !seconds.is_finite() || seconds < 0.0 {
             return false;
         }

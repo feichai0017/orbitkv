@@ -1,8 +1,8 @@
 use super::*;
-use crate::cost::{CostPath, ExecutionResource, Representation};
+use crate::cost::{CostObservationKind, ExecutionResource, Representation};
 
-fn key(path: CostPath) -> CostKey {
-    CostKey::new(
+fn key(path: CostObservationKind) -> CostEstimateKey {
+    CostEstimateKey::new(
         path,
         ExecutionResource::Gpu(1),
         Representation::Raw,
@@ -23,8 +23,8 @@ fn estimate(seconds: f64, error: f64) -> Estimate {
 
 #[test]
 fn shadow_requires_matching_demand_resources_and_completion_target() {
-    let current = key(CostPath::GpuLoadDirect);
-    let alternative = key(CostPath::GpuLoadKernel);
+    let current = key(CostObservationKind::GpuLoadDirect);
+    let alternative = key(CostObservationKind::GpuLoadKernel);
     let predictions = [Some(estimate(0.02, 0.0)), Some(estimate(0.01, 0.0))];
     assert_eq!(
         recommendation(&[current, alternative], &predictions, 0),
@@ -32,37 +32,47 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
     );
 
     for (name, incompatible) in [
-        ("direction", alternative.with_path(CostPath::GpuSaveKernel)),
+        (
+            "direction",
+            alternative.with_observation_kind(CostObservationKind::GpuSaveKernel),
+        ),
         (
             "completion",
-            alternative.with_path(CostPath::SsdUringRestore),
+            alternative.with_observation_kind(CostObservationKind::SsdUringRestore),
         ),
-        ("composite", alternative.with_path(CostPath::GpuDecode)),
+        (
+            "composite",
+            alternative.with_observation_kind(CostObservationKind::GpuDecode),
+        ),
         (
             "device",
-            alternative.with_path_resource(alternative.path, ExecutionResource::Gpu(2)),
+            alternative
+                .with_observation_kind_and_resource(alternative.kind, ExecutionResource::Gpu(2)),
         ),
         (
             "owner domain",
-            alternative.with_path_resource(alternative.path, ExecutionResource::SsdStore(1)),
+            alternative.with_observation_kind_and_resource(
+                alternative.kind,
+                ExecutionResource::SsdStore(1),
+            ),
         ),
         (
             "representation",
-            CostKey {
+            CostEstimateKey {
                 representation: Representation::Ans,
                 ..alternative
             },
         ),
         (
             "bytes",
-            CostKey {
+            CostEstimateKey {
                 size: alternative.size + 1,
                 ..alternative
             },
         ),
         (
             "fragments",
-            CostKey {
+            CostEstimateKey {
                 fragments: alternative.fragments + 1,
                 ..alternative
             },
@@ -77,13 +87,16 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
         );
     }
 
-    let unknown = CostKey {
+    let unknown = CostEstimateKey {
         representation: Representation::Unknown,
         ..current
     };
     assert_eq!(
         recommendation(
-            &[unknown, unknown.with_path(CostPath::GpuLoadKernel)],
+            &[
+                unknown,
+                unknown.with_observation_kind(CostObservationKind::GpuLoadKernel)
+            ],
             &predictions,
             0
         ),
@@ -91,8 +104,8 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
     );
 
     let ssd = current
-        .with_path_resource(
-            CostPath::SsdUringRestore,
+        .with_observation_kind_and_resource(
+            CostObservationKind::SsdUringRestore,
             ExecutionResource::SsdRestore {
                 device: 1,
                 copy_backend: 0,
@@ -103,15 +116,18 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
         .with_ssd_shape(8192, 8, 4096, 4);
     assert_eq!(
         recommendation(
-            &[ssd, ssd.with_path(CostPath::SsdCufileRestore)],
+            &[
+                ssd,
+                ssd.with_observation_kind(CostObservationKind::SsdCufileRestore)
+            ],
             &predictions,
             0
         ),
         "different",
     );
 
-    let other_device = ssd.with_path_resource(
-        CostPath::SsdCufileRestore,
+    let other_device = ssd.with_observation_kind_and_resource(
+        CostObservationKind::SsdCufileRestore,
         ExecutionResource::SsdRestore {
             device: 2,
             copy_backend: 0,
@@ -128,7 +144,10 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
 
 #[test]
 fn shadow_requires_a_gain_beyond_both_errors_and_the_switching_margin() {
-    let candidates = [key(CostPath::GpuLoadDirect), key(CostPath::GpuLoadKernel)];
+    let candidates = [
+        key(CostObservationKind::GpuLoadDirect),
+        key(CostObservationKind::GpuLoadKernel),
+    ];
     for (name, current, alternative, expected) in [
         (
             "clear gain",

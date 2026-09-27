@@ -17,8 +17,8 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
                 codec_budget: 64 << 20,
             },
             Observation::new(
-                crate::cost::CostKey::new(
-                    crate::cost::CostPath::GpuSsdLoad,
+                crate::cost::CostEstimateKey::new(
+                    crate::cost::CostObservationKind::GpuSsdLoad,
                     crate::cost::ExecutionResource::Gpu(0),
                     crate::cost::Representation::Raw,
                     0,
