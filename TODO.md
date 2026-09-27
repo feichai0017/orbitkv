@@ -210,9 +210,12 @@ qualification remain open. See the
   fragments and terminal outcome through `orbitkv-channel`. Train only
   admitted completions; keep standalone P/D unchanged and do not enable route
   selection.
-- [ ] Add the matching direct-to-decode completion boundary, live decode-page
-  and handoff-queue admission, TENT NIC pressure at decision time, and an
-  authoritative SGLang decode completion callback before comparing routes.
+- [x] Add the matching direct-to-decode completion boundary from Restore
+  submission through terminal GPU completion. Validate exact registered target
+  ranges into a device-bound `DecodePageGrant` retained by the consumed plan;
+  keep this observation-only.
+- [ ] Add live handoff-queue admission, TENT NIC pressure at decision time, and
+  an authoritative SGLang decode completion callback before comparing routes.
 
 ## M0 — framework-neutral foundation
 

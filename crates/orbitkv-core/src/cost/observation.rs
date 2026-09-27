@@ -95,6 +95,14 @@ impl Observation {
     }
 
     pub(crate) fn new(key: CostEstimateKey, logical_bytes: Option<u64>) -> Self {
+        Self::new_enqueued(key, logical_bytes, Instant::now())
+    }
+
+    pub(crate) fn new_enqueued(
+        key: CostEstimateKey,
+        logical_bytes: Option<u64>,
+        enqueued: Instant,
+    ) -> Self {
         if !*ENABLED {
             return Self(None);
         }
@@ -109,7 +117,7 @@ impl Observation {
         Self(Some(Running {
             key,
             logical_bytes,
-            enqueued: now,
+            enqueued,
             admitted: None,
             submitted: None,
             prediction,

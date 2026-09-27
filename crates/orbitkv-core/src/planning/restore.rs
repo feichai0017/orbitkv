@@ -2,6 +2,17 @@ use std::collections::HashSet;
 
 use crate::SsdReadPath;
 use crate::block::RestoreSource;
+use crate::cost::resource_id;
+
+/// Exact registered decode-page ranges accepted for one restore submission.
+/// The framework retains page lifetime; this grant proves the Cache Manager
+/// validated the concrete destination device and byte ranges before enqueue.
+#[derive(Debug)]
+pub(crate) struct DecodePageGrant {
+    device_id: i32,
+    bytes: u64,
+    fragments: usize,
+}
 
 /// Physical restore intent after the engine has allocated destination pages.
 /// It owns no source or device resource; execution owners acquire those next.
@@ -12,7 +23,11 @@ pub(crate) struct RestorePlan {
     allow_uring_fallback: bool,
     ssd_source_bytes: u64,
     ssd_source_fragments: usize,
+    source_bytes: u64,
+    source_fragments: usize,
+    source_set_hash: u64,
     has_memory: bool,
+    decode_pages: Option<DecodePageGrant>,
 }
 
 impl RestorePlan {
@@ -24,13 +39,18 @@ impl RestorePlan {
             return Err("restore target device must be non-negative".into());
         }
         let mut seen = HashSet::new();
+        let mut source_domains = Vec::new();
         let mut plan = Self {
             device_id,
             ssd_path: None,
             allow_uring_fallback: false,
             ssd_source_bytes: 0,
             ssd_source_fragments: 0,
+            source_bytes: 0,
+            source_fragments: 0,
+            source_set_hash: 0,
             has_memory: false,
+            decode_pages: None,
         };
         for (source_id, source) in sources {
             if let RestoreSource::Ssd {
@@ -52,21 +72,46 @@ impl RestorePlan {
                 continue;
             }
             match source {
-                RestoreSource::Memory(_) => plan.has_memory = true,
+                RestoreSource::Memory(block) => {
+                    plan.has_memory = true;
+                    plan.source_bytes = plan
+                        .source_bytes
+                        .checked_add(block.memory_footprint())
+                        .ok_or("restore source bytes overflow")?;
+                    plan.source_fragments = plan
+                        .source_fragments
+                        .checked_add(block.slots().iter().map(|slot| slot.num_segments()).sum())
+                        .ok_or("restore source fragment count overflow")?;
+                    source_domains.push((0u8, 0u64));
+                }
                 RestoreSource::Ssd { lease, .. } => {
+                    source_domains.push((1u8, resource_id(&lease.cost_resource())));
                     for slot in &lease.entry.slots {
+                        let bytes = slot.total_size();
+                        let fragments = slot.num_segments();
                         plan.ssd_source_bytes = plan
                             .ssd_source_bytes
-                            .checked_add(slot.total_size())
+                            .checked_add(bytes)
                             .ok_or("restore source bytes overflow")?;
                         plan.ssd_source_fragments = plan
                             .ssd_source_fragments
-                            .checked_add(slot.num_segments())
+                            .checked_add(fragments)
+                            .ok_or("restore source fragment count overflow")?;
+                        plan.source_bytes = plan
+                            .source_bytes
+                            .checked_add(bytes)
+                            .ok_or("restore source bytes overflow")?;
+                        plan.source_fragments = plan
+                            .source_fragments
+                            .checked_add(fragments)
                             .ok_or("restore source fragment count overflow")?;
                     }
                 }
             }
         }
+        source_domains.sort_unstable();
+        source_domains.dedup();
+        plan.source_set_hash = resource_id(&source_domains);
         Ok(plan)
     }
 
@@ -100,6 +145,55 @@ impl RestorePlan {
 
     pub(crate) fn has_memory(&self) -> bool {
         self.has_memory
+    }
+
+    pub(crate) fn admit_decode_pages(
+        &mut self,
+        bytes: u64,
+        fragments: usize,
+    ) -> Result<(), String> {
+        if bytes == 0 || fragments == 0 {
+            return Err("decode page grant requires non-empty target ranges".into());
+        }
+        if self.decode_pages.is_some() {
+            return Err("decode pages were already admitted for this restore".into());
+        }
+        self.decode_pages = Some(DecodePageGrant {
+            device_id: self.device_id,
+            bytes,
+            fragments,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn decode_pages(&self) -> Option<&DecodePageGrant> {
+        self.decode_pages.as_ref()
+    }
+
+    pub(crate) fn source_bytes(&self) -> u64 {
+        self.source_bytes
+    }
+
+    pub(crate) fn source_fragments(&self) -> usize {
+        self.source_fragments
+    }
+
+    pub(crate) fn source_set_hash(&self) -> u64 {
+        self.source_set_hash
+    }
+}
+
+impl DecodePageGrant {
+    pub(crate) fn device_id(&self) -> i32 {
+        self.device_id
+    }
+
+    pub(crate) fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    pub(crate) fn fragments(&self) -> usize {
+        self.fragments
     }
 }
 

@@ -22,6 +22,7 @@ impl OrbitKVEngine {
         layer_groups: &[Vec<&str>],
         loads: &[(QueryLeaseId, Vec<Vec<Option<usize>>>)],
     ) -> Result<oneshot::Receiver<LoadOutcome>, EngineError> {
+        let decode_ready_started = std::time::Instant::now();
         let (completion, receiver) = oneshot::channel();
         let instance = self.get_instance(instance_id)?;
         let topology = instance.sealed_topology()?;
@@ -225,6 +226,8 @@ impl OrbitKVEngine {
             completion,
             reservations,
             codec_budget: self.storage.codec_budget,
+            decode_ready_started,
+            decode_ready_observation: Box::new(crate::cost::Observation::disabled()),
         })?;
         Ok(receiver)
     }

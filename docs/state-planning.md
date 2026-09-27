@@ -389,8 +389,13 @@ generation from the statistical key. Only admitted completed reports update
 the estimate; rejected, failed, cancelled and timed-out reports remain
 diagnostics. This adds
 evidence, not a candidate enumerator or execution selector. Direct cache restore
-still needs the same DecodeReady measurement boundary and live destination
-admission before the two routes may compete.
+now records the same post-allocation DecodeReady boundary: `Restore` begins
+after the framework has allocated decode pages, Core consumes fresh source
+leases, validates the exact registered device ranges into a `DecodePageGrant`,
+and the worker finishes the observation only after every GPU operation is
+terminal. The grant remains in the consumed `RestorePlan` through completion.
+This supplies comparable completed-route evidence; live handoff queue and TENT
+NIC admission are still required before the two routes may compete.
 
 ### Cost model for complete routes
 

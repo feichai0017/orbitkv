@@ -118,13 +118,17 @@ pub(crate) enum CostObservationKind {
     PeerDramHostReady,
     #[cfg(feature = "mooncake")]
     PeerSsdHostReady,
+    DirectToDecodeRestore,
     PrefillToDecodeHandoff,
 }
 
 impl CostObservationKind {
     #[cfg(feature = "mooncake")]
-    fn is_prefill_to_decode_handoff(self) -> bool {
-        self == Self::PrefillToDecodeHandoff
+    fn is_decode_ready_route(self) -> bool {
+        matches!(
+            self,
+            Self::DirectToDecodeRestore | Self::PrefillToDecodeHandoff
+        )
     }
 
     fn is_raw_copy(self) -> bool {
@@ -139,6 +143,7 @@ impl CostObservationKind {
             Self::SsdUringRestore
             | Self::SsdCufileRestore
             | Self::LocalSsdHostReady
+            | Self::DirectToDecodeRestore
             | Self::PrefillToDecodeHandoff => SampleBoundary::EnqueuedToCompletion,
             Self::GpuLoadDirect
             | Self::GpuLoadKernel
@@ -186,6 +191,12 @@ impl CostObservationKind {
                     destination_device, ..
                 },
             ) => Some(CompletionTarget::engine_restore(destination_device)),
+            (
+                Self::DirectToDecodeRestore,
+                ExecutionResource::DirectToDecodeRestore {
+                    destination_device, ..
+                },
+            ) => Some(CompletionTarget::engine_restore(destination_device)),
             _ => None,
         }
     }
@@ -218,6 +229,7 @@ impl CostObservationKind {
             Self::PeerDramHostReady => "peer_dram_host_ready",
             #[cfg(feature = "mooncake")]
             Self::PeerSsdHostReady => "peer_ssd_host_ready",
+            Self::DirectToDecodeRestore => "direct_to_decode_restore",
             Self::PrefillToDecodeHandoff => "prefill_to_decode_handoff",
         }
     }
@@ -253,7 +265,7 @@ impl CostEstimateKey {
     fn route_comparable(self, other: Self) -> bool {
         self.completion.is_some()
             && self.completion == other.completion
-            && self.kind.is_prefill_to_decode_handoff() == other.kind.is_prefill_to_decode_handoff()
+            && self.kind.is_decode_ready_route() == other.kind.is_decode_ready_route()
             && self.representation != Representation::Unknown
             && self.with_observation_kind_and_resource(other.kind, other.resource) == other
     }
@@ -284,6 +296,13 @@ impl CostEstimateKey {
             source_fragments: bucket(source_fragments as u64),
             ssd_size: bucket(target_bytes),
             ssd_fragments: bucket(target_fragments as u64),
+            ..self
+        }
+    }
+    pub(crate) fn with_source_shape(self, source_bytes: u64, source_fragments: usize) -> Self {
+        Self {
+            source_size: bucket(source_bytes),
+            source_fragments: bucket(source_fragments as u64),
             ..self
         }
     }

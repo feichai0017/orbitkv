@@ -15,6 +15,8 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
                 completion,
                 reservations: Vec::new(),
                 codec_budget: 64 << 20,
+                decode_ready_started: Instant::now(),
+                decode_ready_observation: Box::new(Observation::disabled()),
             },
             Observation::new(
                 crate::cost::CostEstimateKey::new(

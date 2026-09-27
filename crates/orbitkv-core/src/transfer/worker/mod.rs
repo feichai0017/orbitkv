@@ -34,6 +34,8 @@ pub(crate) struct LoadTask {
     pub completion: oneshot::Sender<LoadOutcome>,
     pub reservations: Vec<crate::QueryReservation>,
     pub codec_budget: usize,
+    pub decode_ready_started: Instant,
+    pub decode_ready_observation: Box<Observation>,
 }
 
 /// Terminal GPU transfer evidence, timestamped before notifying the dispatcher.
@@ -198,7 +200,11 @@ impl GpuWorkerPool {
 
     fn submit(&self, command: WorkerCommand, disk: bool) -> Result<(), EngineError> {
         let reject = |command: WorkerCommand| match command {
-            WorkerCommand::Load(_, observation) | WorkerCommand::Save(_, observation) => {
+            WorkerCommand::Load(task, observation) => {
+                observation.finish(Outcome::Failed, Some(0));
+                task.decode_ready_observation.finish(Outcome::Failed, None);
+            }
+            WorkerCommand::Save(_, observation) => {
                 observation.finish(Outcome::Failed, Some(0));
             }
             WorkerCommand::Drain(_) => {}
@@ -307,7 +313,16 @@ impl GpuWorkerPool {
                 }
             }
         }
+        let target_bytes = targets.iter().try_fold(0u64, |total, (_, bytes)| {
+            total
+                .checked_add(*bytes as u64)
+                .ok_or_else(|| EngineError::InvalidArgument("decode page bytes overflow".into()))
+        })?;
+        let target_fragments = targets.len();
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
+        task.plan
+            .admit_decode_pages(target_bytes, target_fragments)
+            .map_err(EngineError::InvalidArgument)?;
         restore::validate_plan(&task)?;
         let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
@@ -327,7 +342,7 @@ impl GpuWorkerPool {
         }
         restore::validate_plan(&task)?;
         let disk = ssd_path.is_some();
-        let observation = if enabled() {
+        let (observation, decode_ready_observation) = if enabled() {
             let (mut key, bytes) = transfer_key(
                 &task.layers,
                 self.device_id,
@@ -339,10 +354,31 @@ impl GpuWorkerPool {
                 key = restore::cost_estimate_key(&task, self.transfer_mode, path, key);
                 restore::shadow(&task, path, key);
             }
-            Observation::new(key, Some(bytes))
+            let page_grant = task
+                .plan
+                .decode_pages()
+                .expect("decode pages admitted before cost observation");
+            debug_assert_eq!(page_grant.device_id(), self.device_id);
+            debug_assert_eq!(page_grant.bytes(), bytes);
+            debug_assert_eq!(page_grant.fragments(), transfer_shape(&task.layers).1);
+            let decode_ready_key = key
+                .with_observation_kind_and_resource(
+                    CostObservationKind::DirectToDecodeRestore,
+                    ExecutionResource::DirectToDecodeRestore {
+                        source_set_hash: task.plan.source_set_hash(),
+                        destination_device: self.device_id as u64,
+                    },
+                )
+                .with_source_shape(task.plan.source_bytes(), task.plan.source_fragments())
+                .with_wire_bytes(task.plan.source_bytes());
+            (
+                Observation::new(key, Some(bytes)),
+                Observation::new_enqueued(decode_ready_key, Some(bytes), task.decode_ready_started),
+            )
         } else {
-            Observation::disabled()
+            (Observation::disabled(), Observation::disabled())
         };
+        task.decode_ready_observation = Box::new(decode_ready_observation);
         self.submit(WorkerCommand::Load(task, observation), disk)
     }
 
@@ -556,6 +592,8 @@ fn worker_loop(
             WorkerCommand::Load(mut task, mut observation) => {
                 let started = Instant::now();
                 observation.admitted();
+                task.decode_ready_observation.admitted();
+                task.decode_ready_observation.submitted();
                 let host_staged = task.plan.ssd_path() == Some(crate::SsdReadPath::Uring);
                 let mut cancelled = false;
                 let mut gpu_observation = Observation::disabled();
@@ -629,7 +667,7 @@ fn worker_loop(
                 } else {
                     observation.finish(outcome, actual_io);
                 }
-                finish_load(task, result.map(|_| ()), started, bytes);
+                finish_load(task, result.map(|_| ()), started, bytes, outcome);
             }
             WorkerCommand::Save(
                 SaveTask {
@@ -945,7 +983,13 @@ fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usiz
 }
 
 /// Publish completion only after the worker establishes that all GPU access has ended.
-fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant, bytes: usize) {
+fn finish_load(
+    task: LoadTask,
+    result: Result<(), EngineError>,
+    started: Instant,
+    bytes: usize,
+    outcome: Outcome,
+) {
     if result.is_ok() {
         for layer in &task.layers {
             for block in &layer.blocks {
@@ -964,6 +1008,8 @@ fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant
         error!("GPU restore failed: {error}");
         core_metrics().load_failures.add(1, &[]);
     }
+    let wire_bytes = result.is_ok().then_some(task.plan.source_bytes());
+    task.decode_ready_observation.finish(outcome, wire_bytes);
     drop(task.layers);
     drop(task.reservations);
     let _ = task.completion.send(LoadOutcome {

@@ -164,6 +164,8 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
                 completion,
                 reservations: vec![],
                 codec_budget,
+                decode_ready_started: Instant::now(),
+                decode_ready_observation: Box::new(Observation::disabled()),
             };
             let error = pool.submit_load(task).unwrap_err();
             assert!(error.to_string().contains("overlap"));
@@ -202,6 +204,8 @@ fn restore_plan_must_target_the_worker_device() {
             completion,
             reservations: Vec::new(),
             codec_budget: 0,
+            decode_ready_started: Instant::now(),
+            decode_ready_observation: Box::new(Observation::disabled()),
         })
         .unwrap_err();
     assert!(error.to_string().contains("targets device 1"));
@@ -242,6 +246,8 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         completion: reply,
         reservations: vec![],
         codec_budget: 64 * 1024 * 1024,
+        decode_ready_started: Instant::now(),
+        decode_ready_observation: Box::new(Observation::disabled()),
     })
     .unwrap();
     let draining = Arc::clone(&pool);
@@ -273,6 +279,8 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
             completion: reply,
             reservations: vec![],
             codec_budget: 64 * 1024 * 1024,
+            decode_ready_started: Instant::now(),
+            decode_ready_observation: Box::new(Observation::disabled()),
         })
         .is_err()
     );

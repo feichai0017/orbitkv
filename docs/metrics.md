@@ -78,9 +78,13 @@ endpoint is hashed into the internal execution-resource key; endpoint text,
 request identity, cache keys
 and notification generation are not metric labels. The generation is required
 as freshness evidence but is not an estimator dimension. Only
-`admission="admitted", outcome="completed"` trains the estimate. This path has
-no execution selector until direct cache restore supplies the same DecodeReady
-boundary and both routes have live device/queue/NIC admission evidence.
+`admission="admitted", outcome="completed"` trains the estimate.
+`direct_to_decode_restore` supplies the matching completed boundary from Restore
+submission after framework page allocation through terminal GPU completion.
+Its consumed plan retains an exact device-bound `DecodePageGrant`, source-set
+identity, representation, source/wire shape and target shape. It remains
+observation-only; neither route has an execution selector until both carry live
+device, queue and NIC admission evidence.
 
 Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
 DMA-coalesced ranges. Actual execution samples and shadow candidates use the

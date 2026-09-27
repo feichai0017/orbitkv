@@ -144,14 +144,18 @@ fn engine_ready_routes_require_the_same_destination_device() {
 }
 
 #[test]
-fn prefill_handoff_waits_for_a_matching_complete_direct_route() {
+fn decode_ready_routes_compare_only_for_the_same_target_and_shape() {
     let direct = CostEstimateKey::new(
-        CostObservationKind::GpuLoadDirect,
-        ExecutionResource::Gpu(7),
+        CostObservationKind::DirectToDecodeRestore,
+        ExecutionResource::DirectToDecodeRestore {
+            source_set_hash: 9,
+            destination_device: 7,
+        },
         Representation::Raw,
         4096,
         2,
     )
+    .with_source_shape(4096, 2)
     .with_wire_bytes(4096);
     let handoff = CostEstimateKey::new(
         CostObservationKind::PrefillToDecodeHandoff,
@@ -163,12 +167,10 @@ fn prefill_handoff_waits_for_a_matching_complete_direct_route() {
         4096,
         2,
     )
+    .with_source_shape(4096, 2)
     .with_wire_bytes(4096);
     let predictions = [Some(estimate(0.02, 0.0)), Some(estimate(0.01, 0.0))];
-    assert_eq!(
-        choose(&[direct, handoff], &predictions, 0),
-        (0, "incomparable")
-    );
+    assert_eq!(choose(&[direct, handoff], &predictions, 0), (1, "selected"));
 
     let other_device = handoff.with_observation_kind_and_resource(
         CostObservationKind::PrefillToDecodeHandoff,

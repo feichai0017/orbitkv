@@ -11,6 +11,10 @@ pub(crate) enum ExecutionResource {
         source_endpoint_hash: u64,
         destination_device: u64,
     },
+    DirectToDecodeRestore {
+        source_set_hash: u64,
+        destination_device: u64,
+    },
     #[cfg(feature = "mooncake")]
     Peer(u64),
     SsdRestore {

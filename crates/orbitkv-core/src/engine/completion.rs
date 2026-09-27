@@ -41,6 +41,7 @@ impl OrbitKVEngine {
             observation.logical_bytes,
             observation.fragment_count as usize,
         )
+        .with_source_shape(observation.wire_bytes, observation.fragment_count as usize)
         .with_wire_bytes(observation.wire_bytes);
         let outcome = match observation.outcome {
             CompletionOutcome::Completed => Outcome::Completed,

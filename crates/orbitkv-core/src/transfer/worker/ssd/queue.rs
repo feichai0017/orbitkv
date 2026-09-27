@@ -86,6 +86,10 @@ impl Job {
             observation,
             outcome: Outcome::Completed,
         };
+        if let Task::Load(task) = &mut job.task {
+            task.decode_ready_observation.admitted();
+            task.decode_ready_observation.submitted();
+        }
         let planned = (|| {
             match &mut job.task {
                 Task::Load(task) => {
@@ -282,7 +286,7 @@ impl Job {
             .error
             .map_or(Ok(()), |error| Err(EngineError::Storage(error)));
         match self.task {
-            Task::Load(task) => finish_load(task, result, self.started, self.bytes),
+            Task::Load(task) => finish_load(task, result, self.started, self.bytes, outcome),
             Task::Save(task) => {
                 drop(task.ssd_admission);
                 let _ = task.reply.send(result.map(|()| task.layers));
