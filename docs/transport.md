@@ -109,7 +109,7 @@ scheduler topology this requires all configured TP shards to be on the scheduler
 host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
-returns `Loading`. Channel ABI 7 retains separate query submission and ticket polling
+returns `Loading`. Channel ABI 8 retains separate query submission and ticket polling
 and uses shared restore results.
 Query schema 5 distinguishes metadata-only discovery from leased payload reads
 and marks selected recovery reads so HLL counts the logical discovery only once.
@@ -179,12 +179,18 @@ chunk carries the same page range across its layers; the client returns only
 after every chunk has completed D2H. This supports long-context, many-layer
 models with the default 64 KiB slot without silently skipping oversized saves.
 
-Restore destinations remain owned by the engine until the manager confirms a
-terminal result. A lost submission acknowledgement, failed completion poll, or
-deadline does not cancel CUDA writes. vLLM stops the engine step in those cases
-without reporting reusable blocks; SGLang fails its layer wait and completion
-observer without acknowledging the destination pages. A confirmed, drained
-failure can still use vLLM's single-cache-group recomputation path.
+Restore destinations remain owned by the engine until the Manager confirms a
+terminal result. The client reserves its operation ID before submission; the
+Manager claims it before consuming leases. A lost submission ACK closes further
+descriptor admission but returns the known handle for an already claimed
+operation. Shared completion polling continues after that closure. Cancellation
+can reclaim only an unclaimed reservation, so delayed requests cannot start DMA
+after cancellation wins. Preparation errors are Failed results on the handle.
+
+A failed completion poll or deadline does not cancel CUDA writes. vLLM stops
+the engine step without reporting reusable blocks; SGLang fails its layer wait
+and completion observer without acknowledging the destination pages. A confirmed,
+drained failure can still use vLLM's single-cache-group recomputation path.
 
 Both H2D and D2H workers synchronize submitted stream work even when the backend
 returns an error partway through a batch. If CUDA cannot establish completion,
@@ -192,7 +198,7 @@ the manager terminates instead of publishing a terminal result and recycling
 potentially active memory. This is a transfer lifetime fence; allocator-owned
 per-page generations and graceful cancellation remain separate work.
 
-The bootstrap protocol is version 4, passing four FDs: the descriptor memfd,
+The bootstrap protocol is version 5, passing four FDs: the descriptor memfd,
 restore-completion memfd, restore eventfd and Publish reply eventfd. After FD
 exchange, its UDS also carries
 versioned, epoch-checked lifecycle frames with a 16 MiB metadata limit. These

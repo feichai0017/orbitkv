@@ -249,7 +249,7 @@ fn publish_request_round_trip_and_shape_validation() {
 }
 
 #[test]
-fn restore_request_and_response_round_trip() {
+fn restore_request_round_trip() {
     let request = RestoreRequest {
         instance_id: "model-a".to_string(),
         tp_rank: 1,
@@ -263,16 +263,6 @@ fn restore_request_and_response_round_trip() {
     assert_eq!(
         RestoreRequest::decode(&request.encode().unwrap()).unwrap(),
         request
-    );
-
-    let response = RestoreResponse {
-        operation_id: 42,
-        state: RestoreState::Failed,
-        message: "cuda copy failed".to_string(),
-    };
-    assert_eq!(
-        RestoreResponse::decode(&response.encode().unwrap()).unwrap(),
-        response
     );
 }
 

@@ -12,6 +12,7 @@ barrier directory. Ordinary completion and model-output gates run separately.
 | One owner cancels a shared preparation read | Another demand owner completes from the shared read; cancellation cannot revoke its buffers. |
 | Prepared result expires without another poll | The Manager releases the undelivered lease; a matching claim before expiry keeps its bytes owned through GPU completion. |
 | Restore completion delayed and eventfd notification dropped | A wait deadline returns no ownership of destination pages. Polling the same handle discovers terminal completion; restored bytes match, and reservations drain. |
+| Restore submission ACK corrupted after claim, with delayed/lost completion notification | The native client retains the pre-reserved handle despite closing descriptor admission. Its shared result reports actual GPU completion or preparation rejection; successful bytes and exactly one copy are verified. |
 | cuFile worker paused before reading, query cancelled and notification dropped | The SSD extent remains pinned through restore completion. A concurrent DRAM restore completes; polling recovers completion, bytes match and ownership counters drain. |
 | cuFile write paused, completion failed or Manager killed | Unfinished objects stay invisible; GPU pages remain owned; DRAM restores progress; failed reservations can be retried and staging is released on unregister. |
 | GDS hot-copy completion held while SSD work continues | Publish and unregister keep engine mappings; unrelated SSD demand restores complete with exact GPU bytes. |
@@ -25,6 +26,11 @@ Publish logs a warning after the configured ordinary call deadline, then at
 most once per minute. It never frees sources merely because a timer expired.
 A permanently stuck live Manager requires operational restart; this gate does
 not install an automatic process killer.
+
+Channel tests additionally drop the submission ACK entirely, race cancellation
+against claim in separate mappings, and prove a delayed request cannot execute
+after cancellation. They distinguish UDS closure from actual peer process exit
+and cover shared-record capacity, generation reuse, and duplicate claim rejection.
 
 ## Reproduce
 

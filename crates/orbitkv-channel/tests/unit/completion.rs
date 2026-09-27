@@ -14,24 +14,18 @@ fn records() -> Arc<RestoreCompletions> {
 #[test]
 fn only_consumed_terminal_records_are_reusable_and_old_generations_stay_closed() {
     let records = records();
-    let mut next = 1;
     let ids: Vec<_> = (0..RESTORE_COMPLETION_SLOTS)
-        .map(|_| records.reserve(&mut next).unwrap())
+        .map(|_| records.reserve().unwrap())
         .collect();
     for id in &ids {
         assert_eq!(records.poll(*id).unwrap().state, RestoreState::Pending);
     }
-    assert!(matches!(
-        records.reserve(&mut next),
-        Err(CompletionError::Full)
-    ));
+    assert!(matches!(records.reserve(), Err(CompletionError::Full)));
+    records.claim(ids[0]).unwrap();
     records.complete(ids[0], Ok(())).unwrap();
-    assert!(matches!(
-        records.reserve(&mut next),
-        Err(CompletionError::Full)
-    ));
+    assert!(matches!(records.reserve(), Err(CompletionError::Full)));
     assert_eq!(records.poll(ids[0]).unwrap().state, RestoreState::Succeeded);
-    let replacement = records.reserve(&mut next).unwrap();
+    let replacement = records.reserve().unwrap();
     assert_eq!(
         replacement as usize % RESTORE_COMPLETION_SLOTS,
         ids[0] as usize % RESTORE_COMPLETION_SLOTS
@@ -64,7 +58,8 @@ fn mappings_validate_session_identity_and_preserve_bounded_utf8_errors() {
     assert!(matches!(open(18, 29), Err(CompletionError::InvalidMapping)));
     assert!(matches!(open(17, 30), Err(CompletionError::InvalidMapping)));
     let reader = open(17, 29).unwrap();
-    let id = records.reserve(&mut 1).unwrap();
+    let id = records.reserve().unwrap();
+    records.claim(id).unwrap();
     let message = "错".repeat(2000);
     records.complete(id, Err(message)).unwrap();
     let response = reader.poll(id).unwrap();
@@ -76,7 +71,8 @@ fn mappings_validate_session_identity_and_preserve_bounded_utf8_errors() {
 #[test]
 fn concurrent_completion_and_consumption_do_not_ack_pending_or_consume_twice() {
     let records = records();
-    let id = records.reserve(&mut 1).unwrap();
+    let id = records.reserve().unwrap();
+    records.claim(id).unwrap();
     let gate = std::sync::Barrier::new(3);
     thread::scope(|scope| {
         let readers: Vec<_> = (0..2)
@@ -155,8 +151,12 @@ fn concurrent_reuse_never_exposes_mixed_error_bytes() {
             });
         }
         for generation in 0..128u64 {
-            let mut next = 1 + generation * RESTORE_COMPLETION_SLOTS as u64;
-            let id = records.reserve(&mut next).unwrap();
+            records.word(NEXT_OPERATION_OFFSET).store(
+                1 + generation * RESTORE_COMPLETION_SLOTS as u64,
+                Ordering::Relaxed,
+            );
+            let id = records.reserve().unwrap();
+            records.claim(id).unwrap();
             current.store(id, Ordering::Release);
             let message = if generation.is_multiple_of(2) {
                 "错".repeat(1365)
@@ -165,7 +165,8 @@ fn concurrent_reuse_never_exposes_mixed_error_bytes() {
             };
             records.complete(id, Err(message)).unwrap();
             let (record, _) = RestoreCompletions::offsets(id).unwrap();
-            while records.word(record).load(Ordering::Acquire) != (id << 2) | ACKNOWLEDGED {
+            while records.word(record).load(Ordering::Acquire) != (id << STATE_BITS) | ACKNOWLEDGED
+            {
                 thread::yield_now();
             }
         }
@@ -175,27 +176,135 @@ fn concurrent_reuse_never_exposes_mixed_error_bytes() {
 }
 
 #[test]
-fn rollback_is_only_for_unsubmitted_pending_reservations_and_publication_is_once() {
+fn cancellation_can_only_win_before_claim_and_publication_is_once() {
     let records = records();
-    let mut next = 1;
-    let abandoned = records.reserve(&mut next).unwrap();
-    records.abandon(abandoned).unwrap();
+    let cancelled = records.reserve().unwrap();
+    assert!(records.cancel(cancelled).unwrap());
     assert!(matches!(
-        records.complete(abandoned, Ok(())),
+        records.claim(cancelled),
         Err(CompletionError::Stale(_))
     ));
-    let submitted = records.reserve(&mut next).unwrap();
+    assert!(matches!(
+        records.complete(cancelled, Ok(())),
+        Err(CompletionError::Stale(_))
+    ));
+    assert!(matches!(
+        records.cancel(cancelled),
+        Err(CompletionError::Stale(_))
+    ));
+
+    let submitted = records.reserve().unwrap();
+    assert!(matches!(
+        records.complete(submitted, Ok(())),
+        Err(CompletionError::Stale(_))
+    ));
+    records.claim(submitted).unwrap();
+    assert!(matches!(
+        records.claim(submitted),
+        Err(CompletionError::Stale(_))
+    ));
+    assert!(!records.cancel(submitted).unwrap());
+    assert_eq!(
+        records.poll(submitted).unwrap().state,
+        RestoreState::Pending
+    );
     records.complete(submitted, Ok(())).unwrap();
     assert!(matches!(
         records.complete(submitted, Err("second result".into())),
         Err(CompletionError::Stale(_))
     ));
-    assert!(matches!(
-        records.abandon(submitted),
-        Err(CompletionError::Stale(_))
-    ));
+    assert!(!records.cancel(submitted).unwrap());
     assert_eq!(
         records.poll(submitted).unwrap().state,
         RestoreState::Succeeded
     );
+    assert!(matches!(
+        records.claim(submitted),
+        Err(CompletionError::Stale(_))
+    ));
+}
+
+#[test]
+fn independent_mappings_share_ids_and_claim_races_cancellation() {
+    let records = records();
+    let manager = RestoreCompletions::open(
+        records.file().try_clone().unwrap().into(),
+        records.notification_fd().try_clone().unwrap(),
+        17,
+        29,
+    )
+    .unwrap();
+    let first = records.reserve().unwrap();
+    let second = manager.reserve().unwrap();
+    assert_ne!(first, second);
+    assert!(manager.cancel(first).unwrap());
+    assert!(records.cancel(second).unwrap());
+
+    let gate = std::sync::Barrier::new(2);
+    let operation = AtomicU64::new(0);
+    let was_cancelled = std::sync::atomic::AtomicBool::new(false);
+    thread::scope(|scope| {
+        let cancelled = scope.spawn(|| {
+            for _ in 0..128 {
+                gate.wait();
+                let id = operation.load(Ordering::Acquire);
+                let cancelled = records.cancel(id).unwrap();
+                was_cancelled.store(cancelled, Ordering::Release);
+                gate.wait();
+            }
+        });
+        for _ in 0..128 {
+            let id = manager.reserve().unwrap();
+            operation.store(id, Ordering::Release);
+            gate.wait();
+            let claimed = manager.claim(id).is_ok();
+            gate.wait();
+            assert_ne!(claimed, was_cancelled.load(Ordering::Acquire));
+            if claimed {
+                assert!(!records.cancel(id).unwrap());
+                manager.complete(id, Ok(())).unwrap();
+                assert_eq!(records.poll(id).unwrap().state, RestoreState::Succeeded);
+            } else {
+                assert!(matches!(manager.claim(id), Err(CompletionError::Stale(_))));
+                assert!(matches!(
+                    manager.complete(id, Ok(())),
+                    Err(CompletionError::Stale(_))
+                ));
+            }
+        }
+        cancelled.join().unwrap();
+    });
+}
+
+#[test]
+fn operation_identity_exhaustion_never_wraps_into_an_old_generation() {
+    let records = records();
+    records
+        .word(NEXT_OPERATION_OFFSET)
+        .store(MAX_OPERATION_ID, Ordering::Relaxed);
+    let last = records.reserve().unwrap();
+    assert_eq!(last, MAX_OPERATION_ID);
+    records.claim(last).unwrap();
+    records.complete(last, Ok(())).unwrap();
+    assert_eq!(records.poll(last).unwrap().state, RestoreState::Succeeded);
+    assert!(matches!(records.reserve(), Err(CompletionError::Exhausted)));
+    assert!(matches!(records.reserve(), Err(CompletionError::Exhausted)));
+    assert!(matches!(
+        records.claim(last),
+        Err(CompletionError::Stale(_))
+    ));
+    for invalid in [0, MAX_OPERATION_ID + 1, u64::MAX] {
+        assert!(matches!(
+            records.poll(invalid),
+            Err(CompletionError::Stale(_))
+        ));
+        assert!(matches!(
+            records.claim(invalid),
+            Err(CompletionError::Stale(_))
+        ));
+        assert!(matches!(
+            records.cancel(invalid),
+            Err(CompletionError::Stale(_))
+        ));
+    }
 }

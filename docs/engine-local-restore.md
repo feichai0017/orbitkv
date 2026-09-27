@@ -11,6 +11,11 @@ Source preparation and pointer-free geometry now have separate owners, consumed
 by the current Manager worker path. Raw resident plans compile directly into
 copy descriptors and retain each selected leased source once through GPU drain;
 the worker no longer needs layer/block source expansion for that route.
+The current Manager executor also consumes client-reserved operation identities:
+shared claim/cancel admission preserves a handle after a lost submission ACK,
+and completion remains readable when the descriptor channel closes. This is
+already used by all native Restore callers. Its claim authorizes the Manager,
+not the engine; the engine-local grant/drain lifecycle below is still required.
 An engine-local executor, payload-arena
 grants, and the protocol described below are **not implemented**. The implementation sequence is tracked in
 [the communication plan](communication-plan.md).

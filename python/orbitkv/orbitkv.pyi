@@ -221,7 +221,13 @@ class CacheManagerClient:
         device_id: int,
         layer_groups: list[list[str]],
         loads: list[tuple[bytes, list[list[int | None]]]],
-    ) -> RestoreHandle: ...
+    ) -> RestoreHandle:
+        """Reserve an operation before submission; claimed errors arrive in RestoreStatus.
+
+        A lost submission ACK retains the handle if the Manager claimed it.
+        Hold destination pages until its terminal result, including after timeout.
+        """
+        ...
     def poll_restore(self, handle: RestoreHandle) -> RestoreStatus: ...
     def wait_restore(self, handle: RestoreHandle, *, timeout: float) -> RestoreStatus:
         """Wait without the GIL; timeout keeps GPU destinations owned."""

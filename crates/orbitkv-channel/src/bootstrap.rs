@@ -21,7 +21,7 @@ use crate::{ArenaError, CompletionError, DescriptorArena, DescriptorRef, Restore
 
 const BOOTSTRAP_MAGIC: u32 = 0x4f52_4242; // ORBB
 // Version 4 requires request doorbells and a separate Publish reply eventfd.
-const BOOTSTRAP_VERSION: u16 = 4;
+const BOOTSTRAP_VERSION: u16 = 5;
 const BOOTSTRAP_BYTES: usize = 256;
 const BOOTSTRAP_FD_COUNT: usize = 4;
 // Match the iceoryx2 client limit. Detached restore publishers also hold this
@@ -431,20 +431,6 @@ impl BootstrapClient {
         &self.completions
     }
 
-    pub fn is_alive(&self) -> Result<bool, BootstrapError> {
-        let mut byte = [0u8; 1];
-        match rustix::net::recv(
-            &self.stream,
-            &mut byte,
-            RecvFlags::PEEK | RecvFlags::DONTWAIT,
-        ) {
-            Ok((_, 0)) => Ok(false),
-            Ok(_) => Ok(true),
-            Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(true),
-            Err(error) => Err(std::io::Error::from(error).into()),
-        }
-    }
-
     pub fn connect(socket_path: impl AsRef<Path>) -> Result<Self, BootstrapError> {
         let stream = UnixStream::connect(socket_path)?;
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -512,24 +498,12 @@ impl BootstrapClient {
             })?,
             tv_nsec: timeout.subsec_nanos().into(),
         };
-        let mut fds = [
-            rustix::event::PollFd::new(
-                self.completions.notification_fd(),
-                rustix::event::PollFlags::IN,
-            ),
-            rustix::event::PollFd::new(&self.stream, rustix::event::PollFlags::empty()),
-        ];
+        let mut fds = [rustix::event::PollFd::new(
+            self.completions.notification_fd(),
+            rustix::event::PollFlags::IN,
+        )];
         if rustix::event::poll(&mut fds, Some(&timeout)).map_err(std::io::Error::from)? == 0 {
             return Ok(false);
-        }
-        if fds[1]
-            .revents()
-            .intersects(rustix::event::PollFlags::HUP | rustix::event::PollFlags::ERR)
-        {
-            // Rescan results first: a terminal record remains valid even if
-            // the Manager closes immediately after publication. Pending polls
-            // separately reject the disconnected session.
-            return Ok(true);
         }
         let mut value = [0u8; 8];
         let read = match rustix::io::read(self.completions.notification_fd(), &mut value) {

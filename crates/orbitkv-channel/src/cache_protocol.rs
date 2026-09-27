@@ -10,14 +10,12 @@ const CANCEL_QUERY_MAGIC: u32 = 0x4f52_5143; // ORQC
 const RELEASE_REQUEST_MAGIC: u32 = 0x4f52_4c51; // ORLQ
 const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
-const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
 const QUERY_VERSION: u16 = 6;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
 const PUBLISH_HEADER_BYTES: usize = 28;
 const RESTORE_HEADER_BYTES: usize = 28;
-const RESTORE_RESPONSE_BYTES: usize = 24;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CancelQueryRequest {
@@ -283,59 +281,11 @@ pub enum RestoreState {
     Failed = 3,
 }
 
-impl TryFrom<u16> for RestoreState {
-    type Error = QueryCodecError;
-
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::Pending),
-            2 => Ok(Self::Succeeded),
-            3 => Ok(Self::Failed),
-            _ => Err(QueryCodecError::UnknownRestoreState(value)),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RestoreResponse {
     pub operation_id: u64,
     pub state: RestoreState,
     pub message: String,
-}
-
-impl RestoreResponse {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
-        let message = self.message.as_bytes();
-        let mut bytes = Vec::with_capacity(RESTORE_RESPONSE_BYTES + message.len());
-        push_u32(&mut bytes, RESTORE_RESPONSE_MAGIC);
-        push_u16(&mut bytes, QUERY_VERSION);
-        push_u16(&mut bytes, self.state as u16);
-        push_u64(&mut bytes, self.operation_id);
-        push_u32(&mut bytes, checked_u32(message.len(), "restore_message")?);
-        push_u32(&mut bytes, 0);
-        bytes.extend_from_slice(message);
-        Ok(bytes)
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
-        let mut decoder = Decoder::new(bytes);
-        decoder.expect_magic(RESTORE_RESPONSE_MAGIC)?;
-        decoder.expect_version()?;
-        let state = RestoreState::try_from(decoder.u16()?)?;
-        let operation_id = decoder.u64()?;
-        let message_len = decoder.usize_u32()?;
-        let reserved = decoder.u32()?;
-        if reserved != 0 {
-            return Err(QueryCodecError::InvalidReserved(reserved));
-        }
-        let message = decoder.string(message_len, "restore_message")?;
-        decoder.finish()?;
-        Ok(Self {
-            operation_id,
-            state,
-            message,
-        })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -849,12 +799,6 @@ pub enum QueryCodecError {
         block_ids: usize,
         block_hashes: usize,
     },
-    #[error("unknown restore state: {0}")]
-    UnknownRestoreState(u16),
-    #[error("restore response reserved field must be zero, got {0}")]
-    InvalidReserved(u32),
-    #[error("restore operation id must be non-zero")]
-    ZeroOperationId,
 }
 
 struct Decoder<'a> {

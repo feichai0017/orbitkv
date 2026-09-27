@@ -1,14 +1,46 @@
 #![cfg(target_os = "linux")]
 
+use std::path::Path;
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use orbitkv_channel::{
-    BootstrapServer, CacheClient, CallOptions, CommandCode, RESPONSE_FLAG_REQUEST_CONSUMED,
-    Response, RestoreRequest, RestoreResponse, RestoreState, TransportServer,
+    BootstrapServer, CacheClient, CallOptions, ChannelError, CommandCode,
+    RESPONSE_FLAG_REQUEST_CONSUMED, Response, RestoreRequest, RestoreState, TransportServer,
 };
 
 struct ChildGuard(Child);
+
+impl ChildGuard {
+    fn start(directory: &Path) -> Self {
+        let mut child = Self(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "shared_completion_child", "--nocapture"])
+                .env("ORBITKV_COMPLETION_TEST_DIRECTORY", directory)
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !directory.join("ready").exists() {
+            assert!(Instant::now() < deadline, "child did not start");
+            assert!(child.0.try_wait().unwrap().is_none(), "child exited early");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        child
+    }
+
+    fn wait_for_success(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = self.0.try_wait().unwrap() {
+                assert!(status.success());
+                return;
+            }
+            assert!(Instant::now() < deadline, "child did not exit");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
@@ -20,19 +52,7 @@ impl Drop for ChildGuard {
 #[test]
 fn native_wait_consumes_success_and_error_across_processes_without_poll_rpc() {
     let dir = tempfile::tempdir().unwrap();
-    let mut child = ChildGuard(
-        Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "shared_completion_child", "--nocapture"])
-            .env("ORBITKV_COMPLETION_TEST_DIRECTORY", dir.path())
-            .spawn()
-            .unwrap(),
-    );
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !dir.path().join("ready").exists() {
-        assert!(Instant::now() < deadline, "child did not start");
-        assert!(child.0.try_wait().unwrap().is_none(), "child exited early");
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    let mut child = ChildGuard::start(dir.path());
     let client =
         CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
     let handles: Vec<_> = ["success", "failure"]
@@ -73,18 +93,38 @@ fn native_wait_consumes_success_and_error_across_processes_without_poll_rpc() {
         "terminal records are consumed once"
     );
     client.close();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Some(status) = child.0.try_wait().unwrap() {
-            assert!(status.success());
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "child did not observe disconnect"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    child.wait_for_success();
+}
+
+#[test]
+fn pending_restore_reports_actual_peer_process_exit_without_fabricating_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = ChildGuard::start(dir.path());
+    let client =
+        CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
+    let handle = client
+        .start_restore(&RestoreRequest {
+            instance_id: "pending-until-exit".into(),
+            tp_rank: 0,
+            device_id: 0,
+            layer_groups: vec![],
+            loads: vec![],
+        })
+        .unwrap();
+    assert_eq!(
+        client.poll_restore(handle).unwrap().state,
+        RestoreState::Pending
+    );
+    std::fs::write(dir.path().join("exit"), b"").unwrap();
+    child.wait_for_success();
+    assert!(matches!(
+        client.poll_restore(handle),
+        Err(ChannelError::SessionRequiresReconnect)
+    ));
+    assert!(matches!(
+        client.wait_restore(handle, Duration::from_secs(1)),
+        Err(ChannelError::SessionRequiresReconnect)
+    ));
 }
 
 #[test]
@@ -99,7 +139,6 @@ fn shared_completion_child() {
         BootstrapServer::bind(directory.join("cache.sock"), &name, 91, 65536, 4096).unwrap();
     std::fs::write(directory.join("ready"), b"").unwrap();
     let mut session = bootstrap.accept().unwrap();
-    let mut next = 1;
     let mut pending = Vec::new();
     let mut calls = 0;
     while session.is_alive().unwrap() {
@@ -118,25 +157,24 @@ fn shared_completion_child() {
                         .unwrap();
                 calls += 1;
                 assert!(calls <= 2);
-                let id = session.completions().reserve(&mut next).unwrap();
+                let id = command.arg1;
+                session.completions().claim(id).unwrap();
                 pending.push((id, request.instance_id == "failure"));
-                let payload = RestoreResponse {
-                    operation_id: id,
-                    state: RestoreState::Pending,
-                    message: String::new(),
-                }
-                .encode()
-                .unwrap();
                 let mut response = Response::ok(command);
-                response.descriptor = bootstrap
-                    .arena()
-                    .write_response(command.descriptor, &payload)
-                    .unwrap();
                 response.value1 = RESPONSE_FLAG_REQUEST_CONSUMED;
                 session.complete_request().unwrap();
                 response
             })
             .unwrap();
+        if directory.join("exit").exists() {
+            assert_eq!(calls, 1);
+            assert_eq!(pending.len(), 1);
+            assert_eq!(
+                session.completions().poll(pending[0].0).unwrap().state,
+                RestoreState::Pending
+            );
+            return;
+        }
         if directory.join("complete").exists() && !pending.is_empty() {
             for (id, failed) in pending.drain(..) {
                 session

@@ -63,7 +63,10 @@ impl PyRestoreHandle {
     }
     #[getter]
     fn key(&self) -> String {
-        format!("manager:{}:{}", self.0.session_epoch, self.0.operation_id)
+        format!(
+            "manager:{}:{}:{}",
+            self.0.session_epoch, self.0.session_token, self.0.operation_id
+        )
     }
 }
 

@@ -34,10 +34,8 @@ pub enum ChannelError {
     SessionRequiresReconnect,
     #[error("restore operation {operation_id} timed out")]
     RestoreTimeout { operation_id: u64 },
-    #[error("restore operation {operation_id} failed: {message}")]
-    RestoreFailed { operation_id: u64, message: String },
-    #[error("cannot observe Cache Manager process death; refusing to start a publish")]
-    PublishPeerUnobservable,
+    #[error("cannot observe Cache Manager process death; refusing to start a GPU transfer")]
+    GpuPeerUnobservable,
     #[error("Cache Manager rejected lifecycle operation ({code}): {message}")]
     Lifecycle { code: u16, message: String },
 }
@@ -49,7 +47,7 @@ pub struct ChannelClient {
     call_lock: Mutex<()>,
     lifecycle_lock: Mutex<()>,
     poisoned: AtomicBool,
-    publish_peer: Option<OwnedFd>,
+    peer_process: Option<OwnedFd>,
 }
 
 impl ChannelClient {
@@ -58,7 +56,7 @@ impl ChannelClient {
         options: CallOptions,
     ) -> Result<Self, ChannelError> {
         let bootstrap = BootstrapClient::connect(bootstrap_socket)?;
-        let publish_peer = socket_peercred(bootstrap.stream())
+        let peer_process = socket_peercred(bootstrap.stream())
             .ok()
             .and_then(|credentials| pidfd_open(credentials.pid, PidfdFlags::empty()).ok());
         bootstrap
@@ -77,7 +75,7 @@ impl ChannelClient {
             call_lock: Mutex::new(()),
             lifecycle_lock: Mutex::new(()),
             poisoned: AtomicBool::new(false),
-            publish_peer,
+            peer_process,
         })
     }
 
@@ -152,6 +150,10 @@ impl ChannelClient {
         self.bootstrap.info_ref().session_epoch
     }
 
+    pub(crate) fn session_token(&self) -> u64 {
+        self.bootstrap.info_ref().client_token
+    }
+
     /// Borrowed notification descriptor. It remains valid only while this
     /// client is alive and must not be closed by the caller.
     pub fn notification_fd(&self) -> RawFd {
@@ -170,7 +172,8 @@ impl ChannelClient {
         request: &crate::QueryCommand,
     ) -> Result<QueryBundleResponse, ChannelError> {
         let payload = request.encode()?;
-        let payload = self.call_descriptor(CommandCode::QueryBundle, request_id, &payload, None)?;
+        let payload =
+            self.call_descriptor(CommandCode::QueryBundle, request_id, &payload, 0, None)?;
         match QueryBundleResponse::decode(&payload) {
             Ok(response) => Ok(response),
             Err(error) => {
@@ -186,26 +189,27 @@ impl ChannelClient {
         request: &crate::CancelQueryRequest,
     ) -> Result<(), ChannelError> {
         let payload = request.encode()?;
-        self.call_descriptor(CommandCode::CancelQuery, request_id, &payload, None)?;
+        self.call_descriptor(CommandCode::CancelQuery, request_id, &payload, 0, None)?;
         Ok(())
     }
 
     pub fn release(&self, request_id: u64, lease: Vec<u8>) -> Result<(), ChannelError> {
         let payload = ReleaseRequest { lease }.encode()?;
-        let _ = self.call_descriptor(CommandCode::Release, request_id, &payload, None)?;
+        let _ = self.call_descriptor(CommandCode::Release, request_id, &payload, 0, None)?;
         Ok(())
     }
 
     pub fn publish(&self, request_id: u64, request: &PublishRequest) -> Result<(), ChannelError> {
         let peer = self
-            .publish_peer
+            .peer_process
             .as_ref()
-            .ok_or(ChannelError::PublishPeerUnobservable)?;
+            .ok_or(ChannelError::GpuPeerUnobservable)?;
         let payloads = publish_payloads(request, self.bootstrap.info_ref().slot_capacity)?;
         for payload in payloads {
             // One logical publish can use several descriptor generations.
             // Every chunk retains the source pages until its D2H completes.
-            let _ = self.call_descriptor(CommandCode::Publish, request_id, &payload, Some(peer))?;
+            let _ =
+                self.call_descriptor(CommandCode::Publish, request_id, &payload, 0, Some(peer))?;
         }
         Ok(())
     }
@@ -215,26 +219,45 @@ impl ChannelClient {
         request_id: u64,
         request: &RestoreRequest,
     ) -> Result<u64, ChannelError> {
-        let payload = request.encode()?;
-        let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload, None)?;
-        let response = RestoreResponse::decode(&payload)?;
-        match response.state {
-            RestoreState::Pending => Ok(response.operation_id),
-            RestoreState::Succeeded => Ok(response.operation_id),
-            RestoreState::Failed => Err(ChannelError::RestoreFailed {
-                operation_id: response.operation_id,
-                message: response.message,
-            }),
+        if self.peer_process.is_none() {
+            return Err(ChannelError::GpuPeerUnobservable);
         }
+        let payload = request.encode()?;
+        let completions = self.bootstrap.completions();
+        let operation_id = completions.reserve()?;
+        if let Err(error) = self.call_descriptor(
+            CommandCode::Restore,
+            request_id,
+            &payload,
+            operation_id,
+            None,
+        ) {
+            if completions.cancel(operation_id)? {
+                // Winning cancellation proves the Manager cannot start this
+                // operation, even if its queued descriptor arrives later.
+                return Err(error);
+            }
+            // Claim won: the Manager owns execution and the shared result.
+            // An ambiguous ACK cannot discard the only handle to that work.
+            log::warn!("Restore {operation_id} claimed despite submission error: {error}");
+        }
+        Ok(operation_id)
     }
 
     pub fn restore_poll(&self, operation_id: u64) -> Result<RestoreResponse, ChannelError> {
-        if self.poisoned.load(Ordering::Acquire) {
-            return Err(ChannelError::SessionRequiresReconnect);
-        }
         let response = self.bootstrap.completions().poll(operation_id)?;
-        if response.state == RestoreState::Pending && !self.bootstrap.is_alive()? {
+        // Descriptor admission may be closed while previously claimed DMA
+        // still runs. A socket HUP is not process death or transfer completion.
+        if response.state == RestoreState::Pending
+            && let Some(peer) = &self.peer_process
+            && crate::transport::peer_exited(peer)?
+        {
             self.close();
+            // A terminal publication can race the first read and process exit.
+            let final_response = self.bootstrap.completions().poll(operation_id)?;
+            if final_response.state != RestoreState::Pending {
+                return Ok(final_response);
+            }
             return Err(ChannelError::SessionRequiresReconnect);
         }
         Ok(response)
@@ -245,6 +268,7 @@ impl ChannelClient {
         code: CommandCode,
         request_id: u64,
         payload: &[u8],
+        operation_id: u64,
         peer: Option<&OwnedFd>,
     ) -> Result<Vec<u8>, ChannelError> {
         let _call = self
@@ -262,7 +286,7 @@ impl ChannelClient {
             session_epoch: info.session_epoch,
             descriptor,
             arg0: info.client_token,
-            arg1: 0,
+            arg1: operation_id,
         };
         let call = match peer {
             Some(peer) => self.client.call_until_peer_exit(
@@ -312,6 +336,12 @@ impl ChannelClient {
         if response.value1 & RESPONSE_FLAG_REQUEST_CONSUMED == 0 {
             ambiguous();
             return Err(ChannelError::SessionRequiresReconnect);
+        }
+        if code == CommandCode::Restore {
+            self.bootstrap
+                .complete_request(descriptor)
+                .inspect_err(|_| ambiguous())?;
+            return Ok(Vec::new());
         }
         let payload = self
             .bootstrap

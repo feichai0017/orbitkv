@@ -11,6 +11,7 @@ pub(super) async fn publish(
     receiver: oneshot::Receiver<LoadOutcome>,
     completions: Arc<RestoreCompletions>,
     epoch: u64,
+    client_token: u64,
     id: u64,
     started: Instant,
 ) {
@@ -22,7 +23,9 @@ pub(super) async fn publish(
         Err(_) => {
             // A missing outcome does not prove that GPU destinations are safe.
             // Keep the record Pending until the session/Manager is discarded.
-            log::error!("Restore outcome lost: manager={epoch} operation={id}");
+            log::error!(
+                "Restore outcome lost: manager={epoch} client={client_token} operation={id}"
+            );
             return;
         }
     };
@@ -32,7 +35,7 @@ pub(super) async fn publish(
     }
     crate::metric::timeline::record("restore_complete", || {
         serde_json::json!({
-            "restore_key": format!("manager:{epoch}:{id}"),
+            "restore_key": format!("manager:{epoch}:{client_token}:{id}"),
             "elapsed_us": completed_at.saturating_duration_since(started).as_micros() as u64,
             "success": result.is_ok(),
         })
@@ -50,7 +53,7 @@ pub(super) async fn publish(
     }
     crate::metric::timeline::record("restore_notification", || {
         serde_json::json!({
-            "restore_key": format!("manager:{epoch}:{id}"),
+            "restore_key": format!("manager:{epoch}:{client_token}:{id}"),
             "elapsed_us": completed_at.elapsed().as_micros() as u64,
         })
     });

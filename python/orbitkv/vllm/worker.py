@@ -729,8 +729,8 @@ class WorkerConnector:
                     trace_transfer("restore_link", req_id, engine="vllm", restore_key=restore.key)
         except Exception as error:
             self._ctx.state_manager.mark_unavailable(f"restore submit exception: {error}")
-            # A lost acknowledgement can hide an accepted transfer. Releasing
-            # its lease or asking vLLM to recompute would race that GPU write.
+            # Earlier restores can still own GPU destinations when this
+            # submission fails. Keep their pages until transfer teardown.
             raise RuntimeError(
                 "OrbitKV restore submission did not establish completion; "
                 "GPU pages remain held until transfer teardown"
@@ -772,7 +772,7 @@ class WorkerConnector:
 
         vLLM calls this each forward pass and re-schedules reported blocks for
         local recomputation. Only terminal Cache Manager failures establish
-        that DMA has stopped; timeouts and lost acknowledgements are fatal.
+        that DMA has stopped; completion timeouts remain fatal.
         """
         with self._load_completion_lock:
             failed = self._failed_load_block_ids

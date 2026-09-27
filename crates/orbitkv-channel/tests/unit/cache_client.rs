@@ -213,9 +213,23 @@ struct Peer {
     _dir: tempfile::TempDir,
 }
 
+enum Reply {
+    Pending,
+    Payload(Vec<u8>),
+    DropAcknowledgement,
+}
+
 impl Peer {
     fn new(
         mut reply: impl FnMut(Command, &[u8], &BootstrapSession) -> Option<Vec<u8>> + Send + 'static,
+    ) -> Self {
+        Self::with_reply(move |command, payload, session| {
+            reply(command, payload, session).map_or(Reply::Pending, Reply::Payload)
+        })
+    }
+
+    fn with_reply(
+        mut reply: impl FnMut(Command, &[u8], &BootstrapSession) -> Reply + Send + 'static,
     ) -> Self {
         static NAMES: AtomicU64 = AtomicU64::new(1);
         let dir = tempfile::tempdir().unwrap();
@@ -255,18 +269,27 @@ impl Peer {
                 while index < pending.len() {
                     let (command, payload, _) = &pending[index];
                     let session = sessions.get_mut(&command.arg0).unwrap();
-                    if let Some(bytes) = reply(*command, payload, session) {
-                        let (command, _, response) = pending.swap_remove(index);
-                        let mut result = Response::ok(command);
-                        result.descriptor = bootstrap
-                            .arena()
-                            .write_response(command.descriptor, &bytes)
-                            .unwrap();
-                        result.value1 = RESPONSE_FLAG_REQUEST_CONSUMED;
-                        session.complete_request().unwrap();
-                        response.send(result).unwrap();
-                    } else {
-                        index += 1;
+                    match reply(*command, payload, session) {
+                        Reply::Payload(bytes) => {
+                            let (command, _, response) = pending.swap_remove(index);
+                            let mut result = Response::ok(command);
+                            if command.code == CommandCode::Restore {
+                                assert!(bytes.is_empty(), "Restore ACK has no wire body");
+                            } else {
+                                result.descriptor = bootstrap
+                                    .arena()
+                                    .write_response(command.descriptor, &bytes)
+                                    .unwrap();
+                            }
+                            result.value1 = RESPONSE_FLAG_REQUEST_CONSUMED;
+                            session.complete_request().unwrap();
+                            response.send(result).unwrap();
+                        }
+                        Reply::DropAcknowledgement => {
+                            pending.swap_remove(index);
+                            session.complete_request().unwrap();
+                        }
+                        Reply::Pending => index += 1,
                     }
                 }
                 thread::sleep(Duration::from_micros(100));
@@ -421,19 +444,12 @@ fn restore_deadline_and_lost_notification_preserve_ownership_and_reject_other_cl
             "poll/wait must not issue control requests"
         );
         RestoreRequest::decode(payload).unwrap();
-        let operation_id = session.completions().reserve(&mut 9).unwrap();
+        let operation_id = command.arg1;
+        session.completions().claim(operation_id).unwrap();
         submitted_tx
             .send((Arc::clone(session.completions()), operation_id))
             .unwrap();
-        Some(
-            RestoreResponse {
-                operation_id,
-                state: RestoreState::Pending,
-                message: String::new(),
-            }
-            .encode()
-            .unwrap(),
-        )
+        Some(Vec::new())
     });
     let client = peer.client();
     let other = peer.client();
@@ -721,61 +737,224 @@ fn prepared_prefix_claims_partial_hits_without_an_extra_payload_query() {
     assert!(released.load(Ordering::Acquire));
 }
 
+fn restore_request() -> RestoreRequest {
+    RestoreRequest {
+        instance_id: "m".into(),
+        tp_rank: 0,
+        device_id: 0,
+        layer_groups: vec![],
+        loads: vec![],
+    }
+}
+
 #[test]
-fn manager_disconnect_rejects_pending_without_inventing_a_terminal_result() {
+fn equal_restore_ids_in_live_sessions_keep_results_and_handle_ownership_separate() {
+    for same_peer in [true, false] {
+        let (submitted_tx, submitted_rx) = mpsc::channel();
+        let make_peer = || {
+            let submitted_tx = submitted_tx.clone();
+            Peer::new(move |command, payload, session| {
+                assert_eq!(command.code, CommandCode::Restore);
+                RestoreRequest::decode(payload).unwrap();
+                session.completions().claim(command.arg1).unwrap();
+                submitted_tx
+                    .send((session.client_token(), Arc::clone(session.completions())))
+                    .unwrap();
+                Some(Vec::new())
+            })
+        };
+        let first_peer = make_peer();
+        let second_peer = (!same_peer).then(make_peer);
+        let first = first_peer.client();
+        let second = second_peer.as_ref().unwrap_or(&first_peer).client();
+        let first_handle = first.start_restore(&restore_request()).unwrap();
+        let (first_token, first_records) = submitted_rx.recv().unwrap();
+        let second_handle = second.start_restore(&restore_request()).unwrap();
+        let (second_token, second_records) = submitted_rx.recv().unwrap();
+        assert_eq!(first_handle.operation_id, second_handle.operation_id);
+        assert_eq!(first_handle.session_epoch, second_handle.session_epoch);
+        assert_eq!(first_handle.session_token, first_token);
+        assert_eq!(second_handle.session_token, second_token);
+        // Separate Managers can reuse an explicitly configured epoch and its
+        // derived first token. A handle must still belong to its issuing client.
+        assert_eq!(first_token == second_token, !same_peer);
+        for (client, foreign) in [(&first, second_handle), (&second, first_handle)] {
+            assert!(
+                matches!(
+                    client.poll_restore(foreign),
+                    Err(ChannelError::SessionRequiresReconnect)
+                ),
+                "foreign handle accepted with same_peer={same_peer}"
+            );
+        }
+        first_records
+            .complete(first_handle.operation_id, Ok(()))
+            .unwrap();
+        assert_eq!(
+            first.poll_restore(first_handle).unwrap().state,
+            RestoreState::Succeeded
+        );
+        assert_eq!(
+            second.poll_restore(second_handle).unwrap().state,
+            RestoreState::Pending
+        );
+        second_records
+            .complete(
+                second_handle.operation_id,
+                Err("second session failed".into()),
+            )
+            .unwrap();
+        let result = second.poll_restore(second_handle).unwrap();
+        assert_eq!(result.state, RestoreState::Failed);
+        assert_eq!(result.message, "second session failed");
+        assert!(first.poll_restore(first_handle).is_err());
+    }
+}
+
+#[test]
+fn lost_restore_acknowledgement_recovers_the_claimed_operation_without_resubmission() {
+    let (submitted_tx, submitted_rx) = mpsc::channel();
+    let calls = Arc::new(AtomicU64::new(0));
+    let observed_calls = Arc::clone(&calls);
+    let peer = Peer::with_reply(move |command, payload, session| {
+        assert_eq!(command.code, CommandCode::Restore);
+        RestoreRequest::decode(payload).unwrap();
+        assert_eq!(observed_calls.fetch_add(1, Ordering::Relaxed), 0);
+        session.completions().claim(command.arg1).unwrap();
+        submitted_tx
+            .send((Arc::clone(session.completions()), command.arg1))
+            .unwrap();
+        Reply::DropAcknowledgement
+    });
+    let client = CacheClient::connect(
+        &peer.socket,
+        CallOptions {
+            timeout: Duration::from_millis(200),
+            ..CallOptions::default()
+        },
+    )
+    .unwrap();
+    let handle = client.start_restore(&restore_request()).unwrap();
+    let (records, id) = submitted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(handle.operation_id, id);
+    assert_eq!(
+        client.poll_restore(handle).unwrap().state,
+        RestoreState::Pending
+    );
+    assert!(matches!(
+        client.query("m", &hashes(&[b"hash"]), "after-lost-ack", 0, LOOKUP),
+        Err(ChannelError::SessionRequiresReconnect)
+    ));
+    assert!(matches!(
+        client.start_restore(&restore_request()),
+        Err(ChannelError::SessionRequiresReconnect)
+    ));
+    records
+        .complete(id, Err("copy failed after drain".into()))
+        .unwrap();
+    let terminal = client.wait_restore(handle, Duration::from_secs(1)).unwrap();
+    assert_eq!(terminal.operation_id, id);
+    assert_eq!(terminal.state, RestoreState::Failed);
+    assert_eq!(terminal.message, "copy failed after drain");
+    assert!(client.poll_restore(handle).is_err());
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn failed_restore_before_claim_cancels_the_slot_and_rejects_a_delayed_execution() {
+    let (submitted_tx, submitted_rx) = mpsc::channel();
+    let (claim_tx, claim_rx) = mpsc::channel();
+    let (rejected_tx, rejected_rx) = mpsc::channel();
+    let peer = Peer::with_reply(move |command, payload, session| {
+        assert_eq!(command.code, CommandCode::Restore);
+        RestoreRequest::decode(payload).unwrap();
+        submitted_tx
+            .send((Arc::clone(session.completions()), command.arg1))
+            .unwrap();
+        claim_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(session.completions().claim(command.arg1).is_err());
+        assert!(
+            session
+                .completions()
+                .complete(command.arg1, Ok(()))
+                .is_err()
+        );
+        rejected_tx.send(()).unwrap();
+        Reply::DropAcknowledgement
+    });
+    let client = CacheClient::connect(
+        &peer.socket,
+        CallOptions {
+            timeout: Duration::from_millis(200),
+            ..CallOptions::default()
+        },
+    )
+    .unwrap();
+    thread::scope(|scope| {
+        let submitted = scope.spawn(|| client.start_restore(&restore_request()));
+        let (records, id) = submitted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(
+            submitted.join().unwrap(),
+            Err(ChannelError::Transport(
+                crate::TransportError::Timeout { .. }
+            ))
+        ));
+        assert!(
+            records.poll(id).is_err(),
+            "cancelled slots cannot remain pending"
+        );
+        claim_tx.send(()).unwrap();
+        rejected_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    });
+}
+
+#[test]
+fn closed_lifecycle_socket_preserves_pending_restore_until_the_live_peer_completes() {
     for terminal_before_disconnect in [false, true] {
         let (submitted_tx, submitted_rx) = mpsc::channel();
         let peer = Peer::new(move |command, payload, session| {
             assert_eq!(command.code, CommandCode::Restore);
             RestoreRequest::decode(payload).unwrap();
-            let id = session.completions().reserve(&mut 1).unwrap();
+            let id = command.arg1;
+            session.completions().claim(id).unwrap();
             submitted_tx
                 .send((Arc::clone(session.completions()), id))
                 .unwrap();
-            Some(
-                RestoreResponse {
-                    operation_id: id,
-                    state: RestoreState::Pending,
-                    message: String::new(),
-                }
-                .encode()
-                .unwrap(),
-            )
+            Some(Vec::new())
         });
         let client = peer.client();
-        let handle = client
-            .start_restore(&RestoreRequest {
-                instance_id: "m".into(),
-                tp_rank: 0,
-                device_id: 0,
-                layer_groups: vec![],
-                loads: vec![],
-            })
-            .unwrap();
+        let handle = client.start_restore(&restore_request()).unwrap();
         let (records, id) = submitted_rx.recv().unwrap();
         if terminal_before_disconnect {
             records.complete(id, Ok(())).unwrap();
         }
         drop(peer);
-        if terminal_before_disconnect {
-            assert!(
-                client
-                    .restore_completions_ready(Duration::from_secs(1))
-                    .unwrap()
-            );
+        if !terminal_before_disconnect {
             assert_eq!(
-                client
-                    .wait_restore(handle, Duration::from_secs(1))
-                    .unwrap()
-                    .state,
-                RestoreState::Succeeded
+                client.poll_restore(handle).unwrap().state,
+                RestoreState::Pending
             );
-        } else {
+            let waiting = Instant::now();
+            assert!(
+                !client
+                    .channel
+                    .wait_for_notification(Duration::from_millis(20))
+                    .unwrap()
+            );
+            assert!(waiting.elapsed() >= Duration::from_millis(10));
             assert!(matches!(
-                client.poll_restore(handle),
-                Err(ChannelError::SessionRequiresReconnect)
+                client.wait_restore(handle, Duration::from_millis(2)),
+                Err(ChannelError::RestoreTimeout { .. })
             ));
             assert_eq!(records.poll(id).unwrap().state, RestoreState::Pending);
+            records.complete(id, Ok(())).unwrap();
         }
+        assert_eq!(
+            client
+                .wait_restore(handle, Duration::from_secs(1))
+                .unwrap()
+                .state,
+            RestoreState::Succeeded
+        );
     }
 }

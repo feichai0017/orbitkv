@@ -35,7 +35,7 @@ path. `orbitkv.timeout_ms` (default 5000) bounds hot requests and health;
 registration and unregister allow at least 120 seconds for CUDA setup/draining.
 `orbitkv.spin_iterations` defaults to 64. Standalone Cache Managers do
 not start gRPC. Client and Cache Manager must use matching
-bootstrap protocol versions (currently version 4, with channel ABI 7).
+bootstrap protocol versions (currently version 5, with channel ABI 8).
 
 `orbitkv.wait_for_full_prefix` is supported on the local path: pending queries
 return `QueryLoading`, and repeated queries with the same instance/request/group

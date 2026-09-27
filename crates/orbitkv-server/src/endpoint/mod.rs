@@ -17,8 +17,7 @@ use orbitkv_channel::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
     DeferredResponse, PublishRequest as ChannelPublishRequest, QueryBundleResponse,
     QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest as ChannelReleaseRequest,
-    Response, RestoreRequest, RestoreResponse, RestoreState, StatusCode, TransportError,
-    TransportServer,
+    Response, RestoreRequest, StatusCode, TransportError, TransportServer,
 };
 use orbitkv_core::{EngineError, OrbitKVEngine};
 use thiserror::Error;
@@ -99,7 +98,6 @@ impl ProcessEndpoint {
                 queries.read_batch_bytes = read_batch_bytes;
                 queries.read_timeout = read_timeout;
                 queries.read_max_batches = read_max_batches;
-                let mut next_operation_id = 1u64;
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
@@ -147,7 +145,6 @@ impl ProcessEndpoint {
                                 &runtime,
                                 &hll_tracker,
                                 &mut queries,
-                                &mut next_operation_id,
                                 &mut request_shutdown,
                             ))
                         }
@@ -249,7 +246,6 @@ fn dispatch(
     runtime: &Handle,
     hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
     queries: &mut pending::PendingQueries,
-    next_operation_id: &mut u64,
     request_shutdown: &mut bool,
 ) -> Response {
     let mut response = Response::ok(command);
@@ -277,14 +273,7 @@ fn dispatch(
         }
         CommandCode::Publish => unreachable!("publish uses deferred response handling"),
         CommandCode::Restore => {
-            response = dispatch_restore(
-                command,
-                bootstrap,
-                sessions,
-                engine,
-                runtime,
-                next_operation_id,
-            );
+            response = dispatch_restore(command, bootstrap, sessions, engine, runtime);
         }
     }
     response
@@ -296,7 +285,6 @@ fn dispatch_restore(
     sessions: &mut HashMap<u64, BootstrapSession>,
     engine: &OrbitKVEngine,
     runtime: &Handle,
-    next_operation_id: &mut u64,
 ) -> Response {
     let mut response = Response::ok(command);
     response.value1 = 0;
@@ -304,64 +292,56 @@ fn dispatch_restore(
         Ok(payload) => payload,
         Err(response) => return response,
     };
-    let request = match RestoreRequest::decode(&payload) {
-        Ok(request) => request,
-        Err(error) => return error_response(response, StatusCode::Invalid, &error),
-    };
     let completions = Arc::clone(sessions[&command.arg0].completions());
-    let operation_id = match completions.reserve(next_operation_id) {
-        Ok(id) => id,
-        Err(error) => return error_response(response, StatusCode::Invalid, &error),
-    };
-    let loads = request
-        .loads
-        .into_iter()
-        .map(|load| RestoreLeaseInput {
-            lease: load.lease,
-            block_ids_by_group: load.block_ids_by_group,
-        })
-        .collect();
+    let operation_id = command.arg1;
+    if let Err(error) = completions.claim(operation_id) {
+        return error_response(response, StatusCode::Invalid, &error);
+    }
     let started = Instant::now();
-    let receiver = match execute_restore(
-        engine,
-        RestoreInput {
-            instance_id: request.instance_id,
-            tp_rank: request.tp_rank,
-            device_id: request.device_id,
-            layer_groups: request.layer_groups,
-            loads,
-        },
-    ) {
-        Ok(receiver) => receiver,
-        Err(error) => {
-            // No operation was admitted, so this slot has no DMA owner.
-            let _ = completions.abandon(operation_id);
-            return error_response(response, engine_error_status(&error), &error);
+    let prepared = (|| {
+        let request = RestoreRequest::decode(&payload).map_err(|error| error.to_string())?;
+        let loads = request
+            .loads
+            .into_iter()
+            .map(|load| RestoreLeaseInput {
+                lease: load.lease,
+                block_ids_by_group: load.block_ids_by_group,
+            })
+            .collect();
+        execute_restore(
+            engine,
+            RestoreInput {
+                instance_id: request.instance_id,
+                tp_rank: request.tp_rank,
+                device_id: request.device_id,
+                layer_groups: request.layer_groups,
+                loads,
+            },
+        )
+        .map_err(|error| error.to_string())
+    })();
+    match prepared {
+        Ok(receiver) => {
+            runtime.spawn(restore::publish(
+                receiver,
+                completions,
+                command.session_epoch,
+                command.arg0,
+                operation_id,
+                started,
+            ));
         }
-    };
-    runtime.spawn(restore::publish(
-        receiver,
-        completions,
-        command.session_epoch,
-        operation_id,
-        started,
-    ));
-    let payload = match (RestoreResponse {
-        operation_id,
-        state: RestoreState::Pending,
-        message: String::new(),
-    })
-    .encode()
-    {
-        Ok(payload) => payload,
-        Err(error) => return error_response(response, StatusCode::Internal, &error),
-    };
-    match bootstrap
-        .arena()
-        .write_response(command.descriptor, &payload)
-    {
-        Ok(descriptor) => response.descriptor = descriptor,
-        Err(error) => return error_response(response, arena_error_status(&error), &error),
+        Err(error) => {
+            if let Err(error) = completions.complete(operation_id, Err(error)) {
+                error!("Cannot publish rejected restore completion: {error}");
+            } else if let Err(error) = completions.notify() {
+                error!("Cannot notify rejected restore completion: {error}");
+            }
+        }
+    }
+    #[cfg(feature = "test-hooks")]
+    if orbitkv_core::test_faults::active("restore_ack") {
+        response.value1 = 0;
     }
     response
 }

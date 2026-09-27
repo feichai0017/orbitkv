@@ -1,4 +1,5 @@
-//! Session-owned restore results. Acknowledgement, never a deadline, reclaims a slot.
+//! Session-owned restore admission and results. Client cancellation can reclaim an
+//! unclaimed reservation; only consuming a drained result reclaims a claimed slot.
 
 use std::fs::File;
 use std::os::fd::OwnedFd;
@@ -16,11 +17,16 @@ const HEADER_BYTES: usize = 4096;
 const RECORD_BYTES: usize = 64;
 const ERROR_OFFSET: usize = HEADER_BYTES + RESTORE_COMPLETION_SLOTS * RECORD_BYTES;
 const MAPPING_BYTES: usize = ERROR_OFFSET + RESTORE_COMPLETION_SLOTS * RESTORE_ERROR_BYTES;
-const MAGIC_VERSION: u64 = 0x0001_4f52_4243;
-const SUCCEEDED: u64 = 1;
-const FAILED: u64 = 2;
-const ACKNOWLEDGED: u64 = 3;
-const MAX_OPERATION_ID: u64 = u64::MAX >> 2;
+const MAGIC_VERSION: u64 = 0x0002_4f52_4243;
+const NEXT_OPERATION_OFFSET: usize = 24;
+const STATE_BITS: u32 = 3;
+const STATE_MASK: u64 = (1 << STATE_BITS) - 1;
+const RESERVED: u64 = 0;
+const EXECUTING: u64 = 1;
+const SUCCEEDED: u64 = 2;
+const FAILED: u64 = 3;
+const ACKNOWLEDGED: u64 = 4;
+const MAX_OPERATION_ID: u64 = u64::MAX >> STATE_BITS;
 
 #[derive(Debug, Error)]
 pub enum CompletionError {
@@ -66,6 +72,7 @@ impl RestoreCompletions {
         let this = Self::map(File::from(fd), notification)?;
         this.word(0).store(MAGIC_VERSION, Ordering::Relaxed);
         this.word(8).store(epoch, Ordering::Relaxed);
+        this.word(NEXT_OPERATION_OFFSET).store(1, Ordering::Relaxed);
         this.word(16).store(token, Ordering::Release);
         Ok(this)
     }
@@ -134,21 +141,28 @@ impl RestoreCompletions {
         ))
     }
 
-    /// Reserve before submitting restore work. IDs never repeat during a session.
-    pub fn reserve(&self, next_id: &mut u64) -> Result<u64, CompletionError> {
+    /// The client reserves an identity before sending the restore request. IDs
+    /// never repeat across either mapping during this session.
+    pub fn reserve(&self) -> Result<u64, CompletionError> {
         for _ in 0..RESTORE_COMPLETION_SLOTS {
-            let id = *next_id;
-            if id == 0 || id > MAX_OPERATION_ID {
-                return Err(CompletionError::Exhausted);
-            }
-            *next_id += 1;
+            let id = self
+                .word(NEXT_OPERATION_OFFSET)
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                    (next != 0 && next <= MAX_OPERATION_ID).then(|| next + 1)
+                })
+                .map_err(|_| CompletionError::Exhausted)?;
             let (record, _) = Self::offsets(id)?;
             let tag = self.word(record).load(Ordering::Acquire);
-            if (tag == 0 || tag & 3 == ACKNOWLEDGED)
-                && id > (tag >> 2)
+            if (tag == 0 || tag & STATE_MASK == ACKNOWLEDGED)
+                && id > (tag >> STATE_BITS)
                 && self
                     .word(record)
-                    .compare_exchange(tag, id << 2, Ordering::AcqRel, Ordering::Acquire)
+                    .compare_exchange(
+                        tag,
+                        (id << STATE_BITS) | RESERVED,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
                     .is_ok()
             {
                 return Ok(id);
@@ -157,18 +171,40 @@ impl RestoreCompletions {
         Err(CompletionError::Full)
     }
 
-    /// Roll back admission only when no restore was submitted.
-    pub fn abandon(&self, operation_id: u64) -> Result<(), CompletionError> {
+    /// The Manager must claim exactly once before consuming leases or submitting
+    /// work. A request cancelled before this CAS can never acquire DMA ownership.
+    pub fn claim(&self, operation_id: u64) -> Result<(), CompletionError> {
         let (record, _) = Self::offsets(operation_id)?;
         self.word(record)
             .compare_exchange(
-                operation_id << 2,
-                (operation_id << 2) | ACKNOWLEDGED,
+                (operation_id << STATE_BITS) | RESERVED,
+                (operation_id << STATE_BITS) | EXECUTING,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
             .map_err(|_| CompletionError::Stale(operation_id))?;
         Ok(())
+    }
+
+    /// Cancel a request only while it is unclaimed. A false result leaves the
+    /// record owned by the Manager until its drained result is consumed.
+    pub fn cancel(&self, operation_id: u64) -> Result<bool, CompletionError> {
+        let (record, _) = Self::offsets(operation_id)?;
+        match self.word(record).compare_exchange(
+            (operation_id << STATE_BITS) | RESERVED,
+            (operation_id << STATE_BITS) | ACKNOWLEDGED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(true),
+            Err(tag)
+                if tag >> STATE_BITS == operation_id
+                    && matches!(tag & STATE_MASK, EXECUTING | SUCCEEDED | FAILED) =>
+            {
+                Ok(false)
+            }
+            Err(_) => Err(CompletionError::Stale(operation_id)),
+        }
     }
 
     /// Called once by the restore outcome owner, after submitted work has drained.
@@ -178,7 +214,7 @@ impl RestoreCompletions {
         result: Result<(), String>,
     ) -> Result<(), CompletionError> {
         let (record, error) = Self::offsets(operation_id)?;
-        let pending = operation_id << 2;
+        let pending = (operation_id << STATE_BITS) | EXECUTING;
         if self.word(record).load(Ordering::Acquire) != pending {
             return Err(CompletionError::Stale(operation_id));
         }
@@ -204,7 +240,7 @@ impl RestoreCompletions {
         self.word(record)
             .compare_exchange(
                 pending,
-                pending | status,
+                (operation_id << STATE_BITS) | status,
                 Ordering::Release,
                 Ordering::Relaxed,
             )
@@ -217,14 +253,14 @@ impl RestoreCompletions {
     pub fn poll(&self, operation_id: u64) -> Result<RestoreResponse, CompletionError> {
         let (record, error) = Self::offsets(operation_id)?;
         let tag = self.word(record).load(Ordering::Acquire);
-        if tag >> 2 != operation_id || tag & 3 == ACKNOWLEDGED {
+        if tag >> STATE_BITS != operation_id || tag & STATE_MASK == ACKNOWLEDGED {
             return Err(CompletionError::Stale(operation_id));
         }
-        let state = match tag & 3 {
-            0 => RestoreState::Pending,
+        let state = match tag & STATE_MASK {
+            RESERVED | EXECUTING => RestoreState::Pending,
             SUCCEEDED => RestoreState::Succeeded,
             FAILED => RestoreState::Failed,
-            _ => unreachable!("acknowledgement checked above"),
+            _ => return Err(CompletionError::InvalidPayload),
         };
         let mut message = Vec::new();
         if state == RestoreState::Failed {
@@ -253,7 +289,7 @@ impl RestoreCompletions {
             self.word(record)
                 .compare_exchange(
                     tag,
-                    (operation_id << 2) | ACKNOWLEDGED,
+                    (operation_id << STATE_BITS) | ACKNOWLEDGED,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )

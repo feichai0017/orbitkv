@@ -469,8 +469,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     for offset in range(0, len(pending), self._RESTORE_WINDOW):
                         restores = []
                         for load in pending[offset : offset + self._RESTORE_WINDOW]:
-                            # A lost submission acknowledgement still leaves GPU ownership
-                            # unresolved. Only leases never attempted can be released.
+                            # Earlier submissions can still own GPU pages if this batch
+                            # fails. Release only leases whose submission was never attempted.
                             submitted += 1
                             trace_transfer("restore_submit", load.rid, engine="sglang")
                             restores.append(

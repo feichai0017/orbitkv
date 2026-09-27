@@ -22,7 +22,15 @@ GPU drain instead of waiting for a dispatcher scan. Waiting releases the GIL and
 a deadline does not release GPU destinations. The low-level Rust `ChannelClient`
 owns descriptor framing and session failure, without a second Python facade.
 
-Bootstrap version 4 and channel ABI 7 require rebuilding both client and Manager.
+The client reserves the operation identity before sending Restore. Manager
+claim and client cancellation compete atomically before lease consumption;
+a claimed operation keeps its handle even if its submission ACK is lost.
+Preparation failures are terminal Failed results on that handle. Only the
+descriptor channel closes after an ambiguous call: mapped results remain
+readable, and UDS closure is not a GPU completion fence. The fixed ACK has no
+Restore response payload. Trace keys include epoch, session token and operation ID.
+
+Bootstrap version 5 and channel ABI 8 require rebuilding both client and Manager.
 The required companion iceoryx2 request event wakes the Manager after enqueue;
 the request queue remains authoritative. Manager maintenance bounds missed-wake
 recovery without a fixed 50 us idle poll. Publish retains its source ownership

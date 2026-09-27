@@ -27,6 +27,34 @@ require clients and Managers from the same revision; retired wire decoders and
 runtime implementation selectors are removed. Performance controls run the
 baseline revision in a separate checkout with matched workloads and budgets.
 
+### Restore identity and ambiguous submission
+
+The client reserves a session-local operation ID in shared completion memory
+before sending its descriptor. The Manager authenticates and consumes the
+descriptor, then atomically claims that ID before decoding or consuming leases.
+Cancellation competes with that claim: a cancelled reservation cannot execute;
+once claimed, even a lost or malformed submission ACK returns the original
+handle and preserves the operation until its actual terminal result. Requests
+are not retransmitted. An ambiguous descriptor channel is closed, while already
+claimed results remain readable through their retained mapping.
+
+Each of the 1024 records moves through Reserved, Executing, Succeeded/Failed,
+and Acknowledged. Only Reserved can be cancelled without a completion fence;
+only consuming a terminal result reclaims a claimed slot. Preparation failures
+also return a handle with a Failed result. A closed UDS does not complete a
+restore: pending polls use the Manager pidfd, and recheck for a final publication
+after observing process exit. Notification waits use eventfd without repeatedly
+waking on a disconnected UDS; the existing bounded rescan covers lost wakes.
+
+The fixed submission ACK only acknowledges descriptor consumption. The old
+Restore response encoder/decoder and Manager-wide operation counter are gone.
+Identity and trace keys include Manager epoch, client session token and operation
+ID, since different sessions may reserve the same numeric ID. This implements
+submission identity for the current Manager-owned CUDA path. Handles also retain
+their native client issuer, fencing a replacement mapping even if an operator
+reuses a configured Manager epoch. This does not yet
+grant an engine permission to submit CUDA or prove engine-local DMA drain.
+
 ### Restore preparation and destination binding
 
 Raw resident Restore now compiles GPU/host copy descriptors directly from the
@@ -85,7 +113,7 @@ Ordinary replies remain on the request/response queue. A dedicated per-session
 reply eventfd wakes Publish after its response is queued; the client waits on
 that FD and the Manager pidfd instead of sleeping for 100 us. Restore completion
 keeps its separate eventfd so the two waiters cannot consume each other's wakes.
-Bootstrap version 4 and channel ABI 7
+Bootstrap version 5 and channel ABI 8
 reject previous clients rather than retaining a runtime polling mode.
 
 Request encoding uses exact payload sizes. Oversized Publish requests are

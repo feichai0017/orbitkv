@@ -1,6 +1,96 @@
 # Local communication measurements
 
-## Raw descriptors and split K/V coalescing (current increment)
+## Client-reserved Restore identity (current increment)
+
+On 2026-09-27, the Restore submission protocol moved identity reservation to the
+client and added atomic Manager claim versus client cancellation. An accepted
+operation keeps its handle after a lost or malformed submission ACK. The ACK no
+longer carries an encoded RestoreResponse; terminal results and preparation
+errors use the shared completion mapping. See [the implementation contract](communication-plan.md#restore-identity-and-ambiguous-submission).
+
+This increment establishes recoverable submission identity, **not a measured
+throughput improvement**. Median Restore latency is close to the preceding
+revision, with a small 4 KiB regression and some higher p99 values. Removing
+response encoding did not establish an overall latency win. CUDA submission
+still belongs to the Manager; engine-local execution and model serving speedups
+are not demonstrated by these measurements.
+
+### Comparison and results
+
+The baseline is `2c4041bac57c536986d769ea3343c4ae0b8e6fa1`, frozen as
+`descriptor-production`; the candidate is `identity-production`. Both contain
+release Managers and matching Python extensions without test hooks. The same
+unchanged harness, H20, CPU affinity `8,10,12,14`, 256 MiB pool, 150 samples after
+20 warmups and zero/1 ms prescribed idle were used. Each matrix ran
+`A1 B1 B2 A2 A3 B3`, with one fresh Manager per run:
+
+- One contiguous layer, one lease, 4 KiB / 256 KiB / 4 MiB.
+- 36 split K/V layers, 32 leases, 18 MiB logical payload.
+
+All twelve sessions passed GPU-byte validation and exact copy-counter checks.
+No builds or other qualification tests ran during measurement. Lease lookup is
+outside Restore timing; submit-to-ready includes encoding, IPC, admission, CUDA
+work and terminal observation. Values are medians of three per-run percentiles,
+not pooled samples. These short runs do not establish tail-latency equivalence.
+
+Times in microseconds, without prescribed idle:
+
+| Operation / shape | Baseline p50 / p99 | Candidate p50 / p99 |
+| --- | ---: | ---: |
+| Restore, contiguous 4 KiB | 25.93 / 65.90 | 26.62 / 46.30 |
+| Restore, contiguous 256 KiB | 38.50 / 60.25 | 38.38 / 66.75 |
+| Restore, contiguous 4 MiB | 222.66 / 240.43 | 223.21 / 283.19 |
+| Restore, split 18 MiB, 32 leases | 1,359.48 / 1,449.03 | 1,362.47 / 1,466.27 |
+| Publish, contiguous 4 KiB | 64.11 / 105.18 | 66.93 / 110.53 |
+| Publish, contiguous 256 KiB | 108.76 / 143.66 | 113.35 / 173.69 |
+| Publish, contiguous 4 MiB | 770.60 / 833.74 | 773.80 / 853.97 |
+| Publish, split 18 MiB | 2,909.23 / 3,117.83 | 2,931.24 / 3,123.90 |
+
+With 1 ms prescribed idle, Restore p50 was 39.13 → 40.84 us at 4 KiB,
+51.54 → 52.00 us at 256 KiB, 229.93 → 230.07 us at 4 MiB, and
+1,361.61 → 1,367.31 us for split 18 MiB. Zero-idle submission-only p50 was
+8.87 → 8.69 us, 14.81 → 14.56 us, 109.38 → 109.10 us and
+371.92 → 379.77 us respectively. Submission-only timing is not GPU completion.
+Publish remains a control measurement; its data path was not optimized here.
+
+Frozen production artifacts:
+
+| Bundle | Manager SHA-256 | Extension SHA-256 |
+| --- | --- | --- |
+| Baseline | `0ea5dc4df3f0afd0c1e6e645eee8b95e190152105b5cf25f818b24c4ed38bfc8` | `69e1b911af8ae1d8abf986e6f61fe146dd1c0a9ea367760c69a154916c78ae5a` |
+| Candidate | `308dc6b2590ed2445af4575ee0bf94c0bff9b4429414020467d34b28ed49b7cb` | `ee569e0eba40b7953afc785f24a2d0e30d5d5631151dee414406f37101f4b734` |
+
+The candidate manifest records base `2c4041ba` and source patch SHA-256
+`c493aa60944de176ebd9cf33d0c7b40bb5cd9b9f9c633c66dd068358c9499cca`.
+The unchanged harness SHA-256 is
+`06b0d99c105f8d8ff04d818d963c8031ad00a0aec95cd50aa26ad01fc975f040`.
+This workspace retains per-run samples, manifests, CPU accounting and the
+three-pair aggregate in
+`/workspace/.orbitkv-tools/communication-microbench/runs/restore-identity/`.
+Use the same reproduction commands and environment below, selecting these two
+release bundles and the two workload shapes above. Clients and Managers must be
+paired by revision because bootstrap v5 / channel ABI 8 replace v4 / ABI 7.
+
+### Correctness qualification
+
+Channel tests cover cancellation before claim, lost ACK after claim, mapped
+completion after UDS closure, actual process exit, bounded slot reuse and
+operation-ID collisions across clients and separately configured Managers.
+The final channel gate passed 55 tests (one direct child-helper invocation is
+ignored), and the Manager endpoint gate passed four tests. Workspace Clippy
+with warnings denied and 374 Python unit tests passed.
+
+The final production extension also passed 32 real Manager/native/GPU tests
+against the matching-protocol fault Manager; 30 cases require the unselected
+cuFile configuration and were skipped. The new cases corrupt the ACK after
+claim, delay completion and lose its notification, then verify the original
+handle, actual restored bytes and exactly one copy. Preparation rejection uses
+the same handle with a Failed result. Existing SSD, codec, Publish and restart
+fault gates still pass. No pinned vLLM/SGLang release environments or model
+artifacts were available for serving E2E; these results do not qualify the
+future engine-local grant lifecycle.
+
+## Raw descriptors and split K/V coalescing
 
 On 2026-09-27, compiling raw resident Restore directly into owned copy
 batches and ordering independent descriptors by GPU address reduced the

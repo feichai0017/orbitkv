@@ -263,7 +263,7 @@ impl TransportClient {
     }
 }
 
-fn peer_exited(peer: &OwnedFd) -> Result<bool, TransportError> {
+pub(crate) fn peer_exited(peer: &OwnedFd) -> Result<bool, TransportError> {
     let mut fds = [PollFd::new(peer, PollFlags::IN)];
     let timeout = Timespec {
         tv_sec: 0,

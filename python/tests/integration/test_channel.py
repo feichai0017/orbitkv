@@ -108,8 +108,7 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
     lease = result.lease
     assert isinstance(lease, bytes) and lease
     assert (
-        orbitkv_native.QueryReady(result.num_hit_blocks, lease, result.hit_positions).lease
-        == lease
+        orbitkv_native.QueryReady(result.num_hit_blocks, lease, result.hit_positions).lease == lease
     )
     operation_id = query_client.start_restore(
         instance_id=channel_client_context.instance_id,
@@ -125,14 +124,16 @@ def test_query_bundle_uses_bootstrapped_arena_and_core(channel_server, channel_c
     assert status.success, status.message
     restored = channel_client_context.get_kv_cache()[:, 2:4].cpu()
     assert restored.equal(expected)
-    with pytest.raises(orbitkv_native.OrbitKVError, match="Internal"):
-        query_client.start_restore(
-            instance_id=channel_client_context.instance_id,
-            tp_rank=0,
-            device_id=0,
-            layer_groups=[channel_client_context._layer_names],
-            loads=[(result.lease, [[0, 1]])],
-        )
+    rejected = query_client.start_restore(
+        instance_id=channel_client_context.instance_id,
+        tp_rank=0,
+        device_id=0,
+        layer_groups=[channel_client_context._layer_names],
+        loads=[(result.lease, [[0, 1]])],
+    )
+    status = query_client.wait_restore(rejected, timeout=5)
+    assert status.done and not status.success
+    assert "lease" in status.message.lower()
 
     second = query(
         instance_id=channel_client_context.instance_id,

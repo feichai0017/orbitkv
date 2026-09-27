@@ -175,6 +175,7 @@ impl Queries {
 pub struct RestoreHandle {
     pub operation_id: u64,
     pub session_epoch: u64,
+    pub session_token: u64,
     owner: u64,
 }
 
@@ -627,12 +628,18 @@ impl CacheClient {
         Ok(RestoreHandle {
             operation_id,
             session_epoch: self.channel.session_epoch(),
+            session_token: self.channel.session_token(),
             owner: self.owner,
         })
     }
 
     pub fn poll_restore(&self, handle: RestoreHandle) -> Result<RestoreResponse, ChannelError> {
-        if handle.owner != self.owner || handle.session_epoch != self.channel.session_epoch() {
+        // A configured Manager epoch can repeat after restart. The native
+        // issuer also fences handles against a new mapping with equal wire IDs.
+        if handle.owner != self.owner
+            || handle.session_token != self.channel.session_token()
+            || handle.session_epoch != self.channel.session_epoch()
+        {
             return Err(ChannelError::SessionRequiresReconnect);
         }
         self.channel.restore_poll(handle.operation_id)

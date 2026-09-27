@@ -1143,6 +1143,56 @@ def test_cufile_delay_keeps_sources_and_allows_dram_restores(fault_cache):
     until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_gpu_staging_bytes"] == 0)
 
 
+@pytest.mark.parametrize("reject", [False, True], ids=["gpu-copy", "preparation-error"])
+def test_restore_corrupt_ack_keeps_claimed_handle_and_shared_result(fault_cache, reject):
+    import torch
+
+    from orbitkv import OrbitKVError
+
+    server, client, ctx, directory = fault_cache
+    hashes = [b"restore-ack"]
+    expected = ctx.get_kv_cache()[:, 0:1].cpu().clone()
+    assert publish(client, ctx, hashes)[0]
+    ready = query(client, ctx, hashes, "claimed-before-ack")
+    before = fetch_orbitkv_metrics(server.http_port)
+    arm(directory, "restore_ack")
+    if not reject:
+        arm(directory, "restore")
+        arm(directory, "notification")
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [["missing-layer"]] if reject else [ctx._layer_names],
+        [(ready.lease, [[2]])],
+    )
+    reached(directory, "restore_ack")
+    # The malformed ACK closes descriptor admission. It cannot erase a claimed
+    # operation or turn its socket disconnect into a completed GPU transfer.
+    with pytest.raises(OrbitKVError, match="reconnect"):
+        client.health()
+    if not reject:
+        reached(directory, "restore")
+        with pytest.raises(TimeoutError):
+            client.wait_restore(handle, timeout=0.02)
+        assert not client.poll_restore(handle).done
+        (directory / "restore.pause").unlink()
+    result = client.wait_restore(handle, timeout=5)
+    assert result.done and result.success is not reject
+    if reject:
+        assert "missing-layer" in result.message
+    else:
+        reached(directory, "notification")
+        torch.cuda.synchronize()
+        assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), expected)
+    after = fetch_orbitkv_metrics(server.http_port)
+    assert after.get("orbitkv_load_bytes_total", 0) - before.get("orbitkv_load_bytes_total", 0) == (
+        0 if reject else expected.numel() * expected.element_size()
+    )
+    with pytest.raises(OrbitKVError, match="consumed"):
+        client.poll_restore(handle)
+
+
 def test_restore_timeout_and_lost_notification_preserve_destinations(fault_cache):
     import torch
 
