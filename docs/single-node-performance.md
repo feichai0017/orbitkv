@@ -13,7 +13,7 @@ memory and SGLang's HiCache with a CPU pool. Native HBM-only prefix caching is
 the control for each engine. Independent LMCache and FlexKV comparisons must
 pin and validate the engine, PyTorch, CUDA, and connector versions together.
 Mooncake Store can extend that matrix.
-Mooncake Transfer Engine alone is a transport library, so a raw transfer-engine
+Mooncake TENT alone is a transport library, so a raw transfer-engine
 bandwidth result is not an end-to-end cache comparison.
 
 References: [vLLM KV offloading](https://docs.vllm.ai/en/latest/features/kv_offloading_usage/),

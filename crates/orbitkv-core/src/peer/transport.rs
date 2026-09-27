@@ -7,7 +7,7 @@ use orbitkv_transfer::{AUTO_MEMORY_LOCATION, MemoryRegistration, P2P_METADATA, T
 
 use crate::memory::pool::PinnedAllocator;
 
-/// Mooncake Transfer Engine plus the lifetime of the registered pinned pool.
+/// Mooncake TENT plus the lifetime of the registered pinned pool.
 pub(crate) struct MooncakeTransport {
     engine: Arc<TransferEngine>,
     registrations: Vec<MemoryRegistration>,
@@ -55,7 +55,7 @@ impl MooncakeTransport {
             .collect::<Result<Vec<_>, _>>()?;
 
         info!(
-            "Mooncake Transfer Engine initialised: endpoint={}, nics={}, registered {} memory region(s), elapsed={:?}",
+            "Mooncake TENT initialised: endpoint={}, nics={}, registered {} memory region(s), elapsed={:?}",
             transfer_endpoint,
             nic_names.len(),
             registrations.len(),

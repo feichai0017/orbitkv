@@ -22,7 +22,7 @@ adapters use CUDA IPC for GPU transfers and the same Cache Manager API.
   TurboQuant storage in DRAM, SSD and peer transfers; see [storage formats](../docs/storage-formats.md).
 - Native query ownership, byte budgets and completion fences.
 - Prometheus metrics and optional request timelines.
-- Experimental peer cache sharing through Mooncake Transfer Engine.
+- Experimental peer cache sharing through Mooncake TENT.
 
 Validated engine releases: **vLLM 0.29.0** and **SGLang 0.5.20**. See
 [model qualification](https://feichai0017.github.io/orbitkv/docs/models/)

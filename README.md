@@ -52,7 +52,7 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   Opt-in cost observations compare matching copy/SSD-route evidence in shadow,
   with resource identity and uncertainty checks before suggesting a change.
 - **Experimental shared cache.** Embedded catalog shards locate peer replicas,
-  Mooncake Transfer Engine moves bytes, and etcd tracks cluster membership.
+  Mooncake TENT moves bytes, and etcd tracks cluster membership.
   Source allocations remain budgeted through timeout; bounded completion records
   reconcile lost authorization replies and retry completion acknowledgements
   using reusable windows and generation-fenced tickets. Peer SSD reads use

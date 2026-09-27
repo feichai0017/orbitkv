@@ -250,16 +250,17 @@ Segment metadata through etcd, Redis, or HTTP.
 
 OrbitKV pins Mooncake `v0.3.13.post1` at
 `719735896c86b56fabec6cf3e825fb2ea640597a` and builds its shared Transfer
-Engine through `orbitkv-mooncake-sys`. Native
+Engine through the TENT `tent_shared` target in `orbitkv-mooncake-sys`. Native
 loading first checks `ORBITKV_MOONCAKE_LIB_DIR`, then the executable or Python
 extension directory, then the local `.orbitkv/mooncake/{cuda|cpu}/lib` build cache. Wheels
-bundle `libtransfer_engine.so`, `libmooncake_common.so`, and `libasio.so`; system
+bundle `libtent_shared.so`, `libmooncake_common.so`, and `libasio.so`; the legacy
+`libtransfer_engine.so` is removed from staged runtimes. System
 RDMA/CUDA libraries remain deployment prerequisites.
 
 ## What OrbitKV reuses
 
 `orbitkv-transfer::TransferEngine` is a narrow wrapper over the pinned upstream
-Mooncake C ABI. There is no runtime backend selector and no OrbitKV-owned verbs
+Mooncake TENT C ABI. There is no legacy runtime selector and no OrbitKV-owned verbs
 implementation. Authorized plans are lowered directly to Mooncake Segment
 addresses, BatchTransfer operations, and notifications.
 
@@ -272,6 +273,23 @@ the token, using Mooncake's `cuda:N` location, until native completion drains.
 The current C ABI does not report the data transport actually selected for a
 batch, so OrbitKV does not infer TCP/RDMA/GPUDirect from `--nics` or success;
 qualification records Mooncake logs and NIC/device counters externally.
+
+TENT task cancellation is best effort. OrbitKV requests cancellation after a
+deadline or partial submit, continues polling every task to a TENT terminal
+state, and only then calls `tent_free_batch`. A successful free request is not a
+completion fence. This preserves source/destination memory through TENT's
+asynchronous queue, failover and device work.
+
+OrbitKV also exposes TENT's bounded NIC load snapshot: device name, in-flight
+bytes and EWMA bandwidth. This is live rail-pressure evidence, not a per-batch
+transport receipt. P/D may use the aggregate for diagnostics, while shared-cache
+qualification still checks external NIC counters before claiming RDMA or
+GPUDirect.
+
+The runtime loader resolves only `tent_*` symbols from `libtent_shared.so`.
+CPU and CUDA variants are built separately from the same pinned source; the
+CUDA variant includes CUDA/GDS/NVLink-capable TENT components. Missing TENT
+artifacts fail startup and never fall back to `libtransfer_engine.so`.
 
 OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
 the cache engine handles versioned model/storage keys and leases above Mooncake.

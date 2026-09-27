@@ -6,7 +6,7 @@ pub enum MooncakeError {
     NativeRuntime(String),
     #[error("invalid string: {0}")]
     InvalidString(#[from] std::ffi::NulError),
-    #[error("Mooncake Transfer Engine creation failed")]
+    #[error("Mooncake TENT creation failed")]
     Create,
     #[error("Mooncake operation {operation} failed with status {status}")]
     Operation {

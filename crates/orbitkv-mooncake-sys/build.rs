@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const RUNTIME_LIBRARIES: [(&str, &str); 3] = [
-    ("src/libtransfer_engine.so", "libtransfer_engine.so"),
+    ("tent/src/libtent_shared.so", "libtent_shared.so"),
     (
         "mooncake-common-src/libmooncake_common.so",
         "libmooncake_common.so",
     ),
     ("mooncake-common/libasio.so", "libasio.so"),
 ];
+const OBSOLETE_RUNTIME_LIBRARIES: [&str; 1] = ["libtransfer_engine.so"];
 fn main() {
     println!("cargo:rerun-if-env-changed=ORBITKV_MOONCAKE_BUILD_JOBS");
     println!("cargo:rerun-if-env-changed=ORBITKV_MOONCAKE_CMAKE");
@@ -34,6 +35,7 @@ fn main() {
         .join(variant)
         .join("lib");
     fs::create_dir_all(&runtime_dir).expect("create Mooncake runtime directory");
+    remove_obsolete_libraries(&runtime_dir);
 
     if let Some(prebuilt_dir) = env::var_os("ORBITKV_MOONCAKE_LIB_DIR") {
         stage_prebuilt_libraries(Path::new(&prebuilt_dir), &runtime_dir);
@@ -45,7 +47,7 @@ fn main() {
     let pybind = workspace.join("third-party/mooncake/extern/pybind11/CMakeLists.txt");
     assert!(
         source.join("CMakeLists.txt").is_file() && pybind.is_file(),
-        "Mooncake source is incomplete; run `git submodule update --init --recursive \
+        "Mooncake TENT source is incomplete; run `git submodule update --init --recursive \
          third-party/mooncake`"
     );
     println!(
@@ -57,6 +59,17 @@ fn main() {
     build(&build_dir);
     stage_libraries(&build_dir, &runtime_dir);
     set_origin_runpaths(&runtime_dir);
+}
+
+fn remove_obsolete_libraries(runtime_dir: &Path) {
+    for name in OBSOLETE_RUNTIME_LIBRARIES {
+        let path = runtime_dir.join(name);
+        if let Err(error) = fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            panic!("failed to remove obsolete {}: {error}", path.display());
+        }
+    }
 }
 
 fn configure(source: &Path, build_dir: &Path) {
@@ -83,7 +96,7 @@ fn configure(source: &Path, build_dir: &Path) {
             "-DUSE_HTTP=OFF",
             "-DUSE_ETCD=OFF",
             "-DUSE_REDIS=OFF",
-            "-DUSE_TENT=OFF",
+            "-DUSE_TENT=ON",
             "-DWITH_METRICS=OFF",
         ])
         .arg(format!("-DUSE_CUDA={cuda}"))
@@ -91,7 +104,7 @@ fn configure(source: &Path, build_dir: &Path) {
         .unwrap_or_else(|error| panic!("failed to run {cmake}: {error}"));
     assert!(
         status.success(),
-        "Mooncake CMake configure failed; install its documented build dependencies"
+        "Mooncake TENT CMake configure failed; install its documented build dependencies"
     );
 }
 
@@ -101,11 +114,11 @@ fn build(build_dir: &Path) {
     let status = Command::new(&cmake)
         .args(["--build"])
         .arg(build_dir)
-        .args(["--target", "transfer_engine", "--parallel"])
+        .args(["--target", "tent_shared", "--parallel"])
         .arg(&jobs)
         .status()
-        .unwrap_or_else(|error| panic!("failed to build Mooncake Transfer Engine: {error}"));
-    assert!(status.success(), "Mooncake Transfer Engine build failed");
+        .unwrap_or_else(|error| panic!("failed to build Mooncake TENT: {error}"));
+    assert!(status.success(), "Mooncake TENT build failed");
 }
 
 fn stage_libraries(build_dir: &Path, link_dir: &Path) {
@@ -113,7 +126,7 @@ fn stage_libraries(build_dir: &Path, link_dir: &Path) {
         let source = build_dir.join(relative);
         assert!(
             source.is_file(),
-            "Mooncake build did not produce {}",
+            "Mooncake TENT build did not produce {}",
             source.display()
         );
         fs::copy(&source, link_dir.join(name))
@@ -126,7 +139,7 @@ fn stage_prebuilt_libraries(source_dir: &Path, runtime_dir: &Path) {
         let source = source_dir.join(name);
         assert!(
             source.is_file(),
-            "ORBITKV_MOONCAKE_LIB_DIR is missing {}",
+            "ORBITKV_MOONCAKE_LIB_DIR is missing TENT runtime {}",
             source.display()
         );
         let destination = runtime_dir.join(name);

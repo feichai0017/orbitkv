@@ -1,8 +1,8 @@
 # OrbitKV Transfer
 
 `orbitkv-transfer` is OrbitKV's single remote byte-movement implementation. It
-wraps a pinned upstream Mooncake Transfer Engine and contains no private verbs
-stack.
+wraps the pinned upstream Mooncake TENT engine and contains no private verbs
+stack or legacy Transfer Engine fallback.
 
 OrbitKV owns state identity, recovery completeness, replica choice, leases, and
 generation validation. Mooncake owns segment discovery, memory registration,
@@ -12,7 +12,7 @@ RDMA/TCP selection, multi-rail routing, transfer completion, and notification.
 OrbitKV authorized transfer plan
         │
         ▼
-Mooncake segment + remote address + batch operation
+Mooncake TENT segment + remote address + batch operation
         │
         ├── RDMA / GPUDirect when available
         └── TCP fallback or forced TCP for validation
@@ -20,7 +20,7 @@ Mooncake segment + remote address + batch operation
 
 The public Rust API is deliberately small:
 
-- `TransferEngine::new` creates one upstream Mooncake engine.
+- `TransferEngine::new` creates one upstream Mooncake TENT engine.
 - `register_memory` and `unregister_memory` expose stable host or device memory.
 - `submit_and_wait` executes a READ or WRITE batch.
 - `submit_and_notify` couples a batch to a peer notification.
@@ -29,7 +29,7 @@ The public Rust API is deliberately small:
 
 The upstream source is pinned to stable release `v0.3.13.post1` by the
 `third-party/mooncake` submodule. `orbitkv-mooncake-sys` builds and stages
-`libtransfer_engine.so`,
+`libtent_shared.so`,
 `libmooncake_common.so`, and `libasio.so`; the libraries use an `$ORIGIN`
 runpath so the three files can be bundled together in a wheel or container.
 The sys crate is the only raw C ABI boundary. This crate contains the

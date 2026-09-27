@@ -233,6 +233,7 @@ class FakeMooncakeTransferEngine:
         self.registered_regions = []
         self.writes = []
         self.notifications = []
+        self.nic_stats = []
 
     def register_memory(self, regions):
         self.registered_regions.extend(regions)
@@ -257,6 +258,9 @@ class FakeMooncakeTransferEngine:
         notifications = self.notifications
         self.notifications = []
         return notifications
+
+    def nic_load_stats(self):
+        return self.nic_stats
 
     def complete(self, request_id: str, status: str = "done") -> None:
         self.notifications.append((request_id, status))

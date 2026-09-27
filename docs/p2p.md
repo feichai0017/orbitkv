@@ -1,6 +1,6 @@
 # Distributed KV cache
 
-Managers embed the replica catalog and use Mooncake Transfer Engine for KV bytes.
+Managers embed the replica catalog and use Mooncake TENT for KV bytes.
 Distributed mode needs etcd for members and fixed placement configuration; etcd
 stores no block hashes and receives no lookup on the cache request path. This is
 an experimental deployment with one directory copy per logical shard, not HA.
@@ -35,7 +35,10 @@ orbitkv-cache-manager \
 Use concrete peer addresses reachable from the other hosts. Peer gRPC and
 Mooncake's P2P handshake/data endpoints use separate ports on that host. Optional
 `--nics mlx5_0,mlx5_1` filters RDMA rails; omitted, Mooncake selects an available
-transport including TCP. For a same-host TCP test set `MC_FORCE_TCP=1`.
+transport including TCP. For a same-host TCP test set `MC_FORCE_TCP=1`; OrbitKV
+then disables TENT RDMA/NVLink/MNNVL for that engine creation and temporarily
+suppresses `MC_TENT_CONF` so a general config cannot invalidate the forced-TCP
+control.
 
 There is no separate MetaServer process or `--metaserver-addr` flag. Upgrade all
 Managers together for this breaking protocol change. Engine processes retain the

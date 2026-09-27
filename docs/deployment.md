@@ -33,7 +33,7 @@ flowchart LR
     M --> D[Pinned DRAM]
     M --> F[Optional SSD]
   end
-  M <-->|Mooncake Transfer Engine| P[Peer Cache Managers]
+  M <-->|Mooncake TENT| P[Peer Cache Managers]
 ```
 
 The peer connection is optional and experimental. Sharing a service does not
@@ -187,7 +187,7 @@ for source references, allocator limits and the image/cluster acceptance gates.
 ## Add peer caching
 
 Keep engine connections unchanged and configure each Manager with the
-[embedded catalog and etcd membership](p2p.md). Mooncake Transfer Engine moves
+[embedded catalog and etcd membership](p2p.md). Mooncake TENT moves
 remote bytes; etcd stores member/placement information, not per-block KV data.
 There is no standalone metadata server to deploy. Catalogs currently have one
 metadata copy per shard, and real two-host/RDMA serving remains a separate gate.

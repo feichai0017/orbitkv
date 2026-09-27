@@ -299,8 +299,9 @@ The native physical domains are:
 - local SSD;
 - remote OrbitKV replicas over Mooncake-selected RDMA or TCP.
 
-Mooncake Transfer Engine is the sole remote-movement backend in this codebase. It
-contributes Segment/BatchTransfer, multi-NIC topology selection, endpoint
+Mooncake TENT is the sole remote-movement backend in this codebase. The legacy
+Transfer Engine ABI is neither built nor loaded. TENT contributes
+Segment/BatchTransfer, multi-NIC topology selection, endpoint
 pooling, and rail failover. Mooncake Store Master is not OrbitKV's
 semantic authority: bundle completeness, leases, generations, and planning
 remain in OrbitKV.

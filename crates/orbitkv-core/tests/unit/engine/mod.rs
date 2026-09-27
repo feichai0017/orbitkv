@@ -14,10 +14,7 @@ async fn mooncake_initialization_failure_is_returned_to_caller() {
         Err(err) => err.to_string(),
     };
 
-    assert!(
-        err.contains("Failed to initialise Mooncake Transfer Engine"),
-        "{err}"
-    );
+    assert!(err.contains("Failed to initialise Mooncake TENT"), "{err}");
     assert!(err.contains("definitely-not-a-real-nic"), "{err}");
 }
 

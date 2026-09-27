@@ -220,8 +220,8 @@ qualification remain open. See the
 - [x] Add a real two-process channel test.
 - [x] Integrate the iceoryx2 lifecycle endpoint into `orbitkv-server`.
 - [x] Add Python `ChannelProbeClient` bindings with epoch fencing.
-- [x] Replace the copied native RDMA stacks with a pinned stable Mooncake
-  Transfer Engine sys crate and one clean transfer API.
+- [x] Replace the copied native RDMA stacks with the pinned Mooncake TENT C ABI
+  and one clean transfer API; do not build or load the legacy TE runtime.
 - [ ] Add Python representations/serialization for `orbitkv-state`.
 - [x] Run the full M0 validation matrix and record results in the commit.
 
@@ -531,7 +531,11 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   transfer/restore plan at the Cache Manager.
 - [ ] Evaluate load-only, overlap-only, and joint planning on the same trace.
 
-- [x] Add the pinned Mooncake Transfer Engine native sys/build boundary.
+- [x] Add the pinned Mooncake TENT native sys/build boundary, dynamic ABI,
+  cancellation drain, notifications and relocatable runtime packaging.
+- [x] Remove the legacy Transfer Engine runtime: build and package only
+  `tent_shared`, bind `tent_*` symbols, use terminal task status plus best-effort
+  cancellation before free, and expose TENT NIC pressure to P/D diagnostics.
 - [x] Map OrbitKV remote-cache authorization to Mooncake Segment addresses.
 - [ ] Qualify RDMA READ demand fetch and RDMA WRITE replication.
 - [ ] Import topology-aware slicing, endpoint pooling, and alternate-rail retry.

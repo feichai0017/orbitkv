@@ -1,4 +1,4 @@
-"""P/D transfer port backed by the upstream Mooncake Transfer Engine."""
+"""P/D transfer port backed by the upstream Mooncake TENT engine."""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ def _layer_from_native(layer: LayerRemoteLayout | dict[str, Any]) -> LayerRemote
 
 
 class RealMooncakePort:
-    """P/D layout adapter over the upstream Mooncake Transfer Engine."""
+    """P/D layout adapter over the upstream Mooncake TENT engine."""
 
     def __init__(self, engine: Any, *, nic_count: int = 1) -> None:
         self.engine = engine
@@ -313,7 +313,13 @@ class RealMooncakePort:
         self._send_status(req_id, "aborted")
 
     def aggregated_link_speed(self) -> int:
-        return 0
+        try:
+            return int(
+                sum(max(0.0, float(stat[2])) for stat in self.engine.nic_load_stats()) * 8
+            )
+        except Exception:
+            logger.exception("[PdConnector] failed to read TENT NIC load stats")
+            return 0
 
     def wait_done(self, req_id: str) -> None:
         with self._lock:

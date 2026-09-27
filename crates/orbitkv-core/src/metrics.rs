@@ -175,6 +175,10 @@ pub(crate) struct CoreMetrics {
     #[cfg(feature = "mooncake")]
     pub remote_fetch_bytes: Counter<u64>,
     #[cfg(feature = "mooncake")]
+    pub tent_nic_inflight_bytes: Histogram<u64>,
+    #[cfg(feature = "mooncake")]
+    pub tent_nic_bandwidth_bytes_per_second: Histogram<f64>,
+    #[cfg(feature = "mooncake")]
     pub remote_fetch_plan_segments: Histogram<u64>,
     #[cfg(feature = "mooncake")]
     pub remote_fetch_plan_completed_segments: Histogram<u64>,
@@ -713,6 +717,18 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .u64_counter("orbitkv_remote_fetch_bytes")
                 .with_unit("bytes")
                 .with_description("Total bytes fetched via Mooncake from remote nodes")
+                .build(),
+            #[cfg(feature = "mooncake")]
+            tent_nic_inflight_bytes: meter
+                .u64_histogram("orbitkv_tent_nic_inflight_bytes")
+                .with_unit("bytes")
+                .with_description("TENT live RDMA rail inflight-byte snapshot after a peer batch")
+                .build(),
+            #[cfg(feature = "mooncake")]
+            tent_nic_bandwidth_bytes_per_second: meter
+                .f64_histogram("orbitkv_tent_nic_bandwidth_bytes_per_second")
+                .with_unit("By/s")
+                .with_description("TENT RDMA rail EWMA bandwidth snapshot after a peer batch")
                 .build(),
             #[cfg(feature = "mooncake")]
             candidate_cache_lookups: meter.u64_counter("orbitkv_candidate_cache_lookups")

@@ -116,7 +116,7 @@ support alone do not establish a performance advantage.
   the framework's handoff uses Mooncake TE for cross-node movement. The
   transfer path is distinct from HiCache's shared storage backend.
 
-Transfer Engine moves registered memory; it does not define a framework's
+Mooncake TENT moves registered memory; it does not define a framework's
 legal recovery boundary. TP/PP, heterogeneous rank layouts and hybrid models
 must be qualified against the selected engine connector. Shared storage does
 not by itself prove that a TP=4 representation can be restored by TP=8.

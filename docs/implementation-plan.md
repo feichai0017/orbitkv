@@ -997,6 +997,22 @@ unregister, re-registration, dropping the original engine handle before the
 token, notifications and uncertain batch drain. GPU registration remains an
 external H20 gate rather than a CPU-runtime claim.
 
+The TENT migration replaces the dynamically loaded legacy symbols with the
+upstream `tent_*` C ABI and builds only `tent_shared`. Segment open/close,
+extended memory registration with permissions/location, READ/WRITE batches,
+notifications, per-task status/cancel and NIC-load snapshots now all use TENT.
+The wheel bundles `libtent_shared.so`; stale `libtransfer_engine.so` files are
+removed while staging. TENT `freeBatch` is treated as asynchronous reclamation,
+never as a completion fence: deadline and partial-submit paths cancel pending
+tasks and retain buffers until all statuses are terminal before freeing.
+
+Both CPU and CUDA 13 `tent_shared` variants build from the pinned submodule;
+their staged directories contain no legacy library. Two sys ABI/config tests,
+five Transfer tests including a real TENT TCP batch/notification roundtrip, and
+128 P/D unit tests pass. Strict Transfer and full PyO3 all-target Clippy pass.
+The CUDA build links TENT's CUDA runtime, cuFile and GPU-capable transports, but
+actual H20 RDMA/GPUDirect execution remains an external qualification cell.
+
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
 the pinned Mooncake native library is built with CUDA disabled. This is a build

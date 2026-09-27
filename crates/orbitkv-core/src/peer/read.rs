@@ -242,6 +242,15 @@ impl SegmentFetcher for PeerReader {
         m.remote_fetch_duration_seconds
             .record(elapsed.as_secs_f64(), ok);
         m.remote_fetch_bytes.add(total_bytes, ok);
+        if let Ok(stats) = self.transfer.engine().nic_load_stats() {
+            for stat in stats {
+                let attributes = [KeyValue::new("nic", stat.device_name)];
+                m.tent_nic_inflight_bytes
+                    .record(stat.inflight_bytes, &attributes);
+                m.tent_nic_bandwidth_bytes_per_second
+                    .record(stat.ewma_bandwidth_bps, &attributes);
+            }
+        }
         for (stage, duration) in [
             ("allocation", transfer_timing.build_transfer_tasks),
             ("read", transfer_timing.mooncake_wait),

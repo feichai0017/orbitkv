@@ -3,7 +3,7 @@
 OrbitKV's vLLM-only P/D connector streams each completed prefill layer directly into the
 decode worker's KV pages. The layout and request state machine remain owned by
 OrbitKV; all remote byte movement is performed by the pinned upstream Mooncake
-Transfer Engine.
+TENT engine.
 
 ## Data and control flow
 
@@ -30,7 +30,9 @@ The native boundary exposed to Python is `MooncakeTransferEngine`:
 - `register_memory` registers long-lived vLLM KV tensors once;
 - `write` submits and waits for a batch of source/destination ranges;
 - `send_notification` emits request completion or failure;
-- `take_notifications` drives the decode-side waiter.
+- `take_notifications` drives the decode-side waiter;
+- `nic_load_stats` exposes TENT rail inflight bytes and EWMA bandwidth for
+  diagnostics, without claiming which transport a specific batch used.
 
 Layer writes execute on the connector's existing background worker pool, so
 prefill computation can continue while earlier layer tasks move data. The

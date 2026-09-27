@@ -135,6 +135,11 @@ engine-handle release and instance teardown. Do not treat successful host-memory
 RDMA or a configured `--nics` value as GPUDirect evidence; record GPU/NIC counters
 from the external H20 hosts.
 
+The artifact under test must contain `libtent_shared.so` and must not contain
+`libtransfer_engine.so`. Capture TENT startup logs showing the installed
+transports. A CUDA-enabled build alone is not evidence that a batch selected
+RDMA, NVLink or GPUDirect.
+
 ## Restart and ownership gates
 
 The repository's model-serving test starts etcd, two Managers and two replicas

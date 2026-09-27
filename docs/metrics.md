@@ -427,6 +427,10 @@ For backing failure correlation, use:
   rejection before payload submission; `status="error"` counts other fetch failures.
 - `orbitkv_remote_fetch_plan_segments` includes attempted alternative-source
   segments; `orbitkv_remote_fetch_plan_completed_segments` counts completed ones.
+- `orbitkv_tent_nic_inflight_bytes` and `orbitkv_tent_nic_bandwidth_bytes_per_second`
+  sample TENT's live RDMA rail state after successful peer batches, labelled by
+  NIC. They are resource-pressure evidence, not proof that the sampled batch
+  used RDMA.
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
 - `orbitkv_remote_stage_duration_seconds{stage,status}` separates `discovery_rpc`,
   `authorization`, `allocation`, `read`, `rebuild` and `release`. Allocation/read/rebuild

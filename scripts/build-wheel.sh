@@ -62,6 +62,7 @@ for bin in orbitkv-cache-manager-py; do
 done
 
 echo "==> Copying Mooncake runtime libraries..."
+rm -f "$PYTHON_DIR/orbitkv/libtransfer_engine.so"
 MOONCAKE_VARIANT="cpu"
 if [[ " ${EXTRA_ARGS[*]} " == *" cuda-12"* || " ${EXTRA_ARGS[*]} " == *" cuda-13"* || " ${EXTRA_ARGS[*]} " != *" --no-default-features "* ]]; then
     MOONCAKE_VARIANT="cuda"
@@ -71,7 +72,7 @@ if [[ ! -d "$MOONCAKE_LINK_DIR" ]]; then
     echo "Mooncake native runtime directory not found: $MOONCAKE_LINK_DIR" >&2
     exit 1
 fi
-for lib in libtransfer_engine.so libmooncake_common.so libasio.so; do
+for lib in libtent_shared.so libmooncake_common.so libasio.so; do
     cp "$MOONCAKE_LINK_DIR/$lib" "$PYTHON_DIR/orbitkv/$lib"
 done
 for bin in orbitkv-cache-manager-py; do

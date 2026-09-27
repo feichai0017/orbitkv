@@ -151,9 +151,7 @@ impl Storage {
             let transfer =
                 MooncakeTransport::new(&mooncake_nic_names, allocator.clone(), advertise)
                     .map(Arc::new)
-                    .map_err(|error| {
-                        format!("Failed to initialise Mooncake Transfer Engine: {error}")
-                    })?;
+                    .map_err(|error| format!("Failed to initialise Mooncake TENT: {error}"))?;
             Some(transfer)
         } else {
             None

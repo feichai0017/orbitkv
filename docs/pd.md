@@ -18,7 +18,7 @@ The NIXL integration described here is
 | Path | Trigger | KV destination | Discovery/control | OrbitKV status |
 | --- | --- | --- | --- | --- |
 | OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; experimental remote Catalog + peer lease | GPU-validated locally; multi-node experimental |
-| OrbitKV `PdConnector` | P-to-D request handoff | Decode worker's GPU KV pages | P/D request handshake and proxy; Mooncake Transfer Engine moves bytes | Experimental vLLM adapter |
+| OrbitKV `PdConnector` | P-to-D request handoff | Decode worker's GPU KV pages | P/D request handshake and proxy; Mooncake TENT moves bytes | Experimental vLLM adapter |
 | vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
 
 The OrbitKV P/D connector lives in `orbitkv.vllm.pd` and uses Mooncake to push

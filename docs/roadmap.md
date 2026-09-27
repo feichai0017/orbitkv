@@ -160,7 +160,7 @@ Deliver:
   `QueryBundle` through the cache service;
 - expose a framework-neutral Rust cache client through PyO3 for query, publish,
   restore, and lease release; keep connection configuration in Python;
-- integrate a pinned upstream Mooncake Transfer Engine as the single remote
+- integrate pinned upstream Mooncake TENT as the single remote
   movement implementation;
 - preserve current vLLM behavior.
 

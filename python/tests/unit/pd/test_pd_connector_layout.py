@@ -698,6 +698,17 @@ def test_real_mooncake_port_rejects_missing_mooncake_endpoint() -> None:
         transfer.open_request("req-1", handshake)
 
 
+def test_real_mooncake_port_uses_tent_nic_bandwidth_evidence() -> None:
+    native_engine = FakeMooncakeTransferEngine()
+    native_engine.nic_stats = [
+        ("mlx5_0", 4096, 100_000_000_000.0),
+        ("mlx5_1", 0, 80_000_000_000.0),
+    ]
+    transfer = RealMooncakePort(native_engine)
+
+    assert transfer.aggregated_link_speed() == 1_440_000_000_000
+
+
 def test_pd_handshake_serializes_regions_layout() -> None:
     layer = hnd_remote_layer(
         block_ids=(8, 9, 10),
