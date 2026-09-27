@@ -1050,6 +1050,159 @@ def test_decode_worker_prefill_sender_worker_count_defaults_to_sixteen(monkeypat
     worker.shutdown()
 
 
+def test_decode_worker_reports_bounded_completion_evidence(monkeypatch) -> None:
+    reports: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    class FakeCacheManagerClient:
+        def __init__(self, socket: str) -> None:
+            assert socket == "/tmp/orbitkv-observations.sock"
+
+        def observe_prefill_to_decode_completion(self, *args: Any, **kwargs: Any) -> None:
+            reports.append((args, kwargs))
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(native, "CacheManagerClient", FakeCacheManagerClient)
+    tensor = FakeTensor(
+        shape=(2, 8, 16, 4, 32),
+        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        device_index=3,
+    )
+    transfer = MockMooncakePort()
+    worker = PdDecodeWorkerConnector(
+        SimpleNamespace(
+            kv_transfer_config=SimpleNamespace(
+                engine_id="decode",
+                extra_config={
+                    "orbitkv.pd.completion_observation_socket": ("/tmp/orbitkv-observations.sock"),
+                    "orbitkv.pd.completion_observation_instance_id": "decode-instance",
+                },
+            )
+        ),
+        transfer=transfer,
+    )
+    worker.register_kv_caches({"layer.0": tensor})
+    worker.start_load_kv(
+        PdConnectorMetadata(
+            reqs_to_wait={
+                "decode-1": WaitReqMeta(
+                    local_block_ids=([1, 2],),
+                    remote_request_id="prefill-1",
+                    done_request_id="decode-1",
+                    prompt_token_ids=(1,),
+                    prefill_url="http://prefill:8001",
+                )
+            }
+        ),
+        None,
+    )
+
+    deadline = time.time() + 2
+    while time.time() < deadline and not reports:
+        time.sleep(0.01)
+
+    assert len(reports) == 1
+    args, kwargs = reports[0]
+    assert args[:7] == (
+        "decode-instance",
+        3,
+        "http://prefill:8001",
+        1,
+        16_384,
+        16_384,
+        4,
+    )
+    assert args[7] > 0
+    assert kwargs == {
+        "admitted": True,
+        "outcome": "completed",
+        "representation": "raw",
+    }
+    worker.shutdown()
+
+
+def test_decode_worker_reports_timeout_without_claiming_wire_bytes(monkeypatch) -> None:
+    reports: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    class FakeCacheManagerClient:
+        def __init__(self, _socket: str) -> None:
+            return None
+
+        def observe_prefill_to_decode_completion(self, *args: Any, **kwargs: Any) -> None:
+            reports.append((args, kwargs))
+
+        def close(self) -> None:
+            return None
+
+    class TimedOutMooncake(MockMooncakePort):
+        def wait_done(self, req_id: str) -> None:
+            raise TimeoutError(req_id)
+
+    monkeypatch.setattr(native, "CacheManagerClient", FakeCacheManagerClient)
+    worker = PdDecodeWorkerConnector(
+        SimpleNamespace(
+            kv_transfer_config=SimpleNamespace(
+                engine_id="decode",
+                extra_config={
+                    "orbitkv.pd.completion_observation_socket": "/tmp/observations.sock",
+                    "orbitkv.pd.completion_observation_instance_id": "decode-instance",
+                },
+            )
+        ),
+        transfer=TimedOutMooncake(),
+    )
+    worker.register_kv_caches(
+        {
+            "layer.0": FakeTensor(
+                shape=(2, 8, 16, 4, 32),
+                stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+                device_index=1,
+            )
+        }
+    )
+    worker.start_load_kv(
+        PdConnectorMetadata(
+            reqs_to_wait={
+                "decode-1": WaitReqMeta(
+                    local_block_ids=([1],),
+                    remote_request_id="prefill-1",
+                    done_request_id="decode-1",
+                    prompt_token_ids=(1,),
+                    prefill_url="http://prefill:8001",
+                )
+            }
+        ),
+        None,
+    )
+
+    deadline = time.time() + 2
+    while time.time() < deadline and not reports:
+        time.sleep(0.01)
+
+    assert len(reports) == 1
+    args, kwargs = reports[0]
+    assert args[4] == 8192
+    assert args[5] == 0
+    assert kwargs["outcome"] == "timed_out"
+    worker.shutdown()
+
+
+def test_decode_completion_observation_requires_explicit_instance_id(monkeypatch) -> None:
+    monkeypatch.setattr(native, "CacheManagerClient", MagicMock)
+    config = SimpleNamespace(
+        kv_transfer_config=SimpleNamespace(
+            engine_id="decode",
+            extra_config={
+                "orbitkv.pd.completion_observation_socket": "/tmp/orbitkv-observations.sock"
+            },
+        )
+    )
+
+    with pytest.raises(ValueError, match="completion_observation_instance_id"):
+        PdDecodeWorkerConnector(config, transfer=MockMooncakePort())
+
+
 def test_prefill_worker_push_worker_counts_default_to_sixteen(monkeypatch) -> None:
     created_push_workers: list[int] = []
     created_finalizer_workers: list[int] = []

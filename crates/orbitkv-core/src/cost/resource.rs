@@ -3,10 +3,14 @@ use std::hash::{Hash, Hasher};
 /// Process-local identities supplied by the resource's execution owner.
 /// Peer identities include the source runtime; they imply no memory capability.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum Resource {
+pub(crate) enum ExecutionResource {
     Gpu(u64),
     SsdStore(u64),
     SsdFile(u64),
+    PrefillToDecodeHandoff {
+        source_endpoint_hash: u64,
+        destination_device: u64,
+    },
     #[cfg(feature = "mooncake")]
     Peer(u64),
     SsdRestore {

@@ -1,5 +1,99 @@
 use super::*;
 
+fn completion_observation() -> CompletionObservationRequest {
+    CompletionObservationRequest {
+        instance_id: "decode-instance".into(),
+        destination_device_id: 3,
+        source_endpoint: "tent://prefill-7".into(),
+        notification_generation: 11,
+        intent: CompletionIntent::EngineRestore,
+        path: CompletionPath::PrefillToDecodeHandoff,
+        representation: ReplicaRepresentation::Raw,
+        logical_bytes: 32 * 1024,
+        wire_bytes: 32 * 1024,
+        fragment_count: 8,
+        elapsed_ns: 400_000,
+        admission: CompletionAdmission::Admitted,
+        outcome: CompletionOutcome::Completed,
+    }
+}
+
+#[test]
+fn completion_observation_round_trip_is_bounded_and_rejects_malformed_frames() {
+    let request = completion_observation();
+    let bytes = request.encode().unwrap();
+    assert_eq!(
+        CompletionObservationRequest::decode(&bytes).unwrap(),
+        request
+    );
+    assert_eq!(bytes.len(), COMPLETION_OBSERVATION_HEADER_BYTES + 15 + 16);
+    for end in 0..bytes.len() {
+        assert!(CompletionObservationRequest::decode(&bytes[..end]).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert_eq!(
+        CompletionObservationRequest::decode(&trailing),
+        Err(CacheProtocolError::TrailingBytes(1))
+    );
+
+    let mut too_long = request.clone();
+    too_long.instance_id = "x".repeat(MAX_COMPLETION_INSTANCE_ID_BYTES + 1);
+    assert!(matches!(
+        too_long.encode(),
+        Err(CacheProtocolError::CompletionFieldTooLong {
+            field: "completion_instance_id",
+            ..
+        })
+    ));
+    too_long = request;
+    too_long.source_endpoint = "x".repeat(MAX_COMPLETION_SOURCE_ENDPOINT_BYTES + 1);
+    assert!(matches!(
+        too_long.encode(),
+        Err(CacheProtocolError::CompletionFieldTooLong {
+            field: "completion_source_endpoint",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn completion_observation_rejects_invalid_evidence_combinations() {
+    let mut request = completion_observation();
+    request.notification_generation = 0;
+    assert_eq!(
+        request.encode(),
+        Err(CacheProtocolError::ZeroCompletionField(
+            "notification_generation"
+        ))
+    );
+
+    request = completion_observation();
+    request.intent = CompletionIntent::HostReady;
+    assert_eq!(
+        request.encode(),
+        Err(CacheProtocolError::InvalidCompletionTarget)
+    );
+
+    request = completion_observation();
+    request.admission = CompletionAdmission::Rejected;
+    assert_eq!(
+        request.encode(),
+        Err(CacheProtocolError::InvalidCompletionState)
+    );
+
+    request.outcome = CompletionOutcome::Failed;
+    request.wire_bytes = 0;
+    assert!(request.encode().is_ok());
+
+    request = completion_observation();
+    request.wire_bytes = 0;
+    assert_eq!(
+        request.encode(),
+        Err(CacheProtocolError::InvalidCompletionState)
+    );
+}
+
 #[test]
 fn cancel_query_preserves_scope_and_rejects_malformed_frames() {
     let request = CancelQueryRequest {
@@ -40,10 +134,12 @@ fn request_round_trip_preserves_variable_hashes() {
         request
     );
     let mut previous_schema = request.encode().unwrap();
-    previous_schema[4..6].copy_from_slice(&(QUERY_VERSION - 1).to_le_bytes());
+    previous_schema[4..6].copy_from_slice(&(CACHE_PROTOCOL_VERSION - 1).to_le_bytes());
     assert_eq!(
         QueryBundleRequest::decode(&previous_schema),
-        Err(QueryCodecError::UnsupportedVersion(QUERY_VERSION - 1))
+        Err(CacheProtocolError::UnsupportedVersion(
+            CACHE_PROTOCOL_VERSION - 1
+        ))
     );
     for command in [
         QueryCommand::Submit(request.clone()),
@@ -75,7 +171,7 @@ fn request_round_trip_preserves_variable_hashes() {
     ] {
         assert_eq!(
             QueryCommand::Poll(ticket).encode(),
-            Err(QueryCodecError::InvalidQueryTicket)
+            Err(CacheProtocolError::InvalidQueryTicket)
         );
     }
 }
@@ -132,39 +228,39 @@ fn selected_recovery_round_trip_preserves_all_group_ranges_and_rejects_bad_frame
     oversized[group_count_offset..group_count_offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
     assert_eq!(
         QueryBundleRequest::decode(&oversized),
-        Err(QueryCodecError::Truncated)
+        Err(CacheProtocolError::Truncated)
     );
     let mut duplicate = bytes.clone();
     let last_group_offset = bytes.len() - 20;
     duplicate[last_group_offset..last_group_offset + 4].copy_from_slice(&1u32.to_le_bytes());
     assert!(matches!(
         QueryBundleRequest::decode(&duplicate),
-        Err(QueryCodecError::Recovery(_))
+        Err(CacheProtocolError::Recovery(_))
     ));
     let mut invalid_range = bytes.clone();
     invalid_range[last_group_offset + 4..last_group_offset + 12]
         .copy_from_slice(&129u64.to_le_bytes());
     assert!(matches!(
         QueryBundleRequest::decode(&invalid_range),
-        Err(QueryCodecError::Recovery(_))
+        Err(CacheProtocolError::Recovery(_))
     ));
     let mut missing = request.clone();
     missing.demand = None;
     assert_eq!(
         missing.encode(),
-        Err(QueryCodecError::InvalidRecoveryDemand)
+        Err(CacheProtocolError::InvalidRecoveryDemand)
     );
     let mut unselected = request.clone();
     unselected.materialize = false;
     assert_eq!(
         unselected.encode(),
-        Err(QueryCodecError::InvalidRecoveryDemand)
+        Err(CacheProtocolError::InvalidRecoveryDemand)
     );
     let mut wrong_count = request;
     wrong_count.block_hashes.pop();
     assert!(matches!(
         wrong_count.encode(),
-        Err(QueryCodecError::Recovery(_))
+        Err(CacheProtocolError::Recovery(_))
     ));
 }
 
@@ -188,7 +284,7 @@ fn decoder_rejects_trailing_bytes_and_invalid_loading_payload() {
     encoded.push(0);
     assert_eq!(
         QueryBundleResponse::decode(&encoded),
-        Err(QueryCodecError::TrailingBytes(1))
+        Err(CacheProtocolError::TrailingBytes(1))
     );
 
     let invalid = QueryBundleResponse {
@@ -199,7 +295,7 @@ fn decoder_rejects_trailing_bytes_and_invalid_loading_payload() {
     };
     assert_eq!(
         QueryBundleResponse::decode(&invalid.encode().unwrap()),
-        Err(QueryCodecError::InvalidLoadingPayload)
+        Err(CacheProtocolError::InvalidLoadingPayload)
     );
 }
 
@@ -212,7 +308,7 @@ fn release_request_round_trip_and_empty_rejection() {
     );
     assert_eq!(
         ReleaseRequest::decode(&ReleaseRequest { lease: Vec::new() }.encode().unwrap()),
-        Err(QueryCodecError::EmptyLease)
+        Err(CacheProtocolError::EmptyLease)
     );
 }
 
@@ -244,7 +340,7 @@ fn publish_request_round_trip_and_shape_validation() {
     };
     assert!(matches!(
         invalid.encode(),
-        Err(QueryCodecError::PublishShapeMismatch { .. })
+        Err(CacheProtocolError::PublishShapeMismatch { .. })
     ));
 }
 
@@ -298,7 +394,7 @@ fn candidate_hints_cannot_carry_leases_or_ambiguous_positions() {
         };
         assert_eq!(
             QueryBundleResponse::decode(&response.encode().unwrap()),
-            Err(QueryCodecError::InvalidCandidates)
+            Err(CacheProtocolError::InvalidCandidates)
         );
     }
 }

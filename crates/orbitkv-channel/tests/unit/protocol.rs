@@ -1,6 +1,15 @@
 use super::*;
 
 #[test]
+fn completion_observation_command_code_is_stable() {
+    assert_eq!(
+        CommandCode::try_from(8).unwrap(),
+        CommandCode::ObserveCompletion
+    );
+    assert_eq!(CommandCode::ObserveCompletion as u16, 8);
+}
+
+#[test]
 fn command_round_trip_preserves_identity_guards() {
     let command = Command {
         code: CommandCode::Restore,

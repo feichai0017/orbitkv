@@ -12,7 +12,7 @@ use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use crate::EngineError;
 use crate::block::{RawBlock, SealedBlock};
 use crate::cost::{
-    CostKey, CostPath, Observation, Outcome, Representation, Resource, enabled, shadow,
+    CostKey, CostPath, ExecutionResource, Observation, Outcome, Representation, enabled, shadow,
 };
 use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::metrics::core_metrics;
@@ -797,7 +797,7 @@ fn transfer_key(
     (
         CostKey::new(
             path,
-            Resource::Gpu(device as u64),
+            ExecutionResource::Gpu(device as u64),
             representation.unwrap_or(Representation::Raw),
             bytes,
             fragments,
@@ -819,7 +819,7 @@ fn raw_copy_keys(copies: &[CopyDesc], device: u64, write: bool) -> ([CostKey; 2]
     let keys = paths.map(|path| {
         CostKey::new(
             path,
-            Resource::Gpu(device),
+            ExecutionResource::Gpu(device),
             Representation::Raw,
             bytes,
             copies.len(),

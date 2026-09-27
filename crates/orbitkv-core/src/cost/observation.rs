@@ -2,6 +2,7 @@ use super::estimates::{ESTIMATES, Estimate};
 use super::{CostKey, ENABLED, SampleBoundary};
 use crate::metrics::core_metrics;
 use opentelemetry::KeyValue;
+use std::time::Duration;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,7 +10,6 @@ pub(crate) enum Outcome {
     Completed,
     Failed,
     Cancelled,
-    #[cfg(feature = "mooncake")]
     TimedOut,
     Abandoned,
 }
@@ -20,11 +20,60 @@ impl Outcome {
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
-            #[cfg(feature = "mooncake")]
             Self::TimedOut => "timed_out",
             Self::Abandoned => "abandoned",
         }
     }
+}
+
+pub(super) fn record_external(
+    key: CostKey,
+    logical_bytes: u64,
+    wire_bytes: u64,
+    elapsed: Duration,
+    admitted: bool,
+    outcome: Outcome,
+) {
+    if !*ENABLED {
+        return;
+    }
+    let metrics = core_metrics();
+    let attributes = [
+        KeyValue::new("path", key.path.label()),
+        KeyValue::new("outcome", outcome.label()),
+        KeyValue::new("admission", if admitted { "admitted" } else { "rejected" }),
+    ];
+    metrics.cost_operations.add(1, &attributes);
+    metrics.cost_logical_bytes.add(logical_bytes, &attributes);
+    if wire_bytes > 0 {
+        metrics.cost_io_bytes.add(wire_bytes, &attributes);
+    } else {
+        metrics.cost_io_unknown.add(1, &attributes);
+    }
+    metrics.cost_stage_seconds.record(
+        elapsed.as_secs_f64(),
+        &[
+            attributes[0].clone(),
+            attributes[1].clone(),
+            attributes[2].clone(),
+            KeyValue::new("stage", "total"),
+        ],
+    );
+    if let Some(seconds) = external_sample(admitted, outcome, elapsed) {
+        if let Some(mut estimates) = ESTIMATES.try_lock() {
+            let evicted = estimates.observe(key, seconds, Instant::now());
+            drop(estimates);
+            if evicted {
+                metrics.cost_estimate_evictions.add(1, &[]);
+            }
+        } else {
+            metrics.cost_estimate_dropped.add(1, &[]);
+        }
+    }
+}
+
+fn external_sample(admitted: bool, outcome: Outcome, elapsed: Duration) -> Option<f64> {
+    (admitted && outcome == Outcome::Completed).then_some(elapsed.as_secs_f64())
 }
 
 /// Lives with the physical operation, including a detached completion owner.

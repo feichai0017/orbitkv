@@ -1,12 +1,12 @@
 use super::*;
-use crate::cost::{CostPath, Representation, Resource};
+use crate::cost::{CostPath, ExecutionResource, Representation};
 use crate::cost::{MIN_SAMPLES, enabled};
 use std::time::Duration;
 
 fn key(resource: u64) -> CostKey {
     CostKey::new(
         CostPath::GpuLoadDirect,
-        Resource::Gpu(resource),
+        ExecutionResource::Gpu(resource),
         Representation::Raw,
         65536,
         4,
@@ -69,7 +69,6 @@ fn failed_cancelled_and_unsubmitted_operations_never_train_estimates() {
         for outcome in [
             Outcome::Failed,
             Outcome::Cancelled,
-            #[cfg(feature = "mooncake")]
             Outcome::TimedOut,
             Outcome::Abandoned,
         ] {
@@ -80,6 +79,26 @@ fn failed_cancelled_and_unsubmitted_operations_never_train_estimates() {
         assert_eq!(running.service_sample(Outcome::Completed, end), None);
         assert_eq!(running.estimate_sample(Outcome::Completed, end), None);
     }
+}
+
+#[test]
+fn external_samples_train_only_after_admitted_completion() {
+    let elapsed = Duration::from_millis(25);
+    assert_eq!(
+        external_sample(true, Outcome::Completed, elapsed),
+        Some(0.025)
+    );
+    for admitted in [false, true] {
+        for outcome in [
+            Outcome::Failed,
+            Outcome::Cancelled,
+            Outcome::TimedOut,
+            Outcome::Abandoned,
+        ] {
+            assert_eq!(external_sample(admitted, outcome, elapsed), None);
+        }
+    }
+    assert_eq!(external_sample(false, Outcome::Completed, elapsed), None);
 }
 
 #[test]
@@ -100,6 +119,7 @@ fn complete_routes_compare_enqueue_to_completion_despite_different_internal_admi
         (CostPath::SsdUringRestore, 30, 0.1),
         (CostPath::SsdCufileRestore, 80, 0.05),
         (CostPath::LocalSsdHostReady, 60, 0.07),
+        (CostPath::PrefillToDecodeHandoff, 20, 0.11),
     ] {
         running.key.path = path;
         running.submitted = Some(start + Duration::from_millis(submitted_ms));

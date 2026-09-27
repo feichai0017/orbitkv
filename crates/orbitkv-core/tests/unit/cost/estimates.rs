@@ -1,12 +1,12 @@
 use super::*;
 use crate::cost::bucket;
-use crate::cost::{CostPath, Representation, Resource};
+use crate::cost::{CostPath, ExecutionResource, Representation};
 use std::time::Duration;
 
 fn key(resource: u64) -> CostKey {
     CostKey::new(
         CostPath::GpuLoadDirect,
-        Resource::Gpu(resource),
+        ExecutionResource::Gpu(resource),
         Representation::Raw,
         65536,
         4,
@@ -34,7 +34,7 @@ fn estimates_are_bounded_and_isolate_resource_representation_and_shape() {
             .is_some()
     );
     for different in [
-        retained.with_path_resource(retained.path, Resource::Gpu(10000)),
+        retained.with_path_resource(retained.path, ExecutionResource::Gpu(10000)),
         CostKey {
             representation: Representation::Ans,
             ..retained
@@ -115,9 +115,9 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
     let start = Instant::now();
     let mut estimates = Estimates::default();
     let resources = [
-        Resource::Gpu(1),
-        Resource::SsdStore(1),
-        Resource::SsdFile(1),
+        ExecutionResource::Gpu(1),
+        ExecutionResource::SsdStore(1),
+        ExecutionResource::SsdFile(1),
     ];
     for (index, resource) in resources.into_iter().enumerate() {
         for _ in 0..MIN_SAMPLES {
@@ -148,8 +148,10 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
             endpoint: "same-address".into(),
             incarnation: uuid::Uuid::from_u128(1),
         };
-        let old =
-            key(1).with_path_resource(CostPath::RemoteRead, Resource::Peer(resource_id(&owner)));
+        let old = key(1).with_path_resource(
+            CostPath::RemoteRead,
+            ExecutionResource::Peer(resource_id(&owner)),
+        );
         for _ in 0..MIN_SAMPLES {
             estimates.observe(old, 0.1, start);
         }
@@ -159,7 +161,7 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
         };
         let new = old.with_path_resource(
             CostPath::RemoteRead,
-            Resource::Peer(resource_id(&replacement)),
+            ExecutionResource::Peer(resource_id(&replacement)),
         );
         assert!(estimates.predict(old, start).is_some());
         assert!(estimates.predict(new, start).is_none());

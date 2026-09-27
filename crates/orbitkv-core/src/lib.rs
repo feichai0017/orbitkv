@@ -10,6 +10,7 @@ mod codec;
 mod cost;
 pub use codec::{EncodedSegment, StorageCodec};
 mod block;
+mod completion;
 mod engine;
 mod memory;
 mod metrics;
@@ -21,6 +22,9 @@ pub mod transfer;
 
 pub use block::{
     BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, RestoreSource, SealedBlock, StateKey,
+};
+pub use completion::{
+    CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome, CompletionPath,
 };
 pub use engine::config::EngineConfig;
 pub use engine::instance::{GpuContext, InstanceContext};

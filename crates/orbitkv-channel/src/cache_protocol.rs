@@ -1,4 +1,4 @@
-use orbitkv_state::{RecoveryDemand, TokenRange};
+use orbitkv_state::{RecoveryDemand, ReplicaRepresentation, TokenRange};
 use thiserror::Error;
 
 const QUERY_REQUEST_MAGIC: u32 = 0x4f52_5151; // ORQQ
@@ -10,13 +10,299 @@ const PUBLISH_REQUEST_MAGIC: u32 = 0x4f52_5051; // ORPQ
 const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
-const QUERY_VERSION: u16 = 6;
+const COMPLETION_OBSERVATION_MAGIC: u32 = 0x4f52_434f; // ORCO
+const CACHE_PROTOCOL_VERSION: u16 = 6;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
 const PUBLISH_HEADER_BYTES: usize = 28;
 const RESTORE_HEADER_BYTES: usize = 28;
 const RESTORE_RESPONSE_BYTES: usize = 24;
+const COMPLETION_OBSERVATION_HEADER_BYTES: usize = 72;
+const MAX_COMPLETION_INSTANCE_ID_BYTES: usize = 256;
+const MAX_COMPLETION_SOURCE_ENDPOINT_BYTES: usize = 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum CompletionIntent {
+    HostReady = 1,
+    EngineRestore = 2,
+    SourceRelease = 3,
+}
+
+impl TryFrom<u16> for CompletionIntent {
+    type Error = CacheProtocolError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::HostReady),
+            2 => Ok(Self::EngineRestore),
+            3 => Ok(Self::SourceRelease),
+            _ => Err(CacheProtocolError::UnknownCompletionIntent(value)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum CompletionPath {
+    PrefillToDecodeHandoff = 1,
+}
+
+impl TryFrom<u16> for CompletionPath {
+    type Error = CacheProtocolError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::PrefillToDecodeHandoff),
+            _ => Err(CacheProtocolError::UnknownCompletionPath(value)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum CompletionAdmission {
+    Admitted = 1,
+    Rejected = 2,
+}
+
+impl TryFrom<u16> for CompletionAdmission {
+    type Error = CacheProtocolError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Admitted),
+            2 => Ok(Self::Rejected),
+            _ => Err(CacheProtocolError::UnknownCompletionAdmission(value)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum CompletionOutcome {
+    Completed = 1,
+    Failed = 2,
+    Cancelled = 3,
+    TimedOut = 4,
+}
+
+impl TryFrom<u16> for CompletionOutcome {
+    type Error = CacheProtocolError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Completed),
+            2 => Ok(Self::Failed),
+            3 => Ok(Self::Cancelled),
+            4 => Ok(Self::TimedOut),
+            _ => Err(CacheProtocolError::UnknownCompletionOutcome(value)),
+        }
+    }
+}
+
+/// Bounded evidence for one physical operation observed by an engine process.
+///
+/// Request identifiers and cache keys are deliberately absent: they are not
+/// execution-resource identities and must never become cost dimensions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompletionObservationRequest {
+    pub instance_id: String,
+    pub destination_device_id: i32,
+    pub source_endpoint: String,
+    pub notification_generation: u64,
+    pub intent: CompletionIntent,
+    pub path: CompletionPath,
+    pub representation: ReplicaRepresentation,
+    pub logical_bytes: u64,
+    pub wire_bytes: u64,
+    pub fragment_count: u32,
+    pub elapsed_ns: u64,
+    pub admission: CompletionAdmission,
+    pub outcome: CompletionOutcome,
+}
+
+impl CompletionObservationRequest {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
+        self.validate()?;
+        let instance_id = self.instance_id.as_bytes();
+        let source_endpoint = self.source_endpoint.as_bytes();
+        let mut bytes = Vec::with_capacity(
+            COMPLETION_OBSERVATION_HEADER_BYTES + instance_id.len() + source_endpoint.len(),
+        );
+        push_u32(&mut bytes, COMPLETION_OBSERVATION_MAGIC);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
+        push_u16(&mut bytes, 0);
+        push_u16(&mut bytes, self.intent as u16);
+        push_u16(&mut bytes, self.path as u16);
+        push_u16(&mut bytes, representation_code(self.representation));
+        push_u16(&mut bytes, self.admission as u16);
+        push_u16(&mut bytes, self.outcome as u16);
+        push_u16(&mut bytes, 0);
+        push_i32(&mut bytes, self.destination_device_id);
+        push_u32(
+            &mut bytes,
+            checked_u32(instance_id.len(), "completion_instance_id")?,
+        );
+        push_u32(
+            &mut bytes,
+            checked_u32(source_endpoint.len(), "completion_source_endpoint")?,
+        );
+        push_u64(&mut bytes, self.notification_generation);
+        push_u64(&mut bytes, self.logical_bytes);
+        push_u64(&mut bytes, self.wire_bytes);
+        push_u32(&mut bytes, self.fragment_count);
+        push_u32(&mut bytes, 0);
+        push_u64(&mut bytes, self.elapsed_ns);
+        bytes.extend_from_slice(instance_id);
+        bytes.extend_from_slice(source_endpoint);
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
+        let mut decoder = Decoder::new(bytes);
+        decoder.expect_magic(COMPLETION_OBSERVATION_MAGIC)?;
+        decoder.expect_version()?;
+        let flags = decoder.u16()?;
+        if flags != 0 {
+            return Err(CacheProtocolError::InvalidFlags(flags));
+        }
+        let intent = CompletionIntent::try_from(decoder.u16()?)?;
+        let path = CompletionPath::try_from(decoder.u16()?)?;
+        let representation = decode_representation(decoder.u16()?)?;
+        let admission = CompletionAdmission::try_from(decoder.u16()?)?;
+        let outcome = CompletionOutcome::try_from(decoder.u16()?)?;
+        let reserved = decoder.u16()?;
+        if reserved != 0 {
+            return Err(CacheProtocolError::InvalidCompletionReserved(
+                reserved as u32,
+            ));
+        }
+        let destination_device_id = decoder.i32()?;
+        let instance_len = decoder.usize_u32()?;
+        let source_len = decoder.usize_u32()?;
+        let notification_generation = decoder.u64()?;
+        let logical_bytes = decoder.u64()?;
+        let wire_bytes = decoder.u64()?;
+        let fragment_count = decoder.u32()?;
+        let reserved = decoder.u32()?;
+        if reserved != 0 {
+            return Err(CacheProtocolError::InvalidCompletionReserved(reserved));
+        }
+        let elapsed_ns = decoder.u64()?;
+        let instance_id = decoder.string(instance_len, "completion_instance_id")?;
+        let source_endpoint = decoder.string(source_len, "completion_source_endpoint")?;
+        decoder.finish()?;
+        let request = Self {
+            instance_id,
+            destination_device_id,
+            source_endpoint,
+            notification_generation,
+            intent,
+            path,
+            representation,
+            logical_bytes,
+            wire_bytes,
+            fragment_count,
+            elapsed_ns,
+            admission,
+            outcome,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    fn validate(&self) -> Result<(), CacheProtocolError> {
+        validate_completion_string(
+            &self.instance_id,
+            "completion_instance_id",
+            MAX_COMPLETION_INSTANCE_ID_BYTES,
+        )?;
+        validate_completion_string(
+            &self.source_endpoint,
+            "completion_source_endpoint",
+            MAX_COMPLETION_SOURCE_ENDPOINT_BYTES,
+        )?;
+        if self.destination_device_id < 0 {
+            return Err(CacheProtocolError::InvalidCompletionDevice(
+                self.destination_device_id,
+            ));
+        }
+        if self.notification_generation == 0 {
+            return Err(CacheProtocolError::ZeroCompletionField(
+                "notification_generation",
+            ));
+        }
+        if self.logical_bytes == 0 {
+            return Err(CacheProtocolError::ZeroCompletionField("logical_bytes"));
+        }
+        if self.fragment_count == 0 {
+            return Err(CacheProtocolError::ZeroCompletionField("fragment_count"));
+        }
+        if self.elapsed_ns == 0 {
+            return Err(CacheProtocolError::ZeroCompletionField("elapsed_ns"));
+        }
+        if self.representation == ReplicaRepresentation::Unknown {
+            return Err(CacheProtocolError::UnknownCompletionRepresentation(0));
+        }
+        if self.path == CompletionPath::PrefillToDecodeHandoff
+            && self.intent != CompletionIntent::EngineRestore
+        {
+            return Err(CacheProtocolError::InvalidCompletionTarget);
+        }
+        match (self.admission, self.outcome, self.wire_bytes) {
+            (CompletionAdmission::Admitted, CompletionOutcome::Completed, 0) => {
+                Err(CacheProtocolError::InvalidCompletionState)
+            }
+            (CompletionAdmission::Rejected, CompletionOutcome::Completed, _)
+            | (CompletionAdmission::Rejected, _, 1..) => {
+                Err(CacheProtocolError::InvalidCompletionState)
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+fn validate_completion_string(
+    value: &str,
+    field: &'static str,
+    max_bytes: usize,
+) -> Result<(), CacheProtocolError> {
+    if value.is_empty() {
+        return Err(CacheProtocolError::EmptyCompletionField(field));
+    }
+    if value.len() > max_bytes {
+        return Err(CacheProtocolError::CompletionFieldTooLong {
+            field,
+            len: value.len(),
+            max: max_bytes,
+        });
+    }
+    Ok(())
+}
+
+fn representation_code(representation: ReplicaRepresentation) -> u16 {
+    match representation {
+        ReplicaRepresentation::Unknown => 0,
+        ReplicaRepresentation::Raw => 1,
+        ReplicaRepresentation::Ans => 2,
+        ReplicaRepresentation::Fp8 => 3,
+        ReplicaRepresentation::TurboQuant => 4,
+        ReplicaRepresentation::Mixed => 5,
+    }
+}
+
+fn decode_representation(value: u16) -> Result<ReplicaRepresentation, CacheProtocolError> {
+    match value {
+        1 => Ok(ReplicaRepresentation::Raw),
+        2 => Ok(ReplicaRepresentation::Ans),
+        3 => Ok(ReplicaRepresentation::Fp8),
+        4 => Ok(ReplicaRepresentation::TurboQuant),
+        5 => Ok(ReplicaRepresentation::Mixed),
+        _ => Err(CacheProtocolError::UnknownCompletionRepresentation(value)),
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CancelQueryRequest {
@@ -30,22 +316,22 @@ pub struct QueryTicket {
 }
 
 impl QueryTicket {
-    fn encode_into(self, bytes: &mut Vec<u8>) -> Result<(), QueryCodecError> {
+    fn encode_into(self, bytes: &mut Vec<u8>) -> Result<(), CacheProtocolError> {
         if self.operation_id == 0 || self.revision == 0 {
-            return Err(QueryCodecError::InvalidQueryTicket);
+            return Err(CacheProtocolError::InvalidQueryTicket);
         }
         push_u64(bytes, self.operation_id);
         push_u64(bytes, self.revision);
         Ok(())
     }
 
-    fn decode_from(decoder: &mut Decoder<'_>) -> Result<Self, QueryCodecError> {
+    fn decode_from(decoder: &mut Decoder<'_>) -> Result<Self, CacheProtocolError> {
         let ticket = Self {
             operation_id: decoder.u64()?,
             revision: decoder.u64()?,
         };
         if ticket.operation_id == 0 || ticket.revision == 0 {
-            return Err(QueryCodecError::InvalidQueryTicket);
+            return Err(CacheProtocolError::InvalidQueryTicket);
         }
         Ok(ticket)
     }
@@ -62,13 +348,13 @@ pub enum QueryCommand {
 }
 
 impl QueryCommand {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         match self {
             Self::Submit(request) => request.encode(),
             Self::Poll(ticket) | Self::Claim { ticket, .. } => {
                 let mut bytes = Vec::with_capacity(24);
                 push_u32(&mut bytes, QUERY_POLL_MAGIC);
-                push_u16(&mut bytes, QUERY_VERSION);
+                push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
                 let flags = match self {
                     Self::Claim { count_lookup, .. } => 1 | (u16::from(*count_lookup) << 1),
                     _ => 0,
@@ -80,19 +366,19 @@ impl QueryCommand {
         }
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let mut decoder = Decoder::new(bytes);
         let magic = decoder.u32()?;
         if magic == QUERY_REQUEST_MAGIC {
             return QueryBundleRequest::decode(bytes).map(Self::Submit);
         }
         if magic != QUERY_POLL_MAGIC {
-            return Err(QueryCodecError::InvalidMagic(magic));
+            return Err(CacheProtocolError::InvalidMagic(magic));
         }
         decoder.expect_version()?;
         let flags = decoder.u16()?;
         if flags > 3 || flags == 2 {
-            return Err(QueryCodecError::InvalidFlags(flags));
+            return Err(CacheProtocolError::InvalidFlags(flags));
         }
         let ticket = QueryTicket::decode_from(&mut decoder)?;
         decoder.finish()?;
@@ -108,22 +394,22 @@ impl QueryCommand {
 }
 
 impl CancelQueryRequest {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         let mut bytes = Vec::new();
         push_u32(&mut bytes, CANCEL_QUERY_MAGIC);
-        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
         push_u16(&mut bytes, 0);
         self.ticket.encode_into(&mut bytes)?;
         Ok(bytes)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let mut decoder = Decoder::new(bytes);
         decoder.expect_magic(CANCEL_QUERY_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
         if flags != 0 {
-            return Err(QueryCodecError::InvalidFlags(flags));
+            return Err(CacheProtocolError::InvalidFlags(flags));
         }
         let ticket = QueryTicket::decode_from(&mut decoder)?;
         decoder.finish()?;
@@ -153,13 +439,13 @@ pub enum RestoreCommand {
 }
 
 impl RestoreCommand {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         match self {
             Self::Submit(request) => request.encode(),
             Self::Poll { operation_id } => {
                 let mut bytes = Vec::with_capacity(16);
                 push_u32(&mut bytes, RESTORE_POLL_MAGIC);
-                push_u16(&mut bytes, QUERY_VERSION);
+                push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
                 push_u16(&mut bytes, 0);
                 push_u64(&mut bytes, *operation_id);
                 Ok(bytes)
@@ -167,39 +453,39 @@ impl RestoreCommand {
         }
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let magic = bytes
             .get(0..4)
-            .ok_or(QueryCodecError::Truncated)
+            .ok_or(CacheProtocolError::Truncated)
             .map(|value| u32::from_le_bytes(value.try_into().expect("fixed slice")))?;
         if magic == RESTORE_REQUEST_MAGIC {
             return Ok(Self::Submit(RestoreRequest::decode(bytes)?));
         }
         if magic != RESTORE_POLL_MAGIC {
-            return Err(QueryCodecError::InvalidMagic(magic));
+            return Err(CacheProtocolError::InvalidMagic(magic));
         }
         let mut decoder = Decoder::new(bytes);
         decoder.expect_magic(RESTORE_POLL_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
         if flags != 0 {
-            return Err(QueryCodecError::InvalidFlags(flags));
+            return Err(CacheProtocolError::InvalidFlags(flags));
         }
         let operation_id = decoder.u64()?;
         decoder.finish()?;
         if operation_id == 0 {
-            return Err(QueryCodecError::ZeroOperationId);
+            return Err(CacheProtocolError::ZeroOperationId);
         }
         Ok(Self::Poll { operation_id })
     }
 }
 
 impl RestoreRequest {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         let instance = self.instance_id.as_bytes();
         let mut bytes = Vec::with_capacity(RESTORE_HEADER_BYTES + instance.len());
         push_u32(&mut bytes, RESTORE_REQUEST_MAGIC);
-        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
         push_u16(&mut bytes, 0);
         push_u32(&mut bytes, self.tp_rank);
         push_i32(&mut bytes, self.device_id);
@@ -232,13 +518,13 @@ impl RestoreRequest {
         Ok(bytes)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let mut decoder = Decoder::new(bytes);
         decoder.expect_magic(RESTORE_REQUEST_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
         if flags != 0 {
-            return Err(QueryCodecError::InvalidFlags(flags));
+            return Err(CacheProtocolError::InvalidFlags(flags));
         }
         let tp_rank = decoder.u32()?;
         let device_id = decoder.i32()?;
@@ -247,13 +533,13 @@ impl RestoreRequest {
         let load_count = decoder.usize_u32()?;
         let instance_id = decoder.string(instance_len, "instance_id")?;
         if group_count > decoder.remaining() / 4 {
-            return Err(QueryCodecError::Truncated);
+            return Err(CacheProtocolError::Truncated);
         }
         let mut layer_groups = Vec::with_capacity(group_count);
         for _ in 0..group_count {
             let layer_count = decoder.usize_u32()?;
             if layer_count > decoder.remaining() / 4 {
-                return Err(QueryCodecError::Truncated);
+                return Err(CacheProtocolError::Truncated);
             }
             let mut group = Vec::with_capacity(layer_count);
             for _ in 0..layer_count {
@@ -263,24 +549,24 @@ impl RestoreRequest {
             layer_groups.push(group);
         }
         if load_count > decoder.remaining() / 8 {
-            return Err(QueryCodecError::Truncated);
+            return Err(CacheProtocolError::Truncated);
         }
         let mut loads = Vec::with_capacity(load_count);
         for _ in 0..load_count {
             let lease_len = decoder.usize_u32()?;
             let lease = decoder.bytes(lease_len)?.to_vec();
             if lease.is_empty() {
-                return Err(QueryCodecError::EmptyLease);
+                return Err(CacheProtocolError::EmptyLease);
             }
             let target_group_count = decoder.usize_u32()?;
             if target_group_count > decoder.remaining() / 4 {
-                return Err(QueryCodecError::Truncated);
+                return Err(CacheProtocolError::Truncated);
             }
             let mut block_ids_by_group = Vec::with_capacity(target_group_count);
             for _ in 0..target_group_count {
                 let target_count = decoder.usize_u32()?;
                 if target_count > decoder.remaining() / 4 {
-                    return Err(QueryCodecError::Truncated);
+                    return Err(CacheProtocolError::Truncated);
                 }
                 let mut targets = Vec::with_capacity(target_count);
                 for _ in 0..target_count {
@@ -314,14 +600,14 @@ pub enum RestoreState {
 }
 
 impl TryFrom<u16> for RestoreState {
-    type Error = QueryCodecError;
+    type Error = CacheProtocolError;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             1 => Ok(Self::Pending),
             2 => Ok(Self::Succeeded),
             3 => Ok(Self::Failed),
-            _ => Err(QueryCodecError::UnknownRestoreState(value)),
+            _ => Err(CacheProtocolError::UnknownRestoreState(value)),
         }
     }
 }
@@ -334,11 +620,11 @@ pub struct RestoreResponse {
 }
 
 impl RestoreResponse {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         let message = self.message.as_bytes();
         let mut bytes = Vec::with_capacity(RESTORE_RESPONSE_BYTES + message.len());
         push_u32(&mut bytes, RESTORE_RESPONSE_MAGIC);
-        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
         push_u16(&mut bytes, self.state as u16);
         push_u64(&mut bytes, self.operation_id);
         push_u32(&mut bytes, checked_u32(message.len(), "restore_message")?);
@@ -347,7 +633,7 @@ impl RestoreResponse {
         Ok(bytes)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let mut decoder = Decoder::new(bytes);
         decoder.expect_magic(RESTORE_RESPONSE_MAGIC)?;
         decoder.expect_version()?;
@@ -356,7 +642,7 @@ impl RestoreResponse {
         let message_len = decoder.usize_u32()?;
         let reserved = decoder.u32()?;
         if reserved != 0 {
-            return Err(QueryCodecError::InvalidReserved(reserved));
+            return Err(CacheProtocolError::InvalidReserved(reserved));
         }
         let message = decoder.string(message_len, "restore_message")?;
         decoder.finish()?;
@@ -385,12 +671,12 @@ pub struct PublishRequest {
 }
 
 impl PublishRequest {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         validate_publish_layers(&self.layers)?;
         let instance = self.instance_id.as_bytes();
         let mut bytes = Vec::with_capacity(PUBLISH_HEADER_BYTES + instance.len());
         push_u32(&mut bytes, PUBLISH_REQUEST_MAGIC);
-        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
         push_u16(&mut bytes, 0);
         push_u32(&mut bytes, self.tp_rank);
         push_u32(&mut bytes, self.pp_rank);
@@ -412,13 +698,13 @@ impl PublishRequest {
         Ok(bytes)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let mut decoder = Decoder::new(bytes);
         decoder.expect_magic(PUBLISH_REQUEST_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
         if flags != 0 {
-            return Err(QueryCodecError::InvalidFlags(flags));
+            return Err(CacheProtocolError::InvalidFlags(flags));
         }
         let tp_rank = decoder.u32()?;
         let pp_rank = decoder.u32()?;
@@ -427,7 +713,7 @@ impl PublishRequest {
         let layer_count = decoder.usize_u32()?;
         let instance_id = decoder.string(instance_len, "instance_id")?;
         if layer_count > decoder.remaining() / 8 {
-            return Err(QueryCodecError::Truncated);
+            return Err(CacheProtocolError::Truncated);
         }
         let mut layers = Vec::with_capacity(layer_count);
         for _ in 0..layer_count {
@@ -435,7 +721,7 @@ impl PublishRequest {
             let block_count = decoder.usize_u32()?;
             let layer_name = decoder.string(name_len, "layer_name")?;
             if block_count > decoder.remaining() / 8 {
-                return Err(QueryCodecError::Truncated);
+                return Err(CacheProtocolError::Truncated);
             }
             let mut block_ids = Vec::with_capacity(block_count);
             let mut block_hashes = Vec::with_capacity(block_count);
@@ -462,10 +748,10 @@ impl PublishRequest {
     }
 }
 
-fn validate_publish_layers(layers: &[PublishLayer]) -> Result<(), QueryCodecError> {
+fn validate_publish_layers(layers: &[PublishLayer]) -> Result<(), CacheProtocolError> {
     for layer in layers {
         if layer.block_ids.len() != layer.block_hashes.len() {
-            return Err(QueryCodecError::PublishShapeMismatch {
+            return Err(CacheProtocolError::PublishShapeMismatch {
                 layer: layer.layer_name.clone(),
                 block_ids: layer.block_ids.len(),
                 block_hashes: layer.block_hashes.len(),
@@ -481,29 +767,29 @@ pub struct ReleaseRequest {
 }
 
 impl ReleaseRequest {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         let mut bytes = Vec::with_capacity(RELEASE_HEADER_BYTES + self.lease.len());
         push_u32(&mut bytes, RELEASE_REQUEST_MAGIC);
-        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
         push_u16(&mut bytes, 0);
         push_u32(&mut bytes, checked_u32(self.lease.len(), "lease")?);
         bytes.extend_from_slice(&self.lease);
         Ok(bytes)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let mut decoder = Decoder::new(bytes);
         decoder.expect_magic(RELEASE_REQUEST_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
         if flags != 0 {
-            return Err(QueryCodecError::InvalidFlags(flags));
+            return Err(CacheProtocolError::InvalidFlags(flags));
         }
         let lease_len = decoder.usize_u32()?;
         let lease = decoder.bytes(lease_len)?.to_vec();
         decoder.finish()?;
         if lease.is_empty() {
-            return Err(QueryCodecError::EmptyLease);
+            return Err(CacheProtocolError::EmptyLease);
         }
         Ok(Self { lease })
     }
@@ -531,12 +817,12 @@ pub struct QueryBundleRequest {
 }
 
 impl QueryBundleRequest {
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         if self.request_id.is_empty() {
-            return Err(QueryCodecError::EmptyRequestId);
+            return Err(CacheProtocolError::EmptyRequestId);
         }
         if self.materialize != self.demand.is_some() {
-            return Err(QueryCodecError::InvalidRecoveryDemand);
+            return Err(CacheProtocolError::InvalidRecoveryDemand);
         }
         if let Some(demand) = &self.demand {
             demand.validate(self.group_id, self.block_hashes.len())?;
@@ -554,7 +840,7 @@ impl QueryBundleRequest {
                     .sum::<usize>(),
         );
         push_u32(&mut bytes, QUERY_REQUEST_MAGIC);
-        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
         push_u16(
             &mut bytes,
             u16::from(self.wait_for_full_prefix)
@@ -594,13 +880,13 @@ impl QueryBundleRequest {
         Ok(bytes)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let mut decoder = Decoder::new(bytes);
         decoder.expect_magic(QUERY_REQUEST_MAGIC)?;
         decoder.expect_version()?;
         let flags = decoder.u16()?;
         if flags & !31 != 0 {
-            return Err(QueryCodecError::InvalidFlags(flags));
+            return Err(CacheProtocolError::InvalidFlags(flags));
         }
         let ticket = QueryTicket::decode_from(&mut decoder)?;
         let group_id = decoder.u32()?;
@@ -610,10 +896,10 @@ impl QueryBundleRequest {
         let instance_id = decoder.string(instance_len, "instance_id")?;
         let request_id = decoder.string(request_len, "request_id")?;
         if request_id.is_empty() {
-            return Err(QueryCodecError::EmptyRequestId);
+            return Err(CacheProtocolError::EmptyRequestId);
         }
         if hash_count > decoder.remaining() / 4 {
-            return Err(QueryCodecError::Truncated);
+            return Err(CacheProtocolError::Truncated);
         }
         let mut block_hashes = Vec::with_capacity(hash_count);
         for _ in 0..hash_count {
@@ -628,7 +914,7 @@ impl QueryBundleRequest {
             };
             let count = decoder.usize_u32()?;
             if count > decoder.remaining() / 20 {
-                return Err(QueryCodecError::Truncated);
+                return Err(CacheProtocolError::Truncated);
             }
             let mut groups = Vec::with_capacity(count);
             for _ in 0..count {
@@ -677,7 +963,7 @@ pub enum QueryOutcomeCode {
 }
 
 impl TryFrom<u16> for QueryOutcomeCode {
-    type Error = QueryCodecError;
+    type Error = CacheProtocolError;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
@@ -685,7 +971,7 @@ impl TryFrom<u16> for QueryOutcomeCode {
             2 => Ok(Self::Loading),
             3 => Ok(Self::Busy),
             4 => Ok(Self::Candidates),
-            _ => Err(QueryCodecError::UnknownOutcome(value)),
+            _ => Err(CacheProtocolError::UnknownOutcome(value)),
         }
     }
 }
@@ -708,12 +994,12 @@ impl QueryBundleResponse {
         }
     }
 
-    pub fn encode(&self) -> Result<Vec<u8>, QueryCodecError> {
+    pub fn encode(&self) -> Result<Vec<u8>, CacheProtocolError> {
         let mut bytes = Vec::with_capacity(
             RESPONSE_HEADER_BYTES + self.lease.len() + self.hit_positions.len() * 4,
         );
         push_u32(&mut bytes, QUERY_RESPONSE_MAGIC);
-        push_u16(&mut bytes, QUERY_VERSION);
+        push_u16(&mut bytes, CACHE_PROTOCOL_VERSION);
         push_u16(&mut bytes, self.outcome as u16);
         push_u64(&mut bytes, self.num_hit_blocks);
         push_u32(&mut bytes, checked_u32(self.lease.len(), "lease")?);
@@ -728,7 +1014,7 @@ impl QueryBundleResponse {
         Ok(bytes)
     }
 
-    pub fn decode(bytes: &[u8]) -> Result<Self, QueryCodecError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, CacheProtocolError> {
         let mut decoder = Decoder::new(bytes);
         decoder.expect_magic(QUERY_RESPONSE_MAGIC)?;
         decoder.expect_version()?;
@@ -738,7 +1024,7 @@ impl QueryBundleResponse {
         let positions_len = decoder.usize_u32()?;
         let lease = decoder.bytes(lease_len)?.to_vec();
         if positions_len > decoder.remaining() / 4 {
-            return Err(QueryCodecError::Truncated);
+            return Err(CacheProtocolError::Truncated);
         }
         let mut hit_positions = Vec::with_capacity(positions_len);
         for _ in 0..positions_len {
@@ -748,14 +1034,14 @@ impl QueryBundleResponse {
         if matches!(outcome, QueryOutcomeCode::Loading | QueryOutcomeCode::Busy)
             && (num_hit_blocks != 0 || !lease.is_empty() || !hit_positions.is_empty())
         {
-            return Err(QueryCodecError::InvalidLoadingPayload);
+            return Err(CacheProtocolError::InvalidLoadingPayload);
         }
         if outcome == QueryOutcomeCode::Candidates
             && (!lease.is_empty()
                 || num_hit_blocks != hit_positions.len() as u64
                 || hit_positions.windows(2).any(|pair| pair[0] >= pair[1]))
         {
-            return Err(QueryCodecError::InvalidCandidates);
+            return Err(CacheProtocolError::InvalidCandidates);
         }
         Ok(Self {
             outcome,
@@ -767,7 +1053,7 @@ impl QueryBundleResponse {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum QueryCodecError {
+pub enum CacheProtocolError {
     #[error("only selected recovery reads must carry complete compiled demand")]
     InvalidRecoveryDemand,
     #[error(transparent)]
@@ -776,15 +1062,15 @@ pub enum QueryCodecError {
     InvalidCandidates,
     #[error("query operation and revision must be nonzero")]
     InvalidQueryTicket,
-    #[error("query payload is truncated")]
+    #[error("cache protocol payload is truncated")]
     Truncated,
-    #[error("query payload has {0} trailing bytes")]
+    #[error("cache protocol payload has {0} trailing bytes")]
     TrailingBytes(usize),
-    #[error("invalid query magic: {0:#x}")]
+    #[error("invalid cache protocol magic: {0:#x}")]
     InvalidMagic(u32),
-    #[error("unsupported query version: {0}")]
+    #[error("unsupported cache protocol version: {0}")]
     UnsupportedVersion(u16),
-    #[error("invalid query flags: {0:#x}")]
+    #[error("invalid cache protocol flags: {0:#x}")]
     InvalidFlags(u16),
     #[error("unknown query outcome: {0}")]
     UnknownOutcome(u16),
@@ -792,9 +1078,9 @@ pub enum QueryCodecError {
     EmptyRequestId,
     #[error("release lease must not be empty")]
     EmptyLease,
-    #[error("query field {field} is too large: {len}")]
+    #[error("cache protocol field {field} is too large: {len}")]
     FieldTooLarge { field: &'static str, len: usize },
-    #[error("query field {field} is not valid UTF-8")]
+    #[error("cache protocol field {field} is not valid UTF-8")]
     InvalidUtf8 { field: &'static str },
     #[error("loading query outcome must not carry ready data")]
     InvalidLoadingPayload,
@@ -810,6 +1096,34 @@ pub enum QueryCodecError {
     InvalidReserved(u32),
     #[error("restore operation id must be non-zero")]
     ZeroOperationId,
+    #[error("unknown completion intent: {0}")]
+    UnknownCompletionIntent(u16),
+    #[error("unknown completion path: {0}")]
+    UnknownCompletionPath(u16),
+    #[error("unknown completion representation: {0}")]
+    UnknownCompletionRepresentation(u16),
+    #[error("unknown completion admission: {0}")]
+    UnknownCompletionAdmission(u16),
+    #[error("unknown completion outcome: {0}")]
+    UnknownCompletionOutcome(u16),
+    #[error("completion field {0} must not be empty")]
+    EmptyCompletionField(&'static str),
+    #[error("completion field {field} is too long: {len} bytes (maximum {max})")]
+    CompletionFieldTooLong {
+        field: &'static str,
+        len: usize,
+        max: usize,
+    },
+    #[error("completion field {0} must be non-zero")]
+    ZeroCompletionField(&'static str),
+    #[error("completion destination device must be non-negative, got {0}")]
+    InvalidCompletionDevice(i32),
+    #[error("completion path and target intent are inconsistent")]
+    InvalidCompletionTarget,
+    #[error("completion admission, outcome and wire bytes are inconsistent")]
+    InvalidCompletionState,
+    #[error("completion reserved field must be zero, got {0}")]
+    InvalidCompletionReserved(u32),
 }
 
 struct Decoder<'a> {
@@ -822,73 +1136,73 @@ impl<'a> Decoder<'a> {
         Self { bytes, offset: 0 }
     }
 
-    fn expect_magic(&mut self, expected: u32) -> Result<(), QueryCodecError> {
+    fn expect_magic(&mut self, expected: u32) -> Result<(), CacheProtocolError> {
         let actual = self.u32()?;
         if actual != expected {
-            return Err(QueryCodecError::InvalidMagic(actual));
+            return Err(CacheProtocolError::InvalidMagic(actual));
         }
         Ok(())
     }
 
-    fn expect_version(&mut self) -> Result<(), QueryCodecError> {
+    fn expect_version(&mut self) -> Result<(), CacheProtocolError> {
         let version = self.u16()?;
-        if version != QUERY_VERSION {
-            return Err(QueryCodecError::UnsupportedVersion(version));
+        if version != CACHE_PROTOCOL_VERSION {
+            return Err(CacheProtocolError::UnsupportedVersion(version));
         }
         Ok(())
     }
 
-    fn u16(&mut self) -> Result<u16, QueryCodecError> {
+    fn u16(&mut self) -> Result<u16, CacheProtocolError> {
         Ok(u16::from_le_bytes(
             self.bytes(2)?.try_into().expect("fixed slice"),
         ))
     }
 
-    fn u32(&mut self) -> Result<u32, QueryCodecError> {
+    fn u32(&mut self) -> Result<u32, CacheProtocolError> {
         Ok(u32::from_le_bytes(
             self.bytes(4)?.try_into().expect("fixed slice"),
         ))
     }
 
-    fn i32(&mut self) -> Result<i32, QueryCodecError> {
+    fn i32(&mut self) -> Result<i32, CacheProtocolError> {
         Ok(i32::from_le_bytes(
             self.bytes(4)?.try_into().expect("fixed slice"),
         ))
     }
 
-    fn u64(&mut self) -> Result<u64, QueryCodecError> {
+    fn u64(&mut self) -> Result<u64, CacheProtocolError> {
         Ok(u64::from_le_bytes(
             self.bytes(8)?.try_into().expect("fixed slice"),
         ))
     }
 
-    fn usize_u32(&mut self) -> Result<usize, QueryCodecError> {
+    fn usize_u32(&mut self) -> Result<usize, CacheProtocolError> {
         Ok(self.u32()? as usize)
     }
 
-    fn bytes(&mut self, len: usize) -> Result<&'a [u8], QueryCodecError> {
+    fn bytes(&mut self, len: usize) -> Result<&'a [u8], CacheProtocolError> {
         let end = self
             .offset
             .checked_add(len)
-            .ok_or(QueryCodecError::Truncated)?;
+            .ok_or(CacheProtocolError::Truncated)?;
         let value = self
             .bytes
             .get(self.offset..end)
-            .ok_or(QueryCodecError::Truncated)?;
+            .ok_or(CacheProtocolError::Truncated)?;
         self.offset = end;
         Ok(value)
     }
 
-    fn string(&mut self, len: usize, field: &'static str) -> Result<String, QueryCodecError> {
+    fn string(&mut self, len: usize, field: &'static str) -> Result<String, CacheProtocolError> {
         String::from_utf8(self.bytes(len)?.to_vec())
-            .map_err(|_| QueryCodecError::InvalidUtf8 { field })
+            .map_err(|_| CacheProtocolError::InvalidUtf8 { field })
     }
 
-    fn finish(self) -> Result<(), QueryCodecError> {
+    fn finish(self) -> Result<(), CacheProtocolError> {
         if self.offset == self.bytes.len() {
             Ok(())
         } else {
-            Err(QueryCodecError::TrailingBytes(
+            Err(CacheProtocolError::TrailingBytes(
                 self.bytes.len() - self.offset,
             ))
         }
@@ -899,8 +1213,8 @@ impl<'a> Decoder<'a> {
     }
 }
 
-fn checked_u32(value: usize, field: &'static str) -> Result<u32, QueryCodecError> {
-    u32::try_from(value).map_err(|_| QueryCodecError::FieldTooLarge { field, len: value })
+fn checked_u32(value: usize, field: &'static str) -> Result<u32, CacheProtocolError> {
+    u32::try_from(value).map_err(|_| CacheProtocolError::FieldTooLarge { field, len: value })
 }
 
 fn push_u16(bytes: &mut Vec<u8>, value: u16) {
@@ -923,7 +1237,7 @@ fn push_bytes(
     bytes: &mut Vec<u8>,
     value: &[u8],
     field: &'static str,
-) -> Result<(), QueryCodecError> {
+) -> Result<(), CacheProtocolError> {
     push_u32(bytes, checked_u32(value.len(), field)?);
     bytes.extend_from_slice(value);
     Ok(())

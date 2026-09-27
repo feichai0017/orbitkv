@@ -32,6 +32,26 @@ See [the Mooncake P/D protocol](pd-mooncake-push.md) and the local
 [`run_pd_local.sh`](../scripts/run_pd_local.sh) example. Its local proxy is
 for P/D handoff and testing; it is not the planned KV-aware cache router.
 
+The decode connector can optionally report the physical handoff completion to
+its node-local Cache Manager. Configure both
+`orbitkv.pd.completion_observation_socket` and
+`orbitkv.pd.completion_observation_instance_id` in the decode connector's
+`kv_connector_extra_config`. The instance must already be registered on that
+Manager and the reported device is taken from the actual decode KV tensor.
+Standalone P/D remains the default and opens no Cache Manager connection.
+
+The report covers decode wait enqueue through generation-fenced TENT terminal
+completion. It carries the prefill control endpoint as a hashed source identity,
+the nonzero TENT notification generation as freshness evidence, destination
+device, raw logical/wire bytes, target-layout fragments and terminal outcome.
+Request IDs and cache keys never enter the Manager's cost index or metric
+labels. Only admitted completed observations train estimates; failures,
+cancellations and timeouts are diagnostic. This records one side of the future
+choice but does not enable direct-restore-versus-handoff selection. SGLang's
+current adapter runs at the source-side synchronous transfer boundary and does
+not yet expose an equally authoritative decode completion callback, so it does
+not emit this report.
+
 The alternative is vLLM's built-in NIXL connector. The local
 [`run_nixl_local.sh`](../scripts/run_nixl_local.sh) example uses that upstream
 connector and a separate example proxy. You may also compose vLLM's NIXL

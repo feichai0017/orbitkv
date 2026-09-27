@@ -377,6 +377,20 @@ This is already enforced by raw-copy/SSD shadow and host-route selection. Future
 direct-to-D and prefill-restore-plus-handoff candidates must both end at the
 same DecodeReady device identity before entering the comparison set.
 
+The first authenticated `CompletionObservation` boundary now records vLLM
+prefill-to-decode handoff evidence at the decode owner. The local process
+channel accepts a bounded frame containing the registered instance/device,
+prefill endpoint identity, nonzero TENT notification generation,
+representation, logical/wire bytes, fragments, admission, outcome and elapsed
+time. It contains no request ID or state key. Core hashes the source endpoint
+into an `ExecutionResource::PrefillToDecodeHandoff` identity and excludes the
+generation from the statistical key. Only admitted completed reports update
+the estimate; rejected, failed, cancelled and timed-out reports remain
+diagnostics. This adds
+evidence, not a candidate enumerator or execution selector. Direct cache restore
+still needs the same DecodeReady measurement boundary and live destination
+admission before the two routes may compete.
+
 ### Cost model for complete routes
 
 Keep the shared measurement substrate and make its two boundaries explicit:

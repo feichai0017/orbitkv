@@ -11,6 +11,7 @@ from vllm.distributed.parallel_state import (
 )
 
 from orbitkv.logging_utils import get_connector_logger
+from orbitkv.vllm.pd.config import extra_config_value
 from orbitkv.vllm.pd.decode_worker import DecodeHandler
 from orbitkv.vllm.pd.layout import KvCacheLayout, layout_from_tensor
 from orbitkv.vllm.pd.metadata import (
@@ -56,12 +57,14 @@ class PdWorkerBase:
         self.layouts: dict[str, KvCacheLayout] = {}
         self.layer_names: list[str] = []
         self._registered_layers: dict[str, LayerRemoteLayout] = {}
+        self.device_id: int | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def register_kv_caches(self, kv_caches: dict[str, Any]) -> None:
+        self.device_id = _infer_cuda_device(kv_caches)
         expected_num_blocks = _expected_num_blocks(self.kv_cache_config)
         self.layouts = {
             layer_name: layout_from_tensor(
@@ -82,7 +85,7 @@ class PdWorkerBase:
         if not self._transfer_is_injected:
             self.transfer = build_mooncake_port(
                 self.vllm_config,
-                _infer_cuda_device(kv_caches),
+                self.device_id,
                 tp_rank=self.tp_rank,
             )
         assert self.transfer is not None
@@ -143,7 +146,39 @@ class PdDecodeWorkerConnector(PdWorkerBase):
     ) -> None:
         super().__init__(vllm_config, kv_cache_config, transfer, metrics)
         self._failed_load_block_ids: set[int] = set()
-        self._decode = DecodeHandler(self, prefill_sender=prefill_sender)
+        observation_socket = extra_config_value(
+            vllm_config,
+            "orbitkv.pd.completion_observation_socket",
+        )
+        self._completion_instance_id = str(
+            extra_config_value(
+                vllm_config,
+                "orbitkv.pd.completion_observation_instance_id",
+                "",
+            )
+            or ""
+        )
+        self._completion_client: Any | None = None
+        if observation_socket is not None:
+            if not isinstance(observation_socket, str) or not observation_socket:
+                raise ValueError(
+                    "orbitkv.pd.completion_observation_socket must be a non-empty path"
+                )
+            if not self._completion_instance_id:
+                raise ValueError(
+                    "orbitkv.pd.completion_observation_instance_id is required when "
+                    "completion observation is enabled"
+                )
+            from orbitkv import CacheManagerClient
+
+            self._completion_client = CacheManagerClient(observation_socket)
+        self._decode = DecodeHandler(
+            self,
+            prefill_sender=prefill_sender,
+            completion_callback=(
+                self._observe_handoff_completion if self._completion_client is not None else None
+            ),
+        )
 
     def register_kv_caches(self, kv_caches: dict[str, Any]) -> None:
         super().register_kv_caches(kv_caches)
@@ -231,6 +266,39 @@ class PdDecodeWorkerConnector(PdWorkerBase):
 
     def shutdown(self) -> None:
         self._decode.shutdown()
+        if self._completion_client is not None:
+            self._completion_client.close()
+            self._completion_client = None
+
+    def _observe_handoff_completion(self, evidence: Any, outcome: str) -> None:
+        client = self._completion_client
+        if client is None:
+            return
+        if self.device_id is None:
+            logger.warning("[PdConnector] cannot report completion before KV cache registration")
+            return
+        elapsed_ns = max(1, time.time_ns() - evidence.queued_ts_ns)
+        try:
+            client.observe_prefill_to_decode_completion(
+                self._completion_instance_id,
+                self.device_id,
+                evidence.source_endpoint,
+                evidence.notification_generation,
+                evidence.logical_bytes,
+                evidence.wire_bytes if outcome == "completed" else 0,
+                evidence.fragment_count,
+                elapsed_ns,
+                admitted=True,
+                outcome=outcome,
+                representation="raw",
+            )
+        except Exception:
+            logger.exception(
+                "[PdConnector] disabling completion observations after Cache Manager failure"
+            )
+            client.close()
+            self._completion_client = None
+            self._decode.disable_completion_observations()
 
 
 class PdPrefillWorkerConnector(PdWorkerBase):

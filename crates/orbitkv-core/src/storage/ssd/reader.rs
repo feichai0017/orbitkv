@@ -1,6 +1,6 @@
 use super::{SsdStore, index::SsdIndexEntry, uring::UringIoEngine};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resource};
+use crate::cost::{CostKey, CostPath, ExecutionResource, Observation, Outcome, Representation};
 use crate::metrics::core_metrics;
 use crate::peer::export::{PeerError, StagingReservation};
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -35,7 +35,7 @@ impl PrefetchBatch {
     pub(super) fn new(
         requests: Vec<Arc<super::SsdReadLease>>,
         done_tx: oneshot::Sender<BatchResult>,
-        resource: Resource,
+        resource: ExecutionResource,
     ) -> Self {
         Self::build(requests, done_tx, resource, None)
     }
@@ -43,7 +43,7 @@ impl PrefetchBatch {
     pub(super) fn for_export(
         requests: Vec<Arc<super::SsdReadLease>>,
         done_tx: oneshot::Sender<BatchResult>,
-        resource: Resource,
+        resource: ExecutionResource,
         reservation: StagingReservation,
     ) -> Self {
         Self::build(requests, done_tx, resource, Some(reservation))
@@ -52,7 +52,7 @@ impl PrefetchBatch {
     fn build(
         requests: Vec<Arc<super::SsdReadLease>>,
         done_tx: oneshot::Sender<BatchResult>,
-        resource: Resource,
+        resource: ExecutionResource,
         reservation: Option<StagingReservation>,
     ) -> Self {
         if !crate::cost::enabled() {

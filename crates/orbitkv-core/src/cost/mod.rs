@@ -6,6 +6,8 @@
 use std::sync::LazyLock;
 use std::time::Duration;
 
+use crate::completion::CompletionIntent;
+
 const CAPACITY: usize = 512;
 const MIN_SAMPLES: u64 = 4;
 const MAX_AGE: Duration = Duration::from_secs(300);
@@ -50,7 +52,7 @@ mod shadow;
 pub(crate) use decision::{SelectionScope, select_route, shadow_routes};
 pub(crate) use observation::{Observation, Outcome};
 pub(crate) use orbitkv_state::ReplicaRepresentation as Representation;
-pub(crate) use resource::{Resource, resource_id};
+pub(crate) use resource::{ExecutionResource, resource_id};
 pub(crate) use shadow::shadow;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,16 +62,9 @@ enum SampleBoundary {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum CompletionIntent {
-    HostReady,
-    EngineRestore,
-    SourceRelease,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct CompletionTarget {
     intent: CompletionIntent,
-    resource: Option<Resource>,
+    resource: Option<ExecutionResource>,
 }
 
 impl CompletionTarget {
@@ -83,14 +78,14 @@ impl CompletionTarget {
     const fn engine_restore(device: u64) -> Self {
         Self {
             intent: CompletionIntent::EngineRestore,
-            resource: Some(Resource::Gpu(device)),
+            resource: Some(ExecutionResource::Gpu(device)),
         }
     }
 
     const fn source_release(device: u64) -> Self {
         Self {
             intent: CompletionIntent::SourceRelease,
-            resource: Some(Resource::Gpu(device)),
+            resource: Some(ExecutionResource::Gpu(device)),
         }
     }
 }
@@ -123,9 +118,15 @@ pub(crate) enum CostPath {
     PeerDramHostReady,
     #[cfg(feature = "mooncake")]
     PeerSsdHostReady,
+    PrefillToDecodeHandoff,
 }
 
 impl CostPath {
+    #[cfg(feature = "mooncake")]
+    fn is_prefill_to_decode_handoff(self) -> bool {
+        self == Self::PrefillToDecodeHandoff
+    }
+
     fn is_raw_copy(self) -> bool {
         matches!(
             self,
@@ -135,9 +136,10 @@ impl CostPath {
 
     fn sample_boundary(self) -> SampleBoundary {
         match self {
-            Self::SsdUringRestore | Self::SsdCufileRestore | Self::LocalSsdHostReady => {
-                SampleBoundary::EnqueuedToCompletion
-            }
+            Self::SsdUringRestore
+            | Self::SsdCufileRestore
+            | Self::LocalSsdHostReady
+            | Self::PrefillToDecodeHandoff => SampleBoundary::EnqueuedToCompletion,
             Self::GpuLoadDirect
             | Self::GpuLoadKernel
             | Self::GpuSaveDirect
@@ -162,22 +164,28 @@ impl CostPath {
         }
     }
 
-    fn completion_target(self, resource: Resource) -> Option<CompletionTarget> {
+    fn completion_target(self, resource: ExecutionResource) -> Option<CompletionTarget> {
         match (self, resource) {
-            (Self::GpuLoadDirect | Self::GpuLoadKernel, Resource::Gpu(device)) => {
+            (Self::GpuLoadDirect | Self::GpuLoadKernel, ExecutionResource::Gpu(device)) => {
                 Some(CompletionTarget::engine_restore(device))
             }
-            (Self::GpuSaveDirect | Self::GpuSaveKernel, Resource::Gpu(device)) => {
+            (Self::GpuSaveDirect | Self::GpuSaveKernel, ExecutionResource::Gpu(device)) => {
                 Some(CompletionTarget::source_release(device))
             }
             (
                 Self::SsdUringRestore | Self::SsdCufileRestore,
-                Resource::SsdRestore { device, .. },
+                ExecutionResource::SsdRestore { device, .. },
             ) => Some(CompletionTarget::engine_restore(device)),
             #[cfg(feature = "mooncake")]
             (Self::LocalSsdHostReady | Self::PeerDramHostReady | Self::PeerSsdHostReady, _) => {
                 Some(CompletionTarget::host_ready())
             }
+            (
+                Self::PrefillToDecodeHandoff,
+                ExecutionResource::PrefillToDecodeHandoff {
+                    destination_device, ..
+                },
+            ) => Some(CompletionTarget::engine_restore(destination_device)),
             _ => None,
         }
     }
@@ -210,6 +218,7 @@ impl CostPath {
             Self::PeerDramHostReady => "peer_dram_host_ready",
             #[cfg(feature = "mooncake")]
             Self::PeerSsdHostReady => "peer_ssd_host_ready",
+            Self::PrefillToDecodeHandoff => "prefill_to_decode_handoff",
         }
     }
 }
@@ -219,7 +228,7 @@ impl CostPath {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct CostKey {
     path: CostPath,
-    resource: Resource,
+    resource: ExecutionResource,
     completion: Option<CompletionTarget>,
     representation: Representation,
     size: u8,
@@ -227,6 +236,7 @@ pub(crate) struct CostKey {
     dma_ranges: u8,
     source_size: u8,
     source_fragments: u8,
+    wire_size: u8,
     ssd_size: u8,
     ssd_fragments: u8,
 }
@@ -243,6 +253,7 @@ impl CostKey {
     fn route_comparable(self, other: Self) -> bool {
         self.completion.is_some()
             && self.completion == other.completion
+            && self.path.is_prefill_to_decode_handoff() == other.path.is_prefill_to_decode_handoff()
             && self.representation != Representation::Unknown
             && self.with_path_resource(other.path, other.resource) == other
     }
@@ -276,7 +287,13 @@ impl CostKey {
             ..self
         }
     }
-    pub(crate) fn with_path_resource(self, path: CostPath, resource: Resource) -> Self {
+    pub(crate) fn with_wire_bytes(self, wire_bytes: u64) -> Self {
+        Self {
+            wire_size: bucket(wire_bytes),
+            ..self
+        }
+    }
+    pub(crate) fn with_path_resource(self, path: CostPath, resource: ExecutionResource) -> Self {
         Self {
             path,
             resource,
@@ -286,7 +303,7 @@ impl CostKey {
     }
     pub(crate) fn new(
         path: CostPath,
-        resource: Resource,
+        resource: ExecutionResource,
         representation: Representation,
         bytes: u64,
         fragments: usize,
@@ -302,6 +319,7 @@ impl CostKey {
             dma_ranges: 0,
             source_size: 0,
             source_fragments: 0,
+            wire_size: 0,
             ssd_size: 0,
             ssd_fragments: 0,
         }
@@ -310,4 +328,15 @@ impl CostKey {
 
 fn bucket(value: u64) -> u8 {
     (u64::BITS - value.leading_zeros()) as u8
+}
+
+pub(crate) fn record_completion_observation(
+    key: CostKey,
+    logical_bytes: u64,
+    wire_bytes: u64,
+    elapsed: Duration,
+    admitted: bool,
+    outcome: Outcome,
+) {
+    observation::record_external(key, logical_bytes, wire_bytes, elapsed, admitted, outcome);
 }

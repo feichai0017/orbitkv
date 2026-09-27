@@ -110,7 +110,7 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Cache client | `orbitkv-channel/src/cache_client.rs`, `python/src/client.rs` | Rust query/warming ownership, independent publish session, client-bound restore handles and GIL-free waiting; PyO3 API |
 | Connection setup | `python/orbitkv/client/connection.py` | Engine endpoint options and same-host socket selection |
 | State contract | `orbitkv-state` | State identity, format compatibility, compiled page demand, recovery validation, page-reference types |
-| Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
+| Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation and authenticated completion observations |
 | Process utilities | `orbitkv-common` | Shared logging setup and peer connection defaults |
 | Hardware locality | `orbitkv-core/src/memory/numa.rs` | NUMA topology and allocation/worker affinity |
 | Cache statistics | `orbitkv-server/src/metric/hll.rs` | Namespaced miss cardinality and windowed reuse estimates |
@@ -130,7 +130,7 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 
 | Module | Responsibility |
 | --- | --- |
-| `engine/` | Instance registration, `EngineConfig`, Publish orchestration, demand validation and restore handoff |
+| `engine/` | Instance registration, `EngineConfig`, Publish orchestration, demand validation, restore handoff and registered-target completion evidence |
 | `memory/` | NUMA placement, pinned allocations and pools |
 | `storage/` | Residency assembly, shared replica inventory and allocator-driven reclamation; `publish.rs` owns queued sealing and publication |
 | `storage/dram/` | Resident images, eviction/admission policy and exact insertion versions |

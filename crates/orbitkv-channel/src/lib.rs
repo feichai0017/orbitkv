@@ -32,9 +32,10 @@ pub use bootstrap::{
 #[cfg(target_os = "linux")]
 pub use cache_client::{BlockHashes, CacheClient, QueryIntent, RecoveryRead, RestoreHandle};
 pub use cache_protocol::{
-    CancelQueryRequest, PublishLayer, PublishRequest, QueryBundleRequest, QueryBundleResponse,
-    QueryCodecError, QueryCommand, QueryOutcomeCode, QueryTicket, ReleaseRequest, RestoreCommand,
-    RestoreLease, RestoreRequest, RestoreResponse, RestoreState,
+    CacheProtocolError, CancelQueryRequest, CompletionAdmission, CompletionIntent,
+    CompletionObservationRequest, CompletionOutcome, CompletionPath, PublishLayer, PublishRequest,
+    QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode, QueryTicket,
+    ReleaseRequest, RestoreCommand, RestoreLease, RestoreRequest, RestoreResponse, RestoreState,
 };
 #[cfg(target_os = "linux")]
 pub use client::{ChannelClient, ChannelError};

@@ -24,7 +24,7 @@ fn cancelled_batch_releases_results_and_finishes_after_every_reader() {
     let observation = Observation::new(
         CostKey::new(
             CostPath::LocalSsdHostReady,
-            Resource::SsdStore(99),
+            ExecutionResource::SsdStore(99),
             Representation::Raw,
             4096,
             3,

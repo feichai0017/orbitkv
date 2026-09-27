@@ -14,12 +14,15 @@ use crate::metric::hll::MultiWindowHllTracker;
 use log::{error, info};
 use orbitkv_channel::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
-    DeferredResponse, PublishRequest as ChannelPublishRequest, QueryBundleResponse,
-    QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest as ChannelReleaseRequest,
-    Response, RestoreCommand, RestoreResponse, RestoreState, StatusCode, TransportError,
-    TransportServer,
+    CompletionObservationRequest, DeferredResponse, PublishRequest as ChannelPublishRequest,
+    QueryBundleResponse, QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED,
+    ReleaseRequest as ChannelReleaseRequest, Response, RestoreCommand, RestoreResponse,
+    RestoreState, StatusCode, TransportError, TransportServer,
 };
-use orbitkv_core::{EngineError, OrbitKVEngine};
+use orbitkv_core::{
+    CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
+    CompletionPath, EngineError, OrbitKVEngine,
+};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
@@ -296,6 +299,9 @@ fn dispatch(
         CommandCode::Release => {
             response = dispatch_release(command, bootstrap, sessions, engine);
         }
+        CommandCode::ObserveCompletion => {
+            response = dispatch_completion_observation(command, bootstrap, sessions, engine);
+        }
         CommandCode::Publish => unreachable!("publish uses deferred response handling"),
         CommandCode::Restore => {
             response = dispatch_restore(
@@ -307,6 +313,63 @@ fn dispatch(
                 next_operation_id,
             );
         }
+    }
+    response
+}
+
+fn dispatch_completion_observation(
+    command: Command,
+    bootstrap: &BootstrapServer,
+    sessions: &mut HashMap<u64, BootstrapSession>,
+    engine: &OrbitKVEngine,
+) -> Response {
+    let mut response = Response::ok(command);
+    response.value1 = 0;
+    let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
+        Ok(payload) => payload,
+        Err(response) => return response,
+    };
+    let request = match CompletionObservationRequest::decode(&payload) {
+        Ok(request) => request,
+        Err(error) => return error_response(response, StatusCode::Invalid, &error),
+    };
+    let observation = CompletionObservation {
+        instance_id: request.instance_id,
+        destination_device_id: request.destination_device_id,
+        source_endpoint: request.source_endpoint,
+        notification_generation: request.notification_generation,
+        intent: match request.intent {
+            orbitkv_channel::CompletionIntent::HostReady => CompletionIntent::HostReady,
+            orbitkv_channel::CompletionIntent::EngineRestore => CompletionIntent::EngineRestore,
+            orbitkv_channel::CompletionIntent::SourceRelease => CompletionIntent::SourceRelease,
+        },
+        path: match request.path {
+            orbitkv_channel::CompletionPath::PrefillToDecodeHandoff => {
+                CompletionPath::PrefillToDecodeHandoff
+            }
+        },
+        representation: request.representation,
+        logical_bytes: request.logical_bytes,
+        wire_bytes: request.wire_bytes,
+        fragment_count: request.fragment_count,
+        elapsed: Duration::from_nanos(request.elapsed_ns),
+        admission: match request.admission {
+            orbitkv_channel::CompletionAdmission::Admitted => CompletionAdmission::Admitted,
+            orbitkv_channel::CompletionAdmission::Rejected => CompletionAdmission::Rejected,
+        },
+        outcome: match request.outcome {
+            orbitkv_channel::CompletionOutcome::Completed => CompletionOutcome::Completed,
+            orbitkv_channel::CompletionOutcome::Failed => CompletionOutcome::Failed,
+            orbitkv_channel::CompletionOutcome::Cancelled => CompletionOutcome::Cancelled,
+            orbitkv_channel::CompletionOutcome::TimedOut => CompletionOutcome::TimedOut,
+        },
+    };
+    if let Err(error) = engine.observe_completion(observation) {
+        return error_response(response, engine_error_status(&error), &error);
+    }
+    match bootstrap.arena().write_response(command.descriptor, &[]) {
+        Ok(descriptor) => response.descriptor = descriptor,
+        Err(error) => return error_response(response, arena_error_status(&error), &error),
     }
     response
 }

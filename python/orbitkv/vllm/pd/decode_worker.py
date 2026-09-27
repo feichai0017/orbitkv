@@ -84,12 +84,12 @@ class _DecodeWaitState:
             is_failed = req_id in self.failed_recving
             return req, was_aborted, is_failed
 
-    def record_transfer_done(self, req_id: str) -> WaitReqMeta | None:
+    def record_transfer_done(self, req_id: str) -> tuple[WaitReqMeta | None, bool]:
         with self._lock:
             if req_id not in self.wait_reqs:
-                return None
+                return None, False
             self.finished_transfer_waits.add(req_id)
-            return self.wait_reqs[req_id]
+            return self.wait_reqs[req_id], req_id in self.aborted_waits
 
     # -- failure paths ------------------------------------------------------
 
@@ -342,15 +342,18 @@ class DecodeHandler:
         self,
         worker: PdWorkerBase,
         prefill_sender: Any | None = None,
+        completion_callback: Any | None = None,
     ) -> None:
         self._w = worker
         self._state = _DecodeWaitState(worker.metrics)
         self._peers = _DecodePeerState(worker)
+        self._completion_callback = completion_callback
         self._transfer_waiter: _AsyncTransferDoneWaiter | None = (
             _AsyncTransferDoneWaiter(
                 worker.transfer,
                 failure_callback=self._mark_wait_failed,
                 success_callback=self._record_transfer_wait_done,
+                cancellation_callback=self._record_transfer_wait_cancelled,
             )
             if worker.transfer is not None
             else None
@@ -374,10 +377,14 @@ class DecodeHandler:
                 self._w.transfer,
                 failure_callback=self._mark_wait_failed,
                 success_callback=self._record_transfer_wait_done,
+                cancellation_callback=self._record_transfer_wait_cancelled,
             )
 
     def gather_peer_info(self) -> None:
         self._peers.gather()
+
+    def disable_completion_observations(self) -> None:
+        self._completion_callback = None
 
     def process_wait_reqs(self, reqs_to_wait: dict[str, WaitReqMeta]) -> None:
         assert self._w.transfer is not None, "PdConnector Mooncake port is not initialized"
@@ -387,24 +394,32 @@ class DecodeHandler:
                 logger.info("[PdConnector] D wait req=%s already registered", req_id)
                 continue
             process_ts_ns = time.time_ns()
-            self._state.register_wait(req_id, req)
             block_ids = flatten_block_ids(req.local_block_ids)
             wait_handshake = self._build_wait_handshake(
                 req.done_request_id,
                 req.local_block_ids,
             )
-            self._w.transfer.open_request(req_id, wait_handshake)
             local_block_count = len(block_ids)
+            if self._completion_callback is None:
+                wire_bytes, fragment_count = 0, 0
+            else:
+                wire_bytes, fragment_count = self._completion_shape(req.local_block_ids)
+            notification_generation = self._w.transfer.open_request(req_id, wait_handshake)
+            self._state.register_wait(req_id, req)
             waiter_queued_ts_ns = time.time_ns()
             self._transfer_waiter.submit(
                 _TransferWaitTask(
                     req_id=req_id,
-                    generation=0,
+                    wait_generation=0,
+                    notification_generation=notification_generation,
                     remote_request_id=req.remote_request_id,
                     done_request_id=req.done_request_id,
-                    prefill_url=req.prefill_url,
+                    source_endpoint=req.prefill_url,
                     rank=self._w.tp_rank,
                     block_count=local_block_count,
+                    logical_bytes=wire_bytes,
+                    wire_bytes=wire_bytes,
+                    fragment_count=fragment_count,
                     queued_ts_ns=waiter_queued_ts_ns,
                 )
             )
@@ -463,7 +478,7 @@ class DecodeHandler:
         active_request_ids = self._state.request_ids()
         if self._transfer_waiter is not None:
             for req_id in active_request_ids:
-                self._transfer_waiter.cancel(req_id)
+                self._transfer_waiter.cancel(req_id, outcome="cancelled")
         if self._w.transfer is not None:
             for req_id in active_request_ids:
                 self._w.transfer.close_request(req_id)
@@ -489,9 +504,14 @@ class DecodeHandler:
             )
             return
         req_id, req, failed_blocks = result
-        self._after_mark_failed(req_id, req, failed_blocks, exc)
+        self._after_mark_failed(req_id, req, failed_blocks, exc, None)
 
-    def _mark_wait_failed(self, req_id: str, exc: BaseException) -> None:
+    def _mark_wait_failed(
+        self,
+        req_id: str,
+        exc: BaseException,
+        task: _TransferWaitTask | None = None,
+    ) -> None:
         kind, req, failed_blocks = self._state.mark_wait_failed(req_id)
         if kind == "unknown":
             logger.warning(
@@ -502,6 +522,8 @@ class DecodeHandler:
             return
         if kind == "aborted_finished":
             assert req is not None
+            if task is not None:
+                self._report_completion(task, "cancelled")
             logger.info(
                 "[PdConnector] D treating aborted wait as finished req=%s remote_req=%s error=%s",
                 req_id,
@@ -510,13 +532,15 @@ class DecodeHandler:
             )
             return
         assert req is not None and failed_blocks is not None
-        self._after_mark_failed(req_id, req, failed_blocks, exc)
+        self._after_mark_failed(req_id, req, failed_blocks, exc, task)
 
-    def _record_transfer_wait_done(self, req_id: str, wait_s: float) -> None:
+    def _record_transfer_wait_done(self, task: _TransferWaitTask, wait_s: float) -> None:
+        req_id = task.req_id
         done_ts_ns = time.time_ns()
-        req = self._state.record_transfer_done(req_id)
+        req, was_aborted = self._state.record_transfer_done(req_id)
         if req is None:
             return
+        self._report_completion(task, "cancelled" if was_aborted else "completed")
         self._w.metrics.record_decode_transfer_wait(wait_s)
         logger.info(
             "[PdConnector] D Mooncake wait done req=%s remote_req=%s wait_ms=%.3f proxy_to_transfer_done_ms=%.3f scheduler_wait_to_transfer_done_ms=%.3f ts_ns=%d",
@@ -528,12 +552,20 @@ class DecodeHandler:
             done_ts_ns,
         )
 
+    def _record_transfer_wait_cancelled(
+        self,
+        task: _TransferWaitTask,
+        outcome: str,
+    ) -> None:
+        self._report_completion(task, outcome)
+
     def _after_mark_failed(
         self,
         req_id: str,
         req: WaitReqMeta,
         failed_blocks: set[int],
         exc: BaseException,
+        task: _TransferWaitTask | None,
     ) -> None:
         """Side effects after a failure is recorded in state: emit the wait
         metric, log, and cancel the Mooncake waiter."""
@@ -550,8 +582,34 @@ class DecodeHandler:
             len(failed_blocks),
             exc,
         )
+        if task is not None:
+            self._report_completion(
+                task,
+                "timed_out" if isinstance(exc, TimeoutError) else "failed",
+            )
         if self._transfer_waiter is not None:
-            self._transfer_waiter.cancel(req_id)
+            self._transfer_waiter.cancel(
+                req_id,
+                outcome="timed_out" if isinstance(exc, TimeoutError) else "failed",
+            )
+
+    def _report_completion(self, task: _TransferWaitTask, outcome: str) -> None:
+        if self._completion_callback is not None:
+            self._completion_callback(task, outcome)
+
+    def _completion_shape(self, block_ids: BlockIds) -> tuple[int, int]:
+        wire_bytes = 0
+        fragments = 0
+        for layer_idx, layer_name in enumerate(self._w.layer_names):
+            selected = self._w.block_ids_for_layer(block_ids, layer_name)
+            if not selected:
+                continue
+            layout = self._remote_layout(layer_name, layer_idx, (min(selected),))
+            wire_bytes += len(selected) * sum(region.block_len for region in layout.regions)
+            fragments += len(selected) * len(layout.regions)
+        if wire_bytes <= 0 or not 0 < fragments <= 0xFFFF_FFFF:
+            raise ValueError("P/D completion shape must contain bounded non-empty KV regions")
+        return wire_bytes, fragments
 
     def _build_wait_handshake(
         self,
@@ -640,12 +698,16 @@ class DecodeHandler:
 @dataclass(frozen=True)
 class _TransferWaitTask:
     req_id: str
-    generation: int
+    wait_generation: int
+    notification_generation: int
     remote_request_id: str
     done_request_id: str
-    prefill_url: str | None
+    source_endpoint: str
     rank: int
     block_count: int
+    logical_bytes: int
+    wire_bytes: int
+    fragment_count: int
     queued_ts_ns: int
 
 
@@ -657,14 +719,17 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
         transfer: MooncakePort,
         failure_callback: Any | None = None,
         success_callback: Any | None = None,
+        cancellation_callback: Any | None = None,
         max_workers: int = 16,
     ) -> None:
         super().__init__("pd-transfer-done-waiter", max_workers=max_workers)
         self.transfer = transfer
         self._failure_callback = failure_callback
         self._success_callback = success_callback
+        self._cancellation_callback = cancellation_callback
         self._submitted: dict[str, int] = {}
-        self._cancelled: dict[str, set[int]] = {}
+        self._tasks: dict[str, _TransferWaitTask] = {}
+        self._cancelled: dict[str, dict[int, str]] = {}
         self._next_generation: dict[str, int] = {}
 
     def submit(self, task: _TransferWaitTask) -> _TransferWaitTask | None:
@@ -673,8 +738,9 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
                 return None
             generation = self._next_generation.get(task.req_id, 0) + 1
             self._next_generation[task.req_id] = generation
-            task = replace(task, generation=generation)
+            task = replace(task, wait_generation=generation)
             self._submitted[task.req_id] = generation
+            self._tasks[task.req_id] = task
         logger.info(
             "[PdConnector] D Mooncake wait queued req=%s remote_req=%s done_req=%s rank=%d blocks=%d prefill_url=%s queue_depth=%d",
             task.req_id,
@@ -682,22 +748,27 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
             task.done_request_id,
             task.rank,
             task.block_count,
-            task.prefill_url or "<oob>",
+            task.source_endpoint,
             len(self._submitted),
         )
         self._spawn(task)
         return task
 
-    def cancel(self, req_id: str) -> None:
+    def cancel(self, req_id: str, *, outcome: str = "cancelled") -> None:
         with self._lock:
             generation = self._submitted.pop(req_id, None)
             if generation is None:
                 return
-            self._cancelled.setdefault(req_id, set()).add(generation)
+            self._cancelled.setdefault(req_id, {})[generation] = outcome
+
+    def task(self, req_id: str) -> _TransferWaitTask | None:
+        with self._lock:
+            return self._tasks.get(req_id)
 
     def _execute(self, task: _TransferWaitTask) -> None:
         try:
-            if self._is_cancelled(task.req_id, task.generation):
+            cancellation = self._cancellation_outcome(task)
+            if cancellation is not None:
                 logger.info(
                     "[PdConnector] D Mooncake done wait cancelled before start req=%s remote_req=%s done_req=%s rank=%d blocks=%d",
                     task.req_id,
@@ -706,11 +777,14 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
                     task.rank,
                     task.block_count,
                 )
+                if self._cancellation_callback is not None:
+                    self._cancellation_callback(task, cancellation)
                 return
             start_ts_ns = time.time_ns()
             self.transfer.wait_done(task.req_id)
             done_ts_ns = time.time_ns()
-            if self._is_cancelled(task.req_id, task.generation):
+            cancellation = self._cancellation_outcome(task)
+            if cancellation is not None:
                 logger.info(
                     "[PdConnector] D Mooncake done wait cancelled req=%s remote_req=%s done_req=%s rank=%d blocks=%d queue_wait_ms=%.3f wait_ms=%.3f ts_ns=%d",
                     task.req_id,
@@ -722,6 +796,8 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
                     (done_ts_ns - start_ts_ns) / 1_000_000,
                     done_ts_ns,
                 )
+                if self._cancellation_callback is not None:
+                    self._cancellation_callback(task, cancellation)
                 return
             logger.info(
                 "[PdConnector] D received Mooncake done req=%s remote_req=%s done_req=%s rank=%d blocks=%d queue_wait_ms=%.3f wait_ms=%.3f ts_ns=%d",
@@ -735,7 +811,7 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
                 done_ts_ns,
             )
             if self._success_callback is not None:
-                self._success_callback(task.req_id, (done_ts_ns - start_ts_ns) / 1_000_000_000)
+                self._success_callback(task, (done_ts_ns - start_ts_ns) / 1_000_000_000)
         except Exception as exc:
             logger.exception(
                 "[PdConnector] D Mooncake done wait failed req=%s remote_req=%s done_req=%s rank=%d blocks=%d",
@@ -745,21 +821,26 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
                 task.rank,
                 task.block_count,
             )
-            if self._failure_callback is not None:
-                self._failure_callback(task.req_id, exc)
+            cancellation = self._cancellation_outcome(task)
+            if cancellation is not None and self._cancellation_callback is not None:
+                self._cancellation_callback(task, cancellation)
+            elif self._failure_callback is not None:
+                self._failure_callback(task.req_id, exc, task)
         finally:
             with self._lock:
-                if self._submitted.get(task.req_id) == task.generation:
+                if self._submitted.get(task.req_id) == task.wait_generation:
                     self._submitted.pop(task.req_id, None)
+                if self._tasks.get(task.req_id) is task:
+                    self._tasks.pop(task.req_id, None)
                 cancelled = self._cancelled.get(task.req_id)
                 if cancelled is not None:
-                    cancelled.discard(task.generation)
+                    cancelled.pop(task.wait_generation, None)
                     if not cancelled:
                         self._cancelled.pop(task.req_id, None)
 
-    def _is_cancelled(self, req_id: str, generation: int) -> bool:
+    def _cancellation_outcome(self, task: _TransferWaitTask) -> str | None:
         with self._lock:
-            return generation in self._cancelled.get(req_id, set())
+            return self._cancelled.get(task.req_id, {}).get(task.wait_generation)
 
 
 def _all_gather_peer_info(

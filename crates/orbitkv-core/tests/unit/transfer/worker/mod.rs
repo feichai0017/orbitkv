@@ -352,7 +352,7 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
         key,
         CostKey::new(
             CostPath::GpuDecode,
-            Resource::Gpu(2),
+            ExecutionResource::Gpu(2),
             Representation::Mixed,
             1200,
             4
@@ -363,7 +363,7 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
         key,
         CostKey::new(
             CostPath::GpuSsdLoad,
-            Resource::Gpu(2),
+            ExecutionResource::Gpu(2),
             Representation::Mixed,
             1200,
             4
@@ -413,7 +413,8 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
         for (key, path) in merged_keys.iter().zip(paths) {
             assert_eq!(
                 *key,
-                CostKey::new(path, Resource::Gpu(3), Representation::Raw, 16, 4).with_dma_ranges(1)
+                CostKey::new(path, ExecutionResource::Gpu(3), Representation::Raw, 16, 4)
+                    .with_dma_ranges(1)
             );
         }
         for copies in [&fragmented, &allocations] {
@@ -423,7 +424,7 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
                 assert_ne!(*key, merged_key);
                 assert_eq!(
                     *key,
-                    CostKey::new(path, Resource::Gpu(3), Representation::Raw, 16, 4)
+                    CostKey::new(path, ExecutionResource::Gpu(3), Representation::Raw, 16, 4)
                         .with_dma_ranges(4)
                 );
             }

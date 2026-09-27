@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use orbitkv_channel::lifecycle::LifecycleCommand;
 use orbitkv_channel::{
-    BlockHashes, CacheClient, CallOptions, ChannelError, PublishLayer, PublishRequest, QueryIntent,
-    RestoreHandle, RestoreLease, RestoreRequest, RestoreState,
+    BlockHashes, CacheClient, CallOptions, ChannelError, CompletionAdmission, CompletionIntent,
+    CompletionObservationRequest, CompletionOutcome, CompletionPath, PublishLayer, PublishRequest,
+    QueryIntent, RestoreHandle, RestoreLease, RestoreRequest, RestoreState,
 };
 use orbitkv_proto::proto::engine::{
     RegisterContextRequest, SessionRequest, TransferMode, UnregisterRequest,
@@ -269,6 +270,72 @@ impl PyCacheManagerClient {
             UnregisterRequest { instance_id }.encode_to_vec(),
         )?;
         Ok((true, String::new()))
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "completion evidence fields cross the Python/native boundary once"
+    )]
+    #[pyo3(signature = (instance_id, destination_device_id, source_endpoint, notification_generation, logical_bytes, wire_bytes, fragment_count, elapsed_ns, *, admitted=true, outcome="completed", representation="raw"))]
+    fn observe_prefill_to_decode_completion(
+        &self,
+        py: Python<'_>,
+        instance_id: String,
+        destination_device_id: i32,
+        source_endpoint: String,
+        notification_generation: u64,
+        logical_bytes: u64,
+        wire_bytes: u64,
+        fragment_count: u32,
+        elapsed_ns: u64,
+        admitted: bool,
+        outcome: &str,
+        representation: &str,
+    ) -> PyResult<()> {
+        let outcome = match outcome {
+            "completed" => CompletionOutcome::Completed,
+            "failed" => CompletionOutcome::Failed,
+            "cancelled" => CompletionOutcome::Cancelled,
+            "timed_out" => CompletionOutcome::TimedOut,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown completion outcome '{value}'"
+                )));
+            }
+        };
+        let representation = match representation {
+            "raw" => orbitkv_state::ReplicaRepresentation::Raw,
+            "ans" => orbitkv_state::ReplicaRepresentation::Ans,
+            "fp8" => orbitkv_state::ReplicaRepresentation::Fp8,
+            "turbo_quant" => orbitkv_state::ReplicaRepresentation::TurboQuant,
+            "mixed" => orbitkv_state::ReplicaRepresentation::Mixed,
+            value => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown completion representation '{value}'"
+                )));
+            }
+        };
+        let observation = CompletionObservationRequest {
+            instance_id,
+            destination_device_id,
+            source_endpoint,
+            notification_generation,
+            intent: CompletionIntent::EngineRestore,
+            path: CompletionPath::PrefillToDecodeHandoff,
+            representation,
+            logical_bytes,
+            wire_bytes,
+            fragment_count,
+            elapsed_ns,
+            admission: if admitted {
+                CompletionAdmission::Admitted
+            } else {
+                CompletionAdmission::Rejected
+            },
+            outcome,
+        };
+        py.detach(|| self.inner.observe_completion(&observation))
+            .map_err(client_error)
     }
 
     fn start_session_watcher(

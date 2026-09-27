@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::cost::{CostKey, CostPath, Resource};
+use crate::cost::{CostKey, CostPath, ExecutionResource};
 use crate::{EngineError, SsdReadPath, TransferMode};
 
 use super::{LayerTransferData, LoadTask, TransferPayload};
@@ -77,7 +77,7 @@ pub(super) fn cost_key(
             }
         }
     }
-    let resource = Resource::SsdRestore {
+    let resource = ExecutionResource::SsdRestore {
         device: task.plan.device_id() as u64,
         copy_backend: mode as u8,
         stores: crate::cost::resource_id(&resources),

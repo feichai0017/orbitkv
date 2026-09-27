@@ -7,10 +7,12 @@ select RAM, SSD, or a remote replica: the Cache Manager resolves each cache
 request and uses Mooncake when a remote fetch is available.
 
 The production server owns a thread-safe iceoryx2 service and currently serves
-`Ping`, `QueryBundle`, `Publish`, `Restore`, `Release`, and `Shutdown`, including
-session-epoch fencing. A mode-0600 Unix socket verifies peer credentials and
-passes a sealed memfd arena
-plus a liveness eventfd. Every client owns one arena slot guarded by a client
+`Ping`, `QueryBundle`, `CancelQuery`, `Publish`, `Restore`, `Release`,
+`ObserveCompletion`, and `Shutdown`, including session-epoch fencing.
+`ObserveCompletion` accepts bounded, low-cardinality physical completion
+evidence; it carries no request ID or state key. A mode-0600 Unix socket
+verifies peer credentials and passes a sealed memfd arena plus a liveness
+eventfd. Every client owns one arena slot guarded by a client
 token and a monotonic request/response generation. Python exposes diagnostics
 through `ChannelProbeClient` and cache operations through the PyO3
 `CacheManagerClient`. Rust `CacheClient` owns query revisions, warming interests,

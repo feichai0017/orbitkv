@@ -11,10 +11,10 @@ use thiserror::Error;
 
 use crate::lifecycle::{LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader};
 use crate::{
-    BootstrapClient, BootstrapError, CallOptions, Command, CommandCode, PublishRequest,
-    QueryBundleResponse, QueryCodecError, RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest,
-    RestoreCommand, RestoreRequest, RestoreResponse, RestoreState, StatusCode, TransportClient,
-    TransportError,
+    BootstrapClient, BootstrapError, CacheProtocolError, CallOptions, Command, CommandCode,
+    CompletionObservationRequest, PublishRequest, QueryBundleResponse,
+    RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest, RestoreCommand, RestoreRequest,
+    RestoreResponse, RestoreState, StatusCode, TransportClient, TransportError,
 };
 
 #[derive(Debug, Error)]
@@ -26,7 +26,7 @@ pub enum ChannelError {
     #[error(transparent)]
     Recovery(#[from] orbitkv_state::RecoveryError),
     #[error(transparent)]
-    Codec(#[from] QueryCodecError),
+    Codec(#[from] CacheProtocolError),
     #[error("cache request returned {0:?}")]
     Status(StatusCode),
     #[error("cache session is ambiguous after a failed call; reconnect required")]
@@ -186,6 +186,16 @@ impl ChannelClient {
     ) -> Result<(), ChannelError> {
         let payload = request.encode()?;
         self.call_descriptor(CommandCode::CancelQuery, request_id, &payload)?;
+        Ok(())
+    }
+
+    pub fn observe_completion(
+        &self,
+        request_id: u64,
+        observation: &CompletionObservationRequest,
+    ) -> Result<(), ChannelError> {
+        let payload = observation.encode()?;
+        self.call_descriptor(CommandCode::ObserveCompletion, request_id, &payload)?;
         Ok(())
     }
 

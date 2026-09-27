@@ -1,8 +1,15 @@
 use super::*;
-use crate::cost::{CostPath, Representation, Resource};
+use crate::cost::{CostPath, ExecutionResource, Representation};
 
 fn key(path: CostPath) -> CostKey {
-    CostKey::new(path, Resource::Gpu(1), Representation::Raw, 4096, 4).with_dma_ranges(2)
+    CostKey::new(
+        path,
+        ExecutionResource::Gpu(1),
+        Representation::Raw,
+        4096,
+        4,
+    )
+    .with_dma_ranges(2)
 }
 
 fn estimate(seconds: f64, error: f64) -> Estimate {
@@ -33,11 +40,11 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
         ("composite", alternative.with_path(CostPath::GpuDecode)),
         (
             "device",
-            alternative.with_path_resource(alternative.path, Resource::Gpu(2)),
+            alternative.with_path_resource(alternative.path, ExecutionResource::Gpu(2)),
         ),
         (
             "owner domain",
-            alternative.with_path_resource(alternative.path, Resource::SsdStore(1)),
+            alternative.with_path_resource(alternative.path, ExecutionResource::SsdStore(1)),
         ),
         (
             "representation",
@@ -86,7 +93,7 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
     let ssd = current
         .with_path_resource(
             CostPath::SsdUringRestore,
-            Resource::SsdRestore {
+            ExecutionResource::SsdRestore {
                 device: 1,
                 copy_backend: 0,
                 stores: 123,
@@ -105,7 +112,7 @@ fn shadow_requires_matching_demand_resources_and_completion_target() {
 
     let other_device = ssd.with_path_resource(
         CostPath::SsdCufileRestore,
-        Resource::SsdRestore {
+        ExecutionResource::SsdRestore {
             device: 2,
             copy_backend: 0,
             stores: 123,

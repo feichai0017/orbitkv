@@ -40,8 +40,8 @@ request and state identities are kept out of the exported series.
 
 | Metric family | Labels / meaning |
 | --- | --- |
-| `orbitkv_cost_operations_total` | `path`, `outcome`: completed, failed, cancelled, timed_out or abandoned |
-| `orbitkv_cost_stage_seconds` | `path`, `outcome`, `stage`: queue, admission, completed service or inclusive total; microsecond-to-second buckets |
+| `orbitkv_cost_operations_total` | `path`, `outcome`: completed, failed, cancelled, timed_out or abandoned; externally reported handoffs also carry bounded `admission` |
+| `orbitkv_cost_stage_seconds` | `path`, `outcome`, `stage`: queue, admission, completed service or inclusive total; externally reported handoffs also carry bounded `admission`; microsecond-to-second buckets |
 | `orbitkv_cost_logical_bytes_total` / `orbitkv_cost_logical_unknown_total` | Known attempted logical bytes versus unavailable unpadded sizes; do not sum nested owners |
 | `orbitkv_cost_io_bytes_total` / `orbitkv_cost_io_unknown_total` | Known physical bytes, including short I/O, versus unknown counts; same path/outcome labels |
 | `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-terminal total for complete SSD restore and HostReady routes |
@@ -69,6 +69,18 @@ validation and host-block reconstruction. It uses stored bytes and block count,
 matching the peer HostReady shape. Equal-coverage, single-owner alternatives
 enter cross-medium shadow. They affect execution only under the separate
 three-flag experiment gate.
+
+`prefill_to_decode_handoff` is a decode-owned, enqueue-to-TENT-terminal
+observation for the registered destination GPU. It records raw logical and wire
+bytes plus target-layout fragment shape after successful completion; failed,
+cancelled and timed-out reports keep physical bytes unknown. The source
+endpoint is hashed into the internal execution-resource key; endpoint text,
+request identity, cache keys
+and notification generation are not metric labels. The generation is required
+as freshness evidence but is not an estimator dimension. Only
+`admission="admitted", outcome="completed"` trains the estimate. This path has
+no execution selector until direct cache restore supplies the same DecodeReady
+boundary and both routes have live device/queue/NIC admission evidence.
 
 Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
 DMA-coalesced ranges. Actual execution samples and shadow candidates use the

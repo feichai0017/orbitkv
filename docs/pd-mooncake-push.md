@@ -55,6 +55,8 @@ Each TP rank configures a routable bind host and may select an RDMA NIC. When
   "engine_id": "d0",
   "kv_connector_extra_config": {
     "orbitkv.pd.mooncake.bind_host": "10.0.0.2",
+    "orbitkv.pd.completion_observation_socket": "/run/orbitkv/orbitkv.sock",
+    "orbitkv.pd.completion_observation_instance_id": "decode-instance",
     "orbitkv.pd.mooncake.rank_map": {
       "0": {"nic": "mlx5_0"}
     }
@@ -65,6 +67,14 @@ Each TP rank configures a routable bind host and may select an RDMA NIC. When
 Use `PdPrefillConnector` in the prefill process. The former role-selecting
 `PdConnector` facade is not retained; `engine_id` identifies the instance and
 no longer chooses connector behavior.
+
+The two completion-observation settings are optional and decode-only. When
+present, the named instance/device must already be registered with that
+node-local Manager. The authenticated process channel consumes a bounded report
+after the decode-side TENT waiter reaches a terminal state. Reporting failure
+disables later reports in that worker but never changes P/D completion or page
+ownership. The TENT notification generation is validated as nonzero freshness
+evidence and is deliberately excluded from estimator keys.
 
 Mooncake uses `P2PHANDSHAKE` for peer metadata exchange. No external Mooncake
 Store or metadata service is required for this path. OrbitKV does not use
@@ -77,6 +87,8 @@ Mooncake Store as its state authority.
 - Closing or replacing a request generation wakes its old native waiter without
   allowing it to complete the replacement.
 - The decode side waits for the expected number of producer notifications.
+- An optional Cache Manager observation is emitted only by that decode-side
+  completion owner; source-side write return is not relabelled as decode-ready.
 - Failure/abort notifications never publish the destination as complete.
 - Queued writes carry the producer request generation and captured destination
   authorization. Reusing a request ID cannot redirect an old task into new

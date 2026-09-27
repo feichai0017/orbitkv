@@ -135,6 +135,21 @@ class CacheManagerClient:
     def close(self) -> None: ...
     def health(self) -> tuple[bool, str]: ...
     def unregister_context(self, instance_id: str) -> tuple[bool, str]: ...
+    def observe_prefill_to_decode_completion(
+        self,
+        instance_id: str,
+        destination_device_id: int,
+        source_endpoint: str,
+        notification_generation: int,
+        logical_bytes: int,
+        wire_bytes: int,
+        fragment_count: int,
+        elapsed_ns: int,
+        *,
+        admitted: bool = True,
+        outcome: str = "completed",
+        representation: str = "raw",
+    ) -> None: ...
     def start_session_watcher(
         self, instance_id: str, namespace: str, tp_size: int, world_size: int
     ) -> None: ...

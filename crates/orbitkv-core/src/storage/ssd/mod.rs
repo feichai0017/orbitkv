@@ -9,7 +9,7 @@ use mea::oneshot;
 use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, Resource};
+use crate::cost::{CostKey, CostPath, ExecutionResource, Observation, Outcome, Representation};
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
@@ -79,7 +79,7 @@ impl SsdReadCandidate {
     }
 
     #[cfg(feature = "mooncake")]
-    pub(crate) fn cost_resource(&self) -> Option<Resource> {
+    pub(crate) fn cost_resource(&self) -> Option<ExecutionResource> {
         Some(self.store.upgrade()?.io.cost_resource)
     }
 
@@ -103,7 +103,7 @@ impl SsdReadLease {
             })
     }
 
-    pub(crate) fn cost_resource(&self) -> Resource {
+    pub(crate) fn cost_resource(&self) -> ExecutionResource {
         self.store.io.cost_resource
     }
 

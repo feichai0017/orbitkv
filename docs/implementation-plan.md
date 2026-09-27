@@ -781,7 +781,22 @@ This is cost-evidence work within the existing tier/source plan. Full consumed
 replica endpoint descriptors, live device admission, cross-source local/peer
 comparisons and calibration of unexecuted paths remain open. The same-source
 shadow guard must not be reused as a general cross-source selection policy.
-No new peer source, configuration switch or Python callback is introduced.
+That original increment introduced no peer source or callback. A later bounded
+P/D observation increment now adds one optional vLLM decode callback into the
+authenticated process channel. Rust validates the registered destination,
+hashes the prefill endpoint into an execution-resource identity, records the
+notification generation only as freshness evidence and trains solely on
+admitted completed handoffs. It does not enumerate a P/D route or enable
+selection. The matching
+direct-to-decode boundary, SGLang decode-owned report and live queue/NIC/device
+admission evidence remain open.
+
+The ownership follows the pinned [LMCache prefetch controller][lm-prefetch]
+and [FlexKV transfer scheduler][flex-scheduler] pattern: lookup/request state is
+separate from runnable physical work, and only the terminal physical-operation
+owner publishes completion evidence. OrbitKV keeps that owner in the existing
+Rust/TENT wait path instead of creating a Python planner or compatibility
+facade.
 
 The following host-route increment moves the existing peer-before-SSD choice
 from query coordination into `planning/`. A bounded `HostReadRoute` borrows the

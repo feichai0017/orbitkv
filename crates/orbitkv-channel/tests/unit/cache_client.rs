@@ -304,6 +304,37 @@ fn loading() -> Vec<u8> {
 }
 
 #[test]
+fn completion_observation_uses_the_authenticated_descriptor_session() {
+    let observed = Arc::new(Mutex::new(None));
+    let captured = Arc::clone(&observed);
+    let peer = Peer::new(move |command, payload, _| {
+        assert_eq!(command.code, CommandCode::ObserveCompletion);
+        *captured.lock().unwrap() = Some(CompletionObservationRequest::decode(payload).unwrap());
+        Some(Vec::new())
+    });
+    let client = peer.client();
+    let request = CompletionObservationRequest {
+        instance_id: "decode".into(),
+        destination_device_id: 1,
+        source_endpoint: "tent://prefill".into(),
+        notification_generation: 2,
+        intent: crate::CompletionIntent::EngineRestore,
+        path: crate::CompletionPath::PrefillToDecodeHandoff,
+        representation: orbitkv_state::ReplicaRepresentation::Raw,
+        logical_bytes: 4096,
+        wire_bytes: 4096,
+        fragment_count: 2,
+        elapsed_ns: 25_000,
+        admission: crate::CompletionAdmission::Admitted,
+        outcome: crate::CompletionOutcome::Completed,
+    };
+
+    client.observe_completion(&request).unwrap();
+
+    assert_eq!(*observed.lock().unwrap(), Some(request));
+}
+
+#[test]
 fn warming_is_bounded_expires_and_is_cancelled_before_demand() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let captured = Arc::clone(&events);

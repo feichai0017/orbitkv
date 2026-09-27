@@ -630,7 +630,7 @@ async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
     const CHILD: &str = "ORBITKV_TEST_CROSS_MEDIUM_ROUTE_CHILD";
     if std::env::var_os(CHILD).is_some() {
         use crate::QueryMode;
-        use crate::cost::{CostKey, CostPath, Representation, Resource, resource_id};
+        use crate::cost::{CostKey, CostPath, ExecutionResource, Representation, resource_id};
         use crate::planning::peer::{FetchPlan, PeerSource};
         use crate::planning::read::{HostReadRoute, ReadPlan};
 
@@ -653,7 +653,7 @@ async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
         let local_key = plan.ssd(SsdReadPath::Uring, 0).unwrap().cost_key().unwrap();
         let peer_key = CostKey::new(
             CostPath::PeerDramHostReady,
-            Resource::Peer(resource_id(&owner)),
+            ExecutionResource::Peer(resource_id(&owner)),
             Representation::Raw,
             SSD_ALIGNMENT as u64,
             1,

@@ -1,5 +1,6 @@
 //! Cache orchestration and registration; storage and transfer owners retain resources.
 
+mod completion;
 pub(crate) mod config;
 pub(crate) mod instance;
 mod publish;

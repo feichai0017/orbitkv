@@ -1,8 +1,14 @@
 use super::*;
-use crate::cost::{CostPath, Representation, Resource};
+use crate::cost::{CostPath, ExecutionResource, Representation};
 
 fn key(path: CostPath, peer: u64) -> CostKey {
-    CostKey::new(path, Resource::Peer(peer), Representation::Raw, 4096, 2)
+    CostKey::new(
+        path,
+        ExecutionResource::Peer(peer),
+        Representation::Raw,
+        4096,
+        2,
+    )
 }
 
 fn estimate(seconds: f64, error: f64) -> Estimate {
@@ -30,7 +36,7 @@ fn selection_requires_complete_compatible_fresh_evidence() {
                 candidates[0],
                 CostKey::new(
                     CostPath::PeerSsdHostReady,
-                    Resource::Peer(2),
+                    ExecutionResource::Peer(2),
                     Representation::Ans,
                     4096,
                     2,
@@ -47,7 +53,7 @@ fn selection_requires_complete_compatible_fresh_evidence() {
                 candidates[0],
                 CostKey::new(
                     CostPath::LocalSsdHostReady,
-                    Resource::SsdStore(9),
+                    ExecutionResource::SsdStore(9),
                     Representation::Raw,
                     4096,
                     2,
@@ -102,14 +108,14 @@ fn selection_requires_gain_beyond_error_and_margin() {
 fn engine_ready_routes_require_the_same_destination_device() {
     let direct = CostKey::new(
         CostPath::GpuLoadDirect,
-        Resource::Gpu(7),
+        ExecutionResource::Gpu(7),
         Representation::Raw,
         4096,
         2,
     );
     let ssd = CostKey::new(
         CostPath::SsdUringRestore,
-        Resource::SsdRestore {
+        ExecutionResource::SsdRestore {
             device: 7,
             copy_backend: 0,
             stores: 11,
@@ -124,11 +130,51 @@ fn engine_ready_routes_require_the_same_destination_device() {
 
     let other_device = ssd.with_path_resource(
         CostPath::SsdUringRestore,
-        Resource::SsdRestore {
+        ExecutionResource::SsdRestore {
             device: 8,
             copy_backend: 0,
             stores: 11,
             has_memory: false,
+        },
+    );
+    assert_eq!(
+        choose(&[direct, other_device], &predictions, 0),
+        (0, "incomparable")
+    );
+}
+
+#[test]
+fn prefill_handoff_waits_for_a_matching_complete_direct_route() {
+    let direct = CostKey::new(
+        CostPath::GpuLoadDirect,
+        ExecutionResource::Gpu(7),
+        Representation::Raw,
+        4096,
+        2,
+    )
+    .with_wire_bytes(4096);
+    let handoff = CostKey::new(
+        CostPath::PrefillToDecodeHandoff,
+        ExecutionResource::PrefillToDecodeHandoff {
+            source_endpoint_hash: 11,
+            destination_device: 7,
+        },
+        Representation::Raw,
+        4096,
+        2,
+    )
+    .with_wire_bytes(4096);
+    let predictions = [Some(estimate(0.02, 0.0)), Some(estimate(0.01, 0.0))];
+    assert_eq!(
+        choose(&[direct, handoff], &predictions, 0),
+        (0, "incomparable")
+    );
+
+    let other_device = handoff.with_path_resource(
+        CostPath::PrefillToDecodeHandoff,
+        ExecutionResource::PrefillToDecodeHandoff {
+            source_endpoint_hash: 11,
+            destination_device: 8,
         },
     );
     assert_eq!(

@@ -19,7 +19,7 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
             Observation::new(
                 crate::cost::CostKey::new(
                     crate::cost::CostPath::GpuSsdLoad,
-                    crate::cost::Resource::Gpu(0),
+                    crate::cost::ExecutionResource::Gpu(0),
                     crate::cost::Representation::Raw,
                     0,
                     0,

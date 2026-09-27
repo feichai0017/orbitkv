@@ -3,7 +3,8 @@ use smallvec::SmallVec;
 
 use super::replica::ReplicaSet;
 use crate::cost::{
-    CostKey, CostPath, Resource, SelectionScope, resource_id, select_route, selection_enabled,
+    CostKey, CostPath, ExecutionResource, SelectionScope, resource_id, select_route,
+    selection_enabled,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +41,7 @@ impl FetchSegment {
     pub(crate) fn cost_key(&self) -> CostKey {
         CostKey::new(
             self.source.cost_path(),
-            Resource::Peer(resource_id(&self.owner)),
+            ExecutionResource::Peer(resource_id(&self.owner)),
             self.representation,
             self.stored_bytes.unwrap_or(0),
             self.records.len(),
@@ -126,7 +127,7 @@ impl<'a> FetchPlan<'a> {
         (choice.count == self.rows.len()).then(|| {
             CostKey::new(
                 self.source.cost_path(),
-                Resource::Peer(resource_id(choice.owner)),
+                ExecutionResource::Peer(resource_id(choice.owner)),
                 choice.representation,
                 choice.stored_bytes.unwrap_or(0),
                 choice.count,
@@ -169,7 +170,7 @@ impl<'a> FetchPlan<'a> {
                         self.shape_for_owner(start, count, owner)?;
                     Some(CostKey::new(
                         self.source.cost_path(),
-                        Resource::Peer(resource_id(owner)),
+                        ExecutionResource::Peer(resource_id(owner)),
                         representation.unwrap_or_default(),
                         stored_bytes.unwrap_or(0),
                         count,

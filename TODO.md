@@ -204,6 +204,15 @@ qualification remain open. See the
   request router and with concurrent destinations contending for one peer.
 - [ ] Integrate P/D completion/admission evidence separately from cache misses;
   qualify rank-common TP and stage-dependent PP plans as later topology gates.
+- [x] Add the first bounded authenticated P/D completion observation: vLLM's
+  decode-side TENT waiter reports its registered target device, hashed prefill
+  endpoint identity, nonzero notification generation, raw logical/wire bytes,
+  fragments and terminal outcome through `orbitkv-channel`. Train only
+  admitted completions; keep standalone P/D unchanged and do not enable route
+  selection.
+- [ ] Add the matching direct-to-decode completion boundary, live decode-page
+  and handoff-queue admission, TENT NIC pressure at decision time, and an
+  authoritative SGLang decode completion callback before comparing routes.
 
 ## M0 — framework-neutral foundation
 

@@ -219,7 +219,7 @@ fn peer_owner_selection_is_opt_in_and_uses_matching_complete_route_evidence() {
                 .unwrap();
             let key = crate::cost::CostKey::new(
                 crate::cost::CostPath::PeerDramHostReady,
-                crate::cost::Resource::Peer(crate::cost::resource_id(&location.owner)),
+                crate::cost::ExecutionResource::Peer(crate::cost::resource_id(&location.owner)),
                 ReplicaRepresentation::Raw,
                 8192,
                 2,

@@ -73,13 +73,15 @@ pipeline seals them. `Restore` submits
 the existing in-process GPU load, returns an operation ID, signals its session's
 eventfd at terminal completion, and is consumed through a follow-up poll. The native Python
 `CacheManagerClient` exposes `start_restore`/`poll_restore`, a notification fd,
-and `wait_restore`. Rust owns eventfd waiting and the 50 ms lost-notification
+`wait_restore`, and bounded P/D completion observations. Rust owns eventfd
+waiting and the 50 ms lost-notification
 fallback. A handle is bound to the issuing client, including clients connected
 to the same Manager epoch. A timeout leaves its GPU ownership unresolved.
 Both adapters use these operations through their same-host Cache Manager; KV
 payload bytes do not travel through the descriptor arena. The adapter exposes
 one cache API:
-scheduler Query/Release and worker Publish/Restore use the process channel.
+scheduler Query/Release and worker Publish/Restore/ObserveCompletion use the
+process channel.
 Lifecycle calls use the
 persistent bootstrap UDS. Restore completion uses the session eventfd with bounded fallback
 polling.
@@ -92,9 +94,12 @@ scheduler topology this requires all configured TP shards to be on the scheduler
 host. Cross-host TP sharding needs a future node-local query fan-out path.
 `orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
 the dispatcher for resident hits; any pending future continues on Tokio and
-returns `Loading`. Channel ABI 5 separates query submission from ticket polling.
-Query schema 5 distinguishes metadata-only discovery from leased payload reads
-and marks selected recovery reads so HLL counts the logical discovery only once.
+returns `Loading`. Channel ABI 6 separates query submission from ticket polling
+and adds authenticated completion observations without changing the fixed
+64-byte control frame.
+Cache protocol schema 6 distinguishes metadata-only discovery from leased
+payload reads and marks selected recovery reads so HLL counts the logical
+discovery only once.
 Discovery returns `Candidates`, never a restore lease, and uses bounded query
 operation capacity without reserving payload bytes. `read_recovery` translates
 compiled demand into exact hash views and validates complete leased coverage.
