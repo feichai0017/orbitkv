@@ -101,6 +101,15 @@ def test_install_rejects_invalid_toggle(monkeypatch):
         install_sglang_tent_backend()
 
 
+def test_install_rejects_unavailable_peer_probe(monkeypatch):
+    _install_modules(monkeypatch)
+    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "1")
+    monkeypatch.setenv("SGLANG_ENABLE_FAILED_SESSION_PROBE", "1")
+
+    with pytest.raises(RuntimeError, match="stable TENT peer-liveness ABI"):
+        install_sglang_tent_backend()
+
+
 def test_adapter_uses_rust_tent_for_registration_and_batches(monkeypatch):
     _install_modules(monkeypatch)
     monkeypatch.setenv("ORBITKV_SGLANG_TENT_TIMEOUT_S", "12.5")

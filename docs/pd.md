@@ -85,8 +85,9 @@ SGLang's per-GPU mapping and supplies it as TENT's NIC filter. A transfer
 timeout defaults to 30 seconds and can be changed with
 `ORBITKV_SGLANG_TENT_TIMEOUT_S`. SGLang's optional failed-session background
 probe must remain disabled for this revision (it is disabled by default): the
-current TENT C ABI does not expose its peer-liveness probe. Ordinary transfer
-failure, cancellation and room teardown are supported and fail closed.
+current TENT C ABI does not expose its peer-liveness probe, and OrbitKV rejects
+startup if `SGLANG_ENABLE_FAILED_SESSION_PROBE=1`. Ordinary transfer failure,
+cancellation and room teardown are supported and fail closed.
 
 The external two-GPU correctness gate is:
 

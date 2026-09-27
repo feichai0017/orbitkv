@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 _ENABLE_ENV = "ORBITKV_SGLANG_TENT"
 _TIMEOUT_ENV = "ORBITKV_SGLANG_TENT_TIMEOUT_S"
+_UPSTREAM_PROBE_ENV = "SGLANG_ENABLE_FAILED_SESSION_PROBE"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
@@ -123,6 +124,11 @@ def install_sglang_tent_backend() -> bool:
 
     if not _enabled(_ENABLE_ENV):
         return False
+    if _enabled(_UPSTREAM_PROBE_ENV):
+        raise RuntimeError(
+            "SGLang failed-session probing requires a stable TENT peer-liveness ABI; "
+            f"unset {_UPSTREAM_PROBE_ENV}"
+        )
 
     from sglang.srt.distributed.device_communicators import (
         mooncake_transfer_engine as engine_module,

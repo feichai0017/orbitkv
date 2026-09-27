@@ -314,6 +314,13 @@ selection explicit. Because the current C ABI has no per-batch transport
 receipt, RDMA or GPUDirect must still be proven with runtime logs and hardware
 counters rather than inferred from a successful call.
 
+TENT implements a real peer probe internally, but the pinned stable C ABI does
+not export it. `tent_available` reports only local-engine health, and segment
+metadata can remain thread-locally cached for an hour, so neither is a valid
+substitute. OrbitKV therefore rejects SGLang's optional failed-session probe
+mode instead of allowing a false-positive unblacklist. Ordinary failed batches
+still cancel, drain and invalidate their cached peer segment.
+
 OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
 the cache engine handles versioned model/storage keys and leases above Mooncake.
 The common recovery plan additionally includes:
