@@ -38,9 +38,9 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     """Factory selected by SGLang's ``--radix-cache-backend orbitkv``."""
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
+    from sglang.srt.runtime_context import get_disagg, get_memory
 
-    from .linker import OrbitKVLinker
-    from .recovery import RecoveryLinkerWrapper, RecurrentComponent
+    from .pd import validate_pd_cache_transport
 
     if ctx.disable_radix_cache:
         raise ValueError("OrbitKV direct GPU linker requires RadixCache")
@@ -57,8 +57,11 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
             "OrbitKV direct GPU linker cannot restore DSA, draft, or auxiliary GPU state; "
             "select a backend with a complete recovery contract for that model"
         )
-    from sglang.srt.runtime_context import get_disagg, get_memory
-
+    disaggregation = get_disagg()
+    validate_pd_cache_transport(
+        disaggregation.disaggregation_mode,
+        disaggregation.disaggregation_transfer_backend,
+    )
     if not get_memory().enable_unified_cache_external_linker:
         raise ValueError(
             "OrbitKV direct GPU linker requires --enable-unified-cache-external-linker "
@@ -66,6 +69,9 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
         )
     if get_disagg().disaggregation_decode_retraction_backup == "host_pool":
         raise ValueError("OrbitKV direct GPU linker does not support host-pool retraction")
+
+    from .linker import OrbitKVLinker
+    from .recovery import RecoveryLinkerWrapper, RecurrentComponent
 
     # SGLang's built-in unified-cache factory hardcodes Mooncake/Mori when the
     # external-linker flag is set. Construct its public RadixCache component

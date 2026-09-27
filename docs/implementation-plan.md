@@ -1013,6 +1013,22 @@ five Transfer tests including a real TENT TCP batch/notification roundtrip, and
 The CUDA build links TENT's CUDA runtime, cuFile and GPU-capable transports, but
 actual H20 RDMA/GPUDirect execution remains an external qualification cell.
 
+The pinned SGLang `0.5.20` integration now reuses SGLang's bootstrap-room,
+rank-mapping, destination-page and request-completion state machine while
+installing OrbitKV's Rust TENT wrapper as its payload engine. The adapter is
+explicitly enabled with `ORBITKV_SGLANG_TENT=1`; selecting OrbitKV's radix
+backend in P/D mode rejects NIXL and an unmodified legacy Mooncake engine. The
+stable TENT C ABI still lacks its internal peer-liveness operation, so the
+optional SGLang failed-session probe is rejected rather than approximated with
+local availability or cached segment metadata.
+
+The first P/D-plus-cache gate attaches both SGLang workers to one Cache Manager,
+lets prefill restore before handoff, enables decode radix publication, restarts
+both workers, and requires a continuation to reuse state past the last boundary
+the original prefill could have published. The test and ownership contract are
+implemented; its two-GPU forced-TCP run and two-host RDMA/GPUDirect follow-up
+remain external H20 evidence.
+
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
 the pinned Mooncake native library is built with CUDA disabled. This is a build

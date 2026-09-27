@@ -14,12 +14,13 @@ import pytest
 import requests
 
 from tests.support.cache_manager import find_available_port
+from tests.support.metrics import fetch_orbitkv_metrics
 from tests.support.paths import PYTHON_ROOT
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
 
 
-def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
+def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
     pytest.importorskip("sglang")
     torch = pytest.importorskip("torch")
     if torch.cuda.device_count() < 2:
@@ -28,6 +29,7 @@ def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
     model = Path(request.config.getoption("--model"))
     if not model.exists():
         pytest.skip("pass --model with a local model path")
+    channel_server = request.getfixturevalue("channel_server")
 
     plugin_dir = tmp_path / "orbitkv_source_plugin-0.0.dist-info"
     plugin_dir.mkdir()
@@ -41,12 +43,10 @@ def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
         [str(PYTHON_ROOT), str(tmp_path), env.get("PYTHONPATH", "")]
     )
     env["ORBITKV_SGLANG_TENT"] = "1"
+    env["ORBITKV_SGLANG_ENDPOINT"] = f"unix://{channel_server.bootstrap_socket}"
+    env["ORBITKV_TRANSFER_BACKEND"] = request.config.getoption("--orbitkv-transfer-backend")
     env["MC_FORCE_TCP"] = "1"
 
-    prefill_port = find_available_port()
-    decode_port = find_available_port()
-    router_port = find_available_port()
-    bootstrap_port = find_available_port()
     logs = {
         "prefill": tmp_path / "sglang-pd-prefill.log",
         "decode": tmp_path / "sglang-pd-decode.log",
@@ -75,6 +75,9 @@ def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
         "--random-seed",
         "42",
         "--enable-deterministic-inference",
+        "--page-size",
+        "64",
+        "--enable-cache-report",
     ]
 
     def launch(
@@ -82,7 +85,7 @@ def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
         command: list[str],
         launch_env: dict[str, str] | None = None,
     ):
-        log_file = logs[name].open("w")
+        log_file = logs[name].open("a")
         try:
             process = subprocess.Popen(
                 command,
@@ -121,20 +124,19 @@ def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
                     os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
 
-    payload = {
-        "text": (
-            "A deterministic prefill/decode cache transfer must preserve every attention "
-            "state byte before decode begins. Explain the invariant in one sentence."
-        ),
-        "sampling_params": {"temperature": 0, "max_new_tokens": 16},
-    }
-
-    try:
+    def start_pd() -> int:
+        prefill_port = find_available_port()
+        decode_port = find_available_port()
+        router_port = find_available_port()
+        bootstrap_port = find_available_port()
         pd_args = [
             "--disaggregation-transfer-backend",
             "mooncake",
             "--disaggregation-bootstrap-port",
             str(bootstrap_port),
+            "--radix-cache-backend",
+            "orbitkv",
+            "--enable-unified-cache-external-linker",
         ]
         prefill = launch(
             "prefill",
@@ -163,6 +165,7 @@ def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
                 "1",
                 "--disaggregation-mode",
                 "decode",
+                "--disaggregation-decode-enable-radix-cache",
             ]
             + pd_args,
         )
@@ -188,16 +191,79 @@ def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
             ],
         )
         wait_ready("router", router, router_port)
-        pd_response = requests.post(
-            f"http://127.0.0.1:{router_port}/generate",
+        return router_port
+
+    def request_generation(port: int, payload: dict) -> dict:
+        response = requests.post(
+            f"http://127.0.0.1:{port}/generate",
             json=payload,
             timeout=180,
         )
-        pd_response.raise_for_status()
-        pd_text = pd_response.json()["text"]
+        response.raise_for_status()
+        return response.json()
+
+    def wait_for_saved_bytes(previous: float) -> None:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            current = fetch_orbitkv_metrics(channel_server.http_port).get(
+                "orbitkv_save_bytes_total", 0
+            )
+            if current > previous:
+                return
+            time.sleep(0.2)
+        pytest.fail(
+            "P/D workers did not publish cache state:\n" + channel_server.read_logs()[-8000:]
+        )
+
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True, trust_remote_code=True)
+    fragment = tokenizer.encode("A TENT P/D cache composition correctness sequence. ")
+    prompt_tokens = (fragment * (513 // len(fragment) + 1))[:513]
+    first_payload = {
+        "input_ids": prompt_tokens,
+        "sampling_params": {
+            "temperature": 0,
+            "max_new_tokens": 64,
+            "ignore_eos": True,
+        },
+    }
+
+    try:
+        save_before = fetch_orbitkv_metrics(channel_server.http_port).get(
+            "orbitkv_save_bytes_total", 0
+        )
+        router_port = start_pd()
+        first = request_generation(router_port, first_payload)
+        output_ids = first["output_ids"]
+        assert len(output_ids) == 64
+        wait_for_saved_bytes(save_before)
 
         for name in ("prefill", "decode"):
             assert "OrbitKV installed the Rust TENT payload engine" in logs[name].read_text()
+        stop_all()
+
+        before_restart = fetch_orbitkv_metrics(channel_server.http_port)
+        follow_tokens = (
+            prompt_tokens
+            + output_ids
+            + tokenizer.encode(" Continue with one more fact.", add_special_tokens=False)
+        )
+        prompt_boundary = ((len(prompt_tokens) - 1) // 64) * 64
+        decode_boundary = ((len(prompt_tokens) + len(output_ids) - 1) // 64) * 64
+        assert decode_boundary > prompt_boundary
+        follow_payload = {
+            "input_ids": follow_tokens,
+            "sampling_params": {"temperature": 0, "max_new_tokens": 8, "ignore_eos": True},
+        }
+
+        router_port = start_pd()
+        follow = request_generation(router_port, follow_payload)
+        assert follow["meta_info"]["cached_tokens"] >= decode_boundary, follow
+        after_restart = fetch_orbitkv_metrics(channel_server.http_port)
+        assert after_restart.get("orbitkv_load_bytes_total", 0) > before_restart.get(
+            "orbitkv_load_bytes_total", 0
+        )
         stop_all()
 
         monolithic_port = find_available_port()
@@ -217,12 +283,11 @@ def test_sglang_pd_tent_matches_monolithic(request, tmp_path):
             monolithic_env,
         )
         wait_ready("monolithic", monolithic, monolithic_port)
-        control_response = requests.post(
-            f"http://127.0.0.1:{monolithic_port}/generate",
-            json=payload,
-            timeout=180,
-        )
-        control_response.raise_for_status()
-        assert pd_text == control_response.json()["text"]
+        control_first = request_generation(monolithic_port, first_payload)
+        control_follow = request_generation(monolithic_port, follow_payload)
+        assert first["output_ids"] == control_first["output_ids"]
+        assert first["text"] == control_first["text"]
+        assert follow["output_ids"] == control_follow["output_ids"]
+        assert follow["text"] == control_follow["text"]
     finally:
         stop_all()

@@ -238,6 +238,9 @@ qualification remain open. See the
 - [x] Bind SGLang 0.5.20's native P/D room and page-grant lifecycle to the
   shared Rust TENT registration/completion owner without copying its state
   machine into Python.
+- [x] Define the first SGLang P/D plus external-cache composition: matching P/D
+  workers share one namespace, P restores before handoff, and D publishes a
+  longer completed prefix for a later P request; add a restart E2E gate.
 - [ ] Qualify SGLang P/D on two external H20 GPUs with forced TCP, then on two
   hosts with RDMA counters; cover abort, worker restart and partial failure.
 - [ ] Expose TENT peer-liveness probing through its stable C ABI before enabling

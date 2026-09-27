@@ -122,7 +122,7 @@ class SGLangTentTransferEngine:
 def install_sglang_tent_backend() -> bool:
     """Install the adapter before SGLang initializes its shared engine."""
 
-    if not _enabled(_ENABLE_ENV):
+    if not sglang_tent_enabled():
         return False
     if _enabled(_UPSTREAM_PROBE_ENV):
         raise RuntimeError(
@@ -145,6 +145,24 @@ def install_sglang_tent_backend() -> bool:
         "SGLang retains bootstrap and request-state ownership"
     )
     return True
+
+
+def validate_pd_cache_transport(disaggregation_mode: str, transfer_backend: str) -> None:
+    """Require the project-wide TENT payload policy for composed P/D caching."""
+
+    if disaggregation_mode not in {"prefill", "decode"}:
+        return
+    if transfer_backend != "mooncake":
+        raise ValueError(
+            "OrbitKV SGLang P/D cache composition requires "
+            "--disaggregation-transfer-backend mooncake"
+        )
+    if not sglang_tent_enabled():
+        raise ValueError("OrbitKV SGLang P/D cache composition requires ORBITKV_SGLANG_TENT=1")
+
+
+def sglang_tent_enabled() -> bool:
+    return _enabled(_ENABLE_ENV)
 
 
 def _enabled(name: str) -> bool:

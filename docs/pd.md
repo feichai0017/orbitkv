@@ -98,9 +98,38 @@ cd python
 ```
 
 It compares greedy P/D output with a monolithic SGLang control and asserts that
-both P and D processes installed OrbitKV's Rust/TENT engine. Run forced TCP
-first, then repeat the deployment on two hosts with RDMA and external NIC
-counters before claiming GPUDirect.
+both P and D processes installed OrbitKV's Rust/TENT engine. The gate also
+starts a Cache Manager and enables the OrbitKV external linker on both workers.
+After a P/D restart, a continuation must recover past the last page boundary
+that the original prefill alone could publish, proving that decode-produced
+state was published and reused by the next prefill. Cache Manager load bytes
+must increase. Run forced TCP first, then repeat the deployment on two hosts
+with RDMA and external NIC counters before claiming GPUDirect.
+
+To compose P/D with the external cache manually, point both workers at the same
+node-local Manager and add these flags to both server commands:
+
+```bash
+export ORBITKV_SGLANG_ENDPOINT=unix:///run/orbitkv/orbitkv.sock
+
+--radix-cache-backend orbitkv \
+--enable-unified-cache-external-linker
+```
+
+The decode worker additionally needs
+`--disaggregation-decode-enable-radix-cache`. OrbitKV rejects a composed P/D
+configuration unless its live-transfer backend is the SGLang `mooncake` route
+with `ORBITKV_SGLANG_TENT=1`; this prevents a deployment from silently sending
+the live request through NIXL or the legacy Python Transfer Engine. P and D
+share cache bytes only when their model, computation, TP/PP/CP and physical
+layout identities match.
+
+This first composition keeps the planner boundaries explicit. An external hit
+is restored into prefill HBM, SGLang computes any missing suffix and hands the
+request to decode through TENT, and completed decode state can be published for
+a later prefill. It does not yet let one cost decision choose between restoring
+directly into decode HBM and routing through prefill; that requires comparable
+completion targets and resource-admission evidence on both alternatives.
 
 Neither OrbitKV's P/D paths nor the current Catalog provides production KV-aware
 request routing. Production qualification still needs real multi-GPU and

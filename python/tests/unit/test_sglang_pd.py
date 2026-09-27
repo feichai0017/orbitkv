@@ -3,7 +3,22 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from orbitkv.sglang.pd import SGLangTentTransferEngine, install_sglang_tent_backend
+from orbitkv.sglang.pd import (
+    SGLangTentTransferEngine,
+    install_sglang_tent_backend,
+    validate_pd_cache_transport,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_sglang_pd_environment(monkeypatch):
+    for name in (
+        "MC_FORCE_TCP",
+        "ORBITKV_SGLANG_TENT",
+        "ORBITKV_SGLANG_TENT_TIMEOUT_S",
+        "SGLANG_ENABLE_FAILED_SESSION_PROBE",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 class _NativeTent:
@@ -108,6 +123,21 @@ def test_install_rejects_unavailable_peer_probe(monkeypatch):
 
     with pytest.raises(RuntimeError, match="stable TENT peer-liveness ABI"):
         install_sglang_tent_backend()
+
+
+def test_cache_composition_requires_tent_mooncake(monkeypatch):
+    monkeypatch.delenv("ORBITKV_SGLANG_TENT", raising=False)
+    validate_pd_cache_transport("null", "nixl")
+
+    with pytest.raises(ValueError, match="ORBITKV_SGLANG_TENT=1"):
+        validate_pd_cache_transport("prefill", "mooncake")
+
+    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "1")
+    with pytest.raises(ValueError, match="disaggregation-transfer-backend mooncake"):
+        validate_pd_cache_transport("decode", "nixl")
+
+    validate_pd_cache_transport("prefill", "mooncake")
+    validate_pd_cache_transport("decode", "mooncake")
 
 
 def test_adapter_uses_rust_tent_for_registration_and_batches(monkeypatch):

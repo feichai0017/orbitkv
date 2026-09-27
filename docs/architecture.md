@@ -355,6 +355,16 @@ failure to SGLang's room owner. The SGLang CLI still spells the backend
 only `libtent_shared.so`. See [P/D transfer](pd.md) for operation and current
 qualification limits.
 
+The first P/D-plus-cache composition uses the existing owners rather than a
+new coordinator. Both workers may attach the OrbitKV external linker to the
+same Cache Manager namespace; decode additionally enables SGLang's radix cache.
+After exact identity/layout validation, prefill restores a reusable prefix,
+SGLang sends the live request state to decode through TENT, and decode can
+publish its longer completed prefix for a later prefill request. OrbitKV rejects
+this composition if the live P/D backend is not its TENT adapter. Direct-to-D
+restore versus P-restore-plus-handoff is not yet one comparable cost-model
+choice and remains a later planning step.
+
 ### Future: Radix lifecycle bridge for routing
 
 Publish prefix materialization, match, release, promotion, demotion, and removal
