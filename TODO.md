@@ -77,6 +77,10 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
 - [ ] Complete consumed endpoint descriptors for owner/resource identity,
   representation and bytes; bind actual TE transport capability to GPU routes
   without treating GPUDirect RDMA as a tier or assuming peer HBM authorization.
+- [x] Make Mooncake memory registration an RAII token that retains the
+  `TransferEngine` and unregisters before its backing owner is released. Migrate
+  the pinned pool to these tokens; future HBM grants must pair the token with an
+  engine page owner and `cuda:N` location.
 - [x] Carry versioned replica medium, representation family and known stored
   bytes through owner inventory, Catalog storage and bounded discovery rows.
   Populate current DRAM evidence, feed peer authorization cost shape, and keep

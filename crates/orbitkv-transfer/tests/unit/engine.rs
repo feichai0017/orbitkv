@@ -5,17 +5,20 @@ fn tcp_loopback_moves_bytes_through_upstream_mooncake() {
     unsafe {
         libc::setenv(c"MC_FORCE_TCP".as_ptr(), c"1".as_ptr(), 1);
     }
-    let engine = TransferEngine::new("P2PHANDSHAKE", "127.0.0.1:0", "127.0.0.1", 0, &[])
-        .expect("create Mooncake Transfer Engine");
+    let engine = Arc::new(
+        TransferEngine::new("P2PHANDSHAKE", "127.0.0.1:0", "127.0.0.1", 0, &[])
+            .expect("create Mooncake Transfer Engine"),
+    );
     let segment = engine.local_segment_name().expect("local segment");
     let mut memory = vec![0u8; 8192];
     memory[..4096].fill(0xa5);
     let base = NonNull::new(memory.as_mut_ptr()).expect("memory pointer");
-    unsafe {
+    let registration = unsafe {
         engine
-            .register_memory(base, memory.len(), "cpu:0")
-            .expect("register memory");
-    }
+            .register_memory_owned(base, memory.len(), "cpu:0")
+            .expect("register memory")
+    };
+    assert_eq!(registration.address(), base);
     let destination = unsafe { base.byte_add(4096) };
     engine
         .submit_and_notify(
@@ -46,8 +49,15 @@ fn tcp_loopback_moves_bytes_through_upstream_mooncake() {
         assert!(Instant::now() < deadline, "notification timed out");
         std::thread::yield_now();
     }
+    registration.unregister().expect("unregister memory");
+    let registration = unsafe {
+        engine
+            .register_memory_owned(base, memory.len(), "cpu:0")
+            .expect("register memory again")
+    };
+    drop(engine);
+    drop(registration);
     unsafe {
-        engine.unregister_memory(base).expect("unregister memory");
         libc::unsetenv(c"MC_FORCE_TCP".as_ptr());
     }
 }

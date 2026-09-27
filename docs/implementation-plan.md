@@ -981,6 +981,22 @@ checks both nodes' extent/session/query/completion counters drain. Run it on the
 container-external H20 deployment first with forced TCP and then with the actual
 RDMA rails; those runtime results are not produced by this container.
 
+The Mooncake registration-lifetime increment adds an RAII
+`MemoryRegistration` in `orbitkv-transfer`. A token retains its TransferEngine,
+supports explicit unregister, retries best-effort unregister on drop after an
+error, and cannot be silently orphaned by dropping another engine handle. Core's
+pinned-pool registrations now use these tokens and clear them before releasing
+the backing pool. This is the registration half of a future HBM grant; the GPU
+allocation/page generation must still be retained separately by the engine
+completion owner. Mooncake uses `cuda:N` for GPU locations and remains the only
+remote payload transport.
+
+Strict Transfer/Core/Server Clippy passed with the staged CPU-Mooncake runtime.
+All four `orbitkv-transfer` tests passed, including real TCP loopback, explicit
+unregister, re-registration, dropping the original engine handle before the
+token, notifications and uncertain batch drain. GPU registration remains an
+external H20 gate rather than a CPU-runtime claim.
+
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
 the pinned Mooncake native library is built with CUDA disabled. This is a build

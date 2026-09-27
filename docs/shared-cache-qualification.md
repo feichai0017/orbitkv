@@ -128,6 +128,13 @@ evidence, the same
 output/byte/drain checks, and a matched fixed-route control. Do not carry the
 third flag into ordinary serving until both engines pass TCP and RDMA cells.
 
+For the later GPU-memory gate, register each granted region with the exact
+Mooncake `cuda:N` location and keep the engine page-generation owner beside the
+registration token until completion. Exercise explicit unregister, cancellation,
+engine-handle release and instance teardown. Do not treat successful host-memory
+RDMA or a configured `--nics` value as GPUDirect evidence; record GPU/NIC counters
+from the external H20 hosts.
+
 ## Restart and ownership gates
 
 The repository's model-serving test starts etcd, two Managers and two replicas

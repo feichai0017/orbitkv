@@ -263,6 +263,16 @@ Mooncake C ABI. There is no runtime backend selector and no OrbitKV-owned verbs
 implementation. Authorized plans are lowered directly to Mooncake Segment
 addresses, BatchTransfer operations, and notifications.
 
+Memory registration returns an RAII `MemoryRegistration`. The token retains the
+TransferEngine and unregisters its region on explicit completion or drop. It
+does not own the allocation itself: the current host pool remains beside the
+tokens in `MooncakeTransport` and is released only after registrations clear.
+A future engine-HBM export must similarly keep its page-generation grant beside
+the token, using Mooncake's `cuda:N` location, until native completion drains.
+The current C ABI does not report the data transport actually selected for a
+batch, so OrbitKV does not infer TCP/RDMA/GPUDirect from `--nics` or success;
+qualification records Mooncake logs and NIC/device counters externally.
+
 OrbitKV does not adopt Mooncake Store Master as its semantic authority. Today
 the cache engine handles versioned model/storage keys and leases above Mooncake.
 The common recovery plan additionally includes:

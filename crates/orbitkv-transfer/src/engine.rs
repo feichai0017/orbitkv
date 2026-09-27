@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString, OsString, c_char, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::ptr::NonNull;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use orbitkv_mooncake_sys as native;
@@ -24,6 +24,41 @@ static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
 pub struct TransferEngine {
     native: native::NativeEngine,
     segments: Mutex<HashMap<String, native::SegmentId>>,
+}
+
+/// Owns one Mooncake memory registration. The caller must retain the actual
+/// CPU/GPU allocation separately until this token is dropped or unregistered.
+pub struct MemoryRegistration {
+    engine: Arc<TransferEngine>,
+    address: NonNull<u8>,
+    active: bool,
+}
+
+// SAFETY: The token never dereferences the address. Its owner guarantees the
+// registered allocation remains valid, and TransferEngine serializes native state.
+unsafe impl Send for MemoryRegistration {}
+unsafe impl Sync for MemoryRegistration {}
+
+impl MemoryRegistration {
+    pub fn address(&self) -> NonNull<u8> {
+        self.address
+    }
+
+    pub fn unregister(mut self) -> Result<()> {
+        let result = unsafe { self.engine.unregister_memory(self.address) };
+        if result.is_ok() {
+            self.active = false;
+        }
+        result
+    }
+}
+
+impl Drop for MemoryRegistration {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = unsafe { self.engine.unregister_memory(self.address) };
+        }
+    }
 }
 
 unsafe impl Send for TransferEngine {}
@@ -99,6 +134,27 @@ impl TransferEngine {
                 length,
                 location.as_ptr(),
             )
+        })
+    }
+
+    /// Register memory and return a token that unregisters it on drop.
+    ///
+    /// # Safety
+    ///
+    /// The allocation must outlive the returned token and every submitted
+    /// transfer using it. `location` must describe the actual memory domain,
+    /// for example `cpu:0` or `cuda:0`.
+    pub unsafe fn register_memory_owned(
+        self: &Arc<Self>,
+        address: NonNull<u8>,
+        length: usize,
+        location: &str,
+    ) -> Result<MemoryRegistration> {
+        unsafe { self.register_memory(address, length, location)? };
+        Ok(MemoryRegistration {
+            engine: Arc::clone(self),
+            address,
+            active: true,
         })
     }
 

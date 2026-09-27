@@ -148,6 +148,10 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 independent access routes; peer transport is not a storage medium. `PeerExports`
 checks live owner/version evidence and holds source memory until completion.
 The Mooncake registration owner retains its pinned pool through unregister.
+Each registered region is represented by an RAII token that also retains the
+TransferEngine; Core clears these tokens before releasing the pinned-pool
+backing. A future GPU-region token does not by itself own engine HBM: it must be
+bundled with the engine's generation-fenced page grant through completion.
 Cost observations and shadow comparisons remain opt-in; shadow results never
 select execution. A second opt-in may choose among equal-coverage owners of one
 peer medium using complete HostReady evidence, while broader cross-route choice
