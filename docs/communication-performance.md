@@ -120,9 +120,11 @@ Workspace reproduction uses `/workspace/.orbitkv-tools/run-compact-restore-final
 and `/workspace/.orbitkv-tools/summarize-compact-restore-final.py` with the named
 frozen bundles and the CUDA environment described below. The next measurements
 should isolate small-operation queue handoff and fragmented-plan costs before
-changing execution overlap. Pinned vLLM/SGLang serving environments and models
-remain unavailable here; these results do not prove TTFT/ITL gains or superiority
-to an engine's resident GPU KV cache.
+changing execution overlap. Pinned serving environments were unavailable during
+these microbenchmarks. The subsequent
+[Qwen3-8B serving qualification](single-node-performance.md#engine-local-restore-serving-qualification)
+uses the same production artifacts. These microbenchmarks themselves do not
+prove TTFT/ITL gains or superiority to an engine's resident GPU KV cache.
 
 ## Engine-local raw Restore: functional cutover, measured latency regression
 

@@ -31,9 +31,11 @@ retain Manager workers and CUDA IPC tensor bindings.
   runtime; SGLang retains its native handoff control plane.
 
 Pinned engine releases: **vLLM 0.29.0** and **SGLang 0.5.20**. The new
-[engine-local Restore path](../docs/engine-local-restore.md) has separate serving,
-process-death, multiple-GPU, and huge-page qualification gates; earlier engine
-results do not qualify this execution cutover. See
+[engine-local Restore path](../docs/engine-local-restore.md) passes single-H20
+Qwen3-8B DRAM correctness and engine-restart reuse in both pinned engines.
+The [current vLLM end-to-end results](../docs/single-node-performance.md#matched-vllm-end-to-end-comparison)
+compare native HBM, native CPU offload, OrbitKV and LMCache MP. Multiple-GPU,
+huge-page and broader serving qualification remain separate. See
 [the measured Restore improvements and remaining overhead](../docs/communication-performance.md),
 [model qualification](https://feichai0017.github.io/orbitkv/docs/models/)
 and [deployment support](https://feichai0017.github.io/orbitkv/docs/deployment/).

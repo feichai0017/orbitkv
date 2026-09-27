@@ -485,13 +485,23 @@ process clocks is used, and overlapping intervals must not be added to obtain TT
 ```bash
 python -m benches.report \
   benches/results/runs/<cpu-run> benches/results/runs/<orbitkv-run> \
+  benches/results/runs/<lmcache-run> \
+  --reference-run benches/results/runs/<native-run> \
   --output benches/results/runs/<report-name>
 ```
 
 This needs only `requests`, not torch, either inference engine, or the native
 extension. It writes `summary.csv` and `summary.json` without mixing samples
 across runs. Incomplete workloads, duplicate samples, and failed runs are
-rejected. Copy reviewed exports into `results/` when publishing a measurement;
+rejected. `--reference-run` compares prompt hashes and generated text against
+an unencoded run, including a different cache backend. It requires the same
+workload, capacity arguments, model revision, GPU, launch CPU affinity, Python,
+engine, PyTorch and Transformers versions. Backend-only packages may differ. Missing samples and
+text differences remain explicit; exact text comparisons are diagnostic, not
+a replacement for deterministic correctness gates. Native HBM-only runs record
+zero configured host-cache bytes, while CPU/OrbitKV/LMCache runs record their
+configured host pools. Manifests also retain the launch CPU affinity.
+Copy reviewed exports into `results/` when publishing a measurement;
 keep raw logs and dataset downloads in the ignored `results/runs/` directory.
 
 ## Additional workloads and harness checks

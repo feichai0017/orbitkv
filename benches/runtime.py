@@ -221,10 +221,11 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
         ),
         "packages": {name: importlib.metadata.version(name) for name in packages},
         "python": sys.version,
+        "cpu_affinity": sorted(os.sched_getaffinity(0)),
         "kv_bytes_per_token": bytes_per_token,
         "capacity": {
             "engine_kv_bytes": args.gpu_tokens * bytes_per_token,
-            "host_pool_bytes": args.host_gib * 1024**3,
+            "host_pool_bytes": 0 if args.backend == "native" else args.host_gib * 1024**3,
             "ssd_bytes": args.ssd_gib * 1024**3,
             "codec_scratch_budget_bytes_per_worker": args.storage_codec_budget
             if args.backend == "orbitkv"

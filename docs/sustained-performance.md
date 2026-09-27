@@ -5,6 +5,63 @@ OrbitKV DRAM and OrbitKV SSD backing. This extends the
 [concurrent burst baseline](concurrent-performance.md) with ongoing arrivals
 and final drain checks. It also exposed and fixed a vLLM restore-admission stall.
 
+## Engine-local Restore fixed-cohort comparison
+
+The September 28, 2026 vLLM comparison uses the current engine-local Restore
+production artifacts and [matched runtime/capacity controls](single-node-performance.md#engine-local-restore-serving-qualification).
+This is a short, closed-loop cohort, separate from the historical 60-second
+measurements below. It does not establish sustainable maximum throughput.
+
+Each fresh backend prepares twelve alternating 1K/4K prefixes, a 30,720-token
+working set above the 16,384-token GPU cache capacity. Concurrency is four,
+outputs contain 16 tokens, and the fixed seed produces exactly **49 reuse and
+15 cold requests**. All four backends reach the 64-request cap before the
+60-second limit. Prompt hashes match for all 64 corresponding requests.
+Throughput includes completion of all admitted requests; preparation and the
+subsequent cache-idle check are excluded.
+
+| vLLM backend | Requests/s | Output tokens/s | TTFT p50 (ms) | Request E2E p50 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Native HBM only | 4.39 | 70.16 | 590.22 | 1,107.05 |
+| Native CPU offload | 10.26 | 164.19 | 73.26 | 272.93 |
+| OrbitKV DRAM, engine-local direct | 10.06 | 161.02 | 73.06 | 276.87 |
+| LMCache MP DRAM | 9.61 | 153.70 | 149.51 | 320.23 |
+
+OrbitKV's observed throughput is **2.29× native HBM**, **1.9% below native CPU
+offload**, and **4.8% above LMCache MP**. The external caches have an additional
+16 GiB host pool; HBM-only has none. These numbers demonstrate avoided
+recomputation under constrained HBM, not a faster alternative to a resident
+GPU cache. One short cohort per backend does not establish a repeatable 4.8%
+advantage or an SLO-qualified goodput gain.
+
+OrbitKV records 11,871,977,472 restored bytes, with query/GPU ownership draining
+at the end. All 256 requests complete. Against native HBM, CPU/OrbitKV/LMCache
+have 3/5/4 exact-text differences; against CPU, OrbitKV/LMCache have 4/3.
+The workload's own prepared-prefix comparison reports 1/0/3/2 differences for
+native/CPU/OrbitKV/LMCache. These are retained diagnostics in a non-batch-invariant
+performance run, not proof of equal task quality or of a cache corruption cause.
+The separate deterministic serving gates cover their explicitly documented
+configurations; this cohort is not a new deterministic concurrent-output gate.
+
+Evidence shares the directory documented in the serial report. Accepted sustained
+attempts are native **1**, CPU **1**, OrbitKV **2**, LMCache **1**, all with no
+sampled Cargo/rustc activity. OrbitKV attempt 1 is excluded because build activity
+was observed during its process lifetime, including cleanup. Complete raw data
+and its audit remain available. No latency outliers were removed from accepted
+cohorts.
+
+Use the serial reproduction loop with distinct output directories and replace
+its workload options with:
+
+```bash
+--workload sustained --lengths 1024 4096 --concurrencies 4 \
+  --duration-seconds 60 --max-requests 64 --working-set 12 --reuse-ratio 0.75
+```
+
+Keep the same GPU/host/prefill capacities, output length, seed, CPU affinity and
+OrbitKV direct backend. Run `benches.report --reference-run` against the native
+sustained directory to verify full request pairing.
+
 ## Workload and controls
 
 Measured on 2026-09-21 with Qwen3-8B revision

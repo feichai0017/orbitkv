@@ -94,6 +94,14 @@ multiple-GPU, huge-page, prolonged allocator-pressure, and graph replay gates
 remain separate from these single-GPU process tests. See
 [engine-local qualification](engine-local-restore.md#qualification-gates).
 
+The matching production bundle subsequently passed Qwen3-8B DRAM serving
+correctness on H20: vLLM **6 passed / 1 skipped** (the skipped recurrent-state
+case does not apply to this dense model), and SGLang **1 passed / 1 deselected**
+(DRAM selected, SSD excluded). Both exercise engine restart with a retained
+Manager. These are normal serving gates, not additional injected-fault tests;
+the [exact configuration](single-node-performance.md#engine-local-restore-serving-qualification)
+does not qualify arbitrary graph modes, hybrid models, or multiple GPUs.
+
 ## Reproduce
 
 Build before starting any native/GPU tests: Mooncake shared libraries are

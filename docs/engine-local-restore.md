@@ -22,9 +22,11 @@ bundle passed **38 tests**, with **30 cuFile cases skipped** because that
 configuration was not selected. This includes the new local Restore lifecycle
 cases; the caller CUDA-context preservation test also passed. See the
 [recorded artifacts and scoped results](fault-qualification.md#engine-local-raw-restore-gates).
-Serving, multiple-GPU, huge-page, sustained allocator-pressure, and graph replay
-qualification remain open. These correctness results do not establish a
-serving speedup.
+The same production build subsequently passed single-H20 Qwen3-8B DRAM serving
+correctness in vLLM 0.29.0 and SGLang 0.5.20, including engine-restart reuse.
+See the [serving configuration and evidence](single-node-performance.md#engine-local-restore-serving-qualification).
+Multiple-GPU, huge-page, sustained allocator-pressure, and exhaustive graph-mode
+qualification remain open. Correctness alone does not establish a serving speedup.
 
 ## Connected execution path
 
@@ -294,10 +296,12 @@ Use deterministic hooks to identify claim, accepted-copy, and drain states.
 The passed after-enqueue Manager-death case does not prove that hardware was
 still copying at the precise SIGKILL instant. The engine-death case proves
 quarantine after claim, not death during a proven in-flight copy. Serialization
-tests and normal exporter teardown cannot fill those gaps. Full serving,
-multiple-GPU, huge-page imports, sustained allocator pressure, and graph replay
-remain unverified for this cutover. Record further results against the exact
-binaries and configuration before broadening those claims.
+tests and normal exporter teardown cannot fill those gaps. Single-GPU dense
+Qwen3-8B DRAM serving and restart reuse now pass in both pinned engines;
+hybrid serving errors, every advertised graph mode, multiple GPUs, huge-page
+imports, and sustained allocator pressure remain outside that qualification.
+Record further results against exact binaries and configuration before
+broadening those claims.
 
 Measure preparation, queue delay, native submission, GPU drain, connector
 observation, first engine use, and source-retirement lag separately. Compare

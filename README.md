@@ -29,13 +29,15 @@ to its shared cache. Engines own GPU memory and scheduling; OrbitKV manages
 external replicas and transfers. See [deployment patterns](docs/deployment.md)
 for shared-instance budgets and container qualification limits.
 The pinned engine baselines are **vLLM 0.29.0** and **SGLang 0.5.20**.
-Earlier single-node GPU results precede the new
-[engine-local raw Restore cutover](docs/engine-local-restore.md), whose serving
-and deployment gates are tracked separately.
+The [engine-local raw Restore cutover](docs/engine-local-restore.md) passes
+single-H20 Qwen3-8B DRAM serving correctness and restart reuse in both engines.
+The [current vLLM end-to-end comparison](docs/single-node-performance.md#matched-vllm-end-to-end-comparison)
+shows gains over HBM-eviction recomputation, while native CPU offload remains
+faster. LMCache comparisons and their limits are recorded in the same report.
 The [matched communication measurements](docs/communication-performance.md)
 track the initial regression and the subsequent idle-stream/plan-compaction
-optimization. Dense transfers benefit; small-payload overhead and serving
-qualification remain open.
+optimization. Dense transfers benefit; small-payload overhead and broader
+serving/deployment qualification remain open.
 Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 
 ## Key features
