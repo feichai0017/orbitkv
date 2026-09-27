@@ -13,17 +13,12 @@ from vllm.distributed.kv_transfer.kv_connector.v1.metrics import (
     PromMetric,
     PromMetricT,
 )
+from vllm.v1.metrics.utils import create_metric_per_engine
 
 from orbitkv.vllm.metrics import build_buckets
 
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
-
-try:
-    from vllm.v1.metrics.utils import create_metric_per_engine
-except ImportError:
-    create_metric_per_engine = None
-
 
 PD_STATS_KEYS = {
     "pd_decode_active_waits": 0,
@@ -46,27 +41,10 @@ PD_LIST_KEYS = (
     "pd_load_blocks",
     "pd_prefill_push_duration",
     "pd_prefill_first_save_to_done_duration",
-    "pd_prefill_wait_for_pushes_duration",
     "pd_prefill_push_blocks",
     "pd_prefill_push_bytes",
     "pd_prefill_push_gbps",
 )
-
-
-def _bind_metric_per_engine(
-    prom_metrics: KVConnectorPromMetrics,
-    metric: PromMetric,
-) -> dict[int, PromMetric]:
-    bind_method = getattr(prom_metrics, "make_per_engine", None)
-    if callable(bind_method):
-        return bind_method(metric)
-    if create_metric_per_engine is None:
-        raise RuntimeError(
-            "Incompatible vLLM metrics API: missing both "
-            "KVConnectorPromMetrics.make_per_engine and "
-            "vllm.v1.metrics.utils.create_metric_per_engine"
-        )
-    return create_metric_per_engine(metric, prom_metrics.per_engine_labelvalues)
 
 
 @dataclass
@@ -167,7 +145,6 @@ class PdMetricsTracker:
         *,
         duration_s: float,
         first_save_to_done_s: float | None,
-        wait_for_pushes_s: float | None,
         blocks: int,
         bytes_total: int,
         success: bool,
@@ -185,8 +162,6 @@ class PdMetricsTracker:
                 data["pd_prefill_first_save_to_done_duration"].append(
                     max(0.0, first_save_to_done_s)
                 )
-            if wait_for_pushes_s is not None:
-                data["pd_prefill_wait_for_pushes_duration"].append(max(0.0, wait_for_pushes_s))
             if success:
                 data["pd_prefill_push_success_count"] += 1
             else:
@@ -242,37 +217,37 @@ class PdPromMetrics(KVConnectorPromMetrics):
     ) -> None:
         super().__init__(vllm_config, metric_types, labelnames, per_engine_labelvalues)
 
-        self.gauge_decode_active_waits = _bind_metric_per_engine(
-            self,
+        self.gauge_decode_active_waits = create_metric_per_engine(
             self._gauge_cls(
                 name="vllm:orbitkv_pd_decode_active_waits",
                 documentation="Number of active P/D decode-side KV waits.",
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.gauge_prefill_active_pushes = _bind_metric_per_engine(
-            self,
+        self.gauge_prefill_active_pushes = create_metric_per_engine(
             self._gauge_cls(
                 name="vllm:orbitkv_pd_prefill_active_pushes",
                 documentation="Number of active P/D prefill-side KV pushes.",
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.gauge_prefill_inflight_push_tasks = _bind_metric_per_engine(
-            self,
+        self.gauge_prefill_inflight_push_tasks = create_metric_per_engine(
             self._gauge_cls(
                 name="vllm:orbitkv_pd_prefill_inflight_push_tasks",
                 documentation="Number of in-flight P/D Mooncake push tasks.",
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.gauge_prefill_inflight_finalize_tasks = _bind_metric_per_engine(
-            self,
+        self.gauge_prefill_inflight_finalize_tasks = create_metric_per_engine(
             self._gauge_cls(
                 name="vllm:orbitkv_pd_prefill_inflight_finalize_tasks",
                 documentation="Number of in-flight P/D Mooncake push finalizer tasks.",
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
 
         duration_buckets = build_buckets([1, 2, 4, 8], 100, -3)
@@ -280,95 +255,86 @@ class PdPromMetrics(KVConnectorPromMetrics):
         byte_buckets = build_buckets([1, 2, 4, 8], 1 << 34, 10)
         gbps_buckets = build_buckets([1, 2, 4, 8], 1024, -1)
 
-        self.hist_decode_wait_duration = _bind_metric_per_engine(
-            self,
+        self.hist_decode_wait_duration = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_decode_wait_duration_seconds",
                 documentation="Duration from decode-side KV wait scheduling to completion.",
                 buckets=duration_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.hist_decode_transfer_wait_duration = _bind_metric_per_engine(
-            self,
+        self.hist_decode_transfer_wait_duration = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_decode_transfer_wait_duration_seconds",
                 documentation="Duration spent waiting for decode-side Mooncake done IMM.",
                 buckets=duration_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.hist_decode_prefill_http_submit_duration = _bind_metric_per_engine(
-            self,
+        self.hist_decode_prefill_http_submit_duration = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_decode_prefill_http_submit_duration_seconds",
                 documentation="Duration to submit the decode-to-prefill HTTP trigger.",
                 buckets=duration_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.hist_load_blocks = _bind_metric_per_engine(
-            self,
+        self.hist_load_blocks = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_load_blocks",
                 documentation="Blocks in each decode-side P/D KV load.",
                 buckets=block_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.hist_prefill_push_duration = _bind_metric_per_engine(
-            self,
+        self.hist_prefill_push_duration = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_prefill_push_duration_seconds",
                 documentation="Duration from prefill-side push scheduling to done IMM.",
                 buckets=duration_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.hist_prefill_first_save_to_done_duration = _bind_metric_per_engine(
-            self,
+        self.hist_prefill_first_save_to_done_duration = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_prefill_first_save_to_done_duration_seconds",
                 documentation="Duration from first prefill KV save layer to done IMM.",
                 buckets=duration_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.hist_prefill_wait_for_pushes_duration = _bind_metric_per_engine(
-            self,
-            self._histogram_cls(
-                name="vllm:orbitkv_pd_prefill_wait_for_pushes_duration_seconds",
-                documentation="Duration spent waiting for prefill-side Mooncake writes.",
-                buckets=duration_buckets,
-                labelnames=labelnames,
-            ),
-        )
-        self.hist_prefill_push_blocks = _bind_metric_per_engine(
-            self,
+        self.hist_prefill_push_blocks = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_prefill_push_blocks",
                 documentation="Blocks in each prefill-side P/D KV push.",
                 buckets=block_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.hist_prefill_push_bytes = _bind_metric_per_engine(
-            self,
+        self.hist_prefill_push_bytes = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_prefill_push_bytes",
                 documentation="Bytes in each prefill-side P/D KV push.",
                 buckets=byte_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
-        self.hist_prefill_push_gbps = _bind_metric_per_engine(
-            self,
+        self.hist_prefill_push_gbps = create_metric_per_engine(
             self._histogram_cls(
                 name="vllm:orbitkv_pd_prefill_push_gbps",
                 documentation="Effective prefill-side P/D KV push throughput in GB/s.",
                 buckets=gbps_buckets,
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
 
         self.counter_load_success = self._counter("vllm:orbitkv_pd_load_success_total", labelnames)
@@ -414,10 +380,6 @@ class PdPromMetrics(KVConnectorPromMetrics):
                 self.hist_prefill_first_save_to_done_duration,
                 "pd_prefill_first_save_to_done_duration",
             ),
-            (
-                self.hist_prefill_wait_for_pushes_duration,
-                "pd_prefill_wait_for_pushes_duration",
-            ),
             (self.hist_prefill_push_blocks, "pd_prefill_push_blocks"),
             (self.hist_prefill_push_bytes, "pd_prefill_push_bytes"),
             (self.hist_prefill_push_gbps, "pd_prefill_push_gbps"),
@@ -438,13 +400,13 @@ class PdPromMetrics(KVConnectorPromMetrics):
             self._inc_counter(engine_idx, metric, transfer_stats_data, key)
 
     def _counter(self, name: str, labelnames: list[str]) -> dict[int, PromMetric]:
-        return _bind_metric_per_engine(
-            self,
+        return create_metric_per_engine(
             self._counter_cls(
                 name=name,
                 documentation=name.replace("vllm:", "").replace("_", " "),
                 labelnames=labelnames,
             ),
+            self.per_engine_labelvalues,
         )
 
     @staticmethod

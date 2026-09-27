@@ -231,7 +231,7 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
     worker.register_kv_caches({"layer.0": tensor})
     submitted, completed, draining, retired = (threading.Event() for _ in range(4))
     errors = []
-    sender = worker._push_sender
+    sender = worker._prefill._push_sender
     original_write, original_wait = engine.write, sender.wait_req
 
     def blocked_write(*args, **kwargs):

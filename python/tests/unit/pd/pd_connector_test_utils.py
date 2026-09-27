@@ -26,7 +26,6 @@ import orbitkv.vllm.pd.prefill as prefill_mod  # noqa: E402
 import orbitkv.vllm.pd.prefill_worker as prefill_worker_mod  # noqa: E402
 import orbitkv.vllm.pd.worker as worker_mod  # noqa: E402
 from orbitkv.vllm.pd import (  # noqa: E402
-    PdConnector,
     PdDecodeConnector,
     PdPrefillConnector,
 )
@@ -123,9 +122,6 @@ class MockMooncakePort:
             raise RuntimeError(f"stale Mooncake push generation for request {req_id}")
         self.pushed_layers.setdefault(req_id, [])
         self.pushed_layers[req_id].append((layer_idx, blocks))
-
-    def wait_for_pushes(self, req_id: str) -> None:
-        return None
 
     def push_done(self, req_id: str) -> None:
         self._finished_sending.add(req_id)
@@ -226,6 +222,9 @@ class FakePrefillSender:
     def cancel(self, request_id: str) -> None:
         self.cancelled.append(request_id)
 
+    def close(self) -> None:
+        return None
+
 
 class FakeMooncakeTransferEngine:
     def __init__(self) -> None:
@@ -234,6 +233,8 @@ class FakeMooncakeTransferEngine:
         self.writes = []
         self.notifications = []
         self.nic_stats = []
+        self.notification_generations = {}
+        self.next_notification_generation = 0
 
     def register_memory(self, regions):
         self.registered_regions.extend(regions)
@@ -254,10 +255,32 @@ class FakeMooncakeTransferEngine:
     def send_notification(self, remote_endpoint, name, message):
         self.notifications.append((name, message))
 
-    def take_notifications(self):
-        notifications = self.notifications
-        self.notifications = []
-        return notifications
+    def open_notification_scope(self, name):
+        self.next_notification_generation += 1
+        self.notification_generations[name] = self.next_notification_generation
+        self.notifications = [item for item in self.notifications if item[0] != name]
+        return self.next_notification_generation
+
+    def wait_for_status(self, name, generation, expected_done_count=1, timeout_s=30.0):
+        if self.notification_generations.get(name) != generation:
+            return None
+        counts = {
+            status: sum(item == (name, status) for item in self.notifications)
+            for status in ("failed", "aborted", "done")
+        }
+        if counts["failed"]:
+            return "failed"
+        if counts["aborted"]:
+            return "aborted"
+        if counts["done"] >= expected_done_count:
+            return "done"
+        raise TimeoutError(f"notification wait timed out after {timeout_s}s")
+
+    def close_notification_scope(self, name, generation):
+        if self.notification_generations.get(name) != generation:
+            return
+        self.notification_generations.pop(name)
+        self.notifications = [item for item in self.notifications if item[0] != name]
 
     def nic_load_stats(self):
         return self.nic_stats
@@ -275,8 +298,8 @@ class FakeMooncakeTransferEngineCtor(FakeMooncakeTransferEngine):
 
 
 def drain_pd_pushes(worker: PdDecodeWorkerConnector | PdPrefillWorkerConnector) -> None:
-    worker._push_sender.wait_all()
-    worker._push_finalizer.wait_all()
+    worker._prefill._push_sender.wait_all()
+    worker._prefill._push_finalizer.wait_all()
 
 
 def pushed_layers_by_idx(

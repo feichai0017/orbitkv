@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from orbitkv.logging_utils import get_connector_logger
+from orbitkv.vllm.pd.config import extra_config_value
 from orbitkv.vllm.pd.layout import (
     BlockRegionSlice,
     LayerBlockSlices,
@@ -42,8 +43,6 @@ class MooncakePort(Protocol):
         *,
         request_generation: int,
     ) -> None: ...
-
-    def wait_for_pushes(self, req_id: str) -> None: ...
 
     def push_done(self, req_id: str) -> None: ...
 
@@ -142,9 +141,7 @@ class RealMooncakePort:
         self.local_layers: dict[int, LayerRemoteLayout] = {}
         self.peer_handshakes: dict[str, PdHandshake] = {}
         self._request_generations: dict[str, int] = {}
-        self._next_request_generation = 0
         self._stats: dict[str, dict[str, Any]] = {}
-        self._notification_counts: dict[tuple[str, str], int] = {}
         self._finished_sending: set[str] = set()
         self._finished_recving: set[str] = set()
         self._lock = threading.RLock()
@@ -185,11 +182,10 @@ class RealMooncakePort:
         start = time.perf_counter()
         if not handshake.transfer_endpoint:
             raise ValueError("Mooncake handshake is missing transfer_endpoint")
+        generation = int(self.engine.open_notification_scope(handshake.request_id))
         with self._lock:
-            self._next_request_generation += 1
             self.peer_handshakes[req_id] = handshake
-            self._request_generations[req_id] = self._next_request_generation
-            generation = self._next_request_generation
+            self._request_generations[req_id] = generation
         elapsed_ms = (time.perf_counter() - start) * 1000
         blocks_per_layer = len(handshake.layers[0].block_ids) if handshake.layers else 0
         logger.info(
@@ -287,9 +283,6 @@ class RealMooncakePort:
                 elapsed_ms,
             )
 
-    def wait_for_pushes(self, req_id: str) -> None:
-        return None
-
     def push_done(self, req_id: str) -> None:
         self._send_status(req_id, "done")
         with self._lock:
@@ -314,9 +307,7 @@ class RealMooncakePort:
 
     def aggregated_link_speed(self) -> int:
         try:
-            return int(
-                sum(max(0.0, float(stat[2])) for stat in self.engine.nic_load_stats()) * 8
-            )
+            return int(sum(max(0.0, float(stat[2])) for stat in self.engine.nic_load_stats()) * 8)
         except Exception:
             logger.exception("[PdConnector] failed to read TENT NIC load stats")
             return 0
@@ -325,28 +316,22 @@ class RealMooncakePort:
         with self._lock:
             handshake = self.peer_handshakes.get(req_id)
             generation = self._request_generations.get(req_id)
-        if handshake is None:
+        if handshake is None or generation is None:
             raise RuntimeError(f"remote request {req_id} is not registered")
-        deadline = time.monotonic() + 30.0
-        while True:
-            self._poll_notifications()
-            with self._lock:
-                if self._request_generations.get(req_id) != generation:
-                    return
-                failed = self._notification_counts.get((handshake.request_id, "failed"), 0)
-                aborted = self._notification_counts.get((handshake.request_id, "aborted"), 0)
-                done = self._notification_counts.get((handshake.request_id, "done"), 0)
-                if failed:
-                    raise RuntimeError(f"Mooncake transfer failed for request {req_id}")
-                if aborted:
-                    self._finished_recving.add(req_id)
-                    return
-                if done >= handshake.expected_notify_count:
-                    self._finished_recving.add(req_id)
-                    return
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"Mooncake notification timed out for request {req_id}")
-            time.sleep(0.00005)
+        status = self.engine.wait_for_status(
+            handshake.request_id,
+            generation,
+            expected_done_count=handshake.expected_notify_count,
+            timeout_s=30.0,
+        )
+        with self._lock:
+            if status is None or self._request_generations.get(req_id) != generation:
+                return
+            if status == "failed":
+                raise RuntimeError(f"Mooncake transfer failed for request {req_id}")
+            if status not in {"aborted", "done"}:
+                raise RuntimeError(f"unknown Mooncake transfer status {status!r}")
+            self._finished_recving.add(req_id)
 
     def pop_finished_sending(self) -> set[str]:
         with self._lock:
@@ -363,13 +348,12 @@ class RealMooncakePort:
     def close_request(self, req_id: str) -> None:
         with self._lock:
             handshake = self.peer_handshakes.pop(req_id, None)
-            self._request_generations.pop(req_id, None)
+            generation = self._request_generations.pop(req_id, None)
             self._stats.pop(req_id, None)
             self._finished_sending.discard(req_id)
             self._finished_recving.discard(req_id)
-            if handshake is not None:
-                for status in ("done", "failed", "aborted"):
-                    self._notification_counts.pop((handshake.request_id, status), None)
+        if handshake is not None and generation is not None:
+            self.engine.close_notification_scope(handshake.request_id, generation)
 
     def _send_status(self, req_id: str, status: str) -> None:
         with self._lock:
@@ -378,24 +362,14 @@ class RealMooncakePort:
             raise RuntimeError(f"remote request {req_id} is not registered")
         self.engine.send_notification(handshake.transfer_endpoint, handshake.request_id, status)
 
-    def _poll_notifications(self) -> None:
-        notifications = self.engine.take_notifications()
-        if not notifications:
-            return
-        with self._lock:
-            for name, status in notifications:
-                key = (str(name), str(status))
-                self._notification_counts[key] = self._notification_counts.get(key, 0) + 1
-
 
 def build_mooncake_port(
     vllm_config: Any,
     cuda_device: int | None,
     *,
-    tp_rank: int | None = None,
+    tp_rank: int,
 ) -> MooncakePort:
-    config = getattr(vllm_config, "kv_transfer_config", None)
-    enabled = _extra(config, "orbitkv.pd.mooncake.enabled", _MISSING)
+    enabled = extra_config_value(vllm_config, "orbitkv.pd.mooncake.enabled", _MISSING)
     if enabled is not _MISSING and not _as_bool(enabled):
         raise RuntimeError("PdConnector requires Mooncake; orbitkv.pd.mooncake.enabled=false")
 
@@ -407,11 +381,15 @@ def build_mooncake_port(
         raise RuntimeError("orbitkv.orbitkv does not expose MooncakeTransferEngine") from exc
 
     resolved_cuda_device = int(cuda_device or 0)
-    resolved_tp_rank = _tp_rank(vllm_config) if tp_rank is None else int(tp_rank)
-    rank_config = _rank_mooncake_config(config, resolved_tp_rank, cuda_device=resolved_cuda_device)
+    resolved_tp_rank = int(tp_rank)
+    rank_config = _rank_mooncake_config(
+        vllm_config,
+        resolved_tp_rank,
+        cuda_device=resolved_cuda_device,
+    )
     bind_host = str(
-        _extra(
-            config,
+        extra_config_value(
+            vllm_config,
             "orbitkv.pd.mooncake.bind_host",
             os.getenv("VLLM_NIXL_SIDE_CHANNEL_HOST", "127.0.0.1"),
         )
@@ -426,18 +404,6 @@ def build_mooncake_port(
         engine.endpoint,
     )
     return RealMooncakePort(engine, nic_count=len(nics))
-
-
-def _extra(config: Any, key: str, default: Any) -> Any:
-    if config is None:
-        return default
-    getter = getattr(config, "get_from_extra_config", None)
-    if getter is not None:
-        return getter(key, default)
-    extra_config = getattr(config, "extra_config", None)
-    if isinstance(extra_config, dict):
-        return extra_config.get(key, default)
-    return default
 
 
 def _as_bool(value: Any) -> bool:
@@ -456,23 +422,13 @@ class _RankMooncakeConfig:
     nic: str | None
 
 
-def _tp_rank(vllm_config: Any) -> int:
-    parallel_config = getattr(vllm_config, "parallel_config", None)
-    return int(getattr(parallel_config, "tensor_parallel_rank", 0) or 0)
-
-
 def _rank_mooncake_config(
-    config: Any,
+    vllm_config: Any,
     tp_rank: int,
     *,
     cuda_device: int | None = None,
 ) -> _RankMooncakeConfig:
-    for legacy_key in ("orbitkv.pd.rdma.domains", "orbitkv.pd.rdma.rank_map"):
-        if _extra(config, legacy_key, _MISSING) is not _MISSING:
-            raise RuntimeError(
-                f"{legacy_key} was removed; configure orbitkv.pd.mooncake.rank_map instead"
-            )
-    rank_map = _extra(config, "orbitkv.pd.mooncake.rank_map", _MISSING)
+    rank_map = extra_config_value(vllm_config, "orbitkv.pd.mooncake.rank_map", _MISSING)
     if rank_map is _MISSING:
         return _RankMooncakeConfig(tp_rank=tp_rank, nic=None)
     if not isinstance(rank_map, dict):

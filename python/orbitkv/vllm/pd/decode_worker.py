@@ -429,9 +429,8 @@ class DecodeHandler:
 
     def release(self, req_id: str) -> None:
         req = self._state.mark_aborted(req_id)
-        cancel_prefill = getattr(self._prefill_sender, "cancel", None)
-        if req is not None and cancel_prefill is not None:
-            cancel_prefill(req.remote_request_id)
+        if req is not None:
+            self._prefill_sender.cancel(req.remote_request_id)
 
     def finish_recving(self, finished_recving: set[str]) -> None:
         for req_id in finished_recving:
@@ -471,31 +470,11 @@ class DecodeHandler:
         self._state.clear()
         if self._transfer_waiter is not None:
             self._transfer_waiter.close()
-        close = getattr(self._prefill_sender, "close", None)
-        if close is not None:
-            close()
+        self._prefill_sender.close()
 
     @property
     def wait_reqs(self) -> dict[str, WaitReqMeta]:
         return self._state.wait_reqs
-
-    # Backward-compatible field access for tests / worker.py that reach into
-    # the decode handler's internal collections directly.
-    @property
-    def _wait_reqs(self) -> dict[str, WaitReqMeta]:
-        return self._state.wait_reqs
-
-    @_wait_reqs.setter
-    def _wait_reqs(self, value: dict[str, WaitReqMeta]) -> None:
-        self._state.wait_reqs = value
-
-    @property
-    def _finished_transfer_waits(self) -> set[str]:
-        return self._state.finished_transfer_waits
-
-    @property
-    def _peer_layouts(self) -> dict[int, dict[str, KvCacheLayout]]:
-        return self._peers.layouts
 
     def is_idle(self) -> bool:
         return self._state.is_idle()

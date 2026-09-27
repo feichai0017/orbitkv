@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use orbitkv_mooncake_sys as native;
 
 use crate::error::{MooncakeError, Result};
+use crate::notification::{NotificationMailbox, NotificationMatch};
 use crate::types::{
     INVALID_BATCH, NicLoadStat, Notification, STATUS_CANCELED, STATUS_COMPLETED, STATUS_FAILED,
     STATUS_INVALID, STATUS_PENDING, STATUS_TIMEOUT, STATUS_WAITING, TransferOp, TransferSlice,
@@ -24,6 +25,8 @@ static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
 pub struct TransferEngine {
     native: native::NativeEngine,
     segments: Mutex<HashMap<String, native::SegmentId>>,
+    notification_poll: Mutex<()>,
+    notification_mailbox: Mutex<NotificationMailbox>,
 }
 
 /// Owns one Mooncake memory registration. The caller must retain the actual
@@ -106,6 +109,8 @@ impl TransferEngine {
         Ok(Self {
             native,
             segments: Mutex::new(HashMap::new()),
+            notification_poll: Mutex::new(()),
+            notification_mailbox: Mutex::new(NotificationMailbox::default()),
         })
     }
 
@@ -122,7 +127,7 @@ impl TransferEngine {
     /// # Safety
     ///
     /// The memory must remain valid and pinned until it is unregistered.
-    pub unsafe fn register_memory(
+    unsafe fn register_memory(
         &self,
         address: NonNull<u8>,
         length: usize,
@@ -164,7 +169,7 @@ impl TransferEngine {
     /// # Safety
     ///
     /// `address` must identify a currently registered region.
-    pub unsafe fn unregister_memory(&self, address: NonNull<u8>, length: usize) -> Result<()> {
+    unsafe fn unregister_memory(&self, address: NonNull<u8>, length: usize) -> Result<()> {
         check("unregisterLocalMemory", unsafe {
             native::unregister_memory(self.native, address.as_ptr().cast::<c_void>(), length)
         })
@@ -270,7 +275,7 @@ impl TransferEngine {
         )
     }
 
-    pub fn take_notifications(&self) -> Result<Vec<Notification>> {
+    fn take_notifications_unlocked(&self) -> Result<Vec<Notification>> {
         let mut info = native::NotificationInfo {
             count: 0,
             records: std::ptr::null_mut(),
@@ -297,6 +302,99 @@ impl TransferEngine {
             .collect();
         unsafe { native::free_notifications(&mut info) };
         Ok(notifications)
+    }
+
+    /// Opens a generation-fenced inbox for one logical notification name.
+    pub fn open_notification_scope(&self, name: &str) -> Result<u64> {
+        if name.is_empty() {
+            return Err(MooncakeError::InvalidNotificationWait);
+        }
+        let _poll = self
+            .notification_poll
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let notifications = self.take_notifications_unlocked()?;
+        let mut mailbox = self
+            .notification_mailbox
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        mailbox.record(notifications);
+        Ok(mailbox.open(name))
+    }
+
+    /// Closes the scope only if `generation` still owns `name`.
+    pub fn close_notification_scope(&self, name: &str, generation: u64) {
+        self.notification_mailbox
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .close(name, generation);
+    }
+
+    /// Waits without losing notifications consumed for other active scopes.
+    pub fn wait_for_notification(
+        &self,
+        name: &str,
+        generation: u64,
+        expectations: &[(String, usize)],
+        timeout: Duration,
+    ) -> Result<Option<String>> {
+        if name.is_empty()
+            || generation == 0
+            || expectations.is_empty()
+            || expectations
+                .iter()
+                .any(|(message, count)| message.is_empty() || *count == 0)
+            || timeout.is_zero()
+        {
+            return Err(MooncakeError::InvalidNotificationWait);
+        }
+        let started = Instant::now();
+        loop {
+            match self
+                .notification_mailbox
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .status(name, generation, expectations)
+            {
+                NotificationMatch::Matched(message) => return Ok(Some(message)),
+                NotificationMatch::Closed => return Ok(None),
+                NotificationMatch::Pending => {}
+            }
+
+            let poll_result = {
+                let _poll = self
+                    .notification_poll
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                self.take_notifications_unlocked()
+            };
+            let notifications = match poll_result {
+                Ok(notifications) => notifications,
+                Err(error) => {
+                    return match self
+                        .notification_mailbox
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .status(name, generation, expectations)
+                    {
+                        NotificationMatch::Matched(message) => Ok(Some(message)),
+                        NotificationMatch::Closed => Ok(None),
+                        NotificationMatch::Pending => Err(error),
+                    };
+                }
+            };
+            if !notifications.is_empty() {
+                self.notification_mailbox
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .record(notifications);
+                continue;
+            }
+            if started.elapsed() >= timeout {
+                return Err(MooncakeError::NotificationTimeout(name.to_string()));
+            }
+            std::thread::sleep(Duration::from_micros(50));
+        }
     }
 
     pub fn send_notification(

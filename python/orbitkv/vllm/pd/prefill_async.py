@@ -214,17 +214,11 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
         return True
 
     def _run(self, task: _PushFinalizeTask) -> None:
-        wait_for_pushes_s = 0.0
         completed = False
         for req_id in task.req_ids:
             if self._is_cancelled(req_id):
                 continue
             self._push_sender.wait_req(req_id)
-            if self._is_cancelled(req_id):
-                continue
-            per_req_wait_start_ts_ns = time.time_ns()
-            task.transfer.wait_for_pushes(req_id)
-            wait_for_pushes_s += (time.time_ns() - per_req_wait_start_ts_ns) / 1_000_000_000
             if self._is_cancelled(req_id):
                 continue
             task.transfer.push_done(req_id)
@@ -246,7 +240,6 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
                     if task.first_save_ts_ns is not None
                     else None
                 ),
-                wait_for_pushes_s=wait_for_pushes_s,
                 blocks=task.num_blocks,
                 bytes_total=task.transfer_bytes,
                 gbps=push_gbps,
@@ -296,7 +289,6 @@ class _AsyncPushFinalizer(InflightTaskRunner["_PushFinalizeTask"]):
             self._metrics.record_prefill_push(
                 duration_s=(time.time_ns() - task.schedule_queued_ts_ns) / 1_000_000_000,
                 first_save_to_done_s=None,
-                wait_for_pushes_s=None,
                 blocks=task.num_blocks,
                 bytes_total=task.transfer_bytes,
                 gbps=None,

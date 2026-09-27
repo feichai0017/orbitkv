@@ -33,9 +33,8 @@ from orbitkv.vllm.pd.metadata import (
     flatten_block_ids,
 )
 
-# Re-exported so PrefillHandler resolves these as module globals (tests
-# monkeypatch prefill_worker_mod._AsyncLayerPushSender / _LayerPushTask / etc.)
-# and so existing import sites keep working after the split.
+# Imported as module globals because PrefillHandler constructs these task and
+# runner types directly.
 from orbitkv.vllm.pd.prefill_async import (  # noqa: F401
     _AsyncLayerPushSender,
     _AsyncPushFinalizer,
@@ -227,7 +226,6 @@ class PrefillHandler:
 
     def _drain_physical_request(self, physical_req_id: str) -> None:
         self._push_sender.wait_req(physical_req_id)
-        self._w.transfer.wait_for_pushes(physical_req_id)
 
     def save_kv_layer(
         self,

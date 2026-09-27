@@ -25,6 +25,9 @@ fn tcp_loopback_moves_bytes_through_upstream_mooncake() {
             .expect("register memory")
     };
     assert_eq!(registration.address(), base);
+    let notification_generation = engine
+        .open_notification_scope("loopback")
+        .expect("open notification scope");
     let destination = unsafe { base.byte_add(4096) };
     engine
         .submit_and_notify(
@@ -43,18 +46,33 @@ fn tcp_loopback_moves_bytes_through_upstream_mooncake() {
         )
         .expect("loopback write");
     assert_eq!(&memory[..4096], &memory[4096..]);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let notifications = engine.take_notifications().expect("take notifications");
-        if notifications
-            .iter()
-            .any(|notification| notification.name == "loopback" && notification.message == "done")
-        {
-            break;
-        }
-        assert!(Instant::now() < deadline, "notification timed out");
-        std::thread::yield_now();
-    }
+    assert_eq!(
+        engine
+            .wait_for_notification(
+                "loopback",
+                notification_generation,
+                &[("done".to_string(), 1)],
+                Duration::from_secs(5),
+            )
+            .expect("wait for notification"),
+        Some("done".to_string())
+    );
+    engine.close_notification_scope("loopback", notification_generation);
+    let cancelled_generation = engine
+        .open_notification_scope("cancelled")
+        .expect("open cancelled notification scope");
+    let waiter_engine = Arc::clone(&engine);
+    let waiter = std::thread::spawn(move || {
+        waiter_engine.wait_for_notification(
+            "cancelled",
+            cancelled_generation,
+            &[("done".to_string(), 1)],
+            Duration::from_secs(5),
+        )
+    });
+    std::thread::sleep(Duration::from_millis(10));
+    engine.close_notification_scope("cancelled", cancelled_generation);
+    assert_eq!(waiter.join().expect("join waiter").unwrap(), None);
     let _ = engine.nic_load_stats().expect("query TENT NIC load stats");
     registration.unregister().expect("unregister memory");
     let registration = unsafe {

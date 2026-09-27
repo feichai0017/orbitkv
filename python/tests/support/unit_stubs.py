@@ -121,9 +121,6 @@ def _install_vllm_stubs() -> None:
         ) -> None:
             self.per_engine_labelvalues = per_engine_labelvalues or {0: []}
 
-        def make_per_engine(self, metric):
-            return {}
-
     class PromMetric:
         pass
 

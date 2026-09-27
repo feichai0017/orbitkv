@@ -502,7 +502,7 @@ The refactor sequence is:
    lifecycle, source invalidation, deadline/cancellation and matched overhead
    before allowing a measured route to change execution.
 5. Source-side SSD preparation and fixed-priority requester execution now use
-   the same ticket owner and Mooncake TE path. Add engine-authorized HBM replicas
+   the same ticket owner and Mooncake TENT path. Add engine-authorized HBM replicas
    only when their protocols and deployment gates are ready. Cross-representation
    discovery requires its own identity migration; none is implied by endpoint normalization.
 

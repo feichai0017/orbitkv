@@ -87,8 +87,8 @@ def test_pd_prom_metrics_observes_connector_stats(monkeypatch) -> None:
 
     monkeypatch.setattr(
         pd_metrics_mod,
-        "_bind_metric_per_engine",
-        lambda _prom_metrics, metric: {0: metric},
+        "create_metric_per_engine",
+        lambda metric, _per_engine_labelvalues: {0: metric},
     )
     monkeypatch.setattr(
         KVConnectorPromMetrics,
@@ -127,7 +127,6 @@ def test_pd_prom_metrics_observes_connector_stats(monkeypatch) -> None:
             "pd_load_blocks": [8],
             "pd_prefill_push_duration": [0.4],
             "pd_prefill_first_save_to_done_duration": [0.5],
-            "pd_prefill_wait_for_pushes_duration": [0.6],
             "pd_prefill_push_blocks": [8],
             "pd_prefill_push_bytes": [1024],
             "pd_prefill_push_gbps": [2.5],
@@ -729,12 +728,15 @@ def test_pd_worker_get_finished_does_not_poll_wait_reqs() -> None:
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), transfer=transfer
     )
-    worker._wait_reqs["req-1"] = WaitReqMeta(
-        local_block_ids=([1],),
-        remote_request_id="req-1-p",
-        done_request_id="req-1-d",
-        prompt_token_ids=(1,),
-        prefill_url="http://p:8001",
+    worker._decode._state.register_wait(
+        "req-1",
+        WaitReqMeta(
+            local_block_ids=([1],),
+            remote_request_id="req-1-p",
+            done_request_id="req-1-d",
+            prompt_token_ids=(1,),
+            prefill_url="http://p:8001",
+        ),
     )
 
     transfer._finished_recving.add("req-1")
@@ -819,28 +821,21 @@ def test_p_worker_runtime_layout_validation_can_be_enabled() -> None:
         worker.save_kv_layer("layer.0", changed_tensor, SimpleNamespace())
 
 
-def test_d_worker_idle_decode_step_skips_layer_hooks() -> None:
-    class LayoutsThatShouldNotBeRead(dict):
-        def __contains__(self, key: object) -> bool:
-            raise AssertionError("idle decode step should not inspect layouts")
-
+def test_role_workers_only_construct_their_own_handler() -> None:
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
         transfer=MockMooncakePort(),
     )
-    worker.layouts = LayoutsThatShouldNotBeRead()
-    worker.start_load_kv(PdConnectorMetadata(), None)
-
-    worker._prefill.save_kv_layer = MagicMock(
-        side_effect=AssertionError("idle decode step should not delegate save")
-    )
-    worker._prefill.wait_for_save = MagicMock(
-        side_effect=AssertionError("idle decode step should not delegate wait_for_save")
+    prefill = PdPrefillWorkerConnector(
+        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        transfer=MockMooncakePort(),
     )
 
-    worker.wait_for_layer_load("layer.0")
-    worker.save_kv_layer("layer.0", object(), None)
-    worker.wait_for_save()
+    assert not hasattr(worker, "_prefill")
+    assert not hasattr(prefill, "_decode")
+
+    worker.shutdown()
+    prefill.shutdown()
 
 
 def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
@@ -1296,7 +1291,7 @@ def test_d_worker_finished_transfer_wait_prevents_idle_fast_path() -> None:
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker._decode._finished_transfer_waits.add("decode-1")
+    worker._decode._state.finished_transfer_waits.add("decode-1")
 
     _, finished_recving = worker.get_finished(set())
 
@@ -1430,16 +1425,12 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
             self.closed_reqs: list[str] = []
             self.failed_reqs: list[str] = []
             self.aborted_reqs: list[str] = []
-            self.drained_reqs: list[str] = []
 
         def fail_request(self, req_id: str) -> None:
             self.failed_reqs.append(req_id)
 
         def abort_request(self, req_id: str) -> None:
             self.aborted_reqs.append(req_id)
-
-        def wait_for_pushes(self, req_id: str) -> None:
-            self.drained_reqs.append(req_id)
 
         def close_request(self, req_id: str) -> None:
             self.closed_reqs.append(req_id)
@@ -1499,7 +1490,6 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
     )
 
     assert transfer.failed_reqs == []
-    assert sorted(transfer.drained_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
     assert sorted(transfer.aborted_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
     assert sorted(transfer.closed_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
     assert transfer.registered == set()
@@ -1565,13 +1555,9 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
             super().__init__()
             self.closed_reqs: list[str] = []
             self.failed_reqs: list[str] = []
-            self.drained_reqs: list[str] = []
 
         def fail_request(self, req_id: str) -> None:
             self.failed_reqs.append(req_id)
-
-        def wait_for_pushes(self, req_id: str) -> None:
-            self.drained_reqs.append(req_id)
 
         def close_request(self, req_id: str) -> None:
             self.closed_reqs.append(req_id)
@@ -1604,7 +1590,6 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
     worker.start_load_kv(PdConnectorMetadata(preempted_req_ids={"prefill-1"}), None)
 
     assert transfer.failed_reqs == ["prefill-1"]
-    assert transfer.drained_reqs == ["prefill-1"]
     assert transfer.closed_reqs == ["prefill-1"]
     assert transfer.registered == set()
     assert worker.get_finished({"prefill-1"}) == (None, None)
@@ -2475,20 +2460,19 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
         sender.close()
 
 
-def test_push_finalizer_runs_requests_concurrently() -> None:
-    class Sender:
-        def wait_req(self, req_id: str) -> None:
-            return None
-
-    class BlockingRdma:
+def test_push_finalizer_waits_for_requests_concurrently() -> None:
+    class BlockingSender:
         def __init__(self) -> None:
             self.entered: queue.Queue[str] = queue.Queue()
             self.release = threading.Event()
-            self.done: list[str] = []
 
-        def wait_for_pushes(self, req_id: str) -> None:
+        def wait_req(self, req_id: str) -> None:
             self.entered.put(req_id)
             assert self.release.wait(timeout=2)
+
+    class RecordingTransfer:
+        def __init__(self) -> None:
+            self.done: list[str] = []
 
         def push_done(self, req_id: str) -> None:
             self.done.append(req_id)
@@ -2496,8 +2480,9 @@ def test_push_finalizer_runs_requests_concurrently() -> None:
         def aggregated_link_speed(self) -> int:
             return 400_000_000_000
 
-    transfer = BlockingRdma()
-    finalizer = prefill_worker_mod._AsyncPushFinalizer(Sender())
+    sender = BlockingSender()
+    transfer = RecordingTransfer()
+    finalizer = prefill_worker_mod._AsyncPushFinalizer(sender)
     try:
         for req_id in ("req-1", "req-2"):
             finalizer.submit(
@@ -2514,14 +2499,14 @@ def test_push_finalizer_runs_requests_concurrently() -> None:
                 )
             )
 
-        entered = {transfer.entered.get(timeout=2), transfer.entered.get(timeout=2)}
+        entered = {sender.entered.get(timeout=2), sender.entered.get(timeout=2)}
         assert entered == {"req-1", "req-2"}
 
-        transfer.release.set()
+        sender.release.set()
         finalizer.wait_all()
         assert sorted(transfer.done) == ["req-1", "req-2"]
     finally:
-        transfer.release.set()
+        sender.release.set()
         finalizer.close()
 
 
@@ -2531,9 +2516,6 @@ def test_push_finalizer_records_schedule_to_done_duration() -> None:
             return None
 
     class RecordingRdma:
-        def wait_for_pushes(self, req_id: str) -> None:
-            return None
-
         def push_done(self, req_id: str) -> None:
             return None
 
@@ -3056,9 +3038,9 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
     )
 
     queued = []
-    submit = worker._push_sender.submit
+    submit = worker._prefill._push_sender.submit
     if overlapping:
-        monkeypatch.setattr(worker._push_sender, "submit", queued.append)
+        monkeypatch.setattr(worker._prefill._push_sender, "submit", queued.append)
 
     worker.start_load_kv(
         PdConnectorMetadata(
@@ -3102,7 +3084,7 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
     if overlapping:
         assert queued[0].request_generation == transfer._request_generations["prefill-r0"]
         prefill_worker_mod._run_layer_push(queued.pop())
-        monkeypatch.setattr(worker._push_sender, "submit", submit)
+        monkeypatch.setattr(worker._prefill._push_sender, "submit", submit)
     assert [block.regions[0].block_id for block in transfer.pushed_layers["prefill-r0"][0][1]] == [
         68
     ]

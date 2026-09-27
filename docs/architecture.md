@@ -281,6 +281,14 @@ recovery contract:
 Adapters do not decide which component set is a legal recovery point. That
 logic belongs in the common recovery contract.
 
+The vLLM P/D adapter exposes separate prefill and decode connector classes;
+there is no role-selecting compatibility facade. Its framework callbacks and
+KV tensor layout inspection remain in Python. Registered-memory ownership,
+TENT batch completion and the notification wait mailbox live in Rust. Native
+waits release the GIL, preserve notifications consumed by competing waiter
+threads, and fence close/reopen with a monotonically increasing scope
+generation.
+
 ### `orbitkv-core`
 
 The current core provides content-addressed sealed blocks, NUMA-aware pinned

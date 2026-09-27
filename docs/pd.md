@@ -18,12 +18,15 @@ The NIXL integration described here is
 | Path | Trigger | KV destination | Discovery/control | OrbitKV status |
 | --- | --- | --- | --- | --- |
 | OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; experimental remote Catalog + peer lease | GPU-validated locally; multi-node experimental |
-| OrbitKV vLLM `PdConnector` | P-to-D request handoff | Decode worker's GPU KV pages | OrbitKV handshake and proxy; Mooncake TENT moves bytes | Experimental vLLM adapter |
+| OrbitKV vLLM split P/D connectors | P-to-D request handoff | Decode worker's GPU KV pages | OrbitKV handshake and proxy; Mooncake TENT moves bytes | Experimental vLLM adapter |
 | OrbitKV SGLang TENT adapter | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | Implemented; external H20 qualification pending |
 | vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
 
-The OrbitKV P/D connector lives in `orbitkv.vllm.pd` and uses Mooncake to push
-KV directly from prefill to decode. It does not require an OrbitKV Cache
+The OrbitKV `PdPrefillConnector` and `PdDecodeConnector` live in
+`orbitkv.vllm.pd` and use Mooncake TENT to push KV directly from prefill to
+decode. The old role-selecting `PdConnector` facade has been removed; each
+process declares its role through its connector class instead of encoding it
+again in `engine_id`. The handoff does not require an OrbitKV Cache
 Manager, Catalog, or the remote-cache replica directory for that transfer.
 See [the Mooncake P/D protocol](pd-mooncake-push.md) and the local
 [`run_pd_local.sh`](../scripts/run_pd_local.sh) example. Its local proxy is

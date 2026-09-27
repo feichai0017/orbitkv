@@ -1,4 +1,4 @@
-"""Shared helpers for P/D-specific vLLM connector facades."""
+"""Shared vLLM class-level behavior for the split P/D connectors."""
 
 from __future__ import annotations
 

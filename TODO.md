@@ -215,6 +215,11 @@ qualification remain open. See the
   yet a restorable-state proof.
 - [x] Move the canonical vLLM package to `orbitkv.vllm`.
 - [x] Group the vLLM cache connector and P/D adapter under `orbitkv.vllm`.
+- [x] Remove the vLLM role-selecting `PdConnector` compatibility facade,
+  test-only worker attribute proxies, the runtime-packaged no-op test connector
+  and pre-0.29 preemption/metrics branches.
+- [x] Move P/D notification polling, counting and close/reopen generation
+  fencing into the Rust TENT owner so Python waiters release the GIL.
 - [x] Add `orbitkv.client` and `orbitkv.sglang` package boundaries.
 - [x] Add `orbitkv-channel` with a versioned 64-byte iceoryx2 request/response ABI.
 - [x] Add a real two-process channel test.

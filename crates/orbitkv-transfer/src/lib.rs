@@ -1,5 +1,6 @@
 mod engine;
 mod error;
+mod notification;
 mod types;
 
 pub use engine::{MemoryRegistration, TransferEngine};

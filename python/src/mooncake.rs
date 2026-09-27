@@ -2,9 +2,13 @@ use crate::{OrbitKVError, u64_to_usize};
 
 use orbitkv_transfer::{
     AUTO_MEMORY_LOCATION, MemoryRegistration, Notification, P2P_METADATA, TransferEngine,
-    TransferOp, TransferSlice,
+    TransferError, TransferOp, TransferSlice,
 };
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyDict};
+use pyo3::{
+    exceptions::{PyTimeoutError, PyValueError},
+    prelude::*,
+    types::PyDict,
+};
 use std::{
     collections::{HashMap, HashSet},
     ptr::NonNull,
@@ -203,16 +207,66 @@ impl PyMooncakeTransferEngine {
         })
     }
 
-    fn take_notifications(&self) -> PyResult<Vec<(String, String)>> {
+    fn open_notification_scope(&self, name: String) -> PyResult<u64> {
+        if name.is_empty() {
+            return Err(PyValueError::new_err("notification name must not be empty"));
+        }
         self.engine
-            .take_notifications()
-            .map(|notifications| {
-                notifications
-                    .into_iter()
-                    .map(|notification| (notification.name, notification.message))
-                    .collect()
-            })
-            .map_err(|error| transfer_error("take notifications failed", error))
+            .open_notification_scope(&name)
+            .map_err(|error| transfer_error("open TENT notification scope failed", error))
+    }
+
+    #[pyo3(signature = (name, generation, expected_done_count=1, timeout_s=30.0))]
+    fn wait_for_status(
+        &self,
+        py: Python<'_>,
+        name: String,
+        generation: u64,
+        expected_done_count: usize,
+        timeout_s: f64,
+    ) -> PyResult<Option<String>> {
+        if name.is_empty() {
+            return Err(PyValueError::new_err("notification name must not be empty"));
+        }
+        if generation == 0 {
+            return Err(PyValueError::new_err("generation must be positive"));
+        }
+        if expected_done_count == 0 {
+            return Err(PyValueError::new_err(
+                "expected_done_count must be positive",
+            ));
+        }
+        if !timeout_s.is_finite() || timeout_s <= 0.0 {
+            return Err(PyValueError::new_err("timeout_s must be positive"));
+        }
+        let engine = Arc::clone(&self.engine);
+        py.detach(move || {
+            engine
+                .wait_for_notification(
+                    &name,
+                    generation,
+                    &[
+                        ("failed".to_string(), 1),
+                        ("aborted".to_string(), 1),
+                        ("done".to_string(), expected_done_count),
+                    ],
+                    Duration::from_secs_f64(timeout_s),
+                )
+                .map_err(|error| match error {
+                    TransferError::NotificationTimeout(_) => {
+                        PyTimeoutError::new_err(error.to_string())
+                    }
+                    error => transfer_error("wait for TENT notification failed", error),
+                })
+        })
+    }
+
+    fn close_notification_scope(&self, name: String, generation: u64) -> PyResult<()> {
+        if name.is_empty() {
+            return Err(PyValueError::new_err("notification name must not be empty"));
+        }
+        self.engine.close_notification_scope(&name, generation);
+        Ok(())
     }
 
     fn nic_load_stats(&self) -> PyResult<Vec<(String, u64, f64)>> {

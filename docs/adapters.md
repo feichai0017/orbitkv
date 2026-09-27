@@ -132,8 +132,8 @@ paths. Cross-host TP sharding needs a future node-local query fan-out design.
 vLLM normally exposes hashes only for complete KV blocks. In a P/D deployment,
 enable `orbitkv.pd_tail_save` on prefill and `orbitkv.pd_tail_load` on decode
 to reuse the final partial prompt block through the **external-cache**
-`OrbitKVConnector` path. These options are separate from the direct Mooncake
-`PdConnector`. Start both vLLM processes with
+`OrbitKVConnector` path. These options are separate from the direct TENT-backed
+`PdPrefillConnector` and `PdDecodeConnector`. Start both vLLM processes with
 the same explicit `PYTHONHASHSEED` and `--prefix-caching-hash-algo xxhash_cbor`.
 
 Prefill: `{"orbitkv.pd_tail_save": true}`

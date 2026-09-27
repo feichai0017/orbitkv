@@ -22,7 +22,7 @@ does not establish OrbitKV compatibility.
 | Multiple engines on one node | Engines share one Manager and its cache budget | Shared endpoint and independent instance registrations are implemented; concurrent multi-engine serving and container isolation need separate qualification |
 | Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP; [recorded scope](shared-cache-qualification.md#recorded-result) |
 | Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; [shared-cache gates](shared-cache-qualification.md) distinguish same-host TCP from real two-host/RDMA qualification; catalogs have one metadata copy |
-| vLLM P/D through OrbitKV `PdConnector` | Prefill, decode, P/D proxy; Mooncake transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
+| vLLM P/D through OrbitKV's split connectors | Prefill, decode, P/D proxy; Mooncake TENT transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
 
 ```mermaid
@@ -43,7 +43,7 @@ For integration boundaries and execution priorities, see
 [distributed deployment comparison](distributed-comparison.md).
 
 The planned [transfer policies](state-planning.md#policies-by-deployment-mode)
-share Rust cost observations and budgets across local and Mooncake TE paths.
+share Rust cost observations and budgets across local and Mooncake TENT paths.
 `ORBITKV_COST_SELECTION=1` has an effect only together with
 `ORBITKV_COST_OBSERVATIONS=1`; today it can select among equal-coverage owners
 of the same peer medium and does not enable general cross-tier policy.
@@ -199,12 +199,14 @@ P/D moves KV for the same request from prefill to decode. Remote caching finds
 reusable KV from an earlier request. These are independent paths; see
 [P/D and NIXL](pd.md) for the ownership and control-flow distinction.
 
-OrbitKV's vLLM `PdConnector` pushes KV through Mooncake directly between GPU
-workers. Try the [local P/D example](../scripts/run_pd_local.sh) for that path.
+OrbitKV's vLLM `PdPrefillConnector` and `PdDecodeConnector` push KV through
+Mooncake TENT directly between GPU workers. Try the
+[local P/D example](../scripts/run_pd_local.sh) for that path.
 vLLM `0.29.0` also includes its own NIXL connector; the
 [NIXL comparison example](../scripts/run_nixl_local.sh) uses vLLM's code.
-OrbitKV does not ship a NIXL connector, and its SGLang adapter currently
-implements external caching only.
+OrbitKV does not ship a NIXL connector. Its SGLang adapter supports the native
+SGLang P/D control plane over OrbitKV TENT and an opt-in composition with the
+external cache; external H20 qualification remains open.
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 

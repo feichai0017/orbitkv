@@ -21,10 +21,11 @@ Mooncake TENT segment + remote address + batch operation
 The public Rust API is deliberately small:
 
 - `TransferEngine::new` creates one upstream Mooncake TENT engine.
-- `register_memory` and `unregister_memory` expose stable host or device memory.
+- `register_memory_owned` returns an RAII token for stable host or device memory.
 - `submit_and_wait` executes a READ or WRITE batch.
 - `submit_and_notify` couples a batch to a peer notification.
-- `take_notifications` and `send_notification` implement P/D completion and
+- generation-scoped notification waits retain messages for concurrent requests
+  and wake cancelled/replaced waiters; `send_notification` emits completion and
   failure signals.
 
 The upstream source is pinned to stable release `v0.3.13.post1` by the

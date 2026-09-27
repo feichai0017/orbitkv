@@ -1,7 +1,7 @@
 """Small P/D proxy for exercising PdConnector with two local vLLM servers.
 
 The proxy accepts OpenAI-compatible completion requests, injects the
-``kv_transfer_params`` expected by ``PdConnector``, and sends the request only
+``kv_transfer_params`` expected by the split P/D connectors, and sends the request only
 to D. D allocates KV blocks, then uses the P hint from those params to trigger
 the prefill side. D begins decoding after its connector observes the Mooncake
 completion notification

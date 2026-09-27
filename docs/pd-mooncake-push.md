@@ -30,7 +30,9 @@ The native boundary exposed to Python is `MooncakeTransferEngine`:
 - `register_memory` registers long-lived vLLM KV tensors once;
 - `write` submits and waits for a batch of source/destination ranges;
 - `send_notification` emits request completion or failure;
-- `take_notifications` drives the decode-side waiter;
+- `open_notification_scope`, `wait_for_status` and
+  `close_notification_scope` keep notification polling, counting and
+  close/reopen generation fencing in Rust while the GIL is released;
 - `nic_load_stats` exposes TENT rail inflight bytes and EWMA bandwidth for
   diagnostics, without claiming which transport a specific batch used.
 
@@ -47,7 +49,7 @@ Each TP rank configures a routable bind host and may select an RDMA NIC. When
 
 ```json
 {
-  "kv_connector": "PdConnector",
+  "kv_connector": "PdDecodeConnector",
   "kv_role": "kv_both",
   "kv_connector_module_path": "orbitkv.vllm.pd",
   "engine_id": "d0",
@@ -60,6 +62,10 @@ Each TP rank configures a routable bind host and may select an RDMA NIC. When
 }
 ```
 
+Use `PdPrefillConnector` in the prefill process. The former role-selecting
+`PdConnector` facade is not retained; `engine_id` identifies the instance and
+no longer chooses connector behavior.
+
 Mooncake uses `P2PHANDSHAKE` for peer metadata exchange. No external Mooncake
 Store or metadata service is required for this path. OrbitKV does not use
 Mooncake Store as its state authority.
@@ -68,6 +74,8 @@ Mooncake Store as its state authority.
 
 - The destination advertises only ranges allocated for the request.
 - A transfer notification is accepted only for the matching request ID.
+- Closing or replacing a request generation wakes its old native waiter without
+  allowing it to complete the replacement.
 - The decode side waits for the expected number of producer notifications.
 - Failure/abort notifications never publish the destination as complete.
 - Queued writes carry the producer request generation and captured destination

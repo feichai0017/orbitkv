@@ -419,6 +419,12 @@ def test_register_kv_caches_ignores_shared_by_without_layer_split_opt_in(monkeyp
 
 
 def test_register_kv_caches_uses_layer_split_shared_by_plan(monkeypatch):
+    class MlaTensor(FakeTensor):
+        shape = (1, 1, 16, 1)
+
+        def stride(self) -> tuple[int, int, int, int]:
+            return (16, 16, 1, 1)
+
     kv_cache_config = MagicMock()
     kv_cache_config.kv_cache_groups = [
         _single_attention_cache_group("layer.0", "layer.1", "layer.2")
@@ -438,9 +444,9 @@ def test_register_kv_caches_uses_layer_split_shared_by_plan(monkeypatch):
 
     worker.register_kv_caches(
         {
-            "layer.0": FakeTensor(),
-            "layer.1": FakeTensor(),
-            "layer.2": FakeTensor(),
+            "layer.0": MlaTensor(),
+            "layer.1": MlaTensor(),
+            "layer.2": MlaTensor(),
         }
     )
 

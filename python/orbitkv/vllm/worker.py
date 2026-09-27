@@ -121,15 +121,11 @@ def _infer_kv_cache_registration(
 
     layout = "blocks-first"
     physical_num_blocks = shape[0]
-    if len(shape) == 4:
-        # vLLM's standardized per-layer view is ``[B, H, N, C]``: kernel
-        # blocks, head slots, tokens (states) per kernel block, content.
-        physical_block_size = shape[2]
-    elif len(shape) >= 2:
-        # Legacy MLA cache: ``[num_blocks, block_size, head_dim]``.
-        physical_block_size = shape[1]
-    else:
-        physical_block_size = logical_block_size
+    if len(shape) != 4:
+        raise ValueError(f"vLLM 0.29 MLA cache must use [B, H, N, C], got shape={shape}")
+    # vLLM's standardized per-layer view is ``[B, H, N, C]``: kernel
+    # blocks, head slots, tokens (states) per kernel block, content.
+    physical_block_size = shape[2]
     physical_bytes_per_block = stride[0] * element_size
     kv_stride_bytes = 0
     segments = 1

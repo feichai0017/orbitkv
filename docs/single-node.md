@@ -231,9 +231,10 @@ workload. To validate the current adapters, use the
 matching GPU host.
 
 For experimental multi-node cache sharing, use [P2P deployment](p2p.md).
-vLLM P/D handoff via OrbitKV's `PdConnector` or upstream NIXL is a separate
-request-transfer path; see [P/D and NIXL](pd.md). SGLang has no OrbitKV P/D
-adapter today.
+vLLM P/D handoff via OrbitKV's split P/D connectors or upstream NIXL is a
+separate request-transfer path; see [P/D transfer](pd.md). SGLang can retain
+its native P/D control plane while using OrbitKV's Rust TENT payload engine;
+the external two-GPU gate remains open.
 
 ## Deployment variants
 
@@ -243,7 +244,7 @@ adapter today.
 | Multiple engine instances sharing one host manager | Instances can use the same local socket; use immutable model identities and qualify concurrency for the workload | Instances can use the same local socket; rank/layout-scoped namespaces isolate incompatible pages, and concurrent multi-rank recovery still needs a GPU gate |
 | Replicas on separate hosts | One manager per host with embedded catalog, etcd membership and Mooncake fetch; experimental | The same node-local adapter connection with one manager per host; remote fetch and multi-rank behavior still need qualification |
 | One TP replica split across hosts | Unsupported by the current scheduler-to-manager query fan-out | Not qualified by the current single-rank GPU gate |
-| P/D handoff | Experimental OrbitKV Mooncake `PdConnector`, or upstream vLLM NIXL; separate from external cache | No OrbitKV P/D adapter |
+| P/D handoff | Experimental OrbitKV `PdPrefillConnector`/`PdDecodeConnector`, or upstream vLLM NIXL | Native SGLang P/D control with OrbitKV TENT payload; P/D plus external-cache gate implemented, external H20 run pending |
 
 The current embedded directory has one metadata copy per shard. Do not infer
 production multi-node resilience from the validated single-node paths.

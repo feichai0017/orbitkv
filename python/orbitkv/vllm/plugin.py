@@ -27,18 +27,6 @@ def register() -> None:
         )
     with contextlib.suppress(ValueError):
         KVConnectorFactory.register_connector(
-            "NoopKVConnector",
-            "orbitkv.vllm",
-            "NoopKVConnector",
-        )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
-            "PdConnector",
-            "orbitkv.vllm.pd",
-            "PdConnector",
-        )
-    with contextlib.suppress(ValueError):
-        KVConnectorFactory.register_connector(
             "PdDecodeConnector",
             "orbitkv.vllm.pd",
             "PdDecodeConnector",

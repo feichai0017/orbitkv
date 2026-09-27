@@ -1029,6 +1029,17 @@ the original prefill could have published. The test and ownership contract are
 implemented; its two-GPU forced-TCP run and two-host RDMA/GPUDirect follow-up
 remain external H20 evidence.
 
+The vLLM P/D Python surface now targets only the pinned `0.29.0` API. The
+role-selecting `PdConnector`, old `handle_preemptions(set)` branch, alternate
+metrics API path, test-only worker attribute proxies and runtime-packaged no-op
+test connector were removed. Decode and prefill workers construct only their
+own handler and thread pools. TENT notification polling and per-request
+generation fencing moved into `orbitkv-transfer`; PyO3 releases the GIL for the
+native wait and Python retains only framework handshakes, layouts and completion
+delivery. The container gate covers 372 Python units, seven Transfer tests with
+real TCP notification delivery, and strict Transfer/PyO3 Clippy. The engine E2E
+remains an external GPU gate.
+
 The CPU-Mooncake check uses `--no-default-features --features
 mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
 the pinned Mooncake native library is built with CUDA disabled. This is a build

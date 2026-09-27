@@ -122,51 +122,6 @@ def test_pd_connectors_allow_mtp_layout() -> None:
     PdPrefillConnector(fake_mtp_config(), KVConnectorRole.WORKER)
 
 
-def test_legacy_pd_connector_selects_decode_by_engine_id() -> None:
-    config = fake_mtp_config()
-    config.kv_transfer_config.engine_id = "d0"
-
-    connector = PdConnector(config, KVConnectorRole.WORKER)
-
-    assert isinstance(connector._delegate, PdDecodeConnector)
-
-
-def test_legacy_pd_connector_selects_prefill_by_engine_id() -> None:
-    config = fake_mtp_config()
-    config.kv_transfer_config.engine_id = "p0"
-
-    connector = PdConnector(config, KVConnectorRole.WORKER)
-
-    assert isinstance(connector._delegate, PdPrefillConnector)
-
-
-def test_legacy_pd_connector_forwards_bound_metadata() -> None:
-    config = fake_mtp_config()
-    config.kv_transfer_config.engine_id = "d0"
-    connector = PdConnector(config, KVConnectorRole.WORKER)
-    metadata = PdConnectorMetadata()
-
-    connector.bind_connector_metadata(metadata)
-
-    assert connector._connector_metadata is metadata
-    assert connector._delegate._connector_metadata is metadata
-
-    connector.clear_connector_metadata()
-
-    assert connector._connector_metadata is None
-    assert connector._delegate._connector_metadata is None
-
-
-def test_legacy_pd_connector_preserves_piecewise_default_for_prefill() -> None:
-    assert PdConnector.requires_piecewise_for_cudagraph({}) is True
-    assert (
-        PdConnector.requires_piecewise_for_cudagraph(
-            {"orbitkv.pd.allow_full_decode_cudagraph": True}
-        )
-        is False
-    )
-
-
 def test_vllm_plugin_registers_framework_connectors(monkeypatch) -> None:
     import sys
 
@@ -188,15 +143,12 @@ def test_vllm_plugin_registers_framework_connectors(monkeypatch) -> None:
     vllm_plugin.register()
 
     assert (
-        "PdConnector",
-        "orbitkv.vllm.pd",
-        "PdConnector",
-    ) in registered
-    assert (
         "PdDecodeConnector",
         "orbitkv.vllm.pd",
         "PdDecodeConnector",
     ) in registered
+    assert "PdConnector" not in {name for name, _, _ in registered}
+    assert "NoopKVConnector" not in {name for name, _, _ in registered}
     assert (
         "PdPrefillConnector",
         "orbitkv.vllm.pd",
@@ -935,31 +887,6 @@ def test_pd_worker_uses_cuda_device_rank_map_for_tp1_replicas(monkeypatch) -> No
     worker.register_kv_caches({"layer.0": tensor})
 
     assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_4"]
-
-
-def test_pd_worker_rejects_removed_rdma_config(monkeypatch) -> None:
-    monkeypatch.setattr(
-        native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
-    )
-    tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
-        device_index=2,
-    )
-    config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(
-            engine_id="decode",
-            get_from_extra_config=lambda key, default: {
-                "orbitkv.pd.rdma.domains": ["mlx5_2"],
-                "orbitkv.pd.rdma.rank_map": {"0": {"nic": "mlx5_2", "worker_cpu": 64}},
-            }.get(key, default),
-        ),
-        parallel_config=SimpleNamespace(tensor_parallel_rank=0),
-    )
-
-    worker = PdDecodeWorkerConnector(config)
-    with pytest.raises(RuntimeError, match="mooncake.rank_map"):
-        worker.register_kv_caches({"layer.0": tensor})
 
 
 def test_mooncake_native_blocks_coalesce_contiguous_ranges() -> None:

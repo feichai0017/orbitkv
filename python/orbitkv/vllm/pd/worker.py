@@ -34,7 +34,6 @@ class PdWorkerBase:
         vllm_config: Any,
         kv_cache_config: Any = None,
         transfer: MooncakePort | None = None,
-        prefill_sender: Any | None = None,
         metrics: PdMetricsTracker | None = None,
     ) -> None:
         self.vllm_config = vllm_config
@@ -57,36 +56,6 @@ class PdWorkerBase:
         self.layouts: dict[str, KvCacheLayout] = {}
         self.layer_names: list[str] = []
         self._registered_layers: dict[str, LayerRemoteLayout] = {}
-        self._forward_step_id = 0
-        self._idle_decode_step = False
-        self._failed_load_block_ids: set[int] = set()
-
-        self._decode = DecodeHandler(self, prefill_sender=prefill_sender)
-        self._prefill = PrefillHandler(self)
-
-    # ------------------------------------------------------------------
-    # Backward-compatible attribute access for tests / internal callers
-    # ------------------------------------------------------------------
-
-    @property
-    def _wait_reqs(self) -> dict:
-        return self._decode._wait_reqs
-
-    @_wait_reqs.setter
-    def _wait_reqs(self, value: dict) -> None:
-        self._decode._wait_reqs = value
-
-    @property
-    def _push_reqs(self) -> dict:
-        return self._prefill._push_reqs
-
-    @property
-    def _push_sender(self):
-        return self._prefill._push_sender
-
-    @property
-    def _push_finalizer(self):
-        return self._prefill._push_finalizer
 
     # ------------------------------------------------------------------
     # Public API
@@ -116,7 +85,6 @@ class PdWorkerBase:
                 _infer_cuda_device(kv_caches),
                 tp_rank=self.tp_rank,
             )
-            self._decode.init_transfer_waiter()
         assert self.transfer is not None
         registered_layers = self.transfer.register_local_layers(
             tuple(
@@ -125,11 +93,9 @@ class PdWorkerBase:
             )
         )
         self._registered_layers = {layer.layer_name: layer for layer in registered_layers}
-        self._decode.gather_peer_info()
         logger.info(
-            "[PdConnector] registered %d KV cache layers, gathered %d peer ranks",
+            "[PdConnector] registered %d KV cache layers",
             len(self.layouts),
-            len(self._decode._peer_layouts),
         )
 
     def _layer_spec(self, layer_name: str) -> Any | None:
@@ -140,136 +106,8 @@ class PdWorkerBase:
         )
         return layer_spec
 
-    def start_load_kv(
-        self,
-        metadata: PdConnectorMetadata,
-        forward_context: Any,
-        **kwargs: Any,
-    ) -> None:
-        self._forward_step_id += 1
-        self._idle_decode_step = False
-        logger.debug(
-            "[PdConnector] worker start_load_kv metadata=%s wait_reqs=%s push_reqs=%s release=%s known_wait=%s known_push=%s",
-            metadata,
-            sorted(metadata.reqs_to_wait),
-            sorted(metadata.reqs_to_push),
-            sorted(metadata.reqs_to_release),
-            sorted(self._decode.wait_reqs),
-            sorted(self._prefill.push_reqs),
-        )
-        if (
-            not metadata.reqs_to_wait
-            and not metadata.reqs_to_push
-            and not metadata.reqs_to_release
-            and not metadata.preempted_req_ids
-            and self._decode.is_idle()
-            and not self._prefill.has_state()
-        ):
-            self._idle_decode_step = True
-            return
-
-        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
-
-        self._decode.process_wait_reqs(metadata.reqs_to_wait)
-        self._prefill.process_push_reqs(metadata.reqs_to_push)
-
-        for req_id in metadata.preempted_req_ids:
-            logger.debug("[PdConnector] worker preempt req=%s", req_id)
-            for push_req_id in self._prefill.release(req_id, RELEASE_PRODUCER_PREEMPTED):
-                self.transfer.close_request(push_req_id)
-
-        for req_id in metadata.reqs_to_release:
-            reason = metadata.release_reasons.get(req_id, RELEASE_CONSUMER_ABORT)
-            logger.debug("[PdConnector] worker release req=%s reason=%s", req_id, reason)
-            if reason == RELEASE_CONSUMER_ABORT:
-                self._decode.release(req_id)
-            released_push_req_ids = self._prefill.release(req_id, reason)
-            if released_push_req_ids:
-                for push_req_id in released_push_req_ids:
-                    self.transfer.close_request(push_req_id)
-            elif reason != RELEASE_CONSUMER_ABORT:
-                self.transfer.close_request(req_id)
-
-    def wait_for_layer_load(self, layer_name: str) -> None:
-        if self._idle_decode_step:
-            return None
-        assert layer_name in self.layouts, (
-            f"PdConnector saw unknown layer {layer_name}; registered={list(self.layouts)}"
-        )
-        return None
-
-    def save_kv_layer(
-        self,
-        layer_name: str,
-        kv_layer: Any,
-        attn_metadata: Any,
-        **kwargs: Any,
-    ) -> None:
-        if self._idle_decode_step:
-            return
-        self._prefill.save_kv_layer(layer_name, kv_layer, attn_metadata, **kwargs)
-
-    def wait_for_save(self) -> None:
-        if self._idle_decode_step:
-            return
-        self._prefill.wait_for_save()
-
-    def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
-        if not finished_req_ids and self._decode.is_idle() and not self._prefill.has_state():
-            return None, None
-
-        logger.debug(
-            "[PdConnector] worker get_finished enter finished_req_ids=%s wait_reqs=%s push_reqs=%s",
-            sorted(finished_req_ids),
-            sorted(self._decode.wait_reqs),
-            sorted(self._prefill.push_reqs),
-        )
-
-        releasable_sending = self._prefill.get_finished_sending(finished_req_ids)
-        finished_recving = self.transfer.pop_finished_recving()
-        finished_recving.update(self._decode.pop_finished_transfer_waits())
-        finished_recving.update(self._decode.pop_finished_aborted_recving())
-        failed_recving = self._decode.pop_failed_recving()
-        if failed_recving:
-            finished_recving.update(failed_recving)
-        if finished_recving:
-            report_ts_ns = time.time_ns()
-            logger.info(
-                "[PdConnector] D worker finished_recving reqs=%s count=%d remaining_wait_before=%d ts_ns=%d",
-                sorted(finished_recving),
-                len(finished_recving),
-                len(self._decode.wait_reqs),
-                report_ts_ns,
-            )
-        self._decode.finish_recving(finished_recving)
-
-        logger.debug(
-            "[PdConnector] worker get_finished exit sending=%s recving=%s remaining_wait=%s remaining_push=%s",
-            sorted(releasable_sending),
-            sorted(finished_recving),
-            sorted(self._decode.wait_reqs),
-            sorted(self._prefill.push_reqs),
-        )
-        return releasable_sending or None, finished_recving or None
-
-    def get_block_ids_with_load_errors(self) -> set[int]:
-        self._failed_load_block_ids.update(self._decode.pop_failed_block_ids())
-        failed = self._failed_load_block_ids
-        self._failed_load_block_ids = set()
-        return failed
-
-    def build_connector_worker_meta(self) -> PdWorkerMetadata | None:
-        failed_recving = self._decode.pop_failed_recving_for_meta()
-        if not failed_recving:
-            return None
-        return PdWorkerMetadata(failed_recving=failed_recving)
-
     def get_stats(self) -> PdKVConnectorStats:
         return self.metrics.get_stats()
-
-    def shutdown(self) -> None:
-        self._decode.shutdown()
-        self._prefill.shutdown()
 
     def _layer_idx(self, layer_name: str) -> int:
         try:
@@ -293,11 +131,29 @@ class PdWorkerBase:
 
 
 class PdDecodeWorkerConnector(PdWorkerBase):
-    """Decode-side worker facade.
+    """Decode-side owner of receive, page-grant and completion state."""
 
-    It reuses the existing worker initialization and decode handler while
-    intentionally ignoring producer push metadata and save callbacks.
-    """
+    def __init__(
+        self,
+        vllm_config: Any,
+        kv_cache_config: Any = None,
+        transfer: MooncakePort | None = None,
+        prefill_sender: Any | None = None,
+        metrics: PdMetricsTracker | None = None,
+    ) -> None:
+        super().__init__(vllm_config, kv_cache_config, transfer, metrics)
+        self._failed_load_block_ids: set[int] = set()
+        self._decode = DecodeHandler(self, prefill_sender=prefill_sender)
+
+    def register_kv_caches(self, kv_caches: dict[str, Any]) -> None:
+        super().register_kv_caches(kv_caches)
+        if not self._transfer_is_injected:
+            self._decode.init_transfer_waiter()
+        self._decode.gather_peer_info()
+        logger.info(
+            "[PdConnector] decode gathered %d peer ranks",
+            len(self._decode._peers.layouts),
+        )
 
     def start_load_kv(
         self,
@@ -305,12 +161,29 @@ class PdDecodeWorkerConnector(PdWorkerBase):
         forward_context: Any,
         **kwargs: Any,
     ) -> None:
-        decode_metadata = PdConnectorMetadata(
-            reqs_to_wait=metadata.reqs_to_wait,
-            reqs_to_release=metadata.reqs_to_release,
-            release_reasons=metadata.release_reasons,
+        logger.debug(
+            "[PdConnector] decode start_load_kv metadata=%s wait_reqs=%s release=%s known_wait=%s",
+            metadata,
+            sorted(metadata.reqs_to_wait),
+            sorted(metadata.reqs_to_release),
+            sorted(self._decode.wait_reqs),
         )
-        super().start_load_kv(decode_metadata, forward_context, **kwargs)
+        if not metadata.reqs_to_wait and not metadata.reqs_to_release and self._decode.is_idle():
+            return
+        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
+        self._decode.process_wait_reqs(metadata.reqs_to_wait)
+        for req_id in metadata.reqs_to_release:
+            reason = metadata.release_reasons.get(req_id, RELEASE_CONSUMER_ABORT)
+            logger.debug("[PdConnector] decode release req=%s reason=%s", req_id, reason)
+            if reason == RELEASE_CONSUMER_ABORT:
+                self._decode.release(req_id)
+            else:
+                self.transfer.close_request(req_id)
+
+    def wait_for_layer_load(self, layer_name: str) -> None:
+        assert layer_name in self.layouts, (
+            f"PdConnector saw unknown layer {layer_name}; registered={list(self.layouts)}"
+        )
 
     def save_kv_layer(
         self,
@@ -325,16 +198,53 @@ class PdDecodeWorkerConnector(PdWorkerBase):
         return None
 
     def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
-        sending, recving = super().get_finished(finished_req_ids)
-        return None, recving
+        if not finished_req_ids and self._decode.is_idle():
+            return None, None
+        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
+        finished_recving = self.transfer.pop_finished_recving()
+        finished_recving.update(self._decode.pop_finished_transfer_waits())
+        finished_recving.update(self._decode.pop_finished_aborted_recving())
+        finished_recving.update(self._decode.pop_failed_recving())
+        if finished_recving:
+            logger.info(
+                "[PdConnector] D worker finished_recving reqs=%s count=%d "
+                "remaining_wait_before=%d ts_ns=%d",
+                sorted(finished_recving),
+                len(finished_recving),
+                len(self._decode.wait_reqs),
+                time.time_ns(),
+            )
+        self._decode.finish_recving(finished_recving)
+        return None, finished_recving or None
+
+    def get_block_ids_with_load_errors(self) -> set[int]:
+        self._failed_load_block_ids.update(self._decode.pop_failed_block_ids())
+        failed = self._failed_load_block_ids
+        self._failed_load_block_ids = set()
+        return failed
+
+    def build_connector_worker_meta(self) -> PdWorkerMetadata | None:
+        failed_recving = self._decode.pop_failed_recving_for_meta()
+        if not failed_recving:
+            return None
+        return PdWorkerMetadata(failed_recving=failed_recving)
+
+    def shutdown(self) -> None:
+        self._decode.shutdown()
 
 
 class PdPrefillWorkerConnector(PdWorkerBase):
-    """Prefill-side worker facade.
+    """Prefill-side owner of push, completion and source-page state."""
 
-    It reuses the existing worker initialization and prefill handler while
-    intentionally ignoring consumer wait metadata and load callbacks.
-    """
+    def __init__(
+        self,
+        vllm_config: Any,
+        kv_cache_config: Any = None,
+        transfer: MooncakePort | None = None,
+        metrics: PdMetricsTracker | None = None,
+    ) -> None:
+        super().__init__(vllm_config, kv_cache_config, transfer, metrics)
+        self._prefill = PrefillHandler(self)
 
     def start_load_kv(
         self,
@@ -342,16 +252,50 @@ class PdPrefillWorkerConnector(PdWorkerBase):
         forward_context: Any,
         **kwargs: Any,
     ) -> None:
-        prefill_metadata = PdConnectorMetadata(
-            reqs_to_push=metadata.reqs_to_push,
-            reqs_to_release=metadata.reqs_to_release,
-            release_reasons=metadata.release_reasons,
-            preempted_req_ids=metadata.preempted_req_ids,
+        logger.debug(
+            "[PdConnector] prefill start_load_kv metadata=%s push_reqs=%s release=%s known_push=%s",
+            metadata,
+            sorted(metadata.reqs_to_push),
+            sorted(metadata.reqs_to_release),
+            sorted(self._prefill.push_reqs),
         )
-        super().start_load_kv(prefill_metadata, forward_context, **kwargs)
+        if (
+            not metadata.reqs_to_push
+            and not metadata.reqs_to_release
+            and not metadata.preempted_req_ids
+            and not self._prefill.has_state()
+        ):
+            return
+        assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
+        self._prefill.process_push_reqs(metadata.reqs_to_push)
+        for req_id in metadata.preempted_req_ids:
+            logger.debug("[PdConnector] prefill preempt req=%s", req_id)
+            for push_req_id in self._prefill.release(req_id, RELEASE_PRODUCER_PREEMPTED):
+                self.transfer.close_request(push_req_id)
+        for req_id in metadata.reqs_to_release:
+            reason = metadata.release_reasons.get(req_id, RELEASE_CONSUMER_ABORT)
+            logger.debug("[PdConnector] prefill release req=%s reason=%s", req_id, reason)
+            released_push_req_ids = self._prefill.release(req_id, reason)
+            if released_push_req_ids:
+                for push_req_id in released_push_req_ids:
+                    self.transfer.close_request(push_req_id)
+            elif reason != RELEASE_CONSUMER_ABORT:
+                self.transfer.close_request(req_id)
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         return None
+
+    def save_kv_layer(
+        self,
+        layer_name: str,
+        kv_layer: Any,
+        attn_metadata: Any,
+        **kwargs: Any,
+    ) -> None:
+        self._prefill.save_kv_layer(layer_name, kv_layer, attn_metadata, **kwargs)
+
+    def wait_for_save(self) -> None:
+        self._prefill.wait_for_save()
 
     def get_block_ids_with_load_errors(self) -> set[int]:
         return set()
@@ -360,12 +304,17 @@ class PdPrefillWorkerConnector(PdWorkerBase):
         return None
 
     def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
-        sending, recving = super().get_finished(finished_req_ids)
-        return sending, None
+        if not finished_req_ids and not self._prefill.has_state():
+            return None, None
+        releasable_sending = self._prefill.get_finished_sending(finished_req_ids)
+        return releasable_sending or None, None
+
+    def shutdown(self) -> None:
+        self._prefill.shutdown()
 
 
 # ---------------------------------------------------------------------------
-# Module-level helpers (kept here so monkeypatching worker_mod.X still works)
+# Module-level helpers
 # ---------------------------------------------------------------------------
 
 
