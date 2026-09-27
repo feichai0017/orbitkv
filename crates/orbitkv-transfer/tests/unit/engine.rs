@@ -192,6 +192,146 @@ fn uncertain_transfer_states_drain_all_tasks_before_returning() {
 }
 
 #[test]
+fn timeout_cancellation_waits_for_all_terminal_tasks_and_batch_reclamation() {
+    for native_timeout in [false, true] {
+        let polls = [std::cell::Cell::new(0), std::cell::Cell::new(0)];
+        let cancelled = [std::cell::Cell::new(false), std::cell::Cell::new(false)];
+        let terminal = [std::cell::Cell::new(false), std::cell::Cell::new(false)];
+        let frees = std::cell::Cell::new(0);
+        let result = drain_batch(
+            2,
+            if native_timeout {
+                Duration::MAX
+            } else {
+                Duration::ZERO
+            },
+            Ok(()),
+            |task| {
+                polls[task].set(polls[task].get() + 1);
+                let status = if native_timeout && task == 0 {
+                    STATUS_TIMEOUT
+                } else if cancelled[task].get() && polls[task].get() >= 4 {
+                    STATUS_CANCELED
+                } else {
+                    STATUS_PENDING
+                };
+                terminal[task].set(status != STATUS_PENDING);
+                Ok(native::TransferStatus {
+                    status,
+                    transferred_bytes: 0,
+                })
+            },
+            |task| {
+                assert!(!cancelled[task].replace(true), "cancel a task at most once");
+                Ok(())
+            },
+            || {
+                assert!(terminal.iter().all(std::cell::Cell::get));
+                frees.set(frees.get() + 1);
+                frees.get() == 2
+            },
+        );
+        assert!(matches!(result, Err(MooncakeError::Timeout)));
+        assert_eq!(polls[0].get(), if native_timeout { 1 } else { 4 });
+        assert_eq!(polls[1].get(), 4);
+        assert_eq!(cancelled[0].get(), !native_timeout);
+        assert!(cancelled[1].get());
+        assert_eq!(
+            frees.get(),
+            2,
+            "terminal status alone cannot reclaim a batch"
+        );
+    }
+}
+
+#[test]
+fn timeout_cancellation_preserves_submission_polling_and_cancellation_errors() {
+    for operation in ["tent_submit", "getTransferStatus", "tent_cancel_task"] {
+        let error = || MooncakeError::Operation {
+            operation,
+            status: -23,
+        };
+        let polls = std::cell::Cell::new(0);
+        let cancellations = std::cell::Cell::new(0);
+        let freed = std::cell::Cell::new(false);
+        let result = drain_batch(
+            1,
+            Duration::ZERO,
+            if operation == "tent_submit" {
+                Err(error())
+            } else {
+                Ok(())
+            },
+            |_| {
+                polls.set(polls.get() + 1);
+                if polls.get() == 1 && operation == "getTransferStatus" {
+                    return Err(error());
+                }
+                Ok(native::TransferStatus {
+                    status: if polls.get() == 1 {
+                        STATUS_PENDING
+                    } else {
+                        STATUS_CANCELED
+                    },
+                    transferred_bytes: 0,
+                })
+            },
+            |_| {
+                cancellations.set(cancellations.get() + 1);
+                if operation == "tent_cancel_task" {
+                    Err(error())
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                assert_eq!(polls.get(), 2, "retain the owner until cancellation drains");
+                freed.set(true);
+                true
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(MooncakeError::Operation { operation: cause, status: -23 }) if cause == operation
+        ));
+        assert_eq!(cancellations.get(), 1);
+        assert!(freed.get());
+    }
+}
+
+#[test]
+fn unsolicited_cancellation_remains_failure_even_when_another_timeout_was_observed() {
+    for (native_timeout, timeout) in [
+        (false, Duration::MAX),
+        (false, Duration::ZERO),
+        (true, Duration::MAX),
+    ] {
+        let canceled_task = usize::from(native_timeout);
+        let result = drain_batch(
+            canceled_task + 1,
+            timeout,
+            Ok(()),
+            |task| {
+                Ok(native::TransferStatus {
+                    status: if native_timeout && task == 0 {
+                        STATUS_TIMEOUT
+                    } else {
+                        STATUS_CANCELED
+                    },
+                    transferred_bytes: 0,
+                })
+            },
+            |_| panic!("an unsolicited terminal state must not request cancellation"),
+            || true,
+        );
+        assert!(matches!(
+            result,
+            Err(MooncakeError::TransferFailed { task, state: STATUS_CANCELED }) if task == canceled_task
+        ));
+    }
+}
+
+#[test]
 fn batch_drain_counts_completed_bytes_once_and_handles_rejected_submission() {
     let rounds = std::cell::Cell::new(0);
     let result = drain_batch(

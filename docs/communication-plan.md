@@ -65,7 +65,7 @@ authorization retains its own RPC deadline. `release_wait` records this wait,
 and fetch-plan attempt counts describe logical segment attempts rather than
 individual RPC retries.
 
-This increment uses the existing source-control RPC and Mooncake READ backend.
+This increment uses the existing source-control RPC and Mooncake TENT READ backend.
 It does not introduce speculative payload reads, pre-authorized persistent
 hotspot replicas, or a new metadata transport. Prepared-grant residence time
 must not train the complete-route service-cost estimator.

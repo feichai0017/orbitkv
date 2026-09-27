@@ -286,6 +286,8 @@ deadline or partial submit, continues polling every task to a TENT terminal
 state, and only then calls `tent_free_batch`. A successful free request is not a
 completion fence. This preserves source/destination memory through TENT's
 asynchronous queue, failover and device work.
+Cancellation caused by a timeout retains the timeout result after draining;
+an earlier submission, polling or cancellation error keeps its original cause.
 
 OrbitKV also exposes TENT's bounded NIC load snapshot: device name, in-flight
 bytes and EWMA bandwidth. This is live rail-pressure evidence, not a per-batch
