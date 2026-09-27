@@ -73,7 +73,6 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
         16 * 1024,
         1,
         false,
-        true,
         NonZeroU64::new(SSD_ALIGNMENT as u64),
     ));
     for encoded in [false, true] {

@@ -7,7 +7,7 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 
 fn shared_slab() -> (Vec<(StateKey, Arc<SealedBlock>)>, Arc<PinnedAllocation>) {
-    let pool = PinnedAllocator::new_global(1024 * 1024, 1, false, false, None);
+    let pool = PinnedAllocator::new_global(1024 * 1024, 1, false, None);
     let allocation = pool
         .allocate(NonZeroU64::new(4096).unwrap(), NumaNode::UNKNOWN)
         .unwrap();

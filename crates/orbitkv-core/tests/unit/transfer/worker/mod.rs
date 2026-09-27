@@ -313,7 +313,7 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
     use crate::memory::pool::PinnedAllocator;
     use orbitkv_state::StorageFormat;
 
-    let pool = PinnedAllocator::new_global(4096, 1, false, false, None);
+    let pool = PinnedAllocator::new_global(4096, 1, false, None);
     let block = |bytes: usize| {
         let allocation = pool
             .allocate(NonZeroU64::new(bytes as u64).unwrap(), NumaNode::UNKNOWN)

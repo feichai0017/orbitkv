@@ -90,7 +90,6 @@ impl Storage {
             info!("Blockwise allocation enabled for batch_save");
         }
 
-        let cpu_readable = ssd_cache_config.is_some() || config.codec != crate::StorageCodec::None;
         let pool_shards = config.pool_shards;
 
         // Create unified allocator based on NUMA configuration
@@ -104,7 +103,6 @@ impl Storage {
                 numa_nodes,
                 pool_shards,
                 use_hugepages,
-                cpu_readable,
                 unit_hint,
             ))
         } else {
@@ -113,7 +111,6 @@ impl Storage {
                 capacity_bytes,
                 pool_shards,
                 use_hugepages,
-                cpu_readable,
                 unit_hint,
             ))
         };

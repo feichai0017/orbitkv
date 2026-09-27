@@ -8,7 +8,6 @@ fn test_allocate_fn(calls: Arc<AtomicUsize>) -> AllocateFn {
         32 * 1024 * 1024,
         1,
         false,
-        false,
         None,
     ));
     Arc::new(move |size, _numa| {
