@@ -366,7 +366,7 @@ def test_p_worker_prefill_tp_greater_than_decode_tp_registers_remote_head_slices
     def build_worker(rank: int) -> PdPrefillWorkerConnector:
         worker = PdPrefillWorkerConnector(
             SimpleNamespace(
-                kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+                kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
                 model_config=SimpleNamespace(
                     use_mla=False,
                     get_total_num_kv_heads=lambda: 8,
@@ -783,12 +783,12 @@ def test_pd_worker_builds_mooncake_by_default_when_extension_exists(monkeypatch)
         device_index=2,
     )
     config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
             engine_id="decode",
-            get_from_extra_config=lambda key, default: {
+            kv_connector_extra_config={
                 "orbitkv.pd.mooncake.bind_host": "10.0.0.2",
                 "orbitkv.pd.mooncake.rank_map": {"0": {"nic": "mlx5_2"}},
-            }.get(key, default),
+            },
         ),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0),
     )
@@ -813,9 +813,9 @@ def test_pd_worker_allows_mooncake_transport_autoselection(monkeypatch) -> None:
         device_index=2,
     )
     config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
             engine_id="decode",
-            get_from_extra_config=lambda _key, default: default,
+            kv_connector_extra_config={},
         ),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0),
     )
@@ -841,14 +841,11 @@ def test_pd_worker_uses_runtime_tp_rank_for_mooncake_rank_map(monkeypatch) -> No
         device_index=2,
     )
     config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
             engine_id="decode",
-            get_from_extra_config=lambda key, default: {
-                "orbitkv.pd.mooncake.rank_map": {
-                    "0": {"nic": "mlx5_1"},
-                    "2": {"nic": "mlx5_2"},
-                },
-            }.get(key, default),
+            kv_connector_extra_config={
+                "orbitkv.pd.mooncake.rank_map": {"0": {"nic": "mlx5_1"}, "2": {"nic": "mlx5_2"}}
+            },
         ),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=8),
     )
@@ -859,7 +856,7 @@ def test_pd_worker_uses_runtime_tp_rank_for_mooncake_rank_map(monkeypatch) -> No
     assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_2"]
 
 
-def test_pd_worker_uses_cuda_device_rank_map_for_tp1_replicas(monkeypatch) -> None:
+def test_pd_worker_rank_map_uses_tp_rank_even_when_cuda_ordinal_differs(monkeypatch) -> None:
     monkeypatch.setattr(
         native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
     )
@@ -871,14 +868,11 @@ def test_pd_worker_uses_cuda_device_rank_map_for_tp1_replicas(monkeypatch) -> No
         device_index=4,
     )
     config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
             engine_id="decode",
-            get_from_extra_config=lambda key, default: {
-                "orbitkv.pd.mooncake.rank_map": {
-                    "0": {"nic": "mlx5_0"},
-                    "4": {"nic": "mlx5_4"},
-                },
-            }.get(key, default),
+            kv_connector_extra_config={
+                "orbitkv.pd.mooncake.rank_map": {"0": {"nic": "mlx5_0"}, "4": {"nic": "mlx5_4"}}
+            },
         ),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
     )
@@ -886,7 +880,7 @@ def test_pd_worker_uses_cuda_device_rank_map_for_tp1_replicas(monkeypatch) -> No
     worker = PdDecodeWorkerConnector(config)
     worker.register_kv_caches({"layer.0": tensor})
 
-    assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_4"]
+    assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_0"]
 
 
 def test_mooncake_native_blocks_coalesce_contiguous_ranges() -> None:
@@ -947,3 +941,19 @@ def test_mooncake_native_blocks_coalesce_contiguous_ranges() -> None:
             ],
         },
     ]
+
+
+@pytest.mark.parametrize("rank_map", [{"4": {"nic": "mlx5_4"}}, {"0": {}}, [], {"0": {"nic": ""}}])
+def test_pd_rank_map_rejects_missing_rank_or_nic(monkeypatch, rank_map):
+    from orbitkv.vllm.pd.mooncake import build_mooncake_port
+
+    monkeypatch.setattr(
+        native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
+    )
+    config = SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
+            kv_connector_extra_config={"orbitkv.pd.mooncake.rank_map": rank_map}
+        )
+    )
+    with pytest.raises(ValueError, match="rank_map"):
+        build_mooncake_port(config, 4, tp_rank=0)

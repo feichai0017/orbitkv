@@ -45,7 +45,15 @@ changing the wire contract.
 ## Configuration
 
 Each TP rank configures a routable bind host and may select an RDMA NIC. When
-`rank_map` is omitted, Mooncake chooses the available transport and may use TCP:
+`rank_map` is omitted, Mooncake chooses the available transport and may use TCP.
+Keys are **TP ranks**, never CUDA ordinals or host GPU indices. A TP=1 replica
+always uses key `"0"`, including when `CUDA_VISIBLE_DEVICES` selects GPU 4.
+An explicit map must contain that rank and a nonempty NIC. OrbitKV reads the
+pinned vLLM `kv_connector_extra_config` directly; there is no legacy
+`extra_config` field or NIXL host-environment alias. TENT is the required backend,
+so no backend-enabled switch is needed.
+
+Example:
 
 ```json
 {

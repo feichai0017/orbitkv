@@ -27,7 +27,6 @@ from orbitkv.vllm.pd.prefill import AsyncPrefillSender, PrefillHttpTask
 if TYPE_CHECKING:
     from orbitkv.vllm.pd.worker import PdWorkerBase
 
-from orbitkv.vllm.pd.config import extra_config_value
 
 logger = get_connector_logger()
 
@@ -311,8 +310,7 @@ class _DecodePeerState:
         first_layout = next(iter(local_layout.values()))
         remote_heads = int(getattr(first_layout, "num_kv_heads", 1))
         prefill_tp_size = int(
-            extra_config_value(
-                self._w.vllm_config,
+            self._w.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.prefill_tp_size",
                 self._w.tp_size,
             )
@@ -359,8 +357,7 @@ class DecodeHandler:
             else None
         )
         prefill_sender_worker_count = int(
-            extra_config_value(
-                worker.vllm_config,
+            worker.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.prefill_sender_worker_count",
                 16,
             )

@@ -23,6 +23,7 @@ does not establish OrbitKV compatibility.
 | Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP; [recorded scope](shared-cache-qualification.md#recorded-result) |
 | Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; [shared-cache gates](shared-cache-qualification.md) distinguish same-host TCP from real two-host/RDMA qualification; catalogs have one metadata copy |
 | vLLM P/D through OrbitKV's split connectors | Prefill, decode, P/D proxy; Mooncake TENT transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
+| SGLang P/D over OrbitKV TENT | SGLang prefill, decode and native router; optional node-local cache | Native control plane plus Rust TENT is implemented; two-GPU and two-host serving qualification remain open |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
 
 ```mermaid
@@ -110,8 +111,10 @@ not measured per-request latency. See [GPU storage](gds.md) for the exact rules.
 Pinned-pool shards use size-sealed Linux memfds with shared mappings and CUDA
 host registration. Huge-page mode requires reserved huge pages and permission
 to create hugetlb memfds; it does not silently switch to regular pages.
-NUMA placement is established by Manager first-touch. Payload mappings are not
-yet handed to engine processes by the production bootstrap protocol.
+NUMA placement is established by Manager first-touch. GPU registration exports
+the payload arena FDs to the engine's native executor, which maps and registers
+them independently for raw DRAM restores. The Manager retains source leases
+and admission permits through the authoritative engine drain.
 
 Only a configured path enables SSD caching. Capacity defaults to `512gb` if
 omitted; set it explicitly to match the intended storage budget. cuFile reserves
@@ -200,6 +203,14 @@ metadata copy per shard, and real two-host/RDMA serving remains a separate gate.
 Multi-host TP query fan-out is not supported yet.
 
 ## P/D: Mooncake or NIXL
+
+Deployment profiles follow LMCache's independent service, P2P sharing and
+[P/D handoff](https://docs.lmcache.ai/mp/disaggregated_prefill.html) organization.
+The engine, cache tier and request-handoff role are separate choices. An upstream
+mode is a reference topology, not proof that OrbitKV supports its engines,
+parallelism, isolation or failure recovery. Keep those claims tied to the
+qualification table above and the pinned vLLM 0.29.0 / SGLang 0.5.20 contracts.
+
 
 P/D moves KV for the same request from prefill to decode. Remote caching finds
 reusable KV from an earlier request. These are independent paths; see

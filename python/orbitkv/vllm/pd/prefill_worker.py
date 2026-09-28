@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.vllm.pd.chunk_tracker import ChunkTracker
-from orbitkv.vllm.pd.config import extra_config_value
 from orbitkv.vllm.pd.layout import (
     BlockRegionSlice,
     FlashAttnHndLayout,
@@ -83,15 +82,13 @@ class PrefillHandler:
         self._push_traces: dict[str, _PushTrace] = {}
         self._skipped_pushes = 0
         push_worker_count = int(
-            extra_config_value(
-                worker.vllm_config,
+            worker.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.push_worker_count",
                 16,
             )
         )
         push_finalizer_worker_count = int(
-            extra_config_value(
-                worker.vllm_config,
+            worker.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.push_finalizer_worker_count",
                 16,
             )
@@ -106,8 +103,7 @@ class PrefillHandler:
             max_workers=push_finalizer_worker_count,
         )
         self._validate_runtime_layout = _bool_config(
-            extra_config_value(
-                worker.vllm_config,
+            worker.vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.validate_runtime_layout",
                 logger.isEnabledFor(logging.DEBUG),
             )

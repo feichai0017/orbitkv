@@ -365,7 +365,7 @@ def fake_mla_config(
     block_size: int = 64,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(engine_id="pd"),
+        kv_transfer_config=FakeKVTransferConfig(engine_id="pd"),
         model_config=SimpleNamespace(use_mla=True),
         cache_config=SimpleNamespace(block_size=block_size),
         parallel_config=SimpleNamespace(
@@ -379,7 +379,7 @@ def fake_mla_config(
 
 def fake_mtp_config() -> SimpleNamespace:
     return SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(engine_id="pd"),
+        kv_transfer_config=FakeKVTransferConfig(engine_id="pd"),
         model_config=SimpleNamespace(
             use_mla=False,
             hf_text_config=SimpleNamespace(num_nextn_predict_layers=1),
@@ -432,6 +432,12 @@ def fake_mtp_kv_cache_config(*, num_blocks: int = 8) -> SimpleNamespace:
             ),
         ],
     )
+
+
+class FakeKVTransferConfig:
+    def __init__(self, engine_id="pd", kv_connector_extra_config=None):
+        self.engine_id = engine_id
+        self.kv_connector_extra_config = kv_connector_extra_config or {}
 
 
 __all__ = [name for name in globals() if not name.startswith("__") and name != "teardown_module"]

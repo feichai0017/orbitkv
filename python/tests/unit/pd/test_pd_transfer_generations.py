@@ -10,6 +10,7 @@ from .pd_connector_test_utils import (
     RELEASE_CONSUMER_ABORT,
     RELEASE_PRODUCER_PREEMPTED,
     BlockRegionSlice,
+    FakeKVTransferConfig,
     FakeMooncakeTransferEngine,
     FakeTensor,
     LayerBlockSlices,
@@ -178,7 +179,7 @@ def test_active_chunks_cannot_replace_push_authorization(push_state, monkeypatch
     handshake = replace(handshake, layers=(hnd_remote_layer(block_ids=(0, 1), block_len=4096),))
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -222,7 +223,7 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
     handshake = replace(handshake, layers=(hnd_remote_layer(block_ids=(0, 1), block_len=4096),))
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,

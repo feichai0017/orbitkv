@@ -31,6 +31,12 @@ Manager, Catalog, or the remote-cache replica directory for that transfer.
 See [the Mooncake P/D protocol](pd-mooncake-push.md) and the local
 [`run_pd_local.sh`](../scripts/run_pd_local.sh) example. Its local proxy is
 for P/D handoff and testing; it is not the planned KV-aware cache router.
+The script requires an explicit model path, uses `.venv/vllm-release` by default,
+and selects `PREFILL_GPU=0`, `DECODE_GPU=1` with `MC_FORCE_TCP=1`. Override
+`VLLM_PYTHON` for another pinned environment. RDMA testing requires
+`MC_FORCE_TCP=0` plus `PREFILL_NIC` and `DECODE_NIC`; the script does not infer
+GPU/NIC affinity. Each child runs in its own process group, startup timeout is
+fatal, and cleanup targets only those groups.
 
 The decode connector can optionally report the physical handoff completion to
 its node-local Cache Manager. Configure both

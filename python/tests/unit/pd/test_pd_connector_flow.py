@@ -16,7 +16,7 @@ def test_pd_worker_wait_handshake_uses_mooncake_endpoint() -> None:
     native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=RealMooncakePort(native_engine),
@@ -45,7 +45,7 @@ def test_pd_worker_wait_handshake_uses_mooncake_endpoint() -> None:
 
 def test_pd_connector_exposes_empty_stats_for_vllm_metrics() -> None:
     connector = PdDecodeConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         KVConnectorRole.SCHEDULER,
     )
 
@@ -110,7 +110,7 @@ def test_pd_prom_metrics_observes_connector_stats(monkeypatch) -> None:
     monkeypatch.setattr(pd_metrics_mod.PdPromMetrics, "_counter_cls", FakeCounter, raising=False)
 
     prom = PdDecodeConnector.build_prom_metrics(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace()),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig()),
         {PromMetric: PromMetric},
         [],
         {0: []},
@@ -462,7 +462,7 @@ def test_d_consumer_release_does_not_increment_prefill_release_metric() -> None:
     transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -505,7 +505,7 @@ def test_pd_worker_stats_record_decode_wait_completion() -> None:
     transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -547,9 +547,9 @@ def test_d_worker_waits_for_all_prefill_ranks_when_prefill_tp_is_larger() -> Non
     native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="decode",
-                extra_config={"orbitkv.pd.prefill_tp_size": 2},
+                kv_connector_extra_config={"orbitkv.pd.prefill_tp_size": 2},
             ),
             model_config=SimpleNamespace(get_total_num_kv_heads=lambda: 8),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
@@ -586,9 +586,9 @@ def test_d_worker_caches_expected_notification_counts(monkeypatch) -> None:
     native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="decode",
-                extra_config={"orbitkv.pd.prefill_tp_size": 2},
+                kv_connector_extra_config={"orbitkv.pd.prefill_tp_size": 2},
             ),
             model_config=SimpleNamespace(get_total_num_kv_heads=lambda: 8),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
@@ -641,7 +641,7 @@ def test_pd_worker_pushes_flash_attn_hnd_blocks() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
@@ -700,7 +700,7 @@ def test_p_worker_closes_single_target_push_once_when_finished() -> None:
     )
     transfer = TrackingCloseMooncake()
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -726,7 +726,7 @@ def test_p_worker_closes_single_target_push_once_when_finished() -> None:
 def test_pd_worker_get_finished_does_not_poll_wait_reqs() -> None:
     transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")), transfer=transfer
     )
     worker._decode._state.register_wait(
         "req-1",
@@ -746,7 +746,7 @@ def test_pd_worker_get_finished_does_not_poll_wait_reqs() -> None:
 
 def test_p_worker_save_kv_layer_noops_without_push_reqs() -> None:
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
 
@@ -762,7 +762,7 @@ def test_p_worker_save_kv_layer_uses_registered_layout_fast_path() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -796,9 +796,9 @@ def test_p_worker_runtime_layout_validation_can_be_enabled() -> None:
     )
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="prefill",
-                extra_config={"orbitkv.pd.validate_runtime_layout": True},
+                kv_connector_extra_config={"orbitkv.pd.validate_runtime_layout": True},
             )
         ),
         transfer=MockMooncakePort(),
@@ -823,11 +823,11 @@ def test_p_worker_runtime_layout_validation_can_be_enabled() -> None:
 
 def test_role_workers_only_construct_their_own_handler() -> None:
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         transfer=MockMooncakePort(),
     )
     prefill = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=MockMooncakePort(),
     )
 
@@ -861,7 +861,8 @@ def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
     )
     transfer = BlockingWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -920,7 +921,8 @@ def test_d_worker_release_ack_does_not_record_successful_load() -> None:
     )
     transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -965,7 +967,7 @@ def test_d_worker_release_cancels_remote_prefill_request() -> None:
     prefill_sender = FakePrefillSender()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=MockMooncakePort(),
@@ -1012,11 +1014,9 @@ def test_decode_worker_prefill_sender_worker_count_comes_from_extra_config(monke
 
     monkeypatch.setattr(decode_worker_mod, "AsyncPrefillSender", FakeAsyncPrefillSender)
     vllm_config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
             engine_id="decode",
-            get_from_extra_config=lambda key, default=None: {
-                "orbitkv.pd.prefill_sender_worker_count": 4,
-            }.get(key, default),
+            kv_connector_extra_config={"orbitkv.pd.prefill_sender_worker_count": 4},
         ),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
     )
@@ -1040,7 +1040,7 @@ def test_decode_worker_prefill_sender_worker_count_defaults_to_sixteen(monkeypat
 
     monkeypatch.setattr(decode_worker_mod, "AsyncPrefillSender", FakeAsyncPrefillSender)
     vllm_config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(engine_id="decode"),
+        kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
     )
 
@@ -1077,9 +1077,9 @@ def test_decode_worker_reports_bounded_completion_evidence(monkeypatch) -> None:
     transfer = PressureMooncakePort()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="decode",
-                extra_config={
+                kv_connector_extra_config={
                     "orbitkv.pd.completion_observation_socket": ("/tmp/orbitkv-observations.sock"),
                     "orbitkv.pd.completion_observation_instance_id": "decode-instance",
                 },
@@ -1148,9 +1148,9 @@ def test_decode_worker_reports_timeout_without_claiming_wire_bytes(monkeypatch) 
     monkeypatch.setattr(native, "CacheManagerClient", FakeCacheManagerClient)
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="decode",
-                extra_config={
+                kv_connector_extra_config={
                     "orbitkv.pd.completion_observation_socket": "/tmp/observations.sock",
                     "orbitkv.pd.completion_observation_instance_id": "decode-instance",
                 },
@@ -1197,9 +1197,9 @@ def test_decode_worker_reports_timeout_without_claiming_wire_bytes(monkeypatch) 
 def test_decode_completion_observation_requires_explicit_instance_id(monkeypatch) -> None:
     monkeypatch.setattr(native, "CacheManagerClient", MagicMock)
     config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
             engine_id="decode",
-            extra_config={
+            kv_connector_extra_config={
                 "orbitkv.pd.completion_observation_socket": "/tmp/orbitkv-observations.sock"
             },
         )
@@ -1236,7 +1236,7 @@ def test_prefill_worker_push_worker_counts_default_to_sixteen(monkeypatch) -> No
     monkeypatch.setattr(prefill_worker_mod, "_AsyncLayerPushSender", FakePushSender)
     monkeypatch.setattr(prefill_worker_mod, "_AsyncPushFinalizer", FakePushFinalizer)
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=MockMooncakePort(),
     )
 
@@ -1273,12 +1273,12 @@ def test_prefill_worker_push_worker_counts_come_from_extra_config(monkeypatch) -
     monkeypatch.setattr(prefill_worker_mod, "_AsyncPushFinalizer", FakePushFinalizer)
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="prefill",
-                get_from_extra_config=lambda key, default=None: {
+                kv_connector_extra_config={
                     "orbitkv.pd.push_worker_count": 7,
                     "orbitkv.pd.push_finalizer_worker_count": 9,
-                }.get(key, default),
+                },
             )
         ),
         transfer=MockMooncakePort(),
@@ -1309,7 +1309,7 @@ def test_d_worker_prefill_failure_reports_load_error(monkeypatch) -> None:
     )
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=BlockingWaitMooncake(),
@@ -1354,7 +1354,7 @@ def test_d_worker_transfer_wait_failure_reports_load_error() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         transfer=FailingWaitMooncake(),
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -1406,7 +1406,7 @@ def test_d_worker_reports_background_transfer_wait_completion_without_native_pol
     )
     transfer = CallbackOnlyMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -1446,7 +1446,7 @@ def test_d_worker_finished_transfer_wait_prevents_idle_fast_path() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -1491,7 +1491,8 @@ def test_d_worker_reregister_keeps_new_transfer_wait_after_old_wait_exits() -> N
     )
     transfer = SequencedWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     wait_meta = PdConnectorMetadata(
@@ -1552,7 +1553,8 @@ def test_d_worker_starts_multiple_transfer_waits_concurrently() -> None:
     )
     transfer = BlockingWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
 
@@ -1620,7 +1622,7 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
     transfer = TrackingMooncake()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
         transfer=transfer,
@@ -1662,7 +1664,7 @@ def test_p_worker_completion_clears_physical_remote_block_offsets() -> None:
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
         transfer=transfer,
@@ -1728,7 +1730,7 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
     )
     transfer = TrackingMooncake()
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
@@ -1760,7 +1762,7 @@ def test_p_worker_uses_scheduler_blocks_without_slot_mapping_cpu_sync() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
@@ -1795,7 +1797,7 @@ def test_p_worker_save_does_not_require_slot_mapping() -> None:
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
@@ -1831,7 +1833,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     prefill_sender = FakePrefillSender()
     d_worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=d_transfer,
@@ -1877,7 +1879,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     )
 
     push_worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
     push_worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
@@ -2038,7 +2040,7 @@ def test_p_worker_pushes_mtp_layers_from_matching_kv_cache_group_blocks() -> Non
 
 def test_scheduler_delays_producer_block_free_until_send_finishes() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2070,7 +2072,7 @@ def test_scheduler_delays_producer_block_free_until_send_finishes() -> None:
 
 def test_scheduler_does_not_delay_aborted_producer_block_free() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2096,7 +2098,7 @@ def test_scheduler_does_not_delay_aborted_producer_block_free() -> None:
 
 def test_scheduler_marks_remote_prefill_abort_as_consumer_abort_ack() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2123,7 +2125,7 @@ def test_scheduler_marks_remote_prefill_abort_as_consumer_abort_ack() -> None:
 
 def test_scheduler_marks_preempted_producer_for_worker_release() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2144,7 +2146,7 @@ def test_scheduler_marks_preempted_producer_for_worker_release() -> None:
 
 def test_scheduler_marks_consumer_abort_release_reason() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2161,7 +2163,7 @@ def test_scheduler_marks_consumer_abort_release_reason() -> None:
 
 def test_scheduler_emits_cached_producer_chunks() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2189,7 +2191,7 @@ def test_scheduler_emits_cached_producer_chunks() -> None:
 
 def test_scheduler_carries_prompt_tokens_for_d_to_p_oob() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2205,7 +2207,7 @@ def test_scheduler_carries_prompt_tokens_for_d_to_p_oob() -> None:
 
 def test_scheduler_carries_prefill_max_tokens_for_d_to_p_oob() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2255,7 +2257,7 @@ def test_scheduler_carries_cross_process_mooncake_handshake() -> None:
         ],
     }
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="prefill-1",
@@ -2298,7 +2300,7 @@ def test_scheduler_carries_cross_process_mooncake_handshake_list() -> None:
         ],
     }
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="prefill-1",
@@ -2323,7 +2325,7 @@ def test_scheduler_carries_cross_process_mooncake_handshake_list() -> None:
 
 def test_scheduler_ignores_legacy_fake_rdma_done_endpoint() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2343,7 +2345,7 @@ def test_scheduler_ignores_legacy_fake_rdma_done_endpoint() -> None:
 
 def test_scheduler_registers_remote_wait_once_until_done() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2375,7 +2377,7 @@ def test_scheduler_registers_remote_wait_once_until_done() -> None:
 
 def test_scheduler_failed_recv_allows_remote_wait_retry() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2412,7 +2414,7 @@ def test_d_failed_load_retry_dispatches_prefill_again() -> None:
     prefill_sender = FakePrefillSender()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=MockMooncakePort(),
@@ -2420,7 +2422,7 @@ def test_d_failed_load_retry_dispatches_prefill_again() -> None:
     )
     worker.register_kv_caches({"layer.0": tensor})
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="decode-1",
@@ -2466,7 +2468,7 @@ def test_d_worker_rank0_dispatches_prefill_on_wait() -> None:
     prefill_sender = FakePrefillSender()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=MockMooncakePort(),
@@ -2862,7 +2864,7 @@ def test_p_worker_selects_matching_tp_rank_handshake() -> None:
     )
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
         transfer=MockMooncakePort(),
@@ -2892,7 +2894,7 @@ def test_p_worker_pushes_registered_blocks_from_save_kv_layer() -> None:
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -2938,7 +2940,7 @@ def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> 
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
         transfer=transfer,
@@ -3002,7 +3004,7 @@ def test_p_worker_offsets_remote_heads_when_prefill_tp_is_larger() -> None:
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=3, tensor_parallel_size=4),
         ),
         transfer=transfer,
@@ -3060,7 +3062,7 @@ def test_p_worker_maps_local_blocks_to_remote_blocks_by_position() -> None:
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -3118,7 +3120,7 @@ def test_p_worker_precomputes_layer_push_plan_before_save() -> None:
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -3176,7 +3178,7 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -3269,7 +3271,7 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,

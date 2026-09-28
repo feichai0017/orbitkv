@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.vllm.pd.config import extra_config_value
 from orbitkv.vllm.pd.layout import (
     BlockRegionSlice,
     LayerBlockSlices,
@@ -23,7 +20,6 @@ from orbitkv.vllm.pd.metadata import (
 )
 
 logger = get_connector_logger()
-_MISSING = object()
 
 
 class MooncakePort(Protocol):
@@ -378,87 +374,28 @@ def build_mooncake_port(
     *,
     tp_rank: int,
 ) -> MooncakePort:
-    enabled = extra_config_value(vllm_config, "orbitkv.pd.mooncake.enabled", _MISSING)
-    if enabled is not _MISSING and not _as_bool(enabled):
-        raise RuntimeError("PdConnector requires Mooncake; orbitkv.pd.mooncake.enabled=false")
+    from orbitkv.orbitkv import MooncakeTransferEngine
 
-    try:
-        from orbitkv.orbitkv import MooncakeTransferEngine
-    except ImportError as exc:
-        raise RuntimeError("PdConnector requires the OrbitKV native extension") from exc
-    except AttributeError as exc:
-        raise RuntimeError("orbitkv.orbitkv does not expose MooncakeTransferEngine") from exc
-
-    resolved_cuda_device = int(cuda_device or 0)
-    resolved_tp_rank = int(tp_rank)
-    rank_config = _rank_mooncake_config(
-        vllm_config,
-        resolved_tp_rank,
-        cuda_device=resolved_cuda_device,
-    )
-    bind_host = str(
-        extra_config_value(
-            vllm_config,
-            "orbitkv.pd.mooncake.bind_host",
-            os.getenv("VLLM_NIXL_SIDE_CHANNEL_HOST", "127.0.0.1"),
-        )
-    )
-    nics = [rank_config.nic] if rank_config.nic else []
+    config = vllm_config.kv_transfer_config.kv_connector_extra_config
+    bind_host = str(config.get("orbitkv.pd.mooncake.bind_host", "127.0.0.1"))
+    rank_map = config.get("orbitkv.pd.mooncake.rank_map")
+    nics = []
+    if rank_map is not None:
+        if not isinstance(rank_map, dict):
+            raise ValueError("orbitkv.pd.mooncake.rank_map must be an object keyed by TP rank")
+        entry = rank_map.get(str(tp_rank))
+        if not isinstance(entry, dict):
+            raise ValueError(f"orbitkv.pd.mooncake.rank_map missing TP rank {tp_rank}")
+        nic = entry.get("nic")
+        if not isinstance(nic, str) or not nic.strip():
+            raise ValueError(f"orbitkv.pd.mooncake.rank_map[{tp_rank}].nic must be non-empty")
+        nics = [nic]
     engine = MooncakeTransferEngine(bind_host=bind_host, nics=nics)
     logger.info(
-        "[PdConnector] Mooncake enabled tp_rank=%d cuda=%d nics=%s endpoint=%s",
-        rank_config.tp_rank,
-        resolved_cuda_device,
+        "P/D TENT ready: tp_rank=%d cuda=%s nics=%s endpoint=%s",
+        tp_rank,
+        cuda_device,
         nics,
         engine.endpoint,
     )
     return RealMooncakePort(engine, nic_count=len(nics))
-
-
-def _as_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
-@dataclass(frozen=True)
-class _RankMooncakeConfig:
-    tp_rank: int
-    nic: str | None
-
-
-def _rank_mooncake_config(
-    vllm_config: Any,
-    tp_rank: int,
-    *,
-    cuda_device: int | None = None,
-) -> _RankMooncakeConfig:
-    rank_map = extra_config_value(vllm_config, "orbitkv.pd.mooncake.rank_map", _MISSING)
-    if rank_map is _MISSING:
-        return _RankMooncakeConfig(tp_rank=tp_rank, nic=None)
-    if not isinstance(rank_map, dict):
-        raise RuntimeError("orbitkv.pd.mooncake.rank_map must be an object")
-    rank_entry = rank_map.get(str(tp_rank))
-    selected_rank = tp_rank
-    if (
-        cuda_device is not None
-        and tp_rank == 0
-        and cuda_device != 0
-        and str(cuda_device) in rank_map
-    ):
-        rank_entry = rank_map[str(cuda_device)]
-        selected_rank = cuda_device
-    if not isinstance(rank_entry, dict):
-        known = ", ".join(sorted(str(rank) for rank in rank_map))
-        raise RuntimeError(
-            f"PdConnector Mooncake rank_map missing tp_rank={tp_rank}; configured ranks=[{known}]"
-        )
-    nic = str(rank_entry.get("nic") or "") or None
-    return _RankMooncakeConfig(
-        tp_rank=selected_rank,
-        nic=nic,
-    )

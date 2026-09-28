@@ -11,7 +11,6 @@ from vllm.distributed.parallel_state import (
 )
 
 from orbitkv.logging_utils import get_connector_logger
-from orbitkv.vllm.pd.config import extra_config_value
 from orbitkv.vllm.pd.decode_worker import DecodeHandler
 from orbitkv.vllm.pd.layout import KvCacheLayout, layout_from_tensor
 from orbitkv.vllm.pd.metadata import (
@@ -146,13 +145,11 @@ class PdDecodeWorkerConnector(PdWorkerBase):
     ) -> None:
         super().__init__(vllm_config, kv_cache_config, transfer, metrics)
         self._failed_load_block_ids: set[int] = set()
-        observation_socket = extra_config_value(
-            vllm_config,
+        observation_socket = vllm_config.kv_transfer_config.kv_connector_extra_config.get(
             "orbitkv.pd.completion_observation_socket",
         )
         self._completion_instance_id = str(
-            extra_config_value(
-                vllm_config,
+            vllm_config.kv_transfer_config.kv_connector_extra_config.get(
                 "orbitkv.pd.completion_observation_instance_id",
                 "",
             )
