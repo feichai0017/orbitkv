@@ -170,6 +170,17 @@ remote hit. This gate proves recovery, not throughput superiority.
 
 ## Forced source-SSD gate
 
+The 2026-09-28 two-host H20→A100 TCP run passes on vLLM 0.29.0 and SGLang
+0.5.20 with Qwen3-8B and the same natural-text controls described above. After
+source DRAM eviction, each engine recovers 513/1025-token requests with
+72/144 MiB of source io_uring reads, remote TENT READs and destination GPU
+restores. Complete outputs match the source controls, source staging succeeds,
+and both sides' checked reservations drain. Raw launches, output controls and
+counter snapshots are under
+`benches/results/runs/partitioned-restore-20260928/{vllm,sglang}-shared-ssd/`.
+This qualifies ordinary source-SSD recovery over TCP; it does not cover
+cancellation during SSD staging/READ, RDMA or a throughput advantage.
+
 Run this as a separate result from the DRAM baseline. Configure SSD on the
 source Manager with write policy `all`; the target may use its ordinary local
 configuration. Add `--source-medium ssd` to the command above; the driver

@@ -73,8 +73,8 @@ jobs:
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
 
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install wheel build tools
+        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel
 
       - name: Build wheel
         run: |
@@ -140,8 +140,8 @@ jobs:
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
 
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install wheel build tools
+        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel
 
       - name: Build wheel
         run: |

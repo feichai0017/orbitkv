@@ -251,6 +251,7 @@ After installing the candidate wheel in the pinned engine environment, run:
 Run from the repository root; substitute the SGLang environment and `-k sglang`
 for the other adapter, with its own `--basetemp` directory. The test starts
 subprocesses outside the source package, rejects editable/source imports,
+initializes TENT and proves its primary libraries came from the installed wheel,
 uses installed plugin metadata and the bundled console script, and verifies
 exact output plus positive GPU-load bytes after engine restart. It also checks
 final query/I/O drain. Run the engines sequentially on one GPU. See

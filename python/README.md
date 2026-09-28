@@ -55,12 +55,13 @@ until a terminal result. Local completion means DMA drained and does not wait
 for the Manager's source-retirement ACK. Repeated registration of the same
 binding is rejected; unregister and close drain accepted operations first.
 
-Build the native client and Manager together: this cutover uses bootstrap 6,
-channel ABI 9, and lifecycle 4, with no old-wire compatibility path. An encoded
-raw Restore plan above 1 MiB after allocation-aware compaction is rejected
-before consuming its leases. Idle destination streams need no additional GPU
-event; busy streams are fenced with a reusable event. Automatic partitioning,
-layer overlap, and graph replay dependencies remain future work.
+Build the native client and Manager together: this cutover uses bootstrap 7,
+channel ABI 11, cache schema 8, lifecycle 4 and Restore grant schema 5, with no
+old-wire decoder. Fragmented raw Restore plans are partitioned into at most
+1 MiB parts under one final drain fence, with 32 MiB operation and 64 MiB
+session metadata limits. Idle destination streams need no additional GPU event;
+busy streams are fenced with a reusable event. Layer overlap and graph replay
+dependencies remain future work.
 
 ## Installation
 
@@ -73,6 +74,10 @@ Install only one distribution and one engine extra (`vllm` or `sglang`) per
 environment. The extras pin the validated engine releases. The wheel includes
 the native extension, Cache Manager and Mooncake runtime; the Manager also
 needs compatible PyTorch. The base package does not install PyTorch.
+The host supplies matching shared Python, CUDA driver/runtime and RDMA libraries
+(`libibverbs`, `librdmacm` and the selected NIC provider). Other linked native
+dependencies are repaired into the wheel with their redistribution notices;
+its platform tag reflects all bundled binaries.
 
 Version 0.1.0 is being prepared for release. Build a complete wheel from the
 repository, then install the produced file:

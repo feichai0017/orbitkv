@@ -579,7 +579,8 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 - [ ] D3: qualify requester peer-SSD routes and add measured source selection
   without recursive peer fetches or unbounded staging. Fixed-priority peer-SSD
   planning, source-local io_uring staging and two-phase byte/session admission
-  are implemented; two-host TCP/RDMA evidence is still required.
+  are implemented. Ordinary two-host H20→A100 TCP SSD recovery passes on both
+  engines; mixed-load selection, cancellation and RDMA qualification remain open.
 - [x] Extend `benches.shared_cache` with `--source-medium ssd`: require committed
   source SSD bytes, evict only source DRAM, resynchronize inventory, prove source
   SSD reads plus target Mooncake/GPU restore, and drain both sides.

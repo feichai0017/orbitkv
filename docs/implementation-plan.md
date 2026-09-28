@@ -1002,9 +1002,11 @@ local-only and CPU-Mooncake Clippy pass.
 The shared-cache benchmark now accepts `--source-medium ssd`. It verifies a new
 source SSD commit, evicts only source DRAM, resynchronizes inventory, requires
 source io_uring bytes and successes alongside target Mooncake/GPU restore, and
-checks both nodes' extent/session/query/completion counters drain. Run it on the
-container-external H20 deployment first with forced TCP and then with the actual
-RDMA rails; those runtime results are not produced by this container.
+checks both nodes' extent/session/query/completion counters drain. The
+2026-09-28 H20→A100 forced-TCP serving run passes on both engines, with
+72/144 MiB of source SSD reads, remote READs and GPU restores for the two
+natural-text requests. RDMA and cancellation during staging/READ remain open;
+see [the recorded gate](shared-cache-qualification.md#forced-source-ssd-gate).
 
 The Mooncake registration-lifetime increment adds an RAII
 `MemoryRegistration` in `orbitkv-transfer`. A token retains its TransferEngine,

@@ -40,8 +40,23 @@ PYO3_PYTHON=/absolute/path/to/python3.11 \
 
 Omit the feature arguments for CUDA 12. The script builds and stages the
 Manager and Mooncake libraries, builds the extension for the selected Python,
+audits every bundled ELF file with auditwheel, repairs its non-host dependencies,
 checks the package version/content, and imports the installed wheel in a fresh
-non-editable environment. Wheels are written to `target/wheels/`.
+non-editable environment. The initial maturin output uses a Linux tag; only the
+whole-wheel audit selects the final manylinux tag. Auditing the extension alone
+misses libraries loaded dynamically by TENT and the embedded-Python Manager.
+
+CI builds on Ubuntu with `auditwheel==6.8.2`, `patchelf>=0.14.5`, maturin and
+wheel. Dependency copyright files are retained from the Debian/Ubuntu package
+database, together with referenced common license texts and Mooncake's license.
+An externally staged dependency must supply `<library-filename>.license` beside
+its original shared library if it has no OS package provenance; missing notices
+fail the build. The repaired artifact also retains auditwheel's dependency SBOM.
+
+Python's shared library, CUDA driver/runtime/cuFile and RDMA core/provider
+libraries remain host dependencies; the repair step must neither bundle driver
+libraries nor remove the standalone Manager's `libpython` dependency. Wheels
+are written to `target/wheels/`.
 Do not run native builds while a source-built Manager is using the staged
 Mooncake libraries. `maturin build` alone does not stage the complete runtime.
 
@@ -55,6 +70,9 @@ Mooncake libraries. `maturin build` alone does not stage the complete runtime.
 3. Install a candidate wheel into each engine environment. From outside the
    source checkout, check the installed import path, Manager help and health,
    then verify a completion and an external restore after engine restart.
+   The smoke gate removes external TENT search paths, initializes TENT, and
+   checks `/proc/self/maps` to prove that its three primary libraries came from
+   the installed package.
    Run the [release smoke and correctness gates](../python/tests/README.md#release-smoke).
 4. Review the final benchmark summaries and known limits. Publish only after
    these checks pass and the release is approved.
