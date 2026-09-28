@@ -68,6 +68,8 @@ pub(crate) struct LayerTopology {
     /// Layer count per storage group, indexed by group id.
     group_layer_count: Vec<usize>,
     group_block_bytes: Vec<u64>,
+    /// Receiver-local placement, excluded from the cross-host storage identity.
+    group_slot_numa: Vec<Vec<NumaNode>>,
     /// Dense rank of the layer within its storage group (0..group_layer_count),
     /// indexed by layer_id. Within-group slots are `rank * tp_size + tp_rank`.
     layer_group_rank: Vec<usize>,
@@ -165,6 +167,11 @@ fn build_page_layout(
 }
 
 impl LayerTopology {
+    pub(crate) fn group_slot_numa(&self, group_id: u32) -> Result<&[NumaNode], EngineError> {
+        self.group_total_slots(group_id)?;
+        Ok(&self.group_slot_numa[group_id as usize])
+    }
+
     pub(crate) fn group_block_bytes(&self, group_id: u32) -> Result<u64, EngineError> {
         self.group_total_slots(group_id)?;
         Ok(self.group_block_bytes[group_id as usize])
@@ -697,7 +704,7 @@ impl InstanceContext {
                 .ok_or_else(|| EngineError::InvalidArgument("query group bytes overflow".into()))?;
         }
 
-        Ok(LayerTopology {
+        let mut topology = LayerTopology {
             cache_namespace: storage_namespace(
                 &self.namespace,
                 self.page_first,
@@ -721,9 +728,29 @@ impl InstanceContext {
             layer_group,
             group_layer_count,
             group_block_bytes,
+            group_slot_numa: Vec::new(),
             layer_group_rank,
             page_layout,
-        })
+        };
+        topology.group_slot_numa = (0..num_groups)
+            .map(|group| {
+                topology
+                    .group_total_slots(group as u32)
+                    .map(|slots| vec![NumaNode::UNKNOWN; slots])
+            })
+            .collect::<Result<_, _>>()?;
+        for gpu in gpus() {
+            for name in gpu.kv_caches.keys() {
+                let layer = topology.name_to_id[name];
+                let group = topology.layer_group[layer] as usize;
+                let slot = topology.slot_index(layer, gpu.tp_rank)?;
+                let node = &mut topology.group_slot_numa[group][slot];
+                // Replicated slots choose a registered local node independently
+                // of worker arrival order; UNKNOWN sorts after known nodes.
+                *node = (*node).min(gpu.preferred_numa());
+            }
+        }
+        Ok(topology)
     }
 
     /// Build a GPU context for the specified device.

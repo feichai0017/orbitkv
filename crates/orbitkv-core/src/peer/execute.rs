@@ -1,3 +1,4 @@
+use crate::memory::numa::NumaNode;
 use crate::planning::peer::{FetchPlan, FetchSegment};
 
 use crate::storage::MaterializedBlocks;
@@ -55,6 +56,7 @@ pub(super) trait SegmentFetcher {
         segment: &FetchSegment,
         grant: Self::Grant,
         req_id: &str,
+        destination_nodes: &[NumaNode],
     ) -> Result<MaterializedBlocks, ()>;
 }
 
@@ -62,6 +64,7 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
     fetcher: &F,
     mut plan: FetchPlan<'_>,
     req_id: &str,
+    destination_nodes: &[NumaNode],
 ) -> FetchResult {
     let mut fetched = Vec::with_capacity(plan.block_count());
     let mut attempts = 0;
@@ -103,7 +106,7 @@ pub(super) async fn execute_fetch_plan<F: SegmentFetcher>(
         // latter allocates no destination buffers and stays in this future, so
         // a failed prefix or cancellation drops its known-ticket cleanup owner.
         let next = plan.next_segment(fetched.len() + segment.records.len());
-        let read = fetcher.fetch_segment(&segment, grant, req_id);
+        let read = fetcher.fetch_segment(&segment, grant, req_id, destination_nodes);
         let authorize_next = async {
             let Some(next) = &next else {
                 return std::future::pending().await;

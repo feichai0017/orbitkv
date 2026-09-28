@@ -13,6 +13,7 @@ use parking_lot::Mutex;
 
 use crate::QueryMode;
 use crate::block::{QueryResult, RestoreSource, SealedBlock, StateKey};
+use crate::memory::numa::NumaNode;
 use crate::metrics::core_metrics;
 #[cfg(feature = "mooncake")]
 use crate::peer::read::PeerReader;
@@ -43,6 +44,7 @@ struct ReadKey {
     hit: usize,
     wait_for_full_prefix: bool,
     allow_ssd_prefetch: bool,
+    destination_nodes: Vec<NumaNode>,
 }
 type SharedRead = OnceCell<MaterializedRead>;
 
@@ -78,6 +80,7 @@ impl ReadCoordinator {
         namespace: &str,
         hashes: &[Vec<u8>],
         mode: QueryMode,
+        destination_nodes: &[NumaNode],
     ) -> QueryResult {
         let warming = matches!(mode, QueryMode::Warmup | QueryMode::Prepare);
         let wait_for_full_prefix = mode == QueryMode::WaitForFullPrefix;
@@ -144,6 +147,7 @@ impl ReadCoordinator {
             hit,
             wait_for_full_prefix,
             allow_ssd_prefetch,
+            destination_nodes: destination_nodes.to_vec(),
         };
         let read = {
             let mut reads = self.reads.lock();
@@ -160,7 +164,7 @@ impl ReadCoordinator {
         let result = read
             .get_or_init(|| async {
                 let (source, blocks) = self
-                    .materialize(&mut plan, req_id, allow_ssd_prefetch)
+                    .materialize(&mut plan, req_id, allow_ssd_prefetch, destination_nodes)
                     .await;
                 let mut result =
                     build_ready_result(prefix_blocks, keys.len(), source, &keys[hit..], blocks);
@@ -210,6 +214,7 @@ impl ReadCoordinator {
         namespace: &str,
         hashes: &[Vec<u8>],
         mode: crate::QueryMode,
+        destination_nodes: &[NumaNode],
     ) -> Vec<Option<crate::RestoreSource>> {
         let keys: Vec<StateKey> = hashes
             .iter()
@@ -228,10 +233,16 @@ impl ReadCoordinator {
                     if block.is_some() {
                         return block.map(crate::RestoreSource::Memory);
                     }
-                    self.read_prefix(req_id, namespace, std::slice::from_ref(&hash), mode)
-                        .await
-                        .blocks
-                        .pop()
+                    self.read_prefix(
+                        req_id,
+                        namespace,
+                        std::slice::from_ref(&hash),
+                        mode,
+                        destination_nodes,
+                    )
+                    .await
+                    .blocks
+                    .pop()
                 }),
         )
         .buffered(8)
@@ -244,6 +255,7 @@ impl ReadCoordinator {
         plan: &mut ReadPlan,
         req_id: &str,
         allow_ssd_prefetch: bool,
+        destination_nodes: &[NumaNode],
     ) -> (Option<AttributionSource>, MaterializedBlocks) {
         #[cfg(feature = "mooncake")]
         if let Some(remote) = &self.remote_fetch {
@@ -254,7 +266,7 @@ impl ReadCoordinator {
         #[cfg(not(feature = "mooncake"))]
         let peer_available = false;
         #[cfg(not(feature = "mooncake"))]
-        let _ = req_id;
+        let _ = (req_id, destination_nodes);
 
         let mut allow_local_ssd = allow_ssd_prefetch;
         for _ in 0..3 {
@@ -262,7 +274,7 @@ impl ReadCoordinator {
                 #[cfg(feature = "mooncake")]
                 Some(HostReadRoute::Peer(route)) => {
                     if let Some(remote) = &self.remote_fetch {
-                        let result = remote.fetch_plan(route, req_id).await;
+                        let result = remote.fetch_plan(route, req_id, destination_nodes).await;
                         if !result.can_replan() {
                             return (Some(AttributionSource::Remote), result.blocks);
                         }
@@ -302,7 +314,7 @@ impl ReadCoordinator {
                 {
                     // A submitted payload failure completes this query; only
                     // missing advertisements participate in producer waiting.
-                    let result = remote.fetch_plan(route, req_id).await;
+                    let result = remote.fetch_plan(route, req_id, destination_nodes).await;
                     if !result.can_replan() {
                         return (Some(AttributionSource::Remote), result.blocks);
                     }

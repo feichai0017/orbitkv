@@ -78,6 +78,13 @@ establish cross-engine byte compatibility or hybrid-state completeness.
 
 The requesting Manager authorizes the next planned segment while the current
 segment's READ runs. There is one execution strategy, with bounded lookahead.
+Remote source NUMA identifiers describe the source host only. The receiver
+allocates each fetched slot beside its own registered GPU, using the sealed
+local layer/group topology. Receiver placement is excluded from the storage
+namespace, included in pending-read coalescing, and retained when fetched
+blocks are published again. A source/receiver slot-count mismatch fails before
+allocating or submitting a READ.
+
 Only one READ and one following authorization can be active per fetch plan;
 the following segment allocates destination memory only when consumed. A failed
 or partial current READ discards the unused grant. A speculative authorization

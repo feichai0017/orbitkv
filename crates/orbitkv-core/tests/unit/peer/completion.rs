@@ -757,6 +757,7 @@ impl crate::peer::execute::SegmentFetcher for PipelineReader {
         _segment: &FetchSegment,
         grant: Self::Grant,
         _req_id: &str,
+        _destination_nodes: &[crate::memory::numa::NumaNode],
     ) -> Result<crate::storage::MaterializedBlocks, ()> {
         assert_eq!(self.reads.fetch_add(1, Ordering::SeqCst), 0);
         // The first grant is already installed; configure only the lookahead.
@@ -826,7 +827,7 @@ fn pipeline_reader(
                 .collect::<Vec<_>>();
             let plan =
                 crate::planning::peer::FetchPlan::new(&mut rows, 1, PeerSource::Dram).unwrap();
-            crate::peer::execute::execute_fetch_plan(reader.as_ref(), plan, "tickets").await
+            crate::peer::execute::execute_fetch_plan(reader.as_ref(), plan, "tickets", &[]).await
         })
     };
     (reader, finish, task)

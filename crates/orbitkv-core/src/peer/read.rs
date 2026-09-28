@@ -214,6 +214,7 @@ impl SegmentFetcher for PeerReader {
         segment: &FetchSegment,
         grant: Self::Grant,
         req_id: &str,
+        destination_nodes: &[NumaNode],
     ) -> Result<MaterializedBlocks, ()> {
         let AuthorizedSegment {
             response,
@@ -242,6 +243,7 @@ impl SegmentFetcher for PeerReader {
             namespace,
             &response.transfer_endpoint,
             &blocks,
+            destination_nodes,
             transfer_timeout,
             lock_guard,
             resource,
@@ -371,10 +373,15 @@ impl PeerReader {
         }
     }
 
-    pub(crate) async fn fetch_plan(&self, plan: FetchPlan<'_>, req_id: &str) -> FetchResult {
+    pub(crate) async fn fetch_plan(
+        &self,
+        plan: FetchPlan<'_>,
+        req_id: &str,
+        destination_nodes: &[NumaNode],
+    ) -> FetchResult {
         let planned_blocks = plan.block_count();
         let started_at = Instant::now();
-        let result = execute_fetch_plan(self, plan, req_id).await;
+        let result = execute_fetch_plan(self, plan, req_id, destination_nodes).await;
         let metrics = core_metrics();
         metrics
             .remote_fetch_plan_segments
@@ -416,6 +423,7 @@ async fn fetch_blocks_via_mooncake(
     namespace: &str,
     transfer_endpoint: &str,
     blocks: &[TransferBlockInfo],
+    destination_nodes: &[NumaNode],
     transfer_timeout: Duration,
     lock_guard: TransferLockGuard,
     resource: ExecutionResource,
@@ -427,7 +435,7 @@ async fn fetch_blocks_via_mooncake(
     let mut slabs = ChunkedSlabs::new(
         allocate_fn,
         FETCH_CHUNK_BYTES,
-        sum_segment_bytes_by_numa(blocks)?,
+        sum_segment_bytes_by_numa(blocks, destination_nodes)?,
     );
 
     // (block_hash, Vec<(slot_segments, slot_numa)>) — for building SealedBlock afterwards.
@@ -443,9 +451,8 @@ async fn fetch_blocks_via_mooncake(
             slot_count += block_info.slots.len();
             let mut slot_allocs = Vec::with_capacity(block_info.slots.len());
 
-            for slot in &block_info.slots {
+            for (slot, &numa) in block_info.slots.iter().zip(destination_nodes) {
                 let mut segments = Vec::new();
-                let numa = NumaNode(slot.numa_node);
 
                 // K segment
                 if slot.k_size > 0 {
@@ -648,11 +655,18 @@ fn transfer_shape(blocks: &[StagedBlock]) -> (Option<u64>, Representation) {
 /// the last chunk of each NUMA so small fetches don't over-allocate.
 fn sum_segment_bytes_by_numa(
     blocks: &[TransferBlockInfo],
+    destination_nodes: &[NumaNode],
 ) -> Result<HashMap<NumaNode, u64>, String> {
     let mut bytes_per_numa: HashMap<NumaNode, u64> = HashMap::new();
     for block_info in blocks {
-        for slot in &block_info.slots {
-            let numa = NumaNode(slot.numa_node);
+        if block_info.slots.len() != destination_nodes.len() {
+            return Err(format!(
+                "remote block has {} slots, receiver registered {}",
+                block_info.slots.len(),
+                destination_nodes.len()
+            ));
+        }
+        for (slot, &numa) in block_info.slots.iter().zip(destination_nodes) {
             let mut add = 0u64;
             if slot.k_size > 0 {
                 add += slot.k_size;

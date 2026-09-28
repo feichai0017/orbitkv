@@ -86,6 +86,7 @@ impl SegmentFetcher for Fetcher {
         _segment: &FetchSegment,
         grant: Self::Grant,
         _req_id: &str,
+        _destination_nodes: &[crate::memory::numa::NumaNode],
     ) -> Result<MaterializedBlocks, ()> {
         grant
     }
@@ -100,7 +101,7 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
         };
         let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"])];
         let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-        let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
+        let result = execute_fetch_plan(&fetcher, plan, "test-request", &[]).await;
         assert_eq!(result.blocks.len(), expected);
         assert_eq!(
             result.status,
@@ -125,7 +126,7 @@ async fn stale_candidate_uses_alternative_without_skipping_prefix_or_retrying_pa
     };
     let mut rows = vec![row(1, &["a", "b", "c", "d"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
+    let result = execute_fetch_plan(&fetcher, plan, "test-request", &[]).await;
     assert!(result.blocks.is_empty());
     assert_eq!(result.status, FetchStatus::AuthorizationExhausted);
     assert!(result.can_replan());
@@ -149,7 +150,7 @@ async fn malformed_or_short_segment_never_skips_a_gap() {
     };
     let mut rows = vec![row(1, &["a"]), row(2, &["a"]), row(3, &["b"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    let result = execute_fetch_plan(&fetcher, plan, "test-request").await;
+    let result = execute_fetch_plan(&fetcher, plan, "test-request", &[]).await;
     assert_eq!(result.blocks.len(), 1);
     assert_eq!(result.status, FetchStatus::PayloadFailed);
     assert!(!result.can_replan());
@@ -209,6 +210,7 @@ impl SegmentFetcher for PipelineFetcher {
         segment: &FetchSegment,
         grant: Grant,
         _req_id: &str,
+        _destination_nodes: &[crate::memory::numa::NumaNode],
     ) -> Result<MaterializedBlocks, ()> {
         self.events
             .send(PipelineEvent::Read(segment.owner.endpoint.clone()))
@@ -259,7 +261,7 @@ fn run_pipeline(
 ) -> tokio::task::JoinHandle<FetchResult> {
     tokio::spawn(async move {
         let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-        execute_fetch_plan(fetcher.as_ref(), plan, "pipeline").await
+        execute_fetch_plan(fetcher.as_ref(), plan, "pipeline", &[]).await
     })
 }
 
@@ -364,7 +366,7 @@ async fn pipelined_execution_preserves_prefix_and_owner_fallback() {
     };
     let mut rows = vec![row(1, &["a", "b"]), row(2, &["a", "b"]), row(3, &["c"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    let result = execute_fetch_plan(&fetcher, plan, "owner-fallback").await;
+    let result = execute_fetch_plan(&fetcher, plan, "owner-fallback", &[]).await;
     assert_eq!(result.status, FetchStatus::Complete);
     assert_eq!(result.attempts, 3);
     assert_eq!(result.completed_segments, 2);
@@ -400,7 +402,7 @@ async fn demand_rejection_after_speculation_falls_back_without_losing_completed_
     };
     let mut rows = vec![row(1, &["x"]), row(2, &["a", "b"])];
     let plan = FetchPlan::new(&mut rows, 1, crate::planning::peer::PeerSource::Dram).unwrap();
-    let result = execute_fetch_plan(&fetcher, plan, "busy-source").await;
+    let result = execute_fetch_plan(&fetcher, plan, "busy-source", &[]).await;
     assert_eq!(result.status, FetchStatus::Complete);
     assert_eq!(result.blocks.len(), 2);
     assert_eq!(result.attempts, 4);

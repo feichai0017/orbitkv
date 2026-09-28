@@ -609,3 +609,44 @@ fn page_first_rejects_multiple_groups() {
         .expect_err("page-first with two storage groups must be rejected");
     assert!(err.to_string().contains("page-first"), "{err}");
 }
+
+#[test]
+fn receiver_placement_is_sealed_per_group_without_changing_storage_identity() {
+    for page_first in [false, true] {
+        let groups = if page_first { [0, 0, 0] } else { [0, 1, 0] };
+        let mut namespace = None;
+        for node in [NumaNode(0), NumaNode(1), NumaNode::UNKNOWN] {
+            let instance =
+                InstanceContext::new("receiver".into(), "model".into(), 1, 1, page_first).unwrap();
+            let mut registration = gpu_registration_with_groups(
+                0,
+                0,
+                &[
+                    ("layer_c", groups[2]),
+                    ("layer_b", groups[1]),
+                    ("layer_a", groups[0]),
+                ],
+            );
+            registration.numa_node = node;
+            instance.register_new_gpu(registration).unwrap();
+            let topology = instance.sealed_topology().unwrap();
+            if let Some(previous) = &namespace {
+                assert_eq!(previous, &topology.cache_namespace);
+            } else {
+                namespace = Some(topology.cache_namespace.clone());
+            }
+            assert_eq!(
+                topology.group_slot_numa(0).unwrap(),
+                vec![node; if page_first { 1 } else { 2 }]
+            );
+            if !page_first {
+                assert_eq!(topology.group_slot_numa(1).unwrap(), &[node]);
+            }
+            assert!(
+                topology
+                    .group_slot_numa(topology.num_groups() as u32)
+                    .is_err()
+            );
+        }
+    }
+}
