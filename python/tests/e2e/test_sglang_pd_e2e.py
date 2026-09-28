@@ -182,6 +182,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
                 "--mini-lb",
                 "--prefill",
                 f"http://127.0.0.1:{prefill_port}",
+                str(bootstrap_port),
                 "--decode",
                 f"http://127.0.0.1:{decode_port}",
                 "--host",
@@ -240,7 +241,7 @@ def test_sglang_pd_tent_and_external_cache_match_monolithic(request, tmp_path):
         wait_for_saved_bytes(save_before)
 
         for name in ("prefill", "decode"):
-            assert "OrbitKV installed the Rust TENT payload engine" in logs[name].read_text()
+            assert "SGLang P/D TENT ready:" in logs[name].read_text()
         stop_all()
 
         before_restart = fetch_orbitkv_metrics(channel_server.http_port)

@@ -43,6 +43,12 @@ class SGLangTentTransferEngine:
         self._timeout_s = _positive_float(_TIMEOUT_ENV, 30.0)
         self._engine = MooncakeTransferEngine(bind_host=hostname, nics=nics)
         self.session_id = str(self._engine.endpoint)
+        logger.info(
+            "SGLang P/D TENT ready: gpu=%d nics=%s endpoint=%s",
+            self.gpu_id,
+            nics,
+            self.session_id,
+        )
 
     def register(self, ptr: int, length: int) -> None:
         self.batch_register([ptr], [length])

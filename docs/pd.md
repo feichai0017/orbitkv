@@ -19,7 +19,7 @@ The NIXL integration described here is
 | --- | --- | --- | --- | --- |
 | OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; experimental remote Catalog + peer lease | GPU-validated locally; multi-node experimental |
 | OrbitKV vLLM split P/D connectors | P-to-D request handoff | Decode worker's GPU KV pages | OrbitKV handshake and proxy; Mooncake TENT moves bytes | A100 same-host TCP output gate passes; H20→A100 byte gate passes, strict output gate fails |
-| OrbitKV SGLang TENT adapter | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | Implemented; external H20 qualification pending |
+| OrbitKV SGLang TENT adapter | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | A100 same-host TCP output/restart gate passes; H20→A100 reuse passes, strict 64-token output gate fails |
 | vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
 
 The OrbitKV `PdPrefillConnector` and `PdDecodeConnector` live in
@@ -140,6 +140,32 @@ state was published and reused by the next prefill. Cache Manager load bytes
 must increase. Run forced TCP first, then repeat the deployment on two hosts
 with RDMA and external NIC counters before claiming GPUDirect.
 
+### SGLang qualification on 2026-09-28
+
+Qwen3-8B revision `b968826d9c46dd6066d109eabc6255188de91218`, SGLang 0.5.20,
+BF16, TP=1, 64-token pages, eager deterministic inference and forced TCP were
+used with one Manager per worker. The 513-token natural-language prompt
+produced 64 tokens with `ignore_eos=true`; both engines then restarted while
+the Managers retained their caches. A follow-up appended those token IDs and
+three additional tokens, and requested eight more output tokens.
+
+| Deployment | Initial 64-token output vs A100 monolithic | Restarted 8-token continuation | Cache evidence |
+| --- | --- | --- | --- |
+| Two replicas on the same A100 | Exact token IDs and text | Exact token IDs and text | 576 cached tokens; 81 MiB Prefill H2D, including 9 MiB fetched from the Decode Manager; zero Decode H2D |
+| H20 Prefill → A100 Decode | Differs at output index 20, after the first EOS, in `violet`/`Violet` casing | Exact token IDs and text | Same 576-token, 81 MiB H2D and 9 MiB remote-read evidence; zero Decode H2D |
+
+The H20→A100 run passes the exercised restart/reuse path but **fails** the full
+64-token equality gate. It is not a blanket heterogeneous-GPU correctness pass.
+The same-A100 run drained request/source resources and passed both strict
+output comparisons. Neither deployment establishes RDMA, throughput gains,
+TP/PP behavior or mid-transfer fault recovery.
+
+Raw outputs, launch commands, retained failure logs and driver snapshots are in
+`benches/results/runs/two-host-natural-20260928/sglang-pd/` and
+`sglang-pd-same-a100/`. The production fix keeps external hits out of Decode's
+HiCache-only restore state machine; the maintained E2E also checks the actual
+TENT engine-ready marker and passes the router's explicit bootstrap port.
+
 To compose P/D with the external cache manually, point both workers at the same
 node-local Manager and add these flags to both server commands:
 
@@ -161,7 +187,10 @@ layout identities match.
 This first composition keeps the planner boundaries explicit. An external hit
 is restored into prefill HBM, SGLang computes any missing suffix and hands the
 request to decode through TENT, and completed decode state can be published for
-a later prefill. It does not yet let one cost decision choose between restoring
+a later prefill. Decode advertises only its resident HBM prefix and performs no
+external lookup or restore; this keeps offloaded hits out of SGLang 0.5.20's
+HiCache-only decode restore state machine. Its normal radix-cache retention and
+write-through publication remain enabled. It does not yet let one cost decision choose between restoring
 directly into decode HBM and routing through prefill; that requires comparable
 completion targets and resource-admission evidence on both alternatives.
 

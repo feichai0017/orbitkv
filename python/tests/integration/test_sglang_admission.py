@@ -75,6 +75,7 @@ def test_enqueue_uses_the_same_salted_storage_keys_without_triggering_a_load(
     cache = SimpleNamespace(page_size=64, get_last_hash_value=lambda _: hashes[0])
     wrapper = object.__new__(UnifiedCacheLinkerWrapper)
     wrapper.cache, wrapper.cache_linker = cache, linker
+    wrapper.restore_from_store = True
     cache.linker = wrapper
     cache.match_prefix = MagicMock(
         return_value=SimpleNamespace(
@@ -366,3 +367,91 @@ def test_attention_ranks_share_wait_and_expiration_decisions(linker, peer_state)
         original.assert_called_once()
         linker.client.release.assert_called_once_with(b"lease")
         assert linker.query_state("req") == 2
+
+
+@pytest.mark.parametrize("resident_tokens", [0, 64])
+def test_decode_only_promises_resident_pages_and_never_prepares_external_loads(
+    linker, monkeypatch, resident_tokens
+):
+    import torch
+    from sglang.srt.disaggregation.decode_hicache_mixin import DecodeHiCachePreallocMixin
+    from sglang.srt.mem_cache.base_prefix_cache import MatchResult
+    from sglang.srt.mem_cache.radix_cache import RadixKey
+
+    from orbitkv.sglang.admission import enqueue_request
+    from orbitkv.sglang.recovery import RecoveryLinkerWrapper
+
+    wrapper = object.__new__(RecoveryLinkerWrapper)
+    wrapper.cache_linker = linker
+    wrapper.restore_from_store = False
+    wrapper.hit_markers = {}
+    req = request("req")
+    resident = MatchResult(torch.arange(resident_tokens), 7, 7, 7)
+    matched = wrapper.match(RadixKey(req.origin_input_ids), req, resident)
+    assert matched is resident
+    prealloc = SimpleNamespace(scheduler=SimpleNamespace(enable_decode_hicache=False))
+    promised = DecodeHiCachePreallocMixin._build_decode_prefix_match(prealloc, req, matched)
+    assert promised.decode_prefix_len == resident_tokens
+    assert promised.last_device_node == 7
+    assert not promised.needs_local_restore
+    assert not wrapper.hit_markers and not linker._lookups
+
+    monkeypatch.setenv("ORBITKV_PREPARE_REQUESTS", "1")
+    scheduler = SimpleNamespace(tree_cache=SimpleNamespace(linker=wrapper), waiting_queue=[])
+
+    def accepted(scheduler, req):
+        scheduler.waiting_queue.append(req)
+
+    enqueue_request(accepted, scheduler, req)
+    assert scheduler.waiting_queue == [req]
+    assert linker.client.mock_calls == []
+
+
+@pytest.mark.parametrize("mode", ["null", "prefill", "decode"])
+def test_factory_selects_restore_owner_from_pinned_runtime_role(monkeypatch, mode):
+    from sglang.srt.mem_cache.unified_cache.components import ComponentType
+
+    from orbitkv.sglang.plugin import create_cache
+
+    monkeypatch.setenv("ORBITKV_SGLANG_TENT", "1")
+    monkeypatch.setattr(
+        "sglang.srt.runtime_context.get_disagg",
+        lambda: SimpleNamespace(
+            disaggregation_mode=mode,
+            disaggregation_transfer_backend="mooncake",
+            disaggregation_decode_retraction_backup="none",
+        ),
+    )
+    monkeypatch.setattr(
+        "sglang.srt.runtime_context.get_memory",
+        lambda: SimpleNamespace(enable_unified_cache_external_linker=True),
+    )
+    cache = MagicMock()
+    cache.tree_components = (ComponentType.FULL,)
+    cache.components = {ComponentType.FULL: MagicMock()}
+    monkeypatch.setattr(
+        "sglang.srt.mem_cache.unified_radix_cache.UnifiedRadixCache", lambda _: cache
+    )
+    linker = MagicMock()
+    monkeypatch.setattr("orbitkv.sglang.linker.OrbitKVLinker", lambda *args, **kwargs: linker)
+    params = SimpleNamespace(
+        is_eagle=False,
+        mtp_draft_device_pools=None,
+        component_registry_override=None,
+        req_to_token_pool=SimpleNamespace(),
+        token_to_kv_pool_allocator=MagicMock(),
+    )
+    ctx = SimpleNamespace(
+        disable_radix_cache=False,
+        enable_hierarchical_cache=False,
+        is_dsa=False,
+        is_hybrid_swa=False,
+        is_hybrid_ssm=False,
+        params=params,
+        server_args=object(),
+        tp_worker=MagicMock(),
+    )
+    assert create_cache(ctx) is cache
+    assert cache.linker.restore_from_store == (mode != "decode")
+    assert cache.linker.cache_linker is linker
+    assert cache.write_through_threshold == 1

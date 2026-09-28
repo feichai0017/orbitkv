@@ -95,7 +95,7 @@ class RecurrentComponent(MambaComponent):
 class RecoveryLinkerWrapper(UnifiedCacheLinkerWrapper):
     """Carry absolute query boundaries and support checkpoint-sized state slots."""
 
-    def __init__(self, cache, cache_linker):
+    def __init__(self, cache, cache_linker, *, restore_from_store: bool):
         supported = {ComponentType.FULL, ComponentType.SWA, ComponentType.MAMBA}
         if not set(cache.tree_components) <= supported:
             raise ValueError("OrbitKV has no recovery contract for these tree components")
@@ -110,6 +110,7 @@ class RecoveryLinkerWrapper(UnifiedCacheLinkerWrapper):
                 raise ValueError("Unsupported recurrent checkpoint representation")
         self.cache = cache
         self.cache_linker = cache_linker
+        self.restore_from_store = restore_from_store
         self._skip_swa = False
         self._components = cache._components_tuple
         self.hit_markers = {}
@@ -119,6 +120,8 @@ class RecoveryLinkerWrapper(UnifiedCacheLinkerWrapper):
         cache.write_through_threshold = 1
 
     def match(self, key, req, result):
+        if not self.restore_from_store:
+            return result
         self.cache_linker._origins[req.rid] = int(result.device_indices.numel())
         try:
             matched = super().match(key, req, result)

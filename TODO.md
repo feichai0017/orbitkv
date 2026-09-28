@@ -279,8 +279,11 @@ qualification remain open. See the
 - [x] Define the first SGLang P/D plus external-cache composition: matching P/D
   workers share one namespace, P restores before handoff, and D publishes a
   longer completed prefix for a later P request; add a restart E2E gate.
-- [ ] Qualify SGLang P/D on two external H20 GPUs with forced TCP, then on two
-  hosts with RDMA counters; cover abort, worker restart and partial failure.
+- [x] Qualify same-A100 two-replica SGLang P/D plus external-cache restart/reuse
+  with strict output controls; keep Decode external hits out of the HiCache-only
+  restore path. H20→A100 reuse passes but its 64-token equality gate fails.
+- [ ] Qualify strict SGLang P/D output across distinct GPUs, then two hosts with
+  RDMA counters; cover abort, worker restart and partial failure.
 - [ ] Expose TENT peer-liveness probing through its stable C ABI before enabling
   SGLang's optional failed-session recovery probe.
 - [x] Reject SGLang representations without a complete recovery contract.

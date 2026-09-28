@@ -1050,9 +1050,12 @@ local availability or cached segment metadata.
 The first P/D-plus-cache gate attaches both SGLang workers to one Cache Manager,
 lets prefill restore before handoff, enables decode radix publication, restarts
 both workers, and requires a continuation to reuse state past the last boundary
-the original prefill could have published. The test and ownership contract are
-implemented; its two-GPU forced-TCP run and two-host RDMA/GPUDirect follow-up
-remain external H20 evidence.
+the original prefill could have published. The same-A100 two-replica TCP run
+passes both exact output comparisons. H20→A100 passes restart and 576-token
+reuse, but its 64-token equality gate fails after EOS; the eight-token follow-up
+matches. Decode advertises only its resident HBM prefix and publishes new state;
+Prefill owns external restores. See [the recorded limits](pd.md#sglang-qualification-on-2026-09-28).
+Distinct-GPU full-output, TP/PP, fault and RDMA/GPUDirect gates remain open.
 
 The vLLM P/D Python surface now targets only the pinned `0.29.0` API. The
 role-selecting `PdConnector`, old `handle_preemptions(set)` branch, alternate

@@ -70,6 +70,10 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             ),
         },
     )
+    monkeypatch.setattr(
+        "sglang.srt.runtime_context.get_disagg",
+        lambda: SimpleNamespace(disaggregation_mode="null"),
+    )
     namespace = f"hybrid-proof-{uuid.uuid4().hex}"
     monkeypatch.setattr(GpuLayout, "from_pool", classmethod(lambda cls, *args: layout))
     monkeypatch.setattr("orbitkv.sglang.linker.derive_namespace", lambda *args: namespace)
@@ -262,6 +266,7 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             ],
         )
         wrapper = object.__new__(RecoveryLinkerWrapper)
+        wrapper.restore_from_store = True
         wrapper.cache_linker = linker
         wrapper.cache = SimpleNamespace(dec_lock_ref=MagicMock())
         wrapper.hit_markers = {}

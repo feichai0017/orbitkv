@@ -23,7 +23,7 @@ does not establish OrbitKV compatibility.
 | Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP and the recorded H20/A100 TCP natural-text suite; [recorded scope](shared-cache-qualification.md#recorded-result) |
 | Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; [two-host TCP correctness](shared-cache-qualification.md#two-host-tcp-2026-09-28) is recorded with numerical limits; RDMA and catalog replication remain open |
 | vLLM P/D through OrbitKV's split connectors | Prefill, decode, P/D proxy; Mooncake TENT transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
-| SGLang P/D over OrbitKV TENT | SGLang prefill, decode and native router; optional node-local cache | Native control plane plus Rust TENT is implemented; two-GPU and two-host serving qualification remain open |
+| SGLang P/D over OrbitKV TENT | SGLang prefill, decode and native router; optional node-local cache | Same-A100 TCP P/D plus cache/restart output gate passes; H20→A100 reuse passes but strict 64-token equality fails; RDMA remains open |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
 
 ```mermaid
@@ -225,7 +225,9 @@ vLLM `0.29.0` also includes its own NIXL connector; the
 [NIXL comparison example](../scripts/run_nixl_local.sh) uses vLLM's code.
 OrbitKV does not ship a NIXL connector. Its SGLang adapter supports the native
 SGLang P/D control plane over OrbitKV TENT and an opt-in composition with the
-external cache; external H20 qualification remains open.
+external cache. The same-A100 TCP restart/output gate passes; the H20→A100
+run passes cache reuse but fails full 64-token equality. See the
+[precise P/D qualification](pd.md#sglang-qualification-on-2026-09-28).
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 

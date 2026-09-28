@@ -182,7 +182,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
             from .completion import register_completion_reporter
 
             mode = get_disagg().disaggregation_mode
-            if getattr(mode, "value", mode) == "decode":
+            if mode == "decode":
                 register_completion_reporter(self.client, self.instance_id, self.device_id)
         except Exception:
             self.client.close()

@@ -124,7 +124,11 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     cache = UnifiedRadixCache(ctx.params)
     linker = OrbitKVLinker(ctx.server_args, ctx.params, components=set(cache.components))
     try:
-        cache.linker = RecoveryLinkerWrapper(cache, linker)
+        cache.linker = RecoveryLinkerWrapper(
+            cache,
+            linker,
+            restore_from_store=disaggregation.disaggregation_mode != "decode",
+        )
     except Exception:
         linker.close()
         raise
