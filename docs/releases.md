@@ -46,8 +46,10 @@ non-editable environment. The initial maturin output uses a Linux tag; only the
 whole-wheel audit selects the final manylinux tag. Auditing the extension alone
 misses libraries loaded dynamically by TENT and the embedded-Python Manager.
 
-CI builds on Ubuntu with `auditwheel==6.8.2`, `patchelf>=0.14.5`, maturin and
-wheel. Dependency copyright files are retained from the Debian/Ubuntu package
+CI builds on Ubuntu with protoc 27.5, `auditwheel==6.8.2`,
+`patchelf>=0.14.5`, maturin and wheel. Both release architectures use the same
+protocol compiler; Ubuntu 22.04's system protoc cannot compile the current
+proto3 optional fields without an experimental flag. Dependency copyright files are retained from the Debian/Ubuntu package
 database, together with referenced common license texts and Mooncake's license.
 An externally staged dependency must supply `<library-filename>.license` beside
 its original shared library if it has no OS package provenance; missing notices
@@ -81,6 +83,30 @@ Pushing a matching `v*` tag runs the same build/validation jobs and then publish
 GitHub release assets and both PyPI distributions. The workflow requires the
 repository's `PYPI_API_TOKEN` to authorize both names. Preparing a candidate or
 running the manual workflow does not test that credential or reserve the names.
+
+## CUDA 13 candidate qualification, 2026-09-28
+
+The CPython 3.11 x86_64 candidate built with the `d936b1fa` packaging changes is
+`orbitkv_llm_cu13-0.1.0-cp311-cp311-manylinux_2_35_x86_64.whl`, SHA256
+`eef36f8406ae854a9ea1567da5ac09adba5a3d6f17077cca99d7be6fdd3ff163`.
+The higher platform floor comes from the whole native dependency set; the old
+extension-only audit had incorrectly labeled this artifact `manylinux_2_34`.
+
+Both dedicated engine environments install this wheel non-editably. The H20
+Qwen3-8B release smoke passes for vLLM 0.29.0 and SGLang 0.5.20: each restarts
+the engine, restores 90 MiB to GPU, matches its initial output, and drains query
+reservations. The test removes external TENT library paths and verifies the
+three loaded primary libraries under the installed package.
+
+The same SHA256 is installed on the remote A100. The installed Manager console
+scripts and native clients pass 8 MiB of exact GPU recovery in each direction
+over IPv6 TCP, including re-serving the received replica after original-source
+eviction. Every payload/gap hash matches and checked ownership counters drain.
+Raw evidence, package paths and the wheel hash are under
+`benches/results/runs/partitioned-restore-20260928/` in `wheel-vllm/`,
+`wheel-sglang/`, `installed-wheel-byte-roundtrip/` and `wheel.sha256`.
+These results cover this CUDA 13/CPython 3.11 artifact; they do not qualify all
+matrix targets, RDMA, heterogeneous P/D output equality or publication to PyPI.
 
 ## Scope of 0.1.0
 

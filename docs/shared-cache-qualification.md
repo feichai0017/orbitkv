@@ -57,10 +57,11 @@ Keep the rejected cross-GPU runs and native controls under
 `benches/results/runs/two-host-20260928/`; do not describe the natural-text or
 byte gate as proving arbitrary cross-GPU token equality.
 
-These are source-build correctness results. Neither container exposes RDMA
-hardware, and the hosts have different GPUs. They do not qualify RDMA,
-GPUDirect, distributed throughput, installed release artifacts, P/D or
-mid-transfer crash/partition revocation.
+The model-serving rows above are source-build correctness results. A later
+[installed-wheel gate](releases.md#cuda-13-candidate-qualification-2026-09-28)
+repeats the byte-exact roundtrip on both hosts. Neither container exposes RDMA
+hardware, and the hosts have different GPUs. These results do not qualify RDMA,
+GPUDirect, distributed throughput, P/D or mid-transfer crash/partition revocation.
 
 ### Earlier same-host gates
 

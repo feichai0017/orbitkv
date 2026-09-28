@@ -111,10 +111,16 @@ jobs:
           linux-local-args: '["--toolkit"]'
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
-      - name: Install protobuf compiler and RDMA headers
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+          sudo apt-get install -y libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+      - name: Install protocol compiler
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          version: "27.5"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:
@@ -186,10 +192,16 @@ jobs:
           linux-local-args: '["--toolkit"]'
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
-      - name: Install protobuf compiler and RDMA headers
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+          sudo apt-get install -y libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+      - name: Install protocol compiler
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          version: "27.5"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
       - name: Setup sccache
@@ -253,10 +265,16 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
 
-      - name: Install protobuf compiler and RDMA headers
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
+          sudo apt-get install -y libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
+
+      - name: Install protocol compiler
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          version: "27.5"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
