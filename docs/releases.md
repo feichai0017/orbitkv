@@ -86,6 +86,15 @@ running the manual workflow does not test that credential or reserve the names.
 
 ## CUDA 13 candidate qualification, 2026-09-28
 
+[Release run 36423388612](https://github.com/feichai0017/orbitkv/actions/runs/36423388612)
+at commit `06e04fc3` passes all 15 build targets and the combined artifact
+validation. Python 3.10–3.14, x86_64 CUDA 12/13 and aarch64 CUDA 13 artifacts
+are available from that run. Its publish job is skipped because this was a
+manual candidate build. The matching
+[PR CI run](https://github.com/feichai0017/orbitkv/actions/runs/36423395059)
+also passes all 13 checks. Build coverage is separate from the GPU qualification
+below.
+
 The CPython 3.11 x86_64 candidate built with the `d936b1fa` packaging changes is
 `orbitkv_llm_cu13-0.1.0-cp311-cp311-manylinux_2_35_x86_64.whl`, SHA256
 `eef36f8406ae854a9ea1567da5ac09adba5a3d6f17077cca99d7be6fdd3ff163`.
@@ -105,8 +114,21 @@ eviction. Every payload/gap hash matches and checked ownership counters drain.
 Raw evidence, package paths and the wheel hash are under
 `benches/results/runs/partitioned-restore-20260928/` in `wheel-vllm/`,
 `wheel-sglang/`, `installed-wheel-byte-roundtrip/` and `wheel.sha256`.
-These results cover this CUDA 13/CPython 3.11 artifact; they do not qualify all
-matrix targets, RDMA, heterogeneous P/D output equality or publication to PyPI.
+
+The independently downloaded CUDA 13/CPython 3.11 x86_64 artifact from Release
+run `36423388612` uses the same filename; its SHA256 is
+`abcdc83ab995c1c371eba574721b6cca3bc8e5fe11e53423d0661196254e2d72`.
+Both engines also pass the installed-package restart gate with this CI-built
+wheel: each saves and restores 90 MiB with exact outputs and no query reservation
+left behind. Installing that identical CI artifact on the A100 passes the same
+8 MiB GPU-byte round trip, received-replica re-serving and acknowledged release
+gate. Package paths, hashes and results are recorded in `ci-wheel/` under the
+artifact directory above. The initial etcd launch rejected by the environment's
+HTTP proxy is retained separately; the accepted run uses direct IPv6 traffic.
+
+These runtime results cover CUDA 13/CPython 3.11 x86_64 artifacts; they do not
+qualify GPU execution on all matrix targets, RDMA, heterogeneous P/D output
+equality or publication to PyPI.
 
 ## Scope of 0.1.0
 

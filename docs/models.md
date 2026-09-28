@@ -56,11 +56,48 @@ hf download moonshotai/Kimi-Linear-48B-A3B-Instruct tokenization_kimi.py \
   --local-dir /path/to/kimi-linear-48b-fp8
 ```
 
-The smaller Qwen3-8B dense and Qwen3.5-0.8B recurrent baselines retain their
-existing gates. Mellum and Inkling use generated weights to exercise native
-engine paths; they are listed separately in the
-[state-layout qualification](hybrid-recovery.md#reproducible-gates).
+The smaller Qwen3-8B dense baseline retains its existing gates. Mellum and
+Inkling use generated weights to exercise native engine paths; they are listed
+separately in the [state-layout qualification](hybrid-recovery.md#reproducible-gates).
 Full + SWA + temporal recurrent serving still needs native-model evidence.
+
+### Qwen3.5 after bounded Restore partitioning
+
+The 2026-09-28 normal release build requalifies the real pretrained
+[Qwen3.5-0.8B checkpoint](https://huggingface.co/Qwen/Qwen3.5-0.8B/tree/2fc06364715b967f1860aea9cf38778875588b17)
+on H20, TP=1, with text-only requests. Its 24 layers comprise six full-attention
+layers and 18 GDN layers with conv/recurrent state. The weight file SHA256 is
+`04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696`.
+
+- vLLM 0.29.0: seven DRAM checks and seven forced-SSD checks pass, including
+  native-output controls, recurrent checkpoints and GPU recovery after restart.
+- SGLang 0.5.20: both DRAM and forced-SSD gates pass, including concurrent
+  restart recovery and output controls. The gate does not disable CUDA graphs.
+
+These results exercise the current 2D DMA and bounded-plan implementation with
+attention and recurrent state. They do not by themselves force a multi-part
+plan; the separate 20,480-range GPU fault gate establishes that boundary.
+They do not qualify remote hybrid recovery, P/D for this checkpoint, general
+semantic compilation or restore-compute overlap.
+
+Reproduce from `python/` with the normal extension and Manager, separately for
+each engine:
+
+```bash
+../.venv/vllm-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_vllm_e2e_correctness.py \
+  --model /path/to/Qwen3.5-0.8B --max-model-len 4096 \
+  --orbitkv-pool-size 4gb --vllm-cache-tier dram
+# Repeat with --vllm-cache-tier ssd.
+
+../.venv/sglang-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_sglang_direct_e2e.py --model /path/to/Qwen3.5-0.8B
+```
+
+The pinned model source, test logs and per-case artifacts are retained under
+`benches/results/runs/partitioned-restore-20260928/` as `qwen35-source.json`,
+`qwen35-vllm-dram*`, `qwen35-vllm-ssd*` and `qwen35-sglang*`. Release native
+hashes are recorded in `release-artifacts.sha256` in the same directory.
 
 ### Qwen3.8 on H20
 

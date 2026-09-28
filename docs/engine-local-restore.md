@@ -269,6 +269,20 @@ consumer stream wait before first use. All groups still need one final drain
 for errors and source retirement. Page-first allocations may serve several
 groups, so early source release needs their actual last-use ownership.
 
+The current engine admission rules also have to change before group events can
+produce overlap:
+
+| Engine | Current consumption fence | Required integration |
+| --- | --- | --- |
+| vLLM 0.29.0 | Cache lookup reports an asynchronous load. The scheduler waits for `get_finished` before scheduling that request; `wait_for_layer_load` therefore has no pending layer work to wait for. Worker v2 may submit these loads after the current forward. | Admit a synchronous-load request into the consuming forward, submit before that forward, and establish every attention/recurrent dependency before its first use. Keep asynchronous ownership for final drain and cancellation. |
+| SGLang 0.5.20 | The linker's counter waits for the entire Restore at `set_consumer`. Python pool accessors cannot supply replay-time dependencies by themselves. | Replace that whole-operation consumption wait with native group readiness and dependencies that execute in every supported eager/graph path. Preserve the final completion owner used for page retirement. |
+
+Splitting one plan into smaller wire parts does not change either admission
+rule. A part is a metadata-capacity boundary and may end within a layer;
+consumer readiness must cover all of that layer's attention and recurrent
+state across all contributing leases. Do not equate a part ACK with a layer
+completion or emit `get_finished` when only an early group is ready.
+
 CUDA graph overlap requires dependencies that execute on every replay. A Python
 callback run only during capture is insufficient. Until qualified on the pinned
 engine release and graph mode, the whole-operation gate remains the supported

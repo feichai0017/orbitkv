@@ -137,9 +137,11 @@ A separate synthetic 2D DMA probe copies 72 rows per block with 128 KiB row
 width. For 16/64/128 blocks, 1D total medians are 6.19/24.97/50.00 ms and 2D
 medians are 2.97/11.20/22.15 ms, with exact output bytes checked. The allocation
 is deliberately regular; it does not represent fragmented production grants.
-No 2D production path was applied and these numbers are not serving gains.
-Production integration still needs bounds/gap preservation, allocation identity,
-partial-enqueue drain and matched serving qualification.
+This earlier probe predates the integrated 2D production path; its numbers are
+not serving gains. The later integration and repeated serving results are
+recorded at the top of this page, with separate bounds/gap, allocation-lifetime
+and partial-enqueue fault gates. A causal before/after serving comparison
+remains outstanding.
 
 ### Artifacts and reproduction
 
