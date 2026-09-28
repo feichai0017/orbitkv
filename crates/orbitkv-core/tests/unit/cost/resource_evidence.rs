@@ -15,6 +15,7 @@ fn resource_evidence_is_fresh_bounded_and_resource_scoped() {
     let resource = ExecutionResource::CacheRestore {
         source_set_hash: 1,
         destination_device: 2,
+        copy_backend: 0,
     };
     record(resource, resources(3), Duration::ZERO);
     assert_eq!(
@@ -28,6 +29,7 @@ fn resource_evidence_is_fresh_bounded_and_resource_scoped() {
     let stale = ExecutionResource::CacheRestore {
         source_set_hash: 4,
         destination_device: 2,
+        copy_backend: 0,
     };
     record(stale, resources(7), MAX_AGE + Duration::from_millis(1));
     assert!(current(stale, Instant::now()).is_none());
@@ -37,6 +39,7 @@ fn resource_evidence_is_fresh_bounded_and_resource_scoped() {
             ExecutionResource::CacheRestore {
                 source_set_hash,
                 destination_device: 2,
+                copy_backend: 0,
             },
             resources(1),
             Duration::ZERO,

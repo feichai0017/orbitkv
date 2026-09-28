@@ -151,6 +151,7 @@ fn decode_ready_routes_compare_only_for_the_same_target_and_shape() {
         ExecutionResource::CacheRestore {
             source_set_hash: 9,
             destination_device: 7,
+            copy_backend: 0,
         },
         Representation::Raw,
         4096,
@@ -193,6 +194,7 @@ fn decode_ready_decision_uses_fresh_queue_and_tent_pressure() {
         ExecutionResource::CacheRestore {
             source_set_hash: 31,
             destination_device: 7,
+            copy_backend: 0,
         },
         Representation::Raw,
         4096,

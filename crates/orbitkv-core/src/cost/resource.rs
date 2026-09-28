@@ -14,6 +14,7 @@ pub(crate) enum ExecutionResource {
     CacheRestore {
         source_set_hash: u64,
         destination_device: u64,
+        copy_backend: u8,
     },
     #[cfg(feature = "mooncake")]
     Peer(u64),

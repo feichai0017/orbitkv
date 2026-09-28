@@ -84,7 +84,9 @@ readiness, dispatch, native queue and grant wait. The record is accepted once by
 the source owner for the same session/operation generation. Only a successful
 submitted drain trains its bounded estimate; failure durations are diagnostic.
 Its start boundary differs from `cache_restore` and P/D, so it is excluded from
-cross-route comparison. Enable `ORBITKV_COST_OBSERVATIONS=1` in both the engine
+cross-route comparison. Cache restore resources separate the source domain,
+destination GPU and registered copy backend, so direct and kernel executions
+do not train the same estimate. Enable `ORBITKV_COST_OBSERVATIONS=1` in both the engine
 and Manager to collect it. `ORBITKV_TRACE_TRANSFERS=1` additionally exposes the
 stage decomposition and native result-consumption delay; tracing alone does not
 enable cost selection.

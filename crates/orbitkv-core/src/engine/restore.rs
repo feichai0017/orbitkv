@@ -228,7 +228,11 @@ impl OrbitKVEngine {
                 cost_key: (cost::enabled() && bytes != 0).then(|| {
                     CostEstimateKey::new(
                         CostObservationKind::EngineLocalRestore,
-                        ExecutionResource::Gpu(device_id as u64),
+                        ExecutionResource::CacheRestore {
+                            source_set_hash: prepared.plan.source_set_hash(),
+                            destination_device: device_id as u64,
+                            copy_backend: gpu.worker_pool().transfer_mode as u8,
+                        },
                         Representation::Raw,
                         bytes,
                         fragments,

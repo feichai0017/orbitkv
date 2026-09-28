@@ -182,6 +182,7 @@ fn caller_to_drain_estimates_cannot_select_preparation_or_service_routes() {
         ExecutionResource::CacheRestore {
             source_set_hash: 1,
             destination_device: 9,
+            copy_backend: 0,
         },
     );
     let now = Instant::now();
@@ -197,5 +198,44 @@ fn caller_to_drain_estimates_cannot_select_preparation_or_service_routes() {
     {
         assert!(!local.route_comparable(manager));
         assert!(!manager.route_comparable(local));
+    }
+}
+
+#[test]
+fn local_restore_estimates_separate_copy_backend_and_source_domain() {
+    let base = key(9).with_observation_kind_and_resource(
+        CostObservationKind::EngineLocalRestore,
+        ExecutionResource::CacheRestore {
+            source_set_hash: 3,
+            destination_device: 9,
+            copy_backend: 0,
+        },
+    );
+    let now = Instant::now();
+    let mut estimates = Estimates::default();
+    for _ in 0..MIN_SAMPLES {
+        estimates.observe(base, 0.02, now);
+    }
+    assert!(estimates.predict(base, now).is_some());
+    for resource in [
+        ExecutionResource::CacheRestore {
+            source_set_hash: 3,
+            destination_device: 9,
+            copy_backend: 1,
+        },
+        ExecutionResource::CacheRestore {
+            source_set_hash: 4,
+            destination_device: 9,
+            copy_backend: 0,
+        },
+    ] {
+        assert!(
+            estimates
+                .predict(
+                    base.with_observation_kind_and_resource(base.kind, resource),
+                    now
+                )
+                .is_none()
+        );
     }
 }

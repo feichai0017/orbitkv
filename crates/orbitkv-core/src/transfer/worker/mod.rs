@@ -135,7 +135,7 @@ enum WorkerCommand {
 pub(crate) struct GpuWorkerPool {
     device_id: i32,
     numa_node: NumaNode,
-    transfer_mode: TransferMode,
+    pub(crate) transfer_mode: TransferMode,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
@@ -431,6 +431,7 @@ impl GpuWorkerPool {
             let decode_resource = ExecutionResource::CacheRestore {
                 source_set_hash: task.plan.source_set_hash(),
                 destination_device: self.device_id as u64,
+                copy_backend: self.transfer_mode as u8,
             };
             let decode_ready_key = key
                 .with_observation_kind_and_resource(
