@@ -424,17 +424,17 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
             host_device: 0x2000 + (index * 4) as u64,
             size: 4,
             device_allocation: 1,
-            host_allocation: 2,
+            host_registration: 2,
         })
         .collect();
     let mut fragmented = contiguous.clone();
     fragmented.swap(1, 2);
     let mut allocations = contiguous.clone();
     for (index, copy) in allocations.iter_mut().enumerate() {
-        copy.host_allocation = index;
+        copy.host_registration = index;
     }
     for write in [false, true] {
-        let (merged_keys, bytes) = raw_copy_keys(&contiguous, 3, write);
+        let (merged_keys, bytes) = raw_copy_keys(&contiguous, 3, write, usize::MAX);
         assert_eq!(bytes, 16);
         let paths = if write {
             [
@@ -454,8 +454,8 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
                     .with_dma_ranges(1)
             );
         }
-        for copies in [&fragmented, &allocations] {
-            let (keys, bytes) = raw_copy_keys(copies, 3, write);
+        for (copies, submissions) in [(&fragmented, 2), (&allocations, 4)] {
+            let (keys, bytes) = raw_copy_keys(copies, 3, write, usize::MAX);
             assert_eq!(bytes, 16);
             for ((key, merged_key), path) in keys.iter().zip(merged_keys).zip(paths) {
                 assert_ne!(*key, merged_key);
@@ -468,11 +468,14 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
                         16,
                         4
                     )
-                    .with_dma_ranges(4)
+                    .with_dma_ranges(submissions)
                 );
             }
         }
-        assert_ne!(merged_keys, raw_copy_keys(&contiguous, 3, !write).0);
+        assert_ne!(
+            merged_keys,
+            raw_copy_keys(&contiguous, 3, !write, usize::MAX).0
+        );
     }
 }
 
@@ -516,7 +519,7 @@ fn raw_source_ranges_are_checked_before_appending_descriptors() {
         16
     );
     assert_eq!(copies[1].host, copies[0].host.wrapping_add(8));
-    assert_eq!(copies[0].host_allocation, copies[1].host_allocation);
+    assert_eq!(copies[0].host_registration, copies[1].host_registration);
     copies.clear();
     assert_eq!(
         append_copy_descs(&mut copies, 7, ranges(), &split, 4).unwrap(),
@@ -526,7 +529,7 @@ fn raw_source_ranges_are_checked_before_appending_descriptors() {
         copies[1].host,
         split.segment_ptr(1).unwrap().as_ptr().wrapping_add(4)
     );
-    assert_ne!(copies[0].host_allocation, copies[1].host_allocation);
+    assert_eq!(copies[0].host_registration, copies[1].host_registration);
     copies.clear();
     assert!(
         append_copy_descs(
@@ -584,7 +587,7 @@ fn managed_restore_retains_sources_and_reservations_through_partial_submission_d
                 unsafe { drop(Box::from_raw(gate)) };
                 return Err(error.to_string());
             }
-            MemcpyBackend.h2d(copies, stream)?;
+            MemcpyBackend::new(stream.context())?.h2d(copies, stream)?;
             self.submitted.send(()).unwrap();
             Err("injected failure after accepting a copy".into())
         }

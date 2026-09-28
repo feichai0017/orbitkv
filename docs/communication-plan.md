@@ -38,8 +38,10 @@ batched lease validation, then transfers the selected sealed blocks and
 The native engine worker retains the actual registered tensors, independently
 imports the payload arenas, resolves local addresses, and uses the existing
 memcpy or mapped-memory kernel backend. Destination ranges are checked and
-sorted before submission; adjacent copies merge only within matching source
-and destination allocations. CUDA submission and whole-operation drain now
+sorted before submission. The direct backend merges contiguous ranges and
+explicit equal-width, constant-pitch rows within one host CUDA registration and
+one GPU allocation. Every logical source allocation is validated and retained
+independently. CUDA submission and whole-operation drain now
 belong to this native worker. The Manager raw-descriptor worker branch and its
 `LoadPayload` enum have been removed.
 
@@ -288,39 +290,56 @@ destination and capacity authority. Retain deterministic selection while that
 contract is incomplete. Real two-host DP qualification remains a separate gate;
 local performance work does not establish RDMA or catalog availability.
 
-## Proposed: strided DMA for raw restores
+## Strided DMA for raw transfers
 
-Status: diagnostic probe only; no production integration. The measured 8K
-plan/enqueue interval motivates testing regular rows in one `cuMemcpy2DAsync`
-submission. The existing direct backend remains authoritative until the
-following change and its gates are accepted.
+The direct backend now compiles regular rows into `cuMemcpy2DAsync` submissions
+for both H2D and D2H. This replaces the old contiguous-only compiler; there is
+no compatibility backend or new runtime selector. Engine-local restore and
+Manager publication use the same compiler. Single rows still use directional
+1D DMA. Model-serving and repeated performance acceptance are separate gates.
 
-The concrete proposed implementation is:
+The implementation preserves these constraints:
 
-1. Extend `transfer/memcpy.rs` to compile each already validated descriptor list
-   into contiguous runs or constant-pitch rows. Grow a row group only from
+1. `transfer/memcpy.rs` compiles each already validated descriptor list
+   into contiguous runs or constant-pitch rows. A row group grows only from
    explicit input descriptors of equal width, with checked pointer arithmetic
    and source/destination pitches between row width and the device's maximum
    pitch. Do not infer missing rows or copy inter-row gaps.
-2. Separate the imported arena's CUDA registration identity from the source
+2. The imported arena's CUDA registration identity is separate from the source
    allocation's lifetime identity in the local executor. Continue validating
    every logical allocation ID, generation and bounds before compilation; the
    Manager grant must retain every contributing allocation until final drain.
    Combining rows in one CUDA registration must never turn that registration
    into permission to access an unlisted allocation or a gap.
-3. Keep the existing final stream drain, partial-enqueue error handling,
+3. Preserve the final stream drain, partial-enqueue error handling,
    destination readiness, shared device permits and quarantine. Do not retry a
    failed batch or introduce a second runtime backend selection switch.
-4. Count actual compiled submissions in the existing direct-backend cost shape.
+4. Count actual compiled submissions using the same compiler and device pitch
+   limit in the existing direct-backend cost shape.
    Keep historical direct/kernel observations isolated; do not enable dynamic
    selection from the synthetic probe.
 
-Before application, review expanded-row equivalence against the original
-input ranges, including distinct source generations, registrations, uneven
-strides, overlaps, overflow and maximum pitch. Before acceptance, require GPU
+Unit gates expand the compiled rows back to the original byte pairs, including
+2,000 irregular layouts, registration boundaries, uneven strides, overlap,
+overflow and maximum pitch. GPU acceptance requires
 H2D/D2H sentinel-gap tests, engine/Manager death and partial-enqueue fault gates,
 both deterministic model gates, and at least three matched serving repetitions
 with order reversal. A synthetic copy gain alone cannot close this item.
+
+### Functional qualification, 2026-09-28
+
+The integrated compiler passes full release workspace tests and strict workspace
+Clippy. Four H20 GPU cases cover bidirectional sentinel gaps, shared-arena
+suballocation bounds, context restoration and kernel/direct byte parity.
+Twelve process-fault cases pass, including Manager death after claim,
+engine-death quarantine, lost notifications and partial-submit drain.
+Qwen3-8B passes the vLLM deterministic gate (six checks; one hybrid-only skip)
+and SGLang DRAM restart recovery. Raw logs and artifact hashes are retained under
+`benches/results/runs/strided-dma-20260928/`.
+
+These functional results do not establish a serving speedup. Three matched,
+order-reversed performance repetitions remain required before accepting the
+performance claim. The earlier synthetic 2D probe is not a substitute.
 
 ## Next: bounded large restores and execution overlap
 

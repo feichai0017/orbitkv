@@ -82,6 +82,10 @@ unsafe impl Send for PinnedAllocation {}
 unsafe impl Sync for PinnedAllocation {}
 
 impl PinnedAllocation {
+    pub(crate) fn registration_id(&self) -> usize {
+        Arc::as_ptr(&self.pool) as usize
+    }
+
     pub(crate) fn source_range(
         &self,
         host: NonNull<u8>,

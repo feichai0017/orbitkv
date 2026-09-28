@@ -342,7 +342,7 @@ impl LocalRestoreExecutor {
             .new_event(Some(sys::CUevent_flags::CU_EVENT_BLOCKING_SYNC))
             .map_err(|e| e.to_string())?;
         let backend: Box<dyn TransferBackend> = match mode {
-            TransferMode::Direct => Box::new(MemcpyBackend),
+            TransferMode::Direct => Box::new(MemcpyBackend::new(&context)?),
             TransferMode::Kernel => Box::new(KernelBackend::new(&context)?),
         };
         Ok(Self {
@@ -419,9 +419,7 @@ impl LocalRestoreExecutor {
             }
             let key = (source.arena_id, source.allocation_id);
             let bounds = (source.allocation_offset, source.allocation_size);
-            let next_index = allocations.len();
-            let (previous_bounds, allocation_index) =
-                allocations.entry(key).or_insert((bounds, next_index));
+            let previous_bounds = allocations.entry(key).or_insert(bounds);
             if *previous_bounds != bounds {
                 return Err("inconsistent Restore allocation generation bounds".into());
             }
@@ -449,7 +447,7 @@ impl LocalRestoreExecutor {
                     .ok_or("source GPU address overflow")?,
                 size: source.size as usize,
                 device_allocation: tensor.allocation,
-                host_allocation: *allocation_index,
+                host_registration: arena.pointer.as_ptr() as usize,
             });
         }
         copies.sort_unstable_by_key(|copy| copy.device);

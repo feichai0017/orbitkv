@@ -101,3 +101,75 @@ fn caller_context_survives_registration_and_readiness_success_and_failure() {
     primary.bind_to_thread().unwrap();
     unsafe { result::free_sync(address) }.unwrap();
 }
+
+#[test]
+#[ignore = "requires a CUDA GPU"]
+fn strided_restore_keeps_each_allocation_boundary_inside_a_shared_arena() {
+    use crate::memory::numa::NumaNode;
+    use crate::memory::pool::PinnedAllocator;
+    use std::num::NonZeroU64;
+
+    let _context = CudaContext::new(0).unwrap();
+    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let sources: Vec<_> = (0..4)
+        .map(|index| {
+            let source = pool
+                .allocate(NonZeroU64::new(64).unwrap(), NumaNode::UNKNOWN)
+                .unwrap();
+            // SAFETY: each new allocation is uniquely owned before publication.
+            unsafe {
+                source.as_non_null().as_ptr().write_bytes(0x31 + index, 64);
+            }
+            source
+        })
+        .collect();
+    let plan = RawRestorePlan {
+        copies: sources
+            .iter()
+            .enumerate()
+            .map(|(index, source)| RawCopy {
+                source: source.source_range(source.as_non_null(), 64).unwrap(),
+                layer: "layer".into(),
+                destination_offset: (index * 64) as u64,
+            })
+            .collect(),
+    };
+    assert!(
+        plan.copies
+            .windows(2)
+            .all(|pair| pair[0].source.arena_id == pair[1].source.arena_id
+                && pair[0].source.allocation_id != pair[1].source.allocation_id)
+    );
+    // SAFETY: this context owns the allocation until the executor is dropped.
+    let device = unsafe { result::malloc_sync(256) }.unwrap();
+    let tensor =
+        LocalTensor::new("layer".into(), device, 256, device as usize, 4, 64, 0, 1).unwrap();
+    let mut executor = LocalRestoreExecutor::new(
+        0,
+        vec![tensor],
+        pool.payload_arenas().unwrap(),
+        TransferMode::Direct,
+    )
+    .unwrap();
+    executor.execute(&plan, None).unwrap();
+    let mut actual = [0u8; 256];
+    // SAFETY: execute has drained the stream, and the output buffer is 256 bytes.
+    unsafe { sys::cuMemcpyDtoH_v2(actual.as_mut_ptr().cast(), device, actual.len()).result() }
+        .unwrap();
+    for (index, row) in actual.chunks_exact(64).enumerate() {
+        assert!(row.iter().all(|byte| *byte == 0x31 + index as u8));
+    }
+    for fault in 0..4 {
+        let mut invalid = plan.clone();
+        match fault {
+            0 => invalid.copies[0].source.offset += invalid.copies[0].source.allocation_size,
+            1 => invalid.copies[1].source.allocation_id = invalid.copies[0].source.allocation_id,
+            2 => invalid.copies[0].source.allocation_id = 0,
+            _ => invalid.copies[1].destination_offset = 0,
+        }
+        assert!(executor.execute(&invalid, None).is_err());
+    }
+    drop(executor);
+    // SAFETY: every accepted copy has completed and no executor retains the destination.
+    unsafe { result::free_sync(device) }.unwrap();
+}

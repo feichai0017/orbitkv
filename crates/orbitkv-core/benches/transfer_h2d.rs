@@ -292,7 +292,7 @@ fn copy_desc(device: u64, host: &MappedHost, device_offset: usize, host_offset: 
         host_device: host.device + host_offset as u64,
         size: SEG,
         device_allocation: 0,
-        host_allocation: 0,
+        host_registration: 0,
     }
 }
 
@@ -364,7 +364,7 @@ fn main() {
     let ctx = CudaContext::new(0).expect("cuda ctx");
     let stream = ctx.default_stream();
     let kernel = KernelBackend::new(&ctx).expect("kernel backend");
-    let memcpy = MemcpyBackend;
+    let memcpy = MemcpyBackend::new(&ctx).expect("DMA backend");
 
     println!(
         "fragment={} B, stride_factor={}, warmup={}, iters={}, host_memory={:?}, host_alloc={} MiB\n",

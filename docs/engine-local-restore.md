@@ -55,8 +55,10 @@ qualification remain open. Correctness alone does not establish a serving speedu
 5. The Manager installs the grant owner before publishing `Granted`. The native
    worker wins `Granted → Active`, copies the plan locally, validates source
    and destination ranges, and submits through the existing memcpy or mapped
-   memory kernel backend. Each backend keeps its current allocation-aware copy
-   coalescing rules.
+   memory kernel backend. Direct DMA groups contiguous ranges or explicit
+   equal-width strided rows within one CUDA host registration and GPU allocation.
+   Each source allocation retains its own generation, checked bounds and lease;
+   no gaps or unlisted rows become accessible through coalescing.
 6. The worker drains all accepted copy work, including partial submission
    failures. It publishes `Drained` and makes the local result available to
    `poll_restore`/`wait_restore`. Connector page consumption does not wait for

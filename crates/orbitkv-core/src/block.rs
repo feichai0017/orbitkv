@@ -240,11 +240,11 @@ impl RawBlock {
         self.segments.as_slice().get(index).map(|s| s.ptr)
     }
 
-    pub(crate) fn segment_allocation_id(&self, index: usize) -> Option<usize> {
+    pub(crate) fn segment_registration_id(&self, index: usize) -> Option<usize> {
         self.segments
             .as_slice()
             .get(index)
-            .map(Segment::allocation_id)
+            .map(|segment| segment._allocation.registration_id())
     }
 
     pub(crate) fn source_range(

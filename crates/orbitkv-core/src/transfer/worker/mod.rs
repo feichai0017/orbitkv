@@ -608,22 +608,9 @@ fn spawn_worker(
 struct WorkerRuntime {
     stream: Arc<CudaStream>,
     backend: Box<dyn TransferBackend>,
+    max_dma_pitch: usize,
     codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
     codec_write: std::cell::RefCell<Option<crate::storage::ssd::cufile::GpuSlot>>,
-}
-
-fn build_backend(
-    mode: TransferMode,
-    ctx: &std::sync::Arc<CudaContext>,
-) -> Result<Box<dyn TransferBackend>, EngineError> {
-    match mode {
-        TransferMode::Direct => Ok(Box::new(MemcpyBackend)),
-        TransferMode::Kernel => {
-            let kernel = KernelBackend::new(ctx)
-                .map_err(|e| EngineError::CudaInit(format!("kernel backend init failed: {e}")))?;
-            Ok(Box::new(kernel))
-        }
-    }
 }
 
 fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRuntime, EngineError> {
@@ -637,7 +624,12 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
     // Set thread-local diagnostic info
     ThreadLocalDiagnostic::insert("device_id", device_id.to_string());
 
-    let backend = build_backend(transfer_mode, &ctx)?;
+    let direct = MemcpyBackend::new(&ctx).map_err(EngineError::CudaInit)?;
+    let max_dma_pitch = direct.max_pitch;
+    let backend: Box<dyn TransferBackend> = match transfer_mode {
+        TransferMode::Direct => Box::new(direct),
+        TransferMode::Kernel => Box::new(KernelBackend::new(&ctx).map_err(EngineError::CudaInit)?),
+    };
 
     info!(
         "GPU worker initialized: device={} backend={}",
@@ -648,6 +640,7 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
     Ok(WorkerRuntime {
         stream,
         backend,
+        max_dma_pitch,
         codec: Default::default(),
         codec_write: Default::default(),
     })
@@ -721,6 +714,7 @@ fn worker_loop(
                             device_id as u64,
                             runtime.backend.name(),
                             false,
+                            runtime.max_dma_pitch,
                             gpu_cost,
                         );
                     }
@@ -782,8 +776,7 @@ fn worker_loop(
                     }
                     process_save_task(
                         &layers,
-                        &runtime.stream,
-                        runtime.backend.as_ref(),
+                        &runtime,
                         &mut observation,
                         #[cfg(feature = "tracing")]
                         trace_ctx,
@@ -926,11 +919,16 @@ fn transfer_key(
     )
 }
 
-fn raw_copy_keys(copies: &[CopyDesc], device: u64, write: bool) -> ([CostEstimateKey; 2], u64) {
+fn raw_copy_keys(
+    copies: &[CopyDesc],
+    device: u64,
+    write: bool,
+    max_pitch: usize,
+) -> ([CostEstimateKey; 2], u64) {
     let bytes = copies
         .iter()
         .fold(0u64, |bytes, copy| bytes.saturating_add(copy.size as u64));
-    let dma_ranges = crate::transfer::memcpy::merged_ranges(copies).count();
+    let dma_ranges = crate::transfer::memcpy::dma_copies(copies, max_pitch).count();
     let paths = if write {
         [
             CostObservationKind::GpuSaveDirect,
@@ -960,12 +958,13 @@ fn observe_raw_copies(
     device: u64,
     backend: &str,
     write: bool,
+    max_pitch: usize,
     observation: &mut Observation,
 ) {
     if !enabled() || copies.is_empty() {
         return;
     }
-    let (keys, bytes) = raw_copy_keys(copies, device, write);
+    let (keys, bytes) = raw_copy_keys(copies, device, write, max_pitch);
     let selected = usize::from(backend == "kernel");
     if !observation.refine_raw_copy(keys[selected], bytes) {
         return;
@@ -1010,7 +1009,7 @@ pub(crate) fn append_copy_descs(
             host_device: ptr.device().as_ptr() as u64,
             size,
             device_allocation,
-            host_allocation: raw.segment_allocation_id(segment).ok_or_else(invalid)?,
+            host_registration: raw.segment_registration_id(segment).ok_or_else(invalid)?,
         })
     };
     match block_copies {
@@ -1131,13 +1130,14 @@ fn finish_load(
 /// backend, then synchronized once.
 fn process_save_task(
     layers: &[LayerTransferData],
-    stream: &Arc<CudaStream>,
-    backend: &dyn TransferBackend,
+    runtime: &WorkerRuntime,
     observation: &mut Observation,
     #[cfg(feature = "tracing")] trace_ctx: Option<::fastrace::prelude::SpanContext>,
 ) -> Result<(), EngineError> {
     trace_child!("gpu.save_task", trace_ctx);
     let start = std::time::Instant::now();
+    let stream = &runtime.stream;
+    let backend = runtime.backend.as_ref();
     let total_blocks: usize = layers.iter().map(|l| l.blocks.len()).sum();
 
     let (copies, total_bytes) = build_copy_descs(layers)?;
@@ -1147,6 +1147,7 @@ fn process_save_task(
         stream.context().ordinal() as u64,
         backend.name(),
         true,
+        runtime.max_dma_pitch,
         observation,
     );
     observation.submitted();
