@@ -678,7 +678,7 @@ impl CacheClient {
         handle: RestoreHandle,
         result: Result<(), String>,
         timing: Option<crate::RestoreTiming>,
-    ) -> Result<(), ChannelError> {
+    ) -> Result<bool, ChannelError> {
         if handle.owner != self.owner
             || handle.session_token != self.channel.session_token()
             || handle.session_epoch != self.channel.session_epoch()

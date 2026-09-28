@@ -1,6 +1,6 @@
 //! Engine-owned raw Restore copies from independently imported payload arenas.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use super::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMod
 use crate::PayloadArena;
 
 pub const MAX_PLAN_BYTES: usize = 1024 * 1024;
+pub const MAX_RESTORE_PLAN_BYTES: usize = 32 * MAX_PLAN_BYTES;
 
 /// A checked range inside one live allocation of a shared payload arena.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,17 +40,29 @@ pub struct RawRestorePlan {
 }
 
 impl RawRestorePlan {
-    pub fn encode(&self) -> Result<Vec<u8>, String> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&1_u32.to_le_bytes());
-        let count = u32::try_from(self.copies.len()).map_err(|_| "too many Restore copies")?;
-        bytes.extend_from_slice(&count.to_le_bytes());
+    pub fn encode_parts(&self) -> Result<VecDeque<Vec<u8>>, String> {
+        let mut parts = VecDeque::new();
+        let mut bytes = Vec::from([1, 0, 0, 0, 0, 0, 0, 0]);
+        let mut count = 0_u32;
+        let mut total = 8usize;
         for copy in &self.copies {
-            let name_len =
-                u16::try_from(copy.layer.len()).map_err(|_| "Restore layer name too long")?;
-            if bytes.len().saturating_add(58 + copy.layer.len()) > MAX_PLAN_BYTES {
-                return Err("Restore plan exceeds the session plan bank".into());
+            let name_len = u16::try_from(copy.layer.len())
+                .ok()
+                .filter(|len| *len != 0)
+                .ok_or("invalid Restore layer name length")?;
+            let size = 58 + usize::from(name_len);
+            if bytes.len() + size > MAX_PLAN_BYTES {
+                bytes[4..8].copy_from_slice(&count.to_le_bytes());
+                parts.push_back(bytes);
+                bytes = Vec::from([1, 0, 0, 0, 0, 0, 0, 0]);
+                count = 0;
+                total += 8;
             }
+            total = total
+                .checked_add(size)
+                .filter(|size| *size <= MAX_RESTORE_PLAN_BYTES)
+                .ok_or("Restore plan exceeds the operation metadata limit")?;
+            count += 1;
             let source = &copy.source;
             for value in [
                 source.arena_id,
@@ -65,7 +78,9 @@ impl RawRestorePlan {
             bytes.extend_from_slice(&name_len.to_le_bytes());
             bytes.extend_from_slice(copy.layer.as_bytes());
         }
-        Ok(bytes)
+        bytes[4..8].copy_from_slice(&count.to_le_bytes());
+        parts.push_back(bytes);
+        Ok(parts)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {

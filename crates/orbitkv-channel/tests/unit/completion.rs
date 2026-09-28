@@ -32,7 +32,11 @@ fn only_reaped_and_acknowledged_records_recycle() {
     assert!(matches!(records.reserve(), Err(CompletionError::Full)));
     let id = ids[0];
     records.claim(id).unwrap();
-    assert!(records.publish_local(id, b"checked source plan").unwrap());
+    assert!(
+        records
+            .publish_local(id, b"checked source plan", false)
+            .unwrap()
+    );
     assert_eq!(engine.poll(id).unwrap().state, RestoreState::Pending);
     assert_eq!(
         engine.claim_local(id).unwrap().unwrap(),
@@ -71,11 +75,11 @@ fn plan_bank_is_bounded_and_consumption_does_not_release_sources() {
     let first = engine.reserve().unwrap();
     records.claim(first).unwrap();
     let large = vec![0x5a; RESTORE_PLAN_BYTES];
-    assert!(records.publish_local(first, &large).unwrap());
+    assert!(records.publish_local(first, &large, false).unwrap());
     let second = engine.reserve().unwrap();
     records.claim(second).unwrap();
     assert!(matches!(
-        records.publish_local(second, b"next"),
+        records.publish_local(second, b"next", false),
         Err(CompletionError::PlanFull)
     ));
     assert!(records.release_plan(first).is_err());
@@ -85,7 +89,7 @@ fn plan_bank_is_bounded_and_consumption_does_not_release_sources() {
         vec![(first, GrantState::Active)]
     );
     records.release_plan(first).unwrap();
-    assert!(records.publish_local(second, b"next").unwrap());
+    assert!(records.publish_local(second, b"next", false).unwrap());
     assert_eq!(records.state(first).unwrap(), GrantState::Active);
     assert!(records.reap(first).is_err());
     assert_eq!(engine.claim_local(second).unwrap().unwrap(), b"next");
@@ -113,7 +117,11 @@ fn cancellation_has_a_separate_preparation_drain() {
     records.claim(during).unwrap();
     assert!(!records.cancel(during).unwrap());
     assert_eq!(records.poll(during).unwrap().state, RestoreState::Pending);
-    assert!(!records.publish_local(during, b"not published").unwrap());
+    assert!(
+        !records
+            .publish_local(during, b"not published", false)
+            .unwrap()
+    );
     records.finish_cancelled(during).unwrap();
     assert_eq!(records.poll(during).unwrap().state, RestoreState::Failed);
     // A managed worker can already have submitted before route publication.
@@ -136,7 +144,7 @@ fn claim_and_revoke_have_exactly_one_winner_across_mappings() {
     for _ in 0..128 {
         let id = engine.reserve().unwrap();
         records.claim(id).unwrap();
-        records.publish_local(id, b"plan").unwrap();
+        records.publish_local(id, b"plan", false).unwrap();
         let gate = std::sync::Barrier::new(2);
         thread::scope(|scope| {
             let claim = scope.spawn(|| {
@@ -177,7 +185,7 @@ fn bounded_dirty_bits_preserve_all_operations_without_queue_overflow() {
         .collect();
     for id in &ids {
         records.claim(*id).unwrap();
-        records.publish_local(*id, b"plan").unwrap();
+        records.publish_local(*id, b"plan", false).unwrap();
         engine.claim_local(*id).unwrap().unwrap();
         engine.drained(*id, Ok(()), None).unwrap();
     }
@@ -349,7 +357,7 @@ fn timing_follows_drain_generation_and_never_blocks_reclamation() {
     for index in 0..=RESTORE_COMPLETION_SLOTS {
         let id = engine.reserve().unwrap();
         records.claim(id).unwrap();
-        records.publish_local(id, b"plan").unwrap();
+        records.publish_local(id, b"plan", false).unwrap();
         engine.claim_local(id).unwrap().unwrap();
         assert!(records.drain_timing(id).is_err());
         let report = (index % 2 == 0).then_some(timing);
@@ -387,7 +395,7 @@ fn timing_follows_drain_generation_and_never_blocks_reclamation() {
     ] {
         let id = engine.reserve().unwrap();
         records.claim(id).unwrap();
-        records.publish_local(id, b"plan").unwrap();
+        records.publish_local(id, b"plan", false).unwrap();
         engine.claim_local(id).unwrap().unwrap();
         engine.drained(id, Ok(()), Some(invalid)).unwrap();
         assert_eq!(records.drain_timing(id).unwrap(), None);
@@ -396,7 +404,7 @@ fn timing_follows_drain_generation_and_never_blocks_reclamation() {
     }
     let id = engine.reserve().unwrap();
     records.claim(id).unwrap();
-    records.publish_local(id, b"plan").unwrap();
+    records.publish_local(id, b"plan", false).unwrap();
     engine.claim_local(id).unwrap().unwrap();
     engine
         .drained(id, Err("partial enqueue drained".into()), Some(timing))
@@ -405,4 +413,63 @@ fn timing_follows_drain_generation_and_never_blocks_reclamation() {
     assert!(!records.drain_succeeded(id).unwrap());
     records.reap(id).unwrap();
     assert_eq!(engine.poll(id).unwrap().state, RestoreState::Failed);
+}
+
+#[test]
+fn multiple_parts_keep_one_pending_operation_until_final_drain() {
+    for outcome in ["success", "failure", "revoke", "cancel"] {
+        let records = records();
+        let engine = independent(&records);
+        let id = engine.reserve().unwrap();
+        records.claim(id).unwrap();
+        let first = vec![0x41; RESTORE_PLAN_BYTES];
+        assert!(records.publish_local(id, &first, true).unwrap());
+        assert_eq!(engine.claim_local(id).unwrap().unwrap(), first);
+        assert_eq!(records.state(id).unwrap(), GrantState::ActiveMore);
+        assert!(!records.revoke(id).unwrap());
+        assert!(!engine.drained(id, Ok(()), None).unwrap());
+        assert_eq!(records.state(id).unwrap(), GrantState::PartDrained);
+        assert_eq!(engine.poll(id).unwrap().state, RestoreState::Pending);
+        assert!(records.reap(id).is_err());
+        records.release_plan(id).unwrap();
+        if outcome == "revoke" {
+            assert!(records.revoke(id).unwrap());
+            assert!(records.continue_local(id).is_err());
+        } else {
+            records.continue_local(id).unwrap();
+            // A duplicate dirty-bit observation must not consume another part.
+            assert!(records.continue_local(id).is_err());
+            if outcome == "cancel" {
+                assert!(!engine.cancel(id).unwrap());
+                assert!(!records.publish_local(id, b"unused", false).unwrap());
+                records.finish_cancelled(id).unwrap();
+                assert_eq!(engine.poll(id).unwrap().state, RestoreState::Failed);
+                continue;
+            }
+            assert!(
+                records
+                    .publish_local(id, b"second", outcome == "failure")
+                    .unwrap()
+            );
+            assert_eq!(engine.claim_local(id).unwrap().unwrap(), b"second");
+            let result = if outcome == "failure" {
+                Err("second part failed after drain".into())
+            } else {
+                Ok(())
+            };
+            assert!(engine.drained(id, result, None).unwrap());
+            assert!(records.continue_local(id).is_err());
+        }
+        assert_eq!(engine.poll(id).unwrap().state, RestoreState::Pending);
+        records.reap(id).unwrap();
+        assert_eq!(
+            engine.poll(id).unwrap().state,
+            if outcome == "success" {
+                RestoreState::Succeeded
+            } else {
+                RestoreState::Failed
+            }
+        );
+        assert!(records.plans.lock().unwrap().is_empty());
+    }
 }

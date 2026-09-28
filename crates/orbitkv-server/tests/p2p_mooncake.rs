@@ -121,7 +121,7 @@ async fn restore_and_wait(
     execution: RestoreExecution,
 ) {
     match execution {
-        RestoreExecution::Local(grant) => {
+        RestoreExecution::Local(mut grant) => {
             let tensor = LocalTensor::new(
                 layer.into(),
                 gpu.as_u64(),
@@ -140,9 +140,15 @@ async fn restore_and_wait(
                 TransferMode::Direct,
             )
             .expect("import source payload arenas");
-            let plan =
-                RawRestorePlan::decode(grant.encoded_plan()).expect("decode local Restore plan");
-            let result = executor.execute(&plan, None);
+            let result = loop {
+                let (bytes, more) = grant.encoded_plan();
+                let plan = RawRestorePlan::decode(bytes).expect("decode local Restore plan");
+                let result = executor.execute(&plan, None);
+                if result.is_err() || !more {
+                    break result;
+                }
+                assert!(grant.advance_plan());
+            };
             grant.finish(result.is_ok(), None);
             result.expect("local Restore failed");
         }

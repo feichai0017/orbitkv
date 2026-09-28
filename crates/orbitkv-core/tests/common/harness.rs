@@ -509,15 +509,21 @@ impl TestEnv {
 
     pub async fn restore_outcome(&self, execution: RestoreExecution) -> LoadOutcome {
         match execution {
-            RestoreExecution::Local(grant) => {
-                let plan =
-                    RawRestorePlan::decode(grant.encoded_plan()).expect("decode granted plan");
-                let result = self
-                    .local_restore
-                    .lock()
-                    .unwrap()
-                    .execute(&plan, None)
-                    .map_err(EngineError::Storage);
+            RestoreExecution::Local(mut grant) => {
+                let result = loop {
+                    let (bytes, more) = grant.encoded_plan();
+                    let plan = RawRestorePlan::decode(bytes).expect("decode granted plan");
+                    let result = self
+                        .local_restore
+                        .lock()
+                        .unwrap()
+                        .execute(&plan, None)
+                        .map_err(EngineError::Storage);
+                    if result.is_err() || !more {
+                        break result;
+                    }
+                    assert!(grant.advance_plan());
+                };
                 grant.finish(result.is_ok(), None);
                 LoadOutcome {
                     result,

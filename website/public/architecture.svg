@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="850" viewBox="0 0 1280 850" role="img" aria-labelledby="title desc">
   <title id="title">OrbitKV process ownership and communication paths</title>
-  <desc id="desc">Each engine owns HBM, framework scheduling and the Rust raw DRAM restore executor. Its Manager owns shared pinned DRAM, SSD, source grants and budgets. UDS transfers file descriptors; iceoryx2 carries commands; completion records and eventfd report progress. Manager Publish and SSD or encoded restores use CUDA IPC. Independent Managers discover and authorize historical cache reads over gRPC and transfer payloads with Mooncake TENT. Separate P/D adapters write current-request KV between engines. etcd maintains membership and fixed placement in the background. Catalogs have one copy per shard. Large-plan partitioning, group overlap, binary peer metadata and a unified route optimizer remain planned.</desc>
+  <desc id="desc">Each engine owns HBM, framework scheduling and the Rust raw DRAM restore executor. Its Manager owns shared pinned DRAM, SSD, source grants and budgets. UDS transfers file descriptors; iceoryx2 carries commands; completion records and eventfd report progress. Manager Publish and SSD or encoded restores use CUDA IPC. Independent Managers discover and authorize historical cache reads over gRPC and transfer payloads with Mooncake TENT. Separate P/D adapters write current-request KV between engines. etcd maintains membership and fixed placement in the background. Catalogs have one copy per shard. Raw restore plans are partitioned under one whole-operation fence. Group overlap, binary peer metadata and a unified route optimizer remain planned.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10" fill="#203b30"/></marker>
     <marker id="arrow-start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M10 0 0 5 10 10" fill="#203b30"/></marker>
@@ -99,6 +99,6 @@
 <text x="640" y="716" font-size="13" text-anchor="middle" fill="#f6f5f0">Membership · epochs · fixed catalog placement</text>
 <text x="32" y="775" font-size="15" text-anchor="start" fill="#ab4d29" font-weight="700">READY ≠ DRAINED ≠ REAPED</text>
 <text x="32" y="799" font-size="14" text-anchor="start">Engine readiness follows its GPU fence. Sources remain retained until submitted work drains; credits retire afterwards.</text>
-<text x="32" y="826" font-size="13" text-anchor="start" fill="#60695f">Planned: bounded large plans · layer/group overlap · binary peer metadata · unified route selection · catalog HA.</text>
+<text x="32" y="826" font-size="13" text-anchor="start" fill="#60695f">Planned: layer/group overlap · binary peer metadata · unified route selection · catalog HA.</text>
   </g>
 </svg>

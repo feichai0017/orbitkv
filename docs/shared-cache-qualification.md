@@ -41,7 +41,10 @@ with source-release acknowledgements and drained counters. It found and now
 regresses a real placement error: H20's NUMA 0 had been used for allocations
 on the A100 host, whose GPU-local pool is NUMA 1. The fix derives destination
 placement from the receiving instance's registered slots; host NUMA identifiers
-never define cross-host storage identity.
+never define cross-host storage identity. The final normal release with bounded
+Restore partitioning repeats this bidirectional byte gate successfully; its
+outputs and matching native hashes are retained under
+`benches/results/runs/partitioned-restore-20260928/`.
 
 **Numerical scope:** the initial random-token model suite did not pass strict
 cross-GPU output equality. Native monolithic H20/A100 controls also differ for

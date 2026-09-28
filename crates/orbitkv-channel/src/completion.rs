@@ -22,7 +22,7 @@ const HEADER_BYTES: usize = 4096;
 const RECORD_BYTES: usize = 192;
 const PLAN_OFFSET: usize = HEADER_BYTES + RESTORE_COMPLETION_SLOTS * RECORD_BYTES;
 const MAPPING_BYTES: usize = PLAN_OFFSET + RESTORE_PLAN_BYTES;
-const MAGIC_VERSION: u64 = 0x0004_4f52_4243;
+const MAGIC_VERSION: u64 = 0x0005_4f52_4243;
 const NEXT_OPERATION_OFFSET: usize = 24;
 const DIRTY_OFFSET: usize = 64;
 const DIRTY_WORDS: usize = RESTORE_COMPLETION_SLOTS / 64;
@@ -68,6 +68,9 @@ pub enum GrantState {
     Managed = 7,
     Reaped = 8,
     Acknowledged = 9,
+    GrantedMore = 10,
+    ActiveMore = 11,
+    PartDrained = 12,
 }
 
 impl GrantState {
@@ -83,6 +86,9 @@ impl GrantState {
             7 => Ok(Self::Managed),
             8 => Ok(Self::Reaped),
             9 => Ok(Self::Acknowledged),
+            10 => Ok(Self::GrantedMore),
+            11 => Ok(Self::ActiveMore),
+            12 => Ok(Self::PartDrained),
             _ => Err(CompletionError::InvalidPayload),
         }
     }
@@ -304,7 +310,7 @@ impl RestoreCompletions {
     }
 
     /// The caller installs source owners before making a plan claimable.
-    pub fn publish_local(&self, id: u64, plan: &[u8]) -> Result<bool, CompletionError> {
+    pub fn publish_local(&self, id: u64, plan: &[u8], more: bool) -> Result<bool, CompletionError> {
         if self.state(id)? == GrantState::CancelRequested {
             return Ok(false);
         }
@@ -346,7 +352,15 @@ impl RestoreCompletions {
             .store(plan.len() as u64, Ordering::Relaxed);
         self.word(record + 24).store(0, Ordering::Relaxed);
         plans.insert(id, start..start + size);
-        match self.transition(id, GrantState::Preparing, GrantState::Granted) {
+        match self.transition(
+            id,
+            GrantState::Preparing,
+            if more {
+                GrantState::GrantedMore
+            } else {
+                GrantState::Granted
+            },
+        ) {
             Ok(()) => Ok(true),
             Err(_) if self.state(id)? == GrantState::CancelRequested => {
                 plans.remove(&id);
@@ -362,12 +376,14 @@ impl RestoreCompletions {
     /// Claim precedes every read of the plan. The returned bytes no longer refer
     /// to the shared bank, allowing independent plan and source reclamation.
     pub fn claim_local(&self, id: u64) -> Result<Option<Vec<u8>>, CompletionError> {
-        match self.state(id)? {
-            GrantState::Granted => {}
+        let state = self.state(id)?;
+        let active = match state {
+            GrantState::Granted => GrantState::Active,
+            GrantState::GrantedMore => GrantState::ActiveMore,
             GrantState::Acknowledged => return Err(CompletionError::Stale(id)),
             _ => return Ok(None),
-        }
-        self.transition(id, GrantState::Granted, GrantState::Active)?;
+        };
+        self.transition(id, state, active)?;
         let record = Self::offset(id)?;
         let offset = self.word(record + 8).load(Ordering::Relaxed) as usize;
         let len = self.word(record + 16).load(Ordering::Relaxed) as usize;
@@ -434,8 +450,11 @@ impl RestoreCompletions {
     pub fn release_plan(&self, id: u64) -> Result<(), CompletionError> {
         let record = Self::offset(id)?;
         let state = self.state(id)?;
-        if !matches!(state, GrantState::Revoked | GrantState::Drained)
-            && !(state == GrantState::Active && self.word(record + 24).load(Ordering::Acquire) == 1)
+        if !matches!(
+            state,
+            GrantState::Revoked | GrantState::Drained | GrantState::PartDrained
+        ) && !(matches!(state, GrantState::Active | GrantState::ActiveMore)
+            && self.word(record + 24).load(Ordering::Acquire) == 1)
         {
             return Err(CompletionError::Stale(id));
         }
@@ -446,24 +465,29 @@ impl RestoreCompletions {
         Ok(())
     }
 
+    /// A completed part must be acknowledged once before publishing its successor.
+    pub fn continue_local(&self, id: u64) -> Result<(), CompletionError> {
+        self.transition(id, GrantState::PartDrained, GrantState::Preparing)
+    }
+
     pub fn revoke(&self, id: u64) -> Result<bool, CompletionError> {
-        match self.transition(id, GrantState::Granted, GrantState::Revoked) {
-            Ok(()) => {
-                self.dirty(id)?;
-                Ok(true)
+        loop {
+            let state = self.state(id)?;
+            match state {
+                GrantState::Granted | GrantState::GrantedMore | GrantState::PartDrained => {
+                    if self.transition(id, state, GrantState::Revoked).is_ok() {
+                        self.dirty(id)?;
+                        return Ok(true);
+                    }
+                }
+                GrantState::Active
+                | GrantState::ActiveMore
+                | GrantState::Drained
+                | GrantState::Revoked
+                | GrantState::Reaped
+                | GrantState::Acknowledged => return Ok(false),
+                _ => return Err(CompletionError::Stale(id)),
             }
-            Err(_)
-                if matches!(
-                    self.state(id)?,
-                    GrantState::Active
-                        | GrantState::Drained
-                        | GrantState::Reaped
-                        | GrantState::Acknowledged
-                ) =>
-            {
-                Ok(false)
-            }
-            Err(error) => Err(error),
         }
     }
 
@@ -473,10 +497,12 @@ impl RestoreCompletions {
         id: u64,
         result: Result<(), String>,
         timing: Option<RestoreTiming>,
-    ) -> Result<(), CompletionError> {
-        if self.state(id)? != GrantState::Active {
+    ) -> Result<bool, CompletionError> {
+        let state = self.state(id)?;
+        if !matches!(state, GrantState::Active | GrantState::ActiveMore) {
             return Err(CompletionError::Stale(id));
         }
+        let terminal = state == GrantState::Active || result.is_err();
         let record = Self::offset(id)?;
         let timing =
             timing.filter(|timing| timing.valid() && (result.is_err() || timing.submitted_ns != 0));
@@ -500,8 +526,17 @@ impl RestoreCompletions {
         self.word(record + 128)
             .store(u64::from(timing.is_some()), Ordering::Relaxed);
         self.write_result(id, result)?;
-        self.transition(id, GrantState::Active, GrantState::Drained)?;
-        self.dirty(id)
+        self.transition(
+            id,
+            state,
+            if terminal {
+                GrantState::Drained
+            } else {
+                GrantState::PartDrained
+            },
+        )?;
+        self.dirty(id)?;
+        Ok(terminal)
     }
 
     /// The Manager reads evidence before reaping; the source owner consumes it once.

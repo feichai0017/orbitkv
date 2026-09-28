@@ -158,8 +158,15 @@ qualification remain open. See the
   distinguish physical host registration from retained allocation generations.
   Pass full Rust, H20 bidirectional/gap/bounds, process-fault and both-engine
   Qwen3-8B correctness gates. Count actual submissions with the executor compiler.
-- [ ] Qualify integrated strided DMA with three order-reversed, matched serving
+- [x] Qualify integrated strided DMA with three order-reversed, matched serving
   repetitions against native HBM, native CPU and LMCache on each engine.
+  Both deterministic C4 gates pass; a separate before/after A/B is still needed
+  to attribute gains specifically to 2D DMA.
+- [x] Partition large raw Restore plans under one operation/source/destination
+  fence; bound per-part, operation and session metadata. Pass actual H20 bytes,
+  second-part enqueue failure and Manager exit between parts.
+- [ ] Qualify layer/group restore-compute overlap, including eager and graph
+  replay dependencies, without weakening the final drain fence.
 - [x] Run the [three-pair DRAM/raw comparison](docs/implementation-plan.md#dmakernel-comparison-final-evidence)
   on both engines. Fixed kernel exceeds throughput and TTFT p50 regression
   budgets in both cells; keep the default direct backend for these layouts.

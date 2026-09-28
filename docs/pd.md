@@ -165,6 +165,10 @@ Raw outputs, launch commands, retained failure logs and driver snapshots are in
 `sglang-pd-same-a100/`. The production fix keeps external hits out of Decode's
 HiCache-only restore state machine; the maintained E2E also checks the actual
 TENT engine-ready marker and passes the router's explicit bootstrap port.
+The final normal release with bounded Restore partitioning repeats the
+same-A100 gate successfully; its matching native hashes and outputs are under
+`benches/results/runs/partitioned-restore-20260928/sglang-pd-same-a100/`,
+with hashes in the parent directory.
 
 To compose P/D with the external cache manually, point both workers at the same
 node-local Manager and add these flags to both server commands:

@@ -60,7 +60,7 @@ fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
     )
     .unwrap();
     let (encoded, bytes, fragments) = prepared.raw.unwrap();
-    let plan = RawRestorePlan::decode(&encoded).unwrap();
+    let plan = RawRestorePlan::decode(&encoded[0]).unwrap();
     assert_eq!(fragments, plan.copies.len());
     assert_eq!(plan.copies.len(), 2);
     assert_eq!(plan.copies[0].layer, "layer_99");
@@ -81,8 +81,17 @@ fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
             _ => unreachable!(),
         })
         .collect();
-    let grant = RawRestoreGrant {
-        plan: encoded,
+    let plans = plan
+        .copies
+        .into_iter()
+        .flat_map(|copy| {
+            RawRestorePlan { copies: vec![copy] }
+                .encode_parts()
+                .unwrap()
+        })
+        .collect();
+    let mut grant = RawRestoreGrant {
+        plans,
         sources,
         reservations: prepared.reservations,
         bytes,
@@ -96,6 +105,16 @@ fn raw_grant_retains_allocation_and_query_charge_until_explicit_finish() {
         pool.allocate(NonZeroU64::new(1).unwrap(), NumaNode::UNKNOWN)
             .is_none()
     );
+    assert!(matches!(
+        budget.reserve("engine", "ns", 1, QueryMode::Demand),
+        QueryAdmission::Busy
+    ));
+    assert!(grant.encoded_plan().1);
+    assert!(grant.advance_plan());
+    assert!(!grant.encoded_plan().1);
+    assert!(!grant.advance_plan());
+    assert!(source_owner.upgrade().is_some());
+    assert!(allocation_owner.upgrade().is_some());
     assert!(matches!(
         budget.reserve("engine", "ns", 1, QueryMode::Demand),
         QueryAdmission::Busy
@@ -129,7 +148,7 @@ fn raw_plan_rejection_preserves_lease_before_source_bounds_or_plan_limit_failure
         KVCacheGeometry::new(1, 32, 0, 1, None, 1).unwrap(),
     )
     .unwrap();
-    for name in ["range".to_string(), "x".repeat(MAX_PLAN_BYTES)] {
+    for name in ["range".to_string(), "x".repeat(u16::MAX as usize + 1)] {
         let groups = vec![RestoreGroup {
             layers: vec![RestoreLayer {
                 name,
@@ -218,7 +237,7 @@ fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
                 PreparedRestore::raw_plan(&mut groups, &refs, &[layout])
                     .unwrap()
                     .unwrap();
-            let plan = RawRestorePlan::decode(&encoded).unwrap();
+            let plan = RawRestorePlan::decode(&encoded[0]).unwrap();
             assert_eq!(fragments, plan.copies.len());
             let segments = if split { 2 } else { 1 };
             assert_eq!(bytes, segments * 128);
@@ -281,7 +300,7 @@ fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
         PreparedRestore::raw_plan(&mut groups, &refs, std::slice::from_ref(&layout))
             .unwrap()
             .unwrap();
-    let plan = RawRestorePlan::decode(&encoded).unwrap();
+    let plan = RawRestorePlan::decode(&encoded[0]).unwrap();
     assert_eq!(fragments, plan.copies.len());
     assert_eq!(plan.copies.len(), 2);
     assert_eq!(
@@ -302,9 +321,14 @@ fn raw_plan_orders_permuted_pages_and_compacts_only_matching_allocations() {
 }
 
 #[test]
-fn large_dense_plan_fits_but_fragmented_overflow_preserves_its_lease() {
+fn large_plan_compacts_or_partitions_after_global_validation_and_preserves_rejected_leases() {
     const COUNT: usize = 32768;
-    for contiguous in [true, false] {
+    for (contiguous, layer_name, rejection) in [
+        (true, "layer".into(), None),
+        (false, "layer".into(), None),
+        (false, "layer".into(), Some("overlap")),
+        (false, "x".repeat(1024), Some("metadata limit")),
+    ] {
         let size = if contiguous { COUNT * 32 } else { 32 };
         let pool = PinnedAllocator::new_global(size.max(512), 1, false, None);
         let allocation = pool
@@ -334,37 +358,61 @@ fn large_dense_plan_fits_but_fragmented_overflow_preserves_its_lease() {
         .unwrap();
         let groups = vec![RestoreGroup {
             layers: vec![RestoreLayer {
-                name: "layer".into(),
+                name: layer_name,
                 slot_id: 0,
                 host_offset: 0,
             }],
             storage_slots: Some((0, 1)),
             targets: vec![],
         }];
+        let mut targets: Vec<_> = (0..COUNT).map(Some).collect();
+        if rejection == Some("overlap") {
+            targets[COUNT - 1] = Some(0);
+        }
         let prepared = PreparedRestore::prepare(
             &leases,
             "engine",
             0,
             groups,
-            &[(lease, vec![(0..COUNT).map(Some).collect()])],
+            &[(lease, vec![targets])],
             &[layout],
         );
-        if contiguous {
-            let (encoded, bytes, fragments) = prepared.unwrap().raw.unwrap();
-            let plan = RawRestorePlan::decode(&encoded).unwrap();
-            assert_eq!(fragments, plan.copies.len());
-            assert_eq!(plan.copies.len(), 1);
-            assert_eq!(plan.copies[0].source.size, (COUNT * 32) as u64);
-            assert_eq!(bytes, (COUNT * 32) as u64);
-            assert_eq!(encoded.len(), 71);
-        } else {
-            assert!(
-                matches!(prepared,Err(EngineError::InvalidArgument(message)) if message.contains("bounded plan bank"))
-            );
+        if let Some(expected) = rejection {
+            assert!(prepared.err().unwrap().to_string().contains(expected));
             assert!(
                 leases.release(&lease),
-                "rejected fragmented plan must preserve the lease"
+                "rejected plan must preserve the lease"
             );
+            continue;
+        }
+        let (encoded, bytes, fragments) = prepared.unwrap().raw.unwrap();
+        assert!(
+            encoded
+                .iter()
+                .all(|part| part.len() <= crate::transfer::local::MAX_PLAN_BYTES)
+        );
+        let copies: Vec<_> = encoded
+            .iter()
+            .flat_map(|part| RawRestorePlan::decode(part).unwrap().copies)
+            .collect();
+        assert_eq!(fragments, copies.len());
+        assert_eq!(bytes, (COUNT * 32) as u64);
+        assert!(
+            !leases.release(&lease),
+            "accepted parts share one consumed lease"
+        );
+        if contiguous {
+            assert_eq!(encoded.len(), 1);
+            assert_eq!(copies.len(), 1);
+            assert_eq!(copies[0].source.size, (COUNT * 32) as u64);
+            assert_eq!(encoded[0].len(), 71);
+        } else {
+            assert_eq!(encoded.len(), 2);
+            assert_eq!(copies.len(), COUNT);
+            for (index, copy) in copies.iter().enumerate() {
+                assert_eq!(copy.destination_offset, (index * 32) as u64);
+                assert_eq!(copy.source.size, 32);
+            }
         }
     }
 }

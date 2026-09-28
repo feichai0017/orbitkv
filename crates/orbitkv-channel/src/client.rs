@@ -282,7 +282,10 @@ impl ChannelClient {
             if final_response.state != RestoreState::Pending {
                 return Ok(final_response);
             }
-            if self.bootstrap.completions().state(operation_id)? != crate::GrantState::Active {
+            if !matches!(
+                self.bootstrap.completions().state(operation_id)?,
+                crate::GrantState::Active | crate::GrantState::ActiveMore
+            ) {
                 return Err(ChannelError::SessionRequiresReconnect);
             }
         }

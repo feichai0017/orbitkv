@@ -16,7 +16,7 @@ fn raw_plan_round_trip_and_framing() {
             destination_offset: 2048,
         }],
     };
-    let bytes = plan.encode().unwrap();
+    let bytes = plan.encode_parts().unwrap().pop_front().unwrap();
     assert_eq!(RawRestorePlan::decode(&bytes).unwrap(), plan);
     for end in 0..bytes.len() {
         assert!(RawRestorePlan::decode(&bytes[..end]).is_err());
@@ -30,7 +30,7 @@ fn raw_plan_round_trip_and_framing() {
 }
 
 #[test]
-fn raw_plan_encoding_obeys_session_budget() {
+fn raw_plan_encoding_partitions_without_losing_copies_and_bounds_total_metadata() {
     let copy = RawCopy {
         source: SourceRange {
             arena_id: 1,
@@ -44,9 +44,36 @@ fn raw_plan_encoding_obeys_session_budget() {
         destination_offset: 0,
     };
     let plan = RawRestorePlan {
-        copies: vec![copy; MAX_PLAN_BYTES / 63 + 1],
+        copies: vec![copy.clone(); MAX_PLAN_BYTES / 63 + 1],
     };
-    assert!(plan.encode().is_err());
+    let parts = plan.encode_parts().unwrap();
+    assert_eq!(parts.len(), 2);
+    assert!(parts.iter().all(|bytes| bytes.len() <= MAX_PLAN_BYTES));
+    let copies: Vec<_> = parts
+        .iter()
+        .flat_map(|bytes| RawRestorePlan::decode(bytes).unwrap().copies)
+        .collect();
+    assert_eq!(copies, plan.copies);
+    for name in [String::new(), "x".repeat(u16::MAX as usize + 1)] {
+        assert!(
+            RawRestorePlan {
+                copies: vec![RawCopy {
+                    layer: name,
+                    ..copy.clone()
+                }]
+            }
+            .encode_parts()
+            .is_err()
+        );
+    }
+    let long_copy = RawCopy {
+        layer: "x".repeat(u16::MAX as usize),
+        ..copy
+    };
+    let huge = RawRestorePlan {
+        copies: vec![long_copy; MAX_RESTORE_PLAN_BYTES / (58 + u16::MAX as usize) + 1],
+    };
+    assert!(huge.encode_parts().unwrap_err().contains("metadata limit"));
     assert!(RawRestorePlan::decode(&vec![0; MAX_PLAN_BYTES + 1]).is_err());
 }
 

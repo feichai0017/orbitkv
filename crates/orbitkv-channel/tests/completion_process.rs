@@ -164,35 +164,37 @@ fn local_grants_remain_pending_until_engine_drain_and_manager_reaping() {
 
 #[test]
 fn manager_process_death_does_not_fence_active_engine_dma() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut child = ChildGuard::start(dir.path());
-    let client =
-        CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
-    let handle = client
-        .start_restore(&RestoreRequest {
-            instance_id: "local".into(),
-            tp_rank: 0,
-            device_id: 0,
-            layer_groups: vec![],
-            loads: vec![],
-        })
-        .unwrap();
-    client.claim_local_restore(handle).unwrap().unwrap();
-    std::fs::write(dir.path().join("exit"), b"").unwrap();
-    child.wait_for_success();
-    assert_eq!(
-        client.poll_restore(handle).unwrap().state,
-        RestoreState::Pending
-    );
-    assert!(matches!(
-        client.wait_restore(handle, Duration::from_millis(2)),
-        Err(ChannelError::RestoreTimeout { .. })
-    ));
-    client.finish_local_restore(handle, Ok(()), None).unwrap();
-    assert!(matches!(
-        client.poll_restore(handle),
-        Err(ChannelError::SessionRequiresReconnect)
-    ));
+    for instance in ["local", "local-parts"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = ChildGuard::start(dir.path());
+        let client =
+            CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
+        let handle = client
+            .start_restore(&RestoreRequest {
+                instance_id: instance.into(),
+                tp_rank: 0,
+                device_id: 0,
+                layer_groups: vec![],
+                loads: vec![],
+            })
+            .unwrap();
+        client.claim_local_restore(handle).unwrap().unwrap();
+        std::fs::write(dir.path().join("exit"), b"").unwrap();
+        child.wait_for_success();
+        assert_eq!(
+            client.poll_restore(handle).unwrap().state,
+            RestoreState::Pending
+        );
+        assert!(matches!(
+            client.wait_restore(handle, Duration::from_millis(2)),
+            Err(ChannelError::RestoreTimeout { .. })
+        ));
+        client.finish_local_restore(handle, Ok(()), None).unwrap();
+        assert!(matches!(
+            client.poll_restore(handle),
+            Err(ChannelError::SessionRequiresReconnect)
+        ));
+    }
 }
 
 #[test]
@@ -208,6 +210,7 @@ fn shared_completion_child() {
     std::fs::write(directory.join("ready"), b"").unwrap();
     let mut session = bootstrap.accept().unwrap();
     let mut pending = Vec::new();
+    let mut parts = std::collections::HashMap::new();
     let mut calls = 0;
     while session.is_alive().unwrap() {
         server
@@ -227,10 +230,14 @@ fn shared_completion_child() {
                 assert!(calls <= 2);
                 let id = command.arg1;
                 session.completions().claim(id).unwrap();
-                if request.instance_id == "local" {
+                if matches!(request.instance_id.as_str(), "local" | "local-parts") {
+                    let more = request.instance_id == "local-parts";
+                    if more {
+                        parts.insert(id, 2);
+                    }
                     session
                         .completions()
-                        .publish_local(id, b"cross-process bounded plan")
+                        .publish_local(id, b"cross-process bounded plan", more)
                         .unwrap();
                     session.notify().unwrap();
                 } else {
@@ -271,7 +278,20 @@ fn shared_completion_child() {
         }
         for (id, state) in session.completions().manager_updates().unwrap() {
             match state {
-                GrantState::Active => session.completions().release_plan(id).unwrap(),
+                GrantState::Active | GrantState::ActiveMore => {
+                    session.completions().release_plan(id).unwrap();
+                }
+                GrantState::PartDrained => {
+                    session.completions().release_plan(id).unwrap();
+                    session.completions().continue_local(id).unwrap();
+                    let remaining = parts.get_mut(&id).unwrap();
+                    *remaining -= 1;
+                    session
+                        .completions()
+                        .publish_local(id, b"next part", *remaining != 0)
+                        .unwrap();
+                    session.notify().unwrap();
+                }
                 GrantState::Drained => session.completions().reap(id).unwrap(),
                 _ => panic!("unexpected grant state: {state:?}"),
             }
@@ -282,4 +302,56 @@ fn shared_completion_child() {
         (1..=2).contains(&calls),
         "completion consumption must not issue Poll requests"
     );
+}
+
+#[test]
+fn partitioned_grant_uses_one_cross_process_submission_and_terminal_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = ChildGuard::start(dir.path());
+    let client =
+        CacheClient::connect(dir.path().join("cache.sock"), CallOptions::default()).unwrap();
+    let handle = client
+        .start_restore(&RestoreRequest {
+            instance_id: "local-parts".into(),
+            tp_rank: 0,
+            device_id: 0,
+            layer_groups: vec![],
+            loads: vec![],
+        })
+        .unwrap();
+    for part in 0..3 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let plan = loop {
+            if let Some(plan) = client.claim_local_restore(handle).unwrap() {
+                break plan;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        };
+        assert_eq!(
+            plan,
+            if part == 0 {
+                b"cross-process bounded plan".as_slice()
+            } else {
+                b"next part".as_slice()
+            }
+        );
+        assert_eq!(
+            client.poll_restore(handle).unwrap().state,
+            RestoreState::Pending
+        );
+        assert_eq!(
+            client.finish_local_restore(handle, Ok(()), None).unwrap(),
+            part == 2
+        );
+    }
+    assert_eq!(
+        client
+            .wait_restore(handle, Duration::from_secs(5))
+            .unwrap()
+            .state,
+        RestoreState::Succeeded
+    );
+    client.close();
+    child.wait_for_success();
 }

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 use tokio::sync::oneshot;
@@ -14,15 +14,17 @@ use crate::metrics::core_metrics;
 use crate::planning::restore::RestorePlan;
 use crate::query::lease::{QueryLeaseId, QueryLeaseManager};
 use crate::transfer::layout::{BlockRanges, KVCacheLayout};
-use crate::transfer::local::{MAX_PLAN_BYTES, RawCopy, RawRestorePlan};
+use crate::transfer::local::{MAX_RESTORE_PLAN_BYTES, RawCopy, RawRestorePlan};
 use crate::transfer::worker::{
     DecodeRestorePermit, LayerTransferData, LoadOutcome, LoadTask, TransferBlock, TransferPayload,
 };
 
+type EncodedPlanParts = VecDeque<Vec<u8>>;
+
 /// Source ownership for an engine-local transfer. The grant owner may release it
 /// only after a never-claimed revocation or an authoritative local DMA drain.
 pub struct RawRestoreGrant {
-    plan: Vec<u8>,
+    plans: EncodedPlanParts,
     sources: Vec<Arc<SealedBlock>>,
     reservations: Vec<QueryReservation>,
     bytes: u64,
@@ -31,8 +33,23 @@ pub struct RawRestoreGrant {
 }
 
 impl RawRestoreGrant {
-    pub fn encoded_plan(&self) -> &[u8] {
-        &self.plan
+    /// The current part and whether another part follows. Source ownership is
+    /// retained across every part until the whole operation drains or is revoked.
+    pub fn encoded_plan(&self) -> (&[u8], bool) {
+        (&self.plans[0], self.plans.len() > 1)
+    }
+
+    pub fn plan_bytes(&self) -> usize {
+        self.plans.iter().map(Vec::len).sum()
+    }
+
+    /// Called only after the current part's authoritative DMA drain.
+    pub fn advance_plan(&mut self) -> bool {
+        if self.plans.len() <= 1 {
+            return false;
+        }
+        self.plans.pop_front();
+        true
     }
 
     pub fn finish(self, success: bool, elapsed: Option<std::time::Duration>) {
@@ -75,7 +92,7 @@ impl RawRestoreGrant {
 impl std::fmt::Debug for RawRestoreGrant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RawRestoreGrant")
-            .field("plan_bytes", &self.plan.len())
+            .field("plan_parts", &self.plans.len())
             .field("sources", &self.sources.len())
             .field("bytes", &self.bytes)
             .finish()
@@ -103,7 +120,7 @@ struct RestoreGroup {
 /// Owns leased sources and their byte reservations before GPU addresses are bound.
 /// Dropping this owner is safe: no transfer has been submitted yet.
 struct PreparedRestore {
-    raw: Option<(Vec<u8>, u64, usize)>,
+    raw: Option<(EncodedPlanParts, u64, usize)>,
     plan: RestorePlan,
     groups: Vec<RestoreGroup>,
     sources: Vec<RestoreSource>,
@@ -191,7 +208,7 @@ impl OrbitKVEngine {
         )?;
         trace_drop!(lookup);
         trace_scope!("load.build_tasks");
-        if let Some((plan, bytes, fragments)) = prepared.raw {
+        if let Some((plans, bytes, fragments)) = prepared.raw {
             let decode_admission = if bytes == 0 {
                 None
             } else {
@@ -221,7 +238,7 @@ impl OrbitKVEngine {
                 })
                 .collect();
             return Ok(RestoreExecution::Local(RawRestoreGrant {
-                plan,
+                plans,
                 sources,
                 reservations: prepared.reservations,
                 bytes,
@@ -382,7 +399,7 @@ impl PreparedRestore {
         groups: &mut [RestoreGroup],
         sources: &[&RestoreSource],
         layouts: &[KVCacheLayout],
-    ) -> Result<Option<(Vec<u8>, u64, usize)>, EngineError> {
+    ) -> Result<Option<(EncodedPlanParts, u64, usize)>, EngineError> {
         let raw = groups.iter().all(|group| {
             group.targets.iter().all(|&(_, source)| {
                 matches!(sources[source], RestoreSource::Memory(sealed)
@@ -459,9 +476,15 @@ impl PreparedRestore {
                             previous.source.size += source.size;
                             continue;
                         }
-                        plan_size = plan_size.checked_add(58).and_then(|size| size.checked_add(layer.name.len()))
-                            .filter(|size| *size <= MAX_PLAN_BYTES)
-                            .ok_or_else(|| EngineError::InvalidArgument("raw restore plan exceeds the bounded plan bank; split the restore batch".into()))?;
+                        plan_size = plan_size
+                            .checked_add(58)
+                            .and_then(|size| size.checked_add(layer.name.len()))
+                            .filter(|size| *size <= MAX_RESTORE_PLAN_BYTES)
+                            .ok_or_else(|| {
+                                EngineError::InvalidArgument(
+                                    "raw restore plan exceeds the operation metadata limit".into(),
+                                )
+                            })?;
                         copies.push(RawCopy {
                             source,
                             layer: layer.name.clone(),
@@ -483,8 +506,8 @@ impl PreparedRestore {
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
         let fragments = copies.len();
         let encoded = RawRestorePlan { copies }
-            .encode()
-            .map_err(EngineError::Storage)?;
+            .encode_parts()
+            .map_err(EngineError::InvalidArgument)?;
         Ok(Some((encoded, bytes, fragments)))
     }
 

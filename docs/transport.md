@@ -89,7 +89,7 @@ stream whose previous use of the destination pages must finish. The first
 slice waits for that dependency and uses a single copy stream with a
 whole-operation fence.
 
-After local drain, the native worker publishes `Drained` and makes the local
+After the final local drain, the native worker publishes `Drained` and makes the local
 result available through `poll_restore`/`wait_restore`. An engine-local eventfd
 wakes framework completion handling. The Manager's separate retirement task
 then releases source owners and publishes `Reaped`; engine acknowledgement
@@ -100,8 +100,12 @@ The grant mapping contains 1024 records of 192 bytes and a 1 MiB plan bank.
 Error text is limited to 88 bytes per shared record. Plan consumption releases
 plan-bank capacity independently of DMA completion, and a bounded dirty bitset
 plus eventfd drives Manager retirement. Full shared plan-bank capacity defers
-prepared grants. An individual encoded plan above 1 MiB is rejected before
-lease consumption; automatic partitioning remains future work.
+prepared grants. Larger raw plans are automatically partitioned under one
+operation ID; nonfinal `PartDrained` records keep the result pending and retain
+all source/target owners. The Manager acknowledges each part once before
+publishing its successor. Operation metadata above 32 MiB is rejected before
+lease consumption, and each session reserves at most 64 MiB of prepared
+metadata. Shared-grant schema 5 requires matched Manager and native client builds.
 
 At most 64 session mappings can be live or retained. An engine that dies after
 claim without drain evidence leaves its sources, byte reservations, and session

@@ -43,8 +43,9 @@ registration and unregister allow at least 120 seconds for CUDA setup/draining.
 not start gRPC. Client and Cache Manager must use matching
 bootstrap protocol versions (currently bootstrap 7, channel ABI 11, and lifecycle 4).
 Bootstrap transfers five metadata/notification FDs; GPU registration attaches
-the shared payload arena FDs separately. The first local executor uses a
-whole-operation fence and rejects raw plans above 1 MiB before lease consumption;
+the shared payload arena FDs separately. The local executor partitions large
+raw plans into at most 1 MiB parts under one whole-operation fence. Operation
+metadata is capped at 32 MiB and per-session prepared metadata at 64 MiB;
 see [execution scope and qualification gates](engine-local-restore.md).
 
 `orbitkv.wait_for_full_prefix` is supported on the local path: pending queries

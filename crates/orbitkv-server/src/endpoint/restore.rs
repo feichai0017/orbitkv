@@ -7,17 +7,21 @@ use std::time::Instant;
 use orbitkv_channel::{CompletionError, GrantState, RESTORE_COMPLETION_SLOTS, RestoreCompletions};
 use orbitkv_core::{LoadOutcome, RawRestoreGrant};
 use tokio::io::unix::AsyncFd;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+
+const LOCAL_PLAN_METADATA_BYTES: usize = 64 * 1024 * 1024;
 
 /// Retains live or quarantined source owners independently of the UDS session.
 pub(super) struct LocalGrants {
     sender: mpsc::Sender<SourceGrant>,
+    metadata_budget: Arc<Semaphore>,
     records: Arc<RestoreCompletions>,
 }
 
 struct SourceGrant {
     id: u64,
     source: Option<RawRestoreGrant>,
+    metadata: Option<OwnedSemaphorePermit>,
     records: Arc<RestoreCompletions>,
 }
 
@@ -33,19 +37,23 @@ impl Drop for SourceGrant {
         // Even task cancellation/panic cannot turn an active grant into free
         // pool offsets. Retaining the mapping also retains its session budget.
         let safe = match self.records.state(self.id) {
-            Ok(GrantState::Granted) => {
+            Ok(GrantState::Granted | GrantState::GrantedMore) => {
                 self.records.revoke(self.id).unwrap_or(false)
                     || matches!(
                         self.records.state(self.id),
-                        Ok(GrantState::Drained | GrantState::Reaped | GrantState::Acknowledged)
+                        Ok(GrantState::PartDrained
+                            | GrantState::Drained
+                            | GrantState::Reaped
+                            | GrantState::Acknowledged)
                     )
             }
-            Ok(GrantState::Active) | Err(_) => false,
+            Ok(GrantState::Active | GrantState::ActiveMore) | Err(_) => false,
             Ok(_) => true,
         };
         if !safe {
             log::error!("Quarantining undrained local restore {}", self.id);
             std::mem::forget(source);
+            std::mem::forget(self.metadata.take());
             std::mem::forget(Arc::clone(&self.records));
         }
     }
@@ -69,13 +77,32 @@ impl LocalGrants {
             epoch,
             client_token,
         ));
-        Ok(Self { sender, records })
+        Ok(Self {
+            sender,
+            records,
+            metadata_budget: Arc::new(Semaphore::new(LOCAL_PLAN_METADATA_BYTES)),
+        })
     }
 
     pub(super) fn install(&self, id: u64, source: RawRestoreGrant) {
+        let Ok(bytes) = u32::try_from(source.plan_bytes()) else {
+            source.finish(false, None);
+            let _ = self
+                .records
+                .reject(id, "restore plan metadata size overflow".into());
+            return;
+        };
+        let Ok(metadata) = Arc::clone(&self.metadata_budget).try_acquire_many_owned(bytes) else {
+            source.finish(false, None);
+            let _ = self
+                .records
+                .reject(id, "restore session plan metadata budget exhausted".into());
+            return;
+        };
         let grant = SourceGrant {
             id,
             source: Some(source),
+            metadata: Some(metadata),
             records: Arc::clone(&self.records),
         };
         if let Err(error) = self.sender.try_send(grant) {
@@ -140,10 +167,45 @@ async fn reap_sources(
             }
         };
         for (id, state) in updates {
-            if let Err(error) = records.release_plan(id) {
+            if matches!(
+                state,
+                GrantState::Active
+                    | GrantState::ActiveMore
+                    | GrantState::PartDrained
+                    | GrantState::Drained
+                    | GrantState::Revoked
+            ) && let Err(error) = records.release_plan(id)
+            {
                 log::error!("Cannot retire restore plan {id}: {error}");
             }
             match state {
+                GrantState::PartDrained => {
+                    #[cfg(feature = "test-hooks")]
+                    orbitkv_core::test_faults::pause("local_restore_part_drained").await;
+                    if !connected {
+                        let _ = records.revoke(id);
+                        continue;
+                    }
+                    // A leftover dirty bit may observe the same drain again.
+                    // Only the acknowledgement winner advances the source plan.
+                    if records.continue_local(id).is_err() {
+                        continue;
+                    }
+                    if grants
+                        .get_mut(&id)
+                        .and_then(|owner| owner.source.as_mut())
+                        .is_some_and(RawRestoreGrant::advance_plan)
+                    {
+                        pending.push_back(id);
+                    } else {
+                        if let Some(mut owner) = grants.remove(&id)
+                            && let Some(source) = owner.source.take()
+                        {
+                            source.finish(false, None);
+                        }
+                        let _ = records.reject(id, "missing next Restore plan part".into());
+                    }
+                }
                 GrantState::Drained | GrantState::Revoked => {
                     #[cfg(feature = "test-hooks")]
                     orbitkv_core::test_faults::pause("local_restore_reap").await;
@@ -190,7 +252,8 @@ async fn reap_sources(
             while orbitkv_core::test_faults::active("restore") {
                 tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             }
-            match records.publish_local(id, source.encoded_plan()) {
+            let (plan, more) = source.encoded_plan();
+            match records.publish_local(id, plan, more) {
                 Ok(true) => {
                     #[cfg(feature = "test-hooks")]
                     let notify = !orbitkv_core::test_faults::active("notification");

@@ -16,9 +16,9 @@ also retain Manager workers and CUDA IPC tensor registration.
 
 This is the first executable slice: one destination GPU per operation,
 unencoded resident sources, and a whole-operation fence. Layer/group overlap,
-CUDA graph replay dependencies, automatic plan partitioning, and migration of
-SSD/codec execution remain future work. The frozen single-GPU native/fault
-bundle passed **38 tests**, with **30 cuFile cases skipped** because that
+CUDA graph replay dependencies and migration of SSD/codec execution remain
+future work. Large raw plans now execute in bounded parts under the same fence.
+The frozen single-GPU native/fault bundle passed **38 tests**, with **30 cuFile cases skipped** because that
 configuration was not selected. This includes the new local Restore lifecycle
 cases; the caller CUDA-context preservation test also passed. See the
 [recorded artifacts and scoped results](fault-qualification.md#engine-local-raw-restore-gates).
@@ -205,14 +205,18 @@ returns capacity. Source references and query reservations remain held while
 they wait. Quarantined grants likewise retain their source-byte and record
 credits; dropping a session does not make those resources reusable.
 
-The 1 MiB individual-plan limit applies **after allocation-aware compaction**;
-an oversized fragmented plan is rejected **before lease consumption**. The
-32,768-page dense unit fixture now encodes one 71-byte descriptor plan, and the
-existing `cpu_path/load_submit_wait/32768` GPU benchmark passes in Criterion
-`--test` mode. That smoke proves submission and drain, not byte validation or
-serving performance. Automatic partitioning into bounded suboperations with
-one parent completion fence remains unimplemented for fragmented large plans;
-there is no retry through the removed Manager raw executor.
+The 1 MiB limit applies to each encoded part **after allocation-aware
+compaction**. Larger fragmented plans are partitioned automatically. A single
+operation is limited to 32 MiB of metadata, checked before lease consumption;
+each session reserves at most 64 MiB for prepared plans. A session budget
+rejection consumes the admitted lease but releases its sources without DMA.
+All destinations are validated together before any part is published. One
+operation ID retains source allocations, query reservations, metadata credits
+and GPU tensor owners until every part drains or the operation fails. The
+Manager acknowledges nonfinal `PartDrained` states once and queues the next
+part fairly; only the final `Drained` state releases whole-operation owners.
+Session loss can revoke an unclaimed part, but active DMA remains quarantined.
+The shared-grant schema is version 5; no earlier decoder is retained.
 
 ## CUDA readiness, failures, and shutdown
 
@@ -256,9 +260,8 @@ Idle-stream queries, reusable busy-stream events, and plan compaction now
 reduce raw Restore overhead; see [matched measurements](communication-performance.md).
 Small operations still carry native scheduling and cross-process handoff costs.
 Profile these costs and fragmented-plan handling before extending overlap.
-Scratch reuse must preserve the same ownership and drain proofs. Bounded plan
-partitioning must also handle large fragmented batches without consuming leases
-more than once.
+Scratch reuse must preserve the same ownership and drain proofs. Partitioning
+consumes accepted leases once; invalid plans leave them available.
 
 The subsequent execution step is group readiness: compile real framework dependency
 groups, publish each group's event after all required copies, and let its

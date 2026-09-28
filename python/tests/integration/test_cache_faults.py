@@ -1627,3 +1627,73 @@ def test_local_completion_evidence_excludes_retirement_and_trains_once(fault_cac
     assert samples["orbitkv_cost_stage_seconds_sum"] == pytest.approx(report["drained_ns"] / 1e9)
     with pytest.raises(OrbitKVError, match="consumed"):
         client.poll_restore(handle)
+
+
+@pytest.mark.parametrize(
+    "fault_cache", [{"num_blocks": 4096, "block_size": 1, "num_layers": 5}], indirect=True
+)
+@pytest.mark.parametrize("outcome", ["success", "failure", "manager_exit"])
+def test_partitioned_restore_keeps_owners_and_completes_only_after_all_parts(fault_cache, outcome):
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    tensors = [ctx.get_kv_cache(layer) for layer in range(ctx.num_layers)]
+    count = ctx.num_blocks // 2
+    expected = []
+    for layer, tensor in enumerate(tensors):
+        values = torch.arange(count, device=tensor.device, dtype=torch.float32).remainder_(251) / 16
+        tensor[0, :count] = values.to(tensor.dtype).reshape(count, 1, 1, 1) + layer * 4
+        tensor[1, :count] = tensor[0, :count] + 2
+        expected.append(tensor[:, :count].flip(1).cpu().clone())
+        tensor[:, count:].fill_(-7)
+    torch.cuda.synchronize()
+    hashes = [index.to_bytes(8, "little") for index in range(count)]
+    assert client.save(
+        ctx.instance_id, 0, 0, 0, [(name, list(range(count)), hashes) for name in ctx._layer_names]
+    )[0]
+    ready = query(client, ctx, hashes, "partitioned")
+    assert ready.num_hit_blocks == count
+    arm(directory, "local_restore_part_drained")
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [list(range(2 * count - 1, count - 1, -1))])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
+    reached(directory, "local_restore_part_drained")
+    with pytest.raises(TimeoutError):
+        client.wait_restore(handle, timeout=0.02)
+    assert not client.poll_restore(handle).done
+    held = fetch_orbitkv_metrics(server.http_port)
+    assert held["orbitkv_query_reserved_bytes"] > 0
+    assert held.get("orbitkv_load_bytes_total", 0) == 0
+    if outcome == "failure":
+        arm(directory, "local_restore_error")
+    if outcome == "manager_exit":
+        server.process.kill()
+        server.process.wait(timeout=10)
+    (directory / "local_restore_part_drained.pause").unlink()
+    status = client.wait_restore(handle, timeout=10)
+    if outcome == "success":
+        assert status.success, status.message
+        for tensor, reference in zip(tensors, expected, strict=True):
+            assert torch.equal(tensor[:, count:].cpu(), reference)
+    else:
+        assert not status.success
+        assert (
+            "after first local Restore enqueue" if outcome == "failure" else "reconnect"
+        ) in status.message
+        for tensor in tensors:
+            tensor[:, count:].fill_(37)
+        torch.cuda.synchronize()
+        assert all(torch.all(tensor[:, count:] == 37) for tensor in tensors)
+    if outcome != "manager_exit":
+        until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] == 0)
+        stats = fetch_orbitkv_metrics(server.http_port)
+        assert stats.get("orbitkv_load_bytes_total", 0) == (
+            sum(tensor.numel() * tensor.element_size() for tensor in expected)
+            if outcome == "success"
+            else 0
+        )

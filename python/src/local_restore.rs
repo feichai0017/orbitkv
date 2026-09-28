@@ -417,7 +417,9 @@ fn advance(
     };
     match client.claim_local_restore(handle) {
         Ok(Some(bytes)) => {
-            if let Some((start, timing)) = &mut job.timing {
+            if let Some((start, timing)) = &mut job.timing
+                && timing.claimed_ns == 0
+            {
                 timing.claimed_ns = start.elapsed().as_nanos() as u64;
             }
             let mut submitted_at = None;
@@ -430,8 +432,10 @@ fn advance(
                     .execute(&plan, job.timing.as_ref().map(|_| &mut submitted_at))
             });
             let timing = job.timing.as_mut().map(|(start, timing)| {
-                timing.submitted_ns =
-                    submitted_at.map_or(0, |at| at.duration_since(*start).as_nanos() as u64);
+                if timing.submitted_ns == 0 {
+                    timing.submitted_ns =
+                        submitted_at.map_or(0, |at| at.duration_since(*start).as_nanos() as u64);
+                }
                 timing.drained_ns = start.elapsed().as_nanos() as u64;
                 *timing
             });
@@ -444,10 +448,11 @@ fn advance(
                 Err(message) => failed(message.clone()),
             };
             // Reaping releases source credits asynchronously, off the GPU fence.
-            if let Err(error) = client.finish_local_restore(handle, result, timing) {
-                return Some((failed(error.to_string()), Some(handle)));
+            match client.finish_local_restore(handle, result, timing) {
+                Ok(false) => None,
+                Ok(true) => Some((response, Some(handle))),
+                Err(error) => Some((failed(error.to_string()), Some(handle))),
             }
-            Some((response, Some(handle)))
         }
         Ok(None) => match client.poll_restore(handle) {
             Ok(response) if response.state != RestoreState::Pending => Some((response, None)),
@@ -459,7 +464,7 @@ fn advance(
             // GPU work was submitted here, so publishing Drained is safe.
             if matches!(
                 client.restore_completions().state(handle.operation_id),
-                Ok(GrantState::Active)
+                Ok(GrantState::Active | GrantState::ActiveMore)
             ) {
                 let _ = client.finish_local_restore(handle, Err(error.to_string()), None);
             }

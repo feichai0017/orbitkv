@@ -113,13 +113,23 @@ are hints and atomic records remain authoritative. Source retirement has its
 own eventfd, and engine-local result notification does not wait on a Manager
 terminal RPC. The old terminal Poll RPC and old result wire codec remain deleted.
 
-A full shared plan bank defers prepared grants until space returns. Individual
-encoded plans larger than 1 MiB after compaction are rejected before consuming
-leases. Preparation sorts destinations and merges only consecutive source and
-destination ranges within the same layer and allocation identity/bounds. The
-existing `cpu_path/load_submit_wait/32768` case now passes its GPU submission/
-drain smoke. Automatic bounded partitioning remains missing for fragmented
-plans; no Manager raw fallback is retained.
+A full shared plan bank defers prepared grants until space returns. Preparation
+sorts destinations and merges consecutive source and destination ranges only
+within the same layer and allocation identity/bounds. It validates all source
+ranges and destination overlaps before consuming any lease, then partitions the
+remaining descriptors into parts of at most 1 MiB. The whole operation is
+limited to 32 MiB of encoded metadata; the Manager reserves at most 64 MiB of
+pending plan metadata per session. Admission failure does not submit any DMA.
+No second raw executor or compatibility protocol is retained.
+
+One operation ID, source grant, query reservation and destination owner span all
+parts. Nonfinal parts use `GrantedMore → ActiveMore → PartDrained`; the Manager
+acknowledges each drain once, returns the operation to `Preparing`, and appends
+its next part to the pending queue. Only the final part or a drained failure
+publishes `Drained`. Intermediate completion cannot expose a successful Python
+result or release any source credits. Disconnect revokes unclaimed parts;
+unknown active DMA retains its owners and metadata budget in quarantine.
+The shared-grant schema is version 5 and requires matched builds.
 
 ### Shared payload arenas
 
@@ -158,9 +168,9 @@ worker. No previous ABI decoder or compatibility runtime selector is retained.
 
 Request encoding uses exact payload sizes. Oversized Publish requests are
 partitioned by encoded length from borrowed block ranges, without repeatedly
-cloning and encoding binary-search candidates. This existing Publish behavior
-does not yet provide partitioning for an oversized raw Restore plan. Each
-channel's descriptor slot retains its request/response lock.
+cloning and encoding binary-search candidates. Raw Restore partitions its
+compiled pointer-free plan separately, with one whole-operation completion owner. Each channel's descriptor slot retains its
+request/response lock.
 
 The [measured local comparison](communication-performance.md) records matched
 Query, Publish, Restore and IPC latency with CPU accounting. Historical
@@ -228,8 +238,9 @@ Neither result establishes a universal performance advantage.
    its correctness gate does not substitute for repeated comparisons. Accept a change
    only with a repeatable TTFT/E2E or throughput gain and no material cold-path,
    CPU-cost or correctness regression.
-4. **Then qualify partitioning and overlap.** Add bounded fragmented-plan
-   partitions with one parent completion owner before layer/group consumption.
+4. **Qualify partitioning, then overlap.** Bounded fragmented-plan parts now
+   share one parent completion owner. Retain their byte and process-fault gates
+   before adding layer/group consumption.
    For overlap, validate actual eager and graph-replay dependencies, cancellation,
    partial enqueue and page reuse. A retained whole-operation source fence is
    still required even when the engine can consume an earlier group.
@@ -283,9 +294,9 @@ LMCache under the same engine, capacity, prompt and output-quality controls.
 Record TTFT, end-to-end latency, tails, CPU cost and transfer bytes. The older
 6.79 ms gap is a profiling lead, not a guaranteed amount recoverable in Restore.
 
-After that, implement bounded large-plan partitioning and then layer/group
-overlap as separate changes. Cost-driven direct/P-D execution follows only when
-both candidates have the same measured completion boundary and real source,
+Bounded large-plan partitioning now retains a whole-operation fence. Add
+layer/group overlap as a separate change. Cost-driven direct/P-D execution
+follows only when both candidates have the same measured completion boundary and real source,
 destination and capacity authority. Retain deterministic selection while that
 contract is incomplete. Real two-host DP qualification remains a separate gate;
 local performance work does not establish RDMA or catalog availability.
@@ -345,12 +356,30 @@ offload. SGLang tail latency also remains higher. These comparisons do not
 isolate the effect of 2D DMA: a repeated before/after implementation control
 is still required before attributing a serving speedup to this change.
 
-## Next: bounded large restores and execution overlap
+## Bounded large restores and remaining execution overlap
 
-Complete automatic plan partitioning with a parent whole-operation fence before
-claiming arbitrary large-prefix support. Suboperations must retain source and
-destination ownership through accepted CUDA work, preserve batch/lease semantics,
-and respect plan, record, source-byte, and native queue budgets.
+Raw plans are automatically partitioned under one whole-operation fence. The
+32 MiB operation metadata and 64 MiB session metadata limits still bound
+admission; this is not unbounded large-prefix support. Source, destination,
+query-byte, record and native queue owners remain held across every part.
+
+On 2026-09-28, the H20 gate restores 2,048 permuted pages across five layers
+(20,480 separate K/V ranges, 40 MiB payload) through multiple parts. It checks
+all destination bytes, no early result or load-byte accounting, retained query
+credits between parts, second-part partial-enqueue drain, and Manager death
+between parts. All three cases pass; seven existing local ownership/fault cases
+also pass. Raw artifacts and test-build hashes are under
+`benches/results/runs/partitioned-restore-20260928/`. This is correctness and
+fault evidence, not a measured serving speedup.
+
+The normal release build also passes the vLLM Qwen3-8B correctness gate
+(six passes; one hybrid-only case skipped for this dense model), SGLang DRAM
+and SSD process-restart gates (two passes), and the same-A100 SGLang P/D
+restart/reuse gate with exact outputs and 576 cached tokens. A fresh two-host
+H20↔A100 byte gate passes 8 MiB in each direction, including re-serving the
+received replica after original-source eviction; all checked counters drain.
+The matching native hashes, launch logs and results are retained in the same
+artifact directory. These gates do not establish layer overlap or RDMA.
 
 Then add layer/group dependencies so early groups can be consumed while later
 groups restore. Compile actual framework dependencies, preserve one final drain,
@@ -399,9 +428,9 @@ epochs, acknowledgements, native prerequisites and source-control cutover.
 | Completed: payload backing | Shared memfd for every pool shard | Private anonymous and `cudaHostAlloc` pool paths, `cpu_readable` plumbing | FD transfer, independent registration and GPU bytes after producer mapping teardown |
 | Completed: peer lookahead | One active READ plus one next authorization | Sequential runtime selector | Prefix integrity, cancelled/lost grants, release pressure, real multi-segment TENT bytes |
 | Implemented, single-GPU process gates passed: raw engine restore | Payload FD attachment, retained source grants, tensor ownership, native CUDA execution and local results | Manager raw-descriptor submission and `LoadPayload` enum | [Process fault evidence](fault-qualification.md#engine-local-raw-restore-gates); scoped DRAM serving gates also passed on the communication-branch build; merged-artifact, graph replay and extended-environment qualification remain separate |
-| Completed: raw plan and idle readiness | Allocation-aware run compaction before encoding; query idle streams and reuse the busy-stream event | Per-page descriptors for contiguous runs and redundant GPU event submission on idle streams | [Matched measurements](communication-performance.md), large dense plan bytes, lease preservation on oversized fragmented plans, and reused-event readiness |
+| Completed: raw plan and idle readiness | Allocation-aware run compaction before encoding; query idle streams and reuse the busy-stream event | Per-page descriptors for contiguous runs and redundant GPU event submission on idle streams | [Matched measurements](communication-performance.md), large dense plan bytes, lease preservation on invalid or over-budget plans, and reused-event readiness |
 | Next: residual raw overhead | Profile native scheduling, fragmented plans and scratch reuse | Measured redundant work in the remaining path | Small-payload latency, unchanged source/destination drain guarantees and failure gates |
-| Next: large raw plans | Bounded suboperations with a parent whole-operation fence | Current rejection above the 1 MiB per-plan limit | Fragmented large-prefix bytes, cancellation between partitions and bounded plan/source credits |
+| Implemented: large raw plans | Bounded parts under one operation ID, with a final completion fence and per-session metadata credits | Rejection solely because a compacted plan exceeds the 1 MiB shared bank | Fragmented large-prefix bytes, cancellation between partitions and bounded plan/source credits |
 | Next: execution overlap | Layer-group dependencies with one final retirement fence | Whole-restore waits from engine consumption sites covered by qualified group dependencies | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
 | Next: native metadata | Bounded binary notification API and per-peer transport selection | Unsafe string framing and first-transport notification dispatch | Size/queue limits, unreachable peer, mixed transports and native shutdown |
 | Next: peer session | Batched lookup/grant/completion with application ACK and credits | Corresponding hot gRPC methods, retry owner and protobuf messages | Loss, duplication, reorder, restart, corruption, slow peer and multi-host qualification |
