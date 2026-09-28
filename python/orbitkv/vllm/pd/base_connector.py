@@ -33,7 +33,7 @@ class PdConnectorClassMixin:
 
     @classmethod
     def requires_piecewise_for_cudagraph(cls, extra_config: dict[str, Any]) -> bool:
-        return not bool(extra_config.get("orbitkv.pd.allow_full_decode_cudagraph", False))
+        return True
 
     def get_kv_connector_stats(self) -> PdKVConnectorStats | None:
         return self._metrics.get_stats()

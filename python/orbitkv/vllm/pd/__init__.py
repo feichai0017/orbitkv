@@ -61,13 +61,6 @@ class _PdSplitConnector(PdConnectorClassMixin, KVConnectorBase_V1, SupportsHMA):
         if self._worker is not None:
             self._worker.register_kv_caches(kv_caches)
 
-    def start_load_kv(self, forward_context: Any, **kwargs: Any) -> None:
-        if self._worker is None:
-            return
-        metadata = self._get_connector_metadata()
-        assert isinstance(metadata, PdConnectorMetadata)
-        self._worker.start_load_kv(metadata, forward_context, **kwargs)
-
     def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str] | None, set[str] | None]:
         if self._worker is None:
             return None, None
@@ -129,6 +122,13 @@ class PdDecodeConnector(_PdSplitConnector):
     _scheduler_cls = PdDecodeSchedulerConnector
     _worker_cls = PdDecodeWorkerConnector
 
+    def start_load_kv(self, forward_context: Any, **kwargs: Any) -> None:
+        if self._worker is None:
+            return
+        metadata = self._get_connector_metadata()
+        assert isinstance(metadata, PdConnectorMetadata)
+        self._worker.start_load_kv(metadata, forward_context, **kwargs)
+
     @classmethod
     def requires_piecewise_for_cudagraph(cls, extra_config: dict[str, Any]) -> bool:
         return False
@@ -165,6 +165,16 @@ class PdPrefillConnector(_PdSplitConnector):
 
     _scheduler_cls = PdPrefillSchedulerConnector
     _worker_cls = PdPrefillWorkerConnector
+
+    def bind_connector_metadata(self, connector_metadata: PdConnectorMetadata) -> None:
+        super().bind_connector_metadata(connector_metadata)
+        assert isinstance(connector_metadata, PdConnectorMetadata)
+        if self._worker is not None:
+            self._worker.prepare_pushes(connector_metadata)
+
+    def start_load_kv(self, forward_context: Any, **kwargs: Any) -> None:
+        # V2 may call this after forward; send ownership must already be bound.
+        return None
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         return None

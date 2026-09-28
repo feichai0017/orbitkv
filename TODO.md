@@ -244,6 +244,13 @@ qualification remain open. See the
 - [x] Remove the vLLM role-selecting `PdConnector` compatibility facade,
   test-only worker attribute proxies, the runtime-packaged no-op test connector
   and pre-0.29 preemption/metrics branches.
+- [x] Consume vLLM 0.29 BHNC raw views with storage/stride/spec validation;
+  remove the old split-K/V and three-dimensional registration adapters.
+  Prepare Prefill sends before forward and publish receive completion only
+  through the Decode owner; remove duplicate merging and completion queues.
+- [x] Validate Qwen3-8B P/D greedy output on two A100 replicas and 1044 actual
+  GPU KV ranges over H20→A100 TCP. Keep the heterogeneous strict-output gate
+  failed (1/3 identical); byte equality is not a model-quality waiver.
 - [x] Move P/D notification polling, counting and close/reopen generation
   fencing into the Rust TENT owner so Python waiters release the GIL.
 - [x] Add `orbitkv.client` and `orbitkv.sglang` package boundaries.

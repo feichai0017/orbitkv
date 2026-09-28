@@ -42,6 +42,32 @@ first implementation waits inside each worker task for its Mooncake batch; a
 future optimization may retain batch handles and poll completions without
 changing the wire contract.
 
+## vLLM 0.29 layout and callback contract
+
+Registration consumes the pinned runner's four-dimensional
+`[blocks, heads, states, content]` view. Attention content packs K and V
+in one region; MLA and indexer caches use the same raw registration shape.
+The adapter validates the shape against `KVCacheSpec`, dense HNC inner
+strides, non-overlapping pages, and the actual backing-storage bounds.
+It copies content bytes only, preserving page padding and the physical
+block stride. Kernel-block splitting is rejected explicitly.
+The pinned MLA attention callback squeezes its singleton head axis;
+that callback view must retain the registered strides and base address.
+
+Prefill prepares each step's sends in `bind_connector_metadata`, before
+forward. The V2 runner can call `start_load_kv` after forward for steps with
+no synchronous loads; using that callback to prepare a layerwise send misses
+the current step. Layer callbacks record CUDA events, and sender tasks wait
+for the event before reading the source pages. Prefill requires piecewise
+CUDA graphs so those callbacks are not skipped during full-graph replay.
+
+The decode waiter is the sole publisher of receive completion. The TENT
+port validates the native terminal notification but does not independently
+mark pages ready for the scheduler. This prevents a second completion queue
+from racing the decode owner's completion processing. Writes validate each
+destination block grant and source registration bounds before admission;
+source and destination page strides may differ.
+
 ## Configuration
 
 Each TP rank configures a routable bind host and may select an RDMA NIC. When
@@ -120,6 +146,32 @@ Mooncake Store as its state authority.
 - cancellation, timeout, and peer-restart behavior;
 - throughput and TTFT comparison with vLLM's supported NIXL connector.
 
-The Rust/Python compile gates and host loopback currently pass. GPU and
-cross-machine P/D qualification remain required before this path is called
-production-ready.
+The September 28, 2026 Qwen3-8B qualification used vLLM 0.29.0,
+bfloat16, TP=1, 64-token pages, FlashAttention 2, eager execution, a 576 MiB
+KV budget per replica, and greedy 16-token outputs with EOS ignored. Three
+natural-language prompts of 129, 513 and 1025 tokens required information
+from the first cache page. The model revision was
+`b968826d9c46dd6066d109eabc6255188de91218`.
+
+| Deployment | Actual KV transfer | Complete output versus A100 monolithic | Completion |
+| --- | --- | --- | --- |
+| Two replicas on one A100 | 261 MiB TENT TCP WRITE | 3/3 identical | Sends, finalizers and waits drained |
+| H20 prefill to A100 decode | 261 MiB TENT TCP WRITE; 1044 GPU ranges have identical source/destination SHA-256 | 1/3 identical; all three retrieve the requested key | Sends, finalizers and waits drained |
+
+The byte diagnostic reads source GPU pages after their CUDA events and target
+GPU pages after TENT completion, before the Decode owner publishes readiness.
+An earlier diagnostic incorrectly raced decode writes because the port had a
+second receive-completion queue; that queue has been removed. The final byte
+comparison includes the transferred partial tail pages. Hashing synchronizes
+GPU reads, so this run is correctness evidence, not an overlap or latency
+benchmark. Raw logs and launch commands are under
+`benches/results/runs/two-host-natural-20260928/vllm-pd-same-a100/` and
+`vllm-pd-byte-probe/`.
+
+The heterogeneous strict-output gate **fails** and is not waived by byte
+correctness. Identical transported bytes and the same-A100 control narrow the
+remaining discrepancy to computation/configuration across the two GPU types;
+they do not establish a general model-quality tolerance. Multi-GPU TP/PP,
+hybrid-model handoff, full cancellation/restart qualification, CUDA-graph
+replay, and RDMA/GPUDirect still require their own execution gates. Neither
+available container exposes `/dev/infiniband`.

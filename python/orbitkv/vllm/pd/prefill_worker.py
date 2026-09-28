@@ -11,9 +11,8 @@ from orbitkv.logging_utils import get_connector_logger
 from orbitkv.vllm.pd.chunk_tracker import ChunkTracker
 from orbitkv.vllm.pd.layout import (
     BlockRegionSlice,
-    FlashAttnHndLayout,
+    KvCacheLayout,
     LayerBlockSlices,
-    block_ranges_for_remote_write,
     block_slices_bytes,
 )
 from orbitkv.vllm.pd.layout_mapping import (
@@ -451,7 +450,7 @@ class PrefillHandler:
                     continue
                 target_req_blocks = set(remote_block_ids)
                 pushed_req_blocks.update(target_req_blocks)
-                block_slices = _target_block_ranges_for_remote_write(
+                block_slices = _target_block_slices(
                     layout,
                     target,
                     target_req_blocks,
@@ -648,10 +647,13 @@ def _bool_config(value: Any) -> bool:
 
 def _assert_runtime_layout_matches(layer_name: str, kv_layer: Any, layout: Any) -> None:
     shape = tuple(int(dim) for dim in kv_layer.shape)
+    runtime_stride = tuple(int(stride) for stride in kv_layer.stride())
+    if len(shape) == 3 and layout.shape[1] == 1:
+        shape = (shape[0], 1, *shape[1:])
+        runtime_stride = (runtime_stride[0], layout.strides[1], *runtime_stride[1:])
     assert shape == layout.shape, (
         f"PdConnector KV shape changed for {layer_name}: registered={layout.shape} runtime={shape}"
     )
-    runtime_stride = tuple(int(stride) for stride in kv_layer.stride())
     assert runtime_stride == layout.strides, (
         f"PdConnector KV strides changed for {layer_name}: "
         f"registered={layout.strides} runtime={runtime_stride}"
@@ -662,28 +664,23 @@ def _assert_runtime_layout_matches(layer_name: str, kv_layer: Any, layout: Any) 
     )
 
 
-def _target_block_ranges_for_remote_write(
-    layout: Any,
+def _target_block_slices(
+    layout: KvCacheLayout,
     target: PushTargetPlan,
     local_block_ids: set[int],
     remote_block_ids: dict[int, int],
 ) -> list[LayerBlockSlices]:
-    if not target.head_slices:
-        return block_ranges_for_remote_write(layout, local_block_ids, remote_block_ids)
-    assert isinstance(layout, FlashAttnHndLayout), (
-        "PdConnector head-sliced layout mapping requires FlashAttention HND layout; "
-        f"layout={type(layout).__name__}"
-    )
     ranges = []
+    head_ranges = (
+        [(part.local_start, part.local_end) for part in target.head_slices]
+        if target.head_slices
+        else [(0, layout.num_kv_heads)]
+    )
     for local_block_id in sorted(local_block_ids):
         remote_block_id = remote_block_ids[local_block_id]
         regions = []
-        for head_slice in target.head_slices:
-            block_slice = layout.block_head_slices(
-                local_block_id,
-                head_slice.local_start,
-                head_slice.local_end,
-            )
+        for start_head, end_head in head_ranges:
+            block_slice = layout.block_slices(local_block_id, start_head, end_head)
             regions.extend(
                 BlockRegionSlice(
                     block_id=remote_block_id,
@@ -698,14 +695,10 @@ def _target_block_ranges_for_remote_write(
 
 def _target_handshake_for_local_layout(
     target: PushTargetPlan,
-    layout: Any,
+    layout: KvCacheLayout,
 ) -> PdHandshake:
     if not target.head_slices or not target.handshake.layers:
         return target.handshake
-    assert isinstance(layout, FlashAttnHndLayout), (
-        "PdConnector head-sliced layout mapping requires FlashAttention HND layout; "
-        f"layout={type(layout).__name__}"
-    )
     head_slice = _single_remote_head_slice(target.head_slices)
     return replace(
         target.handshake,
@@ -780,7 +773,7 @@ def _remote_num_kv_heads(
     local_layout: Any,
     fallback: int,
 ) -> int:
-    if not handshake.layers or not isinstance(local_layout, FlashAttnHndLayout):
+    if not handshake.layers:
         return fallback
     layer = handshake.layers[0]
     if len(layer.regions) < 1:

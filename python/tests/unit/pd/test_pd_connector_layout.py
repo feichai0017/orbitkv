@@ -10,85 +10,86 @@ from orbitkv.vllm.pd.layout_mapping import (
 from .pd_connector_test_utils import *
 
 
-def test_flash_attn_hnd_layout_offsets() -> None:
-    # Logical shape [2, num_blocks, block_size, num_kv_heads, head_size].
-    # HND physical order [2, num_blocks, num_kv_heads, block_size, head_size].
-    tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+def test_bhnc_layout_offsets_and_head_slices() -> None:
+    tensor = FakeTensor(shape=(8, 4, 16, 64), stride=(4096, 1024, 64, 1))
+    layout = KvCacheLayout.from_tensor(
+        "layer.0", tensor, logical_block_size=16, layer_spec=fake_cache_spec()
+    )
+    assert layout.block_bytes == 8192
+    assert layout.block_slices(3).regions == (
+        BlockRegionSlice(block_id=3, src_offset_bytes=24576, bytes=8192),
+    )
+    assert layout.block_slices(3, 1, 3).regions == (
+        BlockRegionSlice(block_id=3, src_offset_bytes=26624, bytes=4096),
+    )
+    assert layout.remote_layout(0, (3, 4)).regions == (
+        TransferRegionLayout(region_idx=0, base_addr=0x1000, block_len=8192),
     )
 
-    layout = FlashAttnHndLayout.from_tensor("layer.0", tensor)
 
-    assert layout.block_bytes == 16 * 4 * 32 * 2
-    assert layout.block_offset_bytes(0, 3) == 3 * 4 * 16 * 32 * 2
-    assert layout.block_offset_bytes(1, 3) == (8 * 4 * 16 * 32 + 3 * 4 * 16 * 32) * 2
-
-
-def test_flash_attn_hnd_head_slice_layouts_use_full_block_stride() -> None:
-    tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
-        ptr=0x1000,
-    )
-    layout = FlashAttnHndLayout.from_tensor("layer.0", tensor)
-
-    slices = layout.block_head_slices(block_id=3, start_head=1, end_head=3)
-
-    assert slices.regions == (
-        BlockRegionSlice(
-            block_id=3,
-            src_offset_bytes=(3 * 4 * 16 * 32 + 1 * 16 * 32) * 2,
-            bytes=2 * 16 * 32 * 2,
+@pytest.mark.parametrize(
+    ("shape", "stride", "storage_bytes", "spec", "error"),
+    [
+        ((8, 4, 16, 64), (4096, 64, 256, 1), None, None, "dense HNC"),
+        ((8, 4, 16, 64), (4096, 1024, 64, 2), None, None, "dense HNC"),
+        ((8, 4, 16, 64), (1024, 1024, 64, 1), None, None, "overlapping"),
+        ((8, 4, 16, 64), (4096, 1024, 64, 1), 65535, None, "backing storage"),
+        ((8, 4, 16, 64), (4096, 1024, 64, 1), None, fake_cache_spec(heads=8), "KVCacheSpec"),
+        (
+            (8, 4, 16, 64),
+            (4096, 1024, 64, 1),
+            None,
+            fake_cache_spec(content_bytes=64),
+            "KVCacheSpec",
         ),
-        BlockRegionSlice(
-            block_id=3,
-            src_offset_bytes=(8 * 4 * 16 * 32 + 3 * 4 * 16 * 32 + 1 * 16 * 32) * 2,
-            bytes=2 * 16 * 32 * 2,
-        ),
-    )
+        ((8, 16, 64), (1024, 64, 1), None, None, "4D BHNC"),
+    ],
+)
+def test_bhnc_rejects_invalid_views(shape, stride, storage_bytes, spec, error):
+    with pytest.raises(AssertionError, match=error):
+        KvCacheLayout.from_tensor(
+            "layer.0",
+            FakeTensor(shape, stride, storage_bytes=storage_bytes),
+            logical_block_size=16,
+            layer_spec=spec,
+        )
 
-    remote = layout.remote_head_layout(
-        layer_idx=0,
-        block_ids=(3, 4),
-        start_head=1,
-        end_head=3,
-    )
 
-    assert remote.regions == (
-        TransferRegionLayout(
-            region_idx=0,
-            base_addr=0x1000 + 1 * 16 * 32 * 2,
-            block_len=2 * 16 * 32 * 2,
-            block_stride=4 * 16 * 32 * 2,
-        ),
-        TransferRegionLayout(
-            region_idx=1,
-            base_addr=0x1000 + 8 * 4 * 16 * 32 * 2 + 1 * 16 * 32 * 2,
-            block_len=2 * 16 * 32 * 2,
-            block_stride=4 * 16 * 32 * 2,
-        ),
+def test_bhnc_preserves_page_gaps_and_storage_offset():
+    tensor = FakeTensor((8, 4, 16, 64), (8192, 1024, 64, 1), ptr=0x4000, storage_offset=4096)
+    spec = fake_cache_spec()
+    spec.page_size_bytes = 16384
+    layout = KvCacheLayout.from_tensor("layer.0", tensor, logical_block_size=16, layer_spec=spec)
+    assert layout.block_slices(7).regions == (
+        BlockRegionSlice(block_id=7, src_offset_bytes=7 * 16384, bytes=8192),
     )
+    assert layout.remote_layout(0).regions == (
+        TransferRegionLayout(region_idx=0, base_addr=0x4000, block_len=8192, block_stride=16384),
+    )
+    with pytest.raises(AssertionError, match="out of range"):
+        layout.block_slices(8)
+    with pytest.raises(AssertionError, match="invalid remote block"):
+        layout.remote_layout(0, (8,))
 
 
 def test_pd_worker_registers_mla_and_indexer_layouts_from_layer_specs() -> None:
     main_tensor = FakeTensor(
-        shape=(8, 64, 656),
-        stride=(64 * 656, 656, 1),
+        shape=(8, 1, 64, 656),
+        stride=(64 * 656, 64 * 656, 656, 1),
         ptr=0x1000,
         element_size=1,
     )
     indexer_tensor = FakeTensor(
-        shape=(8, 64, 128),
-        stride=(64 * 128, 128, 1),
+        shape=(8, 1, 64, 128),
+        stride=(64 * 128, 64 * 128, 128, 1),
         ptr=0x200000,
         element_size=1,
     )
     kv_cache_config = fake_kv_cache_config(
         num_blocks=8,
         specs={
-            "layer.0": SimpleNamespace(block_size=64, page_size_bytes=64 * 656),
-            "indexer.0": SimpleNamespace(block_size=64, page_size_bytes=64 * 128),
+            "layer.0": fake_cache_spec(block_size=64, heads=1, content_bytes=656),
+            "indexer.0": fake_cache_spec(block_size=64, heads=1, content_bytes=128),
         },
     )
     worker = PdDecodeWorkerConnector(
@@ -159,15 +160,15 @@ def test_vllm_plugin_registers_framework_connectors(monkeypatch) -> None:
 
 def test_pd_worker_rejects_mla_physical_logical_block_split() -> None:
     tensor = FakeTensor(
-        shape=(8, 32, 128),
-        stride=(32 * 128, 128, 1),
+        shape=(16, 1, 32, 128),
+        stride=(32 * 128, 32 * 128, 128, 1),
         ptr=0x1000,
         element_size=1,
     )
     kv_cache_config = fake_kv_cache_config(
         num_blocks=8,
         specs={
-            "layer.0": SimpleNamespace(block_size=64, page_size_bytes=32 * 128),
+            "layer.0": fake_cache_spec(block_size=64, heads=1, content_bytes=128),
         },
     )
     worker = PdDecodeWorkerConnector(
@@ -197,7 +198,7 @@ def test_p_worker_maps_mla_prefill_tp_greater_than_decode_tp() -> None:
         transfer=MockMooncakePort(),
     )
 
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r2": PushReqMeta(
@@ -206,8 +207,7 @@ def test_p_worker_maps_mla_prefill_tp_greater_than_decode_tp() -> None:
                     handshakes=handshakes,
                 )
             }
-        ),
-        None,
+        )
     )
 
     assert worker.transfer.peer_handshakes["prefill-r2"] is handshakes[1]
@@ -230,7 +230,7 @@ def test_p_worker_skips_non_representative_mla_prefill_rank() -> None:
         transfer=MockMooncakePort(),
     )
 
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r3": PushReqMeta(
@@ -239,8 +239,7 @@ def test_p_worker_skips_non_representative_mla_prefill_rank() -> None:
                     handshakes=handshakes,
                 )
             }
-        ),
-        None,
+        )
     )
 
     assert "prefill-r3" not in worker.transfer.peer_handshakes
@@ -335,22 +334,24 @@ def test_layout_mapping_prefill_tp_greater_than_decode_tp_offsets_remote_heads()
 
 def test_p_worker_prefill_tp_greater_than_decode_tp_registers_remote_head_slices() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
         ptr=0x1000,
     )
     decode_tensor = FakeTensor(
-        shape=(2, 8, 16, 8, 32),
-        stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 8, 16, 64),
+        stride=(8 * 16 * 64, 16 * 64, 64, 1),
         ptr=0x2000,
     )
     kv_cache_config = fake_kv_cache_config(
         num_blocks=8,
         specs={
-            "layer.0": SimpleNamespace(block_size=16, page_size_bytes=2 * 16 * 4 * 32 * 2),
+            "layer.0": fake_cache_spec(),
         },
     )
-    decode_layer = FlashAttnHndLayout.from_tensor("layer.0", decode_tensor).remote_layout(
+    decode_layer = KvCacheLayout.from_tensor(
+        "layer.0", decode_tensor, logical_block_size=16
+    ).remote_layout(
         0,
         (1, 2),
     )
@@ -389,7 +390,7 @@ def test_p_worker_prefill_tp_greater_than_decode_tp_registers_remote_head_slices
     rank1 = build_worker(1)
 
     for worker in (rank0, rank1):
-        worker.start_load_kv(
+        worker.prepare_pushes(
             PdConnectorMetadata(
                 reqs_to_push={
                     f"prefill-r{worker.tp_rank}": PushReqMeta(
@@ -398,40 +399,17 @@ def test_p_worker_prefill_tp_greater_than_decode_tp_registers_remote_head_slices
                         handshakes=(decode_handshake,),
                     )
                 }
-            ),
-            None,
+            )
         )
 
     rank0_remote = rank0.transfer.peer_handshakes["prefill-r0"].layers[0]
     rank1_remote = rank1.transfer.peer_handshakes["prefill-r1"].layers[0]
 
     assert rank0_remote.regions == (
-        TransferRegionLayout(
-            region_idx=0,
-            base_addr=0x2000,
-            block_len=4 * 16 * 32 * 2,
-            block_stride=8 * 16 * 32 * 2,
-        ),
-        TransferRegionLayout(
-            region_idx=1,
-            base_addr=0x2000 + 8 * 8 * 16 * 32 * 2,
-            block_len=4 * 16 * 32 * 2,
-            block_stride=8 * 16 * 32 * 2,
-        ),
+        TransferRegionLayout(region_idx=0, base_addr=0x2000, block_len=8192, block_stride=16384),
     )
     assert rank1_remote.regions == (
-        TransferRegionLayout(
-            region_idx=0,
-            base_addr=0x2000 + 4 * 16 * 32 * 2,
-            block_len=4 * 16 * 32 * 2,
-            block_stride=8 * 16 * 32 * 2,
-        ),
-        TransferRegionLayout(
-            region_idx=1,
-            base_addr=0x2000 + 8 * 8 * 16 * 32 * 2 + 4 * 16 * 32 * 2,
-            block_len=4 * 16 * 32 * 2,
-            block_stride=8 * 16 * 32 * 2,
-        ),
+        TransferRegionLayout(region_idx=0, base_addr=0x4000, block_len=8192, block_stride=16384),
     )
 
 
@@ -578,7 +556,7 @@ def test_layout_mapping_rejects_non_divisible_tp_ratios() -> None:
 def test_real_mooncake_port_maps_pd_push_to_mooncake_ranges() -> None:
     native_engine = FakeMooncakeTransferEngine()
     transfer = RealMooncakePort(native_engine)
-    layer = hnd_remote_layer(
+    layer = split_remote_layer(
         block_ids=(0, 1),
         k_base=0x1000,
         v_base=0x9000,
@@ -611,9 +589,12 @@ def test_real_mooncake_port_maps_pd_push_to_mooncake_ranges() -> None:
         "req-1",
         0,
         [
-            FlashAttnHndLayout(
-                "layer.0", (2, 8, 16, 4, 32), (16384, 2048, 32, 512, 1), 2, 0x1000
-            ).block_slices(1)
+            LayerBlockSlices(
+                regions=(
+                    BlockRegionSlice(block_id=1, src_offset_bytes=4096, bytes=4096),
+                    BlockRegionSlice(block_id=1, src_offset_bytes=36864, bytes=4096),
+                )
+            )
         ],
         request_generation=generation,
     )
@@ -629,14 +610,12 @@ def test_real_mooncake_port_maps_pd_push_to_mooncake_ranges() -> None:
     ]
     assert transfer.pop_finished_sending() == {"req-1"}
     assert transfer.pop_finished_sending() == set()
-    assert transfer.pop_finished_recving() == {"req-1"}
-    assert transfer.pop_finished_recving() == set()
 
 
 def test_real_mooncake_port_rejects_missing_mooncake_endpoint() -> None:
     native_engine = FakeMooncakeTransferEngine()
     transfer = RealMooncakePort(native_engine)
-    layer = hnd_remote_layer(block_ids=(0,), block_len=1024)
+    layer = split_remote_layer(block_ids=(0,), block_len=1024)
     handshake = PdHandshake(
         request_id="req-1",
         engine_id="decode",
@@ -662,7 +641,7 @@ def test_real_mooncake_port_uses_tent_nic_bandwidth_evidence() -> None:
 
 
 def test_pd_handshake_serializes_regions_layout() -> None:
-    layer = hnd_remote_layer(
+    layer = split_remote_layer(
         block_ids=(8, 9, 10),
         k_base=0x10_000,
         v_base=0x20_000,
@@ -749,8 +728,8 @@ def test_pd_handshake_serializes_strided_regions_layout() -> None:
 
 def test_pd_handshake_compact_serializes_shared_block_ids_once() -> None:
     layers = (
-        hnd_remote_layer(layer_name="layer.0", layer_idx=0, block_ids=(8, 9, 10)),
-        hnd_remote_layer(layer_name="layer.1", layer_idx=1, block_ids=(8, 9, 10)),
+        split_remote_layer(layer_name="layer.0", layer_idx=0, block_ids=(8, 9, 10)),
+        split_remote_layer(layer_name="layer.1", layer_idx=1, block_ids=(8, 9, 10)),
     )
     handshake = PdHandshake(
         request_id="req-1",
@@ -778,8 +757,8 @@ def test_pd_worker_builds_mooncake_by_default_when_extension_exists(monkeypatch)
         native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
     )
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
         device_index=2,
     )
     config = SimpleNamespace(
@@ -808,8 +787,8 @@ def test_pd_worker_allows_mooncake_transport_autoselection(monkeypatch) -> None:
         native, "MooncakeTransferEngine", FakeMooncakeTransferEngineCtor, raising=False
     )
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
         device_index=2,
     )
     config = SimpleNamespace(
@@ -836,8 +815,8 @@ def test_pd_worker_uses_runtime_tp_rank_for_mooncake_rank_map(monkeypatch) -> No
     monkeypatch.setattr(worker_mod, "get_tensor_model_parallel_rank", lambda: 2)
     monkeypatch.setattr(worker_mod, "get_tensor_model_parallel_world_size", lambda: 8)
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
         device_index=2,
     )
     config = SimpleNamespace(
@@ -863,8 +842,8 @@ def test_pd_worker_rank_map_uses_tp_rank_even_when_cuda_ordinal_differs(monkeypa
     monkeypatch.setattr(worker_mod, "get_tensor_model_parallel_rank", lambda: 0)
     monkeypatch.setattr(worker_mod, "get_tensor_model_parallel_world_size", lambda: 1)
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
         device_index=4,
     )
     config = SimpleNamespace(
@@ -883,66 +862,6 @@ def test_pd_worker_rank_map_uses_tp_rank_even_when_cuda_ordinal_differs(monkeypa
     assert FakeMooncakeTransferEngineCtor.last_kwargs["nics"] == ["mlx5_0"]
 
 
-def test_mooncake_native_blocks_coalesce_contiguous_ranges() -> None:
-    blocks = [
-        LayerBlockSlices(
-            regions=(
-                BlockRegionSlice(block_id=10, src_offset_bytes=0x1000, bytes=0x400),
-                BlockRegionSlice(block_id=10, src_offset_bytes=0x9000, bytes=0x400),
-            ),
-        ),
-        LayerBlockSlices(
-            regions=(
-                BlockRegionSlice(block_id=11, src_offset_bytes=0x1400, bytes=0x400),
-                BlockRegionSlice(block_id=11, src_offset_bytes=0x9400, bytes=0x400),
-            ),
-        ),
-        LayerBlockSlices(
-            regions=(
-                BlockRegionSlice(block_id=13, src_offset_bytes=0x2000, bytes=0x400),
-                BlockRegionSlice(block_id=13, src_offset_bytes=0xA000, bytes=0x400),
-            ),
-        ),
-    ]
-
-    native_blocks = _layer_blocks_to_native(blocks)
-
-    assert native_blocks == [
-        {
-            "regions": [
-                {
-                    "region_idx": 0,
-                    "block_id": 10,
-                    "src_offset_bytes": 0x1000,
-                    "bytes": 0x800,
-                },
-                {
-                    "region_idx": 1,
-                    "block_id": 10,
-                    "src_offset_bytes": 0x9000,
-                    "bytes": 0x800,
-                },
-            ],
-        },
-        {
-            "regions": [
-                {
-                    "region_idx": 0,
-                    "block_id": 13,
-                    "src_offset_bytes": 0x2000,
-                    "bytes": 0x400,
-                },
-                {
-                    "region_idx": 1,
-                    "block_id": 13,
-                    "src_offset_bytes": 0xA000,
-                    "bytes": 0x400,
-                },
-            ],
-        },
-    ]
-
-
 @pytest.mark.parametrize("rank_map", [{"4": {"nic": "mlx5_4"}}, {"0": {}}, [], {"0": {"nic": ""}}])
 def test_pd_rank_map_rejects_missing_rank_or_nic(monkeypatch, rank_map):
     from orbitkv.vllm.pd.mooncake import build_mooncake_port
@@ -957,3 +876,80 @@ def test_pd_rank_map_rejects_missing_rank_or_nic(monkeypatch, rank_map):
     )
     with pytest.raises(ValueError, match="rank_map"):
         build_mooncake_port(config, 4, tp_rank=0)
+
+
+def test_pd_write_preserves_different_source_and_destination_page_gaps():
+    engine = FakeMooncakeTransferEngine()
+    port = RealMooncakePort(engine)
+    tensor = FakeTensor((4, 4, 16, 64), (8192, 1024, 64, 1))
+    layout = KvCacheLayout.from_tensor("layer.0", tensor, logical_block_size=16)
+    port.register_local_layers((layout.remote_layout(0),))
+    remote = LayerRemoteLayout(
+        layer_name="layer.0",
+        layer_idx=0,
+        block_ids=(2, 3),
+        regions=(
+            TransferRegionLayout(
+                region_idx=0, base_addr=0x80000, block_len=8192, block_stride=32768
+            ),
+        ),
+    )
+    handshake = PdHandshake(
+        request_id="remote",
+        engine_id="decode",
+        transfer_endpoint="peer:1",
+        tp_rank=0,
+        tp_size=1,
+        block_size=16,
+        layers=(remote,),
+    )
+    generation = port.open_request("req", handshake)
+    port.push_layer(
+        "req",
+        0,
+        [
+            LayerBlockSlices(
+                regions=(BlockRegionSlice(block_id=3, src_offset_bytes=16384, bytes=8192),)
+            ),
+            LayerBlockSlices(
+                regions=(BlockRegionSlice(block_id=2, src_offset_bytes=49152, bytes=8192),)
+            ),
+        ],
+        request_generation=generation,
+    )
+    assert engine.writes == [
+        (
+            "peer:1",
+            [
+                (0x5000, 0x98000, 8192),
+                (0xD000, 0x90000, 8192),
+            ],
+            30.0,
+        )
+    ]
+    assert engine.registered_regions == [{"addr": 0x1000, "len": 57344, "location": "*"}]
+    for block, error in [
+        (BlockRegionSlice(block_id=2, src_offset_bytes=57344, bytes=8192), "registered layer"),
+        (BlockRegionSlice(block_id=1, src_offset_bytes=0, bytes=8192), "not authorized"),
+        (BlockRegionSlice(block_id=2, src_offset_bytes=0, bytes=16384), "must equal"),
+    ]:
+        with pytest.raises((ValueError, RuntimeError), match=error):
+            port.push_layer(
+                "req", 0, [LayerBlockSlices(regions=(block,))], request_generation=generation
+            )
+    assert len(engine.writes) == 1
+
+
+def test_pinned_mla_callback_squeezes_only_the_registered_single_head_axis():
+    tensor = FakeTensor((8, 1, 64, 656), (41984, 41984, 656, 1), element_size=1)
+    layout = KvCacheLayout.from_tensor(
+        "mla.0",
+        tensor,
+        logical_block_size=64,
+        layer_spec=fake_cache_spec(block_size=64, heads=1, content_bytes=656),
+    )
+    callback = FakeTensor((8, 64, 656), (41984, 656, 1), element_size=1)
+    prefill_worker_mod._assert_runtime_layout_matches("mla.0", callback, layout)
+    changed = FakeTensor((8, 64, 656), (41984, 656, 1), ptr=0x2000, element_size=1)
+    with pytest.raises(AssertionError, match="base address changed"):
+        prefill_worker_mod._assert_runtime_layout_matches("mla.0", changed, layout)

@@ -87,6 +87,12 @@ def _install_vllm_stubs() -> None:
         WORKER = "worker"
 
     class KVConnectorBase_V1:
+        def bind_connector_metadata(self, metadata):
+            self._connector_metadata = metadata
+
+        def clear_connector_metadata(self):
+            self._connector_metadata = None
+
         def __init__(self, *_args, **_kwargs) -> None:
             return None
 

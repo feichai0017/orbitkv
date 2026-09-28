@@ -9,14 +9,12 @@ from typing import Any, Protocol
 
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.vllm.pd.layout import (
-    BlockRegionSlice,
     LayerBlockSlices,
     block_slices_bytes,
 )
 from orbitkv.vllm.pd.metadata import (
     LayerRemoteLayout,
     PdHandshake,
-    layer_layout_from_dict,
 )
 
 logger = get_connector_logger()
@@ -56,92 +54,19 @@ class MooncakePort(Protocol):
 
     def pop_finished_sending(self) -> set[str]: ...
 
-    def pop_finished_recving(self) -> set[str]: ...
-
     def close_request(self, req_id: str) -> None: ...
-
-
-def _block_slice_to_native(block: BlockRegionSlice) -> dict[str, int]:
-    return {
-        "block_id": block.block_id,
-        "src_offset_bytes": block.src_offset_bytes,
-        "bytes": block.bytes,
-    }
-
-
-def _layer_blocks_to_native(blocks: list[LayerBlockSlices]) -> list[dict[str, Any]]:
-    return [
-        {
-            "regions": [
-                {"region_idx": region_idx, **_block_slice_to_native(region)}
-                for region_idx, region in enumerate(block.regions)
-            ],
-        }
-        for block in _coalesce_contiguous_blocks(blocks)
-    ]
-
-
-def _coalesce_contiguous_blocks(blocks: list[LayerBlockSlices]) -> list[LayerBlockSlices]:
-    if len(blocks) < 2:
-        return blocks
-
-    coalesced: list[LayerBlockSlices] = []
-    current = blocks[0]
-    for block in blocks[1:]:
-        if _can_extend_block_range(current, block):
-            current = LayerBlockSlices(
-                regions=tuple(
-                    BlockRegionSlice(
-                        block_id=current_region.block_id,
-                        src_offset_bytes=current_region.src_offset_bytes,
-                        bytes=current_region.bytes + block_region.bytes,
-                    )
-                    for current_region, block_region in zip(
-                        current.regions,
-                        block.regions,
-                        strict=True,
-                    )
-                ),
-            )
-            continue
-        coalesced.append(current)
-        current = block
-    coalesced.append(current)
-    return coalesced
-
-
-def _can_extend_block_range(prev: LayerBlockSlices, nxt: LayerBlockSlices) -> bool:
-    if len(prev.regions) != len(nxt.regions):
-        return False
-    for prev_region, next_region in zip(prev.regions, nxt.regions, strict=True):
-        if prev_region.bytes % next_region.bytes != 0:
-            return False
-        block_count = prev_region.bytes // next_region.bytes
-        if prev_region.block_id + block_count != next_region.block_id:
-            return False
-        if prev_region.src_offset_bytes + prev_region.bytes != next_region.src_offset_bytes:
-            return False
-    return True
-
-
-def _layer_from_native(layer: LayerRemoteLayout | dict[str, Any]) -> LayerRemoteLayout:
-    if isinstance(layer, LayerRemoteLayout):
-        return layer
-    return layer_layout_from_dict(layer)
 
 
 class RealMooncakePort:
     """P/D layout adapter over the upstream Mooncake TENT engine."""
 
-    def __init__(self, engine: Any, *, nic_count: int = 1) -> None:
+    def __init__(self, engine: Any) -> None:
         self.engine = engine
-        self.nic_count = nic_count
         self.local_layers: dict[int, LayerRemoteLayout] = {}
         self.peer_handshakes: dict[str, PdHandshake] = {}
         self._request_generations: dict[str, int] = {}
         self._stats: dict[str, dict[str, Any]] = {}
         self._finished_sending: set[str] = set()
-        self._finished_recving: set[str] = set()
         self._lock = threading.RLock()
 
     def endpoint(self) -> str:
@@ -222,34 +147,39 @@ class RealMooncakePort:
         if remote is None:
             raise RuntimeError(f"remote layer {layer_idx} for request {req_id} is not registered")
 
-        native_blocks = _layer_blocks_to_native(blocks)
         slices: list[tuple[int, int, int]] = []
         allowed_blocks = set(remote.block_ids)
         local_base = min(region.base_addr for region in local.regions)
-        for block in native_blocks:
-            for region_idx, block_region in enumerate(block["regions"]):
+        for block in blocks:
+            if len(block.regions) != len(remote.regions):
+                raise ValueError("source and destination region counts differ")
+            for region_idx, block_region in enumerate(block.regions):
                 remote_region = remote.regions[region_idx]
-                block_id = int(block_region["block_id"])
-                source_offset = int(block_region["src_offset_bytes"])
-                bytes_len = int(block_region["bytes"])
+                block_id = block_region.block_id
+                source_offset = block_region.src_offset_bytes
+                bytes_len = block_region.bytes
                 stride = remote_region.block_stride or remote_region.block_len
-                if bytes_len % remote_region.block_len:
+                if bytes_len != remote_region.block_len:
                     raise ValueError(
-                        f"block slice bytes {bytes_len} must be a multiple of "
+                        f"block slice bytes {bytes_len} must equal "
                         f"remote block length {remote_region.block_len}"
                     )
-                block_count = bytes_len // remote_region.block_len
-                for offset in range(block_count):
-                    remote_block_id = block_id + offset
-                    if remote_block_id not in allowed_blocks:
-                        raise RuntimeError(f"remote block {remote_block_id} is not authorized")
-                    slices.append(
-                        (
-                            local_base + source_offset + offset * remote_region.block_len,
-                            remote_region.base_addr + remote_block_id * stride,
-                            remote_region.block_len,
-                        )
-                    )
+                if block_id not in allowed_blocks:
+                    raise RuntimeError(f"remote block {block_id} is not authorized")
+                source = local_base + source_offset
+                if not any(
+                    region.base_addr <= source
+                    and source + bytes_len
+                    <= region.base_addr
+                    + max(local.block_ids) * (region.block_stride or region.block_len)
+                    + region.block_len
+                    for region in local.regions
+                ):
+                    raise ValueError("source slice exceeds registered layer storage")
+                destination = remote_region.base_addr + block_id * stride
+                if destination + bytes_len > 2**64:
+                    raise ValueError("destination slice overflows address space")
+                slices.append((source, destination, bytes_len))
         bytes_total = sum(length for _, _, length in slices)
         # This is write admission. The sender holds the task through native
         # completion, so an admitted write keeps its captured authorization.
@@ -271,12 +201,11 @@ class RealMooncakePort:
             stats["xfer_window_ms"] = stats.get("xfer_window_ms", 0.0) + elapsed_ms
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "[PdConnector] Mooncake push_layer req=%s layer=%d input_blocks=%d coalesced_blocks=%d regions=%d bytes=%d native_ms=%.3f",
+                "[PdConnector] Mooncake push_layer req=%s layer=%d blocks=%d regions=%d bytes=%d native_ms=%.3f",
                 req_id,
                 layer_idx,
                 len(blocks),
-                len(native_blocks),
-                sum(len(block["regions"]) for block in native_blocks),
+                sum(len(block.regions) for block in blocks),
                 block_slices_bytes(blocks),
                 elapsed_ms,
             )
@@ -336,18 +265,11 @@ class RealMooncakePort:
                 raise RuntimeError(f"Mooncake transfer failed for request {req_id}")
             if status not in {"aborted", "done"}:
                 raise RuntimeError(f"unknown Mooncake transfer status {status!r}")
-            self._finished_recving.add(req_id)
 
     def pop_finished_sending(self) -> set[str]:
         with self._lock:
             finished = self._finished_sending
             self._finished_sending = set()
-            return finished
-
-    def pop_finished_recving(self) -> set[str]:
-        with self._lock:
-            finished = self._finished_recving
-            self._finished_recving = set()
             return finished
 
     def close_request(self, req_id: str) -> None:
@@ -356,7 +278,6 @@ class RealMooncakePort:
             generation = self._request_generations.pop(req_id, None)
             self._stats.pop(req_id, None)
             self._finished_sending.discard(req_id)
-            self._finished_recving.discard(req_id)
         if handshake is not None and generation is not None:
             self.engine.close_notification_scope(handshake.request_id, generation)
 
@@ -398,4 +319,4 @@ def build_mooncake_port(
         nics,
         engine.endpoint,
     )
-    return RealMooncakePort(engine, nic_count=len(nics))
+    return RealMooncakePort(engine)

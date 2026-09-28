@@ -12,7 +12,7 @@ from vllm.distributed.parallel_state import (
 
 from orbitkv.logging_utils import get_connector_logger
 from orbitkv.vllm.pd.decode_worker import DecodeHandler
-from orbitkv.vllm.pd.layout import KvCacheLayout, layout_from_tensor
+from orbitkv.vllm.pd.layout import KvCacheLayout
 from orbitkv.vllm.pd.metadata import (
     RELEASE_CONSUMER_ABORT,
     RELEASE_PRODUCER_PREEMPTED,
@@ -66,7 +66,7 @@ class PdWorkerBase:
         self.device_id = _infer_cuda_device(kv_caches)
         expected_num_blocks = _expected_num_blocks(self.kv_cache_config)
         self.layouts = {
-            layer_name: layout_from_tensor(
+            layer_name: KvCacheLayout.from_tensor(
                 layer_name,
                 tensor,
                 layer_spec=self._layer_spec(layer_name),
@@ -233,8 +233,7 @@ class PdDecodeWorkerConnector(PdWorkerBase):
         if not finished_req_ids and self._decode.is_idle():
             return None, None
         assert self.transfer is not None, "PdConnector Mooncake port is not initialized"
-        finished_recving = self.transfer.pop_finished_recving()
-        finished_recving.update(self._decode.pop_finished_transfer_waits())
+        finished_recving = self._decode.pop_finished_transfer_waits()
         finished_recving.update(self._decode.pop_finished_aborted_recving())
         finished_recving.update(self._decode.pop_failed_recving())
         if finished_recving:
@@ -316,14 +315,9 @@ class PdPrefillWorkerConnector(PdWorkerBase):
         super().__init__(vllm_config, kv_cache_config, transfer, metrics)
         self._prefill = PrefillHandler(self)
 
-    def start_load_kv(
-        self,
-        metadata: PdConnectorMetadata,
-        forward_context: Any,
-        **kwargs: Any,
-    ) -> None:
+    def prepare_pushes(self, metadata: PdConnectorMetadata) -> None:
         logger.debug(
-            "[PdConnector] prefill start_load_kv metadata=%s push_reqs=%s release=%s known_push=%s",
+            "[PdConnector] prefill prepare_pushes metadata=%s push_reqs=%s release=%s known_push=%s",
             metadata,
             sorted(metadata.reqs_to_push),
             sorted(metadata.reqs_to_release),
