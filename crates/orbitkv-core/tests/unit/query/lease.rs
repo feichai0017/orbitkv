@@ -2,52 +2,142 @@ use super::*;
 use crate::SealedBlock;
 
 #[test]
-fn consume_rejects_wrong_instance_without_removing_lease() {
-    let manager = QueryLeaseManager::default();
-    let lease_id = QueryLeaseId::fresh();
-    manager
-        .inner
-        .leases
-        .lock()
-        .expect("query leases lock poisoned")
-        .insert(
-            lease_id,
-            QueryLease {
-                instance_id: "inst-a".to_string(),
-                blocks: Vec::new(),
-                remaining_consumers: 1,
-                expires_at: Instant::now() + DEFAULT_LEASE_TTL,
-                ownership: None,
-            },
+fn invalid_batch_does_not_consume_valid_lease_shares() {
+    for invalid in ["missing", "instance", "expired", "duplicate"] {
+        let manager = QueryLeaseManager::default();
+        let source = RestoreSource::Memory(Arc::new(SealedBlock::from_slots(Vec::new())));
+        let first = manager.create("a", vec![source.clone()], 2, None);
+        let second = manager.create(
+            if invalid == "instance" { "b" } else { "a" },
+            vec![source],
+            1,
+            None,
         );
-
-    let err = match manager.consume("inst-b", &lease_id) {
-        Ok(_) => panic!("wrong instance consumed lease"),
-        Err(err) => err,
-    };
-    assert!(err.contains("belongs to instance inst-a"));
-
-    manager
-        .consume("inst-a", &lease_id)
-        .expect("original instance can still consume lease");
+        if invalid == "expired" {
+            manager
+                .inner
+                .leases
+                .lock()
+                .unwrap()
+                .get_mut(&second)
+                .unwrap()
+                .expires_at = Instant::now();
+        }
+        let tokens = [
+            first,
+            match invalid {
+                "missing" => QueryLeaseId::fresh(),
+                "duplicate" => first,
+                _ => second,
+            },
+        ];
+        let error = manager
+            .consume_batch::<()>("a", &tokens, |_| {
+                panic!("invalid tokens must be rejected before source validation")
+            })
+            .err()
+            .expect("invalid batch must fail");
+        assert!(matches!(
+            (&error, invalid),
+            (EngineError::InvalidArgument(_), "duplicate") | (EngineError::Storage(_), _)
+        ));
+        assert!(
+            error.to_string().contains(match invalid {
+                "instance" => "belongs to instance b",
+                "duplicate" => "duplicate query lease",
+                _ => "unknown or expired",
+            }),
+            "{invalid}: {error}"
+        );
+        let leases = manager.inner.leases.lock().unwrap();
+        assert_eq!(leases[&first].remaining_consumers, 2, "{invalid}");
+        assert_eq!(leases[&second].remaining_consumers, 1, "{invalid}");
+    }
 }
 
 #[test]
-fn consume_allows_configured_number_of_consumers() {
+fn source_validation_failure_preserves_the_entire_batch() {
     let manager = QueryLeaseManager::default();
-    let blocks = vec![RestoreSource::Memory(Arc::new(SealedBlock::from_slots(
-        Vec::new(),
-    )))];
-    let lease_id = manager.create("inst-a", blocks, 2, None);
-
-    assert_eq!(manager.consume("inst-a", &lease_id).unwrap().0.len(), 1);
-    assert_eq!(manager.consume("inst-a", &lease_id).unwrap().0.len(), 1);
-
-    let err = manager
-        .consume("inst-a", &lease_id)
+    let block = Arc::new(SealedBlock::from_slots(Vec::new()));
+    let source = RestoreSource::Memory(Arc::clone(&block));
+    let first = manager.create("a", vec![source.clone()], 1, None);
+    let second = manager.create("a", vec![source.clone(), source], 2, None);
+    let owners = Arc::strong_count(&block);
+    let error = manager
+        .consume_batch::<()>("a", &[first, second], |sources| {
+            assert_eq!(
+                sources
+                    .iter()
+                    .map(|blocks| blocks.len())
+                    .collect::<Vec<_>>(),
+                [1, 2]
+            );
+            Err(EngineError::InvalidArgument(
+                "storage group slot mismatch".to_string(),
+            ))
+        })
         .err()
-        .expect("lease should be exhausted");
-    assert!(err.contains("query lease is unknown or expired"));
+        .expect("source validation must reject the batch");
+    assert!(
+        matches!(error, EngineError::InvalidArgument(message) if message == "storage group slot mismatch")
+    );
+    assert_eq!(Arc::strong_count(&block), owners);
+    let leases = manager.inner.leases.lock().unwrap();
+    assert_eq!(leases[&first].remaining_consumers, 1);
+    assert_eq!(leases[&second].remaining_consumers, 2);
+    drop(leases);
+
+    let (total_blocks, consumed, _) = manager
+        .consume_batch("a", &[first, second], |sources| {
+            Ok(sources.iter().map(|blocks| blocks.len()).sum::<usize>())
+        })
+        .unwrap();
+    assert_eq!(total_blocks, 3);
+    assert_eq!(consumed.len(), 3);
+}
+
+#[test]
+fn batch_preserves_order_and_configured_consumer_count() {
+    let manager = QueryLeaseManager::default();
+    let first_block = Arc::new(SealedBlock::from_slots(Vec::new()));
+    let second_block = Arc::new(SealedBlock::from_slots(Vec::new()));
+    let first = manager.create(
+        "a",
+        vec![RestoreSource::Memory(Arc::clone(&first_block))],
+        2,
+        None,
+    );
+    let second = manager.create(
+        "a",
+        vec![RestoreSource::Memory(Arc::clone(&second_block))],
+        1,
+        None,
+    );
+    let (_, consumed, _) = manager
+        .consume_batch("a", &[second, first], |_| Ok(()))
+        .unwrap();
+    for (source, expected) in consumed.iter().zip([&second_block, &first_block]) {
+        let RestoreSource::Memory(actual) = source else {
+            panic!("memory source expected");
+        };
+        assert!(Arc::ptr_eq(actual, expected));
+    }
+    assert!(manager.consume_batch("a", &[second], |_| Ok(())).is_err());
+    assert_eq!(
+        manager
+            .consume_batch("a", &[first], |_| Ok(()))
+            .unwrap()
+            .1
+            .len(),
+        1
+    );
+    assert!(manager.consume_batch("a", &[first], |_| Ok(())).is_err());
+    let (validated, empty, reservations) = manager
+        .consume_batch("a", &[], |sources| Ok(sources.is_empty()))
+        .unwrap();
+    assert!(validated);
+    assert!(empty.is_empty());
+    assert!(reservations.is_empty());
 }
 
 #[test]
@@ -65,22 +155,25 @@ fn disconnect_releases_ready_interest_but_not_a_gpu_consumers_reservation() {
         operation: 1,
         revision: 2,
     };
+    let block = Arc::new(SealedBlock::from_slots(Vec::new()));
+    let source = Arc::downgrade(&block);
     let id = manager.create(
         "a",
-        vec![RestoreSource::Memory(Arc::new(SealedBlock::from_slots(
-            Vec::new(),
-        )))],
+        vec![RestoreSource::Memory(block)],
         2,
         Some((owner, reservation)),
     );
-    let (_, gpu) = manager.consume("a", &id).unwrap();
-    gpu.as_ref().unwrap().restoring();
+    let (_, blocks, gpu) = manager.consume_batch("a", &[id], |_| Ok(())).unwrap();
+    gpu[0].restoring();
     manager.release_owner(|candidate| candidate.session == 7);
+    assert!(source.upgrade().is_some());
     assert!(matches!(
         budget.reserve("a", "ns", 1, crate::QueryMode::Demand),
         crate::QueryAdmission::Busy
     ));
-    assert!(manager.consume("a", &id).is_err());
+    assert!(manager.consume_batch("a", &[id], |_| Ok(())).is_err());
+    drop(blocks);
+    assert!(source.upgrade().is_none());
     drop(gpu);
     assert!(matches!(
         budget.reserve("a", "ns", 100, crate::QueryMode::Demand),

@@ -13,6 +13,7 @@ use std::time::Duration;
 mod mooncake;
 
 mod client;
+mod local_restore;
 mod recovery;
 
 // Custom Python exceptions for error classification
@@ -86,7 +87,7 @@ fn query_response(
             py,
             QueryReady {
                 num_hit_blocks: u64_to_usize(response.num_hit_blocks, "num_hit_blocks")?,
-                lease: PyQueryLease(response.lease),
+                lease: response.lease,
                 hit_positions: response.hit_positions,
             },
         )
@@ -94,33 +95,11 @@ fn query_response(
     }
 }
 
-#[derive(Clone)]
-struct PyQueryLease(Vec<u8>);
-
-impl<'a, 'py> FromPyObject<'a, 'py> for PyQueryLease {
-    type Error = PyErr;
-
-    fn extract(obj: pyo3::Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
-        let bytes: Vec<u8> = obj.extract()?;
-        Ok(Self(bytes))
-    }
-}
-
-impl<'py> IntoPyObject<'py> for PyQueryLease {
-    type Target = pyo3::types::PyBytes;
-    type Output = Bound<'py, Self::Target>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-        Ok(pyo3::types::PyBytes::new(py, &self.0))
-    }
-}
-
 #[pyclass(frozen)]
 struct QueryReady {
     #[pyo3(get)]
     num_hit_blocks: usize,
-    lease: PyQueryLease,
+    lease: Vec<u8>,
     /// Membership queries (group_id > 0) only: indices into the queried
     /// block_hashes whose block is cached; lease block i corresponds to
     /// query position hit_positions[i]. Empty for prefix queries.
@@ -132,7 +111,7 @@ struct QueryReady {
 impl QueryReady {
     #[new]
     #[pyo3(signature = (num_hit_blocks, lease, hit_positions=Vec::new()))]
-    fn new(num_hit_blocks: usize, lease: PyQueryLease, hit_positions: Vec<u32>) -> Self {
+    fn new(num_hit_blocks: usize, lease: Vec<u8>, hit_positions: Vec<u32>) -> Self {
         Self {
             num_hit_blocks,
             lease,
@@ -141,8 +120,8 @@ impl QueryReady {
     }
 
     #[getter]
-    fn lease<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
-        self.lease.clone().into_pyobject(py)
+    fn lease<'py>(&self, py: Python<'py>) -> Bound<'py, pyo3::types::PyBytes> {
+        pyo3::types::PyBytes::new(py, &self.lease)
     }
 
     fn __repr__(&self) -> String {
@@ -150,7 +129,7 @@ impl QueryReady {
             "QueryReady(num_hit_blocks={}, hits={:?}, has_lease={})",
             self.num_hit_blocks,
             self.hit_positions,
-            !self.lease.0.is_empty()
+            !self.lease.is_empty()
         )
     }
 }

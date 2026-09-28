@@ -1,0 +1,490 @@
+//! Engine-owned raw Restore copies from independently imported payload arenas.
+
+use std::collections::HashMap;
+use std::os::fd::{AsRawFd, OwnedFd};
+use std::ptr::NonNull;
+use std::sync::Arc;
+
+use cudarc::driver::{CudaContext, CudaEvent, CudaStream, result, sys};
+
+use super::layout::{KVCacheGeometry, KVCacheLayout};
+use super::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
+use crate::PayloadArena;
+
+pub const MAX_PLAN_BYTES: usize = 1024 * 1024;
+
+/// A checked range inside one live allocation of a shared payload arena.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceRange {
+    pub arena_id: u64,
+    pub allocation_id: u64,
+    pub allocation_offset: u64,
+    pub allocation_size: u64,
+    /// Absolute byte offset within the arena, not a process address.
+    pub offset: u64,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawCopy {
+    pub source: SourceRange,
+    pub layer: String,
+    pub destination_offset: u64,
+}
+
+/// Pointer-free plan read only after the engine claims its source grant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawRestorePlan {
+    pub copies: Vec<RawCopy>,
+}
+
+impl RawRestorePlan {
+    pub fn encode(&self) -> Result<Vec<u8>, String> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        let count = u32::try_from(self.copies.len()).map_err(|_| "too many Restore copies")?;
+        bytes.extend_from_slice(&count.to_le_bytes());
+        for copy in &self.copies {
+            let name_len =
+                u16::try_from(copy.layer.len()).map_err(|_| "Restore layer name too long")?;
+            if bytes.len().saturating_add(58 + copy.layer.len()) > MAX_PLAN_BYTES {
+                return Err("Restore plan exceeds the session plan bank".into());
+            }
+            let source = &copy.source;
+            for value in [
+                source.arena_id,
+                source.allocation_id,
+                source.allocation_offset,
+                source.allocation_size,
+                source.offset,
+                source.size,
+                copy.destination_offset,
+            ] {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes.extend_from_slice(&name_len.to_le_bytes());
+            bytes.extend_from_slice(copy.layer.as_bytes());
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < 8 || bytes.len() > MAX_PLAN_BYTES || bytes[..4] != 1_u32.to_le_bytes() {
+            return Err("invalid raw Restore plan header".into());
+        }
+        let count =
+            u32::from_le_bytes(bytes[4..8].try_into().map_err(|_| "invalid plan count")?) as usize;
+        if count > (bytes.len() - 8) / 58 {
+            return Err("invalid raw Restore copy count".into());
+        }
+        let mut copies = Vec::with_capacity(count);
+        let mut remaining = &bytes[8..];
+        for _ in 0..count {
+            if remaining.len() < 58 {
+                return Err("truncated raw Restore copy".into());
+            }
+            let mut words = [0_u64; 7];
+            for (index, word) in words.iter_mut().enumerate() {
+                *word = u64::from_le_bytes(
+                    remaining[index * 8..index * 8 + 8]
+                        .try_into()
+                        .map_err(|_| "invalid copy word")?,
+                );
+            }
+            let name_len = u16::from_le_bytes([remaining[56], remaining[57]]) as usize;
+            if name_len == 0 || remaining.len() < 58 + name_len {
+                return Err("invalid raw Restore layer name".into());
+            }
+            let layer = std::str::from_utf8(&remaining[58..58 + name_len])
+                .map_err(|_| "Restore layer name is not UTF-8")?
+                .to_owned();
+            remaining = &remaining[58 + name_len..];
+            copies.push(RawCopy {
+                source: SourceRange {
+                    arena_id: words[0],
+                    allocation_id: words[1],
+                    allocation_offset: words[2],
+                    allocation_size: words[3],
+                    offset: words[4],
+                    size: words[5],
+                },
+                layer,
+                destination_offset: words[6],
+            });
+        }
+        if !remaining.is_empty() {
+            return Err("trailing raw Restore plan bytes".into());
+        }
+        Ok(Self { copies })
+    }
+}
+
+/// Local binding of the exact tensor view registered with the Manager.
+/// The caller must retain the tensor allocation until this binding is dropped.
+pub struct LocalTensor {
+    name: String,
+    address: u64,
+    bytes: usize,
+    allocation: usize,
+}
+
+impl LocalTensor {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "validates the registered tensor geometry"
+    )]
+    pub fn new(
+        name: String,
+        address: u64,
+        bytes: usize,
+        allocation: usize,
+        num_blocks: usize,
+        segment_bytes: usize,
+        kv_stride_bytes: usize,
+        segments: usize,
+    ) -> Result<Self, String> {
+        let geometry = KVCacheGeometry::new(
+            num_blocks,
+            segment_bytes,
+            kv_stride_bytes,
+            segments,
+            None,
+            1,
+        )?;
+        let extent = match geometry.block_ranges(num_blocks - 1)? {
+            super::layout::BlockRanges::Contiguous(range) => range.end,
+            super::layout::BlockRanges::Split { k, v } => k.end.max(v.end),
+        };
+        KVCacheLayout::bind(address, bytes, geometry)?;
+        Ok(Self {
+            name,
+            address,
+            bytes: extent,
+            allocation,
+        })
+    }
+}
+
+struct ImportedArena {
+    pointer: NonNull<u8>,
+    device_pointer: u64,
+    size: usize,
+    _fd: OwnedFd,
+    context: Arc<CudaContext>,
+}
+
+// SAFETY: the mapping is stable, shared and CUDA registered for its lifetime.
+// Only the serialized executor submits reads, and drains before dropping it.
+unsafe impl Send for ImportedArena {}
+
+impl ImportedArena {
+    fn new(arena: PayloadArena, context: Arc<CudaContext>) -> Result<Self, String> {
+        let size = usize::try_from(arena.size).map_err(|_| "payload arena size overflow")?;
+        if arena.id == 0 || size == 0 || size > isize::MAX as usize {
+            return Err("invalid payload arena identity or size".into());
+        }
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: stat is valid output storage; fd is independently owned.
+        if unsafe { libc::fstat(arena.fd.as_raw_fd(), stat.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        // SAFETY: fstat initialized the full result on success.
+        let stat = unsafe { stat.assume_init() };
+        let required = libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+        // SAFETY: F_GET_SEALS does not consume or mutate the owned descriptor.
+        let seals = unsafe { libc::fcntl(arena.fd.as_raw_fd(), libc::F_GET_SEALS) };
+        if stat.st_size < 0
+            || stat.st_size as u64 != arena.size
+            || seals < 0
+            || seals & required != required
+        {
+            return Err("payload arena size or seals do not match registration".into());
+        }
+        context.bind_to_thread().map_err(|e| e.to_string())?;
+        // SAFETY: validated sealed file covers this nonempty mapping.
+        let pointer = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                arena.fd.as_raw_fd(),
+                0,
+            )
+        };
+        if pointer == libc::MAP_FAILED {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        // SAFETY: mapping is live and writable for size bytes in the current context.
+        if let Err(error) = unsafe {
+            sys::cuMemHostRegister_v2(pointer, size, sys::CU_MEMHOSTREGISTER_DEVICEMAP).result()
+        } {
+            unsafe { libc::munmap(pointer, size) };
+            return Err(format!("payload CUDA registration failed: {error}"));
+        }
+        let mut device_pointer = 0;
+        // SAFETY: registration succeeded and output pointer is valid.
+        if let Err(error) =
+            unsafe { sys::cuMemHostGetDevicePointer_v2(&mut device_pointer, pointer, 0).result() }
+        {
+            unsafe {
+                sys::cuMemHostUnregister(pointer);
+                libc::munmap(pointer, size);
+            }
+            return Err(format!("payload CUDA address failed: {error}"));
+        }
+        let pointer = NonNull::new(pointer.cast::<u8>()).ok_or("null payload mapping")?;
+        Ok(Self {
+            pointer,
+            device_pointer,
+            size,
+            _fd: arena.fd,
+            context,
+        })
+    }
+}
+
+impl Drop for ImportedArena {
+    fn drop(&mut self) {
+        if self.context.bind_to_thread().is_err() {
+            std::process::abort();
+        }
+        // SAFETY: the owning executor drains every submission before drop.
+        if unsafe { sys::cuMemHostUnregister(self.pointer.as_ptr().cast()).result() }.is_err() {
+            std::process::abort();
+        }
+        unsafe { libc::munmap(self.pointer.as_ptr().cast(), self.size) };
+    }
+}
+
+/// One engine GPU's stream, tensor bindings and imported source mappings.
+/// All submitted work drains inside `execute`, including partial failures.
+pub struct LocalRestoreExecutor {
+    context: Arc<CudaContext>,
+    stream: Arc<CudaStream>,
+    readiness: CudaEvent,
+    backend: Box<dyn TransferBackend>,
+    tensors: HashMap<String, LocalTensor>,
+    arenas: HashMap<u64, ImportedArena>,
+}
+
+/// CUDA operations in registration and readiness run on a framework thread.
+/// Restore its context after all temporary CUDA owners have been dropped.
+struct CallerContext(Option<sys::CUcontext>);
+
+impl CallerContext {
+    fn capture() -> Result<Self, String> {
+        result::ctx::get_current()
+            .map(Self)
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for CallerContext {
+    fn drop(&mut self) {
+        // SAFETY: this context belonged to the caller before entering native
+        // work; none of these operations destroys it. Null restores no context.
+        if let Err(error) =
+            unsafe { result::ctx::set_current(self.0.unwrap_or(std::ptr::null_mut())) }
+        {
+            log::error!("Cannot restore framework CUDA context: {error}; terminating engine");
+            std::process::abort();
+        }
+    }
+}
+
+impl LocalRestoreExecutor {
+    /// Attach to the same primary context as the exporting framework tensors.
+    /// `device` is the process-local CUDA ordinal, not Manager's physical ID.
+    pub fn new(
+        device: usize,
+        tensors: Vec<LocalTensor>,
+        arenas: Vec<PayloadArena>,
+        mode: TransferMode,
+    ) -> Result<Self, String> {
+        let _caller_context = CallerContext::capture()?;
+        let context = CudaContext::new(device).map_err(|e| e.to_string())?;
+        let mut bindings = HashMap::new();
+        for tensor in tensors {
+            let mut tensor_context = std::ptr::null_mut();
+            // SAFETY: CUDA validates the exported device pointer; output is a context handle.
+            unsafe {
+                sys::cuPointerGetAttribute(
+                    (&mut tensor_context as *mut sys::CUcontext).cast(),
+                    sys::CUpointer_attribute::CU_POINTER_ATTRIBUTE_CONTEXT,
+                    tensor.address,
+                )
+                .result()
+            }
+            .map_err(|e| format!("invalid tensor CUDA allocation: {e}"))?;
+            if tensor_context != context.cu_ctx() {
+                return Err(
+                    "tensor allocation does not belong to the framework primary context".into(),
+                );
+            }
+            if bindings.insert(tensor.name.clone(), tensor).is_some() {
+                return Err("duplicate local tensor layer".into());
+            }
+        }
+        if arenas.len() > 64 {
+            return Err("too many payload arena mappings".into());
+        }
+        let mut imported = HashMap::new();
+        for arena in arenas {
+            let id = arena.id;
+            if imported.contains_key(&id) {
+                return Err("duplicate payload arena identity".into());
+            }
+            imported.insert(id, ImportedArena::new(arena, Arc::clone(&context))?);
+        }
+        let stream = context.new_stream().map_err(|e| e.to_string())?;
+        let readiness = context
+            .new_event(Some(sys::CUevent_flags::CU_EVENT_BLOCKING_SYNC))
+            .map_err(|e| e.to_string())?;
+        let backend: Box<dyn TransferBackend> = match mode {
+            TransferMode::Direct => Box::new(MemcpyBackend),
+            TransferMode::Kernel => Box::new(KernelBackend::new(&context)?),
+        };
+        Ok(Self {
+            context,
+            stream,
+            readiness,
+            backend,
+            tensors: bindings,
+            arenas: imported,
+        })
+    }
+
+    /// Capture the caller's actual previous-user stream and fence it before
+    /// requesting a plan (which may select a Manager-owned codec/SSD route).
+    pub fn wait_for_destination(&mut self, ready_stream: u64) -> Result<(), String> {
+        let _caller_context = CallerContext::capture()?;
+        self.context.bind_to_thread().map_err(|e| e.to_string())?;
+        let stream = ready_stream as sys::CUstream;
+        let mut stream_context = std::ptr::null_mut();
+        // SAFETY: CUDA validates the borrowed framework stream; we never destroy it.
+        unsafe { sys::cuStreamGetCtx(stream, &mut stream_context).result() }
+            .map_err(|e| e.to_string())?;
+        if stream_context != self.context.cu_ctx() {
+            return Err("Restore readiness stream belongs to another CUDA context".into());
+        }
+        // An idle stream already proves all preceding users have finished.
+        // Do not submit an otherwise unnecessary event to the GPU in that case.
+        // SAFETY: stream was validated in this context and remains caller-owned.
+        match unsafe { sys::cuStreamQuery(stream) } {
+            sys::CUresult::CUDA_SUCCESS => return Ok(()),
+            sys::CUresult::CUDA_ERROR_NOT_READY => {}
+            error => return Err(format!("Restore readiness query failed: {error:?}")),
+        }
+        // SAFETY: event belongs to this context and stream was verified above.
+        unsafe { result::event::record(self.readiness.cu_event(), stream) }
+            .map_err(|e| e.to_string())?;
+        self.readiness.synchronize().map_err(|e| e.to_string())
+    }
+
+    /// Caller holds the Active grant until this method returns and publishes
+    /// Drained afterwards. Sources cannot be recycled during preparation or DMA.
+    pub fn execute(&mut self, plan: &RawRestorePlan) -> Result<(), String> {
+        #[cfg(feature = "test-hooks")]
+        crate::test_faults::pause_blocking("local_restore_claim");
+        self.context.bind_to_thread().map_err(|e| e.to_string())?;
+        let mut copies = Vec::with_capacity(plan.copies.len());
+        let mut allocations = HashMap::new();
+        for copy in &plan.copies {
+            let source = &copy.source;
+            let arena = self
+                .arenas
+                .get(&source.arena_id)
+                .ok_or("Restore source arena is not registered")?;
+            let allocation_end = source
+                .allocation_offset
+                .checked_add(source.allocation_size)
+                .ok_or("source allocation overflow")?;
+            let source_end = source
+                .offset
+                .checked_add(source.size)
+                .ok_or("source copy overflow")?;
+            if source.allocation_id == 0
+                || source.size == 0
+                || source.allocation_size == 0
+                || allocation_end > arena.size as u64
+                || source.offset < source.allocation_offset
+                || source_end > allocation_end
+            {
+                return Err("Restore source exceeds its granted allocation".into());
+            }
+            let key = (source.arena_id, source.allocation_id);
+            let bounds = (source.allocation_offset, source.allocation_size);
+            let next_index = allocations.len();
+            let (previous_bounds, allocation_index) =
+                allocations.entry(key).or_insert((bounds, next_index));
+            if *previous_bounds != bounds {
+                return Err("inconsistent Restore allocation generation bounds".into());
+            }
+            let tensor = self
+                .tensors
+                .get(&copy.layer)
+                .ok_or("Restore destination layer is not registered")?;
+            let end = copy
+                .destination_offset
+                .checked_add(source.size)
+                .ok_or("destination copy overflow")?;
+            if end > tensor.bytes as u64 {
+                return Err("Restore destination exceeds retained tensor allocation".into());
+            }
+            copies.push(CopyDesc {
+                device: tensor
+                    .address
+                    .checked_add(copy.destination_offset)
+                    .ok_or("destination address overflow")?,
+                // SAFETY: source offset is within the live imported arena.
+                host: unsafe { arena.pointer.as_ptr().add(source.offset as usize) },
+                host_device: arena
+                    .device_pointer
+                    .checked_add(source.offset)
+                    .ok_or("source GPU address overflow")?,
+                size: source.size as usize,
+                device_allocation: tensor.allocation,
+                host_allocation: *allocation_index,
+            });
+        }
+        copies.sort_unstable_by_key(|copy| copy.device);
+        for pair in copies.windows(2) {
+            if pair[0]
+                .device
+                .checked_add(pair[0].size as u64)
+                .is_none_or(|end| end > pair[1].device)
+            {
+                return Err("overlapping Restore destination ranges".into());
+            }
+        }
+        #[cfg(feature = "test-hooks")]
+        let submitted = if !copies.is_empty()
+            && (crate::test_faults::active("local_restore_dma")
+                || crate::test_faults::active("local_restore_error"))
+        {
+            let first = self.backend.h2d(&copies[..1], &self.stream);
+            crate::test_faults::pause_blocking("local_restore_dma");
+            if crate::test_faults::active("local_restore_error") {
+                first.and(Err(
+                    "injected failure after first local Restore enqueue".into()
+                ))
+            } else {
+                first.and_then(|()| self.backend.h2d(&copies[1..], &self.stream))
+            }
+        } else {
+            self.backend.h2d(&copies, &self.stream)
+        };
+        #[cfg(not(feature = "test-hooks"))]
+        let submitted = self.backend.h2d(&copies, &self.stream);
+        if let Err(error) = self.stream.synchronize() {
+            log::error!("Cannot establish engine-local Restore drain: {error}; terminating engine");
+            std::process::abort();
+        }
+        submitted
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/transfer/local.rs"]
+mod tests;

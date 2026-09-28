@@ -16,10 +16,16 @@ client.close()
 
 `CacheManagerClient` is the Rust owner exposed through PyO3. Construct
 `BlockHashes(page_hashes)` once per lookup; slices share its native allocation.
-`query_prefetch` owns submission, revision and polling. `start_restore` returns
-a client-bound handle for `poll_restore` or `wait_restore(timeout=...)`.
-Native calls release the GIL. A timeout does not release GPU destinations while
-a copy may still be running. See the [type reference](../python/orbitkv/orbitkv.pyi).
+`query_prefetch` owns submission, revision and polling.
+`register_context_batch(..., tensors=...)` retains actual tensor/exporter objects
+alongside the IPC metadata used by Publish and Manager SSD/codec routes.
+`start_restore(..., ready_stream=...)` takes the engine's destination-readiness
+stream and returns a client-bound handle for `poll_restore` or
+`wait_restore(timeout=...)`. Unencoded DRAM copies execute in the native engine
+worker; their local result follows DMA drain without waiting for Manager source
+reaping. Repeated registration of the same binding is rejected, and unregister
+or close drains accepted operations. Native calls release the GIL. A timeout
+does not release destination page assignments while a copy may still be running. See the [type reference](../python/orbitkv/orbitkv.pyi).
 
 ## Process channel
 
@@ -35,7 +41,11 @@ path. `orbitkv.timeout_ms` (default 5000) bounds hot requests and health;
 registration and unregister allow at least 120 seconds for CUDA setup/draining.
 `orbitkv.spin_iterations` defaults to 64. Standalone Cache Managers do
 not start gRPC. Client and Cache Manager must use matching
-bootstrap protocol versions (currently version 2).
+bootstrap protocol versions (currently bootstrap 6, channel ABI 9, and lifecycle 4).
+Bootstrap transfers five metadata/notification FDs; GPU registration attaches
+the shared payload arena FDs separately. The first local executor uses a
+whole-operation fence and rejects raw plans above 1 MiB before lease consumption;
+see [execution scope and qualification gates](engine-local-restore.md).
 
 `orbitkv.wait_for_full_prefix` is supported on the local path: pending queries
 return `QueryLoading`, and repeated queries with the same instance/request/group

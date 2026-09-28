@@ -17,6 +17,7 @@
 
 mod kernel;
 pub(crate) mod layout;
+pub mod local;
 mod memcpy;
 pub(crate) mod worker;
 

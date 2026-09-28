@@ -9,6 +9,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | Path | Responsibility |
 | --- | --- |
 | `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
+| `communication.py` | Real Query miss/hit, Publish D2H, Restore submit-to-ready and empty-restore controls using matching external artifacts |
 | `catalog.rs` | Rust directory cleanup microbenchmark, run through Cargo |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
@@ -20,6 +21,7 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `concurrent.py` | Closed-loop bursts, shared/mixed prefixes, batch counters and sampled memory peaks |
 | `sustained.py` | Bounded continuous traffic mixing reusable prefixes with cold requests |
 | `metrics.py` | Cache-source evidence and statistical summaries |
+| `timeline.py` | Request-linked preparation/restore intervals and explicit completion measurement coverage |
 | `report.py` | Offline CSV/JSON reports from complete raw runs |
 | `serving.sh` | vLLM serving measurements against an already running endpoint |
 | `sharegpt.py` | Multi-turn workload using the pinned vLLM benchmark scripts |
@@ -339,7 +341,10 @@ request ID for correlating measured traffic with the logs.
 `timeline.jsonl` extracts only measured requests; `timeline-summary.json` reports
 stage coverage and preparation/restore/queue intervals. Durations use one
 process's monotonic clock or Manager-local elapsed time, never a subtraction
-of clocks on different hosts. Missing stages are not counted as zero latency.
+of clocks on different hosts. Missing restore/completion intervals have
+`count: 0` and null quantiles. `completion_coverage` counts linked restore batches,
+observed worker/notification events and client restore intervals;
+missing stages are not counted as zero latency.
 The [initial Qwen3-8B pressure controls](../docs/queued-warming.md#initial-pressure-controls)
 increased SSD bytes per request without a throughput gain. These results also
 retain a native HBM control for SGLang's prepared-reference output differences.
@@ -456,27 +461,47 @@ Add `--trace-transfers` to either engine's OrbitKV run for request-correlated
 discovery, host-read, restore and completion observations in `timeline.jsonl`
 and `timeline-summary.json`. Manager restore time includes dispatch and worker
 queueing; the load histogram separately measures the H2D worker task including
-stream synchronization. Completion signal and delivery intervals start at the
-GPU worker's terminal timestamp. A signal event records the notification attempt,
-whereas delivery records the terminal poll response. These are distinct from
-the engine's own restore-submit to GPU-ready interval. Shared restore batches
-are counted once, using the Manager epoch and operation ID. Dense ordinary
-queries combine candidate discovery and reading; missing separate discovery
-samples do not mean discovery takes zero time. No subtraction between process
-clocks is used, and these overlapping intervals must not be added to obtain TTFT.
+stream synchronization. `completion_signal_ms` starts at the GPU worker's terminal
+timestamp and records the notification attempt, including the completion record
+publication. Shared-memory completion consumes no Manager poll RPC, so the
+report has no isolated consumer-delivery timer. `completion_coverage` counts
+worker outcomes, notification attempts, missing observations and client restore
+intervals. Regenerate reports with the code revision that produced their logs;
+the current parser has no decoder for retired completion events.
+
+For current revision comparisons, use `restore_ms`: the engine's same-process
+restore-submit to GPU-ready observation. It includes submission, restore work,
+waiting and consumer scheduling, and does not isolate completion delivery. Compare
+matched workloads with tracing enabled on both revisions; retain interval counts,
+TTFT and Manager restore/copy observations. Do not subtract their percentiles to
+estimate delivery latency. Shared Manager restore batches count once, using the
+Manager epoch and operation ID; engine intervals count per request and process.
+Dense ordinary queries combine candidate discovery and reading; missing separate
+discovery samples do not mean discovery takes zero time. No subtraction between
+process clocks is used, and overlapping intervals must not be added to obtain TTFT.
 
 ## Report existing runs
 
 ```bash
 python -m benches.report \
   benches/results/runs/<cpu-run> benches/results/runs/<orbitkv-run> \
+  benches/results/runs/<lmcache-run> \
+  --reference-run benches/results/runs/<native-run> \
   --output benches/results/runs/<report-name>
 ```
 
 This needs only `requests`, not torch, either inference engine, or the native
 extension. It writes `summary.csv` and `summary.json` without mixing samples
 across runs. Incomplete workloads, duplicate samples, and failed runs are
-rejected. Copy reviewed exports into `results/` when publishing a measurement;
+rejected. `--reference-run` compares prompt hashes and generated text against
+an unencoded run, including a different cache backend. It requires the same
+workload, capacity arguments, model revision, GPU, launch CPU affinity, Python,
+engine, PyTorch and Transformers versions. Backend-only packages may differ. Missing samples and
+text differences remain explicit; exact text comparisons are diagnostic, not
+a replacement for deterministic correctness gates. Native HBM-only runs record
+zero configured host-cache bytes, while CPU/OrbitKV/LMCache runs record their
+configured host pools. Manifests also retain the launch CPU affinity.
+Copy reviewed exports into `results/` when publishing a measurement;
 keep raw logs and dataset downloads in the ignored `results/runs/` directory.
 
 ## Additional workloads and harness checks
@@ -529,6 +554,85 @@ other GPU workloads.
 See the [controlled client measurements](../docs/client-performance.md) for the
 baseline, final path and old-client/new-Manager control, with a link to the
 historical per-batch evidence.
+
+## Local communication and GPU-copy microbenchmark
+
+See the [recorded comparison](../docs/communication-performance.md) for the
+request-event and encoding changes, including latency ranges and CPU tradeoffs.
+
+Use one frozen harness checkout and independently built matching Manager and
+Python-package snapshots. The caller imports the selected package through
+`PYTHONPATH`; the Manager inherits that same package and the caller's Python
+runtime. The harness never substitutes this checkout's `python/` directory or
+builds native artifacts. `ORBITKV_CACHE_MANAGER_BINARY` can replace `--manager`.
+
+```bash
+PYTHONPATH=/artifacts/baseline/python /path/to/cuda-python/bin/python \
+  -m benches.communication \
+  --manager /artifacts/baseline/orbitkv-cache-manager \
+  --label baseline --output benches/results/runs/communication-baseline \
+  --iterations 100 --warmup 20 --repeats 3 \
+  --payload-bytes 4096 262144 4194304 --idle-ms 0 1
+
+PYTHONPATH=/artifacts/candidate/python /path/to/cuda-python/bin/python \
+  -m benches.communication \
+  --manager /artifacts/candidate/orbitkv-cache-manager \
+  --label candidate --output benches/results/runs/communication-candidate \
+  --iterations 100 --warmup 20 --repeats 3 \
+  --payload-bytes 4096 262144 4194304 --idle-ms 0 1
+```
+
+Requires a CUDA-enabled torch environment, `requests`, a release native
+extension and Manager, and one GPU. Preserve the same CUDA library paths, MPS
+configuration, CPU affinity, and artifact build mode. Run exclusively after
+builds finish; the harness refuses competing Cargo/Manager/serving processes
+and owns its Manager process group. It retains GPU tensors through Manager
+teardown on errors and rejects incomplete or unsuccessful operations.
+
+The default matrix has 1/64/1024 blocks of 4 KiB in one contiguous uint8 layer.
+`--payload-bytes` specifies bytes **per layer**; output `payload_bytes` counts all
+layers. To exercise multi-message Publish encoding with 36 layers and 128 pages,
+use `--layers 36 --payload-bytes 524288`. Increase `--pool-mib` when the largest
+payload across all layers exceeds half the pool. The 1024-block limit keeps
+Query and Restore descriptors bounded; Publish can span several channel
+messages. Every Publish uses fresh hashes to force D2H instead of measuring
+resident-key deduplication.
+
+Before timing, every payload size passes a real poison/restore/GPU-byte check
+against retained source bytes, with different data in each layer. Restore
+cohorts also check their final GPU bytes; GPU correctness checks are outside
+the timed loop. Measured H2D and D2H byte-counter deltas must equal the requested
+bytes. `restore_empty` uses the registered layers with no loads and measures
+the no-payload submission/completion control.
+
+Query latency includes all `query_prefetch` calls until `QueryReady`, with API
+call counts retained; lease release is outside that interval. Restore latency
+starts after lease acquisition and ends at native `wait_restore` readiness,
+with submission and remaining wait recorded separately. Publish latency covers
+`save`, including chunking and D2H; sealing synchronization and cache cleanup
+run outside each sample to prevent capacity/eviction drift. Thus zero prescribed
+idle for Publish still includes those maintenance calls between samples. The
+1 ms interval is inserted before the measured operation, after lease acquisition
+for Restore. These are client-observed durations, not CUDA-event timings or
+isolated transport/notification latency.
+
+The default `--idle-seconds 2` also records a quiet Manager CPU window after GPU
+validation, without harness calls during the sleep. Its CPU seconds divided by
+wall seconds reports occupied CPU cores. Each measured cohort records caller
+thread/process CPU and Manager `/proc` CPU totals. Manager totals include query
+preparation, release, Publish cleanup, and prescribed idle; they exclude warmup
+and byte validation. The manifest records `/proc` clock-tick resolution: short
+cohorts cannot establish precise per-RPC CPU costs. Use larger iteration counts
+when assessing small CPU differences.
+
+Outputs are `manifest.json`, `samples.jsonl`, `results.json`, `status.json`, and
+`manager.log`. Only a complete status is a valid run. Raw samples exclude
+warmup; p50/p95/p99 use linear interpolation separately for each repeat and
+case. Do not pool repetitions or subtract percentiles to infer delivery delay.
+The manifest identifies binary/extension/helper SHA-256, the harness, device,
+Python, effective paths, affinities and MPS environment. Alternate baseline and
+candidate launch order across independent runs, then compare matched cohorts.
+This microbenchmark does not establish serving TTFT/ITL or multi-GPU performance.
 
 ## Cost observation overhead
 

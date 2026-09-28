@@ -1,4 +1,5 @@
 mod pending;
+mod restore;
 mod session;
 
 use std::collections::HashMap;
@@ -16,8 +17,8 @@ use orbitkv_channel::{
     ArenaError, BootstrapError, BootstrapServer, BootstrapSession, Command, CommandCode,
     CompletionObservationRequest, DeferredResponse, PublishRequest as ChannelPublishRequest,
     QueryBundleResponse, QueryOutcomeCode, RESPONSE_FLAG_REQUEST_CONSUMED,
-    ReleaseRequest as ChannelReleaseRequest, Response, RestoreCommand, RestoreResponse,
-    RestoreState, StatusCode, TransportError, TransportServer,
+    ReleaseRequest as ChannelReleaseRequest, Response, RestoreRequest, StatusCode, TransportError,
+    TransportServer,
 };
 use orbitkv_core::{
     CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
@@ -32,23 +33,8 @@ use crate::cache::operations::{
     execute_publish, execute_release, execute_restore,
 };
 
-const IDLE_POLL_INTERVAL: Duration = Duration::from_micros(50);
 const BOOTSTRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LIVENESS_POLL_INTERVAL: Duration = Duration::from_millis(250);
-const MAX_RESTORE_OPERATIONS_PER_SESSION: usize = 1024;
-const MAX_RESTORE_ERROR_BYTES: usize = 4096;
-
-enum RestoreOperation {
-    Pending {
-        receiver: tokio::sync::oneshot::Receiver<orbitkv_core::LoadOutcome>,
-        started: Instant,
-    },
-    Complete {
-        result: Result<(), String>,
-        completed_at: Instant,
-    },
-}
-
 #[derive(Debug, Error)]
 pub(crate) enum ProcessEndpointError {
     #[error(transparent)]
@@ -112,12 +98,11 @@ impl ProcessEndpoint {
                     bootstrap_socket.display()
                 );
                 let mut sessions = HashMap::new();
-                let mut operations = HashMap::new();
+                let mut grants = HashMap::new();
                 let mut queries = pending::PendingQueries::default();
                 queries.read_batch_bytes = read_batch_bytes;
                 queries.read_timeout = read_timeout;
                 queries.read_max_batches = read_max_batches;
-                let mut next_operation_id = 1u64;
                 let mut next_bootstrap_poll = Instant::now();
                 let mut next_liveness_poll = Instant::now();
                 while !thread_stop.load(Ordering::Acquire) {
@@ -126,6 +111,7 @@ impl ProcessEndpoint {
                         accept_pending_sessions(
                             &bootstrap,
                             &mut sessions,
+                            &mut grants,
                             &runtime,
                             &lifecycle,
                             session_epoch,
@@ -134,25 +120,17 @@ impl ProcessEndpoint {
                         next_bootstrap_poll = now + BOOTSTRAP_POLL_INTERVAL;
                     }
                     if now >= next_liveness_poll {
-                        let mut dead_sessions = Vec::new();
-                        sessions.retain(|token, session| {
-                            let alive = match session.is_alive() {
-                                Ok(alive) => alive,
-                                Err(error) => {
-                                    error!("Bootstrap liveness check failed: {error}");
-                                    false
-                                }
-                            };
-                            if !alive {
-                                dead_sessions.push(*token);
+                        sessions.retain(|_, session| match session.is_alive() {
+                            Ok(alive) => alive,
+                            Err(error) => {
+                                error!("Bootstrap liveness check failed: {error}");
+                                false
                             }
-                            alive
                         });
-                        operations.retain(|(token, _), _| !dead_sessions.contains(token));
+                        grants.retain(|token, _| sessions.contains_key(token));
                         queries.retain_sessions(&engine, |token| sessions.contains_key(&token));
                         next_liveness_poll = now + LIVENESS_POLL_INTERVAL;
                     }
-                    advance_restore_operations(&sessions, &mut operations, session_epoch);
 
                     let mut request_shutdown = false;
                     match server.try_serve_deferred_for_epoch(session_epoch, |command, reply| {
@@ -170,12 +148,11 @@ impl ProcessEndpoint {
                                 command,
                                 &bootstrap,
                                 &mut sessions,
+                                &grants,
                                 &engine,
                                 &runtime,
                                 &hll_tracker,
-                                &mut operations,
                                 &mut queries,
-                                &mut next_operation_id,
                                 &mut request_shutdown,
                             ))
                         }
@@ -184,12 +161,17 @@ impl ProcessEndpoint {
                             shutdown.notify_waiters();
                             break;
                         }
-                        Ok(true) => {}
-                        Ok(false) => thread::sleep(IDLE_POLL_INTERVAL),
-                        Err(error) => {
-                            error!("Process channel request failed: {error}");
-                            thread::sleep(IDLE_POLL_INTERVAL);
-                        }
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(error) => error!("Process channel request failed: {error}"),
+                    }
+                    let maintenance = next_bootstrap_poll.min(next_liveness_poll);
+                    if let Err(error) = server
+                        .wait_for_request(maintenance.saturating_duration_since(Instant::now()))
+                    {
+                        error!("Process channel request wait failed: {error}");
+                        shutdown.notify_waiters();
+                        break;
                     }
                 }
                 info!("Process channel endpoint stopped: service={thread_service}");
@@ -221,6 +203,7 @@ impl Drop for ProcessEndpoint {
 fn accept_pending_sessions(
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
+    grants: &mut HashMap<u64, restore::LocalGrants>,
     runtime: &Handle,
     lifecycle: &crate::cache::lifecycle::LifecycleService,
     epoch: u64,
@@ -235,6 +218,15 @@ fn accept_pending_sessions(
                     session.credentials().uid,
                     session.slot_index()
                 );
+                match restore::LocalGrants::start(Arc::clone(session.completions()), runtime) {
+                    Ok(owner) => {
+                        grants.insert(session.client_token(), owner);
+                    }
+                    Err(error) => {
+                        error!("Cannot start restore grant reaper: {error}");
+                        continue;
+                    }
+                }
                 match session.stream().try_clone() {
                     Ok(stream) => {
                         runtime.spawn(session::serve(
@@ -246,6 +238,7 @@ fn accept_pending_sessions(
                     }
                     Err(error) => {
                         error!("Cannot start process-channel lifecycle: {error}");
+                        grants.remove(&session.client_token());
                         continue;
                     }
                 }
@@ -268,12 +261,11 @@ fn dispatch(
     command: Command,
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
+    grants: &HashMap<u64, restore::LocalGrants>,
     engine: &Arc<OrbitKVEngine>,
     runtime: &Handle,
     hll_tracker: &Arc<std::sync::Mutex<MultiWindowHllTracker>>,
-    operations: &mut HashMap<(u64, u64), RestoreOperation>,
     queries: &mut pending::PendingQueries,
-    next_operation_id: &mut u64,
     request_shutdown: &mut bool,
 ) -> Response {
     let mut response = Response::ok(command);
@@ -304,14 +296,7 @@ fn dispatch(
         }
         CommandCode::Publish => unreachable!("publish uses deferred response handling"),
         CommandCode::Restore => {
-            response = dispatch_restore(
-                command,
-                bootstrap,
-                sessions,
-                engine,
-                operations,
-                next_operation_id,
-            );
+            response = dispatch_restore(command, bootstrap, sessions, grants, engine, runtime);
         }
     }
     response
@@ -381,84 +366,13 @@ fn dispatch_completion_observation(
     response
 }
 
-fn advance_restore_operations(
-    sessions: &HashMap<u64, BootstrapSession>,
-    operations: &mut HashMap<(u64, u64), RestoreOperation>,
-    epoch: u64,
-) {
-    for ((token, id), operation) in operations.iter_mut() {
-        #[cfg(feature = "test-hooks")]
-        if orbitkv_core::test_faults::active("restore") {
-            continue;
-        }
-        let completion = match operation {
-            RestoreOperation::Pending { receiver, started } => match receiver.try_recv() {
-                Ok(outcome) => Some((
-                    outcome
-                        .result
-                        .map_err(|error| truncate_error(error.to_string())),
-                    outcome.completed_at,
-                    *started,
-                )),
-                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
-                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => Some((
-                    Err("restore completion channel closed".to_string()),
-                    Instant::now(),
-                    *started,
-                )),
-            },
-            RestoreOperation::Complete { .. } => None,
-        };
-        if let Some((result, completed_at, started)) = completion {
-            crate::metric::timeline::record("restore_complete", || {
-                serde_json::json!({
-                    "restore_key": format!("manager:{epoch}:{id}"),
-                    "elapsed_us": completed_at.saturating_duration_since(started).as_micros() as u64,
-                    "success": result.is_ok(),
-                })
-            });
-            *operation = RestoreOperation::Complete {
-                result,
-                completed_at,
-            };
-            #[cfg(feature = "test-hooks")]
-            if orbitkv_core::test_faults::active("notification") {
-                continue;
-            }
-            if let Some(session) = sessions.get(token)
-                && let Err(error) = session.notify()
-            {
-                error!("Failed to notify local restore completion: {error}");
-            }
-            crate::metric::timeline::record("restore_notification", || {
-                serde_json::json!({
-                    "restore_key": format!("manager:{epoch}:{id}"),
-                    "elapsed_us": completed_at.elapsed().as_micros() as u64,
-                })
-            });
-        }
-    }
-}
-
-fn truncate_error(mut message: String) -> String {
-    if message.len() <= MAX_RESTORE_ERROR_BYTES {
-        return message;
-    }
-    let mut end = MAX_RESTORE_ERROR_BYTES;
-    while !message.is_char_boundary(end) {
-        end -= 1;
-    }
-    message.truncate(end);
-    message
-}
-
 fn dispatch_restore(
     command: Command,
     bootstrap: &BootstrapServer,
     sessions: &mut HashMap<u64, BootstrapSession>,
+    grants: &HashMap<u64, restore::LocalGrants>,
     engine: &OrbitKVEngine,
-    operations: &mut HashMap<(u64, u64), RestoreOperation>,
-    next_operation_id: &mut u64,
+    runtime: &Handle,
 ) -> Response {
     let mut response = Response::ok(command);
     response.value1 = 0;
@@ -466,124 +380,62 @@ fn dispatch_restore(
         Ok(payload) => payload,
         Err(response) => return response,
     };
-    let restore = match RestoreCommand::decode(&payload) {
-        Ok(restore) => restore,
-        Err(error) => return error_response(response, StatusCode::Invalid, &error),
-    };
-    let restore_response = match restore {
-        RestoreCommand::Submit(request) => {
-            let active_operations = operations
-                .keys()
-                .filter(|(token, _)| *token == command.arg0)
-                .count();
-            if active_operations >= MAX_RESTORE_OPERATIONS_PER_SESSION {
-                return error_response(
-                    response,
-                    StatusCode::Invalid,
-                    &"too many unconsumed restore operations",
-                );
+    let completions = Arc::clone(sessions[&command.arg0].completions());
+    let operation_id = command.arg1;
+    if let Err(error) = completions.claim(operation_id) {
+        return error_response(response, StatusCode::Invalid, &error);
+    }
+    let started = Instant::now();
+    let prepared = (|| {
+        let request = RestoreRequest::decode(&payload).map_err(|error| error.to_string())?;
+        let loads = request
+            .loads
+            .into_iter()
+            .map(|load| RestoreLeaseInput {
+                lease: load.lease,
+                block_ids_by_group: load.block_ids_by_group,
+            })
+            .collect();
+        execute_restore(
+            engine,
+            RestoreInput {
+                instance_id: request.instance_id,
+                tp_rank: request.tp_rank,
+                device_id: request.device_id,
+                layer_groups: request.layer_groups,
+                loads,
+            },
+        )
+        .map_err(|error| error.to_string())
+    })();
+    match prepared {
+        Ok(orbitkv_core::RestoreExecution::Local(grant)) => {
+            if let Some(owner) = grants.get(&command.arg0) {
+                owner.install(operation_id, grant);
+            } else {
+                drop(grant);
+                let _ = completions.reject(operation_id, "restore session is closed".into());
             }
-            let operation_id = *next_operation_id;
-            *next_operation_id = match next_operation_id.checked_add(1) {
-                Some(next) => next,
-                None => {
-                    return error_response(
-                        response,
-                        StatusCode::Internal,
-                        &"operation ids exhausted",
-                    );
-                }
-            };
-            let loads = request
-                .loads
-                .into_iter()
-                .map(|load| RestoreLeaseInput {
-                    lease: load.lease,
-                    block_ids_by_group: load.block_ids_by_group,
-                })
-                .collect();
-            let started = Instant::now();
-            let receiver = match execute_restore(
-                engine,
-                RestoreInput {
-                    instance_id: request.instance_id,
-                    tp_rank: request.tp_rank,
-                    device_id: request.device_id,
-                    layer_groups: request.layer_groups,
-                    loads,
-                },
-            ) {
-                Ok(receiver) => receiver,
-                Err(error) => return error_response(response, engine_error_status(&error), &error),
-            };
-            operations.insert(
-                (command.arg0, operation_id),
-                RestoreOperation::Pending { receiver, started },
-            );
-            RestoreResponse {
+        }
+        Ok(orbitkv_core::RestoreExecution::Managed(receiver)) => {
+            runtime.spawn(restore::publish(
+                receiver,
+                completions,
+                command.session_epoch,
+                command.arg0,
                 operation_id,
-                state: RestoreState::Pending,
-                message: String::new(),
+                started,
+            ));
+        }
+        Err(error) => {
+            if let Err(error) = completions.reject(operation_id, error) {
+                error!("Cannot publish rejected restore completion: {error}");
             }
         }
-        RestoreCommand::Poll { operation_id } => {
-            match operations.get(&(command.arg0, operation_id)) {
-                Some(RestoreOperation::Pending { .. }) => RestoreResponse {
-                    operation_id,
-                    state: RestoreState::Pending,
-                    message: String::new(),
-                },
-                Some(RestoreOperation::Complete { result: Ok(()), .. }) => RestoreResponse {
-                    operation_id,
-                    state: RestoreState::Succeeded,
-                    message: String::new(),
-                },
-                Some(RestoreOperation::Complete {
-                    result: Err(message),
-                    ..
-                }) => {
-                    let message = message.clone();
-                    RestoreResponse {
-                        operation_id,
-                        state: RestoreState::Failed,
-                        message,
-                    }
-                }
-                None => {
-                    return error_response(
-                        response,
-                        StatusCode::Invalid,
-                        &"unknown restore operation",
-                    );
-                }
-            }
-        }
-    };
-    let payload = match restore_response.encode() {
-        Ok(payload) => payload,
-        Err(error) => return error_response(response, StatusCode::Internal, &error),
-    };
-    let completed_operation = (restore_response.state != RestoreState::Pending)
-        .then_some((command.arg0, restore_response.operation_id));
-    match bootstrap
-        .arena()
-        .write_response(command.descriptor, &payload)
-    {
-        Ok(descriptor) => {
-            response.descriptor = descriptor;
-            if let Some(key) = completed_operation
-                && let Some(RestoreOperation::Complete { completed_at, .. }) =
-                    operations.remove(&key)
-            {
-                crate::metric::timeline::record("restore_delivered", || {
-                    serde_json::json!({
-                        "restore_key": format!("manager:{}:{}", command.session_epoch, key.1),
-                        "elapsed_us": completed_at.elapsed().as_micros() as u64,
-                    })
-                });
-            }
-        }
-        Err(error) => return error_response(response, arena_error_status(&error), &error),
+    }
+    #[cfg(feature = "test-hooks")]
+    if orbitkv_core::test_faults::active("restore_ack") {
+        response.value1 = 0;
     }
     response
 }
@@ -648,15 +500,22 @@ fn dispatch_publish(
     runtime: &Handle,
     reply: DeferredResponse,
 ) -> Result<(), TransportError> {
+    let reply_notification = sessions
+        .get(&command.arg0)
+        .map(|session| Arc::clone(session.reply_notification_fd()));
+    let send_reply = move |response| match reply_notification.as_deref() {
+        Some(notification) => reply.send_and_notify(response, notification),
+        None => reply.send(response),
+    };
     let mut response = Response::ok(command);
     response.value1 = 0;
     let payload = match consume_descriptor(command, bootstrap, sessions, &mut response) {
         Ok(payload) => payload,
-        Err(response) => return reply.send(response),
+        Err(response) => return send_reply(response),
     };
     let request = match ChannelPublishRequest::decode(&payload) {
         Ok(request) => request,
-        Err(error) => return reply.send(error_response(response, StatusCode::Invalid, &error)),
+        Err(error) => return send_reply(error_response(response, StatusCode::Invalid, &error)),
     };
     let layers = request
         .layers
@@ -670,7 +529,7 @@ fn dispatch_publish(
     match bootstrap.arena().write_response(command.descriptor, &[]) {
         Ok(descriptor) => response.descriptor = descriptor,
         Err(error) => {
-            return reply.send(error_response(response, arena_error_status(&error), &error));
+            return send_reply(error_response(response, arena_error_status(&error), &error));
         }
     }
     let engine = Arc::clone(engine);
@@ -695,7 +554,7 @@ fn dispatch_publish(
         if orbitkv_core::test_faults::active("publish_ack") {
             response.value1 = 0;
         }
-        if let Err(error) = reply.send(response) {
+        if let Err(error) = send_reply(response) {
             error!("Failed to reply to completed publish: {error}");
         }
     });

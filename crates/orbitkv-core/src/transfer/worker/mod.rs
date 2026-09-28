@@ -344,6 +344,23 @@ impl GpuWorkerPool {
         }
     }
 
+    pub(crate) fn admit_restore(
+        &self,
+        plan: &mut RestorePlan,
+        bytes: u64,
+        fragments: usize,
+    ) -> Result<DecodeRestorePermit, EngineError> {
+        if plan.device_id() != self.device_id {
+            return Err(EngineError::InvalidArgument(
+                "restore admission device mismatch".into(),
+            ));
+        }
+        let permit = self.decode_restore_admission.try_acquire()?;
+        plan.admit_decode_pages(bytes, fragments)
+            .map_err(EngineError::InvalidArgument)?;
+        Ok(permit)
+    }
+
     pub(crate) fn submit_load(&self, mut task: LoadTask) -> Result<(), EngineError> {
         if task.plan.device_id() != self.device_id {
             return Err(EngineError::InvalidArgument(format!(
@@ -352,8 +369,9 @@ impl GpuWorkerPool {
                 self.device_id
             )));
         }
+        let layers = &mut task.layers;
         let mut targets = Vec::new();
-        for layer in &task.layers {
+        for layer in layers.iter() {
             for block in &layer.blocks {
                 match layer
                     .layout
@@ -374,16 +392,14 @@ impl GpuWorkerPool {
         })?;
         let target_fragments = targets.len();
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
-        task.plan
-            .admit_decode_pages(target_bytes, target_fragments)
-            .map_err(EngineError::InvalidArgument)?;
-        let decode_admission = self.decode_restore_admission.try_acquire()?;
+        let decode_admission =
+            self.admit_restore(&mut task.plan, target_bytes, target_fragments)?;
         let decode_queue_depth = decode_admission.depth;
         task.decode_admission = Some(decode_admission);
-        restore::validate_plan(&task)?;
+        restore::validate_plan(&task.plan, layers)?;
         let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
-            && task.layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
+            && layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
                 matches!(&block.block, TransferPayload::Ssd { source, .. } if !source.cufile_eligible(task.codec_budget))
             })
         {
@@ -393,23 +409,17 @@ impl GpuWorkerPool {
             task.plan
                 .fallback_from_cufile()
                 .map_err(EngineError::Storage)?;
-            restore::set_ssd_path(&mut task.layers, crate::SsdReadPath::Uring);
+            restore::set_ssd_path(layers, crate::SsdReadPath::Uring);
             core_metrics().ssd_gpu_read_fallbacks.add(1, &[]);
             ssd_path = task.plan.ssd_path();
         }
-        restore::validate_plan(&task)?;
         let disk = ssd_path.is_some();
         let (observation, decode_ready_observation) = if enabled() {
-            let (mut key, bytes) = transfer_key(
-                &task.layers,
-                self.device_id,
-                self.transfer_mode,
-                false,
-                disk,
-            );
+            let (mut key, bytes) =
+                transfer_key(layers, self.device_id, self.transfer_mode, false, disk);
             if let Some(path) = ssd_path {
-                key = restore::cost_estimate_key(&task, self.transfer_mode, path, key);
-                restore::shadow(&task, path, key);
+                key = restore::cost_estimate_key(&task.plan, layers, self.transfer_mode, path, key);
+                restore::shadow(layers, task.codec_budget, path, key);
             }
             let page_grant = task
                 .plan
@@ -671,9 +681,10 @@ fn worker_loop(
                         cancelled = true;
                         return Err(EngineError::Storage("GPU transfer consumer closed".into()));
                     }
+                    let layers = &mut task.layers;
                     if host_staged {
                         observation.submitted();
-                        restore::materialize_host(&mut task)?;
+                        restore::materialize_host(layers)?;
                         if task.completion.is_closed() {
                             cancelled = true;
                             return Err(EngineError::Storage(
@@ -686,8 +697,7 @@ fn worker_loop(
                             } else {
                                 TransferMode::Direct
                             };
-                            let (key, bytes) =
-                                transfer_key(&task.layers, device_id, mode, false, false);
+                            let (key, bytes) = transfer_key(layers, device_id, mode, false, false);
                             gpu_observation = Observation::new(key, Some(bytes));
                             gpu_observation.admitted();
                         }
@@ -698,11 +708,12 @@ fn worker_loop(
                         &mut observation
                     };
                     let decoded_bytes =
-                        codec::restore(&runtime, &task.layers, task.codec_budget, gpu_cost)
-                            .inspect_err(|_| {
+                        codec::restore(&runtime, layers, task.codec_budget, gpu_cost).inspect_err(
+                            |_| {
                                 core_metrics().storage_codec_decode_failures.add(1, &[]);
-                            })?;
-                    let (copies, bytes) = build_copy_descs(&task.layers)?;
+                            },
+                        )?;
+                    let (copies, bytes) = build_copy_descs(layers)?;
                     if decoded_bytes == 0 {
                         observe_raw_copies(
                             &copies,
@@ -967,87 +978,113 @@ fn observe_raw_copies(
     shadow(candidates, selected);
 }
 
-/// Build one `CopyDesc` per GPU segment of every block across all layers,
-/// pairing device ranges from the layout with the host segments of each
-/// block's `RawBlock`. Direction-agnostic: load and save submit the same
-/// descriptors to `h2d`/`d2h` respectively.
-///
-/// Returns `(copies, total_bytes)`.
+/// Bind validated device ranges to checked host segments without changing direction.
+/// Appends only when every segment fits and returns the actual transfer byte count.
+pub(crate) fn append_copy_descs(
+    copies: &mut Vec<CopyDesc>,
+    device_allocation: usize,
+    block_copies: BlockCopies,
+    raw: &RawBlock,
+    host_offset: usize,
+) -> Result<usize, EngineError> {
+    if raw.encoding.is_some() {
+        return Err(EngineError::InvalidArgument(
+            "encoded source cannot be submitted as raw copies".into(),
+        ));
+    }
+    let descriptor = |segment: usize, offset: usize, device, size: usize| {
+        let invalid = || EngineError::Storage("raw copy exceeds its host segment".into());
+        let end = offset.checked_add(size).ok_or_else(invalid)?;
+        let segment_size = raw.segment_size(segment).ok_or_else(invalid)?;
+        if end > segment_size {
+            return Err(invalid());
+        }
+        let ptr = raw
+            .segment_mapped_ptr(segment)
+            .ok_or_else(invalid)?
+            .add(offset);
+        Ok(CopyDesc {
+            device,
+            host: ptr.host().as_ptr(),
+            host_device: ptr.device().as_ptr() as u64,
+            size,
+            device_allocation,
+            host_allocation: raw.segment_allocation_id(segment).ok_or_else(invalid)?,
+        })
+    };
+    match block_copies {
+        BlockCopies::Contiguous(copy) => {
+            copies.push(descriptor(0, host_offset, copy.addr, copy.bytes)?);
+            Ok(copy.bytes)
+        }
+        BlockCopies::Split { k, v } => {
+            let k_copy = descriptor(0, host_offset, k.addr, k.bytes)?;
+            let (v_segment, v_offset) = if raw.num_segments() > 1 {
+                (1, host_offset)
+            } else {
+                (
+                    0,
+                    host_offset.checked_add(k.bytes).ok_or_else(|| {
+                        EngineError::Storage("raw copy host offset overflow".into())
+                    })?,
+                )
+            };
+            let v_copy = descriptor(v_segment, v_offset, v.addr, v.bytes)?;
+            let bytes = k
+                .bytes
+                .checked_add(v.bytes)
+                .ok_or_else(|| EngineError::Storage("raw copy byte count overflow".into()))?;
+            copies.extend([k_copy, v_copy]);
+            Ok(bytes)
+        }
+    }
+}
+
+/// Encoded/SSD restore and Publish retain layer payloads until their physical route
+/// is ready; compile their remaining raw ranges with the same source-bound checks.
 fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usize), EngineError> {
-    let mut copies: Vec<CopyDesc> = Vec::new();
+    let capacity = layers
+        .iter()
+        .map(|layer| {
+            layer.blocks.len()
+                * if layer.layout.geometry().is_split() {
+                    2
+                } else {
+                    1
+                }
+        })
+        .sum();
+    let mut copies = Vec::with_capacity(capacity);
     let mut total_bytes = 0usize;
-
     for (layer_index, layer) in layers.iter().enumerate() {
-        let layer_name = &layer.layer_name;
-
         for block in &layer.blocks {
             if matches!(block.block, TransferPayload::Ssd { .. }) {
                 continue;
             }
-            if block.block.raw().encoding.is_some() {
+            let raw = block.block.raw();
+            if raw.encoding.is_some() {
                 continue;
             }
-            let block_copies = layer
+            let ranges = layer
                 .layout
                 .block_copies(block.block_idx)
-                .map_err(|e| EngineError::Storage(format!("layer {layer_name}: {e}")))?;
-
-            // Page-first reads/writes every layer from one slot at its byte
-            // offset; layer-first leaves this 0 (slot == layer).
-            let host_offset = block.block.host_offset();
-
-            match block_copies {
-                BlockCopies::Split { k, v } => {
-                    let raw = block.block.raw();
-                    let k_ptr = raw.segment_mapped_ptr(0).unwrap().add(host_offset);
-                    // SAFETY: For a contiguous host block (segment 1 absent), the
-                    // allocation is 2 * segment size, so k + k.bytes is in bounds.
-                    let v_ptr = raw
-                        .segment_mapped_ptr(1)
-                        .map(|p| p.add(host_offset))
-                        .unwrap_or_else(|| k_ptr.add(k.bytes));
-
-                    copies.push(CopyDesc {
-                        device: k.addr,
-                        host: k_ptr.host().as_ptr(),
-                        host_device: k_ptr.device().as_ptr() as u64,
-                        size: k.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: raw.segment_allocation_id(0).unwrap(),
-                    });
-                    copies.push(CopyDesc {
-                        device: v.addr,
-                        host: v_ptr.host().as_ptr(),
-                        host_device: v_ptr.device().as_ptr() as u64,
-                        size: v.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: raw
-                            .segment_allocation_id(1)
-                            .unwrap_or_else(|| raw.segment_allocation_id(0).unwrap()),
-                    });
-                    total_bytes += k.bytes + v.bytes;
-                }
-                BlockCopies::Contiguous(c) => {
-                    let ptr = block
-                        .block
-                        .raw()
-                        .segment_mapped_ptr(0)
-                        .unwrap()
-                        .add(host_offset);
-                    copies.push(CopyDesc {
-                        device: c.addr,
-                        host: ptr.host().as_ptr(),
-                        host_device: ptr.device().as_ptr() as u64,
-                        size: c.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: block.block.raw().segment_allocation_id(0).unwrap(),
-                    });
-                    total_bytes += c.bytes;
-                }
-            }
+                .map_err(|error| {
+                    EngineError::Storage(format!("layer {}: {error}", layer.layer_name))
+                })?;
+            let bytes = append_copy_descs(
+                &mut copies,
+                layer_index,
+                ranges,
+                raw,
+                block.block.host_offset(),
+            )?;
+            total_bytes = total_bytes
+                .checked_add(bytes)
+                .ok_or_else(|| EngineError::Storage("raw transfer byte count overflow".into()))?;
         }
     }
-
+    // Copy ownership IDs prevent coalescing across distinct allocations.
+    copies.sort_unstable_by_key(|copy| copy.device);
     Ok((copies, total_bytes))
 }
 

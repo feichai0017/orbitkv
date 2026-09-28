@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use cudarc::driver::CudaContext;
 use cudarc::driver::sys;
 use orbitkv_catalog::{BlockHashStore, CatalogService, MembershipView, Placement};
+use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePlan};
 use orbitkv_core::*;
 use orbitkv_proto::proto::engine::{
     OpenTransferWindowRequest, QueryBlocksForTransferRequest, ReleaseTransferLockRequest,
@@ -110,6 +111,50 @@ fn make_block_hashes(num_blocks: usize, salt: u8) -> Vec<Vec<u8>> {
             hash
         })
         .collect()
+}
+
+async fn restore_and_wait(
+    engine: &OrbitKVEngine,
+    gpu: &GpuBuffer,
+    layer: &str,
+    blocks: usize,
+    execution: RestoreExecution,
+) {
+    match execution {
+        RestoreExecution::Local(grant) => {
+            let tensor = LocalTensor::new(
+                layer.into(),
+                gpu.as_u64(),
+                gpu.len,
+                0,
+                blocks,
+                gpu.len / blocks,
+                0,
+                1,
+            )
+            .expect("local destination geometry");
+            let mut executor = LocalRestoreExecutor::new(
+                0,
+                vec![tensor],
+                engine.payload_arenas().expect("export payload arenas"),
+                TransferMode::Direct,
+            )
+            .expect("import source payload arenas");
+            let plan =
+                RawRestorePlan::decode(grant.encoded_plan()).expect("decode local Restore plan");
+            let result = executor.execute(&plan);
+            grant.finish(result.is_ok());
+            result.expect("local Restore failed");
+        }
+        RestoreExecution::Managed(receiver) => {
+            tokio::time::timeout(Duration::from_secs(5), receiver)
+                .await
+                .expect("restore timeout")
+                .expect("restore worker disappeared")
+                .result
+                .expect("restore failed");
+        }
+    }
 }
 
 // ── Infrastructure ──────────────────────────────────────────────────────────
@@ -279,7 +324,9 @@ fn mooncake_nics() -> Vec<String> {
 
 // ── Test ────────────────────────────────────────────────────────────────────
 
-const NUM_BLOCKS: usize = 4;
+// Cross multiple discovery/authorization segments so the opt-in lookahead path
+// also exercises real source-budget pressure and Mooncake READ ownership.
+const NUM_BLOCKS: usize = orbitkv_state::DISCOVERY_MAX_KEYS * 2 + 4;
 const BLOCK_SIZE: usize = 1024;
 const TOTAL_SIZE: usize = NUM_BLOCKS * BLOCK_SIZE;
 const NAMESPACE: &str = "test-p2p";
@@ -397,6 +444,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // Source authorization fences both restarts and individual residency episodes.
     let evidence = locate(&stores, &cache_namespace, &stored_hashes, "requester");
+    let grant_blocks = orbitkv_state::DISCOVERY_MAX_KEYS;
     let mut peer = EngineClient::connect(format!("http://127.0.0.1:{port_a}"))
         .await
         .unwrap();
@@ -416,10 +464,13 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     };
     let authorization = QueryBlocksForTransferRequest {
         namespace: cache_namespace.clone(),
-        block_hashes: stored_hashes.clone(),
+        block_hashes: stored_hashes[..grant_blocks].to_vec(),
         ticket: Some(ticket.clone()),
         owner_incarnation: evidence[0].replicas[0].owner.incarnation.to_string(),
-        residency_sequences: evidence.iter().map(|r| r.replicas[0].sequence).collect(),
+        residency_sequences: evidence[..grant_blocks]
+            .iter()
+            .map(|r| r.replicas[0].sequence)
+            .collect(),
     };
     assert!(membership_a.renew(Instant::now(), Duration::from_secs(300)));
     let mut stale_runtime = authorization.clone();
@@ -440,7 +491,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .await
         .unwrap()
         .into_inner();
-    assert_eq!(granted.blocks.len(), NUM_BLOCKS);
+    assert_eq!(granted.blocks.len(), grant_blocks);
     assert_eq!(engine_a.expire_transfer_locks(), 1);
     assert_eq!(engine_a.expire_transfer_locks(), 0);
     assert_eq!(
@@ -694,13 +745,13 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     let fresh = locate(&stores, &cache_namespace, &stored_hashes, "requester");
     let fresh_authorization = QueryBlocksForTransferRequest {
         namespace: cache_namespace.clone(),
-        block_hashes: stored_hashes.clone(),
+        block_hashes: stored_hashes[..grant_blocks].to_vec(),
         ticket: Some(TransferTicket {
             generation: 3,
             ..ticket.clone()
         }),
         owner_incarnation: membership_a.owner().incarnation.to_string(),
-        residency_sequences: fresh
+        residency_sequences: fresh[..grant_blocks]
             .iter()
             .map(|row| {
                 row.replicas
@@ -770,12 +821,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         )
         .expect("batch_load on engine B");
 
-    tokio::time::timeout(Duration::from_secs(5), receiver)
-        .await
-        .expect("restore timeout")
-        .expect("restore worker disappeared")
-        .result
-        .expect("restore failed");
+    restore_and_wait(&engine_b, &gpu_b, LAYER, NUM_BLOCKS, receiver).await;
 
     // ── 11. Verify data integrity ──
     let loaded = gpu_b.copy_to_host();
@@ -940,13 +986,10 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
             );
             let lease = engine.create_query_lease(id, result.blocks).unwrap();
             gpu.zero();
-            engine
+            let execution = engine
                 .restore(id, 0, 0, &[vec!["layer"]], &[(lease, vec![vec![Some(0)]])])
-                .unwrap()
-                .await
-                .unwrap()
-                .result
                 .unwrap();
+            restore_and_wait(engine, gpu, "layer", 1, execution).await;
             images.push(gpu.copy_to_host());
         }
         assert_eq!(

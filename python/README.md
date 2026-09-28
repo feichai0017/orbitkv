@@ -4,7 +4,9 @@
 
 **KV cache for vLLM and SGLang, backed by Rust.** Reuse computed prefixes from
 pinned DRAM and optional SSD after GPU eviction or an engine restart. Both
-adapters use CUDA IPC for GPU transfers and the same Cache Manager API.
+adapters use the same native Cache Manager API. Unencoded DRAM Restore runs in
+the engine process using shared payload arenas; SSD/codec Restore and Publish
+retain Manager workers and CUDA IPC tensor bindings.
 
 [Documentation](https://feichai0017.github.io/orbitkv/docs/) ·
 [Quickstart](https://feichai0017.github.io/orbitkv/docs/single-node/) ·
@@ -20,16 +22,45 @@ adapters use CUDA IPC for GPU transfers and the same Cache Manager API.
 - Compiled recovery ranges for supported attention, window and checkpoint layouts.
 - Optional GPU ANS lossless compression and experimental FP8/3-bit/4-bit
   TurboQuant storage in DRAM, SSD and peer transfers; see [storage formats](../docs/storage-formats.md).
-- Native query ownership, byte budgets and completion fences.
+- Native query ownership, source grants, byte budgets and completion fences.
+- Engine-local raw Restore with actual tensor ownership and an explicit engine
+  readiness stream; both adapters use the whole-operation completion gate.
 - Prometheus metrics and optional request timelines.
 - Experimental peer cache sharing through Mooncake TENT.
 - Experimental vLLM and SGLang P/D payload transfer through the same Rust TENT
   runtime; SGLang retains its native handoff control plane.
 
-Validated engine releases: **vLLM 0.29.0** and **SGLang 0.5.20**. See
+Pinned engine releases: **vLLM 0.29.0** and **SGLang 0.5.20**. The new
+[engine-local Restore path](../docs/engine-local-restore.md) passes single-H20
+Qwen3-8B DRAM correctness and engine-restart reuse in both pinned engines.
+The [recorded vLLM end-to-end results](../docs/single-node-performance.md#matched-vllm-end-to-end-comparison)
+compare native HBM, native CPU offload, OrbitKV and LMCache MP. Multiple-GPU,
+huge-page and broader serving qualification remain separate. See
+[the measured Restore improvements and remaining overhead](../docs/communication-performance.md),
 [model qualification](https://feichai0017.github.io/orbitkv/docs/models/)
 and [deployment support](https://feichai0017.github.io/orbitkv/docs/deployment/).
 Interfaces may change before 1.0.
+
+## Native registration and Restore contract
+
+`register_context_batch(..., tensors=[...])` takes the real tensor/exporter
+objects as well as their IPC metadata. Keep tensor order aligned with layer
+registration. `start_restore(..., ready_stream=...)` takes the CUDA stream of
+the engine's previous destination-page users; the native worker establishes
+readiness before copying. Both bundled adapters provide these arguments.
+
+The native worker owns accepted operations even if a Python handle is dropped
+or `wait_restore` times out. Connectors must retain logical destination page IDs
+until a terminal result. Local completion means DMA drained and does not wait
+for the Manager's source-retirement ACK. Repeated registration of the same
+binding is rejected; unregister and close drain accepted operations first.
+
+Build the native client and Manager together: this cutover uses bootstrap 6,
+channel ABI 9, and lifecycle 4, with no old-wire compatibility path. An encoded
+raw Restore plan above 1 MiB after allocation-aware compaction is rejected
+before consuming its leases. Idle destination streams need no additional GPU
+event; busy streams are fenced with a reusable event. Automatic partitioning,
+layer overlap, and graph replay dependencies remain future work.
 
 ## Installation
 

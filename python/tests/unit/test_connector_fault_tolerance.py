@@ -19,6 +19,14 @@ from orbitkv.vllm.metadata import LoadIntent, OrbitKVConnectorMetadata  # noqa: 
 from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def current_cuda_stream(monkeypatch):
+    monkeypatch.setattr(
+        "orbitkv.vllm.worker.torch.cuda.current_stream",
+        lambda _device=None: SimpleNamespace(cuda_stream=17),
+    )
+
+
 class FakeEngineClient:
     """Minimal Cache Manager client for restore and lifecycle tests.
 
@@ -45,6 +53,8 @@ class FakeEngineClient:
         device_id: int,
         layer_groups,
         loads,
+        *,
+        ready_stream: int,
     ) -> SimpleNamespace:
         block_ids = [block_id for _, groups in loads for ids in groups for block_id in ids]
         self.load_calls.append(
@@ -298,24 +308,29 @@ def test_load_uses_registered_layer_names_before_forward_context_names():
     worker.shutdown()
 
 
-def test_worker_consumes_restore_completion():
+def test_worker_consumes_restore_completion(monkeypatch):
     data_client = MagicMock(transport="iceoryx2")
     restore = SimpleNamespace(key="local:41:9")
     data_client.start_restore.return_value = restore
     data_client.restore_completions_ready.return_value = True
     data_client.poll_restore.return_value = RestoreStatus(done=True, success=True)
-    worker, _unused_client, _state_manager = _make_worker(client=data_client)
+    worker, _unused_client, _state_manager = _make_worker(client=data_client, device_id=3)
+    worker._torch_device = "cuda:0"
+    current_stream = MagicMock(return_value=SimpleNamespace(cuda_stream=17))
+    monkeypatch.setattr("orbitkv.vllm.worker.torch.cuda.current_stream", current_stream)
 
     worker.start_load_kv(_load_metadata("local-restore", (3, 4)), _stub_forward_context())
     _, finished_recving = worker.get_finished(set())
 
     assert finished_recving == {"local-restore"}
+    current_stream.assert_called_once_with("cuda:0")
     data_client.start_restore.assert_called_once_with(
         "test_instance",
         0,
-        0,
+        3,
         [["ALL_LAYERS"]],
         [(b"lease-local-restore", [[3, 4]])],
+        ready_stream=17,
     )
     data_client.poll_restore.assert_called_once_with(restore)
     worker.shutdown()

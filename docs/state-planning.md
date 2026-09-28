@@ -389,12 +389,16 @@ generation from the statistical key. Only admitted completed reports update
 the estimate; rejected, failed, cancelled and timed-out reports remain
 diagnostics. This adds
 evidence, not a candidate enumerator or execution selector. Direct cache restore
-now records the same post-allocation DecodeReady boundary: `Restore` begins
+records the same post-allocation DecodeReady boundary for Manager-executed
+restores: `Restore` begins
 after the framework has allocated decode pages, Core consumes fresh source
 leases, validates the exact registered device ranges into a `DecodePageGrant`,
 and the worker finishes the observation only after every GPU operation is
 terminal. The grant remains in the consumed `RestorePlan` through completion.
-This supplies comparable completed-route evidence.
+This supplies comparable completed-route evidence for those routes. Engine-local
+raw grants retain the same device admission but do not yet train this estimator;
+their actual drain occurs in the engine before Manager source retirement. See
+the [next measurement increment](communication-plan.md#next-increments-after-consolidating-pr-188).
 
 Completion resource evidence is separately bounded and freshness-checked. A
 direct restore has a per-device 128-operation admission owner retained through
@@ -1143,7 +1147,7 @@ Identical prefix reads can be shared with independent owners and leases; SSD
 queue pressure waits for space. A too-large individual query bypasses restore.
 Expired replies drop resources while retaining a bounded tombstone until poll,
 cancel, or session teardown. Both adapters cancel superseded queries. Channel
-ABI 5 requires rebuilding the manager and client together.
+ABI 9 requires rebuilding the manager and client together.
 
 Deterministic [fault gates](fault-qualification.md) cover delayed SSD completion,
 cancelled ownership, lost completion notifications, stuck/malformed Publish
@@ -1282,8 +1286,8 @@ events; incrementing an adapter transfer counter does not supply that evidence.
 Qualify full-attention first. Hybrid checkpoints, sliding windows, MLA and
 auxiliary state each require their own complete recovery gate.
 
-P6 adds per-layer-group completion dependencies to Core's `transfer/worker/`, the backing
-pipeline, and both adapters. Start with whole-prefix SSD preparation plus
+P6 adds per-layer-group completion dependencies to the engine-local raw executor,
+the remaining Manager SSD/codec workers, the backing pipeline, and both adapters. Start with whole-prefix SSD preparation plus
 layer-group H2D/compute overlap; only then pipeline SSD chunks through a bounded
 staging ring. The current serialized full restore remains the reference for
 byte correctness during evaluation. GPU execution must wait on a dependency

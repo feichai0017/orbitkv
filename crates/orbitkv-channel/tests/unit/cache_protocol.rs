@@ -372,7 +372,7 @@ fn publish_request_round_trip_and_shape_validation() {
 }
 
 #[test]
-fn restore_request_and_response_round_trip() {
+fn restore_request_round_trip() {
     let request = RestoreRequest {
         instance_id: "model-a".to_string(),
         tp_rank: 1,
@@ -386,22 +386,6 @@ fn restore_request_and_response_round_trip() {
     assert_eq!(
         RestoreRequest::decode(&request.encode().unwrap()).unwrap(),
         request
-    );
-
-    let response = RestoreResponse {
-        operation_id: 42,
-        state: RestoreState::Failed,
-        message: "cuda copy failed".to_string(),
-    };
-    assert_eq!(
-        RestoreResponse::decode(&response.encode().unwrap()).unwrap(),
-        response
-    );
-
-    let poll = RestoreCommand::Poll { operation_id: 42 };
-    assert_eq!(
-        RestoreCommand::decode(&poll.encode().unwrap()).unwrap(),
-        poll
     );
 }
 
@@ -423,5 +407,24 @@ fn candidate_hints_cannot_carry_leases_or_ambiguous_positions() {
             QueryBundleResponse::decode(&response.encode().unwrap()),
             Err(CacheProtocolError::InvalidCandidates)
         );
+    }
+}
+
+#[test]
+fn encoded_size_rejects_overflow_without_changing_the_budget() {
+    for (initial, count, width) in [
+        (0, usize::MAX, 2),
+        (usize::MAX, 1, 1),
+        (isize::MAX as usize, 1, 1),
+    ] {
+        let mut size = initial;
+        assert!(matches!(
+            add_encoded_size(&mut size, count, width),
+            Err(CacheProtocolError::FieldTooLarge {
+                field: "payload",
+                ..
+            })
+        ));
+        assert_eq!(size, initial);
     }
 }

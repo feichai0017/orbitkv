@@ -41,7 +41,11 @@ def test_manifest_records_effective_cost_observations_switch(
         env=env,
         backend_configuration={},
     )
-    assert manifest(args, launch, 147456)["cost_observations"] == expected
+    for backend in ("native", "cpu", "orbitkv", "lmcache"):
+        args.backend = backend
+        recorded = manifest(args, launch, 147456)
+        assert recorded["cost_observations"] == expected
+        assert recorded["capacity"]["host_pool_bytes"] == (0 if backend == "native" else 1024**3)
 
 
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])

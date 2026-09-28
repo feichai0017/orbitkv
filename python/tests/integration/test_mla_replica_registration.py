@@ -174,6 +174,8 @@ def _wait_for_ready_lease(engine_client, instance_id: str, block_hashes: list[by
 
 @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs >= 2 CUDA devices")
 def test_mla_replica_devices_save_and_load(dual_device_server):
+    import torch
+
     hf_config, layer_names = _glm51_topology()
 
     engine_client = CacheManagerClient(dual_device_server.bootstrap_socket)
@@ -221,6 +223,7 @@ def test_mla_replica_devices_save_and_load(dual_device_server):
             workers[1].ctx.device_id,
             [layer_names],
             [(lease, [LOAD_DST_BLOCK_IDS])],
+            ready_stream=torch.cuda.current_stream(workers[1].ctx.device_id).cuda_stream,
         )
 
         deadline = time.time() + WAIT_TIMEOUT_SECONDS

@@ -57,7 +57,12 @@ and lock release. Process
 IPC supports query, publish, asynchronous restore completion, and lease
 release:
 iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
-passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
+passes sealed descriptor and restore-result memfds, and supplies separate
+eventfds for restore completion and Publish replies. A required companion
+iceoryx2 event wakes request dispatch after
+enqueue; the Manager sleeps until a request event or maintenance deadline
+instead of polling every 50 us. Restore completion is read and acknowledged from its shared record;
+the GPU outcome waiter publishes it directly without a dispatcher scan or terminal RPC.
 The vLLM adapter requires this path and fails fast if the Cache Manager socket
 is missing. Each inference process must reach a Cache Manager on its own host.
 Pending queries return `Loading` and continue on Tokio. The endpoint owns one
@@ -147,6 +152,11 @@ the current iceoryx2/UDS connection without defining a separate cache API.
 `backing/` and `internode/` have been removed. There is one SSD store with
 independent access routes; peer transport is not a storage medium. `PeerExports`
 checks live owner/version evidence and holds source memory until completion.
+Every pinned-pool shard has a size-sealed memfd backing mapped with `MAP_SHARED`;
+regular and huge pages share the same NUMA first-touch and CUDA registration
+path. This makes the backing shareable but does not yet export payload mappings
+to inference processes. The [engine-local restore design](engine-local-restore.md)
+defines the allocation grants and destination ownership needed for that cutover.
 The Mooncake registration owner retains its pinned pool through unregister.
 Each registered region is represented by an RAII token that also retains the
 TransferEngine; Core clears these tokens before releasing the pinned-pool

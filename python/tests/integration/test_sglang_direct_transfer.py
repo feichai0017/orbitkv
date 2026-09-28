@@ -19,13 +19,18 @@ pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
 @pytest.mark.parametrize("failure", ["submit", "poll", "timeout"])
-def test_linker_failure_never_acknowledges_gpu_destinations(failure):
+def test_linker_failure_never_acknowledges_gpu_destinations(failure, monkeypatch):
     pytest.importorskip("sglang")
     from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
 
     linker = object.__new__(OrbitKVLinker)
     linker.instance_id = "failed-transfer"
     linker.device_id = 0
+    linker._torch_device = "cuda:0"
+    monkeypatch.setattr(
+        "orbitkv.sglang.linker.torch.cuda.current_stream",
+        lambda _device=None: SimpleNamespace(cuda_stream=17),
+    )
     linker.layout = SimpleNamespace(pools={"kv": SimpleNamespace(layer_names=["kv:0"])})
     linker._load_error = None
     linker._load_queue = queue.Queue()
@@ -65,13 +70,18 @@ def test_linker_failure_never_acknowledges_gpu_destinations(failure):
         linker.layer_done_counter.set_consumer(index)
 
 
-def test_restore_window_never_acknowledges_a_partially_completed_batch():
+def test_restore_window_never_acknowledges_a_partially_completed_batch(monkeypatch):
     pytest.importorskip("sglang")
     from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter, _Load
 
     linker = object.__new__(OrbitKVLinker)
     linker.instance_id = "windowed-restore"
     linker.device_id = 0
+    linker._torch_device = "cuda:0"
+    monkeypatch.setattr(
+        "orbitkv.sglang.linker.torch.cuda.current_stream",
+        lambda _device=None: SimpleNamespace(cuda_stream=17),
+    )
     linker.layout = SimpleNamespace(pools={"kv": SimpleNamespace(layer_names=["kv:0"])})
     linker._load_error = None
     linker._load_queue = queue.Queue()
@@ -82,7 +92,7 @@ def test_restore_window_never_acknowledges_a_partially_completed_batch():
     waiting = set()
     peak = 0
 
-    def submit(*args):
+    def submit(*args, **kwargs):
         nonlocal peak
         handle = object()
         waiting.add(handle)
@@ -175,6 +185,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
             [1] * layer_count,
             "direct",
             page_first,
+            tensors=tensors,
             layer_formats=["bf16"] * layer_count,
         )
         assert ok, message
@@ -317,6 +328,7 @@ def test_direct_page_transfer_overwrites_poisoned_gpu_slots(
         linker = object.__new__(OrbitKVLinker)
         linker.instance_id = instance
         linker.device_id = resolve_device_id()
+        linker._torch_device = tensors[0].device
         linker.layout = SimpleNamespace(pools={"kv": SimpleNamespace(layer_names=names)})
         linker.client = client
         linker._load_error = None

@@ -1,11 +1,108 @@
 //! Bounded lifecycle metadata frames carried by the authenticated bootstrap UDS.
 
-use std::io;
+use std::io::{self, IoSlice, IoSliceMut, Read};
+use std::mem::MaybeUninit;
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::os::unix::net::UnixStream;
+
+use rustix::net::{
+    RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
+    SendAncillaryMessage, SendFlags, recvmsg, sendmsg,
+};
 
 pub const LIFECYCLE_HEADER_BYTES: usize = 20;
 pub const MAX_LIFECYCLE_PAYLOAD: usize = 64 * 1024 * 1024;
 const MAGIC: u32 = 0x4f52_424c;
-const VERSION: u16 = 3;
+const VERSION: u16 = 4;
+
+/// Payload arenas are attached only to successful GPU registration replies.
+pub const MAX_LIFECYCLE_FDS: usize = 64;
+const FD_MARKER: u8 = 0xa7;
+
+#[derive(Debug, Default)]
+pub struct LifecycleReply {
+    pub payload: Vec<u8>,
+    pub fds: Vec<OwnedFd>,
+}
+
+/// The marker is a separate one-byte stream frame, so retrying WouldBlock never
+/// repeats already-transferred descriptors. Header and payload follow normally.
+pub fn send_lifecycle_fds(socket: &impl AsFd, fds: &[BorrowedFd<'_>]) -> io::Result<()> {
+    if fds.len() > MAX_LIFECYCLE_FDS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "too many payload arenas",
+        ));
+    }
+    let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_LIFECYCLE_FDS))];
+    let mut control = SendAncillaryBuffer::new(&mut space);
+    if !fds.is_empty() && !control.push(SendAncillaryMessage::ScmRights(fds)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "arena descriptor buffer exhausted",
+        ));
+    }
+    loop {
+        match sendmsg(
+            socket,
+            &[IoSlice::new(&[FD_MARKER])],
+            &mut control,
+            SendFlags::NOSIGNAL,
+        ) {
+            Ok(1) => return Ok(()),
+            Ok(_) => return Err(io::ErrorKind::WriteZero.into()),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+pub(crate) fn receive_lifecycle_reply(
+    mut socket: &UnixStream,
+) -> io::Result<(LifecycleHeader, LifecycleReply)> {
+    let mut marker = [0];
+    let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_LIFECYCLE_FDS))];
+    let mut control = RecvAncillaryBuffer::new(&mut space);
+    let message = loop {
+        match recvmsg(
+            socket,
+            &mut [IoSliceMut::new(&mut marker)],
+            &mut control,
+            RecvFlags::CMSG_CLOEXEC,
+        ) {
+            Ok(message) => break message,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        }
+    };
+    if message.bytes == 0 {
+        return Err(io::ErrorKind::UnexpectedEof.into());
+    }
+    if marker != [FD_MARKER] || message.flags.contains(ReturnFlags::CTRUNC) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid lifecycle descriptor frame",
+        ));
+    }
+    let mut fds = Vec::new();
+    for message in control.drain() {
+        if let RecvAncillaryMessage::ScmRights(rights) = message {
+            fds.extend(rights);
+        }
+    }
+    if fds.len() > MAX_LIFECYCLE_FDS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "too many payload arenas",
+        ));
+    }
+    let mut header = [0; LIFECYCLE_HEADER_BYTES];
+    socket.read_exact(&mut header)?;
+    let header = LifecycleHeader::decode(header)?;
+    let mut payload = vec![0; header.payload_len];
+    socket.read_exact(&mut payload)?;
+    Ok((header, LifecycleReply { payload, fds }))
+}
 
 #[derive(Clone, Copy, Debug)]
 #[repr(u16)]

@@ -29,9 +29,9 @@ pub use completion::{
 };
 pub use engine::config::EngineConfig;
 pub use engine::instance::{GpuContext, InstanceContext};
-pub use engine::{EngineError, OrbitKVEngine};
+pub use engine::{EngineError, OrbitKVEngine, RawRestoreGrant, RestoreExecution};
 pub use memory::numa::NumaNode;
-pub use memory::pool::PinnedAllocation;
+pub use memory::pool::{PayloadArena, PinnedAllocation};
 pub use orbitkv_state::{
     BundleComponent, RecoveryContract, StateBundle, StateComponent, StateDescriptor, StateFormat,
     TokenRange,

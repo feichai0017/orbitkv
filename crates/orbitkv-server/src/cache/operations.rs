@@ -82,7 +82,7 @@ pub(crate) struct RestoreInput {
 pub(crate) fn execute_restore(
     engine: &OrbitKVEngine,
     input: RestoreInput,
-) -> Result<tokio::sync::oneshot::Receiver<orbitkv_core::LoadOutcome>, EngineError> {
+) -> Result<orbitkv_core::RestoreExecution, EngineError> {
     if input.device_id < 0 {
         return Err(EngineError::InvalidArgument(format!(
             "device_id {} must be >= 0",

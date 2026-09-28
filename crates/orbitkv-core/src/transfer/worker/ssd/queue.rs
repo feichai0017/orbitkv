@@ -93,7 +93,8 @@ impl Job {
         let planned = (|| {
             match &mut job.task {
                 Task::Load(task) => {
-                    let plans = super::plan(&task.layers)?;
+                    let layers = &task.layers;
+                    let plans = super::plan(layers)?;
                     job.encoded = plans.encoded.into();
                     for (file, batches) in plans.raw {
                         for batch in batches {
@@ -143,17 +144,18 @@ impl Job {
         // The route estimate starts before staging/codec work and ends only
         // at engine-visible completion, just like the io_uring host route.
         self.observation.submitted();
-        if let Task::Load(task) = &self.task {
-            self.bytes += super::super::codec::restore(
-                runtime,
-                &task.layers,
-                task.codec_budget,
-                &mut self.observation,
-            )
-            .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
-        }
         let layers = match &self.task {
-            Task::Load(task) => &task.layers,
+            Task::Load(task) => {
+                let layers = &task.layers;
+                self.bytes += super::super::codec::restore(
+                    runtime,
+                    layers,
+                    task.codec_budget,
+                    &mut self.observation,
+                )
+                .inspect_err(|_| core_metrics().storage_codec_decode_failures.add(1, &[]))?;
+                layers
+            }
             Task::Save(task) => &task.layers,
         };
         let (copies, bytes) = build_copy_descs(layers)?;

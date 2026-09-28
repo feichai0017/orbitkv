@@ -1,7 +1,8 @@
 # Single-node fault qualification
 
-The deterministic process gate runs a real Cache Manager, registered CUDA IPC
-buffers and SSD reads. It uses a separate `test-hooks` build; default release
+The deterministic process gate runs a real Cache Manager, retained engine
+tensors, independently imported shared payload arenas, CUDA IPC physical routes,
+and SSD reads. It uses a separate `test-hooks` build; default release
 binaries contain no fault barriers. Each test owns its Manager and a private
 barrier directory. Ordinary completion and model-output gates run separately.
 
@@ -11,7 +12,8 @@ barrier directory. Ordinary completion and model-output gates run separately.
 | One-page read batches with cancellation, a relative deadline or best-effort stopping | No second batch is submitted. A deadline lets demand recompute while the first batch drains with its budget retained. Unread pages are not classified as HLL misses. |
 | One owner cancels a shared preparation read | Another demand owner completes from the shared read; cancellation cannot revoke its buffers. |
 | Prepared result expires without another poll | The Manager releases the undelivered lease; a matching claim before expiry keeps its bytes owned through GPU completion. |
-| Restore completion delayed and eventfd notification dropped | A wait deadline returns no ownership of destination pages. Polling the same handle discovers terminal completion; restored bytes match, and reservations drain. |
+| Restore grant/result publication delayed and eventfd notification dropped | A wait deadline returns no ownership of destination pages. Polling the same handle discovers terminal completion; restored bytes match, and reservations drain. |
+| Restore submission ACK corrupted after claim, with delayed/lost completion notification | The native client retains the pre-reserved handle despite closing descriptor admission. Its native result reports the real outcome. Cancellation during raw preparation is terminal only after source cleanup and must leave GPU pages untouched; Managed work still waits for its actual drain. |
 | cuFile worker paused before reading, query cancelled and notification dropped | The SSD extent remains pinned through restore completion. A concurrent DRAM restore completes; polling recovers completion, bytes match and ownership counters drain. |
 | cuFile write paused, completion failed or Manager killed | Unfinished objects stay invisible; GPU pages remain owned; DRAM restores progress; failed reservations can be retried and staging is released on unregister. |
 | GDS hot-copy completion held while SSD work continues | Publish and unregister keep engine mappings; unrelated SSD demand restores complete with exact GPU bytes. |
@@ -19,12 +21,86 @@ barrier directory. Ordinary completion and model-output gates run separately.
 | Publish delayed beyond the call deadline | The publisher retains source pages while other query sessions progress. Releasing the barrier completes the save. Killing the Manager terminates the wait safely. |
 | Publish acknowledgement malformed | The session is poisoned and the publisher remains fenced until Manager death. Descriptor corruption cannot be mistaken for DMA completion. |
 | Manager restart with old clients, leases and a pending restore | A fresh service incarnation starts behind the same UDS address; old handles/leases are rejected. A newly registered engine can publish and restore. Both default and configured service prefixes are exercised. |
-| Engine process killed with registered CUDA IPC buffers | Session watching drains work and drops the old registration. Existing engine-restart E2Es verify subsequent reuse against output controls. |
+| Engine process killed with registered CUDA IPC buffers | Session watching drains Manager-owned work before dropping its registration. Any claimed engine-local grant without drain evidence retains its source owners and query credits in quarantine. |
 
 Publish logs a warning after the configured ordinary call deadline, then at
 most once per minute. It never frees sources merely because a timer expired.
 A permanently stuck live Manager requires operational restart; this gate does
 not install an automatic process killer.
+
+Channel tests additionally drop the submission ACK entirely, race cancellation
+against claim in separate mappings, and prove a delayed request cannot execute
+after cancellation. They distinguish UDS closure from actual peer process exit
+and cover shared-record capacity, generation reuse, and duplicate claim rejection.
+
+## Engine-local raw Restore gates
+
+The frozen `compact-restore-final-fault` bundle passed the selected real
+Manager/native-client integration and fault suite: **38 passed, 30 skipped in
+97.05 seconds**. The skipped cases require the cuFile configuration, which was
+not selected. All selected single-GPU local Restore lifecycle cases listed below
+passed with bootstrap 6/channel ABI 9/lifecycle 4.
+
+| Frozen artifact | SHA-256 |
+| --- | --- |
+| Cache Manager | `c60b7a780bc24a8eaa9e95f4f7d8aabd9c6498afed6cc9ff64d772d78c0ffbbc` |
+| Python native extension | `fee45f97cfda2a8980b2cdb33f76782c434ff6dc89511950c024efc86e9a2806` |
+
+The cases are implemented in
+[`test_cache_faults.py`](../python/tests/integration/test_cache_faults.py).
+Earlier Manager-owned Restore results remain separate from this evidence.
+
+| Passed test | Observed contract |
+| --- | --- |
+| `test_local_restore_survives_manager_death_after_claim` | Kill the Manager after claim and after the first copy enqueue. The engine must remain pending while its local barrier is held, then drain and verify exact GPU bytes through its own imported registration. |
+| `test_local_partial_enqueue_failure_drains_before_page_reuse` | Inject failure after an accepted copy; the failed result permits page reuse only after stream drain, and Manager source reservations eventually retire. |
+| `test_engine_death_after_claim_quarantines_source_reservation` | Kill a separate engine process after claim; the live Manager retains its charged sources despite UDS loss. |
+| `test_local_restore_retains_tensor_when_caller_drops_handle_and_tensor` | Dropping Python tensor references and the handle cannot free the native binding during a pending copy; unregister releases it after drain. |
+| `test_local_restore_fences_previous_use_on_nondefault_stream` | Two successive restores use different busy nondefault engine streams. Each previous write finishes before Restore overwrites the destination; exact bytes prove that the reused event does not substitute an earlier completion. |
+
+The CUDA unit test
+`caller_context_survives_registration_and_readiness_success_and_failure` in
+[`transfer/local.rs` tests](../crates/orbitkv-core/tests/unit/transfer/local.rs)
+also passed, covering restoration of the caller's CUDA context after both
+successful and rejected registration/readiness paths.
+
+The final release workspace gate passed **488 tests / 38 ignored**, excluding
+nested child-helper invocations from the pass count. The context test above was
+also run explicitly outside that default gate. Python unit tests passed **374**
+cases and benchmark-tool units passed **199**. The matching production Manager
+and extension passed all **7** ordinary channel/client GPU integration cases.
+The same-host Mooncake TCP raw and encoded peer round trips also passed. These
+remote checks qualify data correctness through the new local executor, not
+cross-host RDMA performance.
+
+The compaction unit gates cover permuted dense/sparse destinations, split K/V,
+adjacent distinct allocation IDs, destination overlap, a 32,768-page dense plan,
+and lease preservation for oversized fragmented plans. The existing 32,768-block
+GPU benchmark passes Criterion `--test` mode; it checks submission/drain, while
+the matched communication runs separately verify GPU bytes and copy counters.
+
+The `local_restore_dma` barrier is reached after the first enqueue call. It
+proves that Manager death does not manufacture local completion, and that
+retained imports support subsequent drain and correct bytes. It does **not**
+prove that the copy was physically in flight at the exact instant of SIGKILL.
+The engine-death case pauses after claim; it verifies conservative source
+quarantine, not engine death during proven active hardware DMA.
+
+The native worker captures `ready_stream` and owns tensors independently of
+Python waiters. Its local terminal result precedes asynchronous Manager source
+reaping. The channel suite separately covers claim/revoke races, plan-bank
+pressure, record generations, and retirement acknowledgement. Full serving,
+multiple-GPU, huge-page, prolonged allocator-pressure, and graph replay gates
+remain separate from these single-GPU process tests. See
+[engine-local qualification](engine-local-restore.md#qualification-gates).
+
+The matching production bundle subsequently passed Qwen3-8B DRAM serving
+correctness on H20: vLLM **6 passed / 1 skipped** (the skipped recurrent-state
+case does not apply to this dense model), and SGLang **1 passed / 1 deselected**
+(DRAM selected, SSD excluded). Both exercise engine restart with a retained
+Manager. These are normal serving gates, not additional injected-fault tests;
+the [exact configuration](single-node-performance.md#engine-local-restore-serving-qualification)
+does not qualify arbitrary graph modes, hybrid models, or multiple GPUs.
 
 ## Reproduce
 
@@ -78,5 +154,5 @@ The workspace test directory retains every engine/Manager incarnation log and
 of the evidence directory.
 
 Multi-rank serving, long-running injected-fault traffic, hardware hangs and remote
-failover have separate qualification gates. Page-generation references in a
-future region protocol are not replaced by process/session fencing.
+failover have separate qualification gates. Logical framework page-generation
+evidence remains separate from payload-allocation IDs and process/session fencing.

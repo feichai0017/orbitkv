@@ -10,8 +10,8 @@ prefetch, or can be fetched from a peer with Mooncake.
 
 | Boundary | Control | Payload | Status |
 | --- | --- | --- | --- |
-| inference process to local Cache Manager | iceoryx2 request/response and UDS lifecycle | registered CUDA IPC pages | integrated |
-| local bootstrap and lifecycle | Unix socket with credential and file-descriptor passing | memfd/eventfd handles and registration metadata | implemented; explicit region protocol planned |
+| inference process to local Cache Manager | iceoryx2 requests and shared grants | raw DRAM via engine-imported payload arenas; Publish/SSD/codec via Manager CUDA IPC bindings | raw local executor integrated; qualification gates tracked separately |
+| local bootstrap and lifecycle | Unix socket with credentials and file-descriptor passing | descriptor/grant memfds, three eventfds, and GPU-registration payload arena FDs | implemented |
 | Cache Manager to Cache Manager | Mooncake P2P handshake | Mooncake BatchTransfer over RDMA/TCP | stable Mooncake runtime integrated |
 | replica directory | soft-state network API | no KV bytes | embedded fixed shards; replication planned |
 | administration | HTTP | no KV bytes | existing |
@@ -24,178 +24,166 @@ authenticated bootstrap UDS for both adapters.
 
 ## Process channel
 
-`orbitkv-channel` uses iceoryx2 `0.10.0`. The workspace minimum Rust version is
-therefore `1.89`. Its first ABI is a fixed 64-byte message carrying:
+`orbitkv-channel` uses iceoryx2 `0.10.0` and a fixed 64-byte command carrying
+protocol version, opcode, request identity, Manager epoch, descriptor offset,
+length/generation, and two opcode-specific scalar fields. Variable-length
+hashes, leases, and page arrays use the descriptor arena. KV payload bytes do
+not travel through either command or descriptor memory.
 
-- protocol magic and ABI version;
-- command or status code;
-- request identity and Cache Manager session epoch;
-- offset, length, and generation of a descriptor in a separately registered
-  arena;
-- two opcode-specific scalar fields.
+Each native cache client has a query/restore endpoint and opens a separate
+Publish endpoint on its first save. The Manager owns the thread-safe iceoryx2
+service on a dedicated control thread. Clients enqueue before signaling the
+required request event; the Manager briefly spins and then waits for an event
+or maintenance deadline. Fixed 50 us idle polling is removed. Notifications
+are hints, so a failed wake after enqueue never permits early page reuse.
 
-The initial command vocabulary is `QueryBundle`, `Restore`, `Publish`,
-`Release`, and lifecycle probes. Variable-length hashes and page arrays do not
-live in the message. KV bytes never live in the message.
+### Bootstrap, registration, and versions
 
-Each cache client gets a query/restore iceoryx2 endpoint and opens a separate
-publish endpoint on its first save. The Cache Manager exclusively
-creates and owns the server endpoint; clients only open it. The endpoint uses
-iceoryx2's thread-safe IPC service because the server owns it on a dedicated
-control thread. Calls spin only for a bounded number of iterations and then
-yield. The server uses a short idle sleep instead of consuming a core. The
-measurements below are historical baselines, not a latency guarantee for this
-revision.
-UDS remains necessary for bootstrap, `SO_PEERCRED`, memfd/eventfd passing, and
-process-death detection.
+A mode-0600 UDS authenticates the Manager's uid with `SO_PEERCRED` and assigns
+an exclusive descriptor slot and session token. Bootstrap version **6** passes
+five FDs: descriptor memfd, grant memfd, Manager-to-engine Restore eventfd,
+engine-to-Manager retirement eventfd, and Publish reply eventfd. Memfds are
+size-sealed. Descriptor request/response generations advance monotonically,
+including when a slot is reused by a replacement session.
 
-The Cache Manager process endpoint supports `Ping`, `QueryBundle`,
-stale-session fencing, and `Shutdown`. `ChannelClient` obtains the service
-identity, an exclusive arena slot, a client token, the arena memfd, and a
-notification eventfd through a mode-0600 Unix socket. `SO_PEERCRED` restricts the
-bootstrap to the Cache Manager's uid. Each request has an odd generation and each
-response advances it by one; reconnecting to a reused slot starts beyond the
-prior generation, so delayed commands cannot target a new occupant. The memfd
-is sealed against growth and shrinking. The eventfd wakes clients when an
-asynchronous restore reaches a terminal state; ordinary control responses still
-arrive through iceoryx2's request/response channel.
+After bootstrap, the persistent UDS carries epoch-checked lifecycle version
+**4** frames, with a 64 MiB metadata limit. Registration reuses protobuf metadata
+without HTTP/2 or gRPC. A successful GPU registration reply also attaches
+payload arena FDs, identities, and sizes with `SCM_RIGHTS`. The engine validates
+the seals and independently maps and CUDA-registers each backing. This setup
+happens once per arena and GPU binding, not per restored block.
 
-`QueryBundle` has a framework-neutral binary schema for instance identity,
-request identity, hashes, group, query mode, hit positions, and the opaque
-lease. Iceoryx2 dispatches to the core query function.
-`Publish` and `Release` use the same authenticated descriptor session, so GPU
-page metadata can be submitted and query leases can complete their lifecycle
-without gRPC. Publish now retains its iceoryx2 reply handle while the core save
-runs on Tokio. The dispatcher can serve other requests during D2H, but the
-caller still waits: success means D2H copies have completed and host
-publication has been queued. A later query observes the blocks after the write
-pipeline seals them. `Restore` submits
-the existing in-process GPU load, returns an operation ID, signals its session's
-eventfd at terminal completion, and is consumed through a follow-up poll. The native Python
-`CacheManagerClient` exposes `start_restore`/`poll_restore`, a notification fd,
-`wait_restore`, and bounded P/D completion observations. Rust owns eventfd
-waiting and the 50 ms lost-notification
-fallback. A handle is bound to the issuing client, including clients connected
-to the same Manager epoch. A timeout leaves its GPU ownership unresolved.
-Both adapters use these operations through their same-host Cache Manager; KV
-payload bytes do not travel through the descriptor arena. The adapter exposes
-one cache API:
-scheduler Query/Release and worker Publish/Restore/ObserveCompletion use the
-process channel.
-Lifecycle calls use the
-persistent bootstrap UDS. Restore completion uses the session eventfd with bounded fallback
-polling.
+Channel ABI **10** rejects older clients. Client, native extension, and Manager
+must be rebuilt together; there is no old-wire decoder or alternate runtime
+protocol. Registration requires actual tensor/exporter objects through
+`register_context_batch(..., tensors=...)`, keeping them alive with the local
+CUDA binding. Repeated registration of the same instance/rank/device on one
+client is rejected. Unregister and close drain accepted operations before
+releasing the bindings.
 
-For one Cache Manager, the adapter derives `/tmp/orbitkv-<addr-port>.sock` unless
-`orbitkv.bootstrap_socket` is set. A scheduler querying multiple TP shards
-uses the socket derived from each shard endpoint; custom paths can be supplied
-through `orbitkv.tp_shard_bootstrap_sockets`. In today's centralized vLLM
-scheduler topology this requires all configured TP shards to be on the scheduler
-host. Cross-host TP sharding needs a future node-local query fan-out path.
-`orbitkv.wait_for_full_prefix` is supported locally. A query is polled once on
-the dispatcher for resident hits; any pending future continues on Tokio and
-returns `Loading`. Channel ABI 6 separates query submission from ticket polling
-and adds authenticated completion observations without changing the fixed
-64-byte control frame.
-Cache protocol schema 7 distinguishes metadata-only discovery from leased
-payload reads and marks selected recovery reads so HLL counts the logical
-discovery only once.
-Discovery returns `Candidates`, never a restore lease, and uses bounded query
-operation capacity without reserving payload bytes. `read_recovery` translates
-compiled demand into exact hash views and validates complete leased coverage.
-The query schema also carries an explicit warmup flag: it prepares pages without a
-restore lease, skips on warmup-budget pressure and is retired without polling.
-See [queued warming](queued-warming.md); the previous ABI is not retained.
-Consumer-owned preparation adds an explicit preparation flag and a claim
-command. A claim consumes only its exact live revision; a retired or expired
-preparation returns an unadmitted result, allowing a fresh ordinary query.
-Ordinary-prefix claims count one logical lookup; selected-range recovery claims
-do not count discovery again. Prepared results remain at the Manager until
-claimed or expired, as described in [request preparation](request-preparation.md).
-An operation has a monotonically increasing ID within its authenticated session,
-and a nonzero revision. A newer revision can replace hashes or wait policy while
-keeping its instance, request, and group; old polls and cancels cannot consume or
-cancel the replacement. Unknown or retired polls never submit new work. The
-transport's session epoch rejects messages from an earlier Manager lifetime.
-Both native clients and the Manager must be rebuilt together.
+Every Manager incarnation advertises a unique iceoryx2 service name behind the
+stable UDS address; `--channel-service` is a prefix. Old handles cannot be
+adopted by a new client. Reconnect establishes new mappings and tensor bindings.
+See [fault qualification](fault-qualification.md).
 
-The [client polling experiment](client-performance.md) measures the final
-control path and separates client migration from Manager allocation savings.
+`ObserveCompletion` carries bounded P/D completion and decode-resource evidence,
+without request IDs or state keys. Cache schema **8** combines these observations
+with the engine-local Restore grant protocol; older schemas are rejected.
 
-Rust `CacheClient` owns tickets for both engine adapters, exposed directly as
-`CacheManagerClient` by PyO3; the Python facade and raw Python `ChannelClient`
-API have been removed. It submits
-once, polls without resending hashes, and retires the ticket after a terminal
-result. Calls release the GIL. Each engine prepares an immutable Rust `BlockHashes`
-batch once per lookup; prefix slices share its allocation. Reusing the same
-batch/view makes native pending-query identity comparison constant time, with
-no per-page Python conversion on polls. Constructing a fresh batch still costs
-O(number of hashes), so callers should keep and reuse it. Operation-capacity pressure explicitly reports unadmitted `Loading`,
-which retries with a fresh ticket. While waiting for admission, the Manager borrows its stored request instead of
-cloning the full hash chain on every poll; it copies read inputs only after a
-reservation succeeds. A submitted operation can wait for its
-[byte budget](server.md#query-ownership-budgets) before touching cache pages.
-Outstanding operations are bounded to 128 per session and 1024 globally and
-expire after 60 seconds. Cancellation, disconnect,
-and expiration revoke result ownership; submitted backing reads drain while
-retaining their operation permits. Their completion admits or discards cache
-blocks and drops an undelivered lease without another poll. An expired
-operation leaves a bounded tombstone so a late poll reports timeout. Delivered
-leases retain their byte reservations through GPU completion; session teardown
-also releases delivered leases which were never consumed. Publish's reply is sent only after D2H completes, when the
-framework may reuse its source pages. This removes the shared dispatcher wait
-without making the caller's save completion asynchronous. New measurements of
-this revision are still required; the latency table below predates it.
-Publish requires a Cache Manager pidfd before submission. Once submitted, the client
-waits beyond the ordinary IPC timeout until it receives a reply or the Cache Manager
-process exits; ambiguous receive failures also keep its save-source pages pinned
-until process death. Malformed descriptor acknowledgements use the same fence.
-A watchdog logs the first ordinary-deadline overrun and repeats at most once
-per minute; it does not treat elapsed time as DMA completion. A live Manager
-that never completes still holds the publishing worker's sources. Operators
-must resolve the stall or terminate that Manager before sources can be reused.
+### Restore and source ownership
 
-Each Manager incarnation advertises a unique iceoryx2 service name through the
-stable UDS bootstrap address. `--channel-service` is a name prefix. Old client
-handles can keep their old service alive without preventing a new Manager from
-starting or accessing its new arena. Reconnect and register GPU buffers again;
-old leases and restore handles cannot be adopted. See [fault qualification](fault-qualification.md).
+`Restore` reserves a shared operation identity before descriptor submission.
+The Manager authenticates and claims it before consuming leases. A lost or
+malformed ACK retains the known handle once preparation was claimed; the
+request is not retransmitted. Preparation failures are terminal results on
+that handle. UDS closure stops descriptor admission but does not invalidate
+retained completion mappings or prove DMA completion.
 
-Publish batches are split to the slot capacity negotiated at bootstrap. Each
-chunk carries the same page range across its layers; the client returns only
-after every chunk has completed D2H. This supports long-context, many-layer
-models with the default 64 KiB slot without silently skipping oversized saves.
+For unencoded DRAM sources, the Manager compiles a bounded plan containing
+arena/allocation identities, source allocation bounds and subranges, registered
+layer names, and destination-relative offsets. It installs the selected source
+and query-reservation owners before publishing `Granted`. The engine wins
+`Granted → Active` before reading the plan and uses its own pointers and CUDA
+context. `start_restore(..., ready_stream=...)` supplies the actual engine
+stream whose previous use of the destination pages must finish. The first
+slice waits for that dependency and uses a single copy stream with a
+whole-operation fence.
 
-Restore destinations remain owned by the engine until the manager confirms a
-terminal result. A lost submission acknowledgement, failed completion poll, or
-deadline does not cancel CUDA writes. vLLM stops the engine step in those cases
-without reporting reusable blocks; SGLang fails its layer wait and completion
-observer without acknowledging the destination pages. A confirmed, drained
-failure can still use vLLM's single-cache-group recomputation path.
+After local drain, the native worker publishes `Drained` and makes the local
+result available through `poll_restore`/`wait_restore`. An engine-local eventfd
+wakes framework completion handling. The Manager's separate retirement task
+then releases source owners and publishes `Reaped`; engine acknowledgement
+allows record reuse. Source reaping is not on the successful page-consumption
+critical path. There is no terminal Poll RPC.
 
-Both H2D and D2H workers synchronize submitted stream work even when the backend
-returns an error partway through a batch. If CUDA cannot establish completion,
-the manager terminates instead of publishing a terminal result and recycling
-potentially active memory. This is a transfer lifetime fence; allocator-owned
-per-page generations and graceful cancellation remain separate work.
+The grant mapping contains 1024 records of 128 bytes and a 1 MiB plan bank.
+Error text is limited to 88 bytes per shared record. Plan consumption releases
+plan-bank capacity independently of DMA completion, and a bounded dirty bitset
+plus eventfd drives Manager retirement. Full shared plan-bank capacity defers
+prepared grants. An individual encoded plan above 1 MiB is rejected before
+lease consumption; automatic partitioning remains future work.
 
-The bootstrap protocol is version 2. After FD exchange, its UDS also carries
-versioned, epoch-checked lifecycle frames with a 16 MiB metadata limit. These
-frames reuse the registration protobuf schema without a gRPC channel or HTTP/2.
-Malformed frames close the connection; application errors preserve framing.
-Standalone mode starts no gRPC listener. Distributed etcd/placement configuration enables the
-peer-only transfer control listener automatically.
-Client and Cache Manager need to be upgraded together.
+At most 64 session mappings can be live or retained. An engine that dies after
+claim without drain evidence leaves its sources, byte reservations, and session
+credits quarantined. Neither TTL, UDS closure, nor pidfd exit authorizes source
+reuse. If the Manager dies during a claimed local copy, the engine retains its
+own imported mapping, CUDA registration, and tensors until local drain.
 
-UDS and HTTP cleanup in the Cache Manager share lifecycle serialization. Cleanup
-closes GPU queues to new submissions, waits for both streams to drain, then
-releases imported mappings. A failed drain retains mappings instead of freeing
-memory that may still be in use. Session replacement and disconnect cleanup use
-the same instance lock, so stale disconnects cannot remove the new session.
-SIGTERM, Ctrl+C, and control-plane shutdown close sessions and drain registered
-workers before service exit.
+SSD, encoded, and mixed-source restores use a `Managed` execution state and
+retain Manager workers for their materialization, decode, and I/O. This follows
+the prepared physical route, not a retry after local failure. CUDA IPC remains
+necessary for those routes and Publish. The obsolete Manager raw-descriptor
+worker branch is removed. See [engine-local Restore](engine-local-restore.md)
+for full ownership, limits, and pending qualification gates.
+
+Both native and Manager executors drain accepted copy work after partial
+enqueue failure. If CUDA cannot establish completion, the owning process
+terminates without reporting reusable pages. A wait timeout or dropped Python
+handle does not cancel accepted work; the connector must retain logical
+GPU-page assignments until a terminal result. A proven drained failure can use
+vLLM's single-cache-group recomputation path; hybrid failures retain their
+existing fail-closed engine semantics.
+
+### Publish and query control
+
+`Publish` holds its iceoryx2 reply while the Manager save runs asynchronously.
+The dispatcher serves other requests during D2H, but the caller waits until
+copies complete and host publication is queued. Queries see blocks after the
+write pipeline seals them. After bounded spinning, Publish waits on its own
+reply eventfd and Manager pidfd. A 10 ms response-queue recheck recovers lost
+wakes. Publish and Restore do not consume each other's notification counter.
+
+Publish requires a Manager pidfd before submission. An ordinary deadline logs
+a warning, then at most once per minute; it does not release source pages.
+Ambiguous/malformed replies retain the source fence until a valid outcome or
+confirmed Manager exit. A live Manager that never completes requires
+operational recovery. Publish batches split to the negotiated descriptor slot
+capacity, retaining matching page ranges across layers until all chunks finish.
+This Publish partitioning does not yet partition oversized raw Restore plans.
+
+Rust `CacheClient`, exposed directly by PyO3 as `CacheManagerClient`, owns query
+tickets for both adapters. Python constructs an immutable `BlockHashes` batch
+once per lookup; views share its allocation and native pending-query identity
+checks avoid repeated per-page conversion. Submission, revision, polling, and
+cancellation remain native, and blocking calls release the GIL.
+
+Cache schema 8 distinguishes metadata-only candidates from leased reads.
+Discovery returns `Candidates`, never a Restore lease, and does not reserve
+payload bytes. `read_recovery` translates compiled demand into exact hash views
+and validates complete leased coverage. The warmup flag prepares pages without
+a lease, skips warmup-budget pressure, and retires without polling. See
+[queued warming](queued-warming.md). Consumer-owned preparation and exact
+revision claims retain their contract in [request preparation](request-preparation.md).
+
+Pending query operations are bounded to 128 per session and 1024 globally,
+with a 60-second reply lifetime. Revision changes can replace hashes or wait
+policy while preserving instance/request/group identity. Old polls and cancels
+cannot consume replacements; unknown polls do not submit work. Submitted reads
+retain ownership through cancellation or expiry, and undelivered results release
+their leases without another poll. Delivered query reservations pass into the
+Restore grant or Manager worker and survive until its actual terminal fence.
+
+### Host and lifecycle boundary
+
+The adapter derives `/tmp/orbitkv-<addr-port>.sock` unless
+`orbitkv.bootstrap_socket` is set. A scheduler querying several TP shards uses
+local sockets in `orbitkv.tp_shard_bootstrap_sockets`. The current centralized
+vLLM scheduler requires all configured query shards on its host; cross-host TP
+query fan-out remains future work. `orbitkv.wait_for_full_prefix` keeps its
+existing local pending-query semantics.
+
+Standalone mode starts no gRPC listener. Distributed placement configuration
+enables the peer transfer-control listener. UDS and HTTP cleanup serialize
+instance lifecycle, close Manager GPU queues, drain their submitted work, and
+then release imported CUDA IPC mappings. The native client separately drains
+its engine-local operations. Manager cleanup cannot discard active local grant
+owners merely because the instance or UDS session has closed.
 
 ## Measured process-channel baseline
+
+The [current communication measurements](communication-performance.md) compare
+request events, Publish reply notification and encoding changes against the
+preceding revision, including CPU cost and raw-ping regressions.
 
 Measurements were collected on one H20 node with two Linux processes and a
 64-byte request/response descriptor, before bootstrap version 2. They are
@@ -208,17 +196,21 @@ revision or end-to-end serving results.
 | real Python/PyO3 local `QueryBundle` | 106.861 us | 107.404 us | 114.390 us | 120.635 us | 9,358 |
 | real Python/PyO3 gRPC `QueryBundle` | 489.575 us | 485.715 us | 547.946 us | 635.653 us | 2,043 |
 
-The real local path is about 4.58x faster than gRPC by both mean RTT and
-sequential throughput. Its roughly 107 us RTT is still far above the 4 us
-iceoryx2 substrate, so the next local optimization target is descriptor
-encode/decode, Python/PyO3 crossings, and the Cache Manager's 50 us idle poll, not a
-replacement IPC library. The benchmark is sequential because the scheduler
+In that historical run, the real local path was about 4.58x faster than gRPC by
+both mean RTT and sequential throughput. Its roughly 107 us RTT was far above
+the 4 us iceoryx2 substrate. The current request event removes the fixed 50 us
+idle poll, and request encoding removes repeated allocation and speculative
+Publish chunk copies. The benchmark is sequential because the scheduler
 needs one answer before committing a recovery boundary.
 
 The iceoryx2 result can be reproduced with the two binaries documented in
 [`crates/orbitkv-channel/README.md`](../crates/orbitkv-channel/README.md).
 
-## Current local validation
+## Earlier local validation
+
+The following serving results predate the engine-local raw Restore cutover;
+its new process-fault and serving gates are tracked separately in
+[engine-local Restore](engine-local-restore.md#qualification-gates).
 
 With the pinned vLLM `0.29.0`, a single-node H20 run passed the applicable
 pure-attention E2E recovery gates after an inference-process restart, comparing
@@ -284,6 +276,8 @@ deadline or partial submit, continues polling every task to a TENT terminal
 state, and only then calls `tent_free_batch`. A successful free request is not a
 completion fence. This preserves source/destination memory through TENT's
 asynchronous queue, failover and device work.
+Cancellation caused by a timeout retains the timeout result after draining;
+an earlier submission, polling or cancellation error keeps its original cause.
 
 OrbitKV also exposes TENT's bounded NIC load snapshot: device name, in-flight
 bytes and EWMA bandwidth. This is live rail-pressure evidence, not a per-batch
@@ -357,13 +351,16 @@ the Manager wire protocol does not yet enforce `StateBundle` completeness.
 SGLang validates prefix/window/checkpoint requirements and vLLM validates
 attention/recurrent requirements in their adapters before restore, using the
 shared Rust contract with absolute token coverage and leased group positions;
-see [hybrid recovery](hybrid-recovery.md). This does not add generation-qualified
-page references to the transfer protocol.
+see [hybrid recovery](hybrid-recovery.md). Logical framework page generations
+remain separate from the local source allocation IDs used by raw grants.
 
 ## Remaining work
 
-The hot path now uses UDS + iceoryx2 for both adapters. The next transport
-work is an explicit GPU-region registration protocol (replacing the Python
-CUDA IPC wrapper pickle), page-generation validation, multi-node inventory
-replay, and Mooncake RDMA failure/retry qualification. Peer gRPC remains only
-for remote transfer authorization and lease release in the current design.
+The local raw payload arena protocol and native executor are implemented.
+Next work includes bounded large-plan partitioning, layer/group readiness,
+replay-time CUDA dependencies, logical page-generation evidence, and the
+remaining serving/deployment qualification gates. CUDA IPC metadata still
+serves Publish and Manager SSD/codec routes. Peer metadata still uses gRPC;
+its planned replacement requires bounded native binary notifications and an
+authoritative grant/ACK session before removing those methods. See the
+[communication plan](communication-plan.md) and [peer-control design](peer-control.md).

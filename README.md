@@ -28,7 +28,16 @@ Run an independent Cache Manager per host and connect the engines on that host
 to its shared cache. Engines own GPU memory and scheduling; OrbitKV manages
 external replicas and transfers. See [deployment patterns](docs/deployment.md)
 for shared-instance budgets and container qualification limits.
-The single-node path is GPU-tested on **vLLM 0.29.0** and **SGLang 0.5.20**.
+The pinned engine baselines are **vLLM 0.29.0** and **SGLang 0.5.20**.
+The recorded [engine-local raw Restore cutover](docs/engine-local-restore.md) passes
+single-H20 Qwen3-8B DRAM serving correctness and restart reuse in both engines.
+The [recorded vLLM end-to-end comparison](docs/single-node-performance.md#matched-vllm-end-to-end-comparison)
+shows gains over HBM-eviction recomputation, while native CPU offload remains
+faster. LMCache comparisons and their limits are recorded in the same report.
+The [matched communication measurements](docs/communication-performance.md)
+track the initial regression and the subsequent idle-stream/plan-compaction
+optimization. Dense transfers benefit; small-payload overhead and broader
+serving/deployment qualification remain open.
 Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 
 ## Key features
@@ -38,9 +47,10 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 - **Optional reuse policies.** Rust can protect reused pages within a byte cap
   and admit SSD writes selectively. See the [policy controls](docs/cache-policies.md)
   and their cold-reuse tradeoff before enabling them.
-- **Direct GPU transfers.** Both engines register GPU buffers through CUDA IPC;
-  adapters fence the producing CUDA stream, and Rust handles cache queries,
-  reads and transfer completion.
+- **Native GPU transfers.** Unencoded DRAM Restore executes inside the engine
+  using independently imported shared payload arenas and retained tensors.
+  SSD/codec Restore and Publish retain Manager workers and CUDA IPC bindings;
+  adapters supply the CUDA stream dependencies and Rust owns completion.
 - **Model-aware recovery.** Cache identity includes model artifacts, computation
   settings and storage layout. Compiled recovery rules select the required
   attention pages, sliding windows and recurrent/conv checkpoints, including
@@ -140,8 +150,13 @@ container setup. Standalone caching requires neither etcd nor a gRPC listener.
 The engine adapter identifies missing state and supplies GPU destinations.
 OrbitKV selects compatible cached ranges, reads them from the configured tiers,
 and retains page ownership until the GPU copy finishes. Newly computed KV is
-published for later reuse. The same adapter API serves DRAM, SSD and experimental
-remote fetches; physical placement stays inside the Cache Manager.
+published for later reuse. The Manager owns cache placement and source grants;
+raw DRAM copies execute in the engine, while SSD/codec work remains with Manager
+workers. The same adapter API serves these routes and experimental remote
+fetches. The first local executor uses a whole-operation fence and rejects raw
+plans above 1 MiB after allocation-aware compaction; bounded partitioning for
+fragmented plans remains unimplemented. See
+[execution scope and remaining gates](docs/engine-local-restore.md).
 
 The [implementation plan](docs/implementation-plan.md) maps pinned LMCache,
 FlexKV and Mooncake mechanisms to deployment and validation work. The next milestone

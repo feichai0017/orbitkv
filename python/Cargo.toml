@@ -34,3 +34,4 @@ orbitkv-server = { path = "../crates/orbitkv-server", default-features = false }
 orbitkv-transfer = { workspace = true, optional = true }
 tokio.workspace = true
 prost.workspace = true
+libc.workspace = true

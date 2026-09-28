@@ -1,4 +1,6 @@
 use super::*;
+use crate::memory::numa::NumaNode;
+use crate::memory::pinned::{PagePolicy, PinnedMemory};
 use crate::transfer::MemcpyBackend;
 use cudarc::driver::sys;
 
@@ -6,22 +8,6 @@ use cudarc::driver::sys;
 struct MappedHost {
     host: *mut u8,
     device: u64,
-}
-
-/// Allocate `len` bytes of mapped pinned host memory.
-fn alloc_mapped_host(len: usize) -> MappedHost {
-    let mut p: *mut std::ffi::c_void = std::ptr::null_mut();
-    let r = unsafe { sys::cuMemHostAlloc(&mut p, len, sys::CU_MEMHOSTALLOC_DEVICEMAP) };
-    assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemHostAlloc");
-
-    let mut device: sys::CUdeviceptr = 0;
-    let r = unsafe { sys::cuMemHostGetDevicePointer_v2(&mut device, p, 0) };
-    assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemHostGetDevicePointer");
-
-    MappedHost {
-        host: p as *mut u8,
-        device,
-    }
 }
 
 fn alloc_device(len: usize) -> u64 {
@@ -62,7 +48,12 @@ fn kernel_matches_direct_both_directions() {
     let kernel = KernelBackend::new(&ctx).expect("kernel backend");
     let memcpy = MemcpyBackend;
 
-    let host = alloc_mapped_host(total);
+    let memory = PinnedMemory::allocate(total, PagePolicy::Regular, NumaNode::UNKNOWN)
+        .expect("shared pinned payload backing");
+    let host = MappedHost {
+        host: memory.as_ptr().cast_mut(),
+        device: memory.device_ptr().as_ptr() as u64,
+    };
     let device = alloc_device(total);
 
     let mut pattern = vec![0u8; total];
@@ -137,6 +128,5 @@ fn kernel_matches_direct_both_directions() {
 
     unsafe {
         sys::cuMemFree_v2(device);
-        sys::cuMemFreeHost(host.host as *mut _);
     }
 }

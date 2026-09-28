@@ -18,6 +18,12 @@ mod cache_client;
 mod cache_protocol;
 #[cfg(target_os = "linux")]
 mod client;
+#[cfg(target_os = "linux")]
+#[allow(
+    unsafe_code,
+    reason = "sealed shared completion memory uses aligned atomic access"
+)]
+mod completion;
 pub mod lifecycle;
 mod protocol;
 mod transport;
@@ -35,10 +41,15 @@ pub use cache_protocol::{
     CacheProtocolError, CancelQueryRequest, CompletionAdmission, CompletionIntent,
     CompletionObservationRequest, CompletionOutcome, CompletionRoute, PublishLayer, PublishRequest,
     QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode, QueryTicket,
-    ReleaseRequest, RestoreCommand, RestoreLease, RestoreRequest, RestoreResponse, RestoreState,
+    ReleaseRequest, RestoreLease, RestoreRequest, RestoreResponse, RestoreState,
 };
 #[cfg(target_os = "linux")]
 pub use client::{ChannelClient, ChannelError};
+#[cfg(target_os = "linux")]
+pub use completion::{
+    CompletionError, GrantState, RESTORE_COMPLETION_SLOTS, RESTORE_ERROR_BYTES, RESTORE_PLAN_BYTES,
+    RestoreCompletions,
+};
 pub use protocol::{
     ABI_VERSION, Command, CommandCode, DescriptorRef, ProtocolError,
     RESPONSE_FLAG_REQUEST_CONSUMED, Response, StatusCode, WIRE_MESSAGE_BYTES, WireMessage,

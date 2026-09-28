@@ -186,10 +186,16 @@ def test_none_reference_retains_output_drift_and_requires_verified_inputs(tmp_pa
         for i in range(2)
     ]
     (control / "samples.jsonl").write_text("\n".join(map(json.dumps, samples)))
-    reference = {"directory": str(control), "manifest": {"arguments": args}}
+    environment = {
+        "gpu": "H20",
+        "python": "3.11.10",
+        "cpu_affinity": [8, 10, 12, 14],
+        "packages": {"vllm": "0.29.0", "torch": "2.13.0", "transformers": "5.10.4"},
+    }
+    reference = {"directory": str(control), "manifest": {"arguments": args, **environment}}
     run = {
         "directory": str(tmp_path),
-        "manifest": {"arguments": {**args, "storage_codec": "fp8"}},
+        "manifest": {"arguments": {**args, "storage_codec": "fp8"}, **environment},
         "summary": [{"concurrency": 4}],
     }
     samples[1]["text"] = "changed"
@@ -210,6 +216,45 @@ def test_none_reference_retains_output_drift_and_requires_verified_inputs(tmp_pa
     run["manifest"]["arguments"]["seed"] = 43
     with pytest.raises(ValueError, match="different seed"):
         compare_outputs(run, reference)
+
+
+def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
+    args = {"engine": "vllm", "backend": "native", "storage_codec": "none", "seed": 42}
+    sample = {"length": 1024, "phase": "after_pressure", "prompt_sha256": "same", "text": "ok"}
+    (tmp_path / "samples.jsonl").write_text(json.dumps(sample) + "\n")
+    manifest = {
+        "arguments": args,
+        "gpu": "H20",
+        "python": "3.11.10",
+        "cpu_affinity": [8, 10, 12, 14],
+        "packages": {"vllm": "0.29.0", "torch": "2.13.0", "transformers": "5.10.4"},
+        "model_revision": "fixed-model-revision",
+        "kv_bytes_per_token": 147456,
+    }
+    reference = {"directory": str(tmp_path), "manifest": manifest}
+    for backend in ("orbitkv", "lmcache", "cpu"):
+        run = {
+            "directory": str(tmp_path),
+            "manifest": {**manifest, "arguments": {**args, "backend": backend}},
+            "summary": [{"length": 1024, "phase": "after_pressure"}],
+        }
+        result = compare_outputs(run, reference)
+        assert result["compared_requests"] == 1
+        assert result["output_mismatches"] == 0
+        for field in ("gpu", "python", "cpu_affinity", "model_revision", "kv_bytes_per_token"):
+            changed = {**run, "manifest": {**run["manifest"], field: "different"}}
+            with pytest.raises(ValueError, match=f"different {field}"):
+                compare_outputs(changed, reference)
+        for package in ("vllm", "torch", "transformers"):
+            changed = {
+                **run,
+                "manifest": {
+                    **run["manifest"],
+                    "packages": {**manifest["packages"], package: "different"},
+                },
+            }
+            with pytest.raises(ValueError, match=f"different {package} version"):
+                compare_outputs(changed, reference)
 
 
 def test_idle_retained_codec_workspace_does_not_prevent_measurement_drain(monkeypatch):

@@ -1,33 +1,16 @@
-//! Low-level pinned memory allocation for CUDA.
+//! Shared payload memory pinned independently in each CUDA process.
 //!
-//! Three strategies, all returning DMA-pinned memory:
+//! Every pool shard owns a size-sealed memfd mapped with `MAP_SHARED`. Regular
+//! and reserved huge pages use the same backing and registration path. Manager
+//! first-touch threads place the pages on the requested NUMA node before CUDA
+//! registration or export to another process.
 //!
-//! 1. **Regular** (`allocate_regular`): lazy `mmap` + parallel page pre-touch +
-//!    mapped `cudaHostRegister`. Each touch thread is pinned to the target NUMA
-//!    node so first-touch places every page on that node's local memory.
-//!
-//! 2. **HugePages** (`allocate_hugepages`): `mmap(MAP_HUGETLB)` + parallel
-//!    pre-touch + mapped `cudaHostRegister`. Same NUMA-aware touch. Requires
-//!    reserved hugepages:
-//!    ```bash
-//!    sudo sh -c 'echo 15360 > /proc/sys/vm/nr_hugepages'  # 30GB at 2MB pages
-//!    ```
-//!
-//! 3. **CudaHostAlloc** (`allocate_cuda_host_alloc`): mapped `cudaHostAlloc`.
-//!    NUMA placement follows the calling thread's affinity (caller is expected
-//!    to wrap with `run_on_numa`).
-//!
-//! See `examples/pinned_alloc_parallel.rs` for the benchmarks motivating the
-//! parallel pre-touch path.
-//!
-//! # Safety
-//!
-//! The memory returned is:
-//! - Pinned and registered with CUDA for DMA transfers
-//! - Valid for the lifetime of the `PinnedMemory` struct
-//! - Automatically freed/unmapped and unregistered on drop
+//! Owners must drain GPU access before dropping a mapping. Another process can
+//! keep the backing alive with its own mapping and CUDA registration after the
+//! allocating process exits.
 
 use std::io;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::ptr::NonNull;
 use std::sync::OnceLock;
 
@@ -63,10 +46,12 @@ fn read_hugepage_size_from_proc() -> Option<usize> {
 /// Error type for pinned memory allocation.
 #[derive(Debug)]
 pub(crate) enum PinnedMemError {
+    /// memfd creation, sizing, or sealing failed.
+    BackingFailed(io::Error),
     /// mmap failed
     MmapFailed(io::Error),
-    /// cudaHostAlloc failed
-    CudaAllocFailed(rt::cudaError),
+    /// The requested or rounded size cannot be represented by mmap/ftruncate.
+    SizeOverflow,
     /// cudaHostRegister failed
     CudaRegisterFailed(rt::cudaError),
     /// cudaHostGetDevicePointer failed
@@ -81,7 +66,8 @@ impl std::fmt::Display for PinnedMemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MmapFailed(e) => write!(f, "mmap failed: {}", e),
-            Self::CudaAllocFailed(e) => write!(f, "cudaHostAlloc failed: {:?}", e),
+            Self::BackingFailed(e) => write!(f, "shared payload backing failed: {}", e),
+            Self::SizeOverflow => write!(f, "shared payload size exceeds the mapping limit"),
             Self::CudaRegisterFailed(e) => write!(f, "cudaHostRegister failed: {:?}", e),
             Self::CudaGetDevicePointerFailed(e) => {
                 write!(f, "cudaHostGetDevicePointer failed: {:?}", e)
@@ -97,16 +83,11 @@ impl std::fmt::Display for PinnedMemError {
 
 impl std::error::Error for PinnedMemError {}
 
-/// Allocation strategy for pinned memory.
+/// Page allocation policy for a shared payload memfd.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AllocStrategy {
-    /// `mmap` + parallel pre-touch + mapped `cudaHostRegister`.
-    /// Safe for both CPU reads and writes; use when SSD offload is enabled.
+pub(crate) enum PagePolicy {
     Regular,
-    /// Mapped `cudaHostAlloc`.
-    CudaHostAlloc,
-    /// `mmap(MAP_HUGETLB)` + parallel pre-touch + mapped `cudaHostRegister`.
-    /// Requires reserved hugepages.
+    /// Requires reserved default-size huge pages on the host.
     HugePages,
 }
 
@@ -117,7 +98,7 @@ pub(crate) struct PinnedMemory {
     ptr: NonNull<u8>,
     device_ptr: NonNull<u8>,
     size: usize,
-    strategy: AllocStrategy,
+    fd: OwnedFd,
 }
 
 impl std::fmt::Debug for PinnedMemory {
@@ -126,7 +107,7 @@ impl std::fmt::Debug for PinnedMemory {
             .field("ptr", &format!("{:p}", self.ptr.as_ptr()))
             .field("device_ptr", &format!("{:p}", self.device_ptr.as_ptr()))
             .field("size", &self.size)
-            .field("strategy", &self.strategy)
+            .field("fd", &self.fd.as_raw_fd())
             .finish()
     }
 }
@@ -141,97 +122,22 @@ unsafe impl Send for PinnedMemory {}
 unsafe impl Sync for PinnedMemory {}
 
 impl PinnedMemory {
-    /// Allocate regular pinned memory via `mmap` + parallel pre-touch + register.
-    ///
-    /// All pages are first-touched by threads pinned to `node`, so the entire
-    /// region lands NUMA-local to that node. Pass `NumaNode::UNKNOWN` to skip
-    /// pinning and rely on the calling thread's existing affinity.
-    pub(crate) fn allocate_regular(size: usize, node: NumaNode) -> Result<Self, PinnedMemError> {
-        Self::allocate_mmap_register(size, AllocStrategy::Regular, node)
-    }
-
-    /// Allocate mapped pinned memory via `cudaHostAlloc`.
-    ///
-    /// NUMA placement follows the calling thread's affinity at allocation time.
-    pub(crate) fn allocate_cuda_host_alloc(size: usize) -> Result<Self, PinnedMemError> {
-        if size == 0 {
-            return Err(PinnedMemError::ZeroSize);
-        }
-        let mut ptr: *mut libc::c_void = std::ptr::null_mut();
-        let flags = rt::cudaHostAllocMapped;
-        // SAFETY: ptr is a valid stack pointer; size is validated non-zero above.
-        let result = unsafe { rt::cudaHostAlloc(&mut ptr, size, flags) };
-        if result != rt::cudaError::cudaSuccess {
-            return Err(PinnedMemError::CudaAllocFailed(result));
-        }
-        let ptr = NonNull::new(ptr as *mut u8).expect("cudaHostAlloc returned null");
-        let device_ptr = match mapped_device_pointer(ptr) {
-            Ok(device_ptr) => device_ptr,
-            Err(err) => {
-                // SAFETY: ptr was returned by cudaHostAlloc above.
-                unsafe { rt::cudaFreeHost(ptr.as_ptr() as *mut libc::c_void) };
-                return Err(err);
-            }
-        };
-        Ok(Self {
-            ptr,
-            device_ptr,
-            size,
-            strategy: AllocStrategy::CudaHostAlloc,
-        })
-    }
-
-    /// Allocate hugepage-backed pinned memory.
-    ///
-    /// Uses `mmap(MAP_HUGETLB)` + parallel pre-touch + `cudaHostRegister`.
-    /// Touch threads are pinned to `node` for NUMA-local first-touch.
-    ///
-    /// Requires reserved hugepages:
-    /// ```bash
-    /// sudo sh -c 'echo 15360 > /proc/sys/vm/nr_hugepages'  # 30GB at 2MB pages
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns `MmapFailed` if huge pages are not configured or insufficient.
-    pub(crate) fn allocate_hugepages(size: usize, node: NumaNode) -> Result<Self, PinnedMemError> {
-        Self::allocate_mmap_register(size, AllocStrategy::HugePages, node)
-    }
-
-    fn allocate_mmap_register(
+    /// Allocate shared payload pages and register this process's mapping with CUDA.
+    pub(crate) fn allocate(
         size: usize,
-        strategy: AllocStrategy,
+        pages: PagePolicy,
         node: NumaNode,
     ) -> Result<Self, PinnedMemError> {
-        if size == 0 {
-            return Err(PinnedMemError::ZeroSize);
-        }
-
-        let (flags, aligned_size) = match strategy {
-            AllocStrategy::HugePages => {
-                let huge_page_size =
-                    get_huge_page_size().ok_or(PinnedMemError::HugePageSizeUnavailable)?;
-                let aligned = (size + huge_page_size - 1) & !(huge_page_size - 1);
-                (
-                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_HUGETLB,
-                    aligned,
-                )
-            }
-            AllocStrategy::Regular => (libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, size),
-            AllocStrategy::CudaHostAlloc => {
-                unreachable!("CudaHostAlloc does not use the mmap path")
-            }
-        };
-
-        // SAFETY: null hint + anonymous mapping with valid prot/flags; the
-        // result is checked against MAP_FAILED before any use.
+        let (fd, size) = create_backing(size, pages)?;
+        // SAFETY: fd owns a size-sealed file of exactly size bytes. The mapping
+        // is writable and shared, and its result is checked before use.
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
-                aligned_size,
+                size,
                 libc::PROT_READ | libc::PROT_WRITE,
-                flags,
-                -1,
+                libc::MAP_SHARED,
+                fd.as_raw_fd(),
                 0,
             )
         };
@@ -239,24 +145,24 @@ impl PinnedMemory {
             return Err(PinnedMemError::MmapFailed(io::Error::last_os_error()));
         }
 
-        parallel_pre_touch(ptr.cast::<u8>(), aligned_size, node);
+        parallel_pre_touch(ptr.cast::<u8>(), size, node);
 
-        // SAFETY: ptr is a valid mapping of aligned_size bytes (checked above).
-        let result = unsafe { rt::cudaHostRegister(ptr, aligned_size, rt::cudaHostRegisterMapped) };
+        // SAFETY: ptr is a valid mapping of size bytes (checked above).
+        let result = unsafe { rt::cudaHostRegister(ptr, size, rt::cudaHostRegisterMapped) };
         if result != rt::cudaError::cudaSuccess {
             // SAFETY: ptr was successfully mmap'd above.
-            unsafe { libc::munmap(ptr, aligned_size) };
+            unsafe { libc::munmap(ptr, size) };
             return Err(PinnedMemError::CudaRegisterFailed(result));
         }
 
-        let ptr = NonNull::new(ptr as *mut u8).expect("mmap returned null");
+        let ptr = NonNull::new(ptr.cast::<u8>()).expect("mmap returned null");
         let device_ptr = match mapped_device_pointer(ptr) {
             Ok(device_ptr) => device_ptr,
             Err(err) => {
                 // SAFETY: ptr was successfully registered and mmap'd above.
                 unsafe {
-                    rt::cudaHostUnregister(ptr.as_ptr() as *mut libc::c_void);
-                    libc::munmap(ptr.as_ptr() as *mut libc::c_void, aligned_size);
+                    rt::cudaHostUnregister(ptr.as_ptr().cast());
+                    libc::munmap(ptr.as_ptr().cast(), size);
                 }
                 return Err(err);
             }
@@ -264,9 +170,13 @@ impl PinnedMemory {
         Ok(Self {
             ptr,
             device_ptr,
-            size: aligned_size,
-            strategy,
+            size,
+            fd,
         })
+    }
+
+    pub(crate) fn export_fd(&self) -> io::Result<OwnedFd> {
+        self.fd.try_clone()
     }
 
     /// Get a raw pointer to the allocated memory.
@@ -288,6 +198,55 @@ impl PinnedMemory {
     }
 }
 
+fn create_backing(size: usize, pages: PagePolicy) -> Result<(OwnedFd, usize), PinnedMemError> {
+    if size == 0 {
+        return Err(PinnedMemError::ZeroSize);
+    }
+    let size = match pages {
+        PagePolicy::Regular => size,
+        PagePolicy::HugePages => {
+            let page = get_huge_page_size().ok_or(PinnedMemError::HugePageSizeUnavailable)?;
+            size.checked_add(page - 1)
+                .map(|rounded| rounded / page * page)
+                .ok_or(PinnedMemError::SizeOverflow)?
+        }
+    };
+    if size > isize::MAX as usize || i64::try_from(size).is_err() {
+        return Err(PinnedMemError::SizeOverflow);
+    }
+    let flags = libc::MFD_CLOEXEC
+        | libc::MFD_ALLOW_SEALING
+        | if pages == PagePolicy::HugePages {
+            libc::MFD_HUGETLB
+        } else {
+            0
+        };
+    // SAFETY: the name is NUL-terminated and flags select a shared memory file.
+    let raw_fd = unsafe { libc::memfd_create(c"orbitkv-payload".as_ptr(), flags) };
+    if raw_fd == -1 {
+        return Err(PinnedMemError::BackingFailed(io::Error::last_os_error()));
+    }
+    // SAFETY: memfd_create returned a new descriptor owned by this function.
+    let fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+    // SAFETY: size fits off_t and fd identifies a newly created writable memfd.
+    if unsafe { libc::ftruncate(fd.as_raw_fd(), size as libc::off_t) } == -1 {
+        return Err(PinnedMemError::BackingFailed(io::Error::last_os_error()));
+    }
+    // Preserve writable shared mappings while preventing truncation and resize.
+    // SAFETY: fd is a sealing-enabled memfd and the seal bitmask is valid.
+    if unsafe {
+        libc::fcntl(
+            fd.as_raw_fd(),
+            libc::F_ADD_SEALS,
+            libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL,
+        )
+    } == -1
+    {
+        return Err(PinnedMemError::BackingFailed(io::Error::last_os_error()));
+    }
+    Ok((fd, size))
+}
+
 fn mapped_device_pointer(host_ptr: NonNull<u8>) -> Result<NonNull<u8>, PinnedMemError> {
     let mut device_ptr: *mut libc::c_void = std::ptr::null_mut();
     // SAFETY: host_ptr is mapped pinned memory allocated/registered by CUDA.
@@ -302,33 +261,17 @@ fn mapped_device_pointer(host_ptr: NonNull<u8>) -> Result<NonNull<u8>, PinnedMem
 
 impl Drop for PinnedMemory {
     fn drop(&mut self) {
-        match self.strategy {
-            AllocStrategy::CudaHostAlloc => {
-                // SAFETY: ptr was allocated with cudaHostAlloc.
-                let result = unsafe { rt::cudaFreeHost(self.ptr.as_ptr() as *mut libc::c_void) };
-                if result != rt::cudaError::cudaSuccess
-                    && result != rt::cudaError::cudaErrorCudartUnloading
-                {
-                    eprintln!("Warning: cudaFreeHost failed: {:?}", result);
-                }
-            }
-            AllocStrategy::Regular | AllocStrategy::HugePages => {
-                // SAFETY: ptr was registered with cudaHostRegister.
-                let unreg =
-                    unsafe { rt::cudaHostUnregister(self.ptr.as_ptr() as *mut libc::c_void) };
-                if unreg != rt::cudaError::cudaSuccess
-                    && unreg != rt::cudaError::cudaErrorCudartUnloading
-                {
-                    eprintln!("Warning: cudaHostUnregister failed: {:?}", unreg);
-                }
-                // SAFETY: ptr was allocated by mmap with the same size.
-                let unmap =
-                    unsafe { libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.size) };
-                if unmap == -1 {
-                    let err = io::Error::last_os_error();
-                    eprintln!("Warning: munmap failed: {}", err);
-                }
-            }
+        // SAFETY: this mapping was registered in this process. Its owner must
+        // have drained CUDA work before releasing the final PinnedAllocation.
+        let result = unsafe { rt::cudaHostUnregister(self.ptr.as_ptr().cast()) };
+        if result != rt::cudaError::cudaSuccess && result != rt::cudaError::cudaErrorCudartUnloading
+        {
+            eprintln!("Warning: cudaHostUnregister failed: {:?}", result);
+        }
+        // SAFETY: ptr was mapped with this size; other processes own independent
+        // mappings and registrations of the same file.
+        if unsafe { libc::munmap(self.ptr.as_ptr().cast(), self.size) } == -1 {
+            eprintln!("Warning: munmap failed: {}", io::Error::last_os_error());
         }
     }
 }

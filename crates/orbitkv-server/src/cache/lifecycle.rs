@@ -176,6 +176,10 @@ impl LifecycleService {
         }
         Ok(removed)
     }
+    pub(crate) fn payload_arenas(&self) -> Result<Vec<orbitkv_core::PayloadArena>, ControlError> {
+        self.engine.payload_arenas().map_err(Self::map_engine_error)
+    }
+
     pub(crate) async fn register(&self, req: Registration) -> Result<(), ControlError> {
         let stopping = self.stopping.read().await;
         if *stopping {

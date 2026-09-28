@@ -139,7 +139,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
 }
 
 #[test]
-fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
+fn managed_restore_rejects_overlapping_targets_before_dispatch() {
     let (load_tx, mut load_rx) = mpsc::unbounded_channel();
     let (save_tx, _save_rx) = mpsc::unbounded_channel();
     let pool = GpuWorkerPool {
@@ -158,7 +158,12 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
         closed: Mutex::new(false),
         drained: OnceCell::new(),
     };
-    let mut layout = KVCacheLayout::new(0x10000, 257 * 4096, 257, 4096, 0, 1).unwrap();
+    let mut layout = KVCacheLayout::bind(
+        0x10000,
+        257 * 4096,
+        crate::transfer::layout::KVCacheGeometry::new(257, 4096, 0, 1, None, 1).unwrap(),
+    )
+    .unwrap();
     layout.storage_format = orbitkv_state::StorageFormat::Fp8FromBf16;
     for codec_budget in [4096, 64 * 1024 * 1024] {
         for indices in [vec![0, 0], (0..257).chain([0]).collect()] {
@@ -259,18 +264,23 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         closed: Mutex::new(false),
         drained: OnceCell::new(),
     });
-    let (reply, _result) = oneshot::channel();
-    pool.submit_load(LoadTask {
-        plan: empty_restore_plan(0),
-        layers: vec![],
-        completion: reply,
-        reservations: vec![],
-        codec_budget: 64 * 1024 * 1024,
-        decode_ready_started: Instant::now(),
-        decode_ready_observation: Box::new(Observation::disabled()),
-        decode_admission: None,
-    })
-    .unwrap();
+    let queued_load = || {
+        let (reply, _result) = oneshot::channel();
+        WorkerCommand::Load(
+            LoadTask {
+                plan: empty_restore_plan(0),
+                layers: vec![],
+                completion: reply,
+                reservations: vec![],
+                codec_budget: 64 * 1024 * 1024,
+                decode_ready_started: Instant::now(),
+                decode_ready_observation: Box::new(Observation::disabled()),
+                decode_admission: None,
+            },
+            Observation::disabled(),
+        )
+    };
+    pool.submit(queued_load(), false).unwrap();
     let draining = Arc::clone(&pool);
     let waiter = tokio::spawn(async move { draining.drain().await });
     assert!(matches!(
@@ -292,20 +302,8 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
     let Some(WorkerCommand::Drain(ssd_host_ack)) = ssd_host_rx.recv().await else {
         panic!("missing SSD host barrier")
     };
-    let (reply, _) = oneshot::channel();
-    assert!(
-        pool.submit_load(LoadTask {
-            plan: empty_restore_plan(0),
-            layers: vec![],
-            completion: reply,
-            reservations: vec![],
-            codec_budget: 64 * 1024 * 1024,
-            decode_ready_started: Instant::now(),
-            decode_ready_observation: Box::new(Observation::disabled()),
-            decode_admission: None,
-        })
-        .is_err()
-    );
+    let error = pool.submit(queued_load(), false).unwrap_err();
+    assert!(error.to_string().contains("draining"));
     assert!(pool.batch_save(vec![], vec![], vec![], None).await.is_err());
     load_ack.send(Ok(())).unwrap();
     tokio::task::yield_now().await;
@@ -343,7 +341,7 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
     use crate::memory::pool::PinnedAllocator;
     use orbitkv_state::StorageFormat;
 
-    let pool = PinnedAllocator::new_global(4096, 1, false, false, None);
+    let pool = PinnedAllocator::new_global(4096, 1, false, None);
     let block = |bytes: usize| {
         let allocation = pool
             .allocate(NonZeroU64::new(bytes as u64).unwrap(), NumaNode::UNKNOWN)
@@ -361,9 +359,12 @@ fn transfer_cost_shape_uses_logical_ranges_and_actual_encoding() {
     }]);
     let layers = vec![LayerTransferData {
         layer_name: "split".into(),
-        layout: KVCacheLayout::new(0x10000, 4096, 2, 300, 2048, 2)
-            .unwrap()
-            .with_ssd_padding(512),
+        layout: KVCacheLayout::bind(
+            0x10000,
+            4096,
+            crate::transfer::layout::KVCacheGeometry::new(2, 300, 2048, 2, None, 512).unwrap(),
+        )
+        .unwrap(),
         blocks: vec![
             TransferBlock {
                 block_idx: 0,
@@ -473,4 +474,221 @@ fn raw_copy_candidates_distinguish_dma_coalescing_and_direction() {
         }
         assert_ne!(merged_keys, raw_copy_keys(&contiguous, 3, !write).0);
     }
+}
+
+#[test]
+fn raw_source_ranges_are_checked_before_appending_descriptors() {
+    use std::num::NonZeroU64;
+
+    use crate::block::Segment;
+    use crate::memory::pool::PinnedAllocator;
+    use crate::transfer::layout::BlockCopy;
+
+    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let segment = |bytes| {
+        let allocation = pool
+            .allocate(NonZeroU64::new(bytes as u64).unwrap(), NumaNode::UNKNOWN)
+            .unwrap();
+        Segment::new(allocation.as_non_null(), bytes, allocation)
+    };
+    let contiguous = RawBlock::single_segment(segment(32));
+    let split = RawBlock::two_segments(segment(16), segment(12));
+    let ranges = || BlockCopies::Split {
+        k: BlockCopy {
+            addr: 0x1000,
+            bytes: 8,
+        },
+        v: BlockCopy {
+            addr: 0x2000,
+            bytes: 8,
+        },
+    };
+    let mut copies = Vec::new();
+    for (raw, offset) in [(&contiguous, 17), (&split, 5), (&split, usize::MAX)] {
+        assert!(append_copy_descs(&mut copies, 7, ranges(), raw, offset).is_err());
+        assert!(
+            copies.is_empty(),
+            "invalid second segment must not append K"
+        );
+    }
+    assert_eq!(
+        append_copy_descs(&mut copies, 7, ranges(), &contiguous, 16).unwrap(),
+        16
+    );
+    assert_eq!(copies[1].host, copies[0].host.wrapping_add(8));
+    assert_eq!(copies[0].host_allocation, copies[1].host_allocation);
+    copies.clear();
+    assert_eq!(
+        append_copy_descs(&mut copies, 7, ranges(), &split, 4).unwrap(),
+        16
+    );
+    assert_eq!(
+        copies[1].host,
+        split.segment_ptr(1).unwrap().as_ptr().wrapping_add(4)
+    );
+    assert_ne!(copies[0].host_allocation, copies[1].host_allocation);
+    copies.clear();
+    assert!(
+        append_copy_descs(
+            &mut copies,
+            7,
+            BlockCopies::Contiguous(BlockCopy {
+                addr: 0x1000,
+                bytes: 33
+            }),
+            &contiguous,
+            0,
+        )
+        .is_err()
+    );
+    assert!(copies.is_empty());
+}
+
+#[test]
+fn managed_restore_retains_sources_and_reservations_through_partial_submission_drain() {
+    use std::num::NonZeroU64;
+    use std::time::Duration;
+
+    use cudarc::driver::DevicePtr;
+
+    use crate::block::Segment;
+    use crate::memory::pool::PinnedAllocator;
+
+    struct Gate {
+        entered: std_mpsc::Sender<()>,
+        release: std_mpsc::Receiver<()>,
+    }
+    unsafe extern "C" fn hold_stream(data: *mut std::ffi::c_void) {
+        // SAFETY: successful launch transfers this Box to one callback.
+        let gate = unsafe { Box::from_raw(data.cast::<Gate>()) };
+        let _ = gate.entered.send(());
+        let _ = gate.release.recv_timeout(Duration::from_secs(5));
+    }
+    struct PartialBackend {
+        gate: Mutex<Option<Gate>>,
+        submitted: std_mpsc::Sender<()>,
+    }
+    impl TransferBackend for PartialBackend {
+        fn h2d(&self, copies: &[CopyDesc], stream: &Arc<CudaStream>) -> Result<(), String> {
+            let gate = Box::into_raw(Box::new(self.gate.lock().take().unwrap()));
+            // SAFETY: the callback owns the gate until it returns and does not call CUDA.
+            let launched = unsafe {
+                cudarc::driver::result::stream::launch_host_function(
+                    stream.cu_stream(),
+                    hold_stream,
+                    gate.cast(),
+                )
+            };
+            if let Err(error) = launched {
+                // SAFETY: a rejected launch did not take ownership of the callback.
+                unsafe { drop(Box::from_raw(gate)) };
+                return Err(error.to_string());
+            }
+            MemcpyBackend.h2d(copies, stream)?;
+            self.submitted.send(()).unwrap();
+            Err("injected failure after accepting a copy".into())
+        }
+        fn d2h(&self, _: &[CopyDesc], _: &Arc<CudaStream>) -> Result<(), String> {
+            unreachable!("restore test")
+        }
+        fn name(&self) -> &'static str {
+            "direct"
+        }
+    }
+
+    let context = CudaContext::new(0).unwrap();
+    let stream = context.new_stream().unwrap();
+    let target = stream.alloc_zeros::<u8>(32).unwrap();
+    let device = target.device_ptr(&stream).0;
+    stream.synchronize().unwrap();
+    let pool = PinnedAllocator::new_global(4096, 1, false, None);
+    let allocation = pool
+        .allocate(NonZeroU64::new(32).unwrap(), NumaNode::UNKNOWN)
+        .unwrap();
+    // SAFETY: this test uniquely owns all 32 bytes before sealing them.
+    unsafe { allocation.as_non_null().as_ptr().write_bytes(0x5a, 32) };
+    let raw = RawBlock::single_segment(Segment::new(allocation.as_non_null(), 32, allocation));
+    let source = Arc::new(SealedBlock::from_slots(vec![(raw, NumaNode::UNKNOWN)]));
+    let weak = Arc::downgrade(&source);
+    let budget = crate::query::QueryBudget::new(32, 32).unwrap();
+    let crate::QueryAdmission::Admitted(reservation) =
+        budget.reserve("raw", "ns", 32, crate::QueryMode::Demand)
+    else {
+        panic!("budget available")
+    };
+    reservation.ready(32).unwrap();
+    reservation.restoring();
+    let (completion, result) = oneshot::channel();
+    let planned_source = crate::RestoreSource::Memory(Arc::clone(&source));
+    let plan = RestorePlan::new(0, [(0, &planned_source)]).unwrap();
+    drop(planned_source);
+    let task = LoadTask {
+        plan,
+        layers: vec![LayerTransferData {
+            layer_name: "raw".into(),
+            layout: KVCacheLayout::bind(
+                device,
+                32,
+                crate::transfer::layout::KVCacheGeometry::new(1, 32, 0, 1, None, 1).unwrap(),
+            )
+            .unwrap(),
+            blocks: vec![TransferBlock {
+                block_idx: 0,
+                block: TransferPayload::Cached {
+                    sealed: source,
+                    slot_id: 0,
+                    offset: 0,
+                },
+            }],
+        }],
+        completion,
+        reservations: vec![reservation],
+        codec_budget: 0,
+        decode_ready_started: Instant::now(),
+        decode_ready_observation: Box::new(Observation::disabled()),
+        decode_admission: None,
+    };
+    let (entered_tx, entered_rx) = std_mpsc::channel();
+    let (release_tx, release_rx) = std_mpsc::channel();
+    let (submitted_tx, submitted_rx) = std_mpsc::channel();
+    let (sender, receiver) = mpsc::unbounded_channel();
+    sender
+        .send(WorkerCommand::Load(task, Observation::disabled()))
+        .unwrap();
+    drop(sender);
+    let worker = std::thread::spawn(move || {
+        let mut runtime = init_worker(0, TransferMode::Direct).unwrap();
+        runtime.backend = Box::new(PartialBackend {
+            gate: Mutex::new(Some(Gate {
+                entered: entered_tx,
+                release: release_rx,
+            })),
+            submitted: submitted_tx,
+        });
+        worker_loop(0, receiver, runtime);
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    submitted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    drop(result);
+    let retained = weak.upgrade().is_some();
+    let charged = matches!(
+        budget.reserve("raw", "ns", 1, crate::QueryMode::Demand),
+        crate::QueryAdmission::Busy
+    );
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
+    assert!(
+        retained,
+        "dropping the completion receiver must not release active raw sources"
+    );
+    assert!(
+        charged,
+        "submitted DMA must retain its query byte reservation"
+    );
+    assert!(weak.upgrade().is_none());
+    assert!(matches!(
+        budget.reserve("raw", "ns", 32, crate::QueryMode::Demand),
+        crate::QueryAdmission::Admitted(_)
+    ));
+    assert_eq!(stream.clone_dtoh(&target).unwrap(), vec![0x5a; 32]);
 }

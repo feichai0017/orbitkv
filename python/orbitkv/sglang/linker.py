@@ -133,6 +133,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         try:
             self.client.start_session_watcher(self.instance_id, self.namespace, 1, 1)
             pools = list(self.layout.pools.values())
+            self._torch_device = pools[0].entry.kv_buffer[0].device
             wrappers = [
                 serialize_gpu_buffer(tensor) for pool in pools for tensor in pool.entry.kv_buffer
             ]
@@ -152,6 +153,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 [1] * len(wrappers),
                 transfer_backend,
                 False,
+                tensors=[tensor for pool in pools for tensor in pool.entry.kv_buffer],
                 layer_group_ids=[pool.group_id for pool in pools for _ in pool.layer_names],
                 layer_attention=[
                     item
@@ -476,8 +478,8 @@ class OrbitKVLinker(UnifiedCacheLinker):
                     for offset in range(0, len(pending), self._RESTORE_WINDOW):
                         restores = []
                         for load in pending[offset : offset + self._RESTORE_WINDOW]:
-                            # A lost submission acknowledgement still leaves GPU ownership
-                            # unresolved. Only leases never attempted can be released.
+                            # Earlier submissions can still own GPU pages if this batch
+                            # fails. Release only leases whose submission was never attempted.
                             submitted += 1
                             trace_transfer("restore_submit", load.rid, engine="sglang")
                             restores.append(
@@ -498,6 +500,9 @@ class OrbitKVLinker(UnifiedCacheLinker):
                                         )
                                         for pool_name, lease, targets in load.groups
                                     ],
+                                    ready_stream=torch.cuda.current_stream(
+                                        self._torch_device
+                                    ).cuda_stream,
                                 )
                             )
                             if TRANSFER_TRACING:

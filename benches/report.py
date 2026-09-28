@@ -12,13 +12,12 @@ from .metrics import cache_source, summarize, workload_phases
 
 
 def compare_outputs(run: dict, reference: dict) -> dict:
-    """Compare identical measured inputs with a none-codec control, retaining coverage gaps."""
+    """Compare matched inputs and runtimes against an unencoded reference backend."""
     args, control = run["manifest"]["arguments"], reference["manifest"]["arguments"]
     if control.get("storage_codec", "none") != "none":
         raise ValueError("Output reference must use --storage-codec none")
     for key in (
         "engine",
-        "backend",
         "model",
         "workload",
         "lengths",
@@ -50,6 +49,12 @@ def compare_outputs(run: dict, reference: dict) -> dict:
     for key in ("model_revision", "kv_bytes_per_token"):
         if run["manifest"].get(key) != reference["manifest"].get(key):
             raise ValueError(f"Output reference has different {key}")
+    for key in ("gpu", "python", "cpu_affinity"):
+        if run["manifest"][key] != reference["manifest"][key]:
+            raise ValueError(f"Output reference has different {key}")
+    for package in (args["engine"], "torch", "transformers"):
+        if run["manifest"]["packages"][package] != reference["manifest"]["packages"][package]:
+            raise ValueError(f"Output reference has different {package} version")
 
     def identity(sample):
         return tuple(
@@ -170,7 +175,7 @@ def main() -> None:
     parser.add_argument(
         "--reference-run",
         type=Path,
-        help="Matched none-codec run for prompt-verified output comparisons",
+        help="Matched unencoded reference, including native or another cache backend",
     )
     args = parser.parse_args()
     runs = [collect_run(directory) for directory in args.runs]

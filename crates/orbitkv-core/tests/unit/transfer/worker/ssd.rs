@@ -120,7 +120,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
     use crate::codec::gpu::{EncodeInput, GpuCodec};
     use crate::storage::Storage;
     use crate::storage::ssd::SsdReadPath;
-    use crate::transfer::layout::KVCacheLayout;
+    use crate::transfer::layout::{KVCacheGeometry, KVCacheLayout};
     use crate::transfer::worker::{GpuWorkerPool, LoadTask, TransferBlock};
     use crate::{EngineConfig, NumaNode, SsdBackend, SsdCacheConfig, StorageCodec, TransferMode};
 
@@ -224,8 +224,12 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
         source.entry.len,
     );
     let mut target = stream.alloc_zeros::<u8>(BYTES).unwrap();
-    let mut layout =
-        KVCacheLayout::new(target.device_ptr(&stream).0, BYTES, 1, BYTES, 0, 1).unwrap();
+    let mut layout = KVCacheLayout::bind(
+        target.device_ptr(&stream).0,
+        BYTES,
+        KVCacheGeometry::new(1, BYTES, 0, 1, None, 1).unwrap(),
+    )
+    .unwrap();
     layout.storage_format = format;
     let worker = GpuWorkerPool::new(0, NumaNode::UNKNOWN, TransferMode::Direct).unwrap();
     // Host staging works before any cuFile operation and again after its success.

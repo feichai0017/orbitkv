@@ -585,6 +585,14 @@ fn drain_batch(
                     *done = true;
                 }
                 Ok(status)
+                    if status.status == STATUS_CANCELED && timed_out && cancel_sent[task] =>
+                {
+                    // Acknowledging our timeout-driven cancellation must not
+                    // replace Timeout with TransferFailed. Earlier submission,
+                    // polling or cancellation errors still take precedence.
+                    *done = true;
+                }
+                Ok(status)
                     if matches!(
                         status.status,
                         STATUS_CANCELED | STATUS_FAILED | STATUS_INVALID

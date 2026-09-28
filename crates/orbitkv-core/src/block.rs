@@ -247,6 +247,29 @@ impl RawBlock {
             .map(Segment::allocation_id)
     }
 
+    pub(crate) fn source_range(
+        &self,
+        segment: usize,
+        offset: usize,
+        size: usize,
+    ) -> Result<crate::transfer::local::SourceRange, String> {
+        let segment = self
+            .segments
+            .as_slice()
+            .get(segment)
+            .ok_or_else(|| "missing raw source segment".to_string())?;
+        if size == 0
+            || offset
+                .checked_add(size)
+                .is_none_or(|end| end > segment.size)
+        {
+            return Err("raw source exceeds its host segment".into());
+        }
+        segment
+            ._allocation
+            .source_range(segment.ptr.add(offset).host(), size)
+    }
+
     /// Get segment size by index.
     pub(crate) fn segment_size(&self, index: usize) -> Option<usize> {
         self.segments.as_slice().get(index).map(|s| s.size)

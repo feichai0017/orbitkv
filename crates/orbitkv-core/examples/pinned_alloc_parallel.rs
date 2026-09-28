@@ -1,15 +1,19 @@
 //! Cold-start cost of pinned memory allocation under different strategies.
 //! Motivates the `mmap + parallel_pre_touch + cudaHostRegister` path now used
-//! by `PinnedMemory::allocate_regular`/`allocate_hugepages`.
+//! by the shared `PinnedMemory::allocate` payload pool. This benchmark keeps
+//! anonymous mmap and CUDA allocations as algorithm comparisons.
 //!
 //! Non-hugepage (size = BENCH_SIZE_GB):
-//!   A. cudaHostAlloc(flags=0)                       — old Regular path
+//!   A. cudaHostAlloc(flags=0)                       — CUDA allocation baseline
 //!   B. mmap(MAP_POPULATE) + cudaHostRegister        — single-thread populate
-//!   C. mmap + parallel_pre_touch(N) + register      — current Regular path
+//!   C. mmap + parallel_pre_touch(N) + register      — anonymous-page comparison
 //!
 //! Hugepage (size = BENCH_HUGE_MB, requires reserved hugepages):
-//!   D. mmap(MAP_HUGETLB) + cudaHostRegister         — old HugePages path
-//!   E. mmap(MAP_HUGETLB) + parallel_touch(N) + register — current HugePages path
+//!   D. mmap(MAP_HUGETLB) + cudaHostRegister         — serial huge-page comparison
+//!   E. mmap(MAP_HUGETLB) + parallel_touch(N) + register — parallel huge-page comparison
+//!
+//! These historical timings do not measure the current memfd backing. Use the
+//! production pool and a matched workload to qualify its startup cost.
 //!
 //! ## Measured results
 //!
@@ -57,8 +61,8 @@
 //! Pre-touch threads must run on the target NUMA node so first-touch places
 //! every page locally. With explicit `pin_thread_to_numa_node`: 1000/1000
 //! sampled pages on the target node, no timing penalty vs unpinned. The
-//! production path now plumbs `NumaNode` through `allocate_regular` /
-//! `allocate_hugepages` so each pre-touch worker pins itself before faulting.
+//! production shared-memfd path plumbs `NumaNode` through `PinnedMemory::allocate`
+//! so each pre-touch worker pins itself before faulting.
 //!
 //! ## Takeaways
 //!

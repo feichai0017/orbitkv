@@ -2132,6 +2132,7 @@ dependencies = [
 name = "orbitkv-py"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "orbitkv-channel",
  "orbitkv-common",
  "orbitkv-core",
@@ -2171,6 +2172,7 @@ dependencies = [
  "pyo3",
  "pyo3-build-config",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

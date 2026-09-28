@@ -44,5 +44,7 @@ fn completion_validation_requires_fresh_consistent_evidence() {
 
     invalid.outcome = CompletionOutcome::TimedOut;
     invalid.wire_bytes = 0;
+    assert!(validate_observation(&invalid).is_err());
+    invalid.resources.decode_page_bytes = 0;
     assert!(validate_observation(&invalid).is_ok());
 }

@@ -80,3 +80,83 @@ fn publish_chunks_preserve_ragged_cache_groups() {
     }
     assert_eq!(reconstructed, request);
 }
+
+#[test]
+fn publish_chunk_boundaries_include_variable_hashes_and_only_active_layers() {
+    let request = PublishRequest {
+        instance_id: "m".into(),
+        tp_rank: 1,
+        pp_rank: 2,
+        device_id: 3,
+        layers: vec![
+            PublishLayer {
+                layer_name: "a".into(),
+                block_ids: vec![10, 11, 12],
+                block_hashes: vec![vec![1; 1], vec![2; 20], vec![3; 2]],
+            },
+            PublishLayer {
+                layer_name: "b".into(),
+                block_ids: vec![20, 21],
+                block_hashes: vec![vec![4; 3], vec![5; 8]],
+            },
+            PublishLayer {
+                layer_name: "empty".into(),
+                block_ids: vec![],
+                block_hashes: vec![],
+            },
+        ],
+    };
+
+    for (capacity, first_count) in [(111, 2), (110, 1)] {
+        let payloads = publish_payloads(&request, capacity).unwrap();
+        assert_eq!(payloads.len(), 2);
+        let chunks = payloads
+            .iter()
+            .map(|payload| {
+                assert!(payload.len() <= capacity);
+                PublishRequest::decode(payload).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(chunks[0].layers[0].block_ids.len(), first_count);
+        assert_eq!(chunks[0].layers[1].block_ids.len(), first_count);
+        for original in &request.layers[..2] {
+            let layers = chunks
+                .iter()
+                .flat_map(|chunk| &chunk.layers)
+                .filter(|layer| layer.layer_name == original.layer_name)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                layers
+                    .iter()
+                    .flat_map(|layer| &layer.block_ids)
+                    .copied()
+                    .collect::<Vec<_>>(),
+                original.block_ids
+            );
+            assert_eq!(
+                layers
+                    .iter()
+                    .flat_map(|layer| &layer.block_hashes)
+                    .collect::<Vec<_>>(),
+                original.block_hashes.iter().collect::<Vec<_>>()
+            );
+        }
+        assert!(chunks.iter().all(|chunk| {
+            chunk.instance_id == "m"
+                && (chunk.tp_rank, chunk.pp_rank, chunk.device_id) == (1, 2, 3)
+                && chunk.layers.iter().all(|layer| !layer.block_ids.is_empty())
+        }));
+    }
+
+    let full = request.encode().unwrap();
+    assert_eq!(publish_payloads(&request, full.len()).unwrap(), vec![full]);
+    assert!(matches!(
+        publish_payloads(&request, 66),
+        Err(ChannelError::Bootstrap(BootstrapError::Arena(
+            crate::ArenaError::PayloadTooLarge {
+                len: 67,
+                capacity: 66
+            }
+        )))
+    ));
+}

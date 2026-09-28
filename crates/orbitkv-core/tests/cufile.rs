@@ -271,7 +271,7 @@ async fn short_disk_read_fails_restore_and_releases_its_source() {
         .unwrap()
         .set_len(0)
         .unwrap();
-    let outcome = env
+    let completion = env
         .engine
         .restore(
             &env.instance_id,
@@ -280,9 +280,8 @@ async fn short_disk_read_fails_restore_and_releases_its_source() {
             &[vec!["layer"]],
             &[(lease, vec![vec![Some(0)]])],
         )
-        .unwrap()
-        .await
         .unwrap();
+    let outcome = env.restore_outcome(completion).await;
     assert!(
         outcome.result.is_err(),
         "short reads must not become successful restores"
@@ -457,6 +456,9 @@ impl EncodedFixture {
                 &[(lease, vec![ids.iter().copied().map(Some).collect()])],
             )
             .unwrap();
+        let orbitkv_core::RestoreExecution::Managed(completion) = completion else {
+            panic!("encoded SSD route must execute on the Manager")
+        };
         tokio::time::timeout(std::time::Duration::from_secs(30), completion)
             .await
             .unwrap()

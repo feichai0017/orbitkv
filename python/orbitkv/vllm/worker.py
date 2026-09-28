@@ -328,6 +328,7 @@ class WorkerConnector:
 
         layer_names = []
         buffer_registrations = []
+        registration_tensors = []
         layer_num_blocks = []
         layer_bytes_per_block = []
         layer_kv_stride_bytes = []
@@ -371,6 +372,7 @@ class WorkerConnector:
 
             layer_names.append(layer_name)
             buffer_registrations.append(wrapper_bytes)
+            registration_tensors.append(registration_tensor)
             layer_num_blocks.append(registration.num_blocks)
             layer_bytes_per_block.append(registration.bytes_per_block)
             layer_kv_stride_bytes.append(registration.kv_stride_bytes)
@@ -460,6 +462,7 @@ class WorkerConnector:
             layer_segments,
             self._ctx.transfer_backend,
             self._page_first,
+            tensors=registration_tensors,
             layer_group_ids=layer_group_ids,
             layer_formats=layer_formats,
             layer_attention=layer_attention,
@@ -719,14 +722,15 @@ class WorkerConnector:
                 self._ctx.device_id,
                 layer_groups,
                 loads,
+                ready_stream=torch.cuda.current_stream(self._torch_device).cuda_stream,
             )
             if TRANSFER_TRACING:
                 for req_id in request_ids:
                     trace_transfer("restore_link", req_id, engine="vllm", restore_key=restore.key)
         except Exception as error:
             self._ctx.state_manager.mark_unavailable(f"restore submit exception: {error}")
-            # A lost acknowledgement can hide an accepted transfer. Releasing
-            # its lease or asking vLLM to recompute would race that GPU write.
+            # Earlier restores can still own GPU destinations when this
+            # submission fails. Keep their pages until transfer teardown.
             raise RuntimeError(
                 "OrbitKV restore submission did not establish completion; "
                 "GPU pages remain held until transfer teardown"
@@ -768,7 +772,7 @@ class WorkerConnector:
 
         vLLM calls this each forward pass and re-schedules reported blocks for
         local recomputation. Only terminal Cache Manager failures establish
-        that DMA has stopped; timeouts and lost acknowledgements are fatal.
+        that DMA has stopped; completion timeouts remain fatal.
         """
         with self._load_completion_lock:
             failed = self._failed_load_block_ids

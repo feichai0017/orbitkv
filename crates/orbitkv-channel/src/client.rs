@@ -1,20 +1,22 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rustix::net::sockopt::socket_peercred;
 use rustix::process::{PidfdFlags, pidfd_open};
 use thiserror::Error;
 
-use crate::lifecycle::{LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader};
+use crate::lifecycle::{
+    LifecycleCommand, LifecycleHeader, LifecycleReply, receive_lifecycle_reply,
+};
 use crate::{
     BootstrapClient, BootstrapError, CacheProtocolError, CallOptions, Command, CommandCode,
     CompletionObservationRequest, PublishRequest, QueryBundleResponse,
-    RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest, RestoreCommand, RestoreRequest,
-    RestoreResponse, RestoreState, StatusCode, TransportClient, TransportError,
+    RESPONSE_FLAG_REQUEST_CONSUMED, ReleaseRequest, RestoreRequest, RestoreResponse, RestoreState,
+    StatusCode, TransportClient, TransportError,
 };
 
 #[derive(Debug, Error)]
@@ -27,16 +29,16 @@ pub enum ChannelError {
     Recovery(#[from] orbitkv_state::RecoveryError),
     #[error(transparent)]
     Codec(#[from] CacheProtocolError),
+    #[error(transparent)]
+    Completion(#[from] crate::CompletionError),
     #[error("cache request returned {0:?}")]
     Status(StatusCode),
     #[error("cache session is ambiguous after a failed call; reconnect required")]
     SessionRequiresReconnect,
     #[error("restore operation {operation_id} timed out")]
     RestoreTimeout { operation_id: u64 },
-    #[error("restore operation {operation_id} failed: {message}")]
-    RestoreFailed { operation_id: u64, message: String },
-    #[error("cannot observe Cache Manager process death; refusing to start a publish")]
-    PublishPeerUnobservable,
+    #[error("cannot observe Cache Manager process death; refusing to start a GPU transfer")]
+    GpuPeerUnobservable,
     #[error("Cache Manager rejected lifecycle operation ({code}): {message}")]
     Lifecycle { code: u16, message: String },
 }
@@ -48,7 +50,7 @@ pub struct ChannelClient {
     call_lock: Mutex<()>,
     lifecycle_lock: Mutex<()>,
     poisoned: AtomicBool,
-    publish_peer: Option<OwnedFd>,
+    peer_process: Option<OwnedFd>,
 }
 
 impl ChannelClient {
@@ -57,7 +59,7 @@ impl ChannelClient {
         options: CallOptions,
     ) -> Result<Self, ChannelError> {
         let bootstrap = BootstrapClient::connect(bootstrap_socket)?;
-        let publish_peer = socket_peercred(bootstrap.stream())
+        let peer_process = socket_peercred(bootstrap.stream())
             .ok()
             .and_then(|credentials| pidfd_open(credentials.pid, PidfdFlags::empty()).ok());
         bootstrap
@@ -68,7 +70,7 @@ impl ChannelClient {
             .stream()
             .set_write_timeout(Some(options.timeout))
             .map_err(BootstrapError::Io)?;
-        let client = TransportClient::connect(&bootstrap.info().service_name)?;
+        let client = TransportClient::connect(&bootstrap.info_ref().service_name)?;
         Ok(Self {
             bootstrap,
             client,
@@ -76,7 +78,7 @@ impl ChannelClient {
             call_lock: Mutex::new(()),
             lifecycle_lock: Mutex::new(()),
             poisoned: AtomicBool::new(false),
-            publish_peer,
+            peer_process,
         })
     }
 
@@ -85,7 +87,11 @@ impl ChannelClient {
     }
 
     /// Registration and liveness metadata use UDS, independently of the hot descriptor slot.
-    pub fn lifecycle(&self, command: LifecycleCommand, payload: &[u8]) -> Result<(), ChannelError> {
+    pub fn lifecycle(
+        &self,
+        command: LifecycleCommand,
+        payload: &[u8],
+    ) -> Result<LifecycleReply, ChannelError> {
         let _guard = self
             .lifecycle_lock
             .lock()
@@ -93,7 +99,7 @@ impl ChannelClient {
         if self.poisoned.load(Ordering::Acquire) {
             return Err(ChannelError::SessionRequiresReconnect);
         }
-        let exchange = || -> std::io::Result<(u16, Vec<u8>)> {
+        let exchange = || -> std::io::Result<(u16, LifecycleReply)> {
             let header = LifecycleHeader {
                 code: command as u16,
                 epoch: self.session_epoch(),
@@ -110,28 +116,29 @@ impl ChannelClient {
             stream.set_read_timeout(Some(timeout))?;
             stream.write_all(&header)?;
             stream.write_all(payload)?;
-            let mut header = [0; LIFECYCLE_HEADER_BYTES];
-            stream.read_exact(&mut header)?;
-            let header = LifecycleHeader::decode(header)?;
+            let (header, reply) = receive_lifecycle_reply(stream)?;
             if header.epoch != self.session_epoch() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "stale lifecycle session",
                 ));
             }
-            let mut body = vec![0; header.payload_len];
-            stream.read_exact(&mut body)?;
-            Ok((header.code, body))
+            if !matches!(command, LifecycleCommand::Register)
+                && (!reply.payload.is_empty() || !reply.fds.is_empty())
+                && header.code == 0
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "unexpected lifecycle attachments",
+                ));
+            }
+            Ok((header.code, reply))
         };
         match exchange() {
-            Ok((0, body)) if body.is_empty() => Ok(()),
-            Ok((0, _)) => Err(ChannelError::Lifecycle {
-                code: 0,
-                message: "unexpected lifecycle response body".to_string(),
-            }),
-            Ok((code, message)) => Err(ChannelError::Lifecycle {
+            Ok((0, reply)) => Ok(reply),
+            Ok((code, reply)) => Err(ChannelError::Lifecycle {
                 code,
-                message: String::from_utf8_lossy(&message).into_owned(),
+                message: String::from_utf8_lossy(&reply.payload).into_owned(),
             }),
             Err(error) => {
                 self.close();
@@ -149,6 +156,10 @@ impl ChannelClient {
 
     pub fn session_epoch(&self) -> u64 {
         self.bootstrap.info_ref().session_epoch
+    }
+
+    pub(crate) fn session_token(&self) -> u64 {
+        self.bootstrap.info_ref().client_token
     }
 
     /// Borrowed notification descriptor. It remains valid only while this
@@ -169,7 +180,8 @@ impl ChannelClient {
         request: &crate::QueryCommand,
     ) -> Result<QueryBundleResponse, ChannelError> {
         let payload = request.encode()?;
-        let payload = self.call_descriptor(CommandCode::QueryBundle, request_id, &payload)?;
+        let payload =
+            self.call_descriptor(CommandCode::QueryBundle, request_id, &payload, 0, None)?;
         match QueryBundleResponse::decode(&payload) {
             Ok(response) => Ok(response),
             Err(error) => {
@@ -185,7 +197,7 @@ impl ChannelClient {
         request: &crate::CancelQueryRequest,
     ) -> Result<(), ChannelError> {
         let payload = request.encode()?;
-        self.call_descriptor(CommandCode::CancelQuery, request_id, &payload)?;
+        self.call_descriptor(CommandCode::CancelQuery, request_id, &payload, 0, None)?;
         Ok(())
     }
 
@@ -195,27 +207,33 @@ impl ChannelClient {
         observation: &CompletionObservationRequest,
     ) -> Result<(), ChannelError> {
         let payload = observation.encode()?;
-        self.call_descriptor(CommandCode::ObserveCompletion, request_id, &payload)?;
+        self.call_descriptor(
+            CommandCode::ObserveCompletion,
+            request_id,
+            &payload,
+            0,
+            None,
+        )?;
         Ok(())
     }
 
     pub fn release(&self, request_id: u64, lease: Vec<u8>) -> Result<(), ChannelError> {
         let payload = ReleaseRequest { lease }.encode()?;
-        let _ = self.call_descriptor(CommandCode::Release, request_id, &payload)?;
+        let _ = self.call_descriptor(CommandCode::Release, request_id, &payload, 0, None)?;
         Ok(())
     }
 
     pub fn publish(&self, request_id: u64, request: &PublishRequest) -> Result<(), ChannelError> {
         let peer = self
-            .publish_peer
+            .peer_process
             .as_ref()
-            .ok_or(ChannelError::PublishPeerUnobservable)?;
+            .ok_or(ChannelError::GpuPeerUnobservable)?;
         let payloads = publish_payloads(request, self.bootstrap.info_ref().slot_capacity)?;
         for payload in payloads {
             // One logical publish can use several descriptor generations.
             // Every chunk retains the source pages until its D2H completes.
             let _ =
-                self.call_descriptor_with_peer(CommandCode::Publish, request_id, &payload, peer)?;
+                self.call_descriptor(CommandCode::Publish, request_id, &payload, 0, Some(peer))?;
         }
         Ok(())
     }
@@ -225,27 +243,54 @@ impl ChannelClient {
         request_id: u64,
         request: &RestoreRequest,
     ) -> Result<u64, ChannelError> {
-        let payload = RestoreCommand::Submit(request.clone()).encode()?;
-        let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload)?;
-        let response = RestoreResponse::decode(&payload)?;
-        match response.state {
-            RestoreState::Pending => Ok(response.operation_id),
-            RestoreState::Succeeded => Ok(response.operation_id),
-            RestoreState::Failed => Err(ChannelError::RestoreFailed {
-                operation_id: response.operation_id,
-                message: response.message,
-            }),
+        if self.peer_process.is_none() {
+            return Err(ChannelError::GpuPeerUnobservable);
         }
+        let payload = request.encode()?;
+        let completions = self.bootstrap.completions();
+        let operation_id = completions.reserve()?;
+        if let Err(error) = self.call_descriptor(
+            CommandCode::Restore,
+            request_id,
+            &payload,
+            operation_id,
+            None,
+        ) {
+            if completions.cancel(operation_id)? {
+                // Winning cancellation proves the Manager cannot start this
+                // operation, even if its queued descriptor arrives later.
+                return Err(error);
+            }
+            // Claim won: the Manager owns execution and the shared result.
+            // An ambiguous ACK cannot discard the only handle to that work.
+            log::warn!("Restore {operation_id} claimed despite submission error: {error}");
+        }
+        Ok(operation_id)
     }
 
-    pub fn restore_poll(
-        &self,
-        request_id: u64,
-        operation_id: u64,
-    ) -> Result<RestoreResponse, ChannelError> {
-        let payload = RestoreCommand::Poll { operation_id }.encode()?;
-        let payload = self.call_descriptor(CommandCode::Restore, request_id, &payload)?;
-        Ok(RestoreResponse::decode(&payload)?)
+    pub fn restore_poll(&self, operation_id: u64) -> Result<RestoreResponse, ChannelError> {
+        let response = self.bootstrap.completions().poll(operation_id)?;
+        // Descriptor admission may be closed while previously claimed DMA
+        // still runs. A socket HUP is not process death or transfer completion.
+        if response.state == RestoreState::Pending
+            && let Some(peer) = &self.peer_process
+            && crate::transport::peer_exited(peer)?
+        {
+            self.close();
+            // A terminal publication can race the first read and process exit.
+            let final_response = self.bootstrap.completions().poll(operation_id)?;
+            if final_response.state != RestoreState::Pending {
+                return Ok(final_response);
+            }
+            if self.bootstrap.completions().state(operation_id)? != crate::GrantState::Active {
+                return Err(ChannelError::SessionRequiresReconnect);
+            }
+        }
+        Ok(response)
+    }
+
+    pub fn restore_completions(&self) -> Arc<crate::RestoreCompletions> {
+        Arc::clone(self.bootstrap.completions())
     }
 
     fn call_descriptor(
@@ -253,25 +298,7 @@ impl ChannelClient {
         code: CommandCode,
         request_id: u64,
         payload: &[u8],
-    ) -> Result<Vec<u8>, ChannelError> {
-        self.call_descriptor_inner(code, request_id, payload, None)
-    }
-
-    fn call_descriptor_with_peer(
-        &self,
-        code: CommandCode,
-        request_id: u64,
-        payload: &[u8],
-        peer: &OwnedFd,
-    ) -> Result<Vec<u8>, ChannelError> {
-        self.call_descriptor_inner(code, request_id, payload, Some(peer))
-    }
-
-    fn call_descriptor_inner(
-        &self,
-        code: CommandCode,
-        request_id: u64,
-        payload: &[u8],
+        operation_id: u64,
         peer: Option<&OwnedFd>,
     ) -> Result<Vec<u8>, ChannelError> {
         let _call = self
@@ -282,19 +309,22 @@ impl ChannelClient {
             return Err(ChannelError::SessionRequiresReconnect);
         }
         let descriptor = self.bootstrap.write_request(payload)?;
-        let info = self.bootstrap.info();
+        let info = self.bootstrap.info_ref();
         let command = Command {
             code,
             request_id,
             session_epoch: info.session_epoch,
             descriptor,
             arg0: info.client_token,
-            arg1: 0,
+            arg1: operation_id,
         };
         let call = match peer {
-            Some(peer) => self
-                .client
-                .call_until_peer_exit(command, self.options, peer),
+            Some(peer) => self.client.call_until_peer_exit(
+                command,
+                self.options,
+                peer,
+                self.bootstrap.reply_notification_fd(),
+            ),
             None => self.client.call(command, self.options),
         };
         let response = match call {
@@ -337,6 +367,12 @@ impl ChannelClient {
             ambiguous();
             return Err(ChannelError::SessionRequiresReconnect);
         }
+        if code == CommandCode::Restore {
+            self.bootstrap
+                .complete_request(descriptor)
+                .inspect_err(|_| ambiguous())?;
+            return Ok(Vec::new());
+        }
         let payload = self
             .bootstrap
             .read_response(descriptor, response.descriptor)
@@ -349,9 +385,9 @@ fn publish_payloads(
     request: &PublishRequest,
     capacity: usize,
 ) -> Result<Vec<Vec<u8>>, ChannelError> {
-    let payload = request.encode()?;
-    if payload.len() <= capacity {
-        return Ok(vec![payload]);
+    let payload_len = request.encoded_len(None)?;
+    if payload_len <= capacity {
+        return Ok(vec![request.encode()?]);
     }
     let too_large = |len| {
         ChannelError::Bootstrap(BootstrapError::Arena(crate::ArenaError::PayloadTooLarge {
@@ -366,51 +402,28 @@ fn publish_payloads(
         .max()
         .unwrap_or(0);
     if block_count == 0 {
-        return Err(too_large(payload.len()));
+        return Err(too_large(payload_len));
     }
 
     let mut payloads = Vec::new();
     let mut start = 0;
     while start < block_count {
-        let mut low = start + 1;
-        let mut high = block_count;
-        let mut selected = None;
-        while low <= high {
-            let end = low + (high - low) / 2;
-            // Slice the same block range across layers so each completed
-            // chunk can seal full pages, including page-first registrations.
-            let layers = request
-                .layers
-                .iter()
-                .filter_map(|layer| {
-                    let end = end.min(layer.block_ids.len());
-                    (start < end).then(|| crate::PublishLayer {
-                        layer_name: layer.layer_name.clone(),
-                        block_ids: layer.block_ids[start..end].to_vec(),
-                        block_hashes: layer.block_hashes[start..end].to_vec(),
-                    })
-                })
-                .collect();
-            let chunk = PublishRequest {
-                instance_id: request.instance_id.clone(),
-                tp_rank: request.tp_rank,
-                pp_rank: request.pp_rank,
-                device_id: request.device_id,
-                layers,
-            }
-            .encode()?;
-            if chunk.len() <= capacity {
-                selected = Some((end, chunk));
-                low = end + 1;
-            } else {
-                if end == start + 1 {
-                    return Err(too_large(chunk.len()));
-                }
-                high = end - 1;
-            }
+        let mut end = start + 1;
+        let mut chunk_len = request.encoded_len(Some(start..end))?;
+        if chunk_len > capacity {
+            return Err(too_large(chunk_len));
         }
-        let (end, chunk) = selected.ok_or_else(|| too_large(payload.len()))?;
-        payloads.push(chunk);
+        // The first block accounts for every layer active at this start.
+        // Later blocks add only IDs/hashes; ragged layers can end, not join.
+        while end < block_count {
+            let block_len = request.block_payload_len(end)?;
+            if block_len > capacity - chunk_len {
+                break;
+            }
+            chunk_len += block_len;
+            end += 1;
+        }
+        payloads.push(request.encode_range(Some(start..end))?);
         start = end;
     }
     Ok(payloads)

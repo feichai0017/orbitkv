@@ -22,6 +22,175 @@ References: [vLLM KV offloading](https://docs.vllm.ai/en/latest/features/kv_offl
 [FlexKV](https://github.com/taco-project/FlexKV),
 [Mooncake](https://github.com/kvcache-ai/Mooncake).
 
+## Engine-local Restore serving qualification
+
+The September 28, 2026 rerun uses the `eb61d166` engine-local raw Restore
+implementation and frozen `compact-restore-production` artifacts. Historical
+latency tables below predate this cutover and are not measurements of this build.
+The model is Qwen3-8B revision
+`b968826d9c46dd6066d109eabc6255188de91218`, with all five weight shards verified
+against their repository SHA-256 values, on one NVIDIA H20 (97,871 MiB).
+
+| Production artifact | SHA-256 |
+| --- | --- |
+| Cache Manager | `3435bf33ada1927a419420fa104cc2e8cf75fce3ca8e294416253614aa6da638` |
+| Python native extension | `978bd219c77e544100e87f0add4ee39a919766e59cbb83af055439d02dbb2db4` |
+
+The isolated release environments use Python 3.11.10, PyTorch 2.13.0+cu130,
+NumPy 2.2.6, and LMCache 0.5.5. vLLM 0.29.0 uses Transformers 5.17.0;
+SGLang 0.5.20 uses Transformers 5.12.1. Backends within an engine share its
+environment. Cross-engine numbers would include these runtime differences.
+
+The direct-transfer, unencoded DRAM correctness gates passed:
+
+- vLLM: **6 passed, 1 skipped in 433.41 seconds**. Twelve native-path and
+  OrbitKV outputs match exactly across cold/warm requests, prefix extension,
+  rollback, multiple conversation rounds, and engine restart while retaining
+  the Manager. Positive cache-save and cache-hit bytes are required. The
+  recurrent-state case is inapplicable to this dense model. This deterministic
+  gate uses a no-op connector in its native control to match computation shape;
+  the performance native control has no external connector.
+- SGLang: **1 passed, 1 deselected in 296.26 seconds**. The DRAM case checks
+  flush/restart recovery, four concurrent restart requests, positive restored
+  GPU bytes, and a cold control under a changed model fingerprint. Text and
+  token IDs match the corresponding native cold/reuse computation shapes;
+  output log probabilities use an absolute tolerance of 0.05. The SSD case
+  was not selected.
+
+Reproduce with the pinned release environments and matching production binaries:
+
+```bash
+cd python
+../.venv/vllm-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_vllm_e2e_correctness.py \
+  --model /workspace/models/Qwen3-8B --max-model-len 4096
+../.venv/sglang-release/bin/python -m pytest -m e2e \
+  tests/e2e/test_sglang_direct_e2e.py -k dram \
+  --model /workspace/models/Qwen3-8B
+```
+
+Full stdout, engine/Manager logs, and environment freezes are retained on the
+measurement host under `/workspace/.orbitkv-tools/e2e-vllm-correctness*`,
+`e2e-sglang-correctness*`, and `e2e-{vllm,sglang}-requirements.txt`. These gates
+establish the tested serving correctness; they do not establish performance,
+multi-GPU behavior, arbitrary graph modes, or model task quality.
+
+### Matched vLLM end-to-end comparison
+
+The recorded communication-branch build completed **180 measured serial requests** across native HBM,
+vLLM `OffloadingConnector` CPU offload, OrbitKV DRAM, and LMCache MP DRAM.
+All use the environment above, CPU affinity 8–23, 16,384 GPU KV tokens
+(2.25 GiB), a prefill batch limit of 8,192 tokens, 64-token pages, and 16 output
+tokens. External pools are 16 GiB; native HBM has no host pool. OrbitKV uses
+`direct`, with no storage codec, SSD, or speculative preparation. Each backend
+starts fresh services and uses the same seed and prompt hashes.
+
+Each of five independent prefixes per length is measured cold, resident, and
+after two unrelated 12,288-token requests evict it from HBM. Startup, warmup,
+pressure generation, and the 1.2-second settling waits are outside request
+latency. TTFT measures time to the first nonempty streamed text at the client;
+E2E measures time through all 16 output tokens. They include frontend and
+scheduling costs, not just cache transfer.
+
+**TTFT p50 after HBM pressure, milliseconds; five requests per cell:**
+
+| Backend | 1,024 tokens | 4,096 tokens | 8,192 tokens |
+| --- | ---: | ---: | ---: |
+| Native HBM, evicted | 117.83 | 476.07 | 1,007.43 |
+| Native CPU offload | 21.75 | 32.15 | 47.74 |
+| OrbitKV DRAM, engine-local direct | 22.94 | 33.31 | 54.54 |
+| LMCache MP DRAM | 25.74 | 39.42 | 55.45 |
+
+Every pressure request is verified as a miss for native HBM and an external
+restore for the other three backends. OrbitKV is 5.14×/14.29×/18.47× faster
+than recomputation in this workload, but native CPU offload is still faster:
+OrbitKV adds 1.20/1.16/6.79 ms, or 5.5%/3.6%/14.2%. Its TTFT is
+10.9%/15.5%/1.7% lower than LMCache's. The 8K difference is small; five
+observations do not establish a stable advantage.
+
+**Complete request latency p50 after HBM pressure, milliseconds:**
+
+| Backend | 1,024 tokens | 4,096 tokens | 8,192 tokens |
+| --- | ---: | ---: | ---: |
+| Native HBM, evicted | 207.57 | 568.12 | 1,103.55 |
+| Native CPU offload | 110.99 | 123.53 | 143.74 |
+| OrbitKV DRAM, engine-local direct | 112.22 | 124.84 | 150.00 |
+| LMCache MP DRAM | 112.70 | 128.69 | 149.36 |
+
+Decode time reduces the relative benefit seen in TTFT. At 8K, OrbitKV's complete
+request median is slightly **higher** than LMCache's despite its lower TTFT.
+This run does not support an across-the-board end-to-end win over LMCache.
+
+Cold OrbitKV TTFT is 118.98/477.14/1,008.37 ms, versus native
+117.99/475.82/1,007.62 ms. In the resident phase, native HBM is
+20.08/22.26/26.47 ms and OrbitKV is 19.26/21.32/24.46 ms. The latter are
+**mixed hits**: offload connectors can restore the tail page that native HBM
+recomputes. They are not evidence that an external copy is faster than directly
+using the same resident GPU state. The connectors also report different final
+token boundaries; these are complete integrations, not isolated transports.
+
+CPU offload, OrbitKV, and LMCache match on all **45 corresponding outputs**.
+Each differs from native HBM on two 1K pressure requests. Native HBM itself
+changes output between cold and resident execution for those prefixes. All
+differences remain in the report. The performance configuration is not batch
+invariant; use the deterministic gate above for its scoped correctness evidence.
+
+The [fixed-cohort concurrent comparison](sustained-performance.md#engine-local-restore-fixed-cohort-comparison)
+separately measures throughput. Historical Manager-owned Restore tables below
+use different environments and are not a matched before/after control for the
+engine-local optimization. This comparison ranks the current integrations; it
+does not attribute a speedup to any one communication change.
+
+The next optimization target is the 8K gap to native CPU offload. Profile source
+preparation, grant/worker queueing, copy submission, GPU drain, and connector
+admission before changing synchronization. The current aggregate load timer
+does not isolate those costs, so this run cannot identify which one explains
+the extra 6.79 ms. Any candidate should preserve the ownership/progress gates
+and rerun this end-to-end matrix, rather than rely on a copy microbenchmark.
+
+### Measurement evidence and reproduction
+
+Raw runs, exact launch manifests, samples, package/source identities, and JSON/CSV
+reports are retained under
+`/root/orbitkv/benches/results/runs/cache-e2e-20260928/`.
+These artifacts were moved when the communication worktree was retired; original
+launch manifests retain the former path as historical provenance.
+The accepted serial attempts are native **5**, CPU **1**, OrbitKV **2**, and
+LMCache **1**. A 100 ms process monitor rejected entire runs containing observed
+Cargo/rustc activity, including startup/cleanup. The four earlier native attempts
+and first OrbitKV attempt remain excluded and preserved. Accepted runs contain
+no sampled Cargo/rustc activity; this is not proof of an otherwise idle machine.
+Runs were selected by that rule, not their latency. There is no confidence
+interval, randomized backend order, or long-duration tail guarantee.
+
+With the matching production Manager and extension installed, run from the
+repository root in a quiet GPU/CPU window:
+
+```bash
+result_root=benches/results/runs/engine-local-comparison
+for backend in native cpu orbitkv lmcache; do
+  extra=()
+  if [[ "$backend" == orbitkv ]]; then
+    extra=(--orbitkv-transfer-backend direct)
+  fi
+  taskset -c 8-23 .venv/vllm-release/bin/python -m benches.single_node \
+    --engine vllm --backend "$backend" --model /workspace/models/Qwen3-8B \
+    --output "$result_root/vllm-serial-$backend" --workload serial \
+    --lengths 1024 4096 8192 --repeats 5 --output-tokens 16 \
+    --gpu-tokens 16384 --prefill-tokens 8192 --host-gib 16 \
+    --seed 20260920 "${extra[@]}"
+done
+.venv/vllm-release/bin/python -m benches.report \
+  "$result_root"/vllm-serial-{native,cpu,orbitkv,lmcache} \
+  --reference-run "$result_root/vllm-serial-native" \
+  --output "$result_root/report"
+```
+
+The report verifies matching model revision, runtime packages, Python, GPU,
+CPU affinity, workload arguments and prompt hashes. It retains unpaired requests
+and output differences. The manifest now correctly records zero host-cache
+capacity for native HBM. No competitor integration was patched for these runs.
+
 ## Qwen3-8B on H20: initial measurements
 
 Measured on one NVIDIA H20 (97,871 MiB reported memory), with vLLM 0.29.0,
@@ -278,7 +447,11 @@ the next architectural performance step.
 1. **Observe completion promptly.** The SGLang load worker used to sleep for
    10 ms between restore polls. It now waits on the existing completion
    notification, with a 50 ms fallback poll if a notification is lost. The
-   shared client owns the deadline. Timeout or transport failure still leaves
+   shared client owns the deadline. Terminal polling now reads a shared result
+   record directly, and an outcome waiter publishes and notifies without the
+   endpoint's idle scan. Submission still uses iceoryx2 and its existing dispatch
+   scheduling. The historical tables above do not measure this new path.
+   Timeout or transport failure still leaves
    destination ownership unresolved and faults the engine; neither condition
    means GPU pages can be reused.
 2. **Measure transfer fragmentation before choosing a backend.** Record

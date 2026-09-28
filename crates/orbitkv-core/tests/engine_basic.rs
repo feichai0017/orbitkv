@@ -108,9 +108,8 @@ async fn hybrid_groups_load_to_distinct_block_ids() {
             )],
         )
         .expect("load hybrid groups");
-    completion
+    env.restore_outcome(completion)
         .await
-        .expect("load worker must reply")
         .result
         .expect("load hybrid groups");
 
@@ -231,6 +230,76 @@ async fn save_query_load_roundtrip_split_storage() {
     env.data().assert_gpu_matches_expected();
 }
 
+/// Descriptor sorting must preserve each lease's source/destination association,
+/// including skipped blocks and separate K/V regions with different bytes.
+#[tokio::test]
+async fn split_restore_permuted_leases_preserve_sources_and_skipped_pages() {
+    const SEGMENT: usize = 512;
+    const STRIDE: usize = 8192;
+    let env = TestEnvBuilder::new("test-split-permutation", "test-ns")
+        .split_layer("layer_0", 8, SEGMENT, STRIDE)
+        .build();
+    let hashes = env.hashes(0);
+    let mut original = env.data().expected_bytes().to_vec();
+    for byte in &mut original[STRIDE..] {
+        *byte += 64;
+    }
+    // SAFETY: this test owns the registered GPU allocation, the source covers
+    // its complete extent, and this synchronous call finishes before saving.
+    let result = unsafe {
+        cudarc::driver::sys::cuMemcpyHtoD_v2(
+            env.data().ptr(),
+            original.as_ptr().cast(),
+            original.len(),
+        )
+    };
+    assert_eq!(result, cudarc::driver::sys::cudaError_enum::CUDA_SUCCESS);
+    env.save_and_wait(&hashes).await;
+    env.data().zero_gpu();
+    let first = env.assert_all_hit_lease(&hashes[..4]).await;
+    let second = env.assert_all_hit_lease(&hashes[4..]).await;
+    let destinations = [
+        Some(6),
+        None,
+        Some(2),
+        Some(0),
+        Some(7),
+        Some(5),
+        Some(1),
+        Some(3),
+    ];
+    let completion = env
+        .engine
+        .restore(
+            &env.instance_id,
+            0,
+            0,
+            &[vec!["layer_0"]],
+            &[
+                (first, vec![destinations[..4].to_vec()]),
+                (second, vec![destinations[4..].to_vec()]),
+            ],
+        )
+        .expect("submit permuted leases");
+    env.restore_outcome(completion)
+        .await
+        .result
+        .expect("restore permuted leases");
+
+    let mut expected = vec![0; original.len()];
+    for (source, destination) in destinations.into_iter().enumerate() {
+        if let Some(destination) = destination {
+            for region in [0, STRIDE] {
+                expected[region + destination * SEGMENT..region + (destination + 1) * SEGMENT]
+                    .copy_from_slice(
+                        &original[region + source * SEGMENT..region + (source + 1) * SEGMENT],
+                    );
+            }
+        }
+    }
+    env.data().assert_gpu_matches(&expected);
+}
+
 /// Kernel backend round-trip over real mapped pinned allocations.
 ///
 /// Split storage exercises both K and V segment descriptors, so this covers the
@@ -300,4 +369,68 @@ async fn shared_manager_reuses_only_matching_model_and_storage_identity() {
         let orbitkv_core::QueryResult { blocks, .. } = result;
         assert_eq!(blocks.len(), expected, "cache identity case {id}");
     }
+}
+
+/// Local source grants must keep the same device budget as Manager-owned work.
+#[tokio::test]
+#[ignore = "requires exclusive GPU restore admission"]
+async fn local_restore_grants_share_device_admission_until_drain() {
+    let engines = [
+        TestEnvBuilder::new("admission-first", "admission-ns")
+            .layer("layer_0", 1, 1024)
+            .build(),
+        TestEnvBuilder::new("admission-second", "admission-ns")
+            .layer("layer_0", 1, 1024)
+            .build(),
+    ];
+    let hashes = engines[0].hashes(0);
+    for env in &engines {
+        env.save_and_wait(&hashes).await;
+        env.data().zero_gpu();
+    }
+    let mut grants = Vec::new();
+    for index in 0..128 {
+        let owner = index % engines.len();
+        let env = &engines[owner];
+        let lease = env.assert_all_hit_lease(&hashes).await;
+        let execution = env
+            .engine
+            .restore(
+                &env.instance_id,
+                0,
+                0,
+                &[vec!["layer_0"]],
+                &[(lease, vec![vec![Some(0)]])],
+            )
+            .unwrap();
+        let orbitkv_core::RestoreExecution::Local(grant) = execution else {
+            panic!("raw DRAM must use the engine-local path");
+        };
+        grants.push((owner, grant));
+    }
+    let env = &engines[0];
+    let lease = env.assert_all_hit_lease(&hashes).await;
+    let error = env
+        .engine
+        .restore(
+            &env.instance_id,
+            0,
+            0,
+            &[vec!["layer_0"]],
+            &[(lease, vec![vec![Some(0)]])],
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("decode restore queue is full"));
+
+    let (owner, grant) = grants.pop().unwrap();
+    engines[owner]
+        .restore_outcome(orbitkv_core::RestoreExecution::Local(grant))
+        .await
+        .result
+        .unwrap();
+    engines[owner].data().assert_gpu_matches_expected();
+    let lease = env.assert_all_hit_lease(&hashes).await;
+    env.load_to_gpu(lease, 1).await;
+    env.data().assert_gpu_matches_expected();
+    drop(grants);
 }

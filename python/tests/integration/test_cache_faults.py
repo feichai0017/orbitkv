@@ -159,7 +159,12 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
         assert ready.num_hit_blocks == 2
         arm(directory, "cufile_read_completion")
         handle = client.start_restore(
-            ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2, 3]])]
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(ready.lease, [[2, 3]])],
+            ready_stream=torch.cuda.current_stream(0).cuda_stream,
         )
         reached(directory, "cufile_read_completion")
         client.cancel_query(ctx.instance_id, "canceled-codec")
@@ -185,7 +190,12 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
     ready = query(client, ctx, hashes, "mixed-codec")
     assert ready.num_hit_blocks == 2
     restore = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2, 3]])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2, 3]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     assert client.wait_restore(restore, timeout=10).success
     assert torch.equal(tensor[:, 2:4].view(torch.uint8).cpu(), expected)
@@ -199,7 +209,12 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
     if server.ssd_backend == "cufile":
         assert missing.num_hit_blocks == 1
         handle = client.start_restore(
-            ctx.instance_id, 0, 0, [ctx._layer_names], [(missing.lease, [[2]])]
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(missing.lease, [[2]])],
+            ready_stream=torch.cuda.current_stream(0).cuda_stream,
         )
         assert not client.wait_restore(handle, timeout=10).success
         until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] == 0)
@@ -216,7 +231,12 @@ def test_encoded_ssd_mixed_prefix_cancellation_and_corruption(fault_cache):
     tensor[:, 2:3].zero_()
     torch.cuda.synchronize()
     restore = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(repaired.lease, [[2]])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(repaired.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     assert client.wait_restore(restore, timeout=10).success
     assert torch.equal(tensor[:, 2:3].view(torch.uint8).cpu(), expected[:, 0:1])
@@ -260,7 +280,12 @@ def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(f
     ready = query(client, ctx, hashes, "quantized")
     assert ready.num_hit_blocks == 1
     restore = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     assert client.wait_restore(restore, timeout=10).success
     assert torch.equal(tensor[:, 2:3].view(torch.uint8), expected.view(torch.uint8))
@@ -284,6 +309,7 @@ def test_fp8_storage_matches_torch_scalar_cast_and_isolates_exact_registration(f
         [2],
         "direct",
         False,
+        tensors=[tensor],
         layer_formats=["exact"],
     )
     assert ok, message
@@ -340,7 +366,12 @@ def test_gpu_codecs_restore_after_registration_and_ssd_eviction(fault_cache, req
     assert ready.num_hit_blocks == 1
     before_restore = fetch_orbitkv_metrics(server.http_port)
     restore = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     assert client.wait_restore(restore, timeout=10).success
     after_restore = fetch_orbitkv_metrics(server.http_port)
@@ -383,7 +414,12 @@ def test_gpu_codecs_restore_after_registration_and_ssd_eviction(fault_cache, req
         before_mixed = fetch_orbitkv_metrics(server.http_port)
         assert before_mixed["orbitkv_ssd_read_pinned_bytes"] > 0
         restore = client.start_restore(
-            ctx.instance_id, 0, 0, [ctx._layer_names], [(mixed.lease, [[2, 3]])]
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(mixed.lease, [[2, 3]])],
+            ready_stream=torch.cuda.current_stream(0).cuda_stream,
         )
         assert client.wait_restore(restore, timeout=10).success
         after_mixed = fetch_orbitkv_metrics(server.http_port)
@@ -425,6 +461,8 @@ def test_gpu_codecs_restore_after_registration_and_ssd_eviction(fault_cache, req
     indirect=True,
 )
 def test_encoded_cufile_corruption_rejects_gpu_restore_and_allows_republication(fault_cache):
+    import torch
+
     server, client, ctx, _ = fault_cache
     hashes = [b"repair-gpu-encoded"]
 
@@ -444,7 +482,14 @@ def test_encoded_cufile_corruption_rejects_gpu_restore_and_allows_republication(
     # damaged payload before any decompressor consumes that segment.
     ready = query(client, ctx, hashes, "damaged-gpu-object")
     assert ready.num_hit_blocks == 1
-    handle = client.start_restore(ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])])
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
     assert not client.wait_restore(handle, timeout=10).success
     until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] == 0)
     assert (
@@ -457,7 +502,12 @@ def test_encoded_cufile_corruption_rejects_gpu_restore_and_allows_republication(
     repaired = query(client, ctx, hashes, "repaired-gpu-object")
     assert repaired.num_hit_blocks == 1
     handle = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(repaired.lease, [[2]])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(repaired.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     assert client.wait_restore(handle, timeout=10).success
     after = fetch_orbitkv_metrics(server.http_port)
@@ -610,7 +660,12 @@ def test_prepared_result_expires_without_poll_then_claim_holds_bytes_through_res
     ctx.get_kv_cache()[:, 1:2].zero_()
     torch.cuda.synchronize()
     restore = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[1]])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[1]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     assert client.wait_restore(restore, timeout=10).success
     assert torch.equal(ctx.get_kv_cache()[:, 1:2].cpu(), expected)
@@ -662,7 +717,12 @@ def test_cufile_write_holds_pages_and_publishes_only_completed_objects(
         assert query(client, ctx, [b"writing"], "uncommitted").num_hit_blocks == 0
         assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_write_inflight"] > 0
         handle = client.start_restore(
-            ctx.instance_id, 0, 0, [ctx._layer_names], [(warm.lease, [[3]])]
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(warm.lease, [[3]])],
+            ready_stream=torch.cuda.current_stream(0).cuda_stream,
         )
         assert client.wait_restore(handle, timeout=5).success
         assert torch.equal(ctx.get_kv_cache()[:, 3:4].cpu(), expected)
@@ -694,7 +754,12 @@ def test_cufile_write_holds_pages_and_publishes_only_completed_objects(
         ready = query(client, ctx, [b"writing"], "committed")
         assert ready.num_hit_blocks == 1
         handle = client.start_restore(
-            ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(ready.lease, [[2]])],
+            ready_stream=torch.cuda.current_stream(0).cuda_stream,
         )
         assert client.wait_restore(handle, timeout=10).success
         assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), expected)
@@ -745,7 +810,12 @@ def test_submitted_cufile_write_allows_ssd_reads_and_delays_unregister(fault_cac
         if completion == "cufile_write_completion":
             assert query(client, ctx, [b"unconfirmed"], "unpublished").num_hit_blocks == 0
         restore = client.start_restore(
-            ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])]
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(ready.lease, [[2]])],
+            ready_stream=torch.cuda.current_stream(0).cuda_stream,
         )
         assert client.wait_restore(restore, timeout=5).success
         assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), expected)
@@ -850,7 +920,12 @@ def test_full_gpu_write_queue_uses_host_writeback_without_waiting(fault_cache, e
         ready = query(client, ctx, [bytes([fallback]) * 32], "fallback-on-disk")
         assert ready.num_hit_blocks == 1
         handle = client.start_restore(
-            ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[9]])]
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(ready.lease, [[9]])],
+            ready_stream=torch.cuda.current_stream(0).cuda_stream,
         )
         assert client.wait_restore(handle, timeout=10).success
         assert torch.equal(tensor[:, 9:10].cpu(), expected[:, fallback : fallback + 1])
@@ -880,7 +955,12 @@ def test_submitted_cufile_reads_keep_two_slots_and_leases_until_unregister(fault
     torch.cuda.synchronize()
     arm(directory, "cufile_read_completion")
     handle = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [list(range(ctx.num_blocks))])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [list(range(ctx.num_blocks))])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     pool = ThreadPoolExecutor(1)
     try:
@@ -973,6 +1053,7 @@ def test_submitted_host_reads_keep_leases_and_destinations_until_unregister(faul
             0,
             [ctx._layer_names],
             [(ready.lease, [list(range(ctx.num_blocks))])],
+            ready_stream=torch.cuda.current_stream(0).cuda_stream,
         )
         reached(directory, "ssd")
         client.cancel_query(ctx.instance_id, "host-read")
@@ -1072,7 +1153,12 @@ def test_cufile_batches_keep_all_leases_and_only_read_selected_pages(
     arm(directory, "cufile")
     destinations = [i if i in selected else None for i in range(ctx.num_blocks)]
     handle = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [destinations])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [destinations])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     reached(directory, "cufile")
     client.cancel_query(ctx.instance_id, "batched")
@@ -1113,7 +1199,14 @@ def test_cufile_delay_keeps_sources_and_allows_dram_restores(fault_cache):
     ready = query(client, ctx, hashes, "disk")
     assert fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_read_pinned_bytes"] > 0
     arm(directory, "cufile")
-    handle = client.start_restore(ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])])
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
     reached(directory, "cufile")
     client.cancel_query(ctx.instance_id, "disk")
     with pytest.raises(TimeoutError):
@@ -1123,7 +1216,14 @@ def test_cufile_delay_keeps_sources_and_allows_dram_restores(fault_cache):
 
     # A real DRAM restore, not just a miss, must complete while storage is paused.
     warm = query(client, ctx, warm_hashes, "dram")
-    other = client.start_restore(ctx.instance_id, 0, 0, [ctx._layer_names], [(warm.lease, [[3]])])
+    other = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(warm.lease, [[3]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
     assert client.wait_restore(other, timeout=5).success
     assert torch.equal(ctx.get_kv_cache()[:, 3:4].cpu(), expected)
     arm(directory, "notification")
@@ -1143,6 +1243,57 @@ def test_cufile_delay_keeps_sources_and_allows_dram_restores(fault_cache):
     until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_ssd_gpu_staging_bytes"] == 0)
 
 
+@pytest.mark.parametrize(
+    "reject", [False, True], ids=["cancelled-preparation", "preparation-error"]
+)
+def test_restore_corrupt_ack_keeps_claimed_handle_and_shared_result(fault_cache, reject):
+    import torch
+
+    from orbitkv import OrbitKVError
+
+    server, client, ctx, directory = fault_cache
+    hashes = [b"restore-ack"]
+    unchanged = ctx.get_kv_cache()[:, 2:3].cpu().clone()
+    assert publish(client, ctx, hashes)[0]
+    ready = query(client, ctx, hashes, "claimed-before-ack")
+    before = fetch_orbitkv_metrics(server.http_port)
+    arm(directory, "restore_ack")
+    if not reject:
+        arm(directory, "restore")
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [["missing-layer"]] if reject else [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
+    reached(directory, "restore_ack")
+    # The malformed ACK closes descriptor admission. It cannot erase a claimed
+    # operation or turn its socket disconnect into a completed GPU transfer.
+    with pytest.raises(OrbitKVError, match="reconnect"):
+        client.health()
+    if not reject:
+        reached(directory, "restore")
+        with pytest.raises(TimeoutError):
+            client.wait_restore(handle, timeout=0.02)
+        assert not client.poll_restore(handle).done
+        (directory / "restore.pause").unlink()
+    result = client.wait_restore(handle, timeout=5)
+    assert result.done and not result.success
+    if reject:
+        assert "missing-layer" in result.message
+    else:
+        # The Manager admitted preparation, but the engine had not claimed the
+        # grant. Lost ACK cancellation may therefore finish with no GPU writes.
+        assert "cancelled" in result.message
+        assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), unchanged)
+    after = fetch_orbitkv_metrics(server.http_port)
+    assert after.get("orbitkv_load_bytes_total", 0) == before.get("orbitkv_load_bytes_total", 0)
+    with pytest.raises(OrbitKVError, match="consumed"):
+        client.poll_restore(handle)
+
+
 def test_restore_timeout_and_lost_notification_preserve_destinations(fault_cache):
     import torch
 
@@ -1153,7 +1304,14 @@ def test_restore_timeout_and_lost_notification_preserve_destinations(fault_cache
     ready = query(client, ctx, hashes, "load")
     arm(directory, "restore")
     arm(directory, "notification")
-    handle = client.start_restore(ctx.instance_id, 0, 0, [ctx._layer_names], [(ready.lease, [[2]])])
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
     reached(directory, "restore")
     with pytest.raises(TimeoutError):
         client.wait_restore(handle, timeout=0.02)
@@ -1200,6 +1358,8 @@ def test_publish_stall_keeps_source_owned_without_stalling_queries(fault_cache, 
 
 @pytest.mark.parametrize("fault_cache", [None, "configured-prefix"], indirect=True)
 def test_manager_restart_rejects_old_leases_and_restore_handles(fault_cache):
+    import torch
+
     from orbitkv import CacheManagerClient, OrbitKVError
 
     server, client, ctx, directory = fault_cache
@@ -1208,7 +1368,12 @@ def test_manager_restart_rejects_old_leases_and_restore_handles(fault_cache):
     another = query(client, ctx, [b"restart"], "old-restore")
     arm(directory, "restore")
     handle = client.start_restore(
-        ctx.instance_id, 0, 0, [ctx._layer_names], [(another.lease, [[2]])]
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(another.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
     )
     reached(directory, "restore")
     server.stop()
@@ -1216,9 +1381,10 @@ def test_manager_restart_rejects_old_leases_and_restore_handles(fault_cache):
     assert server.start(), server.read_logs()
     fresh = CacheManagerClient(server.bootstrap_socket)
     try:
-        with pytest.raises(OrbitKVError):
-            client.poll_restore(handle)
-        with pytest.raises(OrbitKVError, match="reconnect"):
+        failed = client.wait_restore(handle, timeout=5)
+        assert failed.done and not failed.success
+        assert "reconnect" in failed.message
+        with pytest.raises(ValueError, match="another client"):
             fresh.poll_restore(handle)
         with pytest.raises(OrbitKVError):
             fresh.release(ready.lease)
@@ -1238,3 +1404,153 @@ def test_manager_restart_rejects_old_leases_and_restore_handles(fault_cache):
         replacement.unregister_context()
     finally:
         fresh.close()
+
+
+@pytest.mark.parametrize("barrier", ["local_restore_claim", "local_restore_dma"])
+def test_local_restore_survives_manager_death_after_claim(fault_cache, barrier):
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    expected = ctx.get_kv_cache()[:, 0:1].cpu().clone()
+    assert publish(client, ctx, [b"manager-crash-local"])[0]
+    ready = query(client, ctx, [b"manager-crash-local"], "local-after-manager-death")
+    arm(directory, barrier)
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
+    reached(directory, barrier)
+    with pytest.raises(TimeoutError):
+        client.wait_restore(handle, timeout=0.02)
+    server.process.kill()
+    server.process.wait(timeout=10)
+    # Manager death cannot complete a local engine's DMA fence.
+    assert not client.poll_restore(handle).done
+    (directory / f"{barrier}.pause").unlink()
+    status = client.wait_restore(handle, timeout=10)
+    assert status.success, status.message
+    assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), expected)
+
+
+def test_local_partial_enqueue_failure_drains_before_page_reuse(fault_cache):
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    assert publish(client, ctx, [b"partial-local"])[0]
+    ready = query(client, ctx, [b"partial-local"], "partial-local")
+    arm(directory, "local_restore_error")
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
+    result = client.wait_restore(handle, timeout=10)
+    assert result.done and not result.success
+    assert "after first local Restore enqueue" in result.message
+    ctx.get_kv_cache()[:, 2:3].fill_(37)
+    torch.cuda.synchronize()
+    assert torch.all(ctx.get_kv_cache()[:, 2:3] == 37)
+    until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] == 0)
+
+
+def test_engine_death_after_claim_quarantines_source_reservation(fault_cache):
+    import subprocess
+    import sys
+
+    server, client, ctx, directory = fault_cache
+    assert publish(client, ctx, [b"engine-crash-source"])[0]
+    ready = query(client, ctx, [b"engine-crash-source"], "seal-crash-source")
+    client.release(ready.lease)
+    until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] == 0)
+    arm(directory, "local_restore_claim")
+    helper = Path(__file__).parents[1] / "support" / "local_restore_process.py"
+    log = directory / "crashing-engine.log"
+    with log.open("w") as output:
+        process = subprocess.Popen(
+            [sys.executable, "-P", str(helper), server.bootstrap_socket, ctx.namespace],
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            until(
+                lambda: (directory / "local_restore_claim.reached").exists()
+                or process.poll() is not None
+            )
+            assert process.poll() is None, log.read_text()
+            before = fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"]
+            assert before > 0
+            process.kill()
+            process.wait(timeout=10)
+            time.sleep(1)
+            assert client.health()[0]
+            assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] >= before
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+
+
+def test_local_restore_retains_tensor_when_caller_drops_handle_and_tensor(fault_cache):
+    import gc
+    import weakref
+
+    import torch
+
+    server, client, ctx, directory = fault_cache
+    tensor = ctx.get_kv_cache()
+    expected = tensor[:, 0:1].cpu().clone()
+    assert publish(client, ctx, [b"tensor-owner"])[0]
+    ready = query(client, ctx, [b"tensor-owner"], "tensor-owner")
+    arm(directory, "local_restore_claim")
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
+    reached(directory, "local_restore_claim")
+    reference = weakref.ref(tensor)
+    ctx.gpu_kv_caches.clear()
+    del tensor, handle
+    gc.collect()
+    assert reference() is not None
+    (directory / "local_restore_claim.pause").unlink()
+    until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] == 0)
+    assert torch.equal(reference()[:, 2:3].cpu(), expected)
+    assert client.unregister_context(ctx.instance_id)[0]
+    gc.collect()
+    assert reference() is None
+
+
+def test_local_restore_fences_previous_use_on_nondefault_stream(fault_cache):
+    import torch
+
+    _server, client, ctx, _directory = fault_cache
+    tensor = ctx.get_kv_cache()
+    expected = tensor[:, 0:1].cpu().clone()
+    assert publish(client, ctx, [b"stream-order"])[0]
+    for attempt in range(2):
+        ready = query(client, ctx, [b"stream-order"], f"stream-order-{attempt}")
+        previous = torch.cuda.Stream()
+        with torch.cuda.stream(previous):
+            torch.cuda._sleep(20_000_000)
+            tensor[:, 2:3].fill_(37 + attempt)
+        handle = client.start_restore(
+            ctx.instance_id,
+            0,
+            0,
+            [ctx._layer_names],
+            [(ready.lease, [[2]])],
+            ready_stream=previous.cuda_stream,
+        )
+        assert client.wait_restore(handle, timeout=10).success
+        assert torch.equal(tensor[:, 2:3].cpu(), expected)

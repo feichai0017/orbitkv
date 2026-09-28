@@ -107,6 +107,12 @@ not measured per-request latency. See [GPU storage](gds.md) for the exact rules.
 | SSD | Manager `--ssd-cache-path` and `--ssd-cache-capacity` | Optional external cache; backend selection stays inside the Manager |
 | Pending and leased query bytes | Manager `--query-budget` and `--query-instance-budget` | Bound total and per-instance ownership through transfer completion |
 
+Pinned-pool shards use size-sealed Linux memfds with shared mappings and CUDA
+host registration. Huge-page mode requires reserved huge pages and permission
+to create hugetlb memfds; it does not silently switch to regular pages.
+NUMA placement is established by Manager first-touch. Payload mappings are not
+yet handed to engine processes by the production bootstrap protocol.
+
 Only a configured path enables SSD caching. Capacity defaults to `512gb` if
 omitted; set it explicitly to match the intended storage budget. cuFile reserves
 physical space before serving, and capacity/quota failures fail startup rather
