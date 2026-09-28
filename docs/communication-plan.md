@@ -248,6 +248,10 @@ observer; it does not add an independent scheduler.
   preparation/grant wait, native queue and submission where the owner can observe
   them. Measure connector observation and first engine use separately; Manager
   source retirement is not part of engine-ready latency.
+  Compare estimates only when both the start and completion boundaries match.
+  Keep the native caller interval separate from existing Manager-preparation
+  samples until both executors report the same declared scope; sharing a
+  destination GPU or the `CacheRestore` name does not make intervals comparable.
 - Transfer bounded durations and outcomes with the existing session/operation
   generation, accept them once, and keep operation IDs out of estimator keys.
   Combine only intervals with defined compatible clocks; never subtract remote
