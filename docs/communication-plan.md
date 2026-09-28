@@ -208,7 +208,7 @@ Neither result establishes a universal performance advantage.
    timeline/observation owners to separate preparation, grant wait, native queue,
    submission, actual GPU drain, connector observation and first engine use.
    Record source retirement separately. Carry bounded, generation-fenced drain
-   evidence before enabling `DirectToDecodeRestore` training for engine-local
+   evidence before enabling `CacheRestore` training for engine-local
    raw grants; Manager reap time cannot stand in for DecodeReady. Keep tracing
    opt-in and measure its overhead. This also closes the gap introduced when
    combining Manager-side completion observations with the local executor.
@@ -237,6 +237,42 @@ Neither result establishes a universal performance advantage.
    selector must consume both source leases and P/D handoff authority before it
    can act on the unified cost evidence. Do not enable selection from stale
    hints or merge control ACKs with payload drain evidence.
+
+### Next concrete change: engine-local completion evidence
+
+Use the [shared definitions](architecture.md#definitions-and-naming). The next
+behavioral increment extends the existing grant/completion owners and cost
+observer; it does not add an independent scheduler.
+
+- Record the native caller-to-GPU-drain interval and separate readiness wait,
+  preparation/grant wait, native queue and submission where the owner can observe
+  them. Measure connector observation and first engine use separately; Manager
+  source retirement is not part of engine-ready latency.
+- Transfer bounded durations and outcomes with the existing session/operation
+  generation, accept them once, and keep operation IDs out of estimator keys.
+  Combine only intervals with defined compatible clocks; never subtract remote
+  wall-clock timestamps to infer network or GPU service time.
+- Successful target-ready completion can train an estimate. Failed, cancelled,
+  never-submitted or quarantined operations must not produce success samples.
+  A terminal drain still retains its failure outcome. Observation cannot delay
+  readiness or become a condition for releasing the actual resource owner.
+- Keep tracing opt-in. Test duplicate/stale completion, lost notification,
+  cancellation and Manager/engine exit at the existing process boundary. Measure
+  instrumentation overhead, then run a matched merged-build serving baseline.
+
+The following performance increment selects one demonstrated bottleneck and
+compares the change with that baseline. Use at least three paired repetitions
+with backend order reversal for native HBM, native CPU offload, OrbitKV and
+LMCache under the same engine, capacity, prompt and output-quality controls.
+Record TTFT, end-to-end latency, tails, CPU cost and transfer bytes. The older
+6.79 ms gap is a profiling lead, not a guaranteed amount recoverable in Restore.
+
+After that, implement bounded large-plan partitioning and then layer/group
+overlap as separate changes. Cost-driven direct/P-D execution follows only when
+both candidates have the same measured completion boundary and real source,
+destination and capacity authority. Retain deterministic selection while that
+contract is incomplete. Real two-host DP qualification remains a separate gate;
+local performance work does not establish RDMA or catalog availability.
 
 ## Next: bounded large restores and execution overlap
 

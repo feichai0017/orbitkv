@@ -11,7 +11,7 @@ pub(crate) enum ExecutionResource {
         source_endpoint_hash: u64,
         destination_device: u64,
     },
-    DirectToDecodeRestore {
+    CacheRestore {
         source_set_hash: u64,
         destination_device: u64,
     },

@@ -39,7 +39,7 @@ pub(crate) fn record_completion_observation(
     if !*ENABLED {
         return;
     }
-    super::admission::record(key.resource, resources, elapsed);
+    super::resource_evidence::record(key.resource, resources, elapsed);
     let metrics = core_metrics();
     let attributes = [
         KeyValue::new("path", key.kind.label()),

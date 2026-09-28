@@ -12,7 +12,7 @@ fn resources(queue_depth: u32) -> CompletionResourceEvidence {
 
 #[test]
 fn resource_evidence_is_fresh_bounded_and_resource_scoped() {
-    let resource = ExecutionResource::DirectToDecodeRestore {
+    let resource = ExecutionResource::CacheRestore {
         source_set_hash: 1,
         destination_device: 2,
     };
@@ -25,7 +25,7 @@ fn resource_evidence_is_fresh_bounded_and_resource_scoped() {
         3
     );
 
-    let stale = ExecutionResource::DirectToDecodeRestore {
+    let stale = ExecutionResource::CacheRestore {
         source_set_hash: 4,
         destination_device: 2,
     };
@@ -34,7 +34,7 @@ fn resource_evidence_is_fresh_bounded_and_resource_scoped() {
 
     for source_set_hash in 10..10 + CAPACITY as u64 {
         record(
-            ExecutionResource::DirectToDecodeRestore {
+            ExecutionResource::CacheRestore {
                 source_set_hash,
                 destination_device: 2,
             },

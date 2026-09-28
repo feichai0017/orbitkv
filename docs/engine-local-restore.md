@@ -133,7 +133,7 @@ There is no eventually consistent allocation directory on the DMA path.
 Local grants and Manager workers share the per-GPU limit of 128 admitted restores.
 A local grant holds its permit through source retirement, including quarantine;
 unregistering an instance cannot reset that budget. Manager-executed restores
-retain their `DirectToDecodeRestore` completion observations. Local raw grants
+retain their `CacheRestore` completion observations. Local raw grants
 do not train that estimator yet: Manager reaping is later than engine DMA drain,
 and substituting it would change the DecodeReady measurement boundary.
 

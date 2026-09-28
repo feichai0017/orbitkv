@@ -131,6 +131,44 @@ from DRAM to SSD or another node should not change `query_prefetch`, `save`,
 `start_restore`, or `release` for the caller. The process channel implements
 the current iceoryx2/UDS connection without defining a separate cache API.
 
+## Definitions and naming
+
+These terms describe responsibilities in the existing owners. A term does not
+require a new public type, wrapper or planner layer.
+
+| Term | Meaning and boundary |
+| --- | --- |
+| Demand | State groups and ranges needed for a legal recovery boundary. It does not allocate pages or authorize reads. |
+| Replica / candidate | A stored copy / evidence that a compatible copy may exist. A candidate does not hold the bytes. Medium, owner/locality and representation are separate dimensions. |
+| Route | Supported transfer, staging and decode steps from a source to a declared completion target. TENT is a transfer backend; remote is locality, not a medium. |
+| Plan | Bounded work description whose type declares its stage. `ReadPlan` holds unresolved candidates; `RestorePlan` binds selected sources and target geometry without owning payload or capacity; `RawRestorePlan` is the bounded copy description. |
+| Lease | A retained source lifetime tied to a specific version or allocation. Expiry cannot release submitted DMA resources. |
+| Grant | Authority to access retained resources under a fenced protocol. `RawRestoreGrant` retains sources, query reservations and the device permit. Registration alone grants no logical page lifetime. |
+| Permit / admission | A real capacity reservation / the decision to acquire one. `DecodeRestorePermit` reserves an operation slot; it does not own GPU pages. |
+| Shape | Descriptive bytes, fragments and geometry. `RestoreTargetShape` records the validated destination device and aggregate shape, with no resource ownership. |
+| Resource evidence | A bounded, expiring snapshot of usage or queue pressure. `cost/resource_evidence` records it; execution owners perform admission. |
+| Observation / estimate | A measured interval and outcome / a prediction derived from compatible observations. Neither authorizes execution. |
+| Ready | The requested state is successfully usable at the declared target. Current `CompletionIntent::EngineRestore` names the engine-target goal; `HostReady` ends at host materialization. |
+| Drained | Submitted accesses are terminal, including failure or cancellation. Drain permits safe release but does not imply successful recovery. |
+| Reaped | The Manager released the operation's retained source owners and credits. It is distinct from engine readiness and record acknowledgement. |
+
+`CostObservationKind` names a measurement boundary, `ExecutionResource` names
+the measured resource, and the completion target says where the result must
+be usable. They are independent. `CacheRestore` measures cache-to-engine
+restoration, including Manager SSD/codec routes, and is distinct from
+`PrefillToDecodeHandoff`. It begins after engine page allocation, not at
+request arrival. First engine use and TTFT remain separate measurements.
+
+Current cost estimates predict elapsed seconds with empirical error. Byte
+counts describe route shape and resource demand; capacity is enforced by
+execution owners. There is no combined score adding latency, bytes and
+retention cost without a defined objective.
+
+Keep protocol states tied to their authority transition. Rename misleading
+internal types and their consumers together; do not retain aliases or forwarding
+APIs. Wire/metric names need their own coordinated cutover when their actual
+measurement boundary changes. Unsupported paths do not get speculative types.
+
 ## Core module ownership
 
 | Module | Responsibility |
@@ -154,9 +192,10 @@ independent access routes; peer transport is not a storage medium. `PeerExports`
 checks live owner/version evidence and holds source memory until completion.
 Every pinned-pool shard has a size-sealed memfd backing mapped with `MAP_SHARED`;
 regular and huge pages share the same NUMA first-touch and CUDA registration
-path. This makes the backing shareable but does not yet export payload mappings
-to inference processes. The [engine-local restore design](engine-local-restore.md)
-defines the allocation grants and destination ownership needed for that cutover.
+path. GPU registration exports payload FDs to inference processes, which map
+and CUDA-register them independently. Unencoded DRAM restores execute in the
+inference process under a Manager-owned source grant; SSD, encoded and mixed
+restores retain Manager workers. See [engine-local restore](engine-local-restore.md).
 The Mooncake registration owner retains its pinned pool through unregister.
 Each registered region is represented by an RAII token that also retains the
 TransferEngine; Core clears these tokens before releasing the pinned-pool
@@ -179,8 +218,11 @@ when another pool owns staging; an explicit cuFile route never switches. The
 owner covers read and GPU-write workers and is released only after all lanes of
 that pool drain.
 
-Restore returns one completion receiver after all submitted DMA drains. The old
-shared-memory completion state and its second load API have been removed.
+`RestoreExecution` returns either a local raw source grant or a Manager-worker
+completion receiver. The process channel exposes one restore handle API with
+generation-fenced shared records. Engine-local results become consumable
+after drain, while Manager source retirement completes separately. The old
+terminal-poll RPC has been removed.
 
 ## Upstream designs and OrbitKV owners
 

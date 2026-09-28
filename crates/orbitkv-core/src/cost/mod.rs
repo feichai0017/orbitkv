@@ -41,22 +41,22 @@ pub(crate) fn observe_for_test(key: CostEstimateKey, seconds: f64, now: std::tim
     estimates::ESTIMATES.lock().observe(key, seconds, now);
 }
 
-mod admission;
 #[cfg(feature = "mooncake")]
 mod decision;
 mod estimates;
 mod observation;
 mod resource;
+mod resource_evidence;
 mod shadow;
 
-pub(crate) use admission::{
-    current as current_resource_evidence, record as record_resource_evidence,
-};
 #[cfg(feature = "mooncake")]
 pub(crate) use decision::{SelectionScope, select_route, shadow_routes};
 pub(crate) use observation::{Observation, Outcome, record_completion_observation};
 pub(crate) use orbitkv_state::ReplicaRepresentation as Representation;
 pub(crate) use resource::{ExecutionResource, resource_id};
+pub(crate) use resource_evidence::{
+    current as current_resource_evidence, record as record_resource_evidence,
+};
 pub(crate) use shadow::shadow;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -122,17 +122,14 @@ pub(crate) enum CostObservationKind {
     PeerDramHostReady,
     #[cfg(feature = "mooncake")]
     PeerSsdHostReady,
-    DirectToDecodeRestore,
+    CacheRestore,
     PrefillToDecodeHandoff,
 }
 
 impl CostObservationKind {
     #[cfg(feature = "mooncake")]
     fn is_decode_ready_route(self) -> bool {
-        matches!(
-            self,
-            Self::DirectToDecodeRestore | Self::PrefillToDecodeHandoff
-        )
+        matches!(self, Self::CacheRestore | Self::PrefillToDecodeHandoff)
     }
 
     fn is_raw_copy(self) -> bool {
@@ -147,7 +144,7 @@ impl CostObservationKind {
             Self::SsdUringRestore
             | Self::SsdCufileRestore
             | Self::LocalSsdHostReady
-            | Self::DirectToDecodeRestore
+            | Self::CacheRestore
             | Self::PrefillToDecodeHandoff => SampleBoundary::EnqueuedToCompletion,
             Self::GpuLoadDirect
             | Self::GpuLoadKernel
@@ -196,8 +193,8 @@ impl CostObservationKind {
                 },
             ) => Some(CompletionTarget::engine_restore(destination_device)),
             (
-                Self::DirectToDecodeRestore,
-                ExecutionResource::DirectToDecodeRestore {
+                Self::CacheRestore,
+                ExecutionResource::CacheRestore {
                     destination_device, ..
                 },
             ) => Some(CompletionTarget::engine_restore(destination_device)),
@@ -233,7 +230,7 @@ impl CostObservationKind {
             Self::PeerDramHostReady => "peer_dram_host_ready",
             #[cfg(feature = "mooncake")]
             Self::PeerSsdHostReady => "peer_ssd_host_ready",
-            Self::DirectToDecodeRestore => "direct_to_decode_restore",
+            Self::CacheRestore => "cache_restore",
             Self::PrefillToDecodeHandoff => "prefill_to_decode_handoff",
         }
     }

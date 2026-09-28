@@ -147,8 +147,8 @@ fn engine_ready_routes_require_the_same_destination_device() {
 #[test]
 fn decode_ready_routes_compare_only_for_the_same_target_and_shape() {
     let direct = CostEstimateKey::new(
-        CostObservationKind::DirectToDecodeRestore,
-        ExecutionResource::DirectToDecodeRestore {
+        CostObservationKind::CacheRestore,
+        ExecutionResource::CacheRestore {
             source_set_hash: 9,
             destination_device: 7,
         },
@@ -189,8 +189,8 @@ fn decode_ready_routes_compare_only_for_the_same_target_and_shape() {
 #[test]
 fn decode_ready_decision_uses_fresh_queue_and_tent_pressure() {
     let direct = CostEstimateKey::new(
-        CostObservationKind::DirectToDecodeRestore,
-        ExecutionResource::DirectToDecodeRestore {
+        CostObservationKind::CacheRestore,
+        ExecutionResource::CacheRestore {
             source_set_hash: 31,
             destination_device: 7,
         },

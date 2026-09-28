@@ -79,12 +79,15 @@ request identity, cache keys
 and transfer generation are not metric labels. The generation is required
 as freshness evidence but is not an estimator dimension. Only
 `admission="admitted", outcome="completed"` trains the estimate.
-`direct_to_decode_restore` supplies the matching completed boundary from Restore
-submission after framework page allocation through terminal GPU completion.
-Its consumed plan retains an exact device-bound `DecodePageGrant`, source-set
-identity, representation, source/wire shape and target shape. It remains
-observation-only until one consumed planner owns both the direct source lease
-and the P/D handoff authorization.
+`cache_restore` supplies the matching completed boundary for
+Manager-executed restores, from preparation after framework page allocation
+through terminal GPU completion. Its plan retains `RestoreTargetShape`
+(destination device, bytes and fragment count), source-set identity and source
+geometry. The shape is metadata; a separate permit owns device admission.
+Engine-local raw restores do not train this estimator until their actual
+drain evidence is connected. The observation does not enable direct/P-D
+selection: one execution owner must first acquire both source and handoff
+authority for the alternatives under consideration.
 
 The completion report carries bounded resource values: admitted decode bytes,
 queue depth, queue parallelism, TENT inflight bytes and TENT bandwidth. They

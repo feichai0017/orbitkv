@@ -125,7 +125,7 @@ fn complete_routes_compare_enqueue_to_completion_despite_different_internal_admi
         (CostObservationKind::SsdUringRestore, 30, 0.1),
         (CostObservationKind::SsdCufileRestore, 80, 0.05),
         (CostObservationKind::LocalSsdHostReady, 60, 0.07),
-        (CostObservationKind::DirectToDecodeRestore, 40, 0.09),
+        (CostObservationKind::CacheRestore, 40, 0.09),
         (CostObservationKind::PrefillToDecodeHandoff, 20, 0.11),
     ] {
         running.key.kind = path;
@@ -151,7 +151,7 @@ fn complete_route_submission_preserves_the_prediction_taken_at_enqueue() {
         CostObservationKind::SsdUringRestore,
         CostObservationKind::SsdCufileRestore,
         CostObservationKind::LocalSsdHostReady,
-        CostObservationKind::DirectToDecodeRestore,
+        CostObservationKind::CacheRestore,
         CostObservationKind::PrefillToDecodeHandoff,
     ] {
         let mut observation = Observation(Some(Running {

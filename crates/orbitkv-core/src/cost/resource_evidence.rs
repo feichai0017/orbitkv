@@ -52,5 +52,5 @@ pub(crate) fn current(resource: ExecutionResource, now: Instant) -> Option<Fresh
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/cost/admission.rs"]
+#[path = "../../tests/unit/cost/resource_evidence.rs"]
 mod tests;

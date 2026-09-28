@@ -356,7 +356,7 @@ impl GpuWorkerPool {
             ));
         }
         let permit = self.decode_restore_admission.try_acquire()?;
-        plan.admit_decode_pages(bytes, fragments)
+        plan.bind_target_shape(bytes, fragments)
             .map_err(EngineError::InvalidArgument)?;
         Ok(permit)
     }
@@ -421,20 +421,20 @@ impl GpuWorkerPool {
                 key = restore::cost_estimate_key(&task.plan, layers, self.transfer_mode, path, key);
                 restore::shadow(layers, task.codec_budget, path, key);
             }
-            let page_grant = task
+            let target_shape = task
                 .plan
-                .decode_pages()
-                .expect("decode pages admitted before cost observation");
-            debug_assert_eq!(page_grant.device_id(), self.device_id);
-            debug_assert_eq!(page_grant.bytes(), bytes);
-            debug_assert_eq!(page_grant.fragments(), transfer_shape(&task.layers).1);
-            let decode_resource = ExecutionResource::DirectToDecodeRestore {
+                .target_shape()
+                .expect("restore target shape bound before cost observation");
+            debug_assert_eq!(target_shape.device_id(), self.device_id);
+            debug_assert_eq!(target_shape.bytes(), bytes);
+            debug_assert_eq!(target_shape.fragments(), transfer_shape(&task.layers).1);
+            let decode_resource = ExecutionResource::CacheRestore {
                 source_set_hash: task.plan.source_set_hash(),
                 destination_device: self.device_id as u64,
             };
             let decode_ready_key = key
                 .with_observation_kind_and_resource(
-                    CostObservationKind::DirectToDecodeRestore,
+                    CostObservationKind::CacheRestore,
                     decode_resource,
                 )
                 .with_source_shape(task.plan.source_bytes(), task.plan.source_fragments())
@@ -442,7 +442,7 @@ impl GpuWorkerPool {
             record_resource_evidence(
                 decode_resource,
                 CompletionResourceEvidence {
-                    decode_page_bytes: page_grant.bytes(),
+                    decode_page_bytes: target_shape.bytes(),
                     queue_depth: decode_queue_depth,
                     queue_parallelism: 1,
                     tent_inflight_bytes: 0,

@@ -4,11 +4,10 @@ use crate::SsdReadPath;
 use crate::block::RestoreSource;
 use crate::cost::resource_id;
 
-/// Exact registered decode-page ranges accepted for one restore submission.
-/// The framework retains page lifetime; this grant proves the Cache Manager
-/// validated the concrete destination device and byte ranges before enqueue.
+/// Device and aggregate shape of validated restore destinations.
+/// This metadata owns neither engine pages nor a device admission permit.
 #[derive(Debug)]
-pub(crate) struct DecodePageGrant {
+pub(crate) struct RestoreTargetShape {
     device_id: i32,
     bytes: u64,
     fragments: usize,
@@ -27,7 +26,7 @@ pub(crate) struct RestorePlan {
     source_fragments: usize,
     source_set_hash: u64,
     has_memory: bool,
-    decode_pages: Option<DecodePageGrant>,
+    target_shape: Option<RestoreTargetShape>,
 }
 
 impl RestorePlan {
@@ -50,7 +49,7 @@ impl RestorePlan {
             source_fragments: 0,
             source_set_hash: 0,
             has_memory: false,
-            decode_pages: None,
+            target_shape: None,
         };
         for (source_id, source) in sources {
             if let RestoreSource::Ssd {
@@ -147,18 +146,14 @@ impl RestorePlan {
         self.has_memory
     }
 
-    pub(crate) fn admit_decode_pages(
-        &mut self,
-        bytes: u64,
-        fragments: usize,
-    ) -> Result<(), String> {
+    pub(crate) fn bind_target_shape(&mut self, bytes: u64, fragments: usize) -> Result<(), String> {
         if bytes == 0 || fragments == 0 {
-            return Err("decode page grant requires non-empty target ranges".into());
+            return Err("restore target shape requires non-empty target ranges".into());
         }
-        if self.decode_pages.is_some() {
-            return Err("decode pages were already admitted for this restore".into());
+        if self.target_shape.is_some() {
+            return Err("restore target shape was already bound".into());
         }
-        self.decode_pages = Some(DecodePageGrant {
+        self.target_shape = Some(RestoreTargetShape {
             device_id: self.device_id,
             bytes,
             fragments,
@@ -166,8 +161,8 @@ impl RestorePlan {
         Ok(())
     }
 
-    pub(crate) fn decode_pages(&self) -> Option<&DecodePageGrant> {
-        self.decode_pages.as_ref()
+    pub(crate) fn target_shape(&self) -> Option<&RestoreTargetShape> {
+        self.target_shape.as_ref()
     }
 
     pub(crate) fn source_bytes(&self) -> u64 {
@@ -183,7 +178,7 @@ impl RestorePlan {
     }
 }
 
-impl DecodePageGrant {
+impl RestoreTargetShape {
     pub(crate) fn device_id(&self) -> i32 {
         self.device_id
     }

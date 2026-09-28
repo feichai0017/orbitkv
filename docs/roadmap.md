@@ -59,6 +59,13 @@ gate, without claiming cross-host tensor parallelism.
 
 ### Next reviewable changes
 
+The communication workstream first closes engine-local completion evidence
+and measures the merged baseline, then removes demonstrated overhead. Follow
+the [concrete next increment](communication-plan.md#next-concrete-change-engine-local-completion-evidence)
+and [shared naming definitions](architecture.md#definitions-and-naming) before
+extending automatic route selection. The distributed qualification gates
+below remain independent.
+
 1. **Qualify local path selection using Rust cost observations.** The bounded
    estimator, raw-copy shadow and full SSD-route shadow are implemented as an opt-in.
    Equal-coverage owners of one peer medium also have a separately gated,

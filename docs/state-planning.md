@@ -392,9 +392,12 @@ evidence, not a candidate enumerator or execution selector. Direct cache restore
 records the same post-allocation DecodeReady boundary for Manager-executed
 restores: `Restore` begins
 after the framework has allocated decode pages, Core consumes fresh source
-leases, validates the exact registered device ranges into a `DecodePageGrant`,
-and the worker finishes the observation only after every GPU operation is
-terminal. The grant remains in the consumed `RestorePlan` through completion.
+leases, validates the registered destination ranges, and records their device,
+bytes and fragment count in `RestoreTargetShape`. This shape remains in the
+`RestorePlan` through completion; it owns no page lifetime or admission.
+The framework retains destination pages, and a separate `DecodeRestorePermit`
+owns device capacity. The worker finishes the observation only after every
+GPU operation is terminal.
 This supplies comparable completed-route evidence for those routes. Engine-local
 raw grants retain the same device admission but do not yet train this estimator;
 their actual drain occurs in the engine before Manager source retirement. See
