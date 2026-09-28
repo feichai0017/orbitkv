@@ -54,6 +54,7 @@ impl OrbitKVEngine {
             observation.logical_bytes,
             observation.wire_bytes,
             observation.elapsed,
+            observation.resources,
             observation.admission == CompletionAdmission::Admitted,
             outcome,
         );
@@ -74,10 +75,8 @@ fn validate_observation(observation: &CompletionObservation) -> Result<(), Engin
     if observation.source_endpoint.is_empty() {
         return Err(invalid("completion source_endpoint must not be empty"));
     }
-    if observation.notification_generation == 0 {
-        return Err(invalid(
-            "completion notification_generation must be non-zero",
-        ));
+    if observation.transfer_generation == 0 {
+        return Err(invalid("completion transfer_generation must be non-zero"));
     }
     if observation.logical_bytes == 0 {
         return Err(invalid("completion logical_bytes must be non-zero"));
@@ -87,6 +86,12 @@ fn validate_observation(observation: &CompletionObservation) -> Result<(), Engin
     }
     if observation.elapsed.is_zero() {
         return Err(invalid("completion elapsed duration must be non-zero"));
+    }
+    if observation.resources.queue_depth > 4096 {
+        return Err(invalid("completion queue depth exceeds 4096"));
+    }
+    if observation.resources.queue_parallelism > 4096 {
+        return Err(invalid("completion queue parallelism exceeds 4096"));
     }
     if observation.representation == ReplicaRepresentation::Unknown {
         return Err(invalid("completion representation must be known"));
@@ -108,6 +113,21 @@ fn validate_observation(observation: &CompletionObservation) -> Result<(), Engin
         | (CompletionAdmission::Rejected, _, 1..) => Err(invalid(
             "completion admission, outcome and wire_bytes are inconsistent",
         )),
+        _ => Ok(()),
+    }?;
+    match observation.admission {
+        CompletionAdmission::Admitted
+            if observation.resources.decode_page_bytes != observation.logical_bytes
+                || observation.resources.queue_depth == 0
+                || observation.resources.queue_parallelism == 0 =>
+        {
+            Err(invalid(
+                "admitted completion requires matching decode pages and a nonzero queue depth",
+            ))
+        }
+        CompletionAdmission::Rejected if observation.resources.decode_page_bytes != 0 => Err(
+            invalid("rejected completion cannot carry admitted decode pages"),
+        ),
         _ => Ok(()),
     }
 }

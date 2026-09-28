@@ -42,15 +42,18 @@ Standalone P/D remains the default and opens no Cache Manager connection.
 
 The report covers decode wait enqueue through generation-fenced TENT terminal
 completion. It carries the prefill control endpoint as a hashed source identity,
-the nonzero TENT notification generation as freshness evidence, destination
+the nonzero transfer generation as freshness evidence (the TENT notification
+scope generation in vLLM), destination
 device, raw logical/wire bytes, target-layout fragments and terminal outcome.
 Request IDs and cache keys never enter the Manager's cost index or metric
 labels. Only admitted completed observations train estimates; failures,
 cancellations and timeouts are diagnostic. This records one side of the future
-choice but does not enable direct-restore-versus-handoff selection. SGLang's
-current adapter runs at the source-side synchronous transfer boundary and does
-not yet expose an equally authoritative decode completion callback, so it does
-not emit this report.
+choice but does not enable direct-restore-versus-handoff selection. SGLang now
+reports only from its decode-owned commit boundary:
+`DecodeTransferQueue._commit_transfer_to_req` runs after TP polling, metadata
+validation and any required HiCache restore. Source-side `batch_transfer_sync`
+return is never treated as DecodeReady. Terminal receiver failures report from
+`failure_exception`; abort only marks the eventual terminal outcome.
 
 The alternative is vLLM's built-in NIXL connector. The local
 [`run_nixl_local.sh`](../scripts/run_nixl_local.sh) example uses that upstream

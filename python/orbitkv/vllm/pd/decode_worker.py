@@ -404,14 +404,15 @@ class DecodeHandler:
                 wire_bytes, fragment_count = 0, 0
             else:
                 wire_bytes, fragment_count = self._completion_shape(req.local_block_ids)
-            notification_generation = self._w.transfer.open_request(req_id, wait_handshake)
+            transfer_generation = self._w.transfer.open_request(req_id, wait_handshake)
             self._state.register_wait(req_id, req)
+            tent_inflight_bytes, tent_bandwidth_bytes_per_second = _tent_pressure(self._w.transfer)
             waiter_queued_ts_ns = time.time_ns()
             self._transfer_waiter.submit(
                 _TransferWaitTask(
                     req_id=req_id,
                     wait_generation=0,
-                    notification_generation=notification_generation,
+                    transfer_generation=transfer_generation,
                     remote_request_id=req.remote_request_id,
                     done_request_id=req.done_request_id,
                     source_endpoint=req.prefill_url,
@@ -420,6 +421,10 @@ class DecodeHandler:
                     logical_bytes=wire_bytes,
                     wire_bytes=wire_bytes,
                     fragment_count=fragment_count,
+                    handoff_queue_depth=0,
+                    handoff_queue_parallelism=0,
+                    tent_inflight_bytes=tent_inflight_bytes,
+                    tent_bandwidth_bytes_per_second=tent_bandwidth_bytes_per_second,
                     queued_ts_ns=waiter_queued_ts_ns,
                 )
             )
@@ -699,7 +704,7 @@ class DecodeHandler:
 class _TransferWaitTask:
     req_id: str
     wait_generation: int
-    notification_generation: int
+    transfer_generation: int
     remote_request_id: str
     done_request_id: str
     source_endpoint: str
@@ -708,6 +713,10 @@ class _TransferWaitTask:
     logical_bytes: int
     wire_bytes: int
     fragment_count: int
+    handoff_queue_depth: int
+    handoff_queue_parallelism: int
+    tent_inflight_bytes: int
+    tent_bandwidth_bytes_per_second: int
     queued_ts_ns: int
 
 
@@ -722,6 +731,7 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
         cancellation_callback: Any | None = None,
         max_workers: int = 16,
     ) -> None:
+        self._max_workers = max(1, int(max_workers))
         super().__init__("pd-transfer-done-waiter", max_workers=max_workers)
         self.transfer = transfer
         self._failure_callback = failure_callback
@@ -740,6 +750,11 @@ class _AsyncTransferDoneWaiter(AsyncTaskPool):
             self._next_generation[task.req_id] = generation
             task = replace(task, wait_generation=generation)
             self._submitted[task.req_id] = generation
+            task = replace(
+                task,
+                handoff_queue_depth=len(self._submitted),
+                handoff_queue_parallelism=self._max_workers,
+            )
             self._tasks[task.req_id] = task
         logger.info(
             "[PdConnector] D Mooncake wait queued req=%s remote_req=%s done_req=%s rank=%d blocks=%d prefill_url=%s queue_depth=%d",
@@ -853,6 +868,13 @@ def _all_gather_peer_info(
     gathered: list[tuple[dict[str, KvCacheLayout], str] | None] = [None] * tp_size
     dist.all_gather_object(gathered, (layouts, transfer_endpoint))
     return gathered  # type: ignore[return-value]
+
+
+def _tent_pressure(transfer: MooncakePort) -> tuple[int, int]:
+    stats = transfer.nic_load_stats()
+    inflight_bytes = sum(max(0, int(stat[1])) for stat in stats)
+    bandwidth_bytes_per_second = sum(max(0, int(float(stat[2]))) for stat in stats)
+    return inflight_bytes, bandwidth_bytes_per_second
 
 
 def _elapsed_ms(start_ts_ns: int, end_ts_ns: int) -> float:

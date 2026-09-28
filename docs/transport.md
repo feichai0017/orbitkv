@@ -97,7 +97,7 @@ the dispatcher for resident hits; any pending future continues on Tokio and
 returns `Loading`. Channel ABI 6 separates query submission from ticket polling
 and adds authenticated completion observations without changing the fixed
 64-byte control frame.
-Cache protocol schema 6 distinguishes metadata-only discovery from leased
+Cache protocol schema 7 distinguishes metadata-only discovery from leased
 payload reads and marks selected recovery reads so HLL counts the logical
 discovery only once.
 Discovery returns `Candidates`, never a restore lease, and uses bounded query

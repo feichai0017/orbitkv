@@ -28,6 +28,18 @@ pub enum CompletionOutcome {
     TimedOut,
 }
 
+/// Bounded resource state captured when the physical route was admitted.
+/// These values are observations for freshness/admission checks, never metric
+/// labels or stable cost-key dimensions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CompletionResourceEvidence {
+    pub decode_page_bytes: u64,
+    pub queue_depth: u32,
+    pub queue_parallelism: u32,
+    pub tent_inflight_bytes: u64,
+    pub tent_bandwidth_bytes_per_second: u64,
+}
+
 /// One measured physical completion interval reported by its execution owner.
 ///
 /// Request identifiers and state keys are intentionally absent. The TENT
@@ -38,7 +50,7 @@ pub struct CompletionObservation {
     pub instance_id: String,
     pub destination_device_id: i32,
     pub source_endpoint: String,
-    pub notification_generation: u64,
+    pub transfer_generation: u64,
     pub intent: CompletionIntent,
     pub route: CompletionRoute,
     pub representation: ReplicaRepresentation,
@@ -46,6 +58,7 @@ pub struct CompletionObservation {
     pub wire_bytes: u64,
     pub fragment_count: u32,
     pub elapsed: Duration,
+    pub resources: CompletionResourceEvidence,
     pub admission: CompletionAdmission,
     pub outcome: CompletionOutcome,
 }

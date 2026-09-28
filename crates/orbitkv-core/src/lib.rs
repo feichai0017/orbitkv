@@ -25,7 +25,7 @@ pub use block::{
 };
 pub use completion::{
     CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
-    CompletionRoute,
+    CompletionResourceEvidence, CompletionRoute,
 };
 pub use engine::config::EngineConfig;
 pub use engine::instance::{GpuContext, InstanceContext};

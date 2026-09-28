@@ -41,6 +41,7 @@ pub(crate) fn observe_for_test(key: CostEstimateKey, seconds: f64, now: std::tim
     estimates::ESTIMATES.lock().observe(key, seconds, now);
 }
 
+mod admission;
 #[cfg(feature = "mooncake")]
 mod decision;
 mod estimates;
@@ -48,6 +49,9 @@ mod observation;
 mod resource;
 mod shadow;
 
+pub(crate) use admission::{
+    current as current_resource_evidence, record as record_resource_evidence,
+};
 #[cfg(feature = "mooncake")]
 pub(crate) use decision::{SelectionScope, select_route, shadow_routes};
 pub(crate) use observation::{Observation, Outcome, record_completion_observation};

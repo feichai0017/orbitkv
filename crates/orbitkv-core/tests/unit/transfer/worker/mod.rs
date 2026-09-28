@@ -1,5 +1,19 @@
 use super::*;
 
+#[test]
+fn decode_restore_admission_is_device_scoped_and_bounded() {
+    let admission = device_restore_admission(i32::MAX - 20);
+    let mut permits = Vec::new();
+    for depth in 1..=MAX_DEVICE_RESTORES {
+        let permit = admission.try_acquire().unwrap();
+        assert_eq!(permit.depth, depth as u32);
+        permits.push(permit);
+    }
+    assert!(admission.try_acquire().is_err());
+    permits.pop();
+    assert!(admission.try_acquire().is_ok());
+}
+
 fn empty_restore_plan(device_id: i32) -> crate::planning::restore::RestorePlan {
     crate::planning::restore::RestorePlan::new(
         device_id,
@@ -90,6 +104,7 @@ async fn shared_admission_saturation_falls_back_before_worker_submission() {
             ssd_host_tx: Mutex::new(None),
             codec_write_tx: Mutex::new(None),
             ssd_write_admission: Arc::clone(&write_admission),
+            decode_restore_admission: device_restore_admission(i32::MAX - 3),
             cufile_worker_admission: Arc::clone(&cufile_admission),
             cufile_worker_owner: Mutex::new(None),
             load_tx,
@@ -135,6 +150,7 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
         ssd_host_tx: Mutex::new(None),
         codec_write_tx: Mutex::new(None),
         ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        decode_restore_admission: device_restore_admission(0),
         cufile_worker_admission: Arc::new(Semaphore::new(1)),
         cufile_worker_owner: Mutex::new(None),
         load_tx,
@@ -166,6 +182,7 @@ fn overlapping_restore_targets_are_rejected_before_worker_or_codec_dispatch() {
                 codec_budget,
                 decode_ready_started: Instant::now(),
                 decode_ready_observation: Box::new(Observation::disabled()),
+                decode_admission: None,
             };
             let error = pool.submit_load(task).unwrap_err();
             assert!(error.to_string().contains("overlap"));
@@ -189,6 +206,7 @@ fn restore_plan_must_target_the_worker_device() {
         ssd_host_tx: Mutex::new(None),
         codec_write_tx: Mutex::new(None),
         ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        decode_restore_admission: device_restore_admission(0),
         cufile_worker_admission: Arc::new(Semaphore::new(1)),
         cufile_worker_owner: Mutex::new(None),
         load_tx,
@@ -206,6 +224,7 @@ fn restore_plan_must_target_the_worker_device() {
             codec_budget: 0,
             decode_ready_started: Instant::now(),
             decode_ready_observation: Box::new(Observation::disabled()),
+            decode_admission: None,
         })
         .unwrap_err();
     assert!(error.to_string().contains("targets device 1"));
@@ -232,6 +251,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         ssd_host_tx: Mutex::new(Some(ssd_host_tx)),
         codec_write_tx: Mutex::new(Some(codec_write_tx)),
         ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+        decode_restore_admission: device_restore_admission(0),
         cufile_worker_admission: Arc::clone(&cufile_admission),
         cufile_worker_owner: Mutex::new(Some(cufile_owner)),
         load_tx,
@@ -248,6 +268,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
         codec_budget: 64 * 1024 * 1024,
         decode_ready_started: Instant::now(),
         decode_ready_observation: Box::new(Observation::disabled()),
+        decode_admission: None,
     })
     .unwrap();
     let draining = Arc::clone(&pool);
@@ -281,6 +302,7 @@ async fn drain_rejects_new_transfers_and_waits_for_all_workers() {
             codec_budget: 64 * 1024 * 1024,
             decode_ready_started: Instant::now(),
             decode_ready_observation: Box::new(Observation::disabled()),
+            decode_admission: None,
         })
         .is_err()
     );

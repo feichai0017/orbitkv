@@ -381,7 +381,7 @@ same DecodeReady device identity before entering the comparison set.
 The first authenticated `CompletionObservation` boundary now records vLLM
 prefill-to-decode handoff evidence at the decode owner. The local process
 channel accepts a bounded frame containing the registered instance/device,
-prefill endpoint identity, nonzero TENT notification generation,
+prefill endpoint identity, nonzero transfer generation,
 representation, logical/wire bytes, fragments, admission, outcome and elapsed
 time. It contains no request ID or state key. Core hashes the source endpoint
 into an `ExecutionResource::PrefillToDecodeHandoff` identity and excludes the
@@ -394,8 +394,18 @@ after the framework has allocated decode pages, Core consumes fresh source
 leases, validates the exact registered device ranges into a `DecodePageGrant`,
 and the worker finishes the observation only after every GPU operation is
 terminal. The grant remains in the consumed `RestorePlan` through completion.
-This supplies comparable completed-route evidence; live handoff queue and TENT
-NIC admission are still required before the two routes may compete.
+This supplies comparable completed-route evidence.
+
+Completion resource evidence is separately bounded and freshness-checked. A
+direct restore has a per-device 128-operation admission owner retained through
+terminal completion. P/D observations carry exact admitted decode bytes,
+handoff queue depth and parallelism, and the TENT rail inflight-byte/bandwidth
+snapshot captured at admission. These values never become metric labels or
+stable estimate-key dimensions. Fresh evidence expires after two seconds;
+decode-route comparison adjusts estimates by queued execution waves and, when
+an RDMA rail is present, current TENT inflight bytes divided by observed rail
+bandwidth. Missing or shape-incompatible resource evidence preserves the
+deterministic default.
 
 ### Cost model for complete routes
 

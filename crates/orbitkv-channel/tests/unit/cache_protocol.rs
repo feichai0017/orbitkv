@@ -5,7 +5,7 @@ fn completion_observation() -> CompletionObservationRequest {
         instance_id: "decode-instance".into(),
         destination_device_id: 3,
         source_endpoint: "tent://prefill-7".into(),
-        notification_generation: 11,
+        transfer_generation: 11,
         intent: CompletionIntent::EngineRestore,
         route: CompletionRoute::PrefillToDecodeHandoff,
         representation: ReplicaRepresentation::Raw,
@@ -13,6 +13,11 @@ fn completion_observation() -> CompletionObservationRequest {
         wire_bytes: 32 * 1024,
         fragment_count: 8,
         elapsed_ns: 400_000,
+        decode_page_bytes: 32 * 1024,
+        handoff_queue_depth: 3,
+        handoff_queue_parallelism: 16,
+        tent_inflight_bytes: 64 * 1024,
+        tent_bandwidth_bytes_per_second: 20_000_000_000,
         admission: CompletionAdmission::Admitted,
         outcome: CompletionOutcome::Completed,
     }
@@ -60,11 +65,11 @@ fn completion_observation_round_trip_is_bounded_and_rejects_malformed_frames() {
 #[test]
 fn completion_observation_rejects_invalid_evidence_combinations() {
     let mut request = completion_observation();
-    request.notification_generation = 0;
+    request.transfer_generation = 0;
     assert_eq!(
         request.encode(),
         Err(CacheProtocolError::ZeroCompletionField(
-            "notification_generation"
+            "transfer_generation"
         ))
     );
 
@@ -84,6 +89,7 @@ fn completion_observation_rejects_invalid_evidence_combinations() {
 
     request.outcome = CompletionOutcome::Failed;
     request.wire_bytes = 0;
+    request.decode_page_bytes = 0;
     assert!(request.encode().is_ok());
 
     request = completion_observation();
@@ -91,6 +97,27 @@ fn completion_observation_rejects_invalid_evidence_combinations() {
     assert_eq!(
         request.encode(),
         Err(CacheProtocolError::InvalidCompletionState)
+    );
+
+    request = completion_observation();
+    request.decode_page_bytes = 0;
+    assert_eq!(
+        request.encode(),
+        Err(CacheProtocolError::InvalidCompletionResources)
+    );
+
+    request = completion_observation();
+    request.handoff_queue_depth = 4097;
+    assert_eq!(
+        request.encode(),
+        Err(CacheProtocolError::CompletionQueueTooDeep(4097))
+    );
+
+    request = completion_observation();
+    request.handoff_queue_parallelism = 0;
+    assert_eq!(
+        request.encode(),
+        Err(CacheProtocolError::InvalidCompletionResources)
     );
 }
 

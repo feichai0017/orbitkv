@@ -206,7 +206,7 @@ qualification remain open. See the
   qualify rank-common TP and stage-dependent PP plans as later topology gates.
 - [x] Add the first bounded authenticated P/D completion observation: vLLM's
   decode-side TENT waiter reports its registered target device, hashed prefill
-  endpoint identity, nonzero notification generation, raw logical/wire bytes,
+  endpoint identity, nonzero transfer generation, raw logical/wire bytes,
   fragments and terminal outcome through `orbitkv-channel`. Train only
   admitted completions; keep standalone P/D unchanged and do not enable route
   selection.
@@ -214,8 +214,12 @@ qualification remain open. See the
   submission through terminal GPU completion. Validate exact registered target
   ranges into a device-bound `DecodePageGrant` retained by the consumed plan;
   keep this observation-only.
-- [ ] Add live handoff-queue admission, TENT NIC pressure at decision time, and
-  an authoritative SGLang decode completion callback before comparing routes.
+- [x] Add bounded per-device direct-restore admission, vLLM handoff queue
+  depth/parallelism, admission-time TENT NIC pressure, and an authoritative
+  SGLang decode callback after metadata and HiCache restore commit. Keep this
+  resource evidence out of metric labels and expire it after two seconds.
+- [ ] Make one consumed planner own both the direct source lease and P/D
+  handoff authorization, then enable the guarded decode-route selector.
 
 ## M0 — framework-neutral foundation
 

@@ -1,5 +1,6 @@
 use super::estimates::{ESTIMATES, Estimate};
 use super::{CostEstimateKey, ENABLED, SampleBoundary};
+use crate::CompletionResourceEvidence;
 use crate::metrics::core_metrics;
 use opentelemetry::KeyValue;
 use std::time::Duration;
@@ -31,12 +32,14 @@ pub(crate) fn record_completion_observation(
     logical_bytes: u64,
     wire_bytes: u64,
     elapsed: Duration,
+    resources: CompletionResourceEvidence,
     admitted: bool,
     outcome: Outcome,
 ) {
     if !*ENABLED {
         return;
     }
+    super::admission::record(key.resource, resources, elapsed);
     let metrics = core_metrics();
     let attributes = [
         KeyValue::new("path", key.kind.label()),

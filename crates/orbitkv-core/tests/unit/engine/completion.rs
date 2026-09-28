@@ -6,7 +6,7 @@ fn observation() -> CompletionObservation {
         instance_id: "decode-instance".into(),
         destination_device_id: 2,
         source_endpoint: "tent://prefill-3".into(),
-        notification_generation: 7,
+        transfer_generation: 7,
         intent: CompletionIntent::EngineRestore,
         route: CompletionRoute::PrefillToDecodeHandoff,
         representation: ReplicaRepresentation::Raw,
@@ -14,6 +14,13 @@ fn observation() -> CompletionObservation {
         wire_bytes: 8192,
         fragment_count: 4,
         elapsed: Duration::from_micros(250),
+        resources: crate::CompletionResourceEvidence {
+            decode_page_bytes: 8192,
+            queue_depth: 1,
+            queue_parallelism: 16,
+            tent_inflight_bytes: 0,
+            tent_bandwidth_bytes_per_second: 0,
+        },
         admission: CompletionAdmission::Admitted,
         outcome: CompletionOutcome::Completed,
     }
@@ -24,7 +31,7 @@ fn completion_validation_requires_fresh_consistent_evidence() {
     assert!(validate_observation(&observation()).is_ok());
 
     let mut invalid = observation();
-    invalid.notification_generation = 0;
+    invalid.transfer_generation = 0;
     assert!(validate_observation(&invalid).is_err());
 
     invalid = observation();

@@ -276,18 +276,23 @@ impl PyCacheManagerClient {
         clippy::too_many_arguments,
         reason = "completion evidence fields cross the Python/native boundary once"
     )]
-    #[pyo3(signature = (instance_id, destination_device_id, source_endpoint, notification_generation, logical_bytes, wire_bytes, fragment_count, elapsed_ns, *, admitted=true, outcome="completed", representation="raw"))]
+    #[pyo3(signature = (instance_id, destination_device_id, source_endpoint, transfer_generation, logical_bytes, wire_bytes, fragment_count, elapsed_ns, decode_page_bytes, handoff_queue_depth, handoff_queue_parallelism, tent_inflight_bytes, tent_bandwidth_bytes_per_second, *, admitted=true, outcome="completed", representation="raw"))]
     fn observe_prefill_to_decode_completion(
         &self,
         py: Python<'_>,
         instance_id: String,
         destination_device_id: i32,
         source_endpoint: String,
-        notification_generation: u64,
+        transfer_generation: u64,
         logical_bytes: u64,
         wire_bytes: u64,
         fragment_count: u32,
         elapsed_ns: u64,
+        decode_page_bytes: u64,
+        handoff_queue_depth: u32,
+        handoff_queue_parallelism: u32,
+        tent_inflight_bytes: u64,
+        tent_bandwidth_bytes_per_second: u64,
         admitted: bool,
         outcome: &str,
         representation: &str,
@@ -319,7 +324,7 @@ impl PyCacheManagerClient {
             instance_id,
             destination_device_id,
             source_endpoint,
-            notification_generation,
+            transfer_generation,
             intent: CompletionIntent::EngineRestore,
             route: CompletionRoute::PrefillToDecodeHandoff,
             representation,
@@ -327,6 +332,11 @@ impl PyCacheManagerClient {
             wire_bytes,
             fragment_count,
             elapsed_ns,
+            decode_page_bytes,
+            handoff_queue_depth,
+            handoff_queue_parallelism,
+            tent_inflight_bytes,
+            tent_bandwidth_bytes_per_second,
             admission: if admitted {
                 CompletionAdmission::Admitted
             } else {

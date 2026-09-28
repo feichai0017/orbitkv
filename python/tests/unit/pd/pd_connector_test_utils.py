@@ -148,6 +148,9 @@ class MockMooncakePort:
     def aggregated_link_speed(self) -> int:
         return 400_000_000_000
 
+    def nic_load_stats(self) -> list[tuple[str, int, float]]:
+        return []
+
     def wait_done(self, req_id: str) -> None:
         return None
 

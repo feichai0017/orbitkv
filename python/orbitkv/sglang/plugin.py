@@ -13,9 +13,47 @@ def register() -> None:
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     from .admission import abort_request, admit_request, enqueue_request
+    from .completion import (
+        capture_decode_pages,
+        capture_handoff_admission,
+        mark_decode_abort,
+        observe_decode_failure,
+        observe_decode_ready,
+        observe_deferred_release,
+    )
     from .pd import install_sglang_tent_backend
 
     install_sglang_tent_backend()
+    HookRegistry.register(
+        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.send_metadata",
+        capture_decode_pages,
+        HookType.AFTER,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.decode.DecodeTransferQueue.add",
+        capture_handoff_admission,
+        HookType.AFTER,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.decode.DecodeTransferQueue._commit_transfer_to_req",
+        observe_decode_ready,
+        HookType.AROUND,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.abort",
+        mark_decode_abort,
+        HookType.AFTER,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.failure_exception",
+        observe_decode_failure,
+        HookType.AROUND,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.decode.DecodeTransferQueue._do_release",
+        observe_deferred_release,
+        HookType.AROUND,
+    )
     register_radix_cache_backend("orbitkv", create_cache)
     HookRegistry.register(
         "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",

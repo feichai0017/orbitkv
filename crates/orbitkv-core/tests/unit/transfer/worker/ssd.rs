@@ -267,6 +267,7 @@ async fn restore_one_extent_through_both_paths(format: StorageFormat) {
                 codec_budget: CODEC_BUDGET,
                 decode_ready_started: std::time::Instant::now(),
                 decode_ready_observation: Box::new(crate::cost::Observation::disabled()),
+                decode_admission: None,
             })
             .unwrap();
         let completed = tokio::time::timeout(Duration::from_secs(30), result).await;

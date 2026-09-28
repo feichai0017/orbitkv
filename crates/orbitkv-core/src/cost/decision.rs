@@ -3,7 +3,10 @@ use std::time::Instant;
 use opentelemetry::KeyValue;
 
 use super::estimates::{ESTIMATES, Estimate};
-use super::{CostEstimateKey, ENABLED, SELECTION_ENABLED};
+use super::{
+    CostEstimateKey, CostObservationKind, ENABLED, SELECTION_ENABLED, bucket,
+    current_resource_evidence,
+};
 use crate::metrics::core_metrics;
 
 const MAX_CANDIDATES: usize = 8;
@@ -35,22 +38,26 @@ pub(crate) fn select_route(
     if !*ENABLED || !*SELECTION_ENABLED {
         return default;
     }
-    let (selected, decision) =
-        if default >= candidates.len() || candidates.len() < 2 || candidates.len() > MAX_CANDIDATES
-        {
-            (default, "unknown")
-        } else if let Some(estimates) = ESTIMATES.try_lock() {
-            let now = Instant::now();
-            let predictions: [_; MAX_CANDIDATES] = std::array::from_fn(|index| {
-                candidates
-                    .get(index)
-                    .and_then(|&key| estimates.predict(key, now))
-            });
-            choose(candidates, &predictions[..candidates.len()], default)
-        } else {
-            core_metrics().cost_estimate_dropped.add(1, &[]);
-            (default, "contention")
-        };
+    let (selected, decision) = if default >= candidates.len()
+        || candidates.len() < 2
+        || candidates.len() > MAX_CANDIDATES
+    {
+        (default, "unknown")
+    } else if let Some(estimates) = ESTIMATES.try_lock() {
+        let now = Instant::now();
+        let mut predictions: [_; MAX_CANDIDATES] = std::array::from_fn(|index| {
+            candidates
+                .get(index)
+                .and_then(|&key| estimates.predict(key, now))
+        });
+        match apply_decode_ready_pressure(candidates, &mut predictions[..candidates.len()], now) {
+            Ok(()) => choose(candidates, &predictions[..candidates.len()], default),
+            Err(decision) => (default, decision),
+        }
+    } else {
+        core_metrics().cost_estimate_dropped.add(1, &[]);
+        (default, "contention")
+    };
     core_metrics().cost_route_decisions.add(
         1,
         &[
@@ -59,6 +66,45 @@ pub(crate) fn select_route(
         ],
     );
     selected
+}
+
+fn apply_decode_ready_pressure(
+    candidates: &[CostEstimateKey],
+    predictions: &mut [Option<Estimate>],
+    now: Instant,
+) -> Result<(), &'static str> {
+    if !candidates
+        .iter()
+        .all(|candidate| candidate.kind.is_decode_ready_route())
+    {
+        return Ok(());
+    }
+    for (candidate, prediction) in candidates.iter().zip(predictions) {
+        let Some(evidence) = current_resource_evidence(candidate.resource, now) else {
+            return Err("resource_unknown");
+        };
+        let resources = evidence.resources;
+        if resources.decode_page_bytes == 0
+            || bucket(resources.decode_page_bytes) != candidate.size
+            || resources.queue_depth == 0
+            || resources.queue_parallelism == 0
+        {
+            return Err("resource_incomparable");
+        }
+        let Some(prediction) = prediction else {
+            continue;
+        };
+        let waiting = resources.queue_depth.saturating_sub(1);
+        let waves = waiting.div_ceil(resources.queue_parallelism);
+        prediction.seconds *= 1.0 + f64::from(waves);
+        if candidate.kind == CostObservationKind::PrefillToDecodeHandoff
+            && resources.tent_bandwidth_bytes_per_second > 0
+        {
+            prediction.seconds += resources.tent_inflight_bytes as f64
+                / resources.tent_bandwidth_bytes_per_second as f64;
+        }
+    }
+    Ok(())
 }
 
 /// Compare complete routes with one target without changing selected execution.

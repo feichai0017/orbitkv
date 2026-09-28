@@ -1,5 +1,6 @@
 use super::*;
 use crate::cost::{CostObservationKind, ExecutionResource, Representation};
+use std::time::Duration;
 
 fn key(path: CostObservationKind, peer: u64) -> CostEstimateKey {
     CostEstimateKey::new(
@@ -182,6 +183,76 @@ fn decode_ready_routes_compare_only_for_the_same_target_and_shape() {
     assert_eq!(
         choose(&[direct, other_device], &predictions, 0),
         (0, "incomparable")
+    );
+}
+
+#[test]
+fn decode_ready_decision_uses_fresh_queue_and_tent_pressure() {
+    let direct = CostEstimateKey::new(
+        CostObservationKind::DirectToDecodeRestore,
+        ExecutionResource::DirectToDecodeRestore {
+            source_set_hash: 31,
+            destination_device: 7,
+        },
+        Representation::Raw,
+        4096,
+        2,
+    )
+    .with_source_shape(4096, 2)
+    .with_wire_bytes(4096);
+    let handoff = CostEstimateKey::new(
+        CostObservationKind::PrefillToDecodeHandoff,
+        ExecutionResource::PrefillToDecodeHandoff {
+            source_endpoint_hash: 32,
+            destination_device: 7,
+        },
+        Representation::Raw,
+        4096,
+        2,
+    )
+    .with_source_shape(4096, 2)
+    .with_wire_bytes(4096);
+    crate::cost::record_resource_evidence(
+        direct.resource,
+        crate::CompletionResourceEvidence {
+            decode_page_bytes: 4096,
+            queue_depth: 1,
+            queue_parallelism: 1,
+            tent_inflight_bytes: 0,
+            tent_bandwidth_bytes_per_second: 0,
+        },
+        Duration::ZERO,
+    );
+    crate::cost::record_resource_evidence(
+        handoff.resource,
+        crate::CompletionResourceEvidence {
+            decode_page_bytes: 4096,
+            queue_depth: 17,
+            queue_parallelism: 16,
+            tent_inflight_bytes: 1000,
+            tent_bandwidth_bytes_per_second: 10_000,
+        },
+        Duration::ZERO,
+    );
+    let mut predictions = [Some(estimate(0.2, 0.0)), Some(estimate(0.1, 0.0))];
+    apply_decode_ready_pressure(&[direct, handoff], &mut predictions, Instant::now()).unwrap();
+    assert_eq!(predictions[0].unwrap().seconds, 0.2);
+    assert!((predictions[1].unwrap().seconds - 0.3).abs() < 1e-10);
+
+    let unknown = handoff.with_observation_kind_and_resource(
+        CostObservationKind::PrefillToDecodeHandoff,
+        ExecutionResource::PrefillToDecodeHandoff {
+            source_endpoint_hash: 33,
+            destination_device: 7,
+        },
+    );
+    assert_eq!(
+        apply_decode_ready_pressure(
+            &[direct, unknown],
+            &mut [Some(estimate(0.2, 0.0)), Some(estimate(0.1, 0.0))],
+            Instant::now(),
+        ),
+        Err("resource_unknown")
     );
 }
 

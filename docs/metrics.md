@@ -76,15 +76,22 @@ bytes plus target-layout fragment shape after successful completion; failed,
 cancelled and timed-out reports keep physical bytes unknown. The source
 endpoint is hashed into the internal execution-resource key; endpoint text,
 request identity, cache keys
-and notification generation are not metric labels. The generation is required
+and transfer generation are not metric labels. The generation is required
 as freshness evidence but is not an estimator dimension. Only
 `admission="admitted", outcome="completed"` trains the estimate.
 `direct_to_decode_restore` supplies the matching completed boundary from Restore
 submission after framework page allocation through terminal GPU completion.
 Its consumed plan retains an exact device-bound `DecodePageGrant`, source-set
 identity, representation, source/wire shape and target shape. It remains
-observation-only; neither route has an execution selector until both carry live
-device, queue and NIC admission evidence.
+observation-only until one consumed planner owns both the direct source lease
+and the P/D handoff authorization.
+
+The completion report carries bounded resource values: admitted decode bytes,
+queue depth, queue parallelism, TENT inflight bytes and TENT bandwidth. They
+live in a 128-entry process-local freshness cache for at most two seconds and
+are not exported as labels. Decode-route comparison accounts for queued waves
+and RDMA rail pressure only when every candidate has fresh, shape-compatible
+evidence; TCP legitimately reports an empty TENT NIC rail.
 
 Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
 DMA-coalesced ranges. Actual execution samples and shadow candidates use the

@@ -73,8 +73,9 @@ present, the named instance/device must already be registered with that
 node-local Manager. The authenticated process channel consumes a bounded report
 after the decode-side TENT waiter reaches a terminal state. Reporting failure
 disables later reports in that worker but never changes P/D completion or page
-ownership. The TENT notification generation is validated as nonzero freshness
-evidence and is deliberately excluded from estimator keys.
+ownership. The transfer generation is validated as nonzero freshness evidence
+and is deliberately excluded from estimator keys; vLLM supplies its TENT
+notification-scope generation.
 
 Mooncake uses `P2PHANDSHAKE` for peer metadata exchange. No external Mooncake
 Store or metadata service is required for this path. OrbitKV does not use
@@ -89,6 +90,10 @@ Mooncake Store as its state authority.
 - The decode side waits for the expected number of producer notifications.
 - An optional Cache Manager observation is emitted only by that decode-side
   completion owner; source-side write return is not relabelled as decode-ready.
+- vLLM captures its generation-fenced waiter depth and live TENT rail snapshot.
+  SGLang captures its admitted decode queue in `DecodeTransferQueue.add` and
+  reports success only after `_commit_transfer_to_req` passes metadata and
+  optional HiCache restore gates.
 - Failure/abort notifications never publish the destination as complete.
 - Queued writes carry the producer request generation and captured destination
   authorization. Reusing a request ID cannot redirect an old task into new

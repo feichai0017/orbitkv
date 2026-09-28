@@ -21,7 +21,7 @@ use orbitkv_channel::{
 };
 use orbitkv_core::{
     CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
-    CompletionRoute, EngineError, OrbitKVEngine,
+    CompletionResourceEvidence, CompletionRoute, EngineError, OrbitKVEngine,
 };
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -337,7 +337,7 @@ fn dispatch_completion_observation(
         instance_id: request.instance_id,
         destination_device_id: request.destination_device_id,
         source_endpoint: request.source_endpoint,
-        notification_generation: request.notification_generation,
+        transfer_generation: request.transfer_generation,
         intent: match request.intent {
             orbitkv_channel::CompletionIntent::HostReady => CompletionIntent::HostReady,
             orbitkv_channel::CompletionIntent::EngineRestore => CompletionIntent::EngineRestore,
@@ -353,6 +353,13 @@ fn dispatch_completion_observation(
         wire_bytes: request.wire_bytes,
         fragment_count: request.fragment_count,
         elapsed: Duration::from_nanos(request.elapsed_ns),
+        resources: CompletionResourceEvidence {
+            decode_page_bytes: request.decode_page_bytes,
+            queue_depth: request.handoff_queue_depth,
+            queue_parallelism: request.handoff_queue_parallelism,
+            tent_inflight_bytes: request.tent_inflight_bytes,
+            tent_bandwidth_bytes_per_second: request.tent_bandwidth_bytes_per_second,
+        },
         admission: match request.admission {
             orbitkv_channel::CompletionAdmission::Admitted => CompletionAdmission::Admitted,
             orbitkv_channel::CompletionAdmission::Rejected => CompletionAdmission::Rejected,

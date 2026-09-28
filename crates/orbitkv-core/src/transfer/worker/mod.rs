@@ -1,5 +1,6 @@
 use crate::transfer::finish_gpu_transfer;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Weak, mpsc as std_mpsc};
 use std::time::Instant;
 
@@ -9,11 +10,12 @@ use logforth::diagnostic::ThreadLocalDiagnostic;
 use parking_lot::Mutex;
 use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
+use crate::CompletionResourceEvidence;
 use crate::EngineError;
 use crate::block::{RawBlock, SealedBlock};
 use crate::cost::{
     CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
-    enabled, shadow,
+    enabled, record_resource_evidence, shadow,
 };
 use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::metrics::core_metrics;
@@ -36,6 +38,7 @@ pub(crate) struct LoadTask {
     pub codec_budget: usize,
     pub decode_ready_started: Instant,
     pub decode_ready_observation: Box<Observation>,
+    pub decode_admission: Option<DecodeRestorePermit>,
 }
 
 /// Terminal GPU transfer evidence, timestamped before notifying the dispatcher.
@@ -137,12 +140,32 @@ pub(crate) struct GpuWorkerPool {
     ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_write_admission: Arc<Semaphore>,
+    decode_restore_admission: Arc<DeviceRestoreAdmission>,
     cufile_worker_admission: Arc<Semaphore>,
     cufile_worker_owner: Mutex<Option<OwnedSemaphorePermit>>,
     load_tx: mpsc::UnboundedSender<WorkerCommand>,
     save_tx: mpsc::UnboundedSender<WorkerCommand>,
     closed: Mutex<bool>,
     drained: OnceCell<Result<(), String>>,
+}
+
+const MAX_DEVICE_RESTORES: usize = 128;
+
+struct DeviceRestoreAdmission {
+    permits: Arc<Semaphore>,
+    active: AtomicUsize,
+}
+
+pub(crate) struct DecodeRestorePermit {
+    _permit: OwnedSemaphorePermit,
+    admission: Arc<DeviceRestoreAdmission>,
+    depth: u32,
+}
+
+impl Drop for DecodeRestorePermit {
+    fn drop(&mut self) {
+        self.admission.active.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// One process-wide GPU-storage write budget per physical CUDA device. Worker
@@ -175,6 +198,36 @@ fn device_cufile_worker_admission(device_id: i32) -> Arc<Semaphore> {
     admission
 }
 
+fn device_restore_admission(device_id: i32) -> Arc<DeviceRestoreAdmission> {
+    static ADMISSIONS: LazyLock<Mutex<HashMap<i32, Weak<DeviceRestoreAdmission>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut admissions = ADMISSIONS.lock();
+    admissions.retain(|_, admission| admission.strong_count() > 0);
+    if let Some(admission) = admissions.get(&device_id).and_then(Weak::upgrade) {
+        return admission;
+    }
+    let admission = Arc::new(DeviceRestoreAdmission {
+        permits: Arc::new(Semaphore::new(MAX_DEVICE_RESTORES)),
+        active: AtomicUsize::new(0),
+    });
+    admissions.insert(device_id, Arc::downgrade(&admission));
+    admission
+}
+
+impl DeviceRestoreAdmission {
+    fn try_acquire(self: &Arc<Self>) -> Result<DecodeRestorePermit, EngineError> {
+        let permit = Arc::clone(&self.permits)
+            .try_acquire_owned()
+            .map_err(|_| EngineError::Storage("decode restore queue is full".into()))?;
+        let depth = self.active.fetch_add(1, Ordering::AcqRel) + 1;
+        Ok(DecodeRestorePermit {
+            _permit: permit,
+            admission: Arc::clone(self),
+            depth: depth as u32,
+        })
+    }
+}
+
 impl GpuWorkerPool {
     pub(crate) fn new(
         device_id: i32,
@@ -191,6 +244,7 @@ impl GpuWorkerPool {
             ssd_host_tx: Mutex::new(None),
             codec_write_tx: Mutex::new(None),
             ssd_write_admission: device_ssd_write_admission(device_id),
+            decode_restore_admission: device_restore_admission(device_id),
             cufile_worker_admission: device_cufile_worker_admission(device_id),
             cufile_worker_owner: Mutex::new(None),
             closed: Mutex::new(false),
@@ -323,6 +377,9 @@ impl GpuWorkerPool {
         task.plan
             .admit_decode_pages(target_bytes, target_fragments)
             .map_err(EngineError::InvalidArgument)?;
+        let decode_admission = self.decode_restore_admission.try_acquire()?;
+        let decode_queue_depth = decode_admission.depth;
+        task.decode_admission = Some(decode_admission);
         restore::validate_plan(&task)?;
         let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
@@ -361,16 +418,28 @@ impl GpuWorkerPool {
             debug_assert_eq!(page_grant.device_id(), self.device_id);
             debug_assert_eq!(page_grant.bytes(), bytes);
             debug_assert_eq!(page_grant.fragments(), transfer_shape(&task.layers).1);
+            let decode_resource = ExecutionResource::DirectToDecodeRestore {
+                source_set_hash: task.plan.source_set_hash(),
+                destination_device: self.device_id as u64,
+            };
             let decode_ready_key = key
                 .with_observation_kind_and_resource(
                     CostObservationKind::DirectToDecodeRestore,
-                    ExecutionResource::DirectToDecodeRestore {
-                        source_set_hash: task.plan.source_set_hash(),
-                        destination_device: self.device_id as u64,
-                    },
+                    decode_resource,
                 )
                 .with_source_shape(task.plan.source_bytes(), task.plan.source_fragments())
                 .with_wire_bytes(task.plan.source_bytes());
+            record_resource_evidence(
+                decode_resource,
+                CompletionResourceEvidence {
+                    decode_page_bytes: page_grant.bytes(),
+                    queue_depth: decode_queue_depth,
+                    queue_parallelism: 1,
+                    tent_inflight_bytes: 0,
+                    tent_bandwidth_bytes_per_second: 0,
+                },
+                std::time::Duration::ZERO,
+            );
             (
                 Observation::new(key, Some(bytes)),
                 Observation::new_enqueued(decode_ready_key, Some(bytes), task.decode_ready_started),
@@ -984,7 +1053,7 @@ fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usiz
 
 /// Publish completion only after the worker establishes that all GPU access has ended.
 fn finish_load(
-    task: LoadTask,
+    mut task: LoadTask,
     result: Result<(), EngineError>,
     started: Instant,
     bytes: usize,
@@ -1012,6 +1081,7 @@ fn finish_load(
     task.decode_ready_observation.finish(outcome, wire_bytes);
     drop(task.layers);
     drop(task.reservations);
+    drop(task.decode_admission.take());
     let _ = task.completion.send(LoadOutcome {
         result,
         completed_at: Instant::now(),

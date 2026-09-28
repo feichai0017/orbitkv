@@ -228,6 +228,7 @@ impl OrbitKVEngine {
             codec_budget: self.storage.codec_budget,
             decode_ready_started,
             decode_ready_observation: Box::new(crate::cost::Observation::disabled()),
+            decode_admission: None,
         })?;
         Ok(receiver)
     }

@@ -11,14 +11,14 @@ const RESTORE_REQUEST_MAGIC: u32 = 0x4f52_5251; // ORRQ
 const RESTORE_POLL_MAGIC: u32 = 0x4f52_5250; // ORRP
 const RESTORE_RESPONSE_MAGIC: u32 = 0x4f52_5252; // ORRR
 const COMPLETION_OBSERVATION_MAGIC: u32 = 0x4f52_434f; // ORCO
-const CACHE_PROTOCOL_VERSION: u16 = 6;
+const CACHE_PROTOCOL_VERSION: u16 = 7;
 const REQUEST_HEADER_BYTES: usize = 40;
 const RESPONSE_HEADER_BYTES: usize = 24;
 const RELEASE_HEADER_BYTES: usize = 12;
 const PUBLISH_HEADER_BYTES: usize = 28;
 const RESTORE_HEADER_BYTES: usize = 28;
 const RESTORE_RESPONSE_BYTES: usize = 24;
-const COMPLETION_OBSERVATION_HEADER_BYTES: usize = 72;
+const COMPLETION_OBSERVATION_HEADER_BYTES: usize = 104;
 const MAX_COMPLETION_INSTANCE_ID_BYTES: usize = 256;
 const MAX_COMPLETION_SOURCE_ENDPOINT_BYTES: usize = 1024;
 
@@ -111,7 +111,7 @@ pub struct CompletionObservationRequest {
     pub instance_id: String,
     pub destination_device_id: i32,
     pub source_endpoint: String,
-    pub notification_generation: u64,
+    pub transfer_generation: u64,
     pub intent: CompletionIntent,
     pub route: CompletionRoute,
     pub representation: ReplicaRepresentation,
@@ -119,6 +119,11 @@ pub struct CompletionObservationRequest {
     pub wire_bytes: u64,
     pub fragment_count: u32,
     pub elapsed_ns: u64,
+    pub decode_page_bytes: u64,
+    pub handoff_queue_depth: u32,
+    pub handoff_queue_parallelism: u32,
+    pub tent_inflight_bytes: u64,
+    pub tent_bandwidth_bytes_per_second: u64,
     pub admission: CompletionAdmission,
     pub outcome: CompletionOutcome,
 }
@@ -149,12 +154,17 @@ impl CompletionObservationRequest {
             &mut bytes,
             checked_u32(source_endpoint.len(), "completion_source_endpoint")?,
         );
-        push_u64(&mut bytes, self.notification_generation);
+        push_u64(&mut bytes, self.transfer_generation);
         push_u64(&mut bytes, self.logical_bytes);
         push_u64(&mut bytes, self.wire_bytes);
         push_u32(&mut bytes, self.fragment_count);
         push_u32(&mut bytes, 0);
         push_u64(&mut bytes, self.elapsed_ns);
+        push_u64(&mut bytes, self.decode_page_bytes);
+        push_u32(&mut bytes, self.handoff_queue_depth);
+        push_u32(&mut bytes, self.handoff_queue_parallelism);
+        push_u64(&mut bytes, self.tent_inflight_bytes);
+        push_u64(&mut bytes, self.tent_bandwidth_bytes_per_second);
         bytes.extend_from_slice(instance_id);
         bytes.extend_from_slice(source_endpoint);
         Ok(bytes)
@@ -182,7 +192,7 @@ impl CompletionObservationRequest {
         let destination_device_id = decoder.i32()?;
         let instance_len = decoder.usize_u32()?;
         let source_len = decoder.usize_u32()?;
-        let notification_generation = decoder.u64()?;
+        let transfer_generation = decoder.u64()?;
         let logical_bytes = decoder.u64()?;
         let wire_bytes = decoder.u64()?;
         let fragment_count = decoder.u32()?;
@@ -191,6 +201,11 @@ impl CompletionObservationRequest {
             return Err(CacheProtocolError::InvalidCompletionReserved(reserved));
         }
         let elapsed_ns = decoder.u64()?;
+        let decode_page_bytes = decoder.u64()?;
+        let handoff_queue_depth = decoder.u32()?;
+        let handoff_queue_parallelism = decoder.u32()?;
+        let tent_inflight_bytes = decoder.u64()?;
+        let tent_bandwidth_bytes_per_second = decoder.u64()?;
         let instance_id = decoder.string(instance_len, "completion_instance_id")?;
         let source_endpoint = decoder.string(source_len, "completion_source_endpoint")?;
         decoder.finish()?;
@@ -198,7 +213,7 @@ impl CompletionObservationRequest {
             instance_id,
             destination_device_id,
             source_endpoint,
-            notification_generation,
+            transfer_generation,
             intent,
             route,
             representation,
@@ -206,6 +221,11 @@ impl CompletionObservationRequest {
             wire_bytes,
             fragment_count,
             elapsed_ns,
+            decode_page_bytes,
+            handoff_queue_depth,
+            handoff_queue_parallelism,
+            tent_inflight_bytes,
+            tent_bandwidth_bytes_per_second,
             admission,
             outcome,
         };
@@ -229,9 +249,9 @@ impl CompletionObservationRequest {
                 self.destination_device_id,
             ));
         }
-        if self.notification_generation == 0 {
+        if self.transfer_generation == 0 {
             return Err(CacheProtocolError::ZeroCompletionField(
-                "notification_generation",
+                "transfer_generation",
             ));
         }
         if self.logical_bytes == 0 {
@@ -242,6 +262,16 @@ impl CompletionObservationRequest {
         }
         if self.elapsed_ns == 0 {
             return Err(CacheProtocolError::ZeroCompletionField("elapsed_ns"));
+        }
+        if self.handoff_queue_depth > 4096 {
+            return Err(CacheProtocolError::CompletionQueueTooDeep(
+                self.handoff_queue_depth,
+            ));
+        }
+        if self.handoff_queue_parallelism > 4096 {
+            return Err(CacheProtocolError::CompletionQueueTooWide(
+                self.handoff_queue_parallelism,
+            ));
         }
         if self.representation == ReplicaRepresentation::Unknown {
             return Err(CacheProtocolError::UnknownCompletionRepresentation(0));
@@ -258,6 +288,19 @@ impl CompletionObservationRequest {
             (CompletionAdmission::Rejected, CompletionOutcome::Completed, _)
             | (CompletionAdmission::Rejected, _, 1..) => {
                 Err(CacheProtocolError::InvalidCompletionState)
+            }
+            _ => Ok(()),
+        }?;
+        match self.admission {
+            CompletionAdmission::Admitted
+                if self.decode_page_bytes != self.logical_bytes
+                    || self.handoff_queue_depth == 0
+                    || self.handoff_queue_parallelism == 0 =>
+            {
+                Err(CacheProtocolError::InvalidCompletionResources)
+            }
+            CompletionAdmission::Rejected if self.decode_page_bytes != 0 => {
+                Err(CacheProtocolError::InvalidCompletionResources)
             }
             _ => Ok(()),
         }
@@ -1124,6 +1167,12 @@ pub enum CacheProtocolError {
     InvalidCompletionState,
     #[error("completion reserved field must be zero, got {0}")]
     InvalidCompletionReserved(u32),
+    #[error("completion handoff queue depth exceeds the bounded limit: {0}")]
+    CompletionQueueTooDeep(u32),
+    #[error("completion handoff queue parallelism exceeds the bounded limit: {0}")]
+    CompletionQueueTooWide(u32),
+    #[error("completion resource evidence is inconsistent with admission")]
+    InvalidCompletionResources,
 }
 
 struct Decoder<'a> {

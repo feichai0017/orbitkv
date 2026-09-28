@@ -1064,12 +1064,17 @@ def test_decode_worker_reports_bounded_completion_evidence(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr(native, "CacheManagerClient", FakeCacheManagerClient)
+
+    class PressureMooncakePort(MockMooncakePort):
+        def nic_load_stats(self) -> list[tuple[str, int, float]]:
+            return [("mlx5_0", 65_536, 20_000_000_000.0)]
+
     tensor = FakeTensor(
         shape=(2, 8, 16, 4, 32),
         stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
         device_index=3,
     )
-    transfer = MockMooncakePort()
+    transfer = PressureMooncakePort()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
             kv_transfer_config=SimpleNamespace(
@@ -1114,6 +1119,7 @@ def test_decode_worker_reports_bounded_completion_evidence(monkeypatch) -> None:
         4,
     )
     assert args[7] > 0
+    assert args[8:] == (16_384, 1, 16, 65_536, 20_000_000_000)
     assert kwargs == {
         "admitted": True,
         "outcome": "completed",

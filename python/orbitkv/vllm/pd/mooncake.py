@@ -54,6 +54,8 @@ class MooncakePort(Protocol):
 
     def aggregated_link_speed(self) -> int: ...
 
+    def nic_load_stats(self) -> list[tuple[str, int, float]]: ...
+
     def wait_done(self, req_id: str) -> None: ...
 
     def pop_finished_sending(self) -> set[str]: ...
@@ -311,6 +313,13 @@ class RealMooncakePort:
         except Exception:
             logger.exception("[PdConnector] failed to read TENT NIC load stats")
             return 0
+
+    def nic_load_stats(self) -> list[tuple[str, int, float]]:
+        try:
+            return list(self.engine.nic_load_stats())
+        except Exception:
+            logger.exception("[PdConnector] failed to read TENT NIC pressure")
+            return []
 
     def wait_done(self, req_id: str) -> None:
         with self._lock:

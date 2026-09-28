@@ -17,6 +17,7 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
                 codec_budget: 64 << 20,
                 decode_ready_started: Instant::now(),
                 decode_ready_observation: Box::new(Observation::disabled()),
+                decode_admission: None,
             },
             Observation::new(
                 crate::cost::CostEstimateKey::new(

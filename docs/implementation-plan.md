@@ -785,11 +785,13 @@ That original increment introduced no peer source or callback. A later bounded
 P/D observation increment now adds one optional vLLM decode callback into the
 authenticated process channel. Rust validates the registered destination,
 hashes the prefill endpoint into an execution-resource identity, records the
-notification generation only as freshness evidence and trains solely on
+transfer generation only as freshness evidence and trains solely on
 admitted completed handoffs. It does not enumerate a P/D route or enable
-selection. The matching
-direct-to-decode boundary, SGLang decode-owned report and live queue/NIC/device
-admission evidence remain open.
+selection. The next increment supplies the matching direct-to-decode boundary,
+device-bound admission, vLLM waiter/TENT pressure evidence and a SGLang
+decode-owned callback after metadata and HiCache gates. Actual route execution
+selection remains off until one planner owns both candidates and their source
+leases.
 
 The ownership follows the pinned [LMCache prefetch controller][lm-prefetch]
 and [FlexKV transfer scheduler][flex-scheduler] pattern: lookup/request state is

@@ -3,6 +3,16 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from orbitkv.sglang.completion import (
+    capture_decode_pages,
+    capture_handoff_admission,
+    mark_decode_abort,
+    observe_decode_failure,
+    observe_decode_ready,
+    observe_deferred_release,
+    register_completion_reporter,
+    unregister_completion_reporter,
+)
 from orbitkv.sglang.pd import (
     SGLangTentTransferEngine,
     install_sglang_tent_backend,
@@ -223,3 +233,138 @@ def test_registration_rejects_shape_and_zero_values(monkeypatch):
         engine.batch_register([0x1000], [])
     with pytest.raises(ValueError, match="positive address and length"):
         engine.batch_register([0], [64])
+
+
+def test_decode_owned_commit_reports_sglang_completion() -> None:
+    reports = []
+
+    class Client:
+        def observe_prefill_to_decode_completion(self, *args, **kwargs):
+            reports.append((args, kwargs))
+
+    client = Client()
+    register_completion_reporter(client, "sglang-decode", 3)
+    try:
+        engine = SimpleNamespace(nic_load_stats=lambda: [("mlx5_0", 8192, 25_000_000_000.0)])
+        receiver = SimpleNamespace(
+            bootstrap_addr="prefill.example:30000",
+            kv_mgr=SimpleNamespace(
+                engine=engine,
+                kv_args=SimpleNamespace(
+                    kv_item_lens=[1024, 1024],
+                    aux_item_lens=[],
+                    state_item_lens=[],
+                ),
+            ),
+        )
+        capture_decode_pages(None, receiver, [1, 2, 3])
+        req = SimpleNamespace(to_finish=None)
+        decode_req = SimpleNamespace(kv_receiver=receiver, req=req)
+        queue = SimpleNamespace(queue=[decode_req, object()])
+        capture_handoff_admission(None, queue, decode_req)
+
+        def commit(_queue, item):
+            item.kv_receiver = None
+
+        observe_decode_ready(commit, queue, decode_req)
+    finally:
+        unregister_completion_reporter(client)
+
+    assert len(reports) == 1
+    args, kwargs = reports[0]
+    assert args[:7] == (
+        "sglang-decode",
+        3,
+        "prefill.example:30000",
+        1,
+        6144,
+        6144,
+        6,
+    )
+    assert args[7] > 0
+    assert args[8:] == (6144, 2, 1, 8192, 25_000_000_000)
+    assert kwargs == {
+        "admitted": True,
+        "outcome": "completed",
+        "representation": "raw",
+    }
+
+
+def test_decode_failure_reports_only_after_receiver_terminal_failure() -> None:
+    reports = []
+
+    class Client:
+        def observe_prefill_to_decode_completion(self, *args, **kwargs):
+            reports.append((args, kwargs))
+
+    client = Client()
+    register_completion_reporter(client, "sglang-decode", 0)
+    receiver = SimpleNamespace(
+        bootstrap_addr="prefill.example:30000",
+        kv_mgr=SimpleNamespace(
+            engine=SimpleNamespace(nic_load_stats=lambda: []),
+            kv_args=SimpleNamespace(
+                kv_item_lens=[4096],
+                aux_item_lens=[],
+                state_item_lens=[],
+            ),
+        ),
+    )
+    try:
+        capture_decode_pages(None, receiver, [7])
+        decode_req = SimpleNamespace(kv_receiver=receiver)
+        capture_handoff_admission(None, SimpleNamespace(queue=[decode_req]), decode_req)
+        assert reports == []
+
+        def fail(_receiver):
+            raise RuntimeError("terminal failure")
+
+        with pytest.raises(RuntimeError, match="terminal failure"):
+            observe_decode_failure(fail, receiver)
+    finally:
+        unregister_completion_reporter(client)
+
+    assert len(reports) == 1
+    args, kwargs = reports[0]
+    assert args[5] == 0
+    assert kwargs["outcome"] == "failed"
+
+
+def test_decode_abort_reports_only_after_deferred_release() -> None:
+    reports = []
+
+    class Client:
+        def observe_prefill_to_decode_completion(self, *args, **kwargs):
+            reports.append((args, kwargs))
+
+    client = Client()
+    register_completion_reporter(client, "sglang-decode", 0)
+    receiver = SimpleNamespace(
+        bootstrap_addr="prefill.example:30000",
+        kv_mgr=SimpleNamespace(
+            engine=SimpleNamespace(nic_load_stats=lambda: []),
+            kv_args=SimpleNamespace(kv_item_lens=[4096], aux_item_lens=[], state_item_lens=[]),
+        ),
+    )
+    decode_req = SimpleNamespace(kv_receiver=receiver)
+    try:
+        capture_decode_pages(None, receiver, [7])
+        capture_handoff_admission(None, SimpleNamespace(queue=[decode_req]), decode_req)
+        mark_decode_abort(None, receiver)
+
+        def failure(_receiver):
+            raise RuntimeError("abort announced")
+
+        with pytest.raises(RuntimeError, match="abort announced"):
+            observe_decode_failure(failure, receiver)
+        assert reports == []
+
+        def release(_queue, item, _index):
+            item.kv_receiver = None
+
+        observe_deferred_release(release, SimpleNamespace(), decode_req, 4)
+    finally:
+        unregister_completion_reporter(client)
+
+    assert len(reports) == 1
+    assert reports[0][1]["outcome"] == "cancelled"
