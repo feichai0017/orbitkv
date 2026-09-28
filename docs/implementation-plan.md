@@ -62,7 +62,7 @@ are recorded below; dynamic execution selection remains planned.
 | Codecs | Batched GPU ANS/FP8/TurboQuant, reusable workspace, CRC; CPU FP8 scalar/AVX2/AVX-512 | General lossy quality qualification and adaptive representation selection |
 | Lifecycle | Query budgets, shared reads, cancellation, completion ownership, restart and process-fault gates | Multi-rank and sustained fault soak; no timeout-only DMA reclamation |
 | Policies | Optional preparation, protected retention, reuse-based SSD admission and opt-in bounded cost/shadow observations | Calibration under shared-device contention, first-use prediction and dynamic path/boundary selection |
-| Peer cache | Embedded catalogs, etcd Watch, bounded per-query coalescing and per-owner discovery concurrency, source authorization, bounded TE transfers and release recovery | Recorded serving evidence is same-host TCP; two-host TCP/RDMA, catalog replication and orphan revocation remain open |
+| Peer cache | Embedded catalogs, etcd Watch, bounded per-query coalescing and per-owner discovery concurrency, source authorization, bounded TE transfers and release recovery | H20/A100 TCP natural-text sharing and restarts pass; cross-GPU numerical limits, RDMA, catalog replication and orphan revocation remain open |
 | Packaging | Source-buildable CUDA wheels and installed-artifact checks | First Python release, qualified container images, shared-instance deployment and Kubernetes installation |
 
 Use the maintained [storage-format results](storage-formats.md#qualification),
@@ -1091,10 +1091,11 @@ These paths describe historical qualification. Check the current checkout,
 toolchain and available devices before choosing gates; they are not portable
 test prerequisites.
 
-The user has no available bare-metal/two-host entry point for native acceptance.
-Continue implementation and reproducible scripts while that hardware gate is
-open. Do not repeat a request for the same unavailable access or relabel the
-current container as bare metal.
+Two GPU hosts became available on 2026-09-28: the local H20 and a remote A100,
+with reachable IPv6 TCP and matching native artifacts. Neither container exposes
+RDMA devices. Continue the [two-host gates](shared-cache-qualification.md) using
+that authorized setup; report TCP separately from RDMA and do not relabel a
+container run as bare-metal qualification.
 
 ```bash
 git status --short

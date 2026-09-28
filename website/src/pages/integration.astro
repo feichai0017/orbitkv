@@ -99,8 +99,9 @@ import { localUrl } from "../data/site";
         Begin with ordinary demand and size DRAM/SSD for your working set.
         Optional request preparation has three matched Qwen3-8B controls per
         engine: vLLM improves modestly, while SGLang gains throughput with worse
-        P95 latency. It stays disabled by default. Next comes real two-host
-        replica sharing, followed by P/D with cache reuse and catalog resilience.
+        P95 latency. It stays disabled by default. Two-host TCP replica sharing
+        has recorded correctness evidence and numerical limits; P/D with cache
+        reuse, RDMA and catalog resilience have separate acceptance gates.
       </p>
       <a class="text-link" href={localUrl("/docs/roadmap/")}>
         Read the implementation gates <span aria-hidden="true">↗</span>

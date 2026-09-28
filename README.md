@@ -65,7 +65,9 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   Mooncake TENT moves bytes, and etcd tracks cluster membership.
   Source allocations remain budgeted through timeout; bounded completion records
   reconcile lost authorization replies and retry completion acknowledgements
-  using reusable windows and generation-fenced tickets. Peer SSD reads use
+  using reusable windows and generation-fenced tickets. Both engines pass the
+  recorded [H20/A100 TCP natural-text recovery and restart gates](docs/shared-cache-qualification.md#two-host-tcp-2026-09-28),
+  with cross-GPU numerical and RDMA limits documented separately. Peer SSD reads use
   exact-generation, bounded source-side io_uring staging before the same
   Mooncake transfer path; physical two-host qualification remains open.
 - **Experimental P/D handoff.** vLLM uses OrbitKV's connector protocol;

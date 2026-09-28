@@ -7,7 +7,8 @@ upstream references, deployment profiles and the P4.1 implementation contract to
 
 Follow the [current delivery priorities](docs/roadmap.md#current-delivery-priorities):
 close the single-node hybrid-layout gates, maintain deterministic demand and
-model-serving fault coverage, and start real two-host DP qualification.
+model-serving fault coverage, and extend two-host DP qualification to the remaining
+fault, numerical and RDMA gates.
 Build measured Rust transfer planning alongside these gates, using shared
 local/peer observations and distinct DP/P/D/TP/PP completion contracts.
 Warming gains are not a DP prerequisite. P/D with cache reuse follows; replicated
@@ -530,6 +531,13 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 - [x] D1: embed fixed catalog shards with per-shard replay and etcd membership/configuration.
 - [x] D1 source ownership: retain overdue source pins, account entire allocations
   under a byte/session budget, retry completion releases and export native stage timing.
+- [x] D1 receiver placement: derive per-slot NUMA allocation from the receiving
+  GPU registration, keep it outside storage identity, and include it in shared-read
+  coalescing. H20/A100 byte-exact forward and re-serving gates pass.
+- [x] D1 two-host TCP serving: both engines pass the Qwen3-8B natural-text sharing,
+  catalog restart and source-loss gates, with 288 MiB READ/H2D per engine.
+  Random-token cross-GPU equality remains unqualified; see
+  `docs/shared-cache-qualification.md` for the accepted and rejected scope.
 - [x] D1 same-host serving: both engines pass independent TP=1 replica sharing,
   catalog replay and source restart gates over TCP (`docs/shared-cache-qualification.md`).
 - [x] D1 completion recovery: reserve bounded per-requester/per-peer release capacity

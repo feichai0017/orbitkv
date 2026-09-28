@@ -20,8 +20,8 @@ does not establish OrbitKV compatibility.
 | --- | --- | --- |
 | Single-node vLLM or SGLang cache | Engine + independent Cache Manager | TP=1 DRAM/SSD recovery and concurrent faults validated on both; multi-rank and long-running fault soak remain open |
 | Multiple engines on one node | Engines share one Manager and its cache budget | Shared endpoint and independent instance registrations are implemented; concurrent multi-engine serving and container isolation need separate qualification |
-| Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP; [recorded scope](shared-cache-qualification.md#recorded-result) |
-| Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; [shared-cache gates](shared-cache-qualification.md) distinguish same-host TCP from real two-host/RDMA qualification; catalogs have one metadata copy |
+| Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP and the recorded H20/A100 TCP natural-text suite; [recorded scope](shared-cache-qualification.md#recorded-result) |
+| Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; [two-host TCP correctness](shared-cache-qualification.md#two-host-tcp-2026-09-28) is recorded with numerical limits; RDMA and catalog replication remain open |
 | vLLM P/D through OrbitKV's split connectors | Prefill, decode, P/D proxy; Mooncake TENT transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
 | SGLang P/D over OrbitKV TENT | SGLang prefill, decode and native router; optional node-local cache | Native control plane plus Rust TENT is implemented; two-GPU and two-host serving qualification remain open |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
@@ -200,7 +200,8 @@ Keep engine connections unchanged and configure each Manager with the
 [embedded catalog and etcd membership](p2p.md). Mooncake TENT moves
 remote bytes; etcd stores member/placement information, not per-block KV data.
 There is no standalone metadata server to deploy. Catalogs currently have one
-metadata copy per shard, and real two-host/RDMA serving remains a separate gate.
+metadata copy per shard. RDMA, sustained distributed faults and broader model
+serving remain separate gates after the recorded two-host TCP checks.
 Multi-host TP query fan-out is not supported yet.
 
 ## P/D: Mooncake or NIXL

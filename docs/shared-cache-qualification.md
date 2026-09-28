@@ -12,6 +12,55 @@ three results separate: same-host TCP, two-host TCP and two-host RDMA.
 
 ## Recorded result
 
+### Two-host TCP, 2026-09-28
+
+Native source `d2ef3a60` runs on a local H20 and a remote A100 over IPv6 TCP,
+with identical Manager/extension artifacts and Qwen3-8B revision
+`b968826d9c46dd6066d109eabc6255188de91218`. Both Managers use separate 2 GiB
+DRAM pools, TP=1 and 64-token pages; preparation is disabled. vLLM 0.29.0 uses
+explicit FlashAttention 2 on both hosts and `VLLM_BATCH_INVARIANT=1`. SGLang
+0.5.20 uses its deterministic flag. Both use eager execution.
+
+| Gate | vLLM | SGLang |
+| --- | --- | --- |
+| Fresh 513/1025-token remote Restore | Passed; 72 + 144 MiB READ/H2D | Passed; 72 + 144 MiB READ/H2D |
+| Sole catalog host restart, inventory replay and Restore | Passed; 72 MiB READ/H2D | Passed; 72 MiB READ/H2D |
+| Source restart without payload | Passed; correct recomputation, zero remote/H2D bytes | Passed; correct recomputation, zero remote/H2D bytes |
+| Output controls and source-release/resource drain | Passed in every recorded case | Passed in every recorded case |
+
+The natural-text prompts require retrieving a specific cabinet key from the
+cached first page among distractors. Complete eight-token outputs match the
+source controls and contain the correct key. Each engine transfers and restores
+288 MiB in total. Raw launches, request outputs and counter deltas are under
+`benches/results/runs/two-host-natural-20260928/`.
+
+A separate [byte-exact gate](#byte-exact-gpu-recovery) passes 8 MiB in each
+direction, including re-serving the received replica after original-source
+eviction. Every K/V byte, destination-page permutation and sentinel gap matches,
+with source-release acknowledgements and drained counters. It found and now
+regresses a real placement error: H20's NUMA 0 had been used for allocations
+on the A100 host, whose GPU-local pool is NUMA 1. The fix derives destination
+placement from the receiving instance's registered slots; host NUMA identifiers
+never define cross-host storage identity.
+
+**Numerical scope:** the initial random-token model suite did not pass strict
+cross-GPU output equality. Native monolithic H20/A100 controls also differ for
+some of those prompts; forcing FA2 on both hosts alone does not close the
+remote-output failure. A100 native HBM prefix hits match their own cold controls. The same random
+513/1025-token requests also pass through two vLLM/FA2 replicas on one A100,
+with 72/144 MiB remote/GPU restores; those diagnostic logs are under
+`benches/results/runs/same-host-a100-20260928/`.
+Keep the rejected cross-GPU runs and native controls under
+`benches/results/runs/two-host-20260928/`; do not describe the natural-text or
+byte gate as proving arbitrary cross-GPU token equality.
+
+These are source-build correctness results. Neither container exposes RDMA
+hardware, and the hosts have different GPUs. They do not qualify RDMA,
+GPUDirect, distributed throughput, installed release artifacts, P/D or
+mid-transfer crash/partition revocation.
+
+### Earlier same-host gates
+
 The [2026-09-25 ownership-layout recheck](implementation-plan.md#ownership-layout-final-evidence)
 passed on native source `046b16f5` with a matching query-body-v6 client and frozen
 Manager. Both engines completed three remote GPU restores, catalog restart
@@ -56,6 +105,38 @@ The Manager's HTTP endpoint must be reachable by the qualification driver on a
 trusted test network. It includes administrative operations and is not a public
 inference endpoint. The engine still uses UDS/iceoryx2, regardless of the driver
 location.
+
+## Byte-exact GPU recovery
+
+Use `benches.shared_cache_bytes` before model comparisons on different GPU
+architectures. It checks four split-K/V layers, source pages spaced by one gap,
+permuted destination pages and untouched sentinel bytes. After an 8 MiB remote
+Restore, the driver evicts the original source's DRAM and requires the received
+replica to serve the same bytes back. Both directions require 8 MiB of Mooncake
+READ and GPU Restore, source-release acknowledgements, matching SHA-256 digests
+and drained resource counters. This checks the full GPU-to-Manager-to-peer-to-GPU
+path; it does not claim direct GPU-to-GPU RDMA or model-output equivalence.
+
+Start fresh DRAM-only test Managers, with no unrelated traffic, using the
+cluster setup above. Run one fixture worker beside each Manager from a checkout
+with a built or installed OrbitKV extension and the engine's Torch environment.
+The workers expose only fixed test operations; use the trusted test network:
+
+```bash
+# Host A; on host B use 10.0.0.2 and --instance byte-target.
+python -m benches.shared_cache_bytes worker \
+  --host 10.0.0.1 --port 8002 --manager-socket /tmp/orbitkv-50055.sock \
+  --instance byte-source --namespace byte-qualification
+
+# Controller; leave both workers running during this command.
+python -m benches.shared_cache_bytes run \
+  --source-url http://10.0.0.1:8002 --target-url http://10.0.0.2:8002 \
+  --source-manager http://10.0.0.1:9091 --target-manager http://10.0.0.2:9091 \
+  --output benches/results/runs/gpu-byte-roundtrip.json
+```
+
+The source DRAM cleanup is intentional. Stop both workers after the gate; use
+fresh test Managers and a matching namespace on both workers for each rerun.
 
 ## Run requests
 
