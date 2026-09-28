@@ -5,6 +5,78 @@ OrbitKV DRAM and OrbitKV SSD backing. This extends the
 [concurrent burst baseline](concurrent-performance.md) with ongoing arrivals
 and final drain checks. It also exposed and fixed a vLLM restore-admission stall.
 
+## Deterministic C4 qualification after completion evidence
+
+The September 28 final production build passes a separate deterministic C4
+cohort for **both** pinned engines and four backends each. All **512 requests**
+complete. Each engine's CPU/OrbitKV/LMCache runs match all 64 corresponding
+native outputs: **384 cross-backend comparisons, zero differences**, with no
+unpaired requests. Every backend also matches its own prepared-prefix outputs.
+This qualifies exact generated text for this synthetic cohort, not general
+model task quality or arbitrary concurrency.
+
+Runtime code includes completion evidence and source/backend cost-key isolation
+through `c1d8d43c`; the benchmark controls are introduced in `968b5d9e`.
+The [production artifact identities](fault-qualification.md#completion-evidence-requalification)
+match before and after every cohort. All eight 100 ms process audits observe
+no Cargo/rustc activity. No build or other qualification from this task overlaps
+the measured cohorts; the audit does not prove exclusive machine use.
+
+Qwen3-8B, H20, TP=1 and CPU set `8–23` are unchanged. Each backend uses twelve
+alternating 1K/4K prepared prefixes, 16,384 GPU KV tokens, an 8,192-token prefill
+budget, 64-token pages, 16 output tokens, seed `20260920`, and the same fixed
+49-reuse/15-cold sequence. External host capacity is 16 GiB; native HBM has no
+host pool. Every window reaches 64 requests before its 60-second admission
+limit. Tracing, cost observations, warming and owned preparation are off.
+
+vLLM uses `VLLM_BATCH_INVARIANT=1` and `FLASH_ATTN`; SGLang uses
+`--enable-deterministic-inference`. These modes change computation. Their
+latency must not be compared with the ordinary-mode historical table below
+as an effect of the cache changes. Compare backends within one engine.
+
+| Engine | Backend | Requests/s | TTFT p50, ms | TTFT p95, ms | E2E p50, ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| vllm | Native HBM | 3.14 | 623.22 | 1171.91 | 1466.07 |
+| vllm | Native CPU / HiCache | 4.57 | 231.74 | 653.81 | 770.57 |
+| vllm | OrbitKV direct DRAM | 4.38 | 263.60 | 636.19 | 788.55 |
+| vllm | LMCache MP | 4.20 | 303.13 | 788.27 | 849.35 |
+| sglang | Native HBM | 3.72 | 665.42 | 1246.17 | 1228.57 |
+| sglang | Native CPU / HiCache | 7.38 | 201.41 | 660.96 | 415.90 |
+| sglang | OrbitKV direct DRAM | 7.21 | 209.02 | 705.49 | 421.44 |
+| sglang | LMCache integration | 6.82 | 211.08 | 653.34 | 453.20 |
+
+OrbitKV remains 4.1%/2.3% behind the native CPU caches in vLLM/SGLang throughput
+and is 4.4%/5.8% ahead of the corresponding LMCache configuration in this single
+cohort. SGLang OrbitKV's TTFT p95 is worse than both HiCache and LMCache. Keep
+these adverse controls: one cohort per backend does not establish a repeatable
+performance advantage or accepted optimization. At least three paired runs
+with backend order reversal remain required for performance acceptance.
+
+OrbitKV restores 11,871,977,472 bytes for vLLM and 11,183,063,040 for SGLang;
+the benchmark's post-window ownership/drain assertions pass. These are actual
+GPU restore bytes, distinct from engine HBM hits. Raw samples, manifests,
+process audits and per-engine reports are retained under
+`benches/results/runs/completion-evidence-20260928/deterministic-c4/`.
+
+Run each backend (`native`, `cpu`, `orbitkv`, `lmcache`) in its engine environment,
+using a fresh output directory and the matching prebuilt Manager/extension:
+
+```bash
+ORBITKV_COST_OBSERVATIONS=0 ORBITKV_TRACE_TRANSFERS=0 taskset -c 8-23 \
+  .venv/vllm-release/bin/python -m benches.single_node \
+  --engine vllm --backend orbitkv --model /workspace/models/Qwen3-8B \
+  --output /path/to/empty-output --workload sustained --lengths 1024 4096 \
+  --concurrencies 4 --duration-seconds 60 --max-requests 64 --working-set 12 \
+  --reuse-ratio 0.75 --gpu-tokens 16384 --prefill-tokens 8192 --host-gib 16 \
+  --output-tokens 16 --seed 20260920 --deterministic-inference \
+  --orbitkv-transfer-backend direct
+```
+
+Use the SGLang interpreter with `--engine sglang` for its matrix; only OrbitKV
+accepts `--orbitkv-transfer-backend`. Run `benches.report --reference-run` with
+the same engine's native directory. The preserved
+`orbitkv-deterministic-serving.py` script records all eight commands and audits.
+
 ## Engine-local Restore fixed-cohort comparison
 
 The September 28, 2026 vLLM comparison uses the recorded communication-branch Restore

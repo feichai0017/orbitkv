@@ -34,6 +34,13 @@ text on these synthetic prompts remains distinct from task-quality evaluation.
 
 ## Engine-local Restore serving qualification
 
+The current completion-evidence and cost-key builds passed the same direct DRAM
+model gates on September 28: vLLM **6 passed / 1 skipped**, SGLang **1 passed /
+1 deselected**. See [the final artifact hashes and scope](fault-qualification.md#completion-evidence-requalification).
+The performance tables below still refer to their explicitly identified earlier
+builds; passing a new correctness gate does not update historical latency data.
+
+
 The September 28, 2026 rerun uses the `eb61d166` engine-local raw Restore
 implementation and frozen `compact-restore-production` artifacts. Historical
 latency tables below predate this cutover and are not measurements of this build.

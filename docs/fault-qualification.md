@@ -33,6 +33,37 @@ against claim in separate mappings, and prove a delayed request cannot execute
 after cancellation. They distinguish UDS closure from actual peer process exit
 and cover shared-record capacity, generation reuse, and duplicate claim rejection.
 
+## Completion-evidence requalification
+
+The September 28 completion-evidence increment uses bootstrap 7, channel ABI 11,
+cache schema 8 and lifecycle 4. Its matching test-hooks build passes **12 selected
+H20 process/GPU fault cases in 37.22 seconds**. They cover the local Restore
+faults below plus lost completion notification/ACK, restart with stale clients,
+and `test_local_completion_evidence_excludes_retirement_and_trains_once`.
+That test pauses Manager retirement after native drain: the engine consumes
+correct GPU bytes while Manager source reservations remain held. On release,
+the report trains once with the native duration, excluding the delayed reap.
+Channel tests also reject stale/recycled or duplicate reports and discard
+invalid optional timings without blocking authoritative completion.
+
+The final production build, including source/backend cost-key isolation
+(`c1d8d43c`), passes **7** native channel/client cases in 13.02 seconds. On
+Qwen3-8B with direct, unencoded DRAM, vLLM passes **6 / 1 skipped** in 279.98
+seconds and SGLang passes **1 / 1 deselected** in 204.96 seconds. The vLLM skip
+is the dense model's inapplicable recurrent-state case; the SGLang SSD case was
+not selected. Both use their existing deterministic restart/output contracts.
+This is single-GPU serving correctness, not multi-rank/P-D/RDMA qualification.
+
+| Final production artifact | SHA-256 |
+| --- | --- |
+| Manager | `85ec9d8fa351259970ee24d06ec504f39d2651ee362a0666e41565eb1dcc4b34` |
+| Native extension | `5cfef266efa208318cc0e8595dd7f06f335aa179a86ab06a8bdd573e5f39ecce` |
+
+Logs and artifact identifiers are retained in
+`.orbitkv/completion-evidence-20260928/`. The diagnostic performance cohorts in
+[communication measurements](communication-performance.md#completion-evidence-and-copy-path-diagnosis)
+use the preceding Manager build; their hashes are recorded separately.
+
 ## Engine-local raw Restore gates
 
 The frozen `compact-restore-final-fault` bundle passed the selected real

@@ -60,8 +60,10 @@ gate, without claiming cross-host tensor parallelism.
 ### Next reviewable changes
 
 Generation-fenced engine-local completion evidence and native consumer timing
-are implemented. The communication workstream next measures instrumentation
-overhead and the merged baseline, then removes demonstrated overhead. Follow
+are implemented and qualified on one H20. Instrumentation overhead and both
+engines' deterministic C4 output controls are measured. The next communication
+increment targets the measured copy-submission cost, with repeated matched
+performance acceptance before enabling a new path. Follow
 the [completion contract](communication-plan.md#engine-local-completion-evidence)
 and [shared naming definitions](architecture.md#definitions-and-naming) before
 extending automatic route selection. The distributed qualification gates

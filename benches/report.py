@@ -212,6 +212,7 @@ def main() -> None:
                     "working_set": config.get("working_set"),
                     "reuse_ratio": config.get("reuse_ratio"),
                     "seed": config.get("seed"),
+                    "deterministic_inference": config.get("deterministic_inference"),
                     "query_budget_gib": config.get("query_budget_gib"),
                     "prefill_tokens": config.get("prefill_tokens", 8192),
                     "cache_protected_percent": config.get("cache_protected_percent", 0),

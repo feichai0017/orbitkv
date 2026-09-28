@@ -157,7 +157,7 @@ def collect(directory: Path, samples: list[dict]) -> dict:
         "notes": (
             "Durations use one process's monotonic clock, transported native elapsed_ns, or Manager-local elapsed_us. "
             "Native stages partition caller-to-drain: readiness includes caller lock/admission; dispatch "
-            "ends at native queue submission; queue ends when the worker dequeues; grant_wait includes "
+            "ends before native job construction; queue includes enqueue handoff until the worker dequeues; grant_wait includes "
             "grant availability, worker scheduling and plan consumption; plan_submit includes validation "
             "and CUDA enqueue; drain_wait ends after stream synchronization. Successful local samples "
             "exclude failures. Native consumer wait runs from GPU drain to native poll/wait consumption. "

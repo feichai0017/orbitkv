@@ -390,8 +390,17 @@ qualification remain open. See the
   caller-to-drain cost estimates and native result-consumption traces. Twelve
   H20 process/GPU fault cases pass, including readiness during paused Manager
   retirement and exactly-once timing consumption.
-- [ ] Measure native timing/tracing overhead and refresh the matched merged-build
-  serving baseline before selecting the next communication optimization.
+- [x] Measure native timing/tracing overhead in three order-reversed repetitions
+  per mode and decompose real vLLM Restore. Keep the slower kernel control and
+  opt-in tracing; see `docs/communication-performance.md`.
+- [x] Add explicit deterministic engine controls to the benchmark launcher and
+  reject output comparisons between different computation modes.
+- [x] Qualify deterministic C4 native/CPU/OrbitKV/LMCache output parity on both
+  engines with the final merged production build: 512 completed requests,
+  384 cross-backend comparisons without differences. Keep this single-cohort
+  result separate from repeated performance acceptance.
+- [ ] Refresh the repeated matched merged-build native/CPU/OrbitKV/LMCache
+  serving baseline before accepting the next communication optimization.
 - [ ] Profile remaining adapter hashing, per-page metadata and PyO3 conversion
   under matched workloads before claiming a latency improvement from the Rust client.
 - [x] Share identical backing reads with independent cancellation and leases;

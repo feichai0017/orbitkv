@@ -204,14 +204,14 @@ results set the next priorities: 8K pressure TTFT was 6.79 ms behind native CPU 
 while the one C4 cohort was 1.9% behind native CPU and 4.8% ahead of LMCache MP.
 Neither result establishes a universal performance advantage.
 
-1. **Measure the engine-visible completion boundary.** Extend the existing
-   timeline/observation owners to separate preparation, grant wait, native queue,
-   submission, actual GPU drain, connector observation and first engine use.
-   Record source retirement separately. Carry bounded, generation-fenced drain
-   evidence before enabling `CacheRestore` training for engine-local
-   raw grants; Manager reap time cannot stand in for DecodeReady. Keep tracing
-   opt-in and measure its overhead. This also closes the gap introduced when
-   combining Manager-side completion observations with the local executor.
+1. **Completed: measure the engine-visible completion boundary.** Bounded,
+   generation-fenced native reports separate readiness, dispatch, queue, grant
+   wait, plan/enqueue, drain and result consumption from Manager retirement.
+   Source/backend-scoped caller-to-drain estimates remain separate from Manager
+   and P/D route-selection intervals. Instrumentation overhead, actual serving
+   stages and both engines' deterministic C4 output parity are recorded in
+   [communication measurements](communication-performance.md) and
+   [the C4 gate](sustained-performance.md#deterministic-c4-qualification-after-completion-evidence).
 2. **Remove the measured 8K overhead.** Use the decomposition to choose between
    repeated destination validation, descriptor work, queue handoffs and copy
    submission. Reuse immutable registration geometry and bounded scratch where
@@ -221,9 +221,9 @@ Neither result establishes a universal performance advantage.
 3. **Repeat matched end-to-end acceptance.** Run native HBM, native CPU, OrbitKV
    and LMCache in the same engine/runtime and capacity budget, retaining cold,
    resident and pressure phases. Alternate backend order across repeated runs.
-   Add deterministic C4 output parity before treating the non-batch-invariant
-   cohort as quality-preserving evidence. Refresh SGLang performance separately;
-   its correctness gate does not substitute for that comparison. Accept a change
+   The deterministic C4 gate now passes for both engines; do not transfer that
+   claim to ordinary-mode cohorts. Refresh SGLang performance separately;
+   its correctness gate does not substitute for repeated comparisons. Accept a change
    only with a repeatable TTFT/E2E or throughput gain and no material cold-path,
    CPU-cost or correctness regression.
 4. **Then qualify partitioning and overlap.** Add bounded fragmented-plan
@@ -243,8 +243,9 @@ Neither result establishes a universal performance advantage.
 The native worker carries six cumulative nanosecond offsets from one engine
 `Instant`: readiness finished, dispatched, dequeued, grant claimed, CUDA enqueue
 returned, and GPU drain observed. The first interval includes native argument
-conversion, client/executor locking and destination readiness. Dispatch ends at
-native job enqueue; grant wait includes worker scheduling and plan consumption.
+conversion, client/executor locking and destination readiness. Dispatch reaches
+native job construction; the queue interval includes enqueue handoff and worker
+delay. Grant wait includes worker scheduling and plan consumption.
 Submission includes validation and descriptor compilation. These are host
 observations, not GPU kernel timestamps.
 
@@ -269,8 +270,9 @@ callbacks. Local completions do not require a Manager-to-engine notification.
 Tracing and cost collection are opt-in; the disabled path takes no stage clocks.
 
 Qualification includes stale/recycled and duplicate completions, malformed
-reports, lost notification, cancellation and actual process exit. The merged
-serving and instrumentation-overhead gates remain distinct from code completion.
+reports, lost notification, cancellation and actual process exit. The final
+single-GPU serving and instrumentation-overhead gates pass; repeated performance
+acceptance remains separate from code completion.
 
 The following performance increment selects one demonstrated bottleneck and
 compares the change with that baseline. Use at least three paired repetitions
@@ -285,6 +287,40 @@ both candidates have the same measured completion boundary and real source,
 destination and capacity authority. Retain deterministic selection while that
 contract is incomplete. Real two-host DP qualification remains a separate gate;
 local performance work does not establish RDMA or catalog availability.
+
+## Proposed: strided DMA for raw restores
+
+Status: diagnostic probe only; no production integration. The measured 8K
+plan/enqueue interval motivates testing regular rows in one `cuMemcpy2DAsync`
+submission. The existing direct backend remains authoritative until the
+following change and its gates are accepted.
+
+The concrete proposed implementation is:
+
+1. Extend `transfer/memcpy.rs` to compile each already validated descriptor list
+   into contiguous runs or constant-pitch rows. Grow a row group only from
+   explicit input descriptors of equal width, with checked pointer arithmetic
+   and source/destination pitches between row width and the device's maximum
+   pitch. Do not infer missing rows or copy inter-row gaps.
+2. Separate the imported arena's CUDA registration identity from the source
+   allocation's lifetime identity in the local executor. Continue validating
+   every logical allocation ID, generation and bounds before compilation; the
+   Manager grant must retain every contributing allocation until final drain.
+   Combining rows in one CUDA registration must never turn that registration
+   into permission to access an unlisted allocation or a gap.
+3. Keep the existing final stream drain, partial-enqueue error handling,
+   destination readiness, shared device permits and quarantine. Do not retry a
+   failed batch or introduce a second runtime backend selection switch.
+4. Count actual compiled submissions in the existing direct-backend cost shape.
+   Keep historical direct/kernel observations isolated; do not enable dynamic
+   selection from the synthetic probe.
+
+Before application, review expanded-row equivalence against the original
+input ranges, including distinct source generations, registrations, uneven
+strides, overlaps, overflow and maximum pitch. Before acceptance, require GPU
+H2D/D2H sentinel-gap tests, engine/Manager death and partial-enqueue fault gates,
+both deterministic model gates, and at least three matched serving repetitions
+with order reversal. A synthetic copy gain alone cannot close this item.
 
 ## Next: bounded large restores and execution overlap
 

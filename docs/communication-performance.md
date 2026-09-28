@@ -1,5 +1,124 @@
 # Local communication measurements
 
+## Completion evidence and copy-path diagnosis
+
+The September 28 increment (`fb2c3b62`, `5b1fb1ff`) measures the native
+caller-to-drain interval independently of Manager retirement. Cost samples are
+opt-in; full tracing additionally records six native stage offsets and result
+consumption. These observations do not enable cross-route selection. Subsequent
+cost-key isolation (`c1d8d43c`) separates source domain, destination GPU and copy
+backend; the measurements below precede that key-only correction.
+
+### Instrumentation overhead
+
+Nine fresh-Manager runs use one H20, CPU set `8,10,12,14`, a 256 MiB pool,
+150 samples after 20 warmups, and no prescribed inter-operation idle. The order
+is `off cost trace trace cost off off trace cost`. Cost mode enables only
+`ORBITKV_COST_OBSERVATIONS=1`; trace mode also enables
+`ORBITKV_TRACE_TRANSFERS=1`. Every Restore passes exact GPU-byte and copy-counter
+checks. A 100 ms process audit observed no Cargo/rustc/cc1plus activity. This
+is a local process audit, not proof of exclusive machine use.
+
+Cells are **median of three per-run p50 / median of three per-run p99**, in
+microseconds; samples are not pooled.
+
+| Contiguous Restore | Both disabled | Cost only | Cost and tracing |
+| --- | ---: | ---: | ---: |
+| 4 KiB | 54.39 / 101.07 | 53.40 / 91.72 | 61.53 / 108.54 |
+| 256 KiB | 64.59 / 102.68 | 60.83 / 100.88 | 73.11 / 126.26 |
+| 4 MiB | 217.66 / 256.62 | 220.86 / 277.49 | 231.37 / 291.72 |
+
+Cost collection does not establish a small-payload speedup: negative overhead
+is measurement variation. At 4 MiB it adds 1.5% to median latency and its tail
+is worse. Full tracing adds about 7–14 us to these medians. Empty-Restore p50 is
+37.87 / 36.42 / 46.31 us in the same mode order. Both switches remain off by
+default, and tracing must match across performance comparisons.
+
+### Real vLLM serving decomposition
+
+Two diagnostic cohorts use Qwen3-8B, vLLM 0.29.0, H20, TP=1, CPU set `8–23`,
+16,384 GPU KV tokens, 8,192 prefill tokens, 16 GiB host capacity, and 16 output
+tokens. Each length has five cold/resident/pressure repetitions. Cost collection
+and tracing are enabled in both; the transfer backend is the only intended
+configuration difference. These are single cohorts, without the separate
+external-build monitor used above, and are not repeated speedup acceptance.
+
+| Prompt tokens | Direct pressure TTFT / E2E, ms | Kernel pressure TTFT / E2E, ms |
+| --- | ---: | ---: |
+| 1,024 | 25.05 / 114.34 | 25.20 / 111.78 |
+| 4,096 | 35.92 / 127.00 | 42.09 / 131.03 |
+| 8,192 | 54.86 / 151.24 | 64.84 / 157.95 |
+
+The kernel control regresses the larger shapes; keep the existing direct
+backend. Both cohorts have two cold-versus-pressure output differences at 1K
+and none at 4K/8K. They use ordinary greedy execution and do not qualify output
+parity. Direct and kernel nevertheless match all 45 corresponding request
+outputs across cohorts. Use the separate deterministic serving gates for
+correctness.
+
+All 45 measured direct requests have connector traces. All 30 linked physical
+Restore batches have native completion and consumption evidence, including
+small partial restores in the resident phase. No local batch requires a
+Manager-to-engine completion notification. For the five **pressure** restores
+per length, native stage medians are:
+
+| Tokens | Readiness | Dispatch | Queue | Grant wait | Plan/enqueue | Drain wait | Native total | Consumer wait |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,024 | 0.0174 | 0.1722 | 0.0138 | 0.0499 | 0.8933 | 3.8082 | 4.9629 | 0.5149 |
+| 4,096 | 0.0170 | 0.2187 | 0.0156 | 0.0438 | 0.7127 | 11.5864 | 12.7325 | 0.4383 |
+| 8,192 | 0.0172 | 0.5863 | 0.0131 | 0.1922 | 15.2132 | 13.6298 | 29.6335 | 0.6109 |
+
+Times are milliseconds. Each interval is computed from that operation's native
+monotonic offsets before aggregation; medians must not be subtracted or summed
+to attribute another median. Plan/enqueue includes validation, descriptor work,
+driver backpressure and any concurrent DMA; it is not pure CPU submission time.
+Consumer wait is outside native total. This evidence prioritizes copy batching
+at 8K over another control-transport rewrite.
+
+A separate synthetic 2D DMA probe copies 72 rows per block with 128 KiB row
+width. For 16/64/128 blocks, 1D total medians are 6.19/24.97/50.00 ms and 2D
+medians are 2.97/11.20/22.15 ms, with exact output bytes checked. The allocation
+is deliberately regular; it does not represent fragmented production grants.
+No 2D production path was applied and these numbers are not serving gains.
+Production integration still needs bounds/gap preservation, allocation identity,
+partial-enqueue drain and matched serving qualification.
+
+### Artifacts and reproduction
+
+| Measured artifact | SHA-256 |
+| --- | --- |
+| Manager | `6fbd684265cf88408191ad1914e92510f68797d82726ef4f54e286377af8cf57` |
+| Native extension | `5cfef266efa208318cc0e8595dd7f06f335aa179a86ab06a8bdd573e5f39ecce` |
+
+Raw runs, process audits, commands and probe sources are retained under
+`benches/results/runs/completion-evidence-20260928/` on the measurement host.
+Use a matching Manager/extension pair and the pinned release environment:
+
+```bash
+# Repeat in off/cost/trace order as specified above.
+ORBITKV_COST_OBSERVATIONS=1 ORBITKV_TRACE_TRANSFERS=0 \
+RUST_LOG=warn,orbitkv_common::timeline=info taskset -c 8,10,12,14 \
+  .venv/vllm-release/bin/python -m benches.communication \
+  --label cost --output /path/to/empty-output \
+  --iterations 150 --warmup 20 --repeats 1 \
+  --payload-bytes 4096 262144 4194304 --idle-ms 0 --idle-seconds 0.5
+
+ORBITKV_COST_OBSERVATIONS=1 RUST_LOG=info taskset -c 8-23 \
+  .venv/vllm-release/bin/python -m benches.single_node \
+  --engine vllm --backend orbitkv --model /workspace/models/Qwen3-8B \
+  --output /path/to/empty-serving-output --lengths 1024 4096 8192 \
+  --repeats 5 --gpu-tokens 16384 --prefill-tokens 8192 --host-gib 16 \
+  --output-tokens 16 --seed 20260920 --orbitkv-transfer-backend direct \
+  --trace-transfers
+```
+
+Repeat the serving command with `kernel` for its control. Do not compare these
+traced cohorts with earlier untraced backends as a cache speedup. The next
+acceptance gate remains repeated, order-reversed native HBM/native CPU/OrbitKV/
+LMCache cohorts. The separate [deterministic C4 gate](sustained-performance.md#deterministic-c4-qualification-after-completion-evidence)
+now passes for both engines; it does not retroactively qualify ordinary-mode
+cohorts or establish a repeated performance gain.
+
 ## Compacted raw plans and idle-stream readiness
 
 The next increment after `d25abcf7` removes two measured costs from engine-local
