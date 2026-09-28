@@ -41,6 +41,7 @@ def compare_outputs(run: dict, reference: dict) -> dict:
         "read_timeout_ms",
         "read_max_batches",
         "seed",
+        "deterministic_inference",
     ):
         if args.get(key) != control.get(key):
             raise ValueError(

@@ -236,7 +236,7 @@ def manifest(args: Namespace, launch, bytes_per_token: int) -> dict:
             else None,
             "notes": "Configured budgets, not measured effective capacity. GPU codec scratch and cuFile staging are additional to engine KV. Encoded-publication counters exclude raw-only slots and do not establish whole-cache savings.",
         },
-        "quality_scope": "Synthetic token prompts; exact generated-text comparisons are diagnostic, not task accuracy or general model quality. Greedy decoding is not guaranteed batch invariant.",
+        "quality_scope": "Synthetic token prompts; exact generated-text comparisons are diagnostic, not task accuracy or general model quality. The deterministic_inference argument records whether engine deterministic kernels were requested; otherwise greedy decoding is not guaranteed batch invariant.",
         "ttft_scope": "Client time to first nonempty streamed text, including HTTP/scheduling; not engine time to first token ID.",
         "model_revision": (args.model / ".revision").read_text().strip()
         if (args.model / ".revision").exists()

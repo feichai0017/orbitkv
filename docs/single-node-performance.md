@@ -22,6 +22,16 @@ References: [vLLM KV offloading](https://docs.vllm.ai/en/latest/features/kv_offl
 [FlexKV](https://github.com/taco-project/FlexKV),
 [Mooncake](https://github.com/kvcache-ai/Mooncake).
 
+## Deterministic comparison controls
+
+`benches.single_node --deterministic-inference` requests vLLM batch-invariant
+execution with `FLASH_ATTN`, or SGLang's deterministic inference mode. Use it
+for a separate output-parity cohort, including concurrent traffic. Apply the
+same flag to every backend: it changes computation kernels and its latency must
+not be compared with ordinary serving as if only the cache changed. The manifest
+records the flag and command; output comparison rejects mismatched modes. Exact
+text on these synthetic prompts remains distinct from task-quality evaluation.
+
 ## Engine-local Restore serving qualification
 
 The September 28, 2026 rerun uses the `eb61d166` engine-local raw Restore

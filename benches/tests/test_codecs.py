@@ -30,6 +30,7 @@ def launch_arguments(tmp_path, engine="vllm", codec="none", ssd_gib=4):
         queue_warmup="off",
         prepare_requests="off",
         trace_transfers=False,
+        deterministic_inference=False,
         read_batch_mib=0,
         read_timeout_ms=0,
         read_max_batches=0,
@@ -109,6 +110,26 @@ def test_fixed_transfer_backend_is_explicit_and_ignores_inherited_environment(
         extra = connector.get("kv_connector_extra_config", {})
         assert extra.get("orbitkv.transfer_backend") == backend
         assert ("orbitkv.transfer_backend" in extra) == (backend is not None)
+
+
+@pytest.mark.parametrize("engine", ["vllm", "sglang"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_deterministic_qualification_is_explicit_and_ignores_inherited_environment(
+    tmp_path, monkeypatch, engine, enabled
+):
+    monkeypatch.setattr("benches.launch.free_port", lambda: 23456)
+    monkeypatch.setenv("VLLM_BATCH_INVARIANT", "inherited-invalid")
+    args = launch_arguments(tmp_path, engine)
+    args.deterministic_inference = enabled
+    launch = configure(args, 147456)
+    if engine == "vllm":
+        assert launch.env.get("VLLM_BATCH_INVARIANT") == ("1" if enabled else None)
+        assert ("--attention-backend" in launch.command) == enabled
+        if enabled:
+            assert launch.command[launch.command.index("--attention-backend") + 1] == "FLASH_ATTN"
+    else:
+        assert "VLLM_BATCH_INVARIANT" not in launch.env
+        assert ("--enable-deterministic-inference" in launch.command) == enabled
 
 
 def test_codec_budget_accepts_binary_units_and_rejects_out_of_range():
@@ -241,6 +262,15 @@ def test_cross_backend_reference_requires_the_same_engine_runtime(tmp_path):
         result = compare_outputs(run, reference)
         assert result["compared_requests"] == 1
         assert result["output_mismatches"] == 0
+        changed = {
+            **run,
+            "manifest": {
+                **run["manifest"],
+                "arguments": {**run["manifest"]["arguments"], "deterministic_inference": True},
+            },
+        }
+        with pytest.raises(ValueError, match="different deterministic_inference"):
+            compare_outputs(changed, reference)
         for field in ("gpu", "python", "cpu_affinity", "model_revision", "kv_bytes_per_token"):
             changed = {**run, "manifest": {**run["manifest"], field: "different"}}
             with pytest.raises(ValueError, match=f"different {field}"):
