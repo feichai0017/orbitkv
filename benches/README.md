@@ -514,7 +514,7 @@ git submodule update --init third-party/vllm
 .venv/vllm-release/bin/python -m benches.sharegpt \
   --model /path/to/model --dataset-path /path/to/sharegpt.json
 
-uv run --isolated --no-project --with pytest --with requests pytest benches/tests
+uv run --isolated --no-project --with pytest --with numpy --with requests pytest benches/tests
 ```
 
 The ShareGPT workload requires the dependencies listed by the pinned vLLM

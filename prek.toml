@@ -37,7 +37,7 @@ hooks = [{ id = "ruff-check", args = ["--fix"] }, { id = "ruff-format" }]
 
 [[repos]]
 repo = "https://github.com/crate-ci/typos"
-rev = "v1.28.4"
+rev = "v1.50.2"
 hooks = [{ id = "typos" }]
 
 [[repos]]

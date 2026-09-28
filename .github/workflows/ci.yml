@@ -76,7 +76,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run typos check
-        uses: crate-ci/typos@master
+        uses: crate-ci/typos@v1.50.2
 
   rust-fmt-check:
     name: rust fmt check
@@ -158,7 +158,7 @@ jobs:
           uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest
       - name: Check benchmark measurements and reporting
         run: |
-          uv run --isolated --no-project --with pytest --with 'requests>=2.26.0' pytest benches/tests
+          uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest benches/tests
 
   cargo-check-variant:
     name: cargo check (${{ matrix.cuda-variant }})
