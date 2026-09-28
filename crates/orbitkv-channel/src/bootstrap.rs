@@ -21,7 +21,7 @@ use crate::{ArenaError, CompletionError, DescriptorArena, DescriptorRef, Restore
 
 const BOOTSTRAP_MAGIC: u32 = 0x4f52_4242; // ORBB
 // Restore grants add an engine-to-Manager reclamation doorbell.
-const BOOTSTRAP_VERSION: u16 = 6;
+const BOOTSTRAP_VERSION: u16 = 7;
 const BOOTSTRAP_BYTES: usize = 256;
 const BOOTSTRAP_FD_COUNT: usize = 5;
 // Match the iceoryx2 client limit. Detached restore publishers also hold this

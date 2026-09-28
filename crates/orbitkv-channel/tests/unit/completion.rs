@@ -40,7 +40,7 @@ fn only_reaped_and_acknowledged_records_recycle() {
     );
     assert!(!records.revoke(id).unwrap());
     assert!(matches!(records.reserve(), Err(CompletionError::Full)));
-    engine.drained(id, Ok(())).unwrap();
+    engine.drained(id, Ok(()), None).unwrap();
     assert_eq!(engine.poll(id).unwrap().state, RestoreState::Pending);
     assert_eq!(
         records.manager_updates().unwrap(),
@@ -58,7 +58,7 @@ fn only_reaped_and_acknowledged_records_recycle() {
     );
     assert!(matches!(records.claim(id), Err(CompletionError::Stale(_))));
     assert!(matches!(
-        engine.drained(id, Ok(())),
+        engine.drained(id, Ok(()), None),
         Err(CompletionError::Stale(_))
     ));
     assert_eq!(records.state(replacement).unwrap(), GrantState::Reserved);
@@ -90,9 +90,9 @@ fn plan_bank_is_bounded_and_consumption_does_not_release_sources() {
     assert!(records.reap(first).is_err());
     assert_eq!(engine.claim_local(second).unwrap().unwrap(), b"next");
     engine
-        .drained(second, Err("partial enqueue drained".into()))
+        .drained(second, Err("partial enqueue drained".into()), None)
         .unwrap();
-    engine.drained(first, Ok(())).unwrap();
+    engine.drained(first, Ok(()), None).unwrap();
     for id in [first, second] {
         records.reap(id).unwrap();
     }
@@ -149,7 +149,7 @@ fn claim_and_revoke_have_exactly_one_winner_across_mappings() {
                 Ok(Some(plan)) => {
                     assert!(!revoked);
                     assert_eq!(plan, b"plan");
-                    engine.drained(id, Ok(())).unwrap();
+                    engine.drained(id, Ok(()), None).unwrap();
                 }
                 Ok(None) | Err(CompletionError::Stale(_)) => assert!(revoked),
                 other => panic!("unexpected claim: {other:?}"),
@@ -179,7 +179,7 @@ fn bounded_dirty_bits_preserve_all_operations_without_queue_overflow() {
         records.claim(*id).unwrap();
         records.publish_local(*id, b"plan").unwrap();
         engine.claim_local(*id).unwrap().unwrap();
-        engine.drained(*id, Ok(())).unwrap();
+        engine.drained(*id, Ok(()), None).unwrap();
     }
     let updates = records.manager_updates().unwrap();
     assert_eq!(updates.len(), RESTORE_COMPLETION_SLOTS);
@@ -331,4 +331,78 @@ fn admission_and_preparation_cancellation_race_without_losing_the_operation() {
         }
         cancel.join().unwrap();
     });
+}
+
+#[test]
+fn timing_follows_drain_generation_and_never_blocks_reclamation() {
+    let records = records();
+    let engine = independent(&records);
+    let timing = RestoreTiming {
+        readiness_ns: 10,
+        dispatched_ns: 20,
+        dequeued_ns: 30,
+        claimed_ns: 40,
+        submitted_ns: 50,
+        drained_ns: 60,
+    };
+    let mut previous = None;
+    for index in 0..=RESTORE_COMPLETION_SLOTS {
+        let id = engine.reserve().unwrap();
+        records.claim(id).unwrap();
+        records.publish_local(id, b"plan").unwrap();
+        engine.claim_local(id).unwrap().unwrap();
+        assert!(records.drain_timing(id).is_err());
+        let report = (index % 2 == 0).then_some(timing);
+        engine.drained(id, Ok(()), report).unwrap();
+        assert_eq!(records.drain_timing(id).unwrap(), report);
+        assert!(engine.drained(id, Ok(()), Some(timing)).is_err());
+        assert_eq!(records.drain_timing(id).unwrap(), report);
+        // Dirty bits remain authoritative even if eventfd notification was consumed elsewhere.
+        assert_eq!(
+            records.manager_updates().unwrap(),
+            vec![(id, GrantState::Drained)]
+        );
+        assert!(records.manager_updates().unwrap().is_empty());
+        if let Some(stale) = previous {
+            assert!(records.drain_timing(stale).is_err());
+        }
+        records.reap(id).unwrap();
+        assert!(records.drain_timing(id).is_err());
+        assert_eq!(engine.poll(id).unwrap().state, RestoreState::Succeeded);
+        previous = Some(id);
+    }
+    for invalid in [
+        RestoreTiming {
+            readiness_ns: 100,
+            ..timing
+        },
+        RestoreTiming {
+            submitted_ns: 0,
+            ..timing
+        },
+        RestoreTiming {
+            drained_ns: u64::MAX,
+            ..timing
+        },
+    ] {
+        let id = engine.reserve().unwrap();
+        records.claim(id).unwrap();
+        records.publish_local(id, b"plan").unwrap();
+        engine.claim_local(id).unwrap().unwrap();
+        engine.drained(id, Ok(()), Some(invalid)).unwrap();
+        assert_eq!(records.drain_timing(id).unwrap(), None);
+        records.reap(id).unwrap();
+        assert_eq!(engine.poll(id).unwrap().state, RestoreState::Succeeded);
+    }
+    let id = engine.reserve().unwrap();
+    records.claim(id).unwrap();
+    records.publish_local(id, b"plan").unwrap();
+    engine.claim_local(id).unwrap().unwrap();
+    engine
+        .drained(id, Err("partial enqueue drained".into()), Some(timing))
+        .unwrap();
+    assert_eq!(records.drain_timing(id).unwrap(), Some(timing));
+    assert!(!records.drain_succeeded(id).unwrap());
+    records.reap(id).unwrap();
+    assert_eq!(engine.poll(id).unwrap().state, RestoreState::Failed);
 }

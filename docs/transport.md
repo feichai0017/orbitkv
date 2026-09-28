@@ -40,7 +40,7 @@ are hints, so a failed wake after enqueue never permits early page reuse.
 ### Bootstrap, registration, and versions
 
 A mode-0600 UDS authenticates the Manager's uid with `SO_PEERCRED` and assigns
-an exclusive descriptor slot and session token. Bootstrap version **6** passes
+an exclusive descriptor slot and session token. Bootstrap version **7** passes
 five FDs: descriptor memfd, grant memfd, Manager-to-engine Restore eventfd,
 engine-to-Manager retirement eventfd, and Publish reply eventfd. Memfds are
 size-sealed. Descriptor request/response generations advance monotonically,
@@ -53,7 +53,7 @@ payload arena FDs, identities, and sizes with `SCM_RIGHTS`. The engine validates
 the seals and independently maps and CUDA-registers each backing. This setup
 happens once per arena and GPU binding, not per restored block.
 
-Channel ABI **10** rejects older clients. Client, native extension, and Manager
+Channel ABI **11** rejects older clients. Client, native extension, and Manager
 must be rebuilt together; there is no old-wire decoder or alternate runtime
 protocol. Registration requires actual tensor/exporter objects through
 `register_context_batch(..., tensors=...)`, keeping them alive with the local
@@ -96,7 +96,7 @@ then releases source owners and publishes `Reaped`; engine acknowledgement
 allows record reuse. Source reaping is not on the successful page-consumption
 critical path. There is no terminal Poll RPC.
 
-The grant mapping contains 1024 records of 128 bytes and a 1 MiB plan bank.
+The grant mapping contains 1024 records of 192 bytes and a 1 MiB plan bank.
 Error text is limited to 88 bytes per shared record. Plan consumption releases
 plan-bank capacity independently of DMA completion, and a bounded dirty bitset
 plus eventfd drives Manager retirement. Full shared plan-bank capacity defers

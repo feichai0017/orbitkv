@@ -19,16 +19,41 @@ pub const RESTORE_COMPLETION_SLOTS: usize = 1024;
 pub const RESTORE_ERROR_BYTES: usize = 88;
 pub const RESTORE_PLAN_BYTES: usize = 1024 * 1024;
 const HEADER_BYTES: usize = 4096;
-const RECORD_BYTES: usize = 128;
+const RECORD_BYTES: usize = 192;
 const PLAN_OFFSET: usize = HEADER_BYTES + RESTORE_COMPLETION_SLOTS * RECORD_BYTES;
 const MAPPING_BYTES: usize = PLAN_OFFSET + RESTORE_PLAN_BYTES;
-const MAGIC_VERSION: u64 = 0x0003_4f52_4243;
+const MAGIC_VERSION: u64 = 0x0004_4f52_4243;
 const NEXT_OPERATION_OFFSET: usize = 24;
 const DIRTY_OFFSET: usize = 64;
 const DIRTY_WORDS: usize = RESTORE_COMPLETION_SLOTS / 64;
 const STATE_BITS: u32 = 4;
 const STATE_MASK: u64 = (1 << STATE_BITS) - 1;
 const MAX_OPERATION_ID: u64 = u64::MAX >> STATE_BITS;
+
+/// Cumulative nanoseconds from the native caller, all on the engine's monotonic
+/// clock. Zero submitted_ns means validation failed before submission.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RestoreTiming {
+    pub readiness_ns: u64,
+    pub dispatched_ns: u64,
+    pub dequeued_ns: u64,
+    pub claimed_ns: u64,
+    pub submitted_ns: u64,
+    pub drained_ns: u64,
+}
+
+impl RestoreTiming {
+    fn valid(self) -> bool {
+        self.readiness_ns <= self.dispatched_ns
+            && self.dispatched_ns <= self.dequeued_ns
+            && self.dequeued_ns <= self.claimed_ns
+            && self.claimed_ns <= self.drained_ns
+            && self.drained_ns > 0
+            && self.drained_ns <= 86_400_000_000_000
+            && (self.submitted_ns == 0
+                || (self.claimed_ns <= self.submitted_ns && self.submitted_ns <= self.drained_ns))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
@@ -443,13 +468,61 @@ impl RestoreCompletions {
     }
 
     /// Only the native executor may publish this, after no-submit proof or drain.
-    pub fn drained(&self, id: u64, result: Result<(), String>) -> Result<(), CompletionError> {
+    pub fn drained(
+        &self,
+        id: u64,
+        result: Result<(), String>,
+        timing: Option<RestoreTiming>,
+    ) -> Result<(), CompletionError> {
         if self.state(id)? != GrantState::Active {
             return Err(CompletionError::Stale(id));
         }
+        let record = Self::offset(id)?;
+        let timing =
+            timing.filter(|timing| timing.valid() && (result.is_err() || timing.submitted_ns != 0));
+        if let Some(timing) = timing {
+            for (index, value) in [
+                timing.readiness_ns,
+                timing.dispatched_ns,
+                timing.dequeued_ns,
+                timing.claimed_ns,
+                timing.submitted_ns,
+                timing.drained_ns,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                self.word(record + 136 + index * 8)
+                    .store(value, Ordering::Relaxed);
+            }
+        }
+        // Optional evidence must never prevent the authoritative drain transition.
+        self.word(record + 128)
+            .store(u64::from(timing.is_some()), Ordering::Relaxed);
         self.write_result(id, result)?;
         self.transition(id, GrantState::Active, GrantState::Drained)?;
         self.dirty(id)
+    }
+
+    /// The Manager reads evidence before reaping; the source owner consumes it once.
+    pub fn drain_timing(&self, id: u64) -> Result<Option<RestoreTiming>, CompletionError> {
+        if self.state(id)? != GrantState::Drained {
+            return Err(CompletionError::Stale(id));
+        }
+        let record = Self::offset(id)?;
+        let present = self.word(record + 128).load(Ordering::Relaxed) == 1;
+        let timing = RestoreTiming {
+            readiness_ns: self.word(record + 136).load(Ordering::Relaxed),
+            dispatched_ns: self.word(record + 144).load(Ordering::Relaxed),
+            dequeued_ns: self.word(record + 152).load(Ordering::Relaxed),
+            claimed_ns: self.word(record + 160).load(Ordering::Relaxed),
+            submitted_ns: self.word(record + 168).load(Ordering::Relaxed),
+            drained_ns: self.word(record + 176).load(Ordering::Relaxed),
+        };
+        if self.state(id)? != GrantState::Drained {
+            return Err(CompletionError::Stale(id));
+        }
+        Ok((present && timing.valid()).then_some(timing))
     }
 
     pub fn drain_succeeded(&self, id: u64) -> Result<bool, CompletionError> {

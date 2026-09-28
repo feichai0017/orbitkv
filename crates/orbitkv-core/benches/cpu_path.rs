@@ -248,8 +248,8 @@ impl BenchFixture {
             RestoreExecution::Local(grant) => {
                 let plan =
                     RawRestorePlan::decode(grant.encoded_plan()).expect("decode Restore plan");
-                let result = self.local_restore.lock().unwrap().execute(&plan);
-                grant.finish(result.is_ok());
+                let result = self.local_restore.lock().unwrap().execute(&plan, None);
+                grant.finish(result.is_ok(), None);
                 result.expect("local Restore failed");
             }
             RestoreExecution::Managed(receiver) => {

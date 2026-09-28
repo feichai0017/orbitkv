@@ -123,6 +123,9 @@ pub(crate) enum CostObservationKind {
     #[cfg(feature = "mooncake")]
     PeerSsdHostReady,
     CacheRestore,
+    // Caller-to-drain evidence cannot be pooled with Manager-preparation routes.
+    // No comparable completion target until both routes share that boundary.
+    EngineLocalRestore,
     PrefillToDecodeHandoff,
 }
 
@@ -145,6 +148,7 @@ impl CostObservationKind {
             | Self::SsdCufileRestore
             | Self::LocalSsdHostReady
             | Self::CacheRestore
+            | Self::EngineLocalRestore
             | Self::PrefillToDecodeHandoff => SampleBoundary::EnqueuedToCompletion,
             Self::GpuLoadDirect
             | Self::GpuLoadKernel
@@ -231,6 +235,7 @@ impl CostObservationKind {
             #[cfg(feature = "mooncake")]
             Self::PeerSsdHostReady => "peer_ssd_host_ready",
             Self::CacheRestore => "cache_restore",
+            Self::EngineLocalRestore => "engine_local_restore",
             Self::PrefillToDecodeHandoff => "prefill_to_decode_handoff",
         }
     }

@@ -3,14 +3,22 @@
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
-use orbitkv_channel::{CacheClient, GrantState, RestoreHandle, RestoreResponse, RestoreState};
+use orbitkv_channel::{
+    CacheClient, GrantState, RestoreHandle, RestoreResponse, RestoreState, RestoreTiming,
+};
 use orbitkv_core::transfer::local::{LocalRestoreExecutor, RawRestorePlan};
 use pyo3::prelude::*;
 
 const MAX_PENDING: usize = 1024;
+
+pub(crate) static RESTORE_TIMING: LazyLock<bool> = LazyLock::new(|| {
+    ["ORBITKV_TRACE_TRANSFERS", "ORBITKV_COST_OBSERVATIONS"]
+        .iter()
+        .any(|name| std::env::var(name).as_deref() == Ok("1"))
+});
 
 /// One engine notification source signals local DMA results, independently of
 /// Manager grant/reaping notifications on the channel's own eventfd.
@@ -92,7 +100,7 @@ impl LocalCompletions {
 
 enum RestoreResult {
     Pending,
-    Ready(RestoreResponse),
+    Ready(RestoreResponse, Option<(RestoreHandle, Instant)>),
     Consumed,
 }
 
@@ -103,7 +111,18 @@ impl RestoreResult {
                 *self = Self::Pending;
                 Ok(None)
             }
-            Self::Ready(response) => Ok(Some(response)),
+            Self::Ready(response, observed) => {
+                if let Some((handle, drained_at)) = observed {
+                    orbitkv_common::timeline::record("local_restore_observed", || {
+                        serde_json::json!({
+                            "restore_key": format!("manager:{}:{}:{}", handle.session_epoch, handle.session_token, handle.operation_id),
+                            "elapsed_ns": drained_at.elapsed().as_nanos() as u64,
+                            "success": response.state == RestoreState::Succeeded,
+                        })
+                    });
+                }
+                Ok(Some(response))
+            }
             Self::Consumed => Err("Restore result was already consumed"),
         }
     }
@@ -140,6 +159,7 @@ impl LocalRestore {
 struct Job {
     handle: RestoreHandle,
     result: Arc<LocalRestore>,
+    timing: Option<(Instant, RestoreTiming)>,
 }
 
 /// Actual tensor exporters and CUDA mappings remain owned by the worker until
@@ -185,7 +205,12 @@ impl LocalRestoreWorker {
                 loop {
                     loop {
                         match receiver.try_recv() {
-                            Ok(job) => active.push(job),
+                            Ok(mut job) => {
+                                if let Some((start, timing)) = &mut job.timing {
+                                    timing.dequeued_ns = start.elapsed().as_nanos() as u64;
+                                }
+                                active.push(job);
+                            }
                             Err(mpsc::TryRecvError::Empty) => break,
                             Err(mpsc::TryRecvError::Disconnected) => {
                                 disconnected = true;
@@ -196,7 +221,7 @@ impl LocalRestoreWorker {
                     let mut index = 0;
                     while index < active.len() {
                         let Some((outcome, retired)) =
-                            advance(&client, &worker_executor, active[index].handle)
+                            advance(&client, &worker_executor, &mut active[index])
                         else {
                             index += 1;
                             continue;
@@ -208,8 +233,19 @@ impl LocalRestoreWorker {
                         *job.result
                             .result
                             .lock()
-                            .unwrap_or_else(|poison| poison.into_inner()) =
-                            RestoreResult::Ready(outcome);
+                            .unwrap_or_else(|poison| poison.into_inner()) = RestoreResult::Ready(
+                            outcome,
+                            job.timing.and_then(|(start, timing)| {
+                                (*orbitkv_common::timeline::ENABLED && timing.drained_ns != 0).then(
+                                    || {
+                                        (
+                                            job.handle,
+                                            start + Duration::from_nanos(timing.drained_ns),
+                                        )
+                                    },
+                                )
+                            }),
+                        );
                         job.result.completed.notify_all();
                         completions.notify();
                         let _idle = worker_idle
@@ -330,7 +366,14 @@ impl LocalRestoreWorker {
         }
     }
 
-    pub(crate) fn submit(&self, handle: RestoreHandle) -> Arc<LocalRestore> {
+    pub(crate) fn submit(
+        &self,
+        handle: RestoreHandle,
+        mut timing: Option<(Instant, RestoreTiming)>,
+    ) -> Arc<LocalRestore> {
+        if let Some((start, timing)) = &mut timing {
+            timing.dispatched_ns = start.elapsed().as_nanos() as u64;
+        }
         let result = Arc::new(LocalRestore {
             result: Mutex::new(RestoreResult::Pending),
             completed: Condvar::new(),
@@ -340,6 +383,7 @@ impl LocalRestoreWorker {
             .send(Job {
                 handle,
                 result: Arc::clone(&result),
+                timing,
             })
             .is_err()
         {
@@ -363,8 +407,9 @@ impl Drop for LocalRestoreWorker {
 fn advance(
     client: &CacheClient,
     executor: &Mutex<Option<LocalRestoreExecutor>>,
-    handle: RestoreHandle,
+    job: &mut Job,
 ) -> Option<(RestoreResponse, Option<RestoreHandle>)> {
+    let handle = job.handle;
     let failed = |message: String| RestoreResponse {
         operation_id: handle.operation_id,
         state: RestoreState::Failed,
@@ -372,13 +417,23 @@ fn advance(
     };
     match client.claim_local_restore(handle) {
         Ok(Some(bytes)) => {
+            if let Some((start, timing)) = &mut job.timing {
+                timing.claimed_ns = start.elapsed().as_nanos() as u64;
+            }
+            let mut submitted_at = None;
             let result = RawRestorePlan::decode(&bytes).and_then(|plan| {
                 executor
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .as_mut()
                     .ok_or_else(|| "local Restore worker stopped before its operation".to_string())?
-                    .execute(&plan)
+                    .execute(&plan, job.timing.as_ref().map(|_| &mut submitted_at))
+            });
+            let timing = job.timing.as_mut().map(|(start, timing)| {
+                timing.submitted_ns =
+                    submitted_at.map_or(0, |at| at.duration_since(*start).as_nanos() as u64);
+                timing.drained_ns = start.elapsed().as_nanos() as u64;
+                *timing
             });
             let response = match &result {
                 Ok(()) => RestoreResponse {
@@ -389,7 +444,7 @@ fn advance(
                 Err(message) => failed(message.clone()),
             };
             // Reaping releases source credits asynchronously, off the GPU fence.
-            if let Err(error) = client.finish_local_restore(handle, result) {
+            if let Err(error) = client.finish_local_restore(handle, result, timing) {
                 return Some((failed(error.to_string()), Some(handle)));
             }
             Some((response, Some(handle)))
@@ -406,7 +461,7 @@ fn advance(
                 client.restore_completions().state(handle.operation_id),
                 Ok(GrantState::Active)
             ) {
-                let _ = client.finish_local_restore(handle, Err(error.to_string()));
+                let _ = client.finish_local_restore(handle, Err(error.to_string()), None);
             }
             // A failed claim can lose the CAS to revocation. Keep its record
             // until Reaped -> Acknowledged even though no DMA was submitted.

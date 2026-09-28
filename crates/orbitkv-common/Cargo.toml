@@ -12,3 +12,4 @@ workspace = true
 log.workspace = true
 logforth.workspace = true
 colored.workspace = true
+serde_json.workspace = true

@@ -59,9 +59,10 @@ gate, without claiming cross-host tensor parallelism.
 
 ### Next reviewable changes
 
-The communication workstream first closes engine-local completion evidence
-and measures the merged baseline, then removes demonstrated overhead. Follow
-the [concrete next increment](communication-plan.md#next-concrete-change-engine-local-completion-evidence)
+Generation-fenced engine-local completion evidence and native consumer timing
+are implemented. The communication workstream next measures instrumentation
+overhead and the merged baseline, then removes demonstrated overhead. Follow
+the [completion contract](communication-plan.md#engine-local-completion-evidence)
 and [shared naming definitions](architecture.md#definitions-and-naming) before
 extending automatic route selection. The distributed qualification gates
 below remain independent.

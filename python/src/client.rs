@@ -770,6 +770,7 @@ impl PyCacheManagerClient {
         loads: Vec<PyLeaseLoad>,
         ready_stream: u64,
     ) -> PyResult<PyRestoreHandle> {
+        let started = (*crate::local_restore::RESTORE_TIMING).then(std::time::Instant::now);
         let loads = loads
             .into_iter()
             .map(|(lease, block_ids_by_group)| RestoreLease {
@@ -790,6 +791,15 @@ impl PyCacheManagerClient {
             worker
                 .reserve(ready_stream)
                 .map_err(OrbitKVError::new_err)?;
+            let timing = started.map(|start| {
+                (
+                    start,
+                    orbitkv_channel::RestoreTiming {
+                        readiness_ns: start.elapsed().as_nanos() as u64,
+                        ..Default::default()
+                    },
+                )
+            });
             match self.inner.start_restore(&RestoreRequest {
                 instance_id,
                 tp_rank,
@@ -799,7 +809,7 @@ impl PyCacheManagerClient {
             }) {
                 Ok(handle) => Ok(PyRestoreHandle {
                     handle,
-                    result: worker.submit(handle),
+                    result: worker.submit(handle, timing),
                     owner: Arc::downgrade(&self.inner),
                 }),
                 Err(error) => {

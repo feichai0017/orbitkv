@@ -142,8 +142,8 @@ async fn restore_and_wait(
             .expect("import source payload arenas");
             let plan =
                 RawRestorePlan::decode(grant.encoded_plan()).expect("decode local Restore plan");
-            let result = executor.execute(&plan);
-            grant.finish(result.is_ok());
+            let result = executor.execute(&plan, None);
+            grant.finish(result.is_ok(), None);
             result.expect("local Restore failed");
         }
         RestoreExecution::Managed(receiver) => {

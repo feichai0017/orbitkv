@@ -133,9 +133,11 @@ There is no eventually consistent allocation directory on the DMA path.
 Local grants and Manager workers share the per-GPU limit of 128 admitted restores.
 A local grant holds its permit through source retirement, including quarantine;
 unregistering an instance cannot reset that budget. Manager-executed restores
-retain their `CacheRestore` completion observations. Local raw grants
-do not train that estimator yet: Manager reaping is later than engine DMA drain,
-and substituting it would change the DecodeReady measurement boundary.
+retain their `CacheRestore` completion observations. Local raw grants report
+caller-to-drain durations as `engine_local_restore`; this separate estimate
+cannot select against Manager-preparation or P/D intervals. Manager reaping
+never substitutes for engine readiness. See the
+[completion evidence contract](communication-plan.md#engine-local-completion-evidence).
 
 
 [Affine geometry](../crates/orbitkv-core/src/transfer/layout.rs) remains the
@@ -147,8 +149,8 @@ submission. Raw plans contain no Manager virtual addresses.
 
 ## Shared grant protocol
 
-Clients and Managers must be rebuilt together. Bootstrap version **6**,
-channel ABI **10**, and lifecycle version **4** reject older peers. Bootstrap
+Clients and Managers must be rebuilt together. Bootstrap version **7**,
+channel ABI **11**, and lifecycle version **4** reject older peers. Bootstrap
 transfers five FDs: descriptor memfd, grant memfd, Manager-to-engine Restore
 eventfd, engine-to-Manager retirement eventfd, and Publish reply eventfd.
 Payload FDs arrive only with GPU registration replies. The native worker also
@@ -189,7 +191,7 @@ runs independently of the descriptor dispatcher and Python result consumption.
 
 ### Bounds and current limits
 
-Each session has 1024 records of 128 bytes and a shared 1 MiB plan bank. Bounded
+Each session has 1024 records of 192 bytes and a shared 1 MiB plan bank. Bounded
 error text occupies at most 88 bytes inside a record. The Manager allows at most
 64 live or retained session mappings; unresolved disconnected sessions count
 against that limit. The native pending-operation bound is 1024, and payload

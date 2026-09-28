@@ -48,7 +48,7 @@ pub use client::{ChannelClient, ChannelError};
 #[cfg(target_os = "linux")]
 pub use completion::{
     CompletionError, GrantState, RESTORE_COMPLETION_SLOTS, RESTORE_ERROR_BYTES, RESTORE_PLAN_BYTES,
-    RestoreCompletions,
+    RestoreCompletions, RestoreTiming,
 };
 pub use protocol::{
     ABI_VERSION, Command, CommandCode, DescriptorRef, ProtocolError,

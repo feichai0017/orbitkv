@@ -677,6 +677,7 @@ impl CacheClient {
         &self,
         handle: RestoreHandle,
         result: Result<(), String>,
+        timing: Option<crate::RestoreTiming>,
     ) -> Result<(), ChannelError> {
         if handle.owner != self.owner
             || handle.session_token != self.channel.session_token()
@@ -686,7 +687,7 @@ impl CacheClient {
         }
         self.channel
             .restore_completions()
-            .drained(handle.operation_id, result)
+            .drained(handle.operation_id, result, timing)
             .map_err(Into::into)
     }
 

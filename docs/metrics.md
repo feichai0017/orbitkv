@@ -79,7 +79,17 @@ request identity, cache keys
 and transfer generation are not metric labels. The generation is required
 as freshness evidence but is not an estimator dimension. Only
 `admission="admitted", outcome="completed"` trains the estimate.
-`cache_restore` supplies the matching completed boundary for
+`engine_local_restore` records native caller-to-GPU-drain duration, including
+readiness, dispatch, native queue and grant wait. The record is accepted once by
+the source owner for the same session/operation generation. Only a successful
+submitted drain trains its bounded estimate; failure durations are diagnostic.
+Its start boundary differs from `cache_restore` and P/D, so it is excluded from
+cross-route comparison. Enable `ORBITKV_COST_OBSERVATIONS=1` in both the engine
+and Manager to collect it. `ORBITKV_TRACE_TRANSFERS=1` additionally exposes the
+stage decomposition and native result-consumption delay; tracing alone does not
+enable cost selection.
+
+`cache_restore` supplies the GPU-completed boundary for
 Manager-executed restores, from preparation after framework page allocation
 through terminal GPU completion. Its plan retains `RestoreTargetShape`
 (destination device, bytes and fragment count), source-set identity and source
@@ -388,7 +398,7 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   - Use case: Monitor load throughput
 
 - **orbitkv_load_duration_seconds** (Histogram)
-  - GPU restore duration, including SSD reads on the selected cuFile or explicit io_uring restore lane
+  - Manager-worker restore duration, including SSD reads on the selected cuFile or explicit io_uring restore lane; engine-local caller-to-drain samples are included only when timing is enabled in the engine. Manager retirement time is never used for local samples.
   - Use case: Track load performance (p50, p99)
 
 - **orbitkv_load_failures_total** (Counter)

@@ -54,7 +54,7 @@ impl OrbitKVEngine {
             observation.logical_bytes,
             observation.wire_bytes,
             observation.elapsed,
-            observation.resources,
+            Some(observation.resources),
             observation.admission == CompletionAdmission::Admitted,
             outcome,
         );

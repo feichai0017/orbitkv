@@ -32,14 +32,16 @@ pub(crate) fn record_completion_observation(
     logical_bytes: u64,
     wire_bytes: u64,
     elapsed: Duration,
-    resources: CompletionResourceEvidence,
+    resources: Option<CompletionResourceEvidence>,
     admitted: bool,
     outcome: Outcome,
 ) {
     if !*ENABLED {
         return;
     }
-    super::resource_evidence::record(key.resource, resources, elapsed);
+    if let Some(resources) = resources {
+        super::resource_evidence::record(key.resource, resources, elapsed);
+    }
     let metrics = core_metrics();
     let attributes = [
         KeyValue::new("path", key.kind.label()),

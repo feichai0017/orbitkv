@@ -1554,3 +1554,76 @@ def test_local_restore_fences_previous_use_on_nondefault_stream(fault_cache):
         )
         assert client.wait_restore(handle, timeout=10).success
         assert torch.equal(tensor[:, 2:3].cpu(), expected)
+
+
+@pytest.mark.skipif(
+    os.environ.get("ORBITKV_COST_OBSERVATIONS") != "1"
+    or os.environ.get("ORBITKV_TRACE_TRANSFERS") != "1",
+    reason="requires cost observations and transfer tracing in both processes",
+)
+def test_local_completion_evidence_excludes_retirement_and_trains_once(fault_cache):
+    import json
+
+    import torch
+
+    from orbitkv import OrbitKVError
+
+    server, client, ctx, directory = fault_cache
+    hashes = [b"completion-evidence"]
+    expected = ctx.get_kv_cache()[:, 0:1].cpu().clone()
+    assert publish(client, ctx, hashes)[0]
+    ready = query(client, ctx, hashes, "completion-evidence")
+    arm(directory, "local_restore_reap")
+    handle = client.start_restore(
+        ctx.instance_id,
+        0,
+        0,
+        [ctx._layer_names],
+        [(ready.lease, [[2]])],
+        ready_stream=torch.cuda.current_stream(0).cuda_stream,
+    )
+    try:
+        assert client.wait_restore(handle, timeout=5).success
+        reached(directory, "local_restore_reap")
+        assert torch.equal(ctx.get_kv_cache()[:, 2:3].cpu(), expected)
+        assert fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] > 0
+        # GPU readiness and native result consumption precede Manager retirement.
+        time.sleep(0.2)
+        assert "local_restore_complete" not in server.read_logs()
+    finally:
+        (directory / "local_restore_reap.pause").unlink(missing_ok=True)
+    until(lambda: fetch_orbitkv_metrics(server.http_port)["orbitkv_query_reserved_bytes"] == 0)
+    until(lambda: "local_restore_complete" in server.read_logs())
+    reports = [
+        json.JSONDecoder().raw_decode(line.partition("cache_timeline ")[2])[0]
+        for line in server.read_logs().splitlines()
+        if "cache_timeline " in line
+    ]
+    reports = [event for event in reports if event["stage"] == "local_restore_complete"]
+    assert len(reports) == 1
+    report = reports[0]
+    assert report["restore_key"] == handle.key
+    assert report["success"]
+    assert 0 < report["readiness_ns"] <= report["dispatched_ns"] <= report["dequeued_ns"]
+    assert (
+        report["dequeued_ns"]
+        <= report["claimed_ns"]
+        <= report["submitted_ns"]
+        <= report["drained_ns"]
+    )
+    response = requests.get(f"http://127.0.0.1:{server.http_port}/metrics", timeout=5)
+    response.raise_for_status()
+    samples = {
+        line.split("{", 1)[0]: float(line.rsplit(" ", 1)[1])
+        for line in response.text.splitlines()
+        if 'path="engine_local_restore"' in line
+        and 'stage="total"' in line
+        and (
+            line.startswith("orbitkv_cost_stage_seconds_count{")
+            or line.startswith("orbitkv_cost_stage_seconds_sum{")
+        )
+    }
+    assert samples["orbitkv_cost_stage_seconds_count"] == 1
+    assert samples["orbitkv_cost_stage_seconds_sum"] == pytest.approx(report["drained_ns"] / 1e9)
+    with pytest.raises(OrbitKVError, match="consumed"):
+        client.poll_restore(handle)

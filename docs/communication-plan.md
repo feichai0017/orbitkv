@@ -98,7 +98,7 @@ the same versioned records and publishes only its worker's drained outcome.
 
 ### Shared records and bounded metadata
 
-The grant mapping has 1024 records of 128 bytes plus a 1 MiB shared plan bank;
+The grant mapping has 1024 records of 192 bytes plus a 1 MiB shared plan bank;
 bounded errors use at most 88 bytes inside each record. At most 64 session
 mappings may be live or retained, including disconnected unresolved grants.
 The native worker admits at most 1024 pending operations, and a native client
@@ -147,7 +147,7 @@ or its maintenance deadline. Publish keeps an independent reply eventfd and
 Manager pidfd wait. Fixed Manager 50 us idle polling and Publish 100 us reply
 sleep remain removed.
 
-Bootstrap version **6**, channel ABI **10**, and lifecycle version **4** require
+Bootstrap version **7**, channel ABI **11**, and lifecycle version **4** require
 matched client and Manager builds. The five bootstrap FDs are the descriptor
 memfd, grant memfd, Manager-to-engine Restore eventfd, engine-to-Manager
 retirement eventfd, and Publish reply eventfd. GPU payload FDs are attached to
@@ -238,31 +238,39 @@ Neither result establishes a universal performance advantage.
    can act on the unified cost evidence. Do not enable selection from stale
    hints or merge control ACKs with payload drain evidence.
 
-### Next concrete change: engine-local completion evidence
+### Engine-local completion evidence
 
-Use the [shared definitions](architecture.md#definitions-and-naming). The next
-behavioral increment extends the existing grant/completion owners and cost
-observer; it does not add an independent scheduler.
+The native worker carries six cumulative nanosecond offsets from one engine
+`Instant`: readiness finished, dispatched, dequeued, grant claimed, CUDA enqueue
+returned, and GPU drain observed. The first interval includes native argument
+conversion, client/executor locking and destination readiness. Dispatch ends at
+native job enqueue; grant wait includes worker scheduling and plan consumption.
+Submission includes validation and descriptor compilation. These are host
+observations, not GPU kernel timestamps.
 
-- Record the native caller-to-GPU-drain interval and separate readiness wait,
-  preparation/grant wait, native queue and submission where the owner can observe
-  them. Measure connector observation and first engine use separately; Manager
-  source retirement is not part of engine-ready latency.
-  Compare estimates only when both the start and completion boundaries match.
-  Keep the native caller interval separate from existing Manager-preparation
-  samples until both executors report the same declared scope; sharing a
-  destination GPU or the `CacheRestore` name does not make intervals comparable.
-- Transfer bounded durations and outcomes with the existing session/operation
-  generation, accept them once, and keep operation IDs out of estimator keys.
-  Combine only intervals with defined compatible clocks; never subtract remote
-  wall-clock timestamps to infer network or GPU service time.
-- Successful target-ready completion can train an estimate. Failed, cancelled,
-  never-submitted or quarantined operations must not produce success samples.
-  A terminal drain still retains its failure outcome. Observation cannot delay
-  readiness or become a condition for releasing the actual resource owner.
-- Keep tracing opt-in. Test duplicate/stale completion, lost notification,
-  cancellation and Manager/engine exit at the existing process boundary. Measure
-  instrumentation overhead, then run a matched merged-build serving baseline.
+The existing session/operation-fenced completion record transports the bounded
+report with `Active -> Drained`. The Manager accepts it when consuming the source
+owner, once, before reaping. Invalid, absent or over-one-day reports are ignored
+without blocking drain, reaping or record reuse. Failed and never-submitted
+operations do not train success estimates. Late Manager observation cannot
+extend engine-ready latency, and no cross-process timestamp subtraction is used.
+
+`ORBITKV_COST_OBSERVATIONS=1` on both processes records the independent
+`engine_local_restore` cost key. It is deliberately excluded from route selection:
+Manager `cache_restore` starts at preparation, and P/D starts at handoff enqueue.
+A shared target GPU does not make these start boundaries comparable.
+
+`ORBITKV_TRACE_TRANSFERS=1` additionally emits `local_restore_complete` from the
+Manager and `local_restore_observed` from native result consumption. The common
+Rust tracer serves both processes. The benchmark parser joins those records to
+existing connector request links, counts each physical batch once, and reports
+native stage and consumer-wait quantiles separately from framework first-use
+callbacks. Local completions do not require a Manager-to-engine notification.
+Tracing and cost collection are opt-in; the disabled path takes no stage clocks.
+
+Qualification includes stale/recycled and duplicate completions, malformed
+reports, lost notification, cancellation and actual process exit. The merged
+serving and instrumentation-overhead gates remain distinct from code completion.
 
 The following performance increment selects one demonstrated bottleneck and
 compares the change with that baseline. Use at least three paired repetitions

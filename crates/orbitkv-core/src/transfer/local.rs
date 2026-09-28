@@ -384,7 +384,11 @@ impl LocalRestoreExecutor {
 
     /// Caller holds the Active grant until this method returns and publishes
     /// Drained afterwards. Sources cannot be recycled during preparation or DMA.
-    pub fn execute(&mut self, plan: &RawRestorePlan) -> Result<(), String> {
+    pub fn execute(
+        &mut self,
+        plan: &RawRestorePlan,
+        submitted_at: Option<&mut Option<std::time::Instant>>,
+    ) -> Result<(), String> {
         #[cfg(feature = "test-hooks")]
         crate::test_faults::pause_blocking("local_restore_claim");
         self.context.bind_to_thread().map_err(|e| e.to_string())?;
@@ -477,6 +481,9 @@ impl LocalRestoreExecutor {
         };
         #[cfg(not(feature = "test-hooks"))]
         let submitted = self.backend.h2d(&copies, &self.stream);
+        if let Some(submitted_at) = submitted_at {
+            *submitted_at = Some(std::time::Instant::now());
+        }
         if let Err(error) = self.stream.synchronize() {
             log::error!("Cannot establish engine-local Restore drain: {error}; terminating engine");
             std::process::abort();

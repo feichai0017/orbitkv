@@ -7,6 +7,9 @@ use super::instance::LayerTopology;
 use super::{EngineError, OrbitKVEngine};
 use crate::QueryReservation;
 use crate::block::{RestoreSource, SealedBlock};
+use crate::cost::{
+    self, CostEstimateKey, CostObservationKind, ExecutionResource, Outcome, Representation,
+};
 use crate::metrics::core_metrics;
 use crate::planning::restore::RestorePlan;
 use crate::query::lease::{QueryLeaseId, QueryLeaseManager};
@@ -23,7 +26,7 @@ pub struct RawRestoreGrant {
     sources: Vec<Arc<SealedBlock>>,
     reservations: Vec<QueryReservation>,
     bytes: u64,
-    started: std::time::Instant,
+    cost_key: Option<CostEstimateKey>,
     decode_admission: Option<DecodeRestorePermit>,
 }
 
@@ -32,16 +35,33 @@ impl RawRestoreGrant {
         &self.plan
     }
 
-    pub fn finish(self, success: bool) {
+    pub fn finish(self, success: bool, elapsed: Option<std::time::Duration>) {
+        if let (Some(key), Some(elapsed)) = (self.cost_key, elapsed) {
+            cost::record_completion_observation(
+                key,
+                self.bytes,
+                if success { self.bytes } else { 0 },
+                elapsed,
+                None,
+                true,
+                if success {
+                    Outcome::Completed
+                } else {
+                    Outcome::Failed
+                },
+            );
+        }
         if success {
             for source in &self.sources {
                 source.mark_warmup_restored();
             }
             if self.bytes != 0 {
                 core_metrics().load_bytes.add(self.bytes, &[]);
-                core_metrics()
-                    .load_duration_seconds
-                    .record(self.started.elapsed().as_secs_f64(), &[]);
+                if let Some(elapsed) = elapsed {
+                    core_metrics()
+                        .load_duration_seconds
+                        .record(elapsed.as_secs_f64(), &[]);
+                }
             }
         } else {
             core_metrics().load_failures.add(1, &[]);
@@ -205,7 +225,15 @@ impl OrbitKVEngine {
                 sources,
                 reservations: prepared.reservations,
                 bytes,
-                started: std::time::Instant::now(),
+                cost_key: (cost::enabled() && bytes != 0).then(|| {
+                    CostEstimateKey::new(
+                        CostObservationKind::EngineLocalRestore,
+                        ExecutionResource::Gpu(device_id as u64),
+                        Representation::Raw,
+                        bytes,
+                        fragments,
+                    )
+                }),
                 decode_admission,
             }));
         }

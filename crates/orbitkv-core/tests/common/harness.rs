@@ -516,9 +516,9 @@ impl TestEnv {
                     .local_restore
                     .lock()
                     .unwrap()
-                    .execute(&plan)
+                    .execute(&plan, None)
                     .map_err(EngineError::Storage);
-                grant.finish(result.is_ok());
+                grant.finish(result.is_ok(), None);
                 LoadOutcome {
                     result,
                     completed_at: std::time::Instant::now(),

@@ -173,3 +173,29 @@ fn resource_domains_and_peer_incarnations_never_share_samples() {
         assert!(estimates.predict(new, start).is_none());
     }
 }
+
+#[test]
+fn caller_to_drain_estimates_cannot_select_preparation_or_service_routes() {
+    let local = key(9).with_observation_kind(CostObservationKind::EngineLocalRestore);
+    let manager = local.with_observation_kind_and_resource(
+        CostObservationKind::CacheRestore,
+        ExecutionResource::CacheRestore {
+            source_set_hash: 1,
+            destination_device: 9,
+        },
+    );
+    let now = Instant::now();
+    let mut estimates = Estimates::default();
+    for _ in 0..MIN_SAMPLES {
+        estimates.observe(local, 0.003, now);
+    }
+    assert_eq!(estimates.predict(local, now).unwrap().seconds, 0.003);
+    assert!(estimates.predict(manager, now).is_none());
+    assert!(!local.comparable(key(9)));
+    assert!(!local.comparable(manager));
+    #[cfg(feature = "mooncake")]
+    {
+        assert!(!local.route_comparable(manager));
+        assert!(!manager.route_comparable(local));
+    }
+}

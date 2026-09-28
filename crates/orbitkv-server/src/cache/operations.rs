@@ -9,7 +9,7 @@ use orbitkv_core::{
 use thiserror::Error;
 
 fn trace_query(stage: &str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
-    crate::metric::timeline::record(stage, || {
+    orbitkv_common::timeline::record(stage, || {
         serde_json::json!({
             "request_id": input.request_id, "instance_id": input.instance_id,
             "group_id": input.group_id, "warmup": input.warmup,

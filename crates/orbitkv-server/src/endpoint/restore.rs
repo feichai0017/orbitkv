@@ -55,12 +55,20 @@ impl LocalGrants {
     pub(super) fn start(
         records: Arc<RestoreCompletions>,
         runtime: &tokio::runtime::Handle,
+        epoch: u64,
+        client_token: u64,
     ) -> io::Result<Self> {
         let notification = records.manager_notification_fd().try_clone()?;
         let _guard = runtime.enter();
         let notification = AsyncFd::new(notification)?;
         let (sender, receiver) = mpsc::channel(RESTORE_COMPLETION_SLOTS);
-        runtime.spawn(reap_sources(Arc::clone(&records), notification, receiver));
+        runtime.spawn(reap_sources(
+            Arc::clone(&records),
+            notification,
+            receiver,
+            epoch,
+            client_token,
+        ));
         Ok(Self { sender, records })
     }
 
@@ -83,6 +91,8 @@ async fn reap_sources(
     records: Arc<RestoreCompletions>,
     notification: AsyncFd<OwnedFd>,
     mut incoming: mpsc::Receiver<SourceGrant>,
+    epoch: u64,
+    client_token: u64,
 ) {
     let mut grants: HashMap<u64, SourceGrant> = HashMap::new();
     let mut pending = VecDeque::new();
@@ -135,12 +145,33 @@ async fn reap_sources(
             }
             match state {
                 GrantState::Drained | GrantState::Revoked => {
+                    #[cfg(feature = "test-hooks")]
+                    orbitkv_core::test_faults::pause("local_restore_reap").await;
                     if let Some(mut owner) = grants.remove(&id) {
                         if let Some(source) = owner.source.take() {
+                            let success = state == GrantState::Drained
+                                && records.drain_succeeded(id).unwrap_or(false);
+                            let timing = records.drain_timing(id).ok().flatten();
                             source.finish(
-                                state == GrantState::Drained
-                                    && records.drain_succeeded(id).unwrap_or(false),
+                                success,
+                                timing.map(|timing| {
+                                    std::time::Duration::from_nanos(timing.drained_ns)
+                                }),
                             );
+                            if let Some(timing) = timing {
+                                orbitkv_common::timeline::record("local_restore_complete", || {
+                                    serde_json::json!({
+                                        "restore_key": format!("manager:{epoch}:{client_token}:{id}"),
+                                        "success": success,
+                                        "readiness_ns": timing.readiness_ns,
+                                        "dispatched_ns": timing.dispatched_ns,
+                                        "dequeued_ns": timing.dequeued_ns,
+                                        "claimed_ns": timing.claimed_ns,
+                                        "submitted_ns": timing.submitted_ns,
+                                        "drained_ns": timing.drained_ns,
+                                    })
+                                });
+                            }
                         }
                         if let Err(error) = records.reap(id) {
                             log::error!("Cannot reap restore source {id}: {error}");
@@ -221,7 +252,7 @@ pub(super) async fn publish(
     while orbitkv_core::test_faults::active("restore") {
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
-    crate::metric::timeline::record("restore_complete", || {
+    orbitkv_common::timeline::record("restore_complete", || {
         serde_json::json!({
             "restore_key": format!("manager:{epoch}:{client_token}:{id}"),
             "elapsed_us": completed_at.saturating_duration_since(started).as_micros() as u64,
@@ -239,7 +270,7 @@ pub(super) async fn publish(
     if let Err(error) = completions.notify() {
         log::error!("Cannot notify restore completion: {error}");
     }
-    crate::metric::timeline::record("restore_notification", || {
+    orbitkv_common::timeline::record("restore_notification", || {
         serde_json::json!({
             "restore_key": format!("manager:{epoch}:{client_token}:{id}"),
             "elapsed_us": completed_at.elapsed().as_micros() as u64,

@@ -35,3 +35,4 @@ orbitkv-transfer = { workspace = true, optional = true }
 tokio.workspace = true
 prost.workspace = true
 libc.workspace = true
+serde_json.workspace = true

@@ -218,7 +218,12 @@ fn accept_pending_sessions(
                     session.credentials().uid,
                     session.slot_index()
                 );
-                match restore::LocalGrants::start(Arc::clone(session.completions()), runtime) {
+                match restore::LocalGrants::start(
+                    Arc::clone(session.completions()),
+                    runtime,
+                    epoch,
+                    session.client_token(),
+                ) {
                     Ok(owner) => {
                         grants.insert(session.client_token(), owner);
                     }

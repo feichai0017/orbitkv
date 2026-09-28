@@ -212,7 +212,7 @@ qualification remain open. See the
   selection.
 - [x] Add the matching direct-to-decode completion boundary from Restore
   submission through terminal GPU completion. Validate exact registered target
-  ranges into a device-bound `DecodePageGrant` retained by the consumed plan;
+  ranges into a device-bound `RestoreTargetShape` retained by the consumed plan;
   keep this observation-only.
 - [x] Add bounded per-device direct-restore admission, vLLM handoff queue
   depth/parallelism, admission-time TENT NIC pressure, and an authoritative
@@ -386,6 +386,12 @@ qualification remain open. See the
   views on repeated polls and bind restore handles to their issuing client.
   Keep engine allocation in Python. Avoid cloning pending Manager query inputs
   until byte admission succeeds.
+- [x] Qualify generation-fenced engine-local completion timing, isolated
+  caller-to-drain cost estimates and native result-consumption traces. Twelve
+  H20 process/GPU fault cases pass, including readiness during paused Manager
+  retirement and exactly-once timing consumption.
+- [ ] Measure native timing/tracing overhead and refresh the matched merged-build
+  serving baseline before selecting the next communication optimization.
 - [ ] Profile remaining adapter hashing, per-page metadata and PyO3 conversion
   under matched workloads before claiming a latency improvement from the Rust client.
 - [x] Share identical backing reads with independent cancellation and leases;

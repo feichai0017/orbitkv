@@ -150,7 +150,7 @@ fn local_grants_remain_pending_until_engine_drain_and_manager_reaping() {
         client.poll_restore(handle).unwrap().state,
         RestoreState::Pending
     );
-    client.finish_local_restore(handle, Ok(())).unwrap();
+    client.finish_local_restore(handle, Ok(()), None).unwrap();
     assert_eq!(
         client
             .wait_restore(handle, Duration::from_secs(5))
@@ -188,7 +188,7 @@ fn manager_process_death_does_not_fence_active_engine_dma() {
         client.wait_restore(handle, Duration::from_millis(2)),
         Err(ChannelError::RestoreTimeout { .. })
     ));
-    client.finish_local_restore(handle, Ok(())).unwrap();
+    client.finish_local_restore(handle, Ok(()), None).unwrap();
     assert!(matches!(
         client.poll_restore(handle),
         Err(ChannelError::SessionRequiresReconnect)

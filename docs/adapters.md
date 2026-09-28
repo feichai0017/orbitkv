@@ -41,7 +41,7 @@ path. `orbitkv.timeout_ms` (default 5000) bounds hot requests and health;
 registration and unregister allow at least 120 seconds for CUDA setup/draining.
 `orbitkv.spin_iterations` defaults to 64. Standalone Cache Managers do
 not start gRPC. Client and Cache Manager must use matching
-bootstrap protocol versions (currently bootstrap 6, channel ABI 9, and lifecycle 4).
+bootstrap protocol versions (currently bootstrap 7, channel ABI 11, and lifecycle 4).
 Bootstrap transfers five metadata/notification FDs; GPU registration attaches
 the shared payload arena FDs separately. The first local executor uses a
 whole-operation fence and rejects raw plans above 1 MiB before lease consumption;
