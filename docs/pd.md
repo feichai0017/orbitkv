@@ -90,9 +90,11 @@ drain the batch, retain the source/destination regions until the drain ends,
 and invalidate the failed peer segment before SGLang marks the room failed.
 
 For a same-host, two-GPU correctness run, enable TENT's TCP path and launch the
-pinned SGLang processes with the OrbitKV plugin installed:
+pinned SGLang processes with the OrbitKV plugin installed. The router is a separate package; the pinned SGLang source
+uses `sglang-router 0.3.2`. Install it in the environment that runs the router:
 
 ```bash
+uv pip install 'sglang-router==0.3.2'
 export ORBITKV_SGLANG_TENT=1
 export MC_FORCE_TCP=1
 
@@ -107,7 +109,7 @@ python -m sglang.launch_server --model-path /path/to/model \
   --disaggregation-transfer-backend mooncake
 
 python -m sglang_router.launch_router --pd-disaggregation --mini-lb \
-  --prefill http://127.0.0.1:31000 --decode http://127.0.0.1:32000 \
+  --prefill http://127.0.0.1:31000 31500 --decode http://127.0.0.1:32000 \
   --host 127.0.0.1 --port 30000
 ```
 

@@ -1,28 +1,104 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="660" viewBox="0 0 1120 660" role="img" aria-labelledby="title desc">
-  <title id="title">OrbitKV cache architecture</title>
-  <desc id="desc">One Cache Manager per inference host manages pinned DRAM and SSD. Optional cuFile writes complete GPU state groups and restores SSD state through bounded GPU staging. Engines retain HBM ownership; adapters discover candidate positions, select compiled page ranges and validate actual leased state. Managers embed catalog shards, use gRPC for peer control and Mooncake for payloads. etcd stores membership and placement. The distributed path is experimental. General lifetime IR, retention, placement, reclamation plans and KV-aware routing remain future work.</desc>
-  <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10" fill="#203b30"/></marker></defs>
-  <rect width="1120" height="660" fill="#f6f5f0"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="850" viewBox="0 0 1280 850" role="img" aria-labelledby="title desc">
+  <title id="title">OrbitKV process ownership and communication paths</title>
+  <desc id="desc">Each engine owns HBM, framework scheduling and the Rust raw DRAM restore executor. Its Manager owns shared pinned DRAM, SSD, source grants and budgets. UDS transfers file descriptors; iceoryx2 carries commands; completion records and eventfd report progress. Manager Publish and SSD or encoded restores use CUDA IPC. Independent Managers discover and authorize historical cache reads over gRPC and transfer payloads with Mooncake TENT. Separate P/D adapters write current-request KV between engines. etcd maintains membership and fixed placement in the background. Catalogs have one copy per shard. Large-plan partitioning, group overlap, binary peer metadata and a unified route optimizer remain planned.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10" fill="#203b30"/></marker>
+    <marker id="arrow-start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M10 0 0 5 10 10" fill="#203b30"/></marker>
+  </defs>
+  <rect width="1280" height="850" fill="#f6f5f0"/>
   <g font-family="Arial, Helvetica, sans-serif" fill="#202d26">
-    <text x="32" y="38" font-size="14" letter-spacing="2" fill="#ab4d29">ORBITKV / ONE MANAGER PER HOST</text>
-    <text x="32" y="69" font-size="24" font-weight="700">Keep execution in the engine. Extend the cache across tiers.</text>
-    <g fill="#fcfbf8" stroke="#d7dcd2"><rect x="32" y="94" width="444" height="398"/><rect x="644" y="94" width="444" height="398"/></g>
-    <g font-size="13" letter-spacing="1" fill="#60695f"><text x="52" y="121">HOST A / INFERENCE REPLICA</text><text x="664" y="121">HOST B / MATCHING REPLICA</text></g>
-    <g fill="#203b30"><rect x="52" y="140" width="404" height="74"/><rect x="664" y="140" width="404" height="74"/></g>
-    <g fill="#f6f5f0" text-anchor="middle"><text x="254" y="164" font-size="21" font-weight="700">vLLM or SGLang</text><text x="254" y="185" font-size="15">Engine-owned HBM · model execution</text><text x="254" y="204" font-size="12">Rules → discover → selected reads → validate</text><text x="866" y="164" font-size="21" font-weight="700">vLLM or SGLang</text><text x="866" y="185" font-size="15">Engine-owned HBM · model execution</text><text x="866" y="204" font-size="12">Rules → discover → selected reads → validate</text></g>
-    <g stroke="#203b30" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"><path d="M254 223V284"/><path d="M866 223V284"/></g>
-    <g font-size="13" fill="#60695f"><text x="66" y="246">UDS + iceoryx2</text><text x="66" y="266">Cache commands</text><text x="280" y="246">CUDA IPC</text><text x="280" y="266">GPU registration</text><text x="678" y="246">UDS + iceoryx2</text><text x="678" y="266">Cache commands</text><text x="892" y="246">CUDA IPC</text><text x="892" y="266">GPU registration</text></g>
-    <g fill="#f6f5f0" stroke="#203b30" stroke-width="2"><rect x="52" y="296" width="404" height="174"/><rect x="664" y="296" width="404" height="174"/></g>
-    <g text-anchor="middle"><text x="254" y="327" font-size="22" font-weight="700">Cache Manager A</text><text x="866" y="327" font-size="22" font-weight="700">Cache Manager B</text><text x="254" y="351" font-size="14">Queries · leases · budgets · transfers</text><text x="866" y="351" font-size="14">Queries · leases · budgets · transfers</text></g>
-    <g fill="#fcfbf8" stroke="#d7dcd2"><rect x="70" y="367" width="174" height="38"/><rect x="264" y="367" width="174" height="38"/><rect x="682" y="367" width="174" height="38"/><rect x="876" y="367" width="174" height="38"/></g>
-    <g text-anchor="middle" font-size="15"><text x="157" y="392">Pinned DRAM</text><text x="351" y="392" font-size="13">SSD · io_uring / cuFile</text><text x="769" y="392">Pinned DRAM</text><text x="963" y="392" font-size="13">SSD · io_uring / cuFile</text><text x="254" y="437">Embedded catalog shards</text><text x="866" y="437">Embedded catalog shards</text></g>
-    <g text-anchor="middle" font-size="12" fill="#60695f"><text x="254" y="455">One metadata copy per shard</text><text x="866" y="455">One metadata copy per shard</text></g>
-    <g stroke="#203b30" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"><path d="M466 334H654"/><path d="M466 423H654" stroke-dasharray="5 5"/></g>
-    <g text-anchor="middle"><text x="560" y="304" font-size="16" font-weight="700">Mooncake TE</text><text x="560" y="323" font-size="12">KV bytes / RDMA or TCP</text><text x="560" y="387" font-size="16" font-weight="700">Peer gRPC</text><text x="560" y="407" font-size="12">Discovery + authorization</text></g>
-    <g fill="none" stroke="#60695f" stroke-width="1.5" stroke-dasharray="5 5"><path d="M254 472V536H380"/><path d="M866 472V536H740"/></g>
-    <rect x="380" y="510" width="360" height="62" fill="#203b30"/>
-    <g text-anchor="middle" fill="#f6f5f0"><text x="560" y="535" font-size="18" font-weight="700">etcd</text><text x="560" y="556" font-size="14">Leased membership + fixed placement</text></g>
-    <text x="32" y="611" font-size="15" fill="#ab4d29">Current: discover → select → read → validate. Single-node recovery tested; multi-node experimental.</text>
-    <text x="32" y="636" font-size="14" fill="#60695f">Future: general lifetime IR, retention / placement / reclaim plans and KV-aware routing.</text>
+
+<text x="32" y="36" font-size="14" text-anchor="start" fill="#ab4d29">ORBITKV / PROCESS OWNERSHIP</text>
+<text x="32" y="72" font-size="28" text-anchor="start" font-weight="700">One Manager per host. Four distinct data paths.</text>
+<rect x="32" y="102" width="480" height="546" fill="#fcfbf8" stroke="#d7dcd2"/>
+<text x="52" y="129" font-size="13" text-anchor="start" fill="#60695f">HOST A</text>
+<rect x="52" y="148" width="440" height="126" fill="#203b30" stroke="#203b30"/>
+<text x="272" y="176" font-size="23" text-anchor="middle" fill="#f6f5f0" font-weight="700">vLLM or SGLang</text>
+<text x="272" y="201" font-size="16" text-anchor="middle" fill="#f6f5f0">Engine-owned HBM + scheduler</text>
+<text x="272" y="224" font-size="14" text-anchor="middle" fill="#f6f5f0">Rust raw DRAM executor → retained GPU pages</text>
+<text x="272" y="250" font-size="13" text-anchor="middle" fill="#d7dcd2">Prefill role for P/D · separate TENT adapter</text>
+<path d="M108 397V278" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M272 278V397" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
+<path d="M436 278V397" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
+<rect x="38" y="300" width="148" height="67" fill="#f6f5f0" stroke="#f6f5f0"/>
+<text x="112" y="317" font-size="12" text-anchor="middle">Shared memfd</text>
+<text x="112" y="336" font-size="12" text-anchor="middle">Raw H2D / 2D DMA</text>
+<text x="112" y="355" font-size="12" text-anchor="middle">Engine submits</text>
+<rect x="198" y="300" width="148" height="67" fill="#f6f5f0" stroke="#f6f5f0"/>
+<text x="272" y="317" font-size="12" text-anchor="middle">UDS + iceoryx2</text>
+<text x="272" y="336" font-size="12" text-anchor="middle">Grants + eventfd</text>
+<text x="272" y="355" font-size="12" text-anchor="middle">Shared completion</text>
+<rect x="360" y="300" width="148" height="67" fill="#f6f5f0" stroke="#f6f5f0"/>
+<text x="434" y="317" font-size="12" text-anchor="middle">CUDA IPC</text>
+<text x="434" y="336" font-size="12" text-anchor="middle">Publish / SSD / codec</text>
+<text x="434" y="355" font-size="12" text-anchor="middle">Manager submits</text>
+<rect x="52" y="402" width="440" height="224" fill="#f6f5f0" stroke="#203b30"/>
+<text x="272" y="432" font-size="23" text-anchor="middle" font-weight="700">Cache Manager A</text>
+<text x="272" y="457" font-size="13" text-anchor="middle">Queries · source grants · byte / operation budgets</text>
+<rect x="70" y="475" width="190" height="48" fill="#fcfbf8" stroke="#d7dcd2"/>
+<rect x="284" y="475" width="190" height="48" fill="#fcfbf8" stroke="#d7dcd2"/>
+<text x="165" y="496" font-size="16" text-anchor="middle" font-weight="700">Pinned DRAM</text>
+<text x="165" y="514" font-size="12" text-anchor="middle" fill="#60695f">Shared payload arenas</text>
+<text x="379" y="496" font-size="16" text-anchor="middle" font-weight="700">SSD</text>
+<text x="379" y="514" font-size="12" text-anchor="middle" fill="#60695f">io_uring / cuFile staging</text>
+<text x="272" y="552" font-size="13" text-anchor="middle">CUDA workers: Publish + SSD / encoded Restore</text>
+<text x="272" y="580" font-size="14" text-anchor="middle" font-weight="700">Embedded catalog + exact source authorization</text>
+<text x="272" y="603" font-size="12" text-anchor="middle" fill="#60695f">One metadata copy per shard · leased inventory</text>
+<rect x="768" y="102" width="480" height="546" fill="#fcfbf8" stroke="#d7dcd2"/>
+<text x="788" y="129" font-size="13" text-anchor="start" fill="#60695f">HOST B</text>
+<rect x="788" y="148" width="440" height="126" fill="#203b30" stroke="#203b30"/>
+<text x="1008" y="176" font-size="23" text-anchor="middle" fill="#f6f5f0" font-weight="700">vLLM or SGLang</text>
+<text x="1008" y="201" font-size="16" text-anchor="middle" fill="#f6f5f0">Engine-owned HBM + scheduler</text>
+<text x="1008" y="224" font-size="14" text-anchor="middle" fill="#f6f5f0">Rust raw DRAM executor → retained GPU pages</text>
+<text x="1008" y="250" font-size="13" text-anchor="middle" fill="#d7dcd2">Decode role for P/D · separate TENT adapter</text>
+<path d="M844 397V278" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M1008 278V397" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
+<path d="M1172 278V397" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
+<rect x="774" y="300" width="148" height="67" fill="#f6f5f0" stroke="#f6f5f0"/>
+<text x="848" y="317" font-size="12" text-anchor="middle">Shared memfd</text>
+<text x="848" y="336" font-size="12" text-anchor="middle">Raw H2D / 2D DMA</text>
+<text x="848" y="355" font-size="12" text-anchor="middle">Engine submits</text>
+<rect x="934" y="300" width="148" height="67" fill="#f6f5f0" stroke="#f6f5f0"/>
+<text x="1008" y="317" font-size="12" text-anchor="middle">UDS + iceoryx2</text>
+<text x="1008" y="336" font-size="12" text-anchor="middle">Grants + eventfd</text>
+<text x="1008" y="355" font-size="12" text-anchor="middle">Shared completion</text>
+<rect x="1096" y="300" width="148" height="67" fill="#f6f5f0" stroke="#f6f5f0"/>
+<text x="1170" y="317" font-size="12" text-anchor="middle">CUDA IPC</text>
+<text x="1170" y="336" font-size="12" text-anchor="middle">Publish / SSD / codec</text>
+<text x="1170" y="355" font-size="12" text-anchor="middle">Manager submits</text>
+<rect x="788" y="402" width="440" height="224" fill="#f6f5f0" stroke="#203b30"/>
+<text x="1008" y="432" font-size="23" text-anchor="middle" font-weight="700">Cache Manager B</text>
+<text x="1008" y="457" font-size="13" text-anchor="middle">Queries · source grants · byte / operation budgets</text>
+<rect x="806" y="475" width="190" height="48" fill="#fcfbf8" stroke="#d7dcd2"/>
+<rect x="1020" y="475" width="190" height="48" fill="#fcfbf8" stroke="#d7dcd2"/>
+<text x="901" y="496" font-size="16" text-anchor="middle" font-weight="700">Pinned DRAM</text>
+<text x="901" y="514" font-size="12" text-anchor="middle" fill="#60695f">Shared payload arenas</text>
+<text x="1115" y="496" font-size="16" text-anchor="middle" font-weight="700">SSD</text>
+<text x="1115" y="514" font-size="12" text-anchor="middle" fill="#60695f">io_uring / cuFile staging</text>
+<text x="1008" y="552" font-size="13" text-anchor="middle">CUDA workers: Publish + SSD / encoded Restore</text>
+<text x="1008" y="580" font-size="14" text-anchor="middle" font-weight="700">Embedded catalog + exact source authorization</text>
+<text x="1008" y="603" font-size="12" text-anchor="middle" fill="#60695f">One metadata copy per shard · leased inventory</text>
+<path d="M500 236H780" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="640" y="169" font-size="15" text-anchor="middle" font-weight="700">P/D HANDOFF</text>
+<text x="640" y="191" font-size="19" text-anchor="middle" font-weight="700">TENT WRITE</text>
+<text x="640" y="215" font-size="13" text-anchor="middle">Current-request KV</text>
+<text x="640" y="266" font-size="12" text-anchor="middle" fill="#60695f">vLLM: OrbitKV control</text>
+<text x="640" y="285" font-size="12" text-anchor="middle" fill="#60695f">SGLang: native rooms</text>
+<path d="M524 494H756" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
+<text x="640" y="421" font-size="15" text-anchor="middle" font-weight="700">SHARED CACHE</text>
+<text x="640" y="448" font-size="19" text-anchor="middle" font-weight="700">TENT READ</text>
+<text x="640" y="472" font-size="13" text-anchor="middle">Historical DRAM / SSD KV</text>
+<text x="640" y="518" font-size="12" text-anchor="middle" fill="#60695f">RDMA or TCP payload transport</text>
+<path d="M524 602H756" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" marker-start="url(#arrow-start)" stroke-dasharray="5 5"/>
+<text x="640" y="557" font-size="17" text-anchor="middle" font-weight="700">Peer gRPC</text>
+<text x="640" y="580" font-size="12" text-anchor="middle">Locate · authorize · release</text>
+<path d="M272 650V697H430" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="5 5"/>
+<path d="M1008 650V697H850" fill="none" stroke="#203b30" stroke-width="1.5" marker-end="url(#arrow)" stroke-dasharray="5 5"/>
+<rect x="430" y="666" width="420" height="66" fill="#203b30" stroke="#203b30"/>
+<text x="640" y="692" font-size="18" text-anchor="middle" fill="#f6f5f0" font-weight="700">etcd / background control plane</text>
+<text x="640" y="716" font-size="13" text-anchor="middle" fill="#f6f5f0">Membership · epochs · fixed catalog placement</text>
+<text x="32" y="775" font-size="15" text-anchor="start" fill="#ab4d29" font-weight="700">READY ≠ DRAINED ≠ REAPED</text>
+<text x="32" y="799" font-size="14" text-anchor="start">Engine readiness follows its GPU fence. Sources remain retained until submitted work drains; credits retire afterwards.</text>
+<text x="32" y="826" font-size="13" text-anchor="start" fill="#60695f">Planned: bounded large plans · layer/group overlap · binary peer metadata · unified route selection · catalog HA.</text>
   </g>
 </svg>

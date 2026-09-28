@@ -337,9 +337,13 @@ Qwen3-8B passes the vLLM deterministic gate (six checks; one hybrid-only skip)
 and SGLang DRAM restart recovery. Raw logs and artifact hashes are retained under
 `benches/results/runs/strided-dma-20260928/`.
 
-These functional results do not establish a serving speedup. Three matched,
-order-reversed performance repetitions remain required before accepting the
-performance claim. The earlier synthetic 2D probe is not a substitute.
+The [three-round serving comparison](communication-performance.md#repeated-serving-comparison-after-strided-dma)
+now covers both engines and all four backends, with 24 accepted cohorts and
+1,152 matching non-native output controls. OrbitKV throughput exceeds LMCache
+by 5.18%/5.27% for vLLM/SGLang, but remains 4.08%/2.25% below native CPU
+offload. SGLang tail latency also remains higher. These comparisons do not
+isolate the effect of 2D DMA: a repeated before/after implementation control
+is still required before attributing a serving speedup to this change.
 
 ## Next: bounded large restores and execution overlap
 

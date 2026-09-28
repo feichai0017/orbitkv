@@ -45,7 +45,7 @@ export const layers = [
     name: "orbitkv-transfer",
     role: "Move the bytes.",
     detail:
-      "Pinned Mooncake Transfer Engine for experimental remote cache fetch and vLLM P/D.",
+      "Pinned Mooncake TENT with registered-region ownership and terminal batch drain for peer cache READs and vLLM/SGLang P/D WRITEs.",
     path: "crates/orbitkv-transfer/README.md",
   },
   {

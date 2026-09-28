@@ -27,9 +27,9 @@ import { layers, localUrl } from "../data/site";
       <figure class="architecture-figure">
         <img
           src={localUrl("/architecture.svg")}
-          width="1120"
-          height="660"
-          alt="Each engine owns HBM and uses compiled page demand and recovery evidence. Per-host Cache Managers own DRAM, SSD and catalog shards; Mooncake transfers remote bytes and etcd tracks membership. General lifetime analysis, retention and physical planning remain future work."
+          width="1280"
+          height="850"
+          alt="Engine-owned HBM and raw DRAM restore; Manager-owned Publish, SSD and codec work. Peer gRPC controls historical TENT READs; P/D adapters issue current-request TENT WRITEs. etcd maintains membership and fixed placement."
         />
         <figcaption>
           Single-node recovery is validated. The multi-node path is
@@ -44,7 +44,9 @@ import { layers, localUrl } from "../data/site";
           <h3>Keep useful prefixes.</h3>
           <p>
             Run an independent Manager per node and connect engines to its
-            shared DRAM and optional SSD cache. Engines retain HBM ownership.
+            shared DRAM and optional SSD cache. Engines retain HBM ownership
+            and execute raw DRAM restores through imported payload arenas.
+            Manager workers retain Publish, SSD and encoded restores.
             Standalone deployment needs neither etcd nor peer gRPC. Configure
             the SSD path and capacity; automatic selection tries native cuFile
             and falls back to io_uring without engine-side backend settings.
@@ -58,17 +60,19 @@ import { layers, localUrl } from "../data/site";
           <h3>Reuse across workers.</h3>
           <p>
             Managers share compatible replicas through embedded catalogs. Cached
-            candidates reduce discovery work; source authorization and Mooncake
-            move the requested blocks. Cross-host serving is the next gate.
+            candidates reduce discovery work. Peer gRPC authorizes exact source
+            replicas; TENT READ moves their bytes into the consumer Manager's
+            host memory before GPU restore. Cross-host serving is a separate gate.
           </p>
         </article>
         <article class="layer">
           <span class="package-name">03 / Prefill &amp; decode</span>
           <h3>Compose the handoff.</h3>
           <p>
-            A P/D connector transfers the current request. The cache retains KV
-            for later requests. Combined serving qualification follows
-            independent-replica sharing.
+            TENT WRITE moves current-request KV from prefill HBM to decode HBM.
+            vLLM uses OrbitKV's split connectors; SGLang keeps its native rooms
+            and loads the Rust TENT adapter. Cache reuse has a separate source
+            grant and completion contract.
           </p>
         </article>
       </div>
@@ -139,11 +143,11 @@ import { layers, localUrl } from "../data/site";
     <section class="detail-section">
       <h2>What comes next</h2>
       <p class="reading-copy">
-        The next local optimization measures transfer costs in Rust before
-        changing path selection. Local storage and Mooncake TE transfers share
-        cost observations and budgets; replica reuse, P/D handoff and TP/PP
-        consumption keep distinct completion contracts. These roles can compose
-        within one deployment. Dynamic cost selection remains planned.
+        Rust records bounded, opt-in route costs. Experimental selectors cover
+        matching peer owners and equal-coverage host routes; a unified optimizer
+        across cache restoration and P/D handoff remains planned. The next local
+        work is bounded fragmented-plan partitioning and layer/group overlap,
+        including dependencies during CUDA graph replay.
       </p>
       <p class="reading-copy">
         Qualify matching replicas on two real hosts, then P/D with reusable cache.

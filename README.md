@@ -145,7 +145,7 @@ container setup. Standalone caching requires neither etcd nor a gRPC listener.
 
 ## Architecture
 
-![OrbitKV architecture: engine-owned GPU memory, compiled page demand, and cache tiers](website/public/architecture.svg)
+![OrbitKV architecture: local restore ownership, peer cache READ and P/D WRITE](website/public/architecture.svg)
 
 The engine adapter identifies missing state and supplies GPU destinations.
 OrbitKV selects compatible cached ranges, reads them from the configured tiers,

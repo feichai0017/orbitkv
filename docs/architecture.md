@@ -24,18 +24,20 @@ fetches. The cache manager decides where to source a hit; the inference engine
 still decides when to query and save. Remote fetch is experimental. There is no
 OrbitKV KV-aware request router today.
 
-```text
-       current multi-node cache (experimental)
-   host A                                      host B
-   vLLM or SGLang                             vLLM or SGLang
-   engine-owned HBM                           engine-owned HBM
-        | CUDA IPC + UDS/iceoryx2                   | CUDA IPC + UDS/iceoryx2
-   Cache Manager A ---- Mooncake RDMA/TCP ---- Cache Manager B
-   pinned DRAM / SSD                         pinned DRAM / SSD
-            \                                   /
-             \---- etcd members/placement ----/
-      catalog shards embedded in Managers; one copy per shard
-```
+The diagram separates four payload routes:
+
+| Route | Submission owner | Control and completion |
+| --- | --- | --- |
+| Raw local DRAM → HBM | Engine's Rust executor | Manager source grant; shared memfd arenas; engine GPU drain; asynchronous source retirement |
+| Publish, SSD or encoded Restore | Manager GPU/storage worker | CUDA IPC tensor registration; retained source/destination and staging owners through completion |
+| Historical peer KV → local cache → HBM | Requester Manager, then its existing local Restore route | Catalog candidates and source gRPC authorization; TENT READ; acknowledged source release |
+| Current prefill KV → decode HBM | Engine P/D adapters | TENT WRITE; vLLM split-connector protocol or SGLang native bootstrap/rooms |
+
+UDS transfers descriptors during session setup; iceoryx2 carries local cache
+commands. Shared completion records and eventfd wakeups report local restore
+progress. etcd maintains membership, epochs and fixed catalog placement in the
+background, outside the cache lookup path. Peer metadata still uses gRPC.
+
 
 Single-node deployment connects engines to their host's Cache Manager and needs
 neither Catalog nor peer gRPC. The Manager shares external capacity across

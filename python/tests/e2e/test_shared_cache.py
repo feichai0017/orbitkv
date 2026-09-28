@@ -69,6 +69,7 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                 queue_warmup="off",
                 prepare_requests="off",
                 trace_transfers=False,
+                deterministic_inference=True,
                 read_batch_mib=32,
                 read_timeout_ms=0,
                 read_max_batches=0,
@@ -89,16 +90,9 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                 ]
             )
             if engine == "vllm":
-                launch.env["VLLM_BATCH_INVARIANT"] = "1"
                 launch.command.extend(["--gpu-memory-utilization", "0.35", "--enforce-eager"])
             else:
-                launch.command.extend(
-                    [
-                        "--mem-fraction-static",
-                        "0.35",
-                        "--enable-deterministic-inference",
-                    ]
-                )
+                launch.command.extend(["--mem-fraction-static", "0.35"])
             launches[node] = launch
             managers[node] = resources.enter_context(contextlib.ExitStack())
             engines[node] = resources.enter_context(contextlib.ExitStack())

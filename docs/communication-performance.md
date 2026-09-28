@@ -1,5 +1,63 @@
 # Local communication measurements
 
+## Repeated serving comparison after strided DMA
+
+Native source `d94a3b26` adds registration-aware 2D CUDA copies. A matched
+Qwen3-8B gate compares each engine's HBM-only cache, native CPU offload,
+OrbitKV raw DRAM Restore and LMCache 0.5.5. It uses one H20, TP=1, CPU set
+`8–23`, 16,384 GPU KV tokens, 8,192 prefill tokens and 16 GiB host capacity.
+The deterministic workload has concurrency 4, 12 prefixes, 1,024/4,096 input
+tokens, 16 output tokens, seed `20260920` and 64 measured requests per cohort.
+Its 30,720-token working set exceeds HBM capacity. Preparation and cache drain
+are outside measured throughput; the complete admitted request window is inside.
+
+Cells are **median of three per-run measurements**, not pooled percentiles.
+
+| Backend | vLLM requests/s | vLLM P95 TTFT, ms | SGLang requests/s | SGLang P95 TTFT, ms |
+| --- | ---: | ---: | ---: | ---: |
+| Native HBM only | 3.1388 | 1172.28 | 3.5583 | 1249.66 |
+| Native CPU offload | 4.5645 | 654.16 | 7.3567 | 661.56 |
+| OrbitKV | 4.3784 | 636.60 | 7.1914 | 706.42 |
+| LMCache | 4.1629 | 820.45 | 6.8314 | 677.26 |
+
+OrbitKV throughput is 5.18%/5.27% above LMCache for vLLM/SGLang, but
+4.08%/2.25% below native CPU offload. SGLang P95 TTFT is 6.78% above its
+native CPU cache and 4.31% above LMCache. The native HBM comparison includes
+recomputation after eviction; it is not a resident-HBM latency comparison.
+These results do not establish that 2D DMA itself caused a serving improvement:
+a repeated before/after implementation control is still required. The
+native-CPU throughput gap and SGLang tail remain open acceptance items.
+
+All 24 accepted cohorts completed. Across them, 1,152 non-native requests
+matched the text of their corresponding native controls, with no missing pairs.
+This qualifies the synthetic deterministic output controls, not model quality.
+Both cost collection and tracing were disabled. A 100 ms process audit found no
+Cargo/rustc activity in accepted cohorts; Manager and extension SHA-256 hashes
+remained unchanged. The initial third round detected a background Cargo check
+and was discarded; the complete round was rerun. This is a process audit, not
+proof of exclusive machine use.
+
+Reproduce from the repository root with the pinned engine environment. Use
+`--engine vllm|sglang` and `--backend native|cpu|orbitkv|lmcache` for each
+cohort; only OrbitKV receives `--orbitkv-transfer-backend direct`:
+
+```bash
+ORBITKV_COST_OBSERVATIONS=0 ORBITKV_TRACE_TRANSFERS=0 \
+  taskset -c 8-23 .venv/vllm-release/bin/python -m benches.single_node \
+  --engine vllm --backend orbitkv --orbitkv-transfer-backend direct \
+  --model /workspace/models/Qwen3-8B --output /path/to/fresh-run \
+  --workload sustained --lengths 1024 4096 --concurrencies 4 \
+  --duration-seconds 60 --max-requests 64 --working-set 12 --reuse-ratio 0.75 \
+  --gpu-tokens 16384 --prefill-tokens 8192 --host-gib 16 --output-tokens 16 \
+  --seed 20260920 --deterministic-inference
+```
+
+Run three rounds in backend orders `native,cpu,orbitkv,lmcache`,
+`lmcache,orbitkv,cpu,native`, then `cpu,native,lmcache,orbitkv`. Use each round's
+native cohort as the explicit `benches.report --reference-run`. Raw logs,
+commands, artifact hashes, per-cohort audits and the rejected round are retained
+under `benches/results/runs/strided-dma-20260928/deterministic-c4/`.
+
 ## Completion evidence and copy-path diagnosis
 
 The September 28 increment (`fb2c3b62`, `5b1fb1ff`) measures the native
