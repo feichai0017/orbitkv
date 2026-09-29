@@ -821,13 +821,17 @@ async fn increasing_metadata_load_records_publication_watch_rebuild_cpu_rss_and_
         .await;
         let mut remaining_records = 0;
         for observed in [&index, &rebuild_index] {
-            for node_keys in &keys_by_node {
+            for (node, node_keys) in keys_by_node.iter().enumerate() {
                 for (position, row) in observed.lookup(node_keys).iter().enumerate() {
                     if position < keys_per_node / 2 {
                         assert!(row.replicas.is_empty(), "retired key remained visible");
                     } else {
+                        let expected = capacity_record(node, position, position as u64 + 1, true);
                         assert_eq!(row.replicas.len(), 1, "retained key disappeared");
-                        assert_eq!(row.replicas[0].metadata.medium, ReplicaMedium::Dram);
+                        assert_eq!(row.key, expected.key);
+                        assert_eq!(row.replicas[0].owner, publishers[node].member.owner);
+                        assert_eq!(row.replicas[0].sequence, expected.sequence);
+                        assert_eq!(row.replicas[0].metadata, expected.metadata.unwrap());
                         if Arc::ptr_eq(observed, &index) {
                             remaining_records += 1;
                         }
