@@ -370,7 +370,11 @@ Use `cargo test --release -p orbitkv-server --no-default-features --features
 cuda-13,mooncake --lib --no-run` during the build phase to obtain the executable.
 `ORBITKV_METADATA_ARTIFACT_DIR` preserves each owned etcd data directory, logs and
 fault summaries on success or failure and rejects a checkout-local destination.
-Without it, the test helper uses ordinary temporary directories.
+Without it, the test helper uses ordinary temporary directories. A frozen test
+binary may run without its compile-time source tree: the helper checks that tree
+when present, otherwise it checks the runtime Git root when invoked from a
+checkout. This preserves the external-output guard without creating a hidden
+source-tree dependency for remote qualification.
 
 The current run evidence is under
 `/root/orbitkv-artifacts/s2-s51-20260929/s2-1/`: `frozen-v5-manifest.json` identifies

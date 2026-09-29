@@ -21,14 +21,12 @@ impl Etcd {
             Some(root) => {
                 std::fs::create_dir_all(&root).unwrap();
                 let root = std::fs::canonicalize(root).unwrap();
-                let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../..")
-                    .canonicalize()
-                    .unwrap();
-                assert!(
-                    !root.starts_with(checkout),
-                    "metadata evidence must be outside checkout"
-                );
+                if let Some(checkout) = checkout_root() {
+                    assert!(
+                        !root.starts_with(checkout),
+                        "metadata evidence must be outside checkout"
+                    );
+                }
                 (
                     tempfile::Builder::new()
                         .prefix("etcd-")
@@ -133,6 +131,22 @@ impl Etcd {
         let _ = self.processes[node].kill();
         let _ = self.processes[node].wait();
     }
+}
+
+fn checkout_root() -> Option<std::path::PathBuf> {
+    let compiled = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if let Ok(root) = compiled.canonicalize() {
+        return Some(root);
+    }
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = std::str::from_utf8(&output.stdout).ok()?.trim();
+    std::fs::canonicalize(root).ok()
 }
 
 impl Drop for Etcd {
