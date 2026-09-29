@@ -577,8 +577,8 @@ async fn delayed_and_compacted_watch_recovers_from_a_partition_without_partial_v
     gate.set_downstream_delay(Duration::ZERO);
 
     let old_revision = index.revision().unwrap();
-    gate.partition().await;
     let partitioned_at = Instant::now();
+    gate.partition().await;
     let second_key = StateKey::new("partition-final".into(), vec![2; 32]);
     let mut second = record(4, ReplicaMedium::Dram, true);
     second.key = second_key.clone();
@@ -605,25 +605,34 @@ async fn delayed_and_compacted_watch_recovers_from_a_partition_without_partial_v
     let healed_at = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut unavailable_at = None;
+    let keys = [key.clone(), second_key.clone()];
     loop {
-        let status = index.status();
-        if !status.available {
+        let rows = index.lookup(&keys);
+        let old_complete = rows[0].replicas.len() == 2 && rows[1].replicas.is_empty();
+        let hidden = rows.iter().all(|row| row.replicas.is_empty());
+        let final_complete = rows[0].replicas.len() == 1
+            && rows[0].replicas[0].metadata.medium == ReplicaMedium::Ssd
+            && rows[1].replicas.len() == 1;
+        assert!(
+            old_complete || hidden || final_complete,
+            "Watch exposed a partial index during repair"
+        );
+        if hidden {
             unavailable_at.get_or_insert_with(Instant::now);
         }
-        let first = index.lookup(std::slice::from_ref(&key));
-        let second = index.lookup(std::slice::from_ref(&second_key));
-        if status.available
-            && status.revision.is_some_and(|value| value >= committed)
-            && first[0].replicas.len() == 1
-            && first[0].replicas[0].metadata.medium == ReplicaMedium::Ssd
-            && second[0].replicas.len() == 1
-        {
+        if final_complete {
+            assert!(
+                index.revision().is_some_and(|value| value >= committed),
+                "final candidates became visible before their revision"
+            );
             break;
         }
         assert!(Instant::now() < deadline, "compacted Watch did not rebuild");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     let unavailable_at = unavailable_at.expect("compaction rebuild never hid incomplete coverage");
+    let heal_to_complete = healed_at.elapsed();
+    let incomplete_visibility = unavailable_at.elapsed();
     assert!(reader.registration_valid() && reader.permits(source.owner()));
     let status = client.status().await.unwrap();
     std::fs::write(
@@ -632,8 +641,8 @@ async fn delayed_and_compacted_watch_recovers_from_a_partition_without_partial_v
             "configured_watch_delay_ms": 400,
             "observed_watch_delay_ms": watch_delay.as_secs_f64() * 1000.0,
             "partition_ms": partition_duration.as_secs_f64() * 1000.0,
-            "heal_to_complete_ms": healed_at.elapsed().as_secs_f64() * 1000.0,
-            "incomplete_visibility_ms": unavailable_at.elapsed().as_secs_f64() * 1000.0,
+            "heal_to_complete_ms": heal_to_complete.as_secs_f64() * 1000.0,
+            "incomplete_visibility_ms": incomplete_visibility.as_secs_f64() * 1000.0,
             "old_revision": old_revision,
             "committed_revision": committed,
             "final_revision": index.revision(),

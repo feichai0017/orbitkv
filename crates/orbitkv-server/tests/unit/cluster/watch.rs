@@ -25,3 +25,22 @@ fn unknown_watch_transport_status_resumes_while_compaction_rebuilds() {
         FollowError::Rebuild(_)
     ));
 }
+
+#[tokio::test]
+async fn watch_rpc_keeps_semantic_unknown_distinct_from_transport_unknown() {
+    let semantic = follow_rpc(async {
+        Err::<(), _>(etcd_client::Error::GRpcStatus(tonic::Status::unknown(
+            "metadata application failed",
+        )))
+    })
+    .await;
+    assert!(matches!(semantic, Err(FollowError::Rebuild(_))));
+
+    let transport = follow_rpc(async {
+        Err::<(), _>(etcd_client::Error::GRpcStatus(tonic::Status::unknown(
+            "h2 protocol error: connection reset",
+        )))
+    })
+    .await;
+    assert!(matches!(transport, Err(FollowError::Disconnected(_))));
+}

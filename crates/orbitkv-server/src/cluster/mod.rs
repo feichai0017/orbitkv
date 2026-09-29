@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch as signal;
 use tokio::task::JoinHandle;
 
-const RPC_TIMEOUT: Duration = Duration::from_secs(3);
+pub(super) const RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_MEMBERS: usize = 4096;
 const MEMBER_BYTES: usize = 1024;
 

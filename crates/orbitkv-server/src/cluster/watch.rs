@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,7 +9,9 @@ use orbitkv_state::InventoryRecord;
 use prost::Message;
 
 use super::publish::{MAX_RECORD_BYTES, Progress, record_key};
-use super::{BootstrapError, MAX_MEMBERS, MEMBER_BYTES, Member, cluster_id, parse_label, rpc};
+use super::{
+    BootstrapError, MAX_MEMBERS, MEMBER_BYTES, Member, RPC_TIMEOUT, cluster_id, parse_label, rpc,
+};
 
 const FORMAT: &[u8] = b"orbitkv/global-index/v2";
 
@@ -45,10 +48,13 @@ fn disconnected_status(status: &tonic::Status) -> bool {
             || status.message().contains("transport error"))
 }
 
-impl From<String> for FollowError {
-    fn from(error: String) -> Self {
-        Self::Disconnected(error)
-    }
+async fn follow_rpc<T>(
+    request: impl Future<Output = Result<T, etcd_client::Error>>,
+) -> Result<T, FollowError> {
+    tokio::time::timeout(RPC_TIMEOUT, request)
+        .await
+        .map_err(|_| FollowError::Disconnected("coordinator request timed out".into()))?
+        .map_err(FollowError::from)
 }
 
 pub(super) async fn run(
@@ -237,15 +243,17 @@ pub(super) async fn follow(
 ) -> Result<(), FollowError> {
     // No fragmentation: etcd preserves transaction atomicity. Oversized responses
     // fail the bounded gRPC decoder and are repaired through paginated bootstrap.
-    let mut stream = rpc(client.watch(
-        prefix,
-        Some(
-            WatchOptions::new()
-                .with_prefix()
-                .with_start_revision(*applied + 1)
-                .with_prev_key(),
+    let mut stream = follow_rpc(
+        client.watch(
+            prefix,
+            Some(
+                WatchOptions::new()
+                    .with_prefix()
+                    .with_start_revision(*applied + 1)
+                    .with_prev_key(),
+            ),
         ),
-    ))
+    )
     .await?;
     loop {
         if !view.registration_valid() {
@@ -254,12 +262,12 @@ pub(super) async fn follow(
         let response = match tokio::time::timeout(Duration::from_secs(2), stream.message()).await {
             Ok(response) => response.map_err(FollowError::from)?,
             Err(_) => {
-                rpc(stream.request_progress()).await?;
+                follow_rpc(stream.request_progress()).await?;
                 continue;
             }
         }
         .ok_or_else(|| FollowError::Disconnected("metadata Watch closed".into()))?;
-        if cluster_id(response.header())? != expected_cluster {
+        if cluster_id(response.header()).map_err(FollowError::Rebuild)? != expected_cluster {
             view.fence();
             return Ok(());
         }
