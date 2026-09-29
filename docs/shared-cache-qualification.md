@@ -264,4 +264,5 @@ idle-window eviction. Connection recovery verifies that an old requester
 completion cannot release a new runtime’s hold. These tests cannot prove
 transport revocation after a permanently lost requester. Such source pins remain
 charged until safe release or coordinated Manager teardown. Real partitions,
-two-host serving, multi-rank replicas and catalog HA remain separate gates.
+multi-rank replicas and metadata HA remain separate gates; scoped two-host TCP
+serving results are recorded above.

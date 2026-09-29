@@ -184,7 +184,8 @@ has one open SGLang ANS SSD latency gate. The route changes require their own
 Read the [architecture](docs/architecture.md),
 [hybrid recovery contract](docs/hybrid-recovery.md), and
 [distributed design](docs/distributed-cache.md). Cross-engine byte conversion,
-production catalog HA and KV-aware request routing remain planned work.
+the etcd-backed local global-index replacement and KV-aware routing remain
+planned work. See the [selected metadata design](docs/distributed-cache.md#selected-target-local-global-index-and-etcd-metadata).
 
 ## Performance
 

@@ -162,6 +162,6 @@ native and model-serving gates.
 Request preparation and read cutoffs remain opt-in. The repeated Qwen3-8B
 controls show a throughput/latency tradeoff on SGLang; see
 [the policy results](request-preparation.md#measured-results).
-Distributed serving, catalog HA, automatic hybrid lookahead and cross-host TP
+Distributed serving, metadata HA, automatic hybrid lookahead and cross-host TP
 remain outside the qualified single-node release scope. See
 [deployment support](deployment.md) and [the roadmap](roadmap.md).

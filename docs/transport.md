@@ -361,10 +361,12 @@ remain separate from the local source allocation IDs used by raw grants.
 ## Remaining work
 
 The local raw payload arena protocol and native executor are implemented.
-Next work includes bounded large-plan partitioning, layer/group readiness,
-replay-time CUDA dependencies, logical page-generation evidence, and the
-remaining serving/deployment qualification gates. CUDA IPC metadata still
-serves Publish and Manager SSD/codec routes. Peer metadata still uses gRPC;
-its planned replacement requires bounded native binary notifications and an
-authoritative grant/ACK session before removing those methods. See the
-[communication plan](communication-plan.md) and [peer-control design](peer-control.md).
+Bounded large-plan partitioning and native layer readiness are implemented;
+broader graph/topology, page-generation and deployment gates remain separate.
+CUDA IPC metadata still serves Publish and Manager SSD/codec routes. Peer
+metadata currently uses gRPC. The selected local global-index replacement moves
+directory synchronization to background etcd publication and snapshot/Watch,
+and removes foreground discovery RPCs. Source grants/completions retain gRPC;
+TENT retains payload READ/WRITE. The custom native metadata bus is outside the
+delivery plan. See the [communication plan](communication-plan.md) and
+[peer-control boundary](peer-control.md).

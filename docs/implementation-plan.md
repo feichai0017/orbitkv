@@ -224,12 +224,13 @@ decode/H2D. Directory hints never authorize a memory read. A pending remote SSD
 replica must be staged by its owner with bounded credits; that owner cannot
 recursively fetch another peer. A peer-HBM source requires an engine lease.
 
-Keep candidate indexes bounded by useful model/format domains, coalesce misses,
-batch catalog requests by host and cap fan-out. Repair incomplete evidence
-through bounded snapshots/deltas. Catalog replication preserves owner sequences
-and placement generations; the source remains authoritative for its payload
-generation and export lifetime. Directory redundancy does not guarantee multiple
-data replicas. Avoid per-page consensus or a full-cluster query broadcast.
+Current discovery uses bounded hints and batched Catalog requests. The selected
+[local global-index replacement](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+stores block metadata in etcd and synchronizes a complete local view through
+snapshot/Watch. Bound publication, staging and index capacity; fail readiness
+explicitly rather than silently evicting rows from a complete view. Foreground
+discovery uses no network requests. The source remains authoritative for payload
+generation and export lifetime; metadata replicas do not guarantee data replicas.
 
 For P/D, the completion target is the decode consumer's required state, not a
 historical cache hit. Protect producer and consumer generations, transfer cached

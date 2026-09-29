@@ -34,7 +34,7 @@ export const docGroups = [
     description: "Explore independent replicas and prefill/decode handoff.",
     items: [
       { slug: "p2p", title: "Cross-node deployment" },
-      { slug: "peer-control", title: "Peer control protocol" },
+      { slug: "peer-control", title: "Peer control boundary" },
       { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
       { slug: "distributed-cache", title: "Embedded catalog design" },
       {

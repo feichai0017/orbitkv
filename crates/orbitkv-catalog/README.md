@@ -1,5 +1,10 @@
 # OrbitKV catalog
 
+This document describes the implemented sharded Catalog. The selected
+[local global-index replacement](../../docs/distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+uses etcd block metadata and complete local snapshots; that cutover is not yet
+implemented. Keep current deployment instructions until it lands.
+
 This library embeds replica discovery in Cache Managers. It owns fixed shard
 placement, cached membership, the inventory index, and the peer gRPC catalog
 service. There is no catalog executable, Python launcher, or separate HTTP port.

@@ -11,9 +11,12 @@ model-serving fault coverage, and extend two-host DP qualification to the remain
 fault, numerical and RDMA gates.
 Build measured Rust transfer planning alongside these gates, using shared
 local/peer observations and distinct DP/P/D/TP/PP completion contracts.
-Warming gains are not a DP prerequisite. P/D with cache reuse follows; replicated
-catalogs are required before production distributed deployment. Milestone
-numbers below group work areas rather than imposing a strict serial schedule.
+Warming gains are not a DP prerequisite. P/D with cache reuse follows. The next
+metadata design replaces single-copy Catalog shards with a complete local global
+index on every Manager, synchronized through etcd block metadata. This is a plan,
+not the current runtime; quorum, synchronization and transfer-lifetime gates
+remain required. Milestone numbers group work areas rather than imposing a strict
+serial schedule.
 
 ## GPU storage
 
@@ -547,9 +550,13 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   reproduce and submit the two remaining C-string termination and terminal
   teardown defects as upstream issues/PRs. Record evidence and related fixes
   in [peer control](docs/peer-control.md#upstream-audit-2026-09-29).
-- [ ] Reconcile the native binary prototype with upstream notification fixes,
-  qualify the resulting pinned artifact and migrate all Rust/P/D consumers
-  together before replacing hot metadata RPCs.
+- [ ] Implement the [local global-index design](docs/distributed-cache.md#selected-target-local-global-index-and-etcd-metadata):
+  background etcd block publication with lease/incarnation fences and ordered
+  retry reconciliation; complete fixed-revision snapshots followed by Watch.
+- [ ] Replace Catalog lookup and inventory RPCs with local discovery and etcd
+  synchronization in one cutover. Remove fixed placement, `--catalog-nodes`,
+  the TTL hint cache and remote lookup coalescing; retain source grant/completion
+  RPCs. The isolated native binary experiment is outside the delivery plan.
 - [x] D0: sequence all owner residency transitions and keep bounded replay
   history; detect lost notifications and require resynchronization.
 - [x] D0: implement paginated inventory snapshots with a complete delta cut,
@@ -589,8 +596,10 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   cancellation and sender/receiver budgets on two real hosts for both engines.
 - [x] D1: replace the standalone directory with `orbitkv-catalog` and remove
   obsolete executables, Python launcher and fixed-directory APIs.
-- [ ] D2: implement versioned shard placement, replicated evidence, handoff and
-  bounded subscriptions; qualify partitions and coordinator/catalog failure.
+- [ ] D2: qualify complete local indexes against three-member etcd: leader loss,
+  quorum loss, snapshot/Watch compaction, delete/recreate, uncertain publication,
+  Manager restart and metadata capacity limits. Measure background churn and
+  index memory; require zero foreground directory requests for cold and warm keys.
 - [ ] D3: qualify requester peer-SSD routes and add measured source selection
   without recursive peer fetches or unbounded staging. Fixed-priority peer-SSD
   planning, source-local io_uring staging and two-phase byte/session admission
@@ -678,7 +687,7 @@ M5, with no measured latency claim. The general compiler work remains open:
   mounts separately from container functional recovery.
 - [ ] Keep all public capability claims tied to a reproducible test.
 - [ ] Separate client and Cache Manager release artifacts when their contracts are
-  stable; catalog shards remain embedded in the Manager.
+  stable; the planned complete global index remains embedded in the Manager.
 - [ ] Keep heavy GPU/RDMA gates explicitly marked.
 - [ ] Preserve license and upstream provenance requirements.
 - [ ] Keep SGLang support claims aligned with the direct-linker E2E gate.

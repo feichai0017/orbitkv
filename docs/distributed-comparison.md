@@ -134,9 +134,10 @@ not by itself prove that a TP=4 representation can be restored by TP=8.
    completed D-side blocks should be available to a later request on another
    P. Start from the existing vLLM Mooncake adapter and separately integrate
    SGLang's handoff lifecycle. A basic P/D proxy is sufficient for this gate.
-4. Add replicated catalogs and operational HA before a production distributed
-   deployment. Cross-host TP/PP, general resharding, peer-SSD qualification and
-   KV-aware routing have separate later gates.
+4. Replace sharded Catalog discovery with complete local global indexes,
+   backed by etcd block metadata and revisioned snapshot/Watch. Qualify quorum
+   loss, repair and metadata capacity. Cross-host TP/PP, peer-SSD mixed-load
+   qualification and KV-aware routing have separate gates.
 
 Transport completion and page-lifetime safety are requirements at every stage.
 Directory hints never authorize memory reuse. Keep engine-to-Manager UDS/iceoryx2,

@@ -69,6 +69,35 @@ request, while OrbitKV can save completed blocks for reuse by later requests.
 The two paths have different ownership and failure modes. See the
 [deployment example](deployment.md).
 
+## Why the adapter sizes differ
+
+OrbitKV currently integrates at different boundaries in the two engines:
+
+| Responsibility | vLLM split connectors | SGLang TENT adapter |
+| --- | --- | --- |
+| Request bootstrap, destination grants and handoff lifecycle | OrbitKV's scheduler/worker handshake and request state | SGLang's native bootstrap, rooms and request queues |
+| Chunk/layer readiness and rank/layout mapping | OrbitKV's vLLM callbacks and layout plans | SGLang's native disaggregation implementation |
+| Native registration, batch drain and memory lifetime | Shared Rust/TENT owner | The same shared Rust/TENT owner |
+| Request routing | Example OrbitKV P/D proxy or external orchestrator | Separate SGLang router |
+
+The checked OrbitKV tree contains 6,038 Python lines in `vllm/pd/`, including
+794 proxy lines and 438 metric lines, versus 233 lines in `sglang/pd.py`.
+These are source-line counts including comments, not equivalent feature or
+complexity measurements. SGLang's adapter delegates its control lifecycle to
+the pinned upstream engine; it has not eliminated that lifecycle. Completion
+observation and plugin installation also live outside `sglang/pd.py`.
+
+vLLM 0.29.0 does include its own Mooncake connector. OrbitKV chose a separate
+split push protocol and native lifetime owner, so the extra code is not forced
+by a lack of upstream P/D support. Before replacing it with a thinner adapter,
+check the actual upstream transport contract, cancellation/drain behavior,
+layout coverage and external-cache composition. Moving request bookkeeping to
+Rust alone does not reduce the number of state machines. Keep one authoritative
+handoff lifecycle; engine callbacks own GPU-page allocation and readiness,
+while shared notification delivery, deduplication and native waiting belong to
+the Rust transport owner. Remove obsolete forwarding and duplicate state only
+with all consumers and fault/output gates updated.
+
 ## SGLang P/D over TENT
 
 The pinned SGLang `0.5.20` release already owns the hard framework-specific

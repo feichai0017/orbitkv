@@ -248,12 +248,13 @@ Neither result establishes a universal performance advantage.
    For overlap, validate actual eager and graph-replay dependencies, cancellation,
    partial enqueue and page reuse. A retained whole-operation source fence is
    still required even when the engine can consume an earlier group.
-5. **Move remote metadata only with a measured hot path.** Keep etcd membership
-   outside request execution. Complete bounded binary TENT notifications and
-   peer credits/ACKs before replacing hot metadata RPCs. Separately, the route
-   selector must consume both source leases and P/D handoff authority before it
-   can act on the unified cost evidence. Do not enable selection from stale
-   hints or merge control ACKs with payload drain evidence.
+5. **Remove directory round trips with a local global index.** Publish block
+   metadata to etcd in bounded background batches and maintain a complete view
+   through a fixed-revision snapshot and Watch. Remove Catalog lookup RPCs at
+   cutover; retain source grants/completions and upstream TENT READ/WRITE.
+   Measure remaining source-control cost before replacing its transport. The
+   route selector still needs source leases and P/D handoff authority; index
+   freshness and control ACKs never replace payload drain evidence.
 
 ### Engine-local completion evidence
 
@@ -402,37 +403,25 @@ Their current Manager execution remains a supported physical route. Moving
 CUDA submission does not remove the physical host-to-HBM transfer or establish
 an advantage over an engine's resident HBM hit.
 
-## Next: batched remote metadata messages
+## Next: local global index and background metadata
 
-Keep etcd membership, epochs and placement outside the per-request lookup
-path. Retain ordinary RPC for bootstrap and low-frequency management. Define
-batched grant, completion, acknowledgement and credit messages around the
-existing source authority on one bounded TENT control session. Replace the
-hot source-control RPC methods when that session passes its qualification gates;
-do not retain a second runtime protocol or an automatic gRPC fallback.
+The selected [distributed design](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+replaces sharded Catalog discovery with a complete local global index at every
+Manager. etcd stores block locations and membership; publication, snapshot and
+Watch run in background. Both warm and previously unqueried keys use local
+discovery. No etcd call or remote Catalog fallback enters the request path.
 
-The pinned TENT source contains an RDMA SEND/RECV notification backend, but its
-current C ABI truncates C strings, its native receive queues are unbounded,
-and notification transport selection is not peer-specific. Its TCP backend
-uses a control RPC. Native length-aware framing, bounded queues, peer transport
-selection and bounded submission must be implemented before moving OrbitKV's
-metadata authority onto it. A bounded Rust channel alone does not bound native
-memory. A successful notification send is not proof that the receiver consumed
-it or that a separate payload READ drained.
+Retain bounded batched OrbitKV source grants/completions and Mooncake TENT
+READ/WRITE. Remove Catalog serving, placement, lookup coalescing and TTL hints
+together at cutover. The custom native binary prototype is outside this plan;
+its application protocol was never deployed. The [control boundary and upstream
+audit](peer-control.md) distinguish it from independent upstream defects/fix PRs.
 
-The [upstream audit](peer-control.md#upstream-audit-2026-09-29) distinguishes
-defects in the pinned release from fixes already in Mooncake main, related open
-PRs and two newly submitted regressions. Reuse upstream fixes when updating the
-native base; submitting them does not complete OrbitKV's binary session cutover.
-
-Only after revocation/drain is qualified should hotspot grants be issued ahead
-of demand. Each grant must hold the precise source allocation and consume a
-bounded budget. A local directory hint is not an authorization. Unused and
-in-flight grants need distinct retirement paths; lease expiry cannot release
-memory still accessible to submitted READs.
-
-The [peer-control design](peer-control.md) defines the target messages, credits,
-epochs, acknowledgements, native prerequisites and source-control cutover.
+Qualify ordered publication, snapshot/Watch repair, index capacity, etcd quota/
+churn, leader/quorum loss and both engines' remote serving. Source lifetimes are
+independent: an expired metadata record cannot release memory still reachable
+by an undrained READ. Measure source RPC cost after local-index cutover before
+proposing another transport, and keep application protocols in OrbitKV.
 
 ## Implementation and deletion gates
 
@@ -447,8 +436,8 @@ epochs, acknowledgements, native prerequisites and source-control cutover.
 | Next: residual raw overhead | Profile native scheduling, fragmented plans and scratch reuse | Measured redundant work in the remaining path | Small-payload latency, unchanged source/destination drain guarantees and failure gates |
 | Implemented: large raw plans | Bounded parts under one operation ID, with a final completion fence and per-session metadata credits | Rejection solely because a compacted plan exceeds the 1 MiB shared bank | Fragmented large-prefix bytes, cancellation between partitions and bounded plan/source credits |
 | Implemented, H20 dense/hybrid serving qualified: raw execution overlap | Native layer events with one final retirement fence; vLLM layer callbacks/full-graph entry waits and SGLang external graph waits | vLLM asynchronous load notification bookkeeping, SGLang per-request Restore window and whole-operation first-use wait | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
-| Next: native metadata | Bounded binary notification API and per-peer transport selection | Unsafe string framing and first-transport notification dispatch | Size/queue limits, unreachable peer, mixed transports and native shutdown |
-| Next: peer session | Batched lookup/grant/completion with application ACK and credits | Corresponding hot gRPC methods, retry owner and protobuf messages | Loss, duplication, reorder, restart, corruption, slow peer and multi-host qualification |
+| Next: global synchronization | Fenced etcd publication, snapshot/Watch and complete local index | Sharded inventory replay and Catalog hosting | Delete/recreate, uncertain writes, compaction, restart, memory and etcd quota limits |
+| Next: local discovery | Warm/cold-key local lookup; existing source grants and TENT payloads | Catalog lookup RPCs, fixed placement, TTL hints and remote lookup coalescing | Zero foreground discovery RPCs, two-host output controls, three-member etcd failures and metadata cost |
 
 Each cutover replaces its old implementation and updates all callers in the
 same change. Capability-specific SSD preparation or codec work remains with

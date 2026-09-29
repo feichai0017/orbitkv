@@ -160,6 +160,41 @@ The etcd connector currently exposes HTTP endpoints; TLS/auth, multi-host clock
 qualification and replica failover remain open. A three-member etcd deployment
 protects its own control plane; it does not replicate the embedded catalogs.
 
+## Catalog availability and etcd
+
+Hosting the same Catalog service on every Manager does not replicate its
+contents. Three different indexes exist:
+
+| State | Contents | Current placement |
+| --- | --- | --- |
+| Owner inventory | This Manager's sealed DRAM/SSD residencies and versions | Local to the storage owner; source authorization checks it |
+| Catalog shard | Candidate locations advertised by owners for keys in this shard | One assigned Manager per shard, selected from `--catalog-nodes` |
+| Requester candidate cache | Recently useful remote locations | Bounded local hints, not a complete global snapshot |
+
+For example, Manager A can retain a KV block while Manager C hosts the shard
+containing its location. If C fails, etcd can still identify A and C, but it
+cannot answer which block A holds: etcd stores membership, epochs and placement,
+not per-block locations. A requester with a valid cached candidate can still
+ask A to authorize a READ; a cold requester can miss until C returns and owner
+inventories rebuild the shard. Current placement does not automatically move
+the missing shard to another live Manager.
+
+Metadata availability protects remote reuse, not payload durability. The
+implemented single-copy design can degrade to bounded misses/recomputation
+during a directory outage without making stale source memory safe to read.
+etcd replication currently covers only its member/placement records.
+
+The selected [replacement design](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+stores block locations in etcd and maintains a complete local global index on
+every Manager. It follows FlexKV's local global-discovery pattern; FlexKV uses
+Redis while OrbitKV will use revisioned etcd snapshot/Watch. This removes remote
+Catalog hosting, replica placement/migration and the custom TENT metadata bus.
+
+This is not implemented yet. etcd quorum, complete snapshot/Watch recovery,
+metadata capacity and live payload owners remain availability requirements.
+Every READ still needs exact source validation and a pin; index rows never
+authorize memory access.
+
 ## Limits and observability
 
 `--inventory-journal-bytes` defaults to 16 MiB divided across shard streams.

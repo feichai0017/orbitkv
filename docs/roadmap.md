@@ -1,7 +1,7 @@
 # OrbitKV roadmap
 
 The execution order is single-node hybrid-layout qualification, independent-replica
-cache sharing (DP), P/D plus cache reuse, then replicated catalogs and scale.
+cache sharing (DP), P/D plus cache reuse, then local global indexes and scale.
 Cancellation and transport lifetime safety apply at every stage. Cross-host
 TP/PP and KV-aware routing have later gates. See the
 [deployment comparison and priority rationale](distributed-comparison.md).
@@ -17,8 +17,8 @@ The starting point is a tested single-node DRAM/SSD path for both pinned engine
 releases, with TP=1 dense full-attention as the shared qualification baseline.
 Owned asynchronous queries, byte admission, shared backing reads and GPU
 completion lifetimes already exist. Embedded catalog discovery and membership
-also exist; real two-host serving, catalog replication and online placement
-changes remain unqualified or unimplemented. Automatic queued warming stays
+also exist; scoped two-host TCP serving passes, while the local global-index
+replacement and broader failure/RDMA qualification remain open. Automatic queued warming stays
 opt-in because the recorded controls do not establish a throughput benefit.
 
 SGLang hybrid pools and vLLM window/aligned recurrent groups use the same recovery
@@ -47,8 +47,8 @@ the later general semantic compiler.
 | Implemented, opt-in: bounded preparation | Small arrival-order lookahead, retained leases, bounded reads and stopping controls. | Three matched pairs per engine completed. Keep off by default because SGLang P95 regresses despite a throughput gain; cutoffs also reduce throughput. |
 | First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TENT path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
 | Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; qualify the implemented SGLang native handoff/TENT adapter, then compose it with external caching. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
-| Before production distributed deployment: catalog HA | Add replicated catalog evidence, versioned placement, handoff/repair and operational failure handling. | Three catalog failure domains, partitions, lease expiry, etcd outage and placement changes; bounded replay, source holds and staging. Replicating etcd alone does not replicate the catalog. |
-| Later expansion | Calibrated peer selection over the implemented remote DRAM/SSD routes, broader model recovery, copy/compute overlap and optional Dynamo routing. | Each has its own recovery, resource and performance gate; remote SSD still needs two-host qualification, while cross-host TP/PP, resharding and cross-engine format conversion are separate capabilities. |
+| Next distributed metadata: local global index | Store block locations in etcd and synchronize a complete view at each Manager; remove sharded Catalog discovery. | Three-member etcd failures, snapshot/Watch repair, ordered publication and bounded metadata resources; zero foreground directory RPCs. Source lifetimes and payload durability remain separate. |
+| Later expansion | Calibrated peer selection over the implemented remote DRAM/SSD routes, broader model recovery, copy/compute overlap and optional Dynamo routing. | Each has its own recovery, resource and performance gate; remote SSD has scoped two-host TCP evidence; mixed-load/RDMA, cross-host TP/PP and cross-engine format conversion have separate gates. |
 
 Start the two-host DP harness once the ordinary-demand lifetime gate passes;
 local preparation and retention tuning can continue alongside it. A warming
@@ -96,11 +96,12 @@ below remain independent.
    catalog replay and bounded failed transfers. Start with full attention,
    then carry the same complete-state contract into hybrid remote recovery.
    Qualify vLLM and SGLang separately; cross-engine byte reuse is not implied.
-4. **Qualify P/D with cache reuse, then catalog HA.** Verify that a P-side
-   external-cache hit still produces a complete D-side handoff, and that later
-   requests can reuse completed state. Catalog replication, repair and placement
-   changes precede production distributed deployment. KV-aware request routing
-   and cross-host TP/PP follow these gates.
+4. **Qualify P/D reuse and local global-index availability.** A P-side cache
+   hit must produce a complete D-side handoff and reusable completed state.
+   Replace sharded Catalog discovery with etcd-synchronized local indexes;
+   qualify quorum failure, Watch repair and metadata scale. See
+   [the selected design](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata).
+   KV-aware routing and cross-host TP/PP have separate topology gates.
 
 Local performance work continues alongside DP: retain the existing
 [preparation](request-preparation.md) and Rust [retention/write-admission](cache-policies.md)
@@ -131,7 +132,7 @@ each reference, distinguish released implementations from proposals, and require
 ownership and workload evidence before changing policy defaults. The immediate
 GDS work now has bounded async submission and read/write scheduling; native
 measurements and placement tuning follow. This does not delay the DP, P/D and
-catalog-HA gates above.
+metadata-availability gates above.
 
 Use Qwen3-8B and the pinned engine releases for continuity. Compare native
 engine behavior and ordinary OrbitKV demand before adding compatible LMCache
@@ -259,12 +260,11 @@ continues.
 ## M2.5: recoverable multi-node cache
 
 The [distributed cache design](distributed-cache.md) selects etcd for membership
-and configuration, an embedded replica catalog, and Mooncake TE for payloads.
-D0 inventory recovery and D1 candidate discovery, leased membership, fixed
-placement and embedded catalog serving are implemented. Directory replicas and
-online migration remain planned. The first serving
-gate uses matching dense-attention namespaces and TP=1, testing each engine
-separately.
+and block-location metadata, complete local global indexes, and Mooncake TENT
+for payloads. That replacement is not implemented yet. Current D0/D1 uses owner
+recovery, candidate hints and single-copy embedded shards; scoped two-host TCP
+serving passes for each engine. Keep those results as a comparison baseline
+and qualify the new synchronization path separately.
 
 Deliver in order:
 
@@ -284,15 +284,16 @@ Deliver in order:
   epochs, lease deadlines, bounded snapshots and Watch repair; new remote work
   stops when membership evidence or registration validity is unavailable;
 - D1 deployment (implemented): per-shard inventory replay and catalogs embedded
-  in Managers; standalone directory binaries and flags removed. Cross-host
-  serving and orphaned-transfer revocation qualification remain open;
-- D2: versioned rendezvous shard placement, replicated evidence, handoff,
-  bounded subscriptions and failure recovery;
+  in Managers; standalone directory binaries and flags removed. Scoped two-host
+  TCP serving passes; RDMA and orphaned-transfer revocation remain open;
+- D2: etcd block metadata and complete local global indexes, revisioned recovery,
+  three-member coordinator failure gates and removal of Catalog discovery RPCs;
 - D3: qualify the implemented remote SSD staging route and add calibrated source
   selection under sender and receiver budgets.
 
 The requesting Manager plans transfers. Source Managers validate and pin data;
-directory hints cannot authorize reads. Per-block operations do not use etcd.
+directory hints cannot authorize reads. Current etcd stores no blocks; the target
+publishes block metadata in background without per-request etcd calls.
 Retain prior baseline reports and compare metadata traffic and recovery costs.
 
 Gate:
@@ -305,7 +306,7 @@ Gate:
 - multi-node measurements separate discovery RPCs, coordinator activity,
   synchronization traffic, source authorization and payload transfer;
 - catalog index memory, replay history, source pins and destination staging
-  remain bounded, including during repair and placement changes.
+  remain bounded, including during full index rebuild and metadata lease expiry.
 
 ## M3: KV-aware routing and physical planning
 
