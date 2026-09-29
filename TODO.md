@@ -170,6 +170,11 @@ qualification remain open. See the
   engines' dense/hybrid DRAM/SSD serving gates. Preserve the final drain fence;
   Manager codec/SSD execution and multipart early publication remain separate
   execution work. See [the layer gate](docs/engine-local-restore.md#layer-readiness-qualification-2026-09-29).
+- [x] Measure the complete layer-readiness/scheduling increment against its
+  previous implementation, native HBM, native CPU and LMCache in three reversed
+  orders per engine. All 30 cohorts pass exact outputs; vLLM gains repeat, while
+  SGLang throughput remains unchanged and its native CPU gap stays open. See
+  [the full comparison](docs/communication-performance.md#repeated-serving-comparison-after-layer-readiness).
 - [x] Run the [three-pair DRAM/raw comparison](docs/implementation-plan.md#dmakernel-comparison-final-evidence)
   on both engines. Fixed kernel exceeds throughput and TTFT p50 regression
   budgets in both cells; keep the default direct backend for these layouts.

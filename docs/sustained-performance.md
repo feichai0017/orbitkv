@@ -5,6 +5,10 @@ OrbitKV DRAM and OrbitKV SSD backing. This extends the
 [concurrent burst baseline](concurrent-performance.md) with ongoing arrivals
 and final drain checks. It also exposed and fixed a vLLM restore-admission stall.
 
+The latest [three-round before/after comparison](communication-performance.md#repeated-serving-comparison-after-layer-readiness)
+uses 30 cohorts and records both the vLLM gain and the remaining SGLang native
+CPU gap. The measurements below describe earlier implementation increments.
+
 ## Deterministic C4 qualification after completion evidence
 
 The September 28 final production build passes a separate deterministic C4

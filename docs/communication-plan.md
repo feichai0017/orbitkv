@@ -65,9 +65,10 @@ The native executor now publishes per-layer events while retaining one final
 source-retirement fence. vLLM uses synchronous admission, per-layer callbacks
 for eager/piecewise execution and a dependency on all restored layers at full-graph
 entry. SGLang installs persistent external events before first capture and orders
-each pool's copies by their consuming layer. Serving and performance qualification
-remain separate gates. The communication-branch production build
-passed the scoped Qwen3-8B DRAM correctness gates in both pinned engines. The exact ownership and
+each pool's copies by their consuming layer. Dense/hybrid DRAM/SSD correctness
+and graph gates pass on H20. The [three-round comparison](communication-performance.md#repeated-serving-comparison-after-layer-readiness)
+shows a vLLM serving gain; SGLang throughput is unchanged within the observed
+ranges and remains behind native CPU offload. The exact ownership and
 remaining gates are described in [engine-local Restore](engine-local-restore.md).
 
 The initial executor cutover regressed serial Restore. The subsequent idle
@@ -359,6 +360,10 @@ offload. SGLang tail latency also remains higher. These comparisons do not
 isolate the effect of 2D DMA: a repeated before/after implementation control
 is still required before attributing a serving speedup to this change.
 
+The subsequent [layer-readiness comparison](communication-performance.md#repeated-serving-comparison-after-layer-readiness)
+adds an explicit pre-change implementation control. It supersedes these serving
+numbers for the current code; it still does not isolate the earlier 2D DMA change.
+
 ## Bounded large restores and remaining execution overlap
 
 Raw plans are automatically partitioned under one whole-operation fence. The
@@ -436,7 +441,7 @@ epochs, acknowledgements, native prerequisites and source-control cutover.
 | Completed: raw plan and idle readiness | Allocation-aware run compaction before encoding; query idle streams and reuse the busy-stream event | Per-page descriptors for contiguous runs and redundant GPU event submission on idle streams | [Matched measurements](communication-performance.md), large dense plan bytes, lease preservation on invalid or over-budget plans, and reused-event readiness |
 | Next: residual raw overhead | Profile native scheduling, fragmented plans and scratch reuse | Measured redundant work in the remaining path | Small-payload latency, unchanged source/destination drain guarantees and failure gates |
 | Implemented: large raw plans | Bounded parts under one operation ID, with a final completion fence and per-session metadata credits | Rejection solely because a compacted plan exceeds the 1 MiB shared bank | Fragmented large-prefix bytes, cancellation between partitions and bounded plan/source credits |
-| Implemented, serving qualification in progress: execution overlap | Native layer events with one final retirement fence; vLLM layer callbacks/full-graph entry waits and SGLang external graph waits | vLLM asynchronous load notification bookkeeping, SGLang per-request Restore window and whole-operation first-use wait | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
+| Implemented, H20 dense/hybrid serving qualified: raw execution overlap | Native layer events with one final retirement fence; vLLM layer callbacks/full-graph entry waits and SGLang external graph waits | vLLM asynchronous load notification bookkeeping, SGLang per-request Restore window and whole-operation first-use wait | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
 | Next: native metadata | Bounded binary notification API and per-peer transport selection | Unsafe string framing and first-transport notification dispatch | Size/queue limits, unreachable peer, mixed transports and native shutdown |
 | Next: peer session | Batched lookup/grant/completion with application ACK and credits | Corresponding hot gRPC methods, retry owner and protobuf messages | Loss, duplication, reorder, restart, corruption, slow peer and multi-host qualification |
 

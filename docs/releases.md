@@ -84,6 +84,28 @@ GitHub release assets and both PyPI distributions. The workflow requires the
 repository's `PYPI_API_TOKEN` to authorize both names. Preparing a candidate or
 running the manual workflow does not test that credential or reserve the names.
 
+## Layer-readiness candidate qualification, 2026-09-29
+
+[Release candidate run 36513923017](https://github.com/feichai0017/orbitkv/actions/runs/36513923017)
+at `de451189` passes all 15 wheel targets and combined artifact validation. Its
+[PR CI run](https://github.com/feichai0017/orbitkv/actions/runs/36513885825)
+passes all 13 checks. The manual workflow does not publish a package.
+
+The downloaded CPython 3.11/CUDA 13/x86_64 artifact is
+`orbitkv_llm_cu13-0.1.0-cp311-cp311-manylinux_2_35_x86_64.whl`, SHA256
+`908b176e86e3c1af599f3a4e1ca84a5ffb97643b15f58e771f200d7d54ecf2c3`.
+It passes the wheel checker and both installed-package H20 restart gates:
+vLLM 0.29.0 and SGLang 0.5.20 each save and restore 90 MiB, reproduce their
+initial output and release all query reservations. The tests run with isolated
+Python imports, remove external TENT library directories and verify loaded
+runtime paths under the installed package.
+
+Logs, installed paths, native library identities and the wheel manifest are in
+`benches/results/runs/layered-restore-20260929/ci-wheel/`. This qualifies the new
+installed single-node artifact. The two-host evidence below belongs to the
+previous candidate; it has not been rerun with this SHA256. No PyPI release or
+RDMA qualification is claimed.
+
 ## CUDA 13 candidate qualification, 2026-09-28
 
 [Release run 36423388612](https://github.com/feichai0017/orbitkv/actions/runs/36423388612)

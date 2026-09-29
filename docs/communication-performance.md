@@ -1,5 +1,91 @@
 # Local communication measurements
 
+## Repeated serving comparison after layer readiness
+
+The September 29 candidate `de451189` combines raw per-layer CUDA dependencies,
+synchronous vLLM external-hit scheduling and SGLang consumer-ordered copies.
+Thirty accepted cohorts compare it with the pre-change `f99f14ab` implementation,
+native HBM, native CPU offload and LMCache 0.5.5 in each pinned engine. All
+**1,536 non-native requests** match their same-round native outputs, with no
+missing pairs. Each cohort also matches its own prepared-prefix outputs.
+
+This is the complete implementation increment, not an isolated attribution to
+copy/compute overlap or 2D DMA. The baseline uses the repaired wheel identified
+below; the candidate uses a source release build. They share the same engine
+virtual environment, model, hardware and benchmark inputs. The preserved artifact
+hashes identify those builds; the comparison does not eliminate build-provenance
+variation. Native overlap itself has a separate
+[CUDA event and graph-replay gate](engine-local-restore.md#layer-readiness-qualification-2026-09-29).
+
+The workload uses one H20, Qwen3-8B, TP=1, CPU set `8–23`, 16,384 GPU KV tokens,
+8,192 prefill tokens and 16 GiB host capacity. It has concurrency 4, twelve
+alternating 1,024/4,096-token prefixes, 49 reuse and 15 cold requests, 16 output
+tokens and seed `20260920`. Its 30,720-token working set exceeds HBM capacity;
+HBM-only results include recomputation after eviction. This does not compare
+external restoration with a resident HBM hit. Both cost observations and tracing
+are disabled. vLLM uses batch-invariant inference and SGLang deterministic
+inference, so compare backends within each engine.
+
+Cells are **medians of three per-run measurements**, not pooled percentiles.
+
+| Engine | Backend | Requests/s | TTFT p50, ms | TTFT p95, ms |
+| --- | --- | ---: | ---: | ---: |
+| vllm | Native HBM only | 3.1531 | 623.19 | 1172.47 |
+| vllm | Native CPU offload | 4.5639 | 236.82 | 656.12 |
+| vllm | OrbitKV before | 4.3815 | 265.71 | 638.17 |
+| vllm | OrbitKV layer readiness | 5.1994 | 190.98 | 630.83 |
+| vllm | LMCache 0.5.5 | 4.1476 | 303.53 | 819.13 |
+| sglang | Native HBM only | 3.5182 | 759.60 | 1246.97 |
+| sglang | Native CPU offload | 7.3635 | 198.78 | 660.82 |
+| sglang | OrbitKV before | 7.2556 | 212.69 | 677.06 |
+| sglang | OrbitKV layer readiness | 7.2402 | 205.61 | 680.13 |
+| sglang | LMCache 0.5.5 | 6.8131 | 215.90 | 678.25 |
+
+vLLM throughput improves **18.67%** over the old implementation, **13.93%** over
+native CPU offload and **25.36%** over LMCache in this workload. TTFT p50 improves
+28.12% versus the old implementation. All three candidate throughput values
+(5.1765–5.2056 requests/s) exceed all three baseline values (4.3691–4.3922).
+The change also removes an asynchronous load scheduling interval; these numbers
+must not be presented as the isolated effect of overlapping GPU copies.
+
+SGLang does **not** demonstrate a throughput improvement from this increment:
+7.2402 versus 7.2556 requests/s, **-0.21%**, with overlapping ranges. Its TTFT p50
+improves 3.33%, while p95 increases 0.45%. Candidate throughput remains **1.67%**
+below native CPU offload and **6.27%** above LMCache. Its p95 remains 2.92% above
+native CPU and 0.28% above LMCache. Keep the native CPU gap open; native event
+correctness and observed overlap do not imply a serving speedup in every engine.
+
+Every cohort passes its post-window cache/drain assertions. The 100 ms process
+audit observes no Cargo/rustc activity, and all Manager, extension, adapter and
+benchmark source hashes remain unchanged during each run. Small standalone C++
+checks on CPU set `0–3` overlapped part of the matrix; large compilation and other
+GPU qualification started only after it finished. This is not proof of exclusive
+machine use or a hard affinity budget for every native worker thread.
+
+### Artifacts and reproduction
+
+Raw logs, commands, per-cohort audits, output comparisons and
+`accepted-summary.json` are retained under
+`benches/results/runs/layered-restore-20260929/deterministic-c4/`.
+The frozen baseline wheel SHA256 is
+`eef36f8406ae854a9ea1567da5ac09adba5a3d6f17077cca99d7be6fdd3ff163`.
+
+| Build | Manager SHA256 | Extension SHA256 |
+| --- | --- | --- |
+| Before | `85a38e9b5600854524cf3f3505ae79b9b1dc1e67594a4c3f2b4d2bef17db4ed5` | `65437c4b7e7985c4265c449b23129a96325e74124dcf14b7f7ab01497d58140b` |
+| After | `93e962a4e2be44bd42a7ec255ab4fa1cd541ab3268cffc69ba7190c74cdc2be2` | `e4b4d552e2c98c8feddaa0142b8d60b3334b507256df82db8fef603a89ab5b70` |
+
+Use the command in the strided-DMA section below with `--settle-seconds 1.2`.
+Run both engines in three backend orders:
+`native,cpu,before,after,lmcache`, `lmcache,after,before,cpu,native`, then
+`cpu,native,before,lmcache,after`. Before/after both select `--backend orbitkv
+--orbitkv-transfer-backend direct`, with their own matching Manager, extension
+and Python package. Give every cohort a new output directory. Run
+`python -m benches.report ... --reference-run <same-round-native-run>` for
+matched output checks; retain the audit alongside each result. Preparation,
+cache drain and engine startup are outside throughput; all admitted request
+completions remain inside the measured window.
+
 ## Repeated serving comparison after strided DMA
 
 Native source `d94a3b26` adds registration-aware 2D CUDA copies. A matched

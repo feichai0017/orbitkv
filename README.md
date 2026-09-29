@@ -159,7 +159,8 @@ raw DRAM copies execute in the engine, while SSD/codec work remains with Manager
 workers. The same adapter API serves these routes and experimental remote
 fetches. The local executor partitions fragmented raw plans into at most 1 MiB
 parts under one whole-operation fence, with 32 MiB operation and 64 MiB session
-metadata limits. Layer/group consumption overlap remains future work. See
+metadata limits. Raw per-layer CUDA dependencies allow consumption before later
+copies finish, with external-event graph replay and a final ownership fence. See
 [execution scope and remaining gates](docs/engine-local-restore.md).
 
 The [implementation plan](docs/implementation-plan.md) maps pinned LMCache,

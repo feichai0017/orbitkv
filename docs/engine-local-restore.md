@@ -354,8 +354,10 @@ is not a P/D transfer qualification.
 Raw logs and the source/binary manifest are under
 `benches/results/runs/layered-restore-20260929/`. Reproduction switches are in
 [the Python test guide](../python/tests/README.md). These gates establish
-correctness and native copy/compute overlap. Serving throughput must be reported
-from the separately repeated, matched before/after and native/LMCache controls.
+correctness and native copy/compute overlap. The separate
+[30-cohort serving matrix](communication-performance.md#repeated-serving-comparison-after-layer-readiness)
+passes exact output controls. It shows a vLLM improvement for the full scheduling
+and copy increment; SGLang throughput does not improve over the old implementation.
 
 ## Qualification gates
 
@@ -387,8 +389,9 @@ still copying at the precise SIGKILL instant. The engine-death case proves
 quarantine after claim, not death during a proven in-flight copy. Serialization
 tests and normal exporter teardown cannot fill those gaps. Single-GPU dense
 Qwen3-8B DRAM serving and restart reuse now pass in both pinned engines;
-hybrid serving errors, every advertised graph mode, multiple GPUs, huge-page
-imports, and sustained allocator pressure remain outside that qualification.
+the later layer-readiness gate above adds dense/hybrid DRAM/SSD and graph evidence.
+Multiple GPUs, huge-page imports and sustained allocator pressure remain outside
+those qualifications.
 Record further results against exact binaries and configuration before
 broadening those claims.
 
