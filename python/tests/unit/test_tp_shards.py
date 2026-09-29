@@ -25,6 +25,7 @@ from orbitkv.vllm.worker import WorkerConnector  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _available_local_sockets(monkeypatch):
+    monkeypatch.setattr("orbitkv.vllm.runtime.install_restore_boundary", lambda: None)
     monkeypatch.setattr("orbitkv.vllm.connector.derive_namespace", lambda *_a, **_k: "identity")
     monkeypatch.setattr("orbitkv.client.connection._is_unix_socket", lambda _path: True)
     monkeypatch.setattr(
@@ -444,7 +445,11 @@ def test_scheduler_rejects_invalid_shard_query_results_without_leaking_lease(inv
         second.release.assert_called_once_with(invalid_ready.lease)
 
 
-def test_worker_selects_the_lease_for_its_local_server():
+def test_worker_selects_the_lease_for_its_local_server(monkeypatch):
+    monkeypatch.setattr(
+        "orbitkv.vllm.worker.torch.cuda.current_stream",
+        lambda _device=None: SimpleNamespace(cuda_stream=17),
+    )
     engine_client = MagicMock()
     engine_client.start_restore.return_value = SimpleNamespace(key="restore-1")
     context = _context(
@@ -466,7 +471,7 @@ def test_worker_selects_the_lease_for_its_local_server():
     )
 
     try:
-        worker.start_load_kv(metadata, SimpleNamespace(no_compile_layers={}))
+        worker.start_load_kv(metadata)
     finally:
         worker._registered_layers = []
         worker.shutdown()

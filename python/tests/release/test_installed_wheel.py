@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -63,14 +64,19 @@ def test_installed_wheel_recovers_after_engine_restart(engine, model, tmp_path):
         for key, value in os.environ.items()
         if not key.startswith(("PYTHON", "ORBITKV_"))
     }
-    # Do not let the source checkout's staged libraries satisfy wheel dependencies.
+    # Exclude both source-tree and externally staged Mooncake libraries.
+    native_libraries = ("libtent_shared.so", "libmooncake_common.so", "libasio.so")
     env["LD_LIBRARY_PATH"] = os.pathsep.join(
         part
         for part in env.get("LD_LIBRARY_PATH", "").split(os.pathsep)
-        if part and "/.orbitkv/" not in part and not part.endswith("/python/orbitkv")
+        if part
+        and "/.orbitkv/" not in part
+        and not part.endswith("/python/orbitkv")
+        and not any((Path(part) / name).exists() for name in native_libraries)
     )
     env.update(
         ORBITKV_CACHE_SCOPE=tmp_path.name,
+        MC_FORCE_TCP="1",
         VLLM_BATCH_INVARIANT="1",
         TORCHINDUCTOR_CACHE_DIR=str(tmp_path / "inductor"),
         TRITON_CACHE_DIR=str(tmp_path / "triton"),
@@ -81,15 +87,41 @@ def test_installed_wheel_recovers_after_engine_restart(engine, model, tmp_path):
             sys.executable,
             "-I",
             "-c",
-            "import importlib.metadata as m, json, pathlib, sysconfig, orbitkv; "
-            "p=pathlib.Path(orbitkv.__file__).resolve(); "
-            "assert p.is_relative_to(pathlib.Path(sysconfig.get_path('purelib')).resolve()), p; "
-            "d=m.distribution('orbitkv-llm-cu13' if m.packages_distributions()"
-            "['orbitkv']==['orbitkv-llm-cu13'] else 'orbitkv-llm'); "
-            "assert not json.loads(d.read_text('direct_url.json') or '{}')"
-            ".get('dir_info',{}).get('editable',False); "
-            "assert orbitkv.__version__==d.version; "
-            "print(json.dumps({'package':str(p),'version':d.version}))",
+            textwrap.dedent("""
+                import importlib.metadata as metadata
+                import json
+                import os
+                from pathlib import Path
+                import sysconfig
+                import orbitkv
+
+                package = Path(orbitkv.__file__).resolve()
+                assert package.is_relative_to(Path(sysconfig.get_path("purelib")).resolve()), package
+                distributions = metadata.packages_distributions()["orbitkv"]
+                assert len(distributions) == 1, distributions
+                distribution = metadata.distribution(distributions[0])
+                assert not json.loads(distribution.read_text("direct_url.json") or "{}").get(
+                    "dir_info", {}
+                ).get("editable", False)
+                assert orbitkv.__version__ == distribution.version
+                transfer = orbitkv.MooncakeTransferEngine(bind_host="127.0.0.1")
+                names = {"libtent_shared.so", "libmooncake_common.so", "libasio.so"}
+                loaded = {
+                    Path(line.split()[-1]).resolve()
+                    for line in Path("/proc/self/maps").read_text().splitlines()
+                    if Path(line.split()[-1]).name in names
+                }
+                assert {path.name for path in loaded} == names, loaded
+                assert all(path.parent == package.parent for path in loaded), loaded
+                print(json.dumps({
+                    "package": str(package), "version": distribution.version,
+                    "native_libraries": sorted(str(path) for path in loaded),
+                    "python_libdir": sysconfig.get_config_var("LIBDIR"),
+                    "pythonhome": os.environ.get("PYTHONHOME"),
+                    "pythonpath": os.environ.get("PYTHONPATH"),
+                    "ld_library_path": os.environ.get("LD_LIBRARY_PATH"),
+                }))
+                """),
         ],
         cwd=tmp_path,
         env=env,

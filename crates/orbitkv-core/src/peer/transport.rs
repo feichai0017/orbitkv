@@ -1,27 +1,19 @@
 use std::path::Path;
-use std::ptr::NonNull;
 use std::sync::Arc;
 use std::time::Instant;
 
 use log::{error, info};
-use orbitkv_transfer::{AUTO_MEMORY_LOCATION, P2P_METADATA, TransferEngine};
+use orbitkv_transfer::{AUTO_MEMORY_LOCATION, MemoryRegistration, P2P_METADATA, TransferEngine};
 
 use crate::memory::pool::PinnedAllocator;
 
-/// Mooncake Transfer Engine plus the lifetime of the registered pinned pool.
+/// Mooncake TENT plus the lifetime of the registered pinned pool.
 pub(crate) struct MooncakeTransport {
-    engine: TransferEngine,
+    engine: Arc<TransferEngine>,
+    registrations: Vec<MemoryRegistration>,
     _pool: Arc<PinnedAllocator>,
     transfer_endpoint: String,
-    /// Base pointers of registered regions, kept for unregister on drop.
-    registered_ptrs: Vec<NonNull<u8>>,
 }
-
-// SAFETY: The registered pointers point to CUDA-pinned memory that is
-// fixed in physical memory and safe to access from any thread. The Vec
-// is only read during Drop, which is exclusive.
-unsafe impl Send for MooncakeTransport {}
-unsafe impl Sync for MooncakeTransport {}
 
 impl MooncakeTransport {
     pub(crate) fn engine(&self) -> &TransferEngine {
@@ -46,44 +38,47 @@ impl MooncakeTransport {
         }
         let bind_host = host_from_endpoint(advertise_addr)?;
         let local_server_name = format!("{bind_host}:0");
-        let engine =
+        let engine = Arc::new(
             TransferEngine::new(P2P_METADATA, &local_server_name, &bind_host, 0, nic_names)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?,
+        );
         let transfer_endpoint = engine.local_segment_name().map_err(|e| e.to_string())?;
 
-        let regions: Vec<(NonNull<u8>, usize)> = allocator.memory_regions();
-        for &(ptr, len) in &regions {
-            unsafe {
+        let regions = allocator.memory_regions();
+        let registrations = regions
+            .iter()
+            .map(|&(ptr, len)| unsafe {
                 engine
-                    .register_memory(ptr, len, AUTO_MEMORY_LOCATION)
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-
-        let registered_ptrs: Vec<NonNull<u8>> = regions.iter().map(|&(ptr, _)| ptr).collect();
+                    .register_memory_owned(ptr, len, AUTO_MEMORY_LOCATION)
+                    .map_err(|e| e.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         info!(
-            "Mooncake Transfer Engine initialised: endpoint={}, nics={}, registered {} memory region(s), elapsed={:?}",
+            "Mooncake TENT initialised: endpoint={}, nics={}, registered {} memory region(s), elapsed={:?}",
             transfer_endpoint,
             nic_names.len(),
-            registered_ptrs.len(),
+            registrations.len(),
             t0.elapsed(),
         );
 
         Ok(Self {
             engine,
+            registrations,
             _pool: allocator,
             transfer_endpoint,
-            registered_ptrs,
         })
     }
 }
 
 impl Drop for MooncakeTransport {
     fn drop(&mut self) {
-        for &ptr in &self.registered_ptrs {
-            if let Err(e) = unsafe { self.engine.unregister_memory(ptr) } {
-                error!("Failed to unregister Mooncake memory region: {e}");
+        // Unregister before the pinned-pool owner can release its backing.
+        for registration in self.registrations.drain(..) {
+            if let Err(error) = registration.unregister() {
+                // The token retries once more from Drop while its engine Arc
+                // and the pool backing are still alive.
+                error!("Failed to unregister Mooncake memory region: {error}");
             }
         }
     }

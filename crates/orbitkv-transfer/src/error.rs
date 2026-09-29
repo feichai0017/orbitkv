@@ -6,7 +6,7 @@ pub enum MooncakeError {
     NativeRuntime(String),
     #[error("invalid string: {0}")]
     InvalidString(#[from] std::ffi::NulError),
-    #[error("Mooncake Transfer Engine creation failed")]
+    #[error("Mooncake TENT creation failed")]
     Create,
     #[error("Mooncake operation {operation} failed with status {status}")]
     Operation {
@@ -23,6 +23,10 @@ pub enum MooncakeError {
     InvalidNotificationCount(i32),
     #[error("Mooncake returned a null notification buffer for {0} messages")]
     InvalidNotificationBuffer(i32),
+    #[error("invalid Mooncake notification wait")]
+    InvalidNotificationWait,
+    #[error("Mooncake notification wait for {0} timed out")]
+    NotificationTimeout(String),
 }
 
 pub type Result<T> = std::result::Result<T, MooncakeError>;

@@ -1,6 +1,6 @@
 # Distributed KV cache
 
-Managers embed the replica catalog and use Mooncake Transfer Engine for KV bytes.
+Managers embed the replica catalog and use Mooncake TENT for KV bytes.
 Distributed mode needs etcd for members and fixed placement configuration; etcd
 stores no block hashes and receives no lookup on the cache request path. This is
 an experimental deployment with one directory copy per logical shard, not HA.
@@ -35,7 +35,10 @@ orbitkv-cache-manager \
 Use concrete peer addresses reachable from the other hosts. Peer gRPC and
 Mooncake's P2P handshake/data endpoints use separate ports on that host. Optional
 `--nics mlx5_0,mlx5_1` filters RDMA rails; omitted, Mooncake selects an available
-transport including TCP. For a same-host TCP test set `MC_FORCE_TCP=1`.
+transport including TCP. For a same-host TCP test set `MC_FORCE_TCP=1`; OrbitKV
+then disables TENT RDMA/NVLink/MNNVL for that engine creation and temporarily
+suppresses `MC_TENT_CONF` so a general config cannot invalidate the forced-TCP
+control.
 
 There is no separate MetaServer process or `--metaserver-addr` flag. Upgrade all
 Managers together for this breaking protocol change. Engine processes retain the
@@ -72,6 +75,37 @@ State identity must match model artifacts, computation, rank topology and storag
 geometry. Source authorization, rather than metadata freshness, protects memory
 reads. Validate vLLM-to-vLLM and SGLang-to-SGLang separately; these tests do not
 establish cross-engine byte compatibility or hybrid-state completeness.
+
+The requesting Manager authorizes the next planned segment while the current
+segment's READ runs. There is one execution strategy, with bounded lookahead.
+Remote source NUMA identifiers describe the source host only. The receiver
+allocates each fetched slot beside its own registered GPU, using the sealed
+local layer/group topology. Receiver placement is excluded from the storage
+namespace, included in pending-read coalescing, and retained when fetched
+blocks are published again. A source/receiver slot-count mismatch fails before
+allocating or submitting a READ.
+
+Only one READ and one following authorization can be active per fetch plan;
+the following segment allocates destination memory only when consumed. A failed
+or partial current READ discards the unused grant. A speculative authorization
+failure is retried on demand after the current READ drains, subject to the
+existing admission limits. On resource exhaustion, authorization may wait up to
+three seconds for that peer's releases already in progress before the attempt,
+then retry once. It does not wait for unrelated active READs; a rejected ticket's
+own cleanup cannot satisfy that wait.
+The three-second bound covers only this release wait; authorization RPCs retain
+their own existing deadlines.
+Cancellation uses the existing known-ticket cleanup
+owner, including when the authorization response was lost.
+
+Source grants awaiting release acknowledgement can outlive those two active
+stages; the existing per-source 64 and global 1024 completion limits bound them.
+Lookahead can retain source memory earlier, so benchmark with identical source
+budgets and delayed release ACKs. `prepared_wait` records residence between
+authorization and consumption; speculative grants do not train the sequential
+composite route estimate. No distributed throughput improvement is claimed yet.
+See the [communication implementation sequence](communication-plan.md) for
+batched metadata and engine-side execution work that remains planned.
 
 ## Failure and configuration behavior
 
@@ -126,6 +160,41 @@ The etcd connector currently exposes HTTP endpoints; TLS/auth, multi-host clock
 qualification and replica failover remain open. A three-member etcd deployment
 protects its own control plane; it does not replicate the embedded catalogs.
 
+## Catalog availability and etcd
+
+Hosting the same Catalog service on every Manager does not replicate its
+contents. Three different indexes exist:
+
+| State | Contents | Current placement |
+| --- | --- | --- |
+| Owner inventory | This Manager's sealed DRAM/SSD residencies and versions | Local to the storage owner; source authorization checks it |
+| Catalog shard | Candidate locations advertised by owners for keys in this shard | One assigned Manager per shard, selected from `--catalog-nodes` |
+| Requester candidate cache | Recently useful remote locations | Bounded local hints, not a complete global snapshot |
+
+For example, Manager A can retain a KV block while Manager C hosts the shard
+containing its location. If C fails, etcd can still identify A and C, but it
+cannot answer which block A holds: etcd stores membership, epochs and placement,
+not per-block locations. A requester with a valid cached candidate can still
+ask A to authorize a READ; a cold requester can miss until C returns and owner
+inventories rebuild the shard. Current placement does not automatically move
+the missing shard to another live Manager.
+
+Metadata availability protects remote reuse, not payload durability. The
+implemented single-copy design can degrade to bounded misses/recomputation
+during a directory outage without making stale source memory safe to read.
+etcd replication currently covers only its member/placement records.
+
+The selected [replacement design](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+stores block locations in etcd and maintains a complete local global index on
+every Manager. It follows FlexKV's local global-discovery pattern; FlexKV uses
+Redis while OrbitKV will use revisioned etcd snapshot/Watch. This removes remote
+Catalog hosting, replica placement/migration and the custom TENT metadata bus.
+
+This is not implemented yet. etcd quorum, complete snapshot/Watch recovery,
+metadata capacity and live payload owners remain availability requirements.
+Every READ still needs exact source validation and a pin; index rows never
+authorize memory access.
+
 ## Limits and observability
 
 `--inventory-journal-bytes` defaults to 16 MiB divided across shard streams.
@@ -170,7 +239,12 @@ MC_FORCE_TCP=1 cargo test --release -p orbitkv-server \
 The first gate covers duplicate identities, epochs, Watch/compaction repair,
 coordinator stalls, membership bounds and immutable placement fencing. The second
 hosts catalog and source control on one Manager endpoint, verifies actual
-Mooncake/CUDA bytes, and checks local loads after remote admission is fenced.
+Mooncake/CUDA bytes across 260 blocks and multiple authorization segments, and
+checks local loads after remote admission is fenced. Compare its
+`p2p_mooncake_remote_fetch_roundtrip` case with the sequential baseline at commit
+`82a93448` with its pipeline disabled, under the same source budget and block count;
+the current implementation
+does not retain a sequential runtime switch.
 The ordinary Rust suite also exercises two catalog endpoints and restart repair.
 These are same-host gates; multi-host serving and HA qualification remain next.
 

@@ -14,11 +14,76 @@ pub struct CacheOwner {
     pub incarnation: uuid::Uuid,
 }
 
+#[derive(
+    Default,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum ReplicaMedium {
+    #[default]
+    Unknown,
+    Dram,
+    Ssd,
+    Hbm,
+}
+
+#[derive(
+    Default,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum ReplicaRepresentation {
+    #[default]
+    Unknown,
+    Raw,
+    Ans,
+    Fp8,
+    TurboQuant,
+    Mixed,
+}
+
+impl From<crate::StorageFormat> for ReplicaRepresentation {
+    fn from(format: crate::StorageFormat) -> Self {
+        match format {
+            crate::StorageFormat::Ans
+            | crate::StorageFormat::Ans16
+            | crate::StorageFormat::AnsFp8 => Self::Ans,
+            crate::StorageFormat::Fp8FromBf16 | crate::StorageFormat::Fp8FromFp16 => Self::Fp8,
+            crate::StorageFormat::TurboQuant { .. } => Self::TurboQuant,
+            _ => Self::Raw,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct ReplicaMetadata {
+    pub medium: ReplicaMedium,
+    pub representation: ReplicaRepresentation,
+    pub stored_bytes: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplicaLocation {
     pub owner: CacheOwner,
     /// Sequence of the insertion in this owner's current runtime inventory.
     pub sequence: u64,
+    pub metadata: ReplicaMetadata,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,6 +106,10 @@ impl BlockCandidates {
                 .sum::<usize>()
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/discovery.rs"]
+mod tests;
 
 pub fn validate_discovery_query(namespace: &str, hashes: &[Vec<u8>]) -> Result<(), &'static str> {
     if namespace.is_empty() || hashes.is_empty() || hashes.len() > DISCOVERY_MAX_KEYS {

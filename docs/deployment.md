@@ -20,9 +20,10 @@ does not establish OrbitKV compatibility.
 | --- | --- | --- |
 | Single-node vLLM or SGLang cache | Engine + independent Cache Manager | TP=1 DRAM/SSD recovery and concurrent faults validated on both; multi-rank and long-running fault soak remain open |
 | Multiple engines on one node | Engines share one Manager and its cache budget | Shared endpoint and independent instance registrations are implemented; concurrent multi-engine serving and container isolation need separate qualification |
-| Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP; [recorded scope](shared-cache-qualification.md#recorded-result) |
-| Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; [shared-cache gates](shared-cache-qualification.md) distinguish same-host TCP from real two-host/RDMA qualification; catalogs have one metadata copy |
-| vLLM P/D through OrbitKV `PdConnector` | Prefill, decode, P/D proxy; Mooncake transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
+| Independent matching replicas, TP=1 | Two engines, two Managers and etcd | Qwen3-8B sharing and restart gates pass on both engines over same-host TCP and the recorded H20/A100 TCP natural-text suite; [recorded scope](shared-cache-qualification.md#recorded-result) |
+| Shared cache across nodes | One Cache Manager per host with embedded catalog + etcd | Experimental; [two-host TCP correctness](shared-cache-qualification.md#two-host-tcp-2026-09-28) is recorded with numerical limits; RDMA and catalog replication remain open |
+| vLLM P/D through OrbitKV's split connectors | Prefill, decode, P/D proxy; Mooncake TENT transfers KV | Experimental; does not need Cache Manager or Catalog for the handoff |
+| SGLang P/D over OrbitKV TENT | SGLang prefill, decode and native router; optional node-local cache | Same-A100 TCP P/D plus cache/restart output gate passes; H20→A100 reuse passes but strict 64-token equality fails; RDMA remains open |
 | vLLM P/D through upstream NIXL | Prefill, decode, NIXL-aware router | Upstream vLLM connector; separate from OrbitKV cache |
 
 ```mermaid
@@ -33,7 +34,7 @@ flowchart LR
     M --> D[Pinned DRAM]
     M --> F[Optional SSD]
   end
-  M <-->|Mooncake Transfer Engine| P[Peer Cache Managers]
+  M <-->|Mooncake TENT| P[Peer Cache Managers]
 ```
 
 The peer connection is optional and experimental. Sharing a service does not
@@ -43,7 +44,13 @@ For integration boundaries and execution priorities, see
 [distributed deployment comparison](distributed-comparison.md).
 
 The planned [transfer policies](state-planning.md#policies-by-deployment-mode)
-share Rust cost observations and budgets across local and Mooncake TE paths.
+share Rust cost observations and budgets across local and Mooncake TENT paths.
+`ORBITKV_COST_SELECTION=1` has an effect only together with
+`ORBITKV_COST_OBSERVATIONS=1`; today it can select among equal-coverage owners
+of the same peer medium and does not enable general cross-tier policy.
+Experimental local-SSD/peer switching additionally requires
+`ORBITKV_CROSS_MEDIUM_SELECTION=1`. Leave it unset outside the dedicated H20
+qualification matrix; missing or incomparable evidence preserves fixed priority.
 They distinguish ordinary cache recovery, current-request P/D handoff and
 TP/PP completion dependencies. These deployment dimensions can compose; one
 Manager may serve instances with different roles. Dynamic cost selection and
@@ -57,8 +64,9 @@ Install the same OrbitKV build in the Manager and engine environments using the
 for GPU registration, but does not load model weights or run inference. It can
 run from a separate environment with those dependencies.
 
-Recovery-demand queries use query-body protocol version 6. Upgrade the native
-client extension and Manager together; mixed query-body versions are rejected.
+Upgrade the native client extension and Manager together; mismatched bootstrap,
+channel and cache-body versions are rejected. The current versions and boundary
+contracts are listed in [the adapter guide](adapters.md#process-channel).
 The engine still owns HBM allocation and page lifetimes.
 
 Start a DRAM cache:
@@ -100,6 +108,14 @@ not measured per-request latency. See [GPU storage](gds.md) for the exact rules.
 | Shared pinned DRAM | Manager `--pool-size` | One pool budget across attached instances |
 | SSD | Manager `--ssd-cache-path` and `--ssd-cache-capacity` | Optional external cache; backend selection stays inside the Manager |
 | Pending and leased query bytes | Manager `--query-budget` and `--query-instance-budget` | Bound total and per-instance ownership through transfer completion |
+
+Pinned-pool shards use size-sealed Linux memfds with shared mappings and CUDA
+host registration. Huge-page mode requires reserved huge pages and permission
+to create hugetlb memfds; it does not silently switch to regular pages.
+NUMA placement is established by Manager first-touch. GPU registration exports
+the payload arena FDs to the engine's native executor, which maps and registers
+them independently for raw DRAM restores. The Manager retains source leases
+and admission permits through the authoritative engine drain.
 
 Only a configured path enables SSD caching. Capacity defaults to `512gb` if
 omitted; set it explicitly to match the intended storage budget. cuFile reserves
@@ -181,24 +197,37 @@ for source references, allocator limits and the image/cluster acceptance gates.
 ## Add peer caching
 
 Keep engine connections unchanged and configure each Manager with the
-[embedded catalog and etcd membership](p2p.md). Mooncake Transfer Engine moves
+[embedded catalog and etcd membership](p2p.md). Mooncake TENT moves
 remote bytes; etcd stores member/placement information, not per-block KV data.
 There is no standalone metadata server to deploy. Catalogs currently have one
-metadata copy per shard, and real two-host/RDMA serving remains a separate gate.
+metadata copy per shard. RDMA, sustained distributed faults and broader model
+serving remain separate gates after the recorded two-host TCP checks.
 Multi-host TP query fan-out is not supported yet.
 
 ## P/D: Mooncake or NIXL
+
+Deployment profiles follow LMCache's independent service, P2P sharing and
+[P/D handoff](https://docs.lmcache.ai/mp/disaggregated_prefill.html) organization.
+The engine, cache tier and request-handoff role are separate choices. An upstream
+mode is a reference topology, not proof that OrbitKV supports its engines,
+parallelism, isolation or failure recovery. Keep those claims tied to the
+qualification table above and the pinned vLLM 0.29.0 / SGLang 0.5.20 contracts.
+
 
 P/D moves KV for the same request from prefill to decode. Remote caching finds
 reusable KV from an earlier request. These are independent paths; see
 [P/D and NIXL](pd.md) for the ownership and control-flow distinction.
 
-OrbitKV's vLLM `PdConnector` pushes KV through Mooncake directly between GPU
-workers. Try the [local P/D example](../scripts/run_pd_local.sh) for that path.
+OrbitKV's vLLM `PdPrefillConnector` and `PdDecodeConnector` push KV through
+Mooncake TENT directly between GPU workers. Try the
+[local P/D example](../scripts/run_pd_local.sh) for that path.
 vLLM `0.29.0` also includes its own NIXL connector; the
 [NIXL comparison example](../scripts/run_nixl_local.sh) uses vLLM's code.
-OrbitKV does not ship a NIXL connector, and its SGLang adapter currently
-implements external caching only.
+OrbitKV does not ship a NIXL connector. Its SGLang adapter supports the native
+SGLang P/D control plane over OrbitKV TENT and an opt-in composition with the
+external cache. The same-A100 TCP restart/output gate passes; the H20→A100
+run passes cache reuse but fails full 64-token equality. See the
+[precise P/D qualification](pd.md#sglang-qualification-on-2026-09-28).
 
 ### Experimental vLLM P/D with NIXL plus OrbitKV cache
 

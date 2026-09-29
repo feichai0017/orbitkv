@@ -40,7 +40,16 @@ class MooncakeTransferEngine:
         timeout_s: float = 30.0,
     ) -> int: ...
     def send_notification(self, remote_endpoint: str, name: str, message: str) -> None: ...
-    def take_notifications(self) -> list[tuple[str, str]]: ...
+    def open_notification_scope(self, name: str) -> int: ...
+    def wait_for_status(
+        self,
+        name: str,
+        generation: int,
+        expected_done_count: int = 1,
+        timeout_s: float = 30.0,
+    ) -> str | None: ...
+    def close_notification_scope(self, name: str, generation: int) -> None: ...
+    def nic_load_stats(self) -> list[tuple[str, int, float]]: ...
     def invalidate_segment(self, remote_endpoint: str) -> None: ...
 
 class QueryLoading:
@@ -48,6 +57,8 @@ class QueryLoading:
     def __init__(self, admitted: bool = True) -> None: ...
 
 class QueryReady:
+    """Query result whose lease token is returned as owned, immutable bytes."""
+
     num_hit_blocks: int
     lease: bytes
     hit_positions: list[int]
@@ -126,6 +137,26 @@ class CacheManagerClient:
     def close(self) -> None: ...
     def health(self) -> tuple[bool, str]: ...
     def unregister_context(self, instance_id: str) -> tuple[bool, str]: ...
+    def observe_prefill_to_decode_completion(
+        self,
+        instance_id: str,
+        destination_device_id: int,
+        source_endpoint: str,
+        transfer_generation: int,
+        logical_bytes: int,
+        wire_bytes: int,
+        fragment_count: int,
+        elapsed_ns: int,
+        decode_page_bytes: int,
+        handoff_queue_depth: int,
+        handoff_queue_parallelism: int,
+        tent_inflight_bytes: int,
+        tent_bandwidth_bytes_per_second: int,
+        *,
+        admitted: bool = True,
+        outcome: str = "completed",
+        representation: str = "raw",
+    ) -> None: ...
     def start_session_watcher(
         self, instance_id: str, namespace: str, tp_size: int, world_size: int
     ) -> None: ...
@@ -149,6 +180,8 @@ class CacheManagerClient:
         layer_group_ids: list[int] | None = None,
         layer_formats: list[str] | None = None,
         layer_attention: list[tuple[int, str, int, int]] | None = None,
+        *,
+        tensors: list[object],
     ) -> tuple[bool, str]: ...
     @property
     def transport(self) -> str: ...
@@ -218,10 +251,25 @@ class CacheManagerClient:
         device_id: int,
         layer_groups: list[list[str]],
         loads: list[tuple[bytes, list[list[int | None]]]],
-    ) -> RestoreHandle: ...
+        *,
+        ready_stream: int,
+        layer_events: list[tuple[str, object]] | None = None,
+    ) -> RestoreHandle:
+        """Reserve an operation before submission; claimed errors arrive in RestoreStatus.
+
+        The caller supplies its previous-user CUDA stream in ready_stream.
+        Native code retains registered tensors and captures that stream before
+        submission. Hold destination pages until the terminal result, including
+        after timeout. A lost submission ACK retains any claimed operation.
+        """
+        ...
+    def wait_restore_enqueued(self, handle: RestoreHandle, *, timeout: float) -> None:
+        """Wait until layer events describe this operation's enqueued copies; keep its final fence."""
+        ...
+
     def poll_restore(self, handle: RestoreHandle) -> RestoreStatus: ...
     def wait_restore(self, handle: RestoreHandle, *, timeout: float) -> RestoreStatus:
-        """Wait without the GIL; timeout keeps GPU destinations owned."""
+        """Consume the terminal result without the GIL; timeout preserves ownership."""
         ...
     def restore_completions_ready(self, *, timeout: float = 0.0) -> bool: ...
 

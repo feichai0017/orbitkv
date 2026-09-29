@@ -53,6 +53,11 @@ fn populate_store() -> (BlockHashStore, String, Uuid) {
                     key: StateKey::new("bench".into(), (key as u64).to_le_bytes().to_vec()),
                     sequence: after + i as u64 + 1,
                     present: true,
+                    metadata: Some(orbitkv_state::ReplicaMetadata {
+                        medium: orbitkv_state::ReplicaMedium::Dram,
+                        representation: orbitkv_state::ReplicaRepresentation::Raw,
+                        stored_bytes: Some(4096),
+                    }),
                 })
                 .collect();
             store

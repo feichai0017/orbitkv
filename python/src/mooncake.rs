@@ -1,10 +1,20 @@
 use crate::{OrbitKVError, u64_to_usize};
 
 use orbitkv_transfer::{
-    AUTO_MEMORY_LOCATION, Notification, P2P_METADATA, TransferEngine, TransferOp, TransferSlice,
+    AUTO_MEMORY_LOCATION, MemoryRegistration, Notification, P2P_METADATA, TransferEngine,
+    TransferError, TransferOp, TransferSlice,
 };
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyDict};
-use std::{ptr::NonNull, sync::Arc, time::Duration};
+use pyo3::{
+    exceptions::{PyTimeoutError, PyValueError},
+    prelude::*,
+    types::PyDict,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    ptr::NonNull,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 fn transfer_error(context: &str, error: impl std::fmt::Display) -> PyErr {
     OrbitKVError::new_err(format!("{context}: {error}"))
@@ -28,6 +38,7 @@ fn pointer(value: u64, field: &str) -> PyResult<NonNull<u8>> {
 struct PyMooncakeTransferEngine {
     engine: Arc<TransferEngine>,
     endpoint: String,
+    registrations: Arc<Mutex<HashMap<u64, MemoryRegistration>>>,
 }
 
 #[pymethods]
@@ -40,13 +51,14 @@ impl PyMooncakeTransferEngine {
         }
         let local_server_name = format!("{bind_host}:0");
         let engine = TransferEngine::new(P2P_METADATA, &local_server_name, &bind_host, 0, &nics)
-            .map_err(|error| transfer_error("Mooncake Transfer Engine init failed", error))?;
+            .map_err(|error| transfer_error("Mooncake TENT init failed", error))?;
         let endpoint = engine
             .local_segment_name()
             .map_err(|error| transfer_error("read Mooncake endpoint failed", error))?;
         Ok(Self {
             engine: Arc::new(engine),
             endpoint,
+            registrations: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -57,6 +69,7 @@ impl PyMooncakeTransferEngine {
 
     fn register_memory(&self, py: Python<'_>, regions: Vec<Py<PyDict>>) -> PyResult<()> {
         let mut parsed = Vec::with_capacity(regions.len());
+        let mut addresses = HashSet::with_capacity(regions.len());
         for region in regions {
             let region = region.bind(py);
             let address = py_get(region, "addr")?;
@@ -70,37 +83,72 @@ impl PyMooncakeTransferEngine {
                 .transpose()?
                 .unwrap_or_else(|| AUTO_MEMORY_LOCATION.to_string());
             pointer(address, "addr")?;
+            if !addresses.insert(address) {
+                return Err(PyValueError::new_err(format!(
+                    "memory address {address:#x} appears more than once"
+                )));
+            }
             parsed.push((address, length, location));
         }
         let engine = Arc::clone(&self.engine);
+        let registrations = Arc::clone(&self.registrations);
         py.detach(move || {
+            let mut registrations = registrations.lock().map_err(|_| {
+                transfer_error("register memory failed", "registration lock poisoned")
+            })?;
+            if let Some((address, _, _)) = parsed
+                .iter()
+                .find(|(address, _, _)| registrations.contains_key(address))
+            {
+                return Err(PyValueError::new_err(format!(
+                    "memory address {address:#x} is already registered"
+                )));
+            }
+            let mut added = Vec::with_capacity(parsed.len());
             for (address, length, location) in parsed {
-                unsafe {
+                let registration = unsafe {
                     engine
-                        .register_memory(
+                        .register_memory_owned(
                             NonNull::new_unchecked(address as *mut u8),
                             length,
                             &location,
                         )
-                        .map_err(|error| transfer_error("register memory failed", error))?;
-                }
+                        .map_err(|error| transfer_error("register memory failed", error))?
+                };
+                added.push((address, registration));
+            }
+            for (address, registration) in added {
+                registrations.insert(address, registration);
             }
             Ok(())
         })
     }
 
     fn unregister_memory(&self, py: Python<'_>, addresses: Vec<u64>) -> PyResult<()> {
+        let mut unique = HashSet::with_capacity(addresses.len());
         for &address in &addresses {
             pointer(address, "addr")?;
+            if !unique.insert(address) {
+                return Err(PyValueError::new_err(format!(
+                    "memory address {address:#x} appears more than once"
+                )));
+            }
         }
-        let engine = Arc::clone(&self.engine);
+        let registrations = Arc::clone(&self.registrations);
         py.detach(move || {
+            let mut registrations = registrations.lock().map_err(|_| {
+                transfer_error("unregister memory failed", "registration lock poisoned")
+            })?;
+            for &address in &addresses {
+                let registration = registrations.get_mut(&address).ok_or_else(|| {
+                    PyValueError::new_err(format!("memory address {address:#x} is not registered"))
+                })?;
+                registration
+                    .try_unregister()
+                    .map_err(|error| transfer_error("unregister memory failed", error))?;
+            }
             for address in addresses {
-                unsafe {
-                    engine
-                        .unregister_memory(NonNull::new_unchecked(address as *mut u8))
-                        .map_err(|error| transfer_error("unregister memory failed", error))?;
-                }
+                registrations.remove(&address);
             }
             Ok(())
         })
@@ -159,16 +207,84 @@ impl PyMooncakeTransferEngine {
         })
     }
 
-    fn take_notifications(&self) -> PyResult<Vec<(String, String)>> {
+    fn open_notification_scope(&self, name: String) -> PyResult<u64> {
+        if name.is_empty() {
+            return Err(PyValueError::new_err("notification name must not be empty"));
+        }
         self.engine
-            .take_notifications()
-            .map(|notifications| {
-                notifications
+            .open_notification_scope(&name)
+            .map_err(|error| transfer_error("open TENT notification scope failed", error))
+    }
+
+    #[pyo3(signature = (name, generation, expected_done_count=1, timeout_s=30.0))]
+    fn wait_for_status(
+        &self,
+        py: Python<'_>,
+        name: String,
+        generation: u64,
+        expected_done_count: usize,
+        timeout_s: f64,
+    ) -> PyResult<Option<String>> {
+        if name.is_empty() {
+            return Err(PyValueError::new_err("notification name must not be empty"));
+        }
+        if generation == 0 {
+            return Err(PyValueError::new_err("generation must be positive"));
+        }
+        if expected_done_count == 0 {
+            return Err(PyValueError::new_err(
+                "expected_done_count must be positive",
+            ));
+        }
+        if !timeout_s.is_finite() || timeout_s <= 0.0 {
+            return Err(PyValueError::new_err("timeout_s must be positive"));
+        }
+        let engine = Arc::clone(&self.engine);
+        py.detach(move || {
+            engine
+                .wait_for_notification(
+                    &name,
+                    generation,
+                    &[
+                        ("failed".to_string(), 1),
+                        ("aborted".to_string(), 1),
+                        ("done".to_string(), expected_done_count),
+                    ],
+                    Duration::from_secs_f64(timeout_s),
+                )
+                .map_err(|error| match error {
+                    TransferError::NotificationTimeout(_) => {
+                        PyTimeoutError::new_err(error.to_string())
+                    }
+                    error => transfer_error("wait for TENT notification failed", error),
+                })
+        })
+    }
+
+    fn close_notification_scope(&self, name: String, generation: u64) -> PyResult<()> {
+        if name.is_empty() {
+            return Err(PyValueError::new_err("notification name must not be empty"));
+        }
+        self.engine.close_notification_scope(&name, generation);
+        Ok(())
+    }
+
+    fn nic_load_stats(&self) -> PyResult<Vec<(String, u64, f64)>> {
+        self.engine
+            .nic_load_stats()
+            .map(|stats| {
+                stats
                     .into_iter()
-                    .map(|notification| (notification.name, notification.message))
+                    .map(|stat| {
+                        (
+                            stat.device_name,
+                            stat.inflight_bytes,
+                            stat.ewma_bandwidth_bps,
+                        )
+                    })
                     .collect()
             })
-            .map_err(|error| transfer_error("take notifications failed", error))
+            .map_err(|error| transfer_error("read TENT NIC load stats failed", error))
     }
 
     fn invalidate_segment(&self, remote_endpoint: String) {
@@ -216,7 +332,7 @@ impl PyMooncakeTransferEngine {
                 ),
                 None => engine.submit_and_wait(operation, &remote_endpoint, &slices, timeout),
             }
-            .map_err(|error| transfer_error("Mooncake transfer failed", error))
+            .map_err(|error| transfer_error("Mooncake TENT transfer failed", error))
         })
     }
 }

@@ -19,7 +19,11 @@ def enqueue_request(original: Callable, scheduler: Any, req: Any, *args: Any, **
 
     wrapper = getattr(scheduler.tree_cache, "linker", None)
     linker = getattr(wrapper, "cache_linker", None)
-    if not isinstance(linker, OrbitKVLinker) or req.positional_embed_overrides is not None:
+    if (
+        not isinstance(linker, OrbitKVLinker)
+        or not wrapper.restore_from_store
+        or req.positional_embed_overrides is not None
+    ):
         return result
     trace_transfer("queued", req.rid, engine="sglang")
     prepare = os.environ.get("ORBITKV_PREPARE_REQUESTS") == "1"

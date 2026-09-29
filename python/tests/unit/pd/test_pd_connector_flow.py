@@ -10,13 +10,13 @@ from .pd_connector_test_utils import *
 
 def test_pd_worker_wait_handshake_uses_mooncake_endpoint() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 8, 32),
-        stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 8, 16, 64),
+        stride=(8 * 16 * 64, 16 * 64, 64, 1),
     )
     native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=RealMooncakePort(native_engine),
@@ -45,7 +45,7 @@ def test_pd_worker_wait_handshake_uses_mooncake_endpoint() -> None:
 
 def test_pd_connector_exposes_empty_stats_for_vllm_metrics() -> None:
     connector = PdDecodeConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         KVConnectorRole.SCHEDULER,
     )
 
@@ -87,8 +87,8 @@ def test_pd_prom_metrics_observes_connector_stats(monkeypatch) -> None:
 
     monkeypatch.setattr(
         pd_metrics_mod,
-        "_bind_metric_per_engine",
-        lambda _prom_metrics, metric: {0: metric},
+        "create_metric_per_engine",
+        lambda metric, _per_engine_labelvalues: {0: metric},
     )
     monkeypatch.setattr(
         KVConnectorPromMetrics,
@@ -110,7 +110,7 @@ def test_pd_prom_metrics_observes_connector_stats(monkeypatch) -> None:
     monkeypatch.setattr(pd_metrics_mod.PdPromMetrics, "_counter_cls", FakeCounter, raising=False)
 
     prom = PdDecodeConnector.build_prom_metrics(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace()),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig()),
         {PromMetric: PromMetric},
         [],
         {0: []},
@@ -127,7 +127,6 @@ def test_pd_prom_metrics_observes_connector_stats(monkeypatch) -> None:
             "pd_load_blocks": [8],
             "pd_prefill_push_duration": [0.4],
             "pd_prefill_first_save_to_done_duration": [0.5],
-            "pd_prefill_wait_for_pushes_duration": [0.6],
             "pd_prefill_push_blocks": [8],
             "pd_prefill_push_bytes": [1024],
             "pd_prefill_push_gbps": [2.5],
@@ -457,13 +456,13 @@ def test_pd_proxy_reuses_stream_http_client(monkeypatch) -> None:
 
 def test_d_consumer_release_does_not_increment_prefill_release_metric() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 8, 32),
-        stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 8, 16, 64),
+        stride=(8 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -500,13 +499,13 @@ def test_d_consumer_release_does_not_increment_prefill_release_metric() -> None:
 
 def test_pd_worker_stats_record_decode_wait_completion() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 8, 32),
-        stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 8, 16, 64),
+        stride=(8 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -527,7 +526,7 @@ def test_pd_worker_stats_record_decode_wait_completion() -> None:
         ),
         None,
     )
-    transfer._finished_recving.add("req-1")
+    worker._decode._state.record_transfer_done("req-1")
     worker.get_finished(set())
 
     stats = worker.get_stats()
@@ -542,15 +541,15 @@ def test_pd_worker_stats_record_decode_wait_completion() -> None:
 
 def test_d_worker_waits_for_all_prefill_ranks_when_prefill_tp_is_larger() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 8, 32),
-        stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 8, 16, 64),
+        stride=(8 * 16 * 64, 16 * 64, 64, 1),
     )
     native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="decode",
-                extra_config={"orbitkv.pd.prefill_tp_size": 2},
+                kv_connector_extra_config={"orbitkv.pd.prefill_tp_size": 2},
             ),
             model_config=SimpleNamespace(get_total_num_kv_heads=lambda: 8),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
@@ -581,15 +580,15 @@ def test_d_worker_waits_for_all_prefill_ranks_when_prefill_tp_is_larger() -> Non
 
 def test_d_worker_caches_expected_notification_counts(monkeypatch) -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 8, 32),
-        stride=(8 * 8 * 16 * 32, 8 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 8, 16, 64),
+        stride=(8 * 16 * 64, 16 * 64, 64, 1),
     )
     native_engine = FakeMooncakeTransferEngine()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="decode",
-                extra_config={"orbitkv.pd.prefill_tp_size": 2},
+                kv_connector_extra_config={"orbitkv.pd.prefill_tp_size": 2},
             ),
             model_config=SimpleNamespace(get_total_num_kv_heads=lambda: 8),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
@@ -636,13 +635,13 @@ def test_d_worker_caches_expected_notification_counts(monkeypatch) -> None:
     worker.shutdown()
 
 
-def test_pd_worker_pushes_flash_attn_hnd_blocks() -> None:
+def test_pd_worker_pushes_packed_bhnc_blocks() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
@@ -665,18 +664,17 @@ def test_pd_worker_pushes_flash_attn_hnd_blocks() -> None:
         }
     )
 
-    worker.start_load_kv(meta, None)
+    worker.prepare_pushes(meta)
     attn_metadata = SimpleNamespace(slot_mapping=FakeSlotMapping([16, 17, 32, -1]))
     worker.save_kv_layer("layer.0", tensor, attn_metadata)
     worker.save_kv_layer("layer.1", tensor, attn_metadata)
 
-    assert unique_blocks_from_slot_mapping(attn_metadata.slot_mapping, 16) == {1, 2}
     worker.wait_for_save()
     drain_pd_pushes(worker)
     pushed_by_layer = pushed_layers_by_idx(worker.transfer, "req-1")
     assert set(pushed_by_layer) == {0, 1}
     first_layer_blocks = pushed_by_layer[0]
-    assert len(first_layer_blocks) == 1
+    assert len(first_layer_blocks) == 2
     assert first_layer_blocks[0].regions[0].block_id == 1
     assert first_layer_blocks[0].regions[0].bytes == tensor.element_size() * 16 * 4 * 32 * 2
     finished_sending, finished_recving = worker.get_finished({"req-1"})
@@ -696,16 +694,16 @@ def test_p_worker_closes_single_target_push_once_when_finished() -> None:
             super().close_request(req_id)
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = TrackingCloseMooncake()
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "req-1": PushReqMeta(
@@ -714,8 +712,7 @@ def test_p_worker_closes_single_target_push_once_when_finished() -> None:
                     handshakes=(DUMMY_HANDSHAKE,),
                 )
             }
-        ),
-        None,
+        )
     )
 
     worker.save_kv_layer("layer.0", tensor, SimpleNamespace())
@@ -727,24 +724,27 @@ def test_p_worker_closes_single_target_push_once_when_finished() -> None:
 def test_pd_worker_get_finished_does_not_poll_wait_reqs() -> None:
     transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")), transfer=transfer
     )
-    worker._wait_reqs["req-1"] = WaitReqMeta(
-        local_block_ids=([1],),
-        remote_request_id="req-1-p",
-        done_request_id="req-1-d",
-        prompt_token_ids=(1,),
-        prefill_url="http://p:8001",
+    worker._decode._state.register_wait(
+        "req-1",
+        WaitReqMeta(
+            local_block_ids=([1],),
+            remote_request_id="req-1-p",
+            done_request_id="req-1-d",
+            prompt_token_ids=(1,),
+            prefill_url="http://p:8001",
+        ),
     )
 
-    transfer._finished_recving.add("req-1")
+    worker._decode._state.record_transfer_done("req-1")
 
     assert worker.get_finished(set()) == (None, {"req-1"})
 
 
 def test_p_worker_save_kv_layer_noops_without_push_reqs() -> None:
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
 
@@ -756,15 +756,15 @@ def test_p_worker_save_kv_layer_uses_registered_layout_fast_path() -> None:
         pass
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "req-1": PushReqMeta(
@@ -773,8 +773,7 @@ def test_p_worker_save_kv_layer_uses_registered_layout_fast_path() -> None:
                     handshakes=(DUMMY_HANDSHAKE,),
                 )
             }
-        ),
-        None,
+        )
     )
 
     worker.save_kv_layer("layer.0", RuntimeTensorThatShouldNotBeInspected(), SimpleNamespace())
@@ -785,24 +784,24 @@ def test_p_worker_save_kv_layer_uses_registered_layout_fast_path() -> None:
 
 def test_p_worker_runtime_layout_validation_can_be_enabled() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     changed_tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 64, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 128, 1),
     )
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="prefill",
-                extra_config={"orbitkv.pd.validate_runtime_layout": True},
+                kv_connector_extra_config={"orbitkv.pd.validate_runtime_layout": True},
             )
         ),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "req-1": PushReqMeta(
@@ -811,36 +810,28 @@ def test_p_worker_runtime_layout_validation_can_be_enabled() -> None:
                     handshakes=(DUMMY_HANDSHAKE,),
                 )
             }
-        ),
-        None,
+        )
     )
 
     with pytest.raises(AssertionError, match="KV strides changed"):
         worker.save_kv_layer("layer.0", changed_tensor, SimpleNamespace())
 
 
-def test_d_worker_idle_decode_step_skips_layer_hooks() -> None:
-    class LayoutsThatShouldNotBeRead(dict):
-        def __contains__(self, key: object) -> bool:
-            raise AssertionError("idle decode step should not inspect layouts")
-
+def test_role_workers_only_construct_their_own_handler() -> None:
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         transfer=MockMooncakePort(),
     )
-    worker.layouts = LayoutsThatShouldNotBeRead()
-    worker.start_load_kv(PdConnectorMetadata(), None)
-
-    worker._prefill.save_kv_layer = MagicMock(
-        side_effect=AssertionError("idle decode step should not delegate save")
-    )
-    worker._prefill.wait_for_save = MagicMock(
-        side_effect=AssertionError("idle decode step should not delegate wait_for_save")
+    prefill = PdPrefillWorkerConnector(
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
+        transfer=MockMooncakePort(),
     )
 
-    worker.wait_for_layer_load("layer.0")
-    worker.save_kv_layer("layer.0", object(), None)
-    worker.wait_for_save()
+    assert not hasattr(worker, "_prefill")
+    assert not hasattr(prefill, "_decode")
+
+    worker.shutdown()
+    prefill.shutdown()
 
 
 def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
@@ -854,19 +845,19 @@ def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
         def wait_done(self, req_id: str) -> None:
             self.wait_started.set()
             assert self.wait_can_return.wait(timeout=5), "wait_done was not released"
-            self._finished_recving.add(req_id)
 
         def close_request(self, req_id: str) -> None:
             self.closed_reqs.append(req_id)
             super().close_request(req_id)
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = BlockingWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -920,12 +911,13 @@ def test_d_worker_release_waits_for_abort_ack_before_finishing() -> None:
 
 def test_d_worker_release_ack_does_not_record_successful_load() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     worker.start_load_kv(
@@ -950,7 +942,7 @@ def test_d_worker_release_ack_does_not_record_successful_load() -> None:
         ),
         None,
     )
-    transfer._finished_recving.add("req-1")
+    worker._decode._state.record_transfer_done("req-1")
     worker.get_finished(set())
     stats = worker.get_stats()
 
@@ -964,13 +956,13 @@ def test_d_worker_release_ack_does_not_record_successful_load() -> None:
 
 def test_d_worker_release_cancels_remote_prefill_request() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     prefill_sender = FakePrefillSender()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=MockMooncakePort(),
@@ -1017,11 +1009,9 @@ def test_decode_worker_prefill_sender_worker_count_comes_from_extra_config(monke
 
     monkeypatch.setattr(decode_worker_mod, "AsyncPrefillSender", FakeAsyncPrefillSender)
     vllm_config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
             engine_id="decode",
-            get_from_extra_config=lambda key, default=None: {
-                "orbitkv.pd.prefill_sender_worker_count": 4,
-            }.get(key, default),
+            kv_connector_extra_config={"orbitkv.pd.prefill_sender_worker_count": 4},
         ),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
     )
@@ -1045,7 +1035,7 @@ def test_decode_worker_prefill_sender_worker_count_defaults_to_sixteen(monkeypat
 
     monkeypatch.setattr(decode_worker_mod, "AsyncPrefillSender", FakeAsyncPrefillSender)
     vllm_config = SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(engine_id="decode"),
+        kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
         parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
     )
 
@@ -1053,6 +1043,165 @@ def test_decode_worker_prefill_sender_worker_count_defaults_to_sixteen(monkeypat
 
     assert created_worker_counts == [16]
     worker.shutdown()
+
+
+def test_decode_worker_reports_bounded_completion_evidence(monkeypatch) -> None:
+    reports: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    class FakeCacheManagerClient:
+        def __init__(self, socket: str) -> None:
+            assert socket == "/tmp/orbitkv-observations.sock"
+
+        def observe_prefill_to_decode_completion(self, *args: Any, **kwargs: Any) -> None:
+            reports.append((args, kwargs))
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(native, "CacheManagerClient", FakeCacheManagerClient)
+
+    class PressureMooncakePort(MockMooncakePort):
+        def nic_load_stats(self) -> list[tuple[str, int, float]]:
+            return [("mlx5_0", 65_536, 20_000_000_000.0)]
+
+    tensor = FakeTensor(
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
+        device_index=3,
+    )
+    transfer = PressureMooncakePort()
+    worker = PdDecodeWorkerConnector(
+        SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
+                engine_id="decode",
+                kv_connector_extra_config={
+                    "orbitkv.pd.completion_observation_socket": ("/tmp/orbitkv-observations.sock"),
+                    "orbitkv.pd.completion_observation_instance_id": "decode-instance",
+                },
+            )
+        ),
+        transfer=transfer,
+    )
+    worker.register_kv_caches({"layer.0": tensor})
+    worker.start_load_kv(
+        PdConnectorMetadata(
+            reqs_to_wait={
+                "decode-1": WaitReqMeta(
+                    local_block_ids=([1, 2],),
+                    remote_request_id="prefill-1",
+                    done_request_id="decode-1",
+                    prompt_token_ids=(1,),
+                    prefill_url="http://prefill:8001",
+                )
+            }
+        ),
+        None,
+    )
+
+    deadline = time.time() + 2
+    while time.time() < deadline and not reports:
+        time.sleep(0.01)
+
+    assert len(reports) == 1
+    args, kwargs = reports[0]
+    assert args[:7] == (
+        "decode-instance",
+        3,
+        "http://prefill:8001",
+        1,
+        16_384,
+        16_384,
+        2,
+    )
+    assert args[7] > 0
+    assert args[8:] == (16_384, 1, 16, 65_536, 20_000_000_000)
+    assert kwargs == {
+        "admitted": True,
+        "outcome": "completed",
+        "representation": "raw",
+    }
+    worker.shutdown()
+
+
+def test_decode_worker_reports_timeout_without_claiming_wire_bytes(monkeypatch) -> None:
+    reports: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    class FakeCacheManagerClient:
+        def __init__(self, _socket: str) -> None:
+            return None
+
+        def observe_prefill_to_decode_completion(self, *args: Any, **kwargs: Any) -> None:
+            reports.append((args, kwargs))
+
+        def close(self) -> None:
+            return None
+
+    class TimedOutMooncake(MockMooncakePort):
+        def wait_done(self, req_id: str) -> None:
+            raise TimeoutError(req_id)
+
+    monkeypatch.setattr(native, "CacheManagerClient", FakeCacheManagerClient)
+    worker = PdDecodeWorkerConnector(
+        SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
+                engine_id="decode",
+                kv_connector_extra_config={
+                    "orbitkv.pd.completion_observation_socket": "/tmp/observations.sock",
+                    "orbitkv.pd.completion_observation_instance_id": "decode-instance",
+                },
+            )
+        ),
+        transfer=TimedOutMooncake(),
+    )
+    worker.register_kv_caches(
+        {
+            "layer.0": FakeTensor(
+                shape=(8, 4, 16, 64),
+                stride=(4 * 16 * 64, 16 * 64, 64, 1),
+                device_index=1,
+            )
+        }
+    )
+    worker.start_load_kv(
+        PdConnectorMetadata(
+            reqs_to_wait={
+                "decode-1": WaitReqMeta(
+                    local_block_ids=([1],),
+                    remote_request_id="prefill-1",
+                    done_request_id="decode-1",
+                    prompt_token_ids=(1,),
+                    prefill_url="http://prefill:8001",
+                )
+            }
+        ),
+        None,
+    )
+
+    deadline = time.time() + 2
+    while time.time() < deadline and not reports:
+        time.sleep(0.01)
+
+    assert len(reports) == 1
+    args, kwargs = reports[0]
+    assert args[4] == 8192
+    assert args[5] == 0
+    assert kwargs["outcome"] == "timed_out"
+    worker.shutdown()
+
+
+def test_decode_completion_observation_requires_explicit_instance_id(monkeypatch) -> None:
+    monkeypatch.setattr(native, "CacheManagerClient", MagicMock)
+    config = SimpleNamespace(
+        kv_transfer_config=FakeKVTransferConfig(
+            engine_id="decode",
+            kv_connector_extra_config={
+                "orbitkv.pd.completion_observation_socket": "/tmp/orbitkv-observations.sock"
+            },
+        )
+    )
+
+    with pytest.raises(ValueError, match="completion_observation_instance_id"):
+        PdDecodeWorkerConnector(config, transfer=MockMooncakePort())
 
 
 def test_prefill_worker_push_worker_counts_default_to_sixteen(monkeypatch) -> None:
@@ -1082,7 +1231,7 @@ def test_prefill_worker_push_worker_counts_default_to_sixteen(monkeypatch) -> No
     monkeypatch.setattr(prefill_worker_mod, "_AsyncLayerPushSender", FakePushSender)
     monkeypatch.setattr(prefill_worker_mod, "_AsyncPushFinalizer", FakePushFinalizer)
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=MockMooncakePort(),
     )
 
@@ -1119,12 +1268,12 @@ def test_prefill_worker_push_worker_counts_come_from_extra_config(monkeypatch) -
     monkeypatch.setattr(prefill_worker_mod, "_AsyncPushFinalizer", FakePushFinalizer)
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(
+            kv_transfer_config=FakeKVTransferConfig(
                 engine_id="prefill",
-                get_from_extra_config=lambda key, default=None: {
+                kv_connector_extra_config={
                     "orbitkv.pd.push_worker_count": 7,
                     "orbitkv.pd.push_finalizer_worker_count": 9,
-                }.get(key, default),
+                },
             )
         ),
         transfer=MockMooncakePort(),
@@ -1141,8 +1290,8 @@ def test_d_worker_prefill_failure_reports_load_error(monkeypatch) -> None:
             time.sleep(10)
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
 
     async def fail_prefill_request(task: PrefillHttpTask, _client=None) -> None:
@@ -1155,7 +1304,7 @@ def test_d_worker_prefill_failure_reports_load_error(monkeypatch) -> None:
     )
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=BlockingWaitMooncake(),
@@ -1196,11 +1345,11 @@ def test_d_worker_transfer_wait_failure_reports_load_error() -> None:
             raise RuntimeError("transfer timeout")
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         transfer=FailingWaitMooncake(),
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -1247,12 +1396,12 @@ def test_d_worker_reports_background_transfer_wait_completion_without_native_pol
             assert self.can_return.wait(timeout=5), f"wait for {req_id} was not released"
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = CallbackOnlyMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
@@ -1282,21 +1431,20 @@ def test_d_worker_reports_background_transfer_wait_completion_without_native_pol
         time.sleep(0.01)
 
     assert finished_recving == {"decode-1"}
-    assert transfer.pop_finished_recving() == set()
     worker.shutdown()
 
 
 def test_d_worker_finished_transfer_wait_prevents_idle_fast_path() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker._decode._finished_transfer_waits.add("decode-1")
+    worker._decode._state.finished_transfer_waits.add("decode-1")
 
     _, finished_recving = worker.get_finished(set())
 
@@ -1322,22 +1470,21 @@ def test_d_worker_reregister_keeps_new_transfer_wait_after_old_wait_exits() -> N
             if wait_call == 1:
                 self.first_started.set()
                 assert self.first_can_return.wait(timeout=5), "first wait was not released"
-                self._finished_recving.add(req_id)
                 return
             if wait_call == 2:
                 self.second_started.set()
                 assert self.second_can_return.wait(timeout=5), "second wait was not released"
-                self._finished_recving.add(req_id)
                 return
             raise AssertionError(f"unexpected wait call {wait_call} for {req_id}")
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = SequencedWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
     wait_meta = PdConnectorMetadata(
@@ -1390,15 +1537,15 @@ def test_d_worker_starts_multiple_transfer_waits_concurrently() -> None:
         def wait_done(self, req_id: str) -> None:
             self.started[req_id].set()
             assert self.can_return.wait(timeout=5), f"wait for {req_id} was not released"
-            self._finished_recving.add(req_id)
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = BlockingWaitMooncake()
     worker = PdDecodeWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="decode")), transfer=transfer
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
 
@@ -1430,7 +1577,6 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
             self.closed_reqs: list[str] = []
             self.failed_reqs: list[str] = []
             self.aborted_reqs: list[str] = []
-            self.drained_reqs: list[str] = []
 
         def fail_request(self, req_id: str) -> None:
             self.failed_reqs.append(req_id)
@@ -1438,16 +1584,13 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
         def abort_request(self, req_id: str) -> None:
             self.aborted_reqs.append(req_id)
 
-        def wait_for_pushes(self, req_id: str) -> None:
-            self.drained_reqs.append(req_id)
-
         def close_request(self, req_id: str) -> None:
             self.closed_reqs.append(req_id)
             super().close_request(req_id)
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     handshakes = tuple(
         PdHandshake(
@@ -1457,11 +1600,11 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
             tp_size=4,
             block_size=16,
             layers=(
-                hnd_remote_layer(
+                packed_remote_layer(
                     layer_name="layer.0",
                     layer_idx=0,
                     block_ids=(1,),
-                    block_len=2 * 16 * 32 * 2,
+                    block_len=4096,
                 ),
             ),
         )
@@ -1470,13 +1613,13 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
     transfer = TrackingMooncake()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r1": PushReqMeta(
@@ -1485,21 +1628,18 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
                     handshakes=handshakes,
                 )
             }
-        ),
-        None,
+        )
     )
     assert sorted(transfer.registered) == ["prefill-r1#d2", "prefill-r1#d3"]
 
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_release={"prefill-r1"},
             release_reasons={"prefill-r1": RELEASE_CONSUMER_ABORT},
-        ),
-        None,
+        )
     )
 
     assert transfer.failed_reqs == []
-    assert sorted(transfer.drained_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
     assert sorted(transfer.aborted_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
     assert sorted(transfer.closed_reqs) == ["prefill-r1#d2", "prefill-r1#d3"]
     assert transfer.registered == set()
@@ -1507,19 +1647,19 @@ def test_p_worker_release_closes_all_physical_decode_targets() -> None:
 
 def test_p_worker_completion_clears_physical_remote_block_offsets() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r1": PushReqMeta(
@@ -1532,14 +1672,13 @@ def test_p_worker_completion_clears_physical_remote_block_offsets() -> None:
                             tp_rank=rank,
                             tp_size=4,
                             block_size=16,
-                            layers=(hnd_remote_layer(block_ids=(68,), block_len=2048),),
+                            layers=(packed_remote_layer(block_ids=(68,), block_len=4096),),
                         )
                         for rank in range(4)
                     ),
                 )
             }
-        ),
-        None,
+        )
     )
     worker._prefill._remote_block_offsets.update(
         {
@@ -1565,29 +1704,25 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
             super().__init__()
             self.closed_reqs: list[str] = []
             self.failed_reqs: list[str] = []
-            self.drained_reqs: list[str] = []
 
         def fail_request(self, req_id: str) -> None:
             self.failed_reqs.append(req_id)
-
-        def wait_for_pushes(self, req_id: str) -> None:
-            self.drained_reqs.append(req_id)
 
         def close_request(self, req_id: str) -> None:
             self.closed_reqs.append(req_id)
             super().close_request(req_id)
 
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = TrackingMooncake()
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="prefill")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill")),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-1": PushReqMeta(
@@ -1596,15 +1731,13 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
                     handshakes=(DUMMY_HANDSHAKE,),
                 )
             }
-        ),
-        None,
+        )
     )
     assert transfer.registered == {"prefill-1"}
 
-    worker.start_load_kv(PdConnectorMetadata(preempted_req_ids={"prefill-1"}), None)
+    worker.prepare_pushes(PdConnectorMetadata(preempted_req_ids={"prefill-1"}))
 
     assert transfer.failed_reqs == ["prefill-1"]
-    assert transfer.drained_reqs == ["prefill-1"]
     assert transfer.closed_reqs == ["prefill-1"]
     assert transfer.registered == set()
     assert worker.get_finished({"prefill-1"}) == (None, None)
@@ -1612,15 +1745,15 @@ def test_p_worker_preemption_cancels_push_without_waiting_for_done() -> None:
 
 def test_p_worker_uses_scheduler_blocks_without_slot_mapping_cpu_sync() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "req-1": PushReqMeta(
@@ -1629,8 +1762,7 @@ def test_p_worker_uses_scheduler_blocks_without_slot_mapping_cpu_sync() -> None:
                     handshakes=(DUMMY_HANDSHAKE,),
                 )
             }
-        ),
-        None,
+        )
     )
 
     slot_mapping = FakeSlotMapping([999])
@@ -1647,15 +1779,15 @@ def test_p_worker_uses_scheduler_blocks_without_slot_mapping_cpu_sync() -> None:
 
 def test_p_worker_save_does_not_require_slot_mapping() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "req-1": PushReqMeta(
@@ -1664,8 +1796,7 @@ def test_p_worker_save_does_not_require_slot_mapping() -> None:
                     handshakes=(DUMMY_HANDSHAKE,),
                 )
             }
-        ),
-        None,
+        )
     )
 
     attn_metadata = SimpleNamespace()
@@ -1680,14 +1811,14 @@ def test_p_worker_save_does_not_require_slot_mapping() -> None:
 
 def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     d_transfer = MockMooncakePort()
     prefill_sender = FakePrefillSender()
     d_worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=d_transfer,
@@ -1729,11 +1860,11 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     assert handshake.layers[0].regions[0] == TransferRegionLayout(
         region_idx=0,
         base_addr=tensor.data_ptr(),
-        block_len=4 * 16 * 32 * 2,
+        block_len=4 * 16 * 64 * 2,
     )
 
     push_worker = PdPrefillWorkerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="")),
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="")),
         transfer=MockMooncakePort(),
     )
     push_worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
@@ -1746,7 +1877,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
             )
         }
     )
-    push_worker.start_load_kv(push_meta, None)
+    push_worker.prepare_pushes(push_meta)
     assert push_worker.transfer.peer_handshakes["req-1"] is handshake
 
     push_worker.save_kv_layer(
@@ -1759,7 +1890,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
     drain_pd_pushes(push_worker)
     assert push_worker.get_finished(set()) == (None, None)
 
-    push_worker.start_load_kv(
+    push_worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "req-1": PushReqMeta(
@@ -1768,8 +1899,7 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
                     handshakes=(handshake,),
                 )
             }
-        ),
-        None,
+        )
     )
     push_worker.save_kv_layer(
         "layer.0", tensor, SimpleNamespace(slot_mapping=FakeSlotMapping([32]))
@@ -1784,8 +1914,8 @@ def test_pd_worker_publishes_wait_handshake_and_delays_done_until_all_blocks() -
 
 def test_d_worker_wait_handshake_uses_layer_kv_cache_group_blocks_for_mtp() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     prefill_sender = FakePrefillSender()
     worker = PdDecodeWorkerConnector(
@@ -1830,8 +1960,8 @@ def test_d_worker_wait_handshake_uses_layer_kv_cache_group_blocks_for_mtp() -> N
 
 def test_p_worker_pushes_mtp_layers_from_matching_kv_cache_group_blocks() -> None:
     tensor = FakeTensor(
-        shape=(2, 16, 16, 4, 32),
-        stride=(16 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(16, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     base_layer = "model.layers.0.self_attn"
     mtp_layer = "model.layers.27.self_attn"
@@ -1849,21 +1979,21 @@ def test_p_worker_pushes_mtp_layers_from_matching_kv_cache_group_blocks() -> Non
         tp_size=1,
         block_size=16,
         layers=(
-            hnd_remote_layer(
+            packed_remote_layer(
                 layer_name=base_layer,
                 layer_idx=0,
                 block_ids=(101, 102),
-                block_len=4096,
+                block_len=8192,
             ),
-            hnd_remote_layer(
+            packed_remote_layer(
                 layer_name=mtp_layer,
                 layer_idx=1,
                 block_ids=(207, 208),
-                block_len=4096,
+                block_len=8192,
             ),
         ),
     )
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r0": PushReqMeta(
@@ -1872,8 +2002,7 @@ def test_p_worker_pushes_mtp_layers_from_matching_kv_cache_group_blocks() -> Non
                     handshakes=(handshake,),
                 )
             }
-        ),
-        None,
+        )
     )
 
     worker.save_kv_layer(base_layer, tensor, SimpleNamespace())
@@ -1882,19 +2011,19 @@ def test_p_worker_pushes_mtp_layers_from_matching_kv_cache_group_blocks() -> Non
     drain_pd_pushes(worker)
 
     pushed_by_layer = pushed_layers_by_idx(transfer, "prefill-r0")
-    assert [block.regions[0].block_id for block in pushed_by_layer[0]] == [101]
+    assert [block.regions[0].block_id for block in pushed_by_layer[0]] == [101, 102]
     assert [block.regions[0].src_offset_bytes for block in pushed_by_layer[0]] == [
-        tensor.stride()[1] * 1 * tensor.element_size()
+        tensor.stride()[0] * block_id * tensor.element_size() for block_id in (1, 2)
     ]
-    assert [block.regions[0].block_id for block in pushed_by_layer[1]] == [207]
+    assert [block.regions[0].block_id for block in pushed_by_layer[1]] == [207, 208]
     assert [block.regions[0].src_offset_bytes for block in pushed_by_layer[1]] == [
-        tensor.stride()[1] * 7 * tensor.element_size()
+        tensor.stride()[0] * block_id * tensor.element_size() for block_id in (7, 8)
     ]
 
 
 def test_scheduler_delays_producer_block_free_until_send_finishes() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -1926,7 +2055,7 @@ def test_scheduler_delays_producer_block_free_until_send_finishes() -> None:
 
 def test_scheduler_does_not_delay_aborted_producer_block_free() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -1952,7 +2081,7 @@ def test_scheduler_does_not_delay_aborted_producer_block_free() -> None:
 
 def test_scheduler_marks_remote_prefill_abort_as_consumer_abort_ack() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -1979,7 +2108,7 @@ def test_scheduler_marks_remote_prefill_abort_as_consumer_abort_ack() -> None:
 
 def test_scheduler_marks_preempted_producer_for_worker_release() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2000,7 +2129,7 @@ def test_scheduler_marks_preempted_producer_for_worker_release() -> None:
 
 def test_scheduler_marks_consumer_abort_release_reason() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2017,7 +2146,7 @@ def test_scheduler_marks_consumer_abort_release_reason() -> None:
 
 def test_scheduler_emits_cached_producer_chunks() -> None:
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2045,7 +2174,7 @@ def test_scheduler_emits_cached_producer_chunks() -> None:
 
 def test_scheduler_carries_prompt_tokens_for_d_to_p_oob() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2061,7 +2190,7 @@ def test_scheduler_carries_prompt_tokens_for_d_to_p_oob() -> None:
 
 def test_scheduler_carries_prefill_max_tokens_for_d_to_p_oob() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2111,7 +2240,7 @@ def test_scheduler_carries_cross_process_mooncake_handshake() -> None:
         ],
     }
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="prefill-1",
@@ -2154,7 +2283,7 @@ def test_scheduler_carries_cross_process_mooncake_handshake_list() -> None:
         ],
     }
     scheduler = PdPrefillSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="p"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="p"))
     )
     request = SimpleNamespace(
         request_id="prefill-1",
@@ -2179,7 +2308,7 @@ def test_scheduler_carries_cross_process_mooncake_handshake_list() -> None:
 
 def test_scheduler_ignores_legacy_fake_rdma_done_endpoint() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2199,7 +2328,7 @@ def test_scheduler_ignores_legacy_fake_rdma_done_endpoint() -> None:
 
 def test_scheduler_registers_remote_wait_once_until_done() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2231,7 +2360,7 @@ def test_scheduler_registers_remote_wait_once_until_done() -> None:
 
 def test_scheduler_failed_recv_allows_remote_wait_retry() -> None:
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="req-1",
@@ -2262,13 +2391,13 @@ def test_scheduler_failed_recv_allows_remote_wait_retry() -> None:
 
 def test_d_failed_load_retry_dispatches_prefill_again() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     prefill_sender = FakePrefillSender()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=MockMooncakePort(),
@@ -2276,7 +2405,7 @@ def test_d_failed_load_retry_dispatches_prefill_again() -> None:
     )
     worker.register_kv_caches({"layer.0": tensor})
     scheduler = PdDecodeSchedulerConnector(
-        SimpleNamespace(kv_transfer_config=SimpleNamespace(engine_id="d"))
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="d"))
     )
     request = SimpleNamespace(
         request_id="decode-1",
@@ -2316,13 +2445,13 @@ def test_d_failed_load_retry_dispatches_prefill_again() -> None:
 
 def test_d_worker_rank0_dispatches_prefill_on_wait() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     prefill_sender = FakePrefillSender()
     worker = PdDecodeWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="decode"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="decode"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=MockMooncakePort(),
@@ -2475,20 +2604,19 @@ def test_layer_push_sender_cancel_skips_queued_req() -> None:
         sender.close()
 
 
-def test_push_finalizer_runs_requests_concurrently() -> None:
-    class Sender:
-        def wait_req(self, req_id: str) -> None:
-            return None
-
-    class BlockingRdma:
+def test_push_finalizer_waits_for_requests_concurrently() -> None:
+    class BlockingSender:
         def __init__(self) -> None:
             self.entered: queue.Queue[str] = queue.Queue()
             self.release = threading.Event()
-            self.done: list[str] = []
 
-        def wait_for_pushes(self, req_id: str) -> None:
+        def wait_req(self, req_id: str) -> None:
             self.entered.put(req_id)
             assert self.release.wait(timeout=2)
+
+    class RecordingTransfer:
+        def __init__(self) -> None:
+            self.done: list[str] = []
 
         def push_done(self, req_id: str) -> None:
             self.done.append(req_id)
@@ -2496,8 +2624,9 @@ def test_push_finalizer_runs_requests_concurrently() -> None:
         def aggregated_link_speed(self) -> int:
             return 400_000_000_000
 
-    transfer = BlockingRdma()
-    finalizer = prefill_worker_mod._AsyncPushFinalizer(Sender())
+    sender = BlockingSender()
+    transfer = RecordingTransfer()
+    finalizer = prefill_worker_mod._AsyncPushFinalizer(sender)
     try:
         for req_id in ("req-1", "req-2"):
             finalizer.submit(
@@ -2514,14 +2643,14 @@ def test_push_finalizer_runs_requests_concurrently() -> None:
                 )
             )
 
-        entered = {transfer.entered.get(timeout=2), transfer.entered.get(timeout=2)}
+        entered = {sender.entered.get(timeout=2), sender.entered.get(timeout=2)}
         assert entered == {"req-1", "req-2"}
 
-        transfer.release.set()
+        sender.release.set()
         finalizer.wait_all()
         assert sorted(transfer.done) == ["req-1", "req-2"]
     finally:
-        transfer.release.set()
+        sender.release.set()
         finalizer.close()
 
 
@@ -2531,9 +2660,6 @@ def test_push_finalizer_records_schedule_to_done_duration() -> None:
             return None
 
     class RecordingRdma:
-        def wait_for_pushes(self, req_id: str) -> None:
-            return None
-
         def push_done(self, req_id: str) -> None:
             return None
 
@@ -2698,8 +2824,8 @@ def test_async_prefill_sender_reports_startup_failure(monkeypatch) -> None:
 
 def test_p_worker_selects_matching_tp_rank_handshake() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     handshakes = (
         PdHandshake(
@@ -2721,13 +2847,13 @@ def test_p_worker_selects_matching_tp_rank_handshake() -> None:
     )
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
         transfer=MockMooncakePort(),
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r1": PushReqMeta(
@@ -2736,8 +2862,7 @@ def test_p_worker_selects_matching_tp_rank_handshake() -> None:
                     handshakes=handshakes,
                 )
             }
-        ),
-        None,
+        )
     )
 
     assert worker.transfer.peer_handshakes["prefill-r1"] is handshakes[1]
@@ -2745,19 +2870,19 @@ def test_p_worker_selects_matching_tp_rank_handshake() -> None:
 
 def test_p_worker_pushes_registered_blocks_from_save_kv_layer() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor, "layer.1": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r0": PushReqMeta(
@@ -2775,8 +2900,7 @@ def test_p_worker_pushes_registered_blocks_from_save_kv_layer() -> None:
                     ),
                 )
             }
-        ),
-        None,
+        )
     )
 
     attn_metadata = SimpleNamespace(slot_mapping=FakeSlotMapping([16]))
@@ -2791,19 +2915,19 @@ def test_p_worker_pushes_registered_blocks_from_save_kv_layer() -> None:
 
 def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 4, 32),
-        stride=(8 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=1, tensor_parallel_size=2),
         ),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r1": PushReqMeta(
@@ -2816,14 +2940,13 @@ def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> 
                             tp_rank=rank,
                             tp_size=4,
                             block_size=16,
-                            layers=(hnd_remote_layer(block_ids=(68,), block_len=2048),),
+                            layers=(packed_remote_layer(block_ids=(68,), block_len=4096),),
                         )
                         for rank in range(4)
                     ),
                 )
             }
-        ),
-        None,
+        )
     )
 
     worker.save_kv_layer(
@@ -2840,13 +2963,13 @@ def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> 
     d3_push = transfer.pushed_layers["prefill-r1#d3"][0][1]
     assert d2_push[0].regions[0] == BlockRegionSlice(
         block_id=68,
-        src_offset_bytes=(3 * 4 * 16 * 32) * 2,
-        bytes=2 * 16 * 32 * 2,
+        src_offset_bytes=(3 * 4 * 16 * 64) * 2,
+        bytes=2 * 16 * 64 * 2,
     )
     assert d3_push[0].regions[0] == BlockRegionSlice(
         block_id=68,
-        src_offset_bytes=(3 * 4 * 16 * 32 + 2 * 16 * 32) * 2,
-        bytes=2 * 16 * 32 * 2,
+        src_offset_bytes=(3 * 4 * 16 * 64 + 2 * 16 * 64) * 2,
+        bytes=2 * 16 * 64 * 2,
     )
     assert worker.get_finished({"prefill-r1"})[0] == {"prefill-r1"}
     assert "prefill-r1#d2" not in transfer.registered
@@ -2855,19 +2978,19 @@ def test_p_worker_pushes_to_multiple_decode_ranks_when_decode_tp_is_larger() -> 
 
 def test_p_worker_offsets_remote_heads_when_prefill_tp_is_larger() -> None:
     tensor = FakeTensor(
-        shape=(2, 8, 16, 2, 32),
-        stride=(8 * 2 * 16 * 32, 2 * 16 * 32, 32, 16 * 32, 1),
+        shape=(8, 2, 16, 64),
+        stride=(2 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=3, tensor_parallel_size=4),
         ),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r3": PushReqMeta(
@@ -2880,14 +3003,13 @@ def test_p_worker_offsets_remote_heads_when_prefill_tp_is_larger() -> None:
                             tp_rank=rank,
                             tp_size=2,
                             block_size=16,
-                            layers=(hnd_remote_layer(block_ids=(68,), block_len=4096),),
+                            layers=(packed_remote_layer(block_ids=(68,), block_len=8192),),
                         )
                         for rank in range(2)
                     ),
                 )
             }
-        ),
-        None,
+        )
     )
 
     worker.save_kv_layer(
@@ -2900,32 +3022,32 @@ def test_p_worker_offsets_remote_heads_when_prefill_tp_is_larger() -> None:
     assert sorted(transfer.peer_handshakes) == ["prefill-r3"]
     assert transfer.peer_handshakes["prefill-r3"].request_id == "decode-r1"
     remote_layer = transfer.peer_handshakes["prefill-r3"].layers[0]
-    assert remote_layer.regions[0].base_addr == 0x1000 + 2 * 16 * 32 * 2
-    assert remote_layer.regions[0].block_len == 2 * 16 * 32 * 2
-    assert remote_layer.regions[0].block_stride == 4 * 16 * 32 * 2
+    assert remote_layer.regions[0].base_addr == 0x1000 + 2 * 16 * 64 * 2
+    assert remote_layer.regions[0].block_len == 2 * 16 * 64 * 2
+    assert remote_layer.regions[0].block_stride == 4 * 16 * 64 * 2
     pushed = transfer.pushed_layers["prefill-r3"][0][1]
     assert pushed[0].regions[0] == BlockRegionSlice(
         block_id=68,
-        src_offset_bytes=(3 * 2 * 16 * 32) * 2,
-        bytes=2 * 16 * 32 * 2,
+        src_offset_bytes=(3 * 2 * 16 * 64) * 2,
+        bytes=2 * 16 * 64 * 2,
     )
 
 
 def test_p_worker_maps_local_blocks_to_remote_blocks_by_position() -> None:
     tensor = FakeTensor(
-        shape=(2, 16, 16, 4, 32),
-        stride=(16 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(16, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r0": PushReqMeta(
@@ -2939,17 +3061,16 @@ def test_p_worker_maps_local_blocks_to_remote_blocks_by_position() -> None:
                             tp_size=1,
                             block_size=16,
                             layers=(
-                                hnd_remote_layer(
+                                packed_remote_layer(
                                     block_ids=(68, 69),
-                                    block_len=4096,
+                                    block_len=8192,
                                 ),
                             ),
                         ),
                     ),
                 )
             }
-        ),
-        None,
+        )
     )
 
     worker.save_kv_layer(
@@ -2961,29 +3082,31 @@ def test_p_worker_maps_local_blocks_to_remote_blocks_by_position() -> None:
     drain_pd_pushes(worker)
 
     _, pushed = transfer.pushed_layers["prefill-r0"][0]
-    assert [block.regions[0].block_id for block in pushed] == [68]
+    assert [block.regions[0].block_id for block in pushed] == [68, 69]
     assert len(transfer.pushed_layers["prefill-r0"]) == 1
     assert [block.regions[0].src_offset_bytes for block in pushed] == [
-        tensor.stride()[1] * 3 * tensor.element_size()
+        tensor.stride()[0] * block_id * tensor.element_size() for block_id in (3, 4)
     ]
-    assert pushed[0].regions[0].bytes == tensor.stride()[1] * tensor.element_size() * 2
+    assert all(
+        block.regions[0].bytes == tensor.stride()[0] * tensor.element_size() for block in pushed
+    )
 
 
 def test_p_worker_precomputes_layer_push_plan_before_save() -> None:
     tensor = FakeTensor(
-        shape=(2, 16, 16, 4, 32),
-        stride=(16 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(16, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
     )
     worker.register_kv_caches({"layer.0": tensor})
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r0": PushReqMeta(
@@ -2997,45 +3120,44 @@ def test_p_worker_precomputes_layer_push_plan_before_save() -> None:
                             tp_size=1,
                             block_size=16,
                             layers=(
-                                hnd_remote_layer(
+                                packed_remote_layer(
                                     block_ids=(68, 69),
-                                    block_len=4096,
+                                    block_len=8192,
                                 ),
                             ),
                         ),
                     ),
                 )
             }
-        ),
-        None,
+        )
     )
 
     prepared = worker._prefill._push_layer_plans["prefill-r0"][0]
     assert prepared.req_blocks == frozenset({3, 4})
     assert prepared.pushed_req_blocks == frozenset({3, 4})
-    assert prepared.transfer_bytes == tensor.stride()[1] * tensor.element_size() * 2 * 2
+    assert prepared.transfer_bytes == tensor.stride()[0] * tensor.element_size() * 2
     assert prepared.all_chunks_seen is True
     assert len(prepared.target_pushes) == 1
-    assert len(prepared.target_pushes[0].block_slices) == 1
+    assert len(prepared.target_pushes[0].block_slices) == 2
     assert prepared.target_pushes[0].block_slices[0].regions[0].block_id == 68
 
     worker.save_kv_layer("layer.0", object(), SimpleNamespace())
     drain_pd_pushes(worker)
 
     _, pushed = transfer.pushed_layers["prefill-r0"][0]
-    assert [block.regions[0].block_id for block in pushed] == [68]
+    assert [block.regions[0].block_id for block in pushed] == [68, 69]
 
 
 @pytest.mark.parametrize("overlapping", [False, True])
 def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overlapping) -> None:
     tensor = FakeTensor(
-        shape=(2, 16, 16, 4, 32),
-        stride=(16 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(16, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -3048,19 +3170,19 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
         tp_size=1,
         block_size=16,
         layers=(
-            hnd_remote_layer(
+            packed_remote_layer(
                 block_ids=(68, 69, 70, 71),
-                block_len=4096,
+                block_len=8192,
             ),
         ),
     )
 
     queued = []
-    submit = worker._push_sender.submit
+    submit = worker._prefill._push_sender.submit
     if overlapping:
-        monkeypatch.setattr(worker._push_sender, "submit", queued.append)
+        monkeypatch.setattr(worker._prefill._push_sender, "submit", queued.append)
 
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r0": PushReqMeta(
@@ -3069,8 +3191,7 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
                     handshakes=(handshake,),
                 )
             }
-        ),
-        None,
+        )
     )
     worker.save_kv_layer(
         "layer.0",
@@ -3087,7 +3208,7 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
 
     assert worker.get_finished(set())[0] is None
 
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r0": PushReqMeta(
@@ -3096,15 +3217,15 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
                     handshakes=(handshake,),
                 )
             }
-        ),
-        None,
+        )
     )
     if overlapping:
         assert queued[0].request_generation == transfer._request_generations["prefill-r0"]
         prefill_worker_mod._run_layer_push(queued.pop())
-        monkeypatch.setattr(worker._push_sender, "submit", submit)
+        monkeypatch.setattr(worker._prefill._push_sender, "submit", submit)
     assert [block.regions[0].block_id for block in transfer.pushed_layers["prefill-r0"][0][1]] == [
-        68
+        68,
+        69,
     ]
     worker.save_kv_layer(
         "layer.0",
@@ -3115,20 +3236,21 @@ def test_p_worker_advances_remote_blocks_across_chunk_prefill(monkeypatch, overl
     drain_pd_pushes(worker)
 
     assert [block.regions[0].block_id for block in transfer.pushed_layers["prefill-r0"][1][1]] == [
-        70
+        70,
+        71,
     ]
     assert worker.get_finished({"prefill-r0"})[0] == {"prefill-r0"}
 
 
 def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
     tensor = FakeTensor(
-        shape=(2, 32, 16, 4, 32),
-        stride=(32 * 4 * 16 * 32, 4 * 16 * 32, 32, 16 * 32, 1),
+        shape=(32, 4, 16, 64),
+        stride=(4 * 16 * 64, 16 * 64, 64, 1),
     )
     transfer = MockMooncakePort()
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
@@ -3141,14 +3263,14 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
         tp_size=1,
         block_size=16,
         layers=(
-            hnd_remote_layer(
+            packed_remote_layer(
                 block_ids=tuple(range(68, 96)),
-                block_len=4096,
+                block_len=8192,
             ),
         ),
     )
 
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r0": PushReqMeta(
@@ -3157,8 +3279,7 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
                     handshakes=(handshake,),
                 )
             }
-        ),
-        None,
+        )
     )
     worker.save_kv_layer(
         "layer.0",
@@ -3170,7 +3291,7 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
 
     assert worker.get_finished(set())[0] is None
 
-    worker.start_load_kv(
+    worker.prepare_pushes(
         PdConnectorMetadata(
             reqs_to_push={
                 "prefill-r0": PushReqMeta(
@@ -3179,8 +3300,7 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
                     handshakes=(handshake,),
                 )
             }
-        ),
-        None,
+        )
     )
     worker.save_kv_layer(
         "layer.0",
@@ -3191,8 +3311,8 @@ def test_p_worker_trims_extra_prefill_blocks_beyond_decode_handshake() -> None:
     drain_pd_pushes(worker)
 
     second_push = transfer.pushed_layers["prefill-r0"][1][1]
-    assert [block.regions[0].block_id for block in second_push] == [76]
-    assert second_push[0].regions[0].bytes == tensor.stride()[1] * tensor.element_size() * 20
+    assert [block.regions[0].block_id for block in second_push] == list(range(76, 96))
+    assert block_slices_bytes(second_push) == tensor.stride()[0] * tensor.element_size() * 20
     assert worker.get_finished({"prefill-r0"})[0] == {"prefill-r0"}
 
 
@@ -3389,10 +3509,104 @@ def test_pd_prefill_connector_requires_piecewise_cudagraph_for_layerwise_push() 
     assert PdPrefillConnector.requires_piecewise_for_cudagraph({}) is True
 
 
-def test_pd_connector_can_allow_full_decode_cudagraph() -> None:
-    assert (
-        PdDecodeConnector.requires_piecewise_for_cudagraph(
-            {"orbitkv.pd.allow_full_decode_cudagraph": True}
-        )
-        is False
+def test_pd_cudagraph_mode_matches_callback_ownership() -> None:
+    assert PdPrefillConnector.requires_piecewise_for_cudagraph({})
+    assert not PdDecodeConnector.requires_piecewise_for_cudagraph({})
+
+
+def test_prefill_binds_send_ownership_before_forward_and_does_not_requeue_after():
+    config = SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"))
+    transfer = MockMooncakePort()
+    connector = PdPrefillConnector(config, KVConnectorRole.WORKER)
+    worker = connector._worker
+    worker.transfer = transfer
+    worker._transfer_is_injected = True
+    tensor = FakeTensor((8, 4, 16, 64), (4096, 1024, 64, 1))
+    connector.register_kv_caches({"layer.0": tensor})
+    handshake = PdHandshake(
+        request_id="decode",
+        engine_id="decode",
+        tp_rank=0,
+        tp_size=1,
+        block_size=16,
+        layers=(packed_remote_layer(block_ids=(2, 3)),),
     )
+    metadata = PdConnectorMetadata(
+        reqs_to_push={
+            "prefill": PushReqMeta(
+                local_block_ids=([1, 2],),
+                target_request_id="decode",
+                handshakes=(handshake,),
+            )
+        }
+    )
+    try:
+        connector.bind_connector_metadata(metadata)
+        assert worker._prefill._push_layer_plans["prefill"][0].pushed_req_blocks == frozenset(
+            {1, 2}
+        )
+        connector.save_kv_layer("layer.0", tensor, SimpleNamespace())
+        connector.start_load_kv(None)
+        connector.wait_for_save()
+        drain_pd_pushes(worker)
+        assert len(transfer.pushed_layers["prefill"]) == 1
+        assert block_slices_bytes(transfer.pushed_layers["prefill"][0][1]) == 16384
+        assert connector.get_finished({"prefill"})[0] == {"prefill"}
+        connector.clear_connector_metadata()
+        connector.bind_connector_metadata(PdConnectorMetadata())
+        assert not worker._prefill.has_state()
+    finally:
+        connector.shutdown()
+
+
+def test_decode_does_not_publish_completion_before_its_owner_callback(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    original = decode_worker_mod.DecodeHandler._record_transfer_wait_done
+
+    def blocked_completion(owner, task, wait_s):
+        entered.set()
+        assert release.wait(timeout=5)
+        return original(owner, task, wait_s)
+
+    monkeypatch.setattr(
+        decode_worker_mod.DecodeHandler, "_record_transfer_wait_done", blocked_completion
+    )
+    engine = FakeMooncakeTransferEngine()
+    monkeypatch.setattr(engine, "wait_for_status", lambda *args, **kwargs: "done")
+    worker = PdDecodeWorkerConnector(
+        SimpleNamespace(kv_transfer_config=FakeKVTransferConfig(engine_id="decode")),
+        transfer=RealMooncakePort(engine),
+    )
+    worker.register_kv_caches({"layer.0": FakeTensor((8, 4, 16, 64), (4096, 1024, 64, 1))})
+    try:
+        worker.start_load_kv(
+            PdConnectorMetadata(
+                reqs_to_wait={
+                    "decode": WaitReqMeta(
+                        local_block_ids=([1],),
+                        remote_request_id="prefill",
+                        done_request_id="decode",
+                        prompt_token_ids=(1,),
+                        prefill_url="",
+                    )
+                }
+            ),
+            None,
+        )
+        assert entered.wait(timeout=5)
+        assert worker.get_finished(set()) == (None, None)
+        assert "decode" in worker._decode.wait_reqs
+        release.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            completed = worker.get_finished(set())
+            if completed[1]:
+                break
+            time.sleep(0.01)
+        assert completed == (None, {"decode"})
+        assert worker.get_finished(set()) == (None, None)
+        assert worker.get_stats().data["pd_load_success_count"] == 1
+    finally:
+        release.set()
+        worker.shutdown()

@@ -73,7 +73,6 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
         16 * 1024,
         1,
         false,
-        true,
         NonZeroU64::new(SSD_ALIGNMENT as u64),
     ));
     for encoded in [false, true] {
@@ -89,7 +88,17 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
             Arc::new(move |bytes, node| {
                 pool.allocate(NonZeroU64::new(bytes)?, node.unwrap_or(NumaNode::UNKNOWN))
             }),
+            {
+                let allocator = Arc::clone(&allocator);
+                Arc::new(move |bytes, node| {
+                    allocator.allocation_footprint(
+                        NonZeroU64::new(bytes)?,
+                        node.unwrap_or(NumaNode::UNKNOWN),
+                    )
+                })
+            },
             false,
+            None,
         )
         .unwrap();
         let data = [if encoded { 0x71 } else { 0x32 }; SSD_ALIGNMENT];
@@ -186,6 +195,13 @@ async fn neutral_leases_read_raw_and_encoded_generations_through_uring() {
 }
 
 pub(super) fn queued_read_store() -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver<PrefetchBatch>) {
+    queued_read_store_with_inventory(None, true)
+}
+
+fn queued_read_store_with_inventory(
+    inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
+    commit: bool,
+) -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver<PrefetchBatch>) {
     use std::os::fd::AsRawFd;
 
     let file = tempfile::tempfile().unwrap();
@@ -220,7 +236,9 @@ pub(super) fn queued_read_store() -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver
             reuse_history: LruCache::new(1),
         }),
         allocate_fn: Arc::new(|_, _| None),
+        allocation_footprint_fn: Arc::new(|bytes, _| Some(bytes)),
         is_numa: false,
+        inventory,
     });
     let key = StateKey::new("queued-lease".into(), vec![0]);
     let mut inner = store.inner.lock();
@@ -235,9 +253,195 @@ pub(super) fn queued_read_store() -> (Arc<SsdStore>, tokio::sync::mpsc::Receiver
             index::Encoding::Raw,
         )
         .unwrap();
-    assert!(inner.ring.commit(&key, true));
     drop(inner);
+    if commit {
+        store.commit_write(&key, true);
+    }
     (store, prefetch_rx)
+}
+
+#[test]
+fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
+    let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
+        16 * 1024,
+    ));
+    let (store, _queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), false);
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let shard = orbitkv_state::catalog_shard(&key);
+    assert!(inventory.page(shard, None).unwrap().is_empty());
+
+    store.commit_write(&key, true);
+    let ssd = inventory.page(shard, None).unwrap();
+    assert_eq!(ssd.len(), 1);
+    assert_eq!(
+        ssd[0].metadata.unwrap().medium,
+        orbitkv_state::ReplicaMedium::Ssd
+    );
+    assert_eq!(
+        ssd[0].metadata.unwrap().stored_bytes,
+        Some(SSD_ALIGNMENT as u64)
+    );
+
+    let dram = crate::storage::dram::DramStore::with_inventory(
+        4096,
+        false,
+        None,
+        Some(Arc::clone(&inventory)),
+        0,
+    );
+    dram.batch_insert(vec![(
+        key.clone(),
+        Arc::new(SealedBlock::for_policy_test(2048)),
+    )]);
+    assert_eq!(
+        inventory.page(shard, None).unwrap()[0]
+            .metadata
+            .unwrap()
+            .medium,
+        orbitkv_state::ReplicaMedium::Dram
+    );
+    dram.remove_all();
+    assert_eq!(
+        inventory.page(shard, None).unwrap()[0]
+            .metadata
+            .unwrap()
+            .medium,
+        orbitkv_state::ReplicaMedium::Ssd
+    );
+
+    let replacement = StateKey::new("queued-lease".into(), vec![1]);
+    let retired = {
+        let mut inner = store.inner.lock();
+        let mut slot =
+            crate::SlotMeta::new(smallvec::smallvec![SSD_ALIGNMENT as u64], NumaNode::UNKNOWN);
+        slot.encoding = Some(vec![crate::codec::EncodedSegment {
+            version: 1,
+            format: orbitkv_state::StorageFormat::Exact,
+            logical_bytes: SSD_ALIGNMENT,
+            stored_bytes: SSD_ALIGNMENT,
+            checksum: 0,
+        }]);
+        inner
+            .ring
+            .reserve(&replacement, vec![slot], index::Encoding::Encoded)
+            .unwrap();
+        inner.ring.take_retired()
+    };
+    assert_eq!(retired, [key]);
+    store.retire_inventory(retired);
+    assert!(inventory.page(shard, None).unwrap().is_empty());
+
+    store.commit_write(&replacement, true);
+    let replacement_shard = orbitkv_state::catalog_shard(&replacement);
+    assert_eq!(
+        inventory.page(replacement_shard, None).unwrap()[0]
+            .metadata
+            .unwrap()
+            .medium,
+        orbitkv_state::ReplicaMedium::Ssd
+    );
+    let entry = store.inner.lock().ring.get(&replacement).unwrap().clone();
+    store.invalidate_encoded_entry(&replacement, &entry);
+    assert!(inventory.page(replacement_shard, None).unwrap().is_empty());
+}
+
+#[test]
+fn export_pins_exact_ssd_evidence_and_accounts_staging_allocations() {
+    let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
+        16 * 1024,
+    ));
+    let (store, _queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), true);
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let record = inventory
+        .page(orbitkv_state::catalog_shard(&key), None)
+        .unwrap()
+        .pop()
+        .unwrap();
+    let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
+    let leases = store
+        .pin_residencies(std::slice::from_ref(&record))
+        .unwrap();
+    assert_eq!(readers.load(Ordering::Acquire), 1);
+    assert_eq!(store.staging_footprint(&leases), Some(SSD_ALIGNMENT as u64));
+    drop(leases);
+    assert_eq!(readers.load(Ordering::Acquire), 0);
+
+    inventory.change(
+        &key,
+        orbitkv_state::ReplicaMedium::Dram,
+        Some(orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Dram,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(SSD_ALIGNMENT as u64),
+        }),
+    );
+    assert!(store.pin_residencies(&[record]).is_none());
+    assert_eq!(readers.load(Ordering::Acquire), 0);
+}
+
+#[tokio::test]
+async fn cancelled_ssd_authorization_keeps_admission_with_queued_batch() {
+    use orbitkv_catalog::{MembershipView, Placement};
+    use orbitkv_state::CacheOwner;
+
+    let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
+        16 * 1024,
+    ));
+    let (store, mut queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), true);
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let records = inventory
+        .page(orbitkv_state::catalog_shard(&key), None)
+        .unwrap();
+    let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
+    let owner = CacheOwner {
+        endpoint: "127.0.0.1:50055".into(),
+        incarnation: uuid::Uuid::new_v4(),
+    };
+    let membership = Arc::new(MembershipView::new(
+        owner.clone(),
+        Placement::new(vec!["source".into()]).unwrap(),
+    ));
+    assert!(membership.renew(
+        std::time::Instant::now(),
+        std::time::Duration::from_secs(30)
+    ));
+    membership.replace_members([("source".into(), owner.clone())]);
+    let dram = Arc::new(crate::storage::dram::DramStore::with_inventory(
+        1 << 20,
+        false,
+        None,
+        Some(inventory),
+        0,
+    ));
+    let exports = crate::PeerExports::new(
+        dram,
+        Some(Arc::clone(&store)),
+        Some(membership),
+        Some("127.0.0.1:12345".into()),
+        std::time::Duration::from_secs(30),
+        SSD_ALIGNMENT as u64,
+    );
+    let ticket = crate::TransferTicket::new(
+        exports
+            .open(owner.incarnation, uuid::Uuid::new_v4())
+            .unwrap(),
+        0,
+        1,
+    )
+    .unwrap();
+    let mut authorization = Box::pin(exports.authorize(owner.incarnation, ticket, &records));
+    assert!(futures::poll!(authorization.as_mut()).is_pending());
+    let batch = queued.recv().await.unwrap();
+    assert_eq!(exports.transfer_accounting(), (1, SSD_ALIGNMENT as u64));
+    assert_eq!(readers.load(Ordering::Acquire), 1);
+
+    drop(authorization);
+    assert!(batch.done_tx.is_closed());
+    assert_eq!(exports.transfer_accounting(), (1, SSD_ALIGNMENT as u64));
+    assert_eq!(readers.load(Ordering::Acquire), 1);
+    drop(batch);
+    assert_eq!(exports.transfer_accounting(), (0, 0));
+    assert_eq!(readers.load(Ordering::Acquire), 0);
 }
 
 #[tokio::test]
@@ -285,6 +489,259 @@ async fn candidates_do_not_pin_and_cannot_authorize_a_replaced_generation() {
     assert!(fresh.pin().is_some());
     drop(store);
     assert!(fresh.pin().is_none());
+}
+
+#[tokio::test]
+async fn host_routes_preserve_source_priority_permissions_and_complete_coverage() {
+    use crate::QueryMode;
+    use crate::planning::read::{HostReadRoute, ReadPlan, ReadTarget};
+
+    let (store, queued) = queued_read_store();
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let missing = StateKey::new("queued-lease".into(), vec![1]);
+    let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
+
+    for mode in [
+        QueryMode::Demand,
+        QueryMode::Prepare,
+        QueryMode::WaitForFullPrefix,
+    ] {
+        for peer_available in [false, true] {
+            for allow_ssd in [false, true] {
+                let mut plan = ReadPlan::new(&[key.clone(), missing.clone()], mode, Some(&store));
+                assert!(plan.deferred_ssd(&store, 0).is_none());
+                assert!(
+                    matches!(plan.target, ReadTarget::HostReady) == (mode == QueryMode::Prepare)
+                );
+                #[cfg(feature = "mooncake")]
+                plan.rows[0].set_peers(vec![orbitkv_state::ReplicaLocation {
+                    owner: orbitkv_state::CacheOwner {
+                        endpoint: "source".into(),
+                        incarnation: uuid::Uuid::from_u128(1),
+                    },
+                    sequence: 1,
+                    metadata: orbitkv_state::ReplicaMetadata {
+                        medium: orbitkv_state::ReplicaMedium::Dram,
+                        representation: orbitkv_state::ReplicaRepresentation::Raw,
+                        stored_bytes: Some(4096),
+                    },
+                }]);
+                let route = plan.host_route(peer_available, allow_ssd, 0);
+                let expected_peer = cfg!(feature = "mooncake") && peer_available;
+                if mode == QueryMode::WaitForFullPrefix {
+                    assert!(route.is_none(), "neither source covers the complete demand");
+                } else {
+                    match route {
+                        #[cfg(feature = "mooncake")]
+                        Some(HostReadRoute::Peer(peer)) => {
+                            assert!(expected_peer);
+                            assert_eq!(peer.block_count(), 1);
+                        }
+                        Some(HostReadRoute::Ssd(ssd)) => {
+                            assert!(allow_ssd && !expected_peer);
+                            assert_eq!(readers.load(Ordering::Acquire), 0);
+                            let leases = ssd.acquire(0).unwrap();
+                            assert_eq!(leases.len(), 1);
+                            assert!(Arc::ptr_eq(&leases[0].entry.readers, &readers));
+                            assert_eq!(readers.load(Ordering::Acquire), 1);
+                        }
+                        None => assert!(!allow_ssd && !expected_peer),
+                    }
+                }
+                assert_eq!(readers.load(Ordering::Acquire), 0);
+                assert_eq!(
+                    queued.len(),
+                    0,
+                    "route selection must not submit payload reads"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn peer_ssd_route_is_explicit_and_follows_local_ssd_priority() {
+    use crate::QueryMode;
+    use crate::cost::{CostEstimateKey, CostObservationKind, Representation};
+    use crate::planning::peer::PeerSource;
+    use crate::planning::read::{HostReadRoute, ReadPlan};
+
+    let (store, queued) = queued_read_store();
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let peer_ssd = orbitkv_state::ReplicaLocation {
+        owner: orbitkv_state::CacheOwner {
+            endpoint: "source".into(),
+            incarnation: uuid::Uuid::from_u128(1),
+        },
+        sequence: 1,
+        metadata: orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Ssd,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(SSD_ALIGNMENT as u64),
+        },
+    };
+
+    let mut local = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Demand, Some(&store));
+    local.rows[0].set_peers(vec![peer_ssd.clone()]);
+    let Some(HostReadRoute::Ssd(local_route)) = local.host_route(true, true, 0) else {
+        panic!("local SSD must remain ahead of peer SSD");
+    };
+    assert_eq!(
+        local_route.cost_estimate_key(),
+        Some(CostEstimateKey::new(
+            CostObservationKind::LocalSsdHostReady,
+            store.io.cost_resource,
+            Representation::Raw,
+            SSD_ALIGNMENT as u64,
+            1,
+        ))
+    );
+    let old = store.inner.lock().ring.get(&key).unwrap().clone();
+    {
+        let mut inner = store.inner.lock();
+        for next in [StateKey::new("queued-lease".into(), vec![1]), key.clone()] {
+            inner
+                .ring
+                .reserve(&next, old.slots.clone(), index::Encoding::Raw)
+                .unwrap();
+            assert!(inner.ring.commit(&next, true));
+        }
+    }
+    assert!(local_route.acquire(0).is_none());
+    let Some(HostReadRoute::Peer(fallback)) = local.host_route(true, false, 0) else {
+        panic!("stale local SSD evidence must preserve the peer SSD fallback");
+    };
+    assert_eq!(fallback.next_segment(0).unwrap().source, PeerSource::Ssd);
+
+    let mut remote = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Demand, Some(&store));
+    remote.rows[0].set_peers(vec![peer_ssd]);
+    let Some(HostReadRoute::Peer(route)) = remote.host_route(true, false, 0) else {
+        panic!("peer SSD should be executable when local host staging is disabled");
+    };
+    assert_eq!(route.next_segment(0).unwrap().source, PeerSource::Ssd);
+    assert_eq!(queued.len(), 0, "planning cannot stage either source");
+}
+
+#[cfg(feature = "mooncake")]
+#[tokio::test]
+async fn cross_medium_selection_is_explicit_and_preserves_equal_coverage() {
+    const CHILD: &str = "ORBITKV_TEST_CROSS_MEDIUM_ROUTE_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        use crate::QueryMode;
+        use crate::cost::{
+            CostEstimateKey, CostObservationKind, ExecutionResource, Representation, resource_id,
+        };
+        use crate::planning::peer::{FetchPlan, PeerSource};
+        use crate::planning::read::{HostReadRoute, ReadPlan};
+
+        let (store, _queued) = queued_read_store();
+        let key = StateKey::new("queued-lease".into(), vec![0]);
+        let owner = orbitkv_state::CacheOwner {
+            endpoint: "peer".into(),
+            incarnation: uuid::Uuid::from_u128(44),
+        };
+        let mut plan = ReadPlan::new(std::slice::from_ref(&key), QueryMode::Demand, Some(&store));
+        plan.rows[0].set_peers(vec![orbitkv_state::ReplicaLocation {
+            owner: owner.clone(),
+            sequence: 1,
+            metadata: orbitkv_state::ReplicaMetadata {
+                medium: orbitkv_state::ReplicaMedium::Dram,
+                representation: orbitkv_state::ReplicaRepresentation::Raw,
+                stored_bytes: Some(SSD_ALIGNMENT as u64),
+            },
+        }]);
+        let local_key = plan
+            .ssd(SsdReadPath::Uring, 0)
+            .unwrap()
+            .cost_estimate_key()
+            .unwrap();
+        let peer_key = CostEstimateKey::new(
+            CostObservationKind::PeerDramHostReady,
+            ExecutionResource::Peer(resource_id(&owner)),
+            Representation::Raw,
+            SSD_ALIGNMENT as u64,
+            1,
+        );
+        for _ in 0..4 {
+            crate::cost::observe_for_test(local_key, 0.01, std::time::Instant::now());
+            crate::cost::observe_for_test(peer_key, 0.02, std::time::Instant::now());
+        }
+        {
+            let peer = FetchPlan::new(&mut plan.rows, 1, PeerSource::Dram).unwrap();
+            assert_eq!(peer.complete_cost_estimate_key(), Some(peer_key));
+        }
+        assert!(matches!(
+            plan.host_route(true, true, 0),
+            Some(HostReadRoute::Ssd(_))
+        ));
+        return;
+    }
+
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "storage::ssd::tests::cross_medium_selection_is_explicit_and_preserves_equal_coverage",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("ORBITKV_COST_OBSERVATIONS", "1")
+        .env("ORBITKV_COST_SELECTION", "1")
+        .env("ORBITKV_CROSS_MEDIUM_SELECTION", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[tokio::test]
+async fn consumed_restore_plan_deduplicates_sources_and_rejects_mixed_paths() {
+    let (store, _queued) = queued_read_store();
+    let key = StateKey::new("queued-lease".into(), vec![0]);
+    let lease = store
+        .discover(&[key])
+        .pop()
+        .unwrap()
+        .unwrap()
+        .pin()
+        .unwrap();
+    let cufile = crate::RestoreSource::Ssd {
+        lease: Arc::clone(&lease),
+        path: crate::SsdReadPath::Cufile,
+        allow_uring_fallback: false,
+    };
+    let plan = crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &cufile)]).unwrap();
+    assert_eq!(plan.device_id(), 2);
+    assert_eq!(plan.ssd_path(), Some(crate::SsdReadPath::Cufile));
+    assert_eq!(plan.ssd_source_bytes(), SSD_ALIGNMENT as u64);
+    assert_eq!(plan.ssd_source_fragments(), 1);
+    assert!(!plan.has_memory());
+
+    let automatic = crate::RestoreSource::Ssd {
+        lease: Arc::clone(&lease),
+        path: crate::SsdReadPath::Cufile,
+        allow_uring_fallback: true,
+    };
+    assert!(
+        crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &automatic)])
+            .unwrap_err()
+            .contains("fallback policies")
+    );
+
+    let uring = crate::RestoreSource::Ssd {
+        lease,
+        path: crate::SsdReadPath::Uring,
+        allow_uring_fallback: false,
+    };
+    assert!(
+        crate::planning::restore::RestorePlan::new(2, [(9, &cufile), (9, &uring)])
+            .unwrap_err()
+            .contains("mix SSD read routes")
+    );
 }
 
 #[tokio::test]
@@ -497,7 +954,10 @@ async fn batched_host_reads_hold_selected_generations_and_reject_foreign_stores(
 #[tokio::test]
 async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions() {
     use crate::QueryMode;
-    use crate::planning::{peer::FetchPlan, read::ReadPlan};
+    use crate::planning::{
+        peer::{FetchPlan, PeerSource},
+        read::ReadPlan,
+    };
     use orbitkv_state::{CacheOwner, ReplicaLocation};
 
     let (store, queued) = queued_read_store();
@@ -512,14 +972,24 @@ async fn peer_rejection_updates_request_evidence_without_discarding_ssd_versions
             incarnation: uuid::Uuid::from_u128(1),
         },
         sequence: 7,
+        metadata: orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Dram,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(4096),
+        },
     };
-    plan.rows[0].set_peer_dram(vec![location]);
-    assert!(FetchPlan::new(&mut plan.rows, 2).is_none());
-    let mut route = FetchPlan::new(&mut plan.rows, 1).unwrap();
+    plan.rows[0].set_peers(vec![location]);
+    assert!(FetchPlan::new(&mut plan.rows, 2, PeerSource::Dram).is_none());
+    let mut route = FetchPlan::new(&mut plan.rows, 1, PeerSource::Dram).unwrap();
     let segment = route.next_segment(0).unwrap();
     route.reject(0, &segment);
     assert!(route.next_segment(0).is_none());
-    assert!(plan.rows[0].peer_dram().next().is_none());
+    assert!(
+        plan.rows[0]
+            .peer(orbitkv_state::ReplicaMedium::Dram)
+            .next()
+            .is_none()
+    );
     assert_eq!(
         plan.rows.len(),
         2,

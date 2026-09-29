@@ -13,8 +13,10 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use cudarc::driver::{CudaContext, sys};
+use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePart};
 use orbitkv_core::{
-    EngineConfig, LayerSave, OrbitKVEngine, QueryLeaseId, QueryResult, TransferMode,
+    EngineConfig, LayerSave, OrbitKVEngine, QueryLeaseId, QueryResult, RestoreExecution,
+    TransferMode,
 };
 use tokio::runtime::Runtime;
 
@@ -35,6 +37,7 @@ const CPU_PATH_BYTES_PER_BLOCK: usize = 1;
 const MULTI_LAYER_COUNT: usize = 61;
 
 struct BenchFixture {
+    local_restore: std::sync::Mutex<LocalRestoreExecutor>,
     engine: OrbitKVEngine,
     _ctx: Arc<CudaContext>,
     _gpu: GpuBuffer,
@@ -154,7 +157,27 @@ impl BenchFixture {
             )
             .expect("register layer");
 
+        let local_restore = LocalRestoreExecutor::new(
+            DEVICE_ID as usize,
+            vec![
+                LocalTensor::new(
+                    LAYER_NAME.into(),
+                    gpu.as_u64(),
+                    total_bytes,
+                    0,
+                    registered_blocks,
+                    bytes_per_block,
+                    0,
+                    1,
+                )
+                .expect("local GPU binding"),
+            ],
+            engine.payload_arenas().expect("export payload arenas"),
+            transfer_mode,
+        )
+        .expect("import payload arenas");
         Self {
+            local_restore: std::sync::Mutex::new(local_restore),
             engine,
             _ctx: ctx,
             _gpu: gpu,
@@ -221,12 +244,35 @@ impl BenchFixture {
                 )],
             )
             .expect("submit load");
-        tokio::time::timeout(LOAD_WAIT_TIMEOUT, receiver)
-            .await
-            .expect("restore timeout")
-            .expect("restore worker disappeared")
-            .result
-            .expect("restore failed");
+        match receiver {
+            RestoreExecution::Local(mut grant) => {
+                let result = loop {
+                    let (bytes, more) = grant.encoded_plan();
+                    let plan = RawRestorePart::decode(bytes).expect("decode Restore plan");
+                    let result = self.local_restore.lock().unwrap().execute(
+                        &plan,
+                        &mut Default::default(),
+                        true,
+                        || {},
+                        None,
+                    );
+                    if result.is_err() || !more {
+                        break result;
+                    }
+                    assert!(grant.advance_plan());
+                };
+                grant.finish(result.is_ok(), None);
+                result.expect("local Restore failed");
+            }
+            RestoreExecution::Managed(receiver) => {
+                tokio::time::timeout(LOAD_WAIT_TIMEOUT, receiver)
+                    .await
+                    .expect("restore timeout")
+                    .expect("restore worker disappeared")
+                    .result
+                    .expect("restore failed");
+            }
+        }
     }
 
     fn cleanup_cache(&self) {

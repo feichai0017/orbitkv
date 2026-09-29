@@ -112,7 +112,7 @@ def test_engine_limit_selects_earlier_checkpoint_before_payload_reads(hybrid):
         QueryReady(1, b"state", [1]),
     ]
     req = request(tokens=128)
-    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, True)
+    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, False)
     validator.select_boundary.assert_called_once_with(
         "model/layout", 64, 128, [[(0, (0, 1, 2, 3)), (1, (1, 3))]], 127
     )
@@ -121,7 +121,7 @@ def test_engine_limit_selects_earlier_checkpoint_before_payload_reads(hybrid):
         entry.args[1] == BlockHashes(req.block_hashes[4:])
         for entry in client.read_recovery.call_args_list
     )
-    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, True)
+    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, False)
     assert client.read_recovery.call_count == 2
     client.query_prefetch.assert_not_called()
     scheduler.update_state_after_alloc(req, allocations(), 32)
@@ -144,7 +144,7 @@ def test_allocation_cannot_change_the_leased_checkpoint(hybrid, tokens):
         QueryReady(1, b"state", [1]),
     ]
     req = request()
-    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, True)
+    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, False)
     with pytest.raises(
         RuntimeError, match="allocation changed the recovery boundary|load block mismatch"
     ):
@@ -165,7 +165,7 @@ def test_ready_groups_remain_owned_while_another_checkpoint_loads(hybrid):
     assert scheduler.get_num_new_matched_tokens(req, 64) == (None, False)
     assert scheduler._prefetch_tracker.pending_prefetches == 1
     client.release.assert_not_called()
-    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, True)
+    assert scheduler.get_num_new_matched_tokens(req, 64) == (32, False)
     assert scheduler._prefetch_tracker.pending_prefetches == 0
     assert [entry.args[-1] for entry in client.read_recovery.call_args_list] == [0, 1, 2, 2]
     scheduler._cleanup_request("r")
@@ -263,7 +263,7 @@ def test_changed_engine_limit_cannot_reuse_a_different_checkpoint(hybrid):
         QueryReady(1, b"state", [3]),
     ]
     req = request(tokens=129)
-    assert scheduler.get_num_new_matched_tokens(req, 64) == (64, True)
+    assert scheduler.get_num_new_matched_tokens(req, 64) == (64, False)
     # Same hash batch, changed engine budget: checkpoint 128 cannot prove 96.
     req.num_tokens = 128
     assert scheduler.get_num_new_matched_tokens(req, 64) == (0, False)

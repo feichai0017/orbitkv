@@ -189,10 +189,13 @@ class VLLMServer:
             cmd.extend(["--kv-transfer-config", json.dumps(self.kv_transfer_config)])
         elif self.use_orbitkv or self.use_noop_connector:
             connector_name = "OrbitKVConnector" if self.use_orbitkv else "NoopKVConnector"
+            connector_module = (
+                "orbitkv.vllm" if self.use_orbitkv else "tests.support.noop_vllm_connector"
+            )
             kv_config: dict[str, object] = {
                 "kv_connector": connector_name,
                 "kv_role": "kv_both",
-                "kv_connector_module_path": "orbitkv.vllm",
+                "kv_connector_module_path": connector_module,
             }
             # The server no longer selects a transfer backend; the connector
             # does. Force it here so --orbitkv-transfer-backend still exercises

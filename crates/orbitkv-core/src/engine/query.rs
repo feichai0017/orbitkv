@@ -38,7 +38,13 @@ impl OrbitKVEngine {
         let status = self
             .storage
             .reads
-            .read_prefix(req_id, namespace, &encoded, mode)
+            .read_prefix(
+                req_id,
+                namespace,
+                &encoded,
+                mode,
+                topology.group_slot_numa(0)?,
+            )
             .await;
 
         {
@@ -135,7 +141,13 @@ impl OrbitKVEngine {
         let status = self
             .storage
             .reads
-            .read_prefix(req_id, namespace, &encoded, QueryMode::WaitForFullPrefix)
+            .read_prefix(
+                req_id,
+                namespace,
+                &encoded,
+                QueryMode::WaitForFullPrefix,
+                topology.group_slot_numa(group_id)?,
+            )
             .await;
 
         {
@@ -182,7 +194,13 @@ impl OrbitKVEngine {
         Ok(self
             .storage
             .reads
-            .read_membership(req_id, namespace, &encoded, mode)
+            .read_membership(
+                req_id,
+                namespace,
+                &encoded,
+                mode,
+                topology.group_slot_numa(group_id)?,
+            )
             .await)
     }
 

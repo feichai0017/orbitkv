@@ -2,10 +2,10 @@
 
 use std::sync::LazyLock;
 
-static ENABLED: LazyLock<bool> =
+pub static ENABLED: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ORBITKV_TRACE_TRANSFERS").is_ok_and(|value| value == "1"));
 
-pub(crate) fn record(stage: &str, fields: impl FnOnce() -> serde_json::Value) {
+pub fn record(stage: &str, fields: impl FnOnce() -> serde_json::Value) {
     if !*ENABLED {
         return;
     }

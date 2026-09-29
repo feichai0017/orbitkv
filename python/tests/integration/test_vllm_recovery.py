@@ -244,7 +244,14 @@ def test_save_fences_its_producer_without_waiting_for_unrelated_gpu_work(channel
             assert time.monotonic() < deadline, ready
             time.sleep(0.01)
         restored = client.wait_restore(
-            client.start_restore(identity, 0, 0, [["layer"]], [(ready.lease, [[2]])]),
+            client.start_restore(
+                identity,
+                0,
+                0,
+                [["layer"]],
+                [(ready.lease, [[2]])],
+                ready_stream=torch.cuda.current_stream(0).cuda_stream,
+            ),
             timeout=10,
         )
         assert restored.success, restored.message

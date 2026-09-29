@@ -1,22 +1,23 @@
-//! OrbitKV-facing Mooncake Transfer Engine lifecycle and batch execution.
+//! OrbitKV-facing Mooncake TENT lifecycle and batch execution.
 //!
 //! OrbitKV owns state identity, leases, generation checks, and transfer plans.
 //! Mooncake exclusively owns transport mechanics: registered segments, RDMA/TCP
 //! selection, rails, endpoints, retries, and batch completion.
 
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, OsString, c_char, c_void};
+use std::ffi::{CString, OsString, c_char, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::ptr::NonNull;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use orbitkv_mooncake_sys as native;
 
 use crate::error::{MooncakeError, Result};
+use crate::notification::{NotificationMailbox, NotificationMatch};
 use crate::types::{
-    INVALID_BATCH, Notification, STATUS_COMPLETED, STATUS_PENDING, STATUS_WAITING, TransferOp,
-    TransferSlice,
+    INVALID_BATCH, NicLoadStat, Notification, STATUS_CANCELED, STATUS_COMPLETED, STATUS_FAILED,
+    STATUS_INVALID, STATUS_PENDING, STATUS_TIMEOUT, STATUS_WAITING, TransferOp, TransferSlice,
 };
 
 static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
@@ -24,6 +25,51 @@ static ENGINE_CREATE_LOCK: Mutex<()> = Mutex::new(());
 pub struct TransferEngine {
     native: native::NativeEngine,
     segments: Mutex<HashMap<String, native::SegmentId>>,
+    notification_poll: Mutex<()>,
+    notification_mailbox: Mutex<NotificationMailbox>,
+}
+
+/// Owns one Mooncake memory registration. The caller must retain the actual
+/// CPU/GPU allocation separately until this token is dropped or unregistered.
+pub struct MemoryRegistration {
+    engine: Arc<TransferEngine>,
+    address: NonNull<u8>,
+    length: usize,
+    active: bool,
+}
+
+// SAFETY: The token never dereferences the address. Its owner guarantees the
+// registered allocation remains valid, and TransferEngine serializes native state.
+unsafe impl Send for MemoryRegistration {}
+unsafe impl Sync for MemoryRegistration {}
+
+impl MemoryRegistration {
+    pub fn address(&self) -> NonNull<u8> {
+        self.address
+    }
+
+    pub fn try_unregister(&mut self) -> Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+        let result = unsafe { self.engine.unregister_memory(self.address, self.length) };
+        if result.is_ok() {
+            self.active = false;
+        }
+        result
+    }
+
+    pub fn unregister(mut self) -> Result<()> {
+        self.try_unregister()
+    }
+}
+
+impl Drop for MemoryRegistration {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = unsafe { self.engine.unregister_memory(self.address, self.length) };
+        }
+    }
 }
 
 unsafe impl Send for TransferEngine {}
@@ -63,21 +109,17 @@ impl TransferEngine {
         Ok(Self {
             native,
             segments: Mutex::new(HashMap::new()),
+            notification_poll: Mutex::new(()),
+            notification_mailbox: Mutex::new(NotificationMailbox::default()),
         })
     }
 
     pub fn local_segment_name(&self) -> Result<String> {
-        let mut output = [0u8; 256];
+        let mut output = [0 as c_char; 256];
         check("getLocalIpAndPort", unsafe {
-            native::local_ip_and_port(
-                self.native,
-                output.as_mut_ptr().cast::<c_char>(),
-                output.len(),
-            )
+            native::local_ip_and_port(self.native, output.as_mut_ptr(), output.len())
         })?;
-        Ok(unsafe { CStr::from_ptr(output.as_ptr().cast::<c_char>()) }
-            .to_string_lossy()
-            .into_owned())
+        Ok(fixed_c_string(&output))
     }
 
     /// Register memory under a Mooncake topology location such as `cpu:0`.
@@ -85,7 +127,7 @@ impl TransferEngine {
     /// # Safety
     ///
     /// The memory must remain valid and pinned until it is unregistered.
-    pub unsafe fn register_memory(
+    unsafe fn register_memory(
         &self,
         address: NonNull<u8>,
         length: usize,
@@ -102,12 +144,34 @@ impl TransferEngine {
         })
     }
 
+    /// Register memory and return a token that unregisters it on drop.
+    ///
+    /// # Safety
+    ///
+    /// The allocation must outlive the returned token and every submitted
+    /// transfer using it. `location` must describe the actual memory domain,
+    /// for example `cpu:0` or `cuda:0`.
+    pub unsafe fn register_memory_owned(
+        self: &Arc<Self>,
+        address: NonNull<u8>,
+        length: usize,
+        location: &str,
+    ) -> Result<MemoryRegistration> {
+        unsafe { self.register_memory(address, length, location)? };
+        Ok(MemoryRegistration {
+            engine: Arc::clone(self),
+            address,
+            length,
+            active: true,
+        })
+    }
+
     /// # Safety
     ///
     /// `address` must identify a currently registered region.
-    pub unsafe fn unregister_memory(&self, address: NonNull<u8>) -> Result<()> {
+    unsafe fn unregister_memory(&self, address: NonNull<u8>, length: usize) -> Result<()> {
         check("unregisterLocalMemory", unsafe {
-            native::unregister_memory(self.native, address.as_ptr().cast::<c_void>())
+            native::unregister_memory(self.native, address.as_ptr().cast::<c_void>(), length)
         })
     }
 
@@ -170,21 +234,21 @@ impl TransferEngine {
                 target_id: segment,
                 target_offset: slice.remote_address,
                 length: slice.length as u64,
+                priority: 0,
+                transport_hint: 0,
             })
             .collect::<Vec<_>>();
         let submitted = match notification.as_ref() {
-            Some((name, message)) => check("submitTransferWithNotify", unsafe {
+            Some((name, message)) => check("tent_submit_notif", unsafe {
                 native::submit_with_notify(
                     self.native,
                     batch,
                     &mut requests,
-                    native::Notify {
-                        name: name.as_ptr().cast_mut(),
-                        message: message.as_ptr().cast_mut(),
-                    },
+                    name.as_ptr(),
+                    message.as_ptr(),
                 )
             }),
-            None => check("submitTransfer", unsafe {
+            None => check("tent_submit", unsafe {
                 native::submit(self.native, batch, &mut requests)
             }),
         };
@@ -202,36 +266,135 @@ impl TransferEngine {
                 })?;
                 Ok(status)
             },
+            |task| {
+                check("tent_cancel_task", unsafe {
+                    native::cancel_task(self.native, batch, task)
+                })
+            },
             || unsafe { native::free_batch(self.native, batch) == 0 },
         )
     }
 
-    pub fn take_notifications(&self) -> Result<Vec<Notification>> {
-        let mut count = 0;
-        let messages = unsafe { native::take_notifies(self.native, &mut count) };
-        if count < 0 {
-            return Err(MooncakeError::InvalidNotificationCount(count));
+    fn take_notifications_unlocked(&self) -> Result<Vec<Notification>> {
+        let mut info = native::NotificationInfo {
+            count: 0,
+            records: std::ptr::null_mut(),
+        };
+        check("tent_recv_notifs", unsafe {
+            native::receive_notifications(self.native, &mut info)
+        })?;
+        if info.count < 0 {
+            return Err(MooncakeError::InvalidNotificationCount(info.count));
         }
-        if count == 0 {
+        if info.count == 0 {
             return Ok(Vec::new());
         }
-        if messages.is_null() {
-            return Err(MooncakeError::InvalidNotificationBuffer(count));
+        if info.records.is_null() {
+            return Err(MooncakeError::InvalidNotificationBuffer(info.count));
         }
-        let messages_slice = unsafe { std::slice::from_raw_parts(messages, count as usize) };
-        let notifications = messages_slice
+        let records = unsafe { std::slice::from_raw_parts(info.records, info.count as usize) };
+        let notifications = records
             .iter()
-            .map(|message| Notification {
-                name: unsafe { CStr::from_ptr(message.name) }
-                    .to_string_lossy()
-                    .into_owned(),
-                message: unsafe { CStr::from_ptr(message.message) }
-                    .to_string_lossy()
-                    .into_owned(),
+            .map(|record| Notification {
+                name: fixed_c_string(&record.name),
+                message: fixed_c_string(&record.message),
             })
             .collect();
-        let _ = unsafe { native::free_notifies(messages, count) };
+        unsafe { native::free_notifications(&mut info) };
         Ok(notifications)
+    }
+
+    /// Opens a generation-fenced inbox for one logical notification name.
+    pub fn open_notification_scope(&self, name: &str) -> Result<u64> {
+        if name.is_empty() {
+            return Err(MooncakeError::InvalidNotificationWait);
+        }
+        let _poll = self
+            .notification_poll
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let notifications = self.take_notifications_unlocked()?;
+        let mut mailbox = self
+            .notification_mailbox
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        mailbox.record(notifications);
+        Ok(mailbox.open(name))
+    }
+
+    /// Closes the scope only if `generation` still owns `name`.
+    pub fn close_notification_scope(&self, name: &str, generation: u64) {
+        self.notification_mailbox
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .close(name, generation);
+    }
+
+    /// Waits without losing notifications consumed for other active scopes.
+    pub fn wait_for_notification(
+        &self,
+        name: &str,
+        generation: u64,
+        expectations: &[(String, usize)],
+        timeout: Duration,
+    ) -> Result<Option<String>> {
+        if name.is_empty()
+            || generation == 0
+            || expectations.is_empty()
+            || expectations
+                .iter()
+                .any(|(message, count)| message.is_empty() || *count == 0)
+            || timeout.is_zero()
+        {
+            return Err(MooncakeError::InvalidNotificationWait);
+        }
+        let started = Instant::now();
+        loop {
+            match self
+                .notification_mailbox
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .status(name, generation, expectations)
+            {
+                NotificationMatch::Matched(message) => return Ok(Some(message)),
+                NotificationMatch::Closed => return Ok(None),
+                NotificationMatch::Pending => {}
+            }
+
+            let poll_result = {
+                let _poll = self
+                    .notification_poll
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                self.take_notifications_unlocked()
+            };
+            let notifications = match poll_result {
+                Ok(notifications) => notifications,
+                Err(error) => {
+                    return match self
+                        .notification_mailbox
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .status(name, generation, expectations)
+                    {
+                        NotificationMatch::Matched(message) => Ok(Some(message)),
+                        NotificationMatch::Closed => Ok(None),
+                        NotificationMatch::Pending => Err(error),
+                    };
+                }
+            };
+            if !notifications.is_empty() {
+                self.notification_mailbox
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .record(notifications);
+                continue;
+            }
+            if started.elapsed() >= timeout {
+                return Err(MooncakeError::NotificationTimeout(name.to_string()));
+            }
+            std::thread::sleep(Duration::from_micros(50));
+        }
     }
 
     pub fn send_notification(
@@ -242,16 +405,43 @@ impl TransferEngine {
         let segment = self.open_segment(remote_segment)?;
         let name = CString::new(notification.name.as_str())?;
         let message = CString::new(notification.message.as_str())?;
-        check("genNotifyInEngine", unsafe {
-            native::notify(
-                self.native,
-                segment,
-                native::Notify {
-                    name: name.as_ptr().cast_mut(),
-                    message: message.as_ptr().cast_mut(),
-                },
-            )
+        check("tent_send_notifs", unsafe {
+            native::notify(self.native, segment, name.as_ptr(), message.as_ptr())
         })
+    }
+
+    /// Snapshot live TENT RDMA rail pressure. An empty result means no RDMA
+    /// rail is active; it does not prove that a particular batch used TCP.
+    pub fn nic_load_stats(&self) -> Result<Vec<NicLoadStat>> {
+        const INITIAL_CAPACITY: usize = 16;
+        let empty = native::NicLoadStat {
+            device_name: [0; 64],
+            inflight_bytes: 0,
+            ewma_bandwidth_bps: 0.0,
+        };
+        let mut stats = vec![empty; INITIAL_CAPACITY];
+        loop {
+            let mut count = stats.len();
+            check("tent_get_nic_load_stats", unsafe {
+                native::nic_load_stats(self.native, stats.as_mut_ptr(), &mut count)
+            })?;
+            if count > stats.len() {
+                stats.resize(count, empty);
+                continue;
+            }
+            stats.truncate(count);
+            return stats
+                .iter()
+                .map(|stat| {
+                    let device_name = fixed_c_string(&stat.device_name);
+                    Ok(NicLoadStat {
+                        device_name,
+                        inflight_bytes: stat.inflight_bytes,
+                        ewma_bandwidth_bps: stat.ewma_bandwidth_bps,
+                    })
+                })
+                .collect();
+        }
     }
 
     fn open_segment(&self, remote_segment: &str) -> Result<native::SegmentId> {
@@ -264,10 +454,10 @@ impl TransferEngine {
         }
         let name = CString::new(remote_segment)?;
         let segment = unsafe { native::open_segment(self.native, name.as_ptr()) };
-        if segment < 0 {
+        if segment == native::INVALID_SEGMENT {
             return Err(MooncakeError::Operation {
-                operation: "openSegment",
-                status: segment,
+                operation: "tent_open_segment",
+                status: -1,
             });
         }
         segments.insert(remote_segment.to_string(), segment);
@@ -285,6 +475,15 @@ impl TransferEngine {
             let _ = unsafe { native::close_segment(self.native, segment) };
         }
     }
+}
+
+fn fixed_c_string(value: &[c_char]) -> String {
+    let length = value
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(value.len());
+    let bytes: Vec<_> = value[..length].iter().map(|byte| *byte as u8).collect();
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn set_nic_filter(nics: &[String]) -> Result<()> {
@@ -349,15 +548,15 @@ impl Drop for TransferEngine {
     }
 }
 
-/// Native submission can partially succeed. Status errors and TIMEOUT are not
-/// fences; the pinned Mooncake implementation frees a batch only when every
-/// task's `is_finished` is set. Keep descriptors and caller-owned memory alive
-/// until that succeeds, even when the operation will ultimately return an error.
+/// TENT submission can partially succeed. Cancellation is best effort, so keep
+/// descriptors and caller-owned memory alive until every task reports a terminal
+/// state, then request batch reclamation.
 fn drain_batch(
     tasks: usize,
     timeout: Duration,
     submitted: Result<()>,
     mut poll: impl FnMut(usize) -> Result<native::TransferStatus>,
+    mut cancel: impl FnMut(usize) -> Result<()>,
     mut free: impl FnMut() -> bool,
 ) -> Result<usize> {
     let started = Instant::now();
@@ -365,7 +564,12 @@ fn drain_batch(
     let mut total = 0usize;
     let mut failure = submitted.err();
     let mut timed_out = false;
+    let mut cancel_sent = vec![false; tasks];
     loop {
+        if !timed_out && started.elapsed() >= timeout {
+            timed_out = true;
+        }
+        let cancelling = timed_out || failure.is_some();
         for (task, done) in completed.iter_mut().enumerate() {
             if *done {
                 continue;
@@ -376,25 +580,55 @@ fn drain_batch(
                     *done = true;
                 }
                 Ok(status) if matches!(status.status, STATUS_WAITING | STATUS_PENDING) => {}
+                Ok(status) if status.status == STATUS_TIMEOUT => {
+                    timed_out = true;
+                    *done = true;
+                }
+                Ok(status)
+                    if status.status == STATUS_CANCELED && timed_out && cancel_sent[task] =>
+                {
+                    // Acknowledging our timeout-driven cancellation must not
+                    // replace Timeout with TransferFailed. Earlier submission,
+                    // polling or cancellation errors still take precedence.
+                    *done = true;
+                }
+                Ok(status)
+                    if matches!(
+                        status.status,
+                        STATUS_CANCELED | STATUS_FAILED | STATUS_INVALID
+                    ) =>
+                {
+                    failure.get_or_insert(MooncakeError::TransferFailed {
+                        task,
+                        state: status.status,
+                    });
+                    *done = true;
+                }
                 Ok(status) => {
                     failure.get_or_insert(MooncakeError::TransferFailed {
                         task,
                         state: status.status,
                     });
+                    *done = true;
                 }
                 Err(error) => {
                     failure.get_or_insert(error);
                 }
             }
+            if !*done && cancelling && !cancel_sent[task] {
+                if let Err(error) = cancel(task) {
+                    failure.get_or_insert(error);
+                }
+                cancel_sent[task] = true;
+            }
         }
-        if free() {
+        if completed.iter().all(|done| *done) && free() {
             return match failure {
                 Some(error) => Err(error),
                 None if timed_out => Err(MooncakeError::Timeout),
                 None => Ok(total),
             };
         }
-        timed_out |= started.elapsed() >= timeout;
         if started.elapsed() < Duration::from_millis(1) {
             std::thread::yield_now();
         } else {

@@ -47,13 +47,11 @@ fn gpu_registration_with_segment_bytes(
 ) -> GpuRegistration {
     let mut kv_caches = HashMap::new();
     for (index, name) in layers.iter().enumerate() {
-        let layout = KVCacheLayout::new(
+        let layout = KVCacheLayout::bind(
             0x1000 + index as u64 * 0x10000,
             1024 * 1024,
-            100,
-            segment_bytes,
-            0,
-            1,
+            crate::transfer::layout::KVCacheGeometry::new(100, segment_bytes, 0, 1, None, 1)
+                .unwrap(),
         )
         .unwrap();
         kv_caches.insert((*name).to_string(), layout);
@@ -124,7 +122,7 @@ fn single_worker_registration_seals_topology() {
     // The registered layer is retrievable with its original layout.
     let gpu = instance.get_gpu(0).expect("get gpu context");
     let layout = gpu.get_layout("layer_b").expect("get layout");
-    assert_eq!(layout.num_blocks(), 100);
+    assert_eq!(layout.geometry().num_blocks(), 100);
     match layout.block_copies(0).expect("block 0 in range") {
         BlockCopies::Contiguous(c) => assert_eq!(c.addr, 0x1000),
         BlockCopies::Split { .. } => panic!("dense test layout must be contiguous"),
@@ -610,4 +608,45 @@ fn page_first_rejects_multiple_groups() {
         ))
         .expect_err("page-first with two storage groups must be rejected");
     assert!(err.to_string().contains("page-first"), "{err}");
+}
+
+#[test]
+fn receiver_placement_is_sealed_per_group_without_changing_storage_identity() {
+    for page_first in [false, true] {
+        let groups = if page_first { [0, 0, 0] } else { [0, 1, 0] };
+        let mut namespace = None;
+        for node in [NumaNode(0), NumaNode(1), NumaNode::UNKNOWN] {
+            let instance =
+                InstanceContext::new("receiver".into(), "model".into(), 1, 1, page_first).unwrap();
+            let mut registration = gpu_registration_with_groups(
+                0,
+                0,
+                &[
+                    ("layer_c", groups[2]),
+                    ("layer_b", groups[1]),
+                    ("layer_a", groups[0]),
+                ],
+            );
+            registration.numa_node = node;
+            instance.register_new_gpu(registration).unwrap();
+            let topology = instance.sealed_topology().unwrap();
+            if let Some(previous) = &namespace {
+                assert_eq!(previous, &topology.cache_namespace);
+            } else {
+                namespace = Some(topology.cache_namespace.clone());
+            }
+            assert_eq!(
+                topology.group_slot_numa(0).unwrap(),
+                vec![node; if page_first { 1 } else { 2 }]
+            );
+            if !page_first {
+                assert_eq!(topology.group_slot_numa(1).unwrap(), &[node]);
+            }
+            assert!(
+                topology
+                    .group_slot_numa(topology.num_groups() as u32)
+                    .is_err()
+            );
+        }
+    }
 }

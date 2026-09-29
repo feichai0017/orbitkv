@@ -265,8 +265,6 @@ class ClientContext:
         segments_list: list[int] = []
 
         for layer_name, kv_cache in kv_caches.items():
-            if not kv_cache.is_contiguous():
-                kv_cache = kv_cache.contiguous()
             wrapper_bytes = serialize_gpu_buffer(kv_cache)
 
             shape = tuple(kv_cache.shape)
@@ -309,6 +307,7 @@ class ClientContext:
             segments_list,
             "direct",
             False,
+            tensors=list(kv_caches.values()),
             layer_attention=[
                 (self.head_size, "kv", index, self.num_layers)
                 if str(t.dtype) in {"torch.bfloat16", "torch.float16"}

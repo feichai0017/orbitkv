@@ -721,8 +721,8 @@ class TestSchedulerQueryProbeReuse:
         first = sc.get_num_new_matched_tokens(req, num_computed_tokens=0)
         second = sc.get_num_new_matched_tokens(req, num_computed_tokens=0)
 
-        assert first == (32, True)
-        assert second == (32, True)
+        assert first == (32, False)
+        assert second == (32, False)
         engine_client.query_prefetch.assert_called_once()
         engine_client.release.assert_not_called()
 
@@ -784,14 +784,21 @@ class TestSchedulerQueryProbeReuse:
         with pytest.raises(TypeError, match="unexpected outcome"):
             sc._query_recovery("r1", _QueryProbe(0, tuple(_hash(i) for i in range(4))), 10000)
 
-    def test_committed_probe_is_not_released_on_cleanup(self):
+    @pytest.mark.parametrize("allocated_hashed", [False, True])
+    def test_committed_probe_is_not_released_on_cleanup(self, allocated_hashed):
         sc, engine_client = self._make_connector()
         req = _make_fake_request("r1", [_hash(i) for i in range(2)])
         blocks = _make_fake_blocks([10, 11])
-        blocks.blocks = [[SimpleNamespace(block_hash=None), SimpleNamespace(block_hash=None)]]
+        blocks.blocks = [
+            [
+                SimpleNamespace(block_hash=b"scheduled" if allocated_hashed else None)
+                for _ in range(2)
+            ]
+        ]
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, False)
         sc.update_state_after_alloc(req, blocks, num_external_tokens=32)
+        assert sc._pending_load_intents["r1"].block_ids_by_group == ((10, 11),)
         sc._cleanup_request("r1")
 
         engine_client.release.assert_not_called()
@@ -802,7 +809,7 @@ class TestSchedulerQueryProbeReuse:
         blocks = _make_fake_blocks([10, 11])
         blocks.blocks = [[SimpleNamespace(block_hash=None), SimpleNamespace(block_hash=None)]]
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, False)
 
         with pytest.raises(RuntimeError, match="leased block mismatch"):
             sc.update_state_after_alloc(req, blocks, num_external_tokens=16)
@@ -815,10 +822,10 @@ class TestSchedulerQueryProbeReuse:
         sc, engine_client = self._make_connector()
         req = _make_fake_request("r1", [_hash(i) for i in range(4)])
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, False)
         engine_client.query_prefetch.return_value = QueryReady(2, b"lease-2")
         req.block_hashes = [_hash(i) for i in range(10, 14)]
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, False)
 
         assert engine_client.query_prefetch.call_count == 2
         engine_client.release.assert_called_once_with(b"lease-1")
@@ -834,7 +841,7 @@ class TestSchedulerQueryProbeReuse:
         req = _make_fake_request("r1", [_hash(i) for i in range(4)])
         engine_client.release.side_effect = RuntimeError("server gone")
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, False)
         sc._cleanup_request("r1")
 
         assert "r1" not in sc._pending_query_probes
@@ -844,7 +851,7 @@ class TestSchedulerQueryProbeReuse:
         sc, engine_client = self._make_connector()
         req = _make_fake_request("r1", [_hash(i) for i in range(4)])
 
-        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, True)
+        assert sc.get_num_new_matched_tokens(req, num_computed_tokens=0) == (32, False)
         sc.shutdown()
 
         assert "r1" not in sc._pending_query_probes

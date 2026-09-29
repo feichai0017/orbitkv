@@ -43,12 +43,11 @@ an OrbitKV implementation or qualification item.
 The implementation in [PR #182](https://github.com/feichai0017/orbitkv/pull/182)
 was merged at `b1aef401`; the design in
 [PR #183](https://github.com/feichai0017/orbitkv/pull/183) was merged at `13ac3a9d`.
-The first structural implementation is in
-[PR #184](https://github.com/feichai0017/orbitkv/pull/184), on
-`refactor/replica-route-planning`, based on that merge. Batch candidate retention
-and source acquisition follow in [PR #185](https://github.com/feichai0017/orbitkv/pull/185).
-The ownership refactor in [PR #186](https://github.com/feichai0017/orbitkv/pull/186)
-follows the implemented
+The first structural implementation in
+[PR #184](https://github.com/feichai0017/orbitkv/pull/184), batch candidate retention
+and source acquisition in [PR #185](https://github.com/feichai0017/orbitkv/pull/185),
+and the ownership refactor in [PR #186](https://github.com/feichai0017/orbitkv/pull/186)
+are merged into `main` at `03374d71`. They establish the implemented
 [Core layout](architecture.md#core-module-ownership): DRAM/SSD, peer, planning,
 query, publication and costs have distinct owners; old `backing/` and `internode/`
 trees are removed. Recheck Git status before working and preserve existing changes. P4.1
@@ -63,7 +62,7 @@ are recorded below; dynamic execution selection remains planned.
 | Codecs | Batched GPU ANS/FP8/TurboQuant, reusable workspace, CRC; CPU FP8 scalar/AVX2/AVX-512 | General lossy quality qualification and adaptive representation selection |
 | Lifecycle | Query budgets, shared reads, cancellation, completion ownership, restart and process-fault gates | Multi-rank and sustained fault soak; no timeout-only DMA reclamation |
 | Policies | Optional preparation, protected retention, reuse-based SSD admission and opt-in bounded cost/shadow observations | Calibration under shared-device contention, first-use prediction and dynamic path/boundary selection |
-| Peer cache | Embedded catalogs, etcd Watch, bounded per-query coalescing and per-owner discovery concurrency, source authorization, bounded TE transfers and release recovery | Recorded serving evidence is same-host TCP; two-host TCP/RDMA, catalog replication and orphan revocation remain open |
+| Peer cache | Embedded catalogs, etcd Watch, bounded per-query coalescing and per-owner discovery concurrency, source authorization, bounded TE transfers and release recovery | H20/A100 TCP natural-text sharing and restarts pass; cross-GPU numerical limits, RDMA, catalog replication and orphan revocation remain open |
 | Packaging | Source-buildable CUDA wheels and installed-artifact checks | First Python release, qualified container images, shared-instance deployment and Kubernetes installation |
 
 Use the maintained [storage-format results](storage-formats.md#qualification),
@@ -225,12 +224,13 @@ decode/H2D. Directory hints never authorize a memory read. A pending remote SSD
 replica must be staged by its owner with bounded credits; that owner cannot
 recursively fetch another peer. A peer-HBM source requires an engine lease.
 
-Keep candidate indexes bounded by useful model/format domains, coalesce misses,
-batch catalog requests by host and cap fan-out. Repair incomplete evidence
-through bounded snapshots/deltas. Catalog replication preserves owner sequences
-and placement generations; the source remains authoritative for its payload
-generation and export lifetime. Directory redundancy does not guarantee multiple
-data replicas. Avoid per-page consensus or a full-cluster query broadcast.
+Current discovery uses bounded hints and batched Catalog requests. The selected
+[local global-index replacement](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+stores block metadata in etcd and synchronizes a complete local view through
+snapshot/Watch. Bound publication, staging and index capacity; fail readiness
+explicitly rather than silently evicting rows from a complete view. Foreground
+discovery uses no network requests. The source remains authoritative for payload
+generation and export lifetime; metadata replicas do not guarantee data replicas.
 
 For P/D, the completion target is the decode consumer's required state, not a
 historical cache hit. Protect producer and consumer generations, transfer cached
@@ -257,7 +257,7 @@ work proceed alongside distributed qualification; no warming speedup gates DP.
 | P4.3 / remaining P3 | Choose legal restore boundary vs recompute; first-use preparation and queue shares | Recovery contract, query/prefetch, engine admission callbacks | TTFT/ITL targets, bounded unused prepared bytes, cancellation/expiry/reordering and other-request progress |
 | P4.4 | Useful retention and writes, optional deferred publication and representation admission | Read cache, write path, codec and worker ownership | Independent policy ablations, write/read amplification and source-hold measurements; lossy quality is a separate gate |
 | D1, in parallel | Real two-host independent-replica recovery, first TP=1 | Catalog/cluster, peer authorization, TE and existing serving driver | Output controls, positive remote/GPU bytes, incarnation rejection, loss/partition cleanup; TCP and RDMA reported separately |
-| After D1: P/D plus reuse | Compose the existing vLLM handoff with cache; integrate SGLang's own handoff lifecycle | Engine adapters/P-D integration plus shared Rust lifetime logic | Cached P prefix reaches D; later P reuses D state; failed/cancelled handoffs cannot expose partial state |
+| After D1: P/D plus reuse | Compose the existing vLLM handoff with cache; qualify the implemented SGLang handoff/TENT adapter and compose it with cache | Engine adapters/P-D integration plus shared Rust lifetime logic | Cached P prefix reaches D; later P reuses D state; failed/cancelled handoffs cannot expose partial state |
 | D2, before production distributed use | Replicated catalog evidence, placement generations, repair and operational recovery | Catalog, inventory sync and server cluster | Three failure domains, coordinator/catalog outage, bounded replay and source holds; etcd replication alone is insufficient |
 | D3 | Measured peer selection and source-local SSD staging; evaluate dedicated cache nodes | Existing SSD/peer workers and common cost observations | Forced source DRAM eviction, real SSD/TE bytes, bounded two-sided credits and useful latency under mixed load |
 | Later topology gates / P6 | Same-host TP per replica, then cross-host TP/PP and layer overlap | Engine coordination, state contract and transfer dependencies | Rank/stage completion, compatible layouts, graph-capture/overlap tests; resharding separately gated |
@@ -497,10 +497,10 @@ Explicit-path qualification disables warming/preparation because aggregate I/O
 counters cannot distinguish their legal host reads from demand reads. An io_uring
 control never qualifies native GDS reads, including when cuFile writes are healthy.
 
-This does not complete a planner across all tiers. General shared-cache peer
-recovery remains peer DRAM → local DRAM → engine HBM; the experimental GPU P/D
-handoff is separate. Dynamic cross-tier/path selection, native GDS qualification,
-remote SSD staging and general peer-HBM cache sourcing remain open. Observations
+At this evidence boundary the planner still covered peer DRAM only; later
+increments below add peer SSD source staging and requester execution. Dynamic
+cross-tier/path selection, native GDS qualification and general peer-HBM cache
+sourcing remain open. The experimental GPU P/D handoff is separate. Observations
 stay off by default, and the earlier SGLang ANS SSD overhead gate remains open.
 
 Validation ran in the existing container with its exposed NVIDIA H20,
@@ -748,6 +748,8 @@ comparisons remain opt-in; dynamic selection and the earlier SGLang ANS SSD
 overhead gate remain open. cuFile used forced CPU compatibility and peers used
 same-host TCP; these results do not qualify native GDS, GPUDirect RDMA or
 physical two-host deployment, nor implement general remote SSD/HBM sources.
+The later source-staging and requester-route increments below implement peer SSD
+over host staging; their physical two-host qualification remains open.
 
 Only this final summary is tracked. Frozen artifacts, exact commands, logs and
 machine-readable results remain in ignored
@@ -756,20 +758,350 @@ machine-readable results remain in ignored
 [shared-cache gates](shared-cache-qualification.md#restart-and-ownership-gates),
 using the matching prebuilt Manager/client and no concurrent native builds.
 
+## Resource-scoped cost evidence
+
+The next increment keeps execution unchanged while tightening the evidence used
+by the current raw-copy and SSD-route shadow consumers:
+
+- Resource identities distinguish local GPU, SSD store/file and peer runtime
+  domains. Complete SSD-route identities preserve destination GPU, copy backend,
+  source-store set and mixed DRAM presence. They do not grant source access or
+  reserve device capacity.
+- Sample boundaries explicitly distinguish submitted operation service from
+  enqueue-to-GPU-terminal SSD restore time. Existing inclusive timers remain
+  non-additive.
+- Comparisons require an existing supported pair, matching resource and shape
+  buckets, and known representation. Execution owners supply the same actual
+  work; buckets alone cannot prove complete demand. Missing estimates remain
+  unknown. Incompatible evidence cannot produce a faster-path recommendation.
+- A different shadow path requires a gain exceeding both empirical errors and
+  5% of the current mean. The margin is an observation-experiment threshold,
+  not a qualified execution policy. See [metric outcomes](metrics.md#bounded-cost-observations).
+
+This is cost-evidence work within the existing tier/source plan. Full consumed
+replica endpoint descriptors, live device admission, cross-source local/peer
+comparisons and calibration of unexecuted paths remain open. The same-source
+shadow guard must not be reused as a general cross-source selection policy.
+That original increment introduced no peer source or callback. A later bounded
+P/D observation increment now adds one optional vLLM decode callback into the
+authenticated process channel. Rust validates the registered destination,
+hashes the prefill endpoint into an execution-resource identity, records the
+transfer generation only as freshness evidence and trains solely on
+admitted completed handoffs. It does not enumerate a P/D route or enable
+selection. The next increment supplies the matching direct-to-decode boundary,
+device-bound admission, vLLM waiter/TENT pressure evidence and a SGLang
+decode-owned callback after metadata and HiCache gates. Actual route execution
+selection remains off until one planner owns both candidates and their source
+leases.
+
+The ownership follows the pinned [LMCache prefetch controller][lm-prefetch]
+and [FlexKV transfer scheduler][flex-scheduler] pattern: lookup/request state is
+separate from runnable physical work, and only the terminal physical-operation
+owner publishes completion evidence. OrbitKV keeps that owner in the existing
+Rust/TENT wait path instead of creating a Python planner or compatibility
+facade.
+
+The following host-route increment moves the existing peer-before-SSD choice
+from query coordination into `planning/`. A bounded `HostReadRoute` borrows the
+same batch evidence and declares either peer materialization or io_uring SSD
+materialization. Source authorization/leases and completion remain with peer
+and SSD owners. Peer scoring first counts consecutive coverage and allocates
+authorization records only for the selected owner, retaining exact inventory
+sequences and the existing stable tie break. This is still fixed-priority
+selection; it prepares one consumer for later route costs without enabling a
+policy switch or a generic backend abstraction.
+
+Validation for the host-route increment: strict Core all-target Clippy passed
+in local-only and CPU-Mooncake configurations. Seven peer/route tests and three
+query/shared-read tests passed with Mooncake enabled; the two applicable local
+route tests also passed without Mooncake. They cover peer-before-SSD priority,
+full-prefix coverage, exact SSD acquisition, unchanged metadata-only selection,
+stable peer tie breaks, source version preservation, rejection fallback and
+malformed/short responses. GPU execution and serving performance are unchanged
+and were not requalified by this metadata-planning change.
+
+The first shared-device admission increment makes the existing eight-job GPU
+SSD-write budget process-wide per CUDA device instead of per registered
+instance. Worker pools keep independent queues and drain ownership; they share
+only the physical-device semaphore. Registration performs the synchronized
+lookup once. An acquired permit moves into `SaveTask` and is released by its
+terminal worker/drop path, including after caller cancellation. Saturation
+continues to roll back unsubmitted GPU extents and use host publication. This
+does not yet admit cuFile reads, codec workspace or inference SM capacity, and
+does not claim tenant fairness.
+
+Validation for this increment: strict Core all-target Clippy passed in
+local-only and CPU-Mooncake configurations. Five host-safe tests cover shared
+capacity and device isolation, permit ownership through terminal drop,
+saturation fallback before worker submission, failed-work classification and
+multi-lane drain. The change does not require CUDA execution; matched multi-
+instance serving and GPU-memory pressure remain separate qualification gates.
+
+The consumed-restore increment constructs a Rust `RestorePlan` only after the
+engine supplies concrete destination blocks. It records the target CUDA device,
+deduplicated SSD source bytes/fragments, one SSD path and whether DRAM sources
+are mixed into the task. Worker dispatch and complete-route cost keys consume
+that plan and reject device/path drift before submission. The plan owns no
+payload or permit: existing query/source leases and destination mappings still
+move into `LoadTask` and drain at terminal completion. Seven focused tests cover
+target binding, source deduplication, mixed-route rejection, host-route behavior
+and unchanged shared reads; strict local-only and CPU-Mooncake Clippy passed.
+
+The device-staging increment carries whether an SSD route was selected
+automatically or explicitly. One instance pool per CUDA device owns persistent
+cuFile read staging and codec/direct-write GPU storage resources. Contending
+automatic reads change their consumed plan and payloads to io_uring before
+submission; explicit cuFile returns an error. Optional GPU writes keep their
+existing host-publication fallback. The owner permit is returned only after
+load/save, SSD, SSD-host and codec-write lanes all acknowledge drain. Seven
+host-safe tests cover route policy, per-device isolation, saturation fallback,
+owner release and source-plan invariants; strict local-only and CPU-Mooncake
+Clippy passed. This bounds persistent staging owners but does not establish
+fair idle handoff or matched multi-instance performance.
+
+The first distributed-evidence increment adds replica medium, representation
+family and optional stored bytes to the versioned inventory and discovery wire
+contract. Sealed DRAM publications populate those fields; removals carry no
+payload metadata. Catalogs retain evidence per owner/key/version and return it
+with bounded candidates. Peer planning aggregates selected records into known
+wire bytes and representation for authorization cost keys. Unknown evidence
+stays unknown, while SSD/HBM advertisements are rejected by the current
+peer-DRAM executor until source preparation or engine page grants exist. The
+directory still carries no address, rkey or transfer permission; all remote
+payload remains behind source authorization and Mooncake TE.
+
+Validation for this increment: strict all-target workspace Clippy passed with
+CPU-Mooncake; 15 state-contract, 2 wire-conversion, 11 Catalog and 12 focused
+Core inventory/planning tests passed. The source-only Python gate passed 364
+tests with one skip. Website check, build and link/search tests passed. This is
+metadata and cost-shape qualification, not two-host transfer or RDMA evidence.
+
+The residency-owner refactor moves the bounded journal from `storage/dram` to
+`storage/` behind one `ResidencyInventory`. DRAM insertion/removal and source
+version checks still update/read it while holding the resident cache lock, so
+the existing authorization invariant is unchanged. Catalog synchronization
+continues through the same API. This creates one sequence owner for later
+DRAM-to-SSD fallback evidence instead of adding a second SSD directory stream.
+Strict Core Clippy and 13 inventory, source-fencing and Catalog replay tests
+passed with CPU-Mooncake; behavior and wire contents are unchanged.
+
+The SSD-evidence increment lets `ResidencyInventory` retain DRAM and SSD state
+for one owner/key while advertising one executable preference. SSD appears only
+after terminal commit; live DRAM remains preferred, DRAM eviction exposes the
+surviving SSD generation, and ring retirement or encoded corruption removes it.
+Pending writes never enter Catalog. The current requester deliberately filters
+SSD/HBM media, so this cannot trigger a remote read before source-local staging
+and credits land. Strict workspace Clippy and 20 host-safe inventory/index tests
+passed. One existing pinned-memory roundtrip remains unavailable in this
+container because CUDA initialization returns `cudaErrorNoDevice`.
+
+Validation for the cost-evidence increment: strict Core all-target Clippy passed in local-only
+and CPU-Mooncake configurations with Rust 1.97.1. The focused cost, candidate,
+peer-plan, io_uring completion and worker-ownership tests passed 26 cases;
+the cost-observation benchmark harness passed 39 cases. Website check, the
+40-page build and both link/search tests passed. The existing
+`transfer_cost_shape_uses_logical_ranges_and_actual_encoding` test requires CUDA
+pinned memory and returned `cudaErrorNoDevice` in this container even though its
+H20 is visible to `nvidia-smi`; the loaded CUDA driver/runtime stack requires
+alignment before GPU gates. GPU recovery, native GDS/RDMA and matched serving
+overhead were not requalified.
+
+The source-staging increment makes advertised SSD evidence executable inside
+the owning Manager. Authorization
+revalidates and pins every exact SSD generation, reserves a ticket session plus
+the allocator-rounded host footprint before allocation, and moves that
+reservation into the io_uring batch. `BatchContext` retains the reservation and
+extent leases after RPC-future cancellation until all physical reads drain. It
+then atomically replaces the conservative bytes with deduplicated actual pinned
+allocations and publishes the existing transfer grant only after successful
+result handoff. A concurrent release fences publication but cannot free staging
+early; allocation, queue, partial-read and failed-handoff paths roll back. The
+returned registered DRAM ranges continue through the existing Mooncake TE READ.
+At this commit boundary requester peer-SSD enumeration remained disabled.
+
+Validation for this increment: strict all-target Core and Server Clippy passed
+with CUDA 13 bindings and the staged CPU-Mooncake libraries. Six staging/source
+tests and six cancellation/drain tests passed; three footprint tests cover
+rounding, estimate replacement and over-budget growth. A separate existing
+pinned-allocation test still returns `cudaErrorNoDevice` in this container and
+does not invalidate the host-safe ownership tests.
+
+The requester-route increment retains peer SSD evidence and constructs a
+`FetchPlan` bound to one explicit source medium. Segments cannot combine peer
+DRAM and SSD records. Existing priorities remain conservative: eligible direct
+local SSD restoration precedes host planning; host planning tries peer DRAM,
+local io_uring and then peer SSD. If local extent acquisition loses its exact
+generation, the same request can use already-retained peer SSD evidence without
+another directory lookup. SSD authorization has a separate 30-second deadline
+and `remote_ssd_authorization` observation, while DRAM setup and completion RPCs
+retain their three-second boundary. The payload response still contains only
+registered memory ranges and always moves through Mooncake TE.
+
+Focused host-safe tests cover media isolation, unsupported HBM filtering,
+longest-cover/stable-owner selection, source-version retention, local priority
+and stale-local fallback. This enables the route but does not qualify physical
+two-host TCP/RDMA behavior or measured cross-source selection.
+
+The guarded peer-owner decision increment records non-additive
+`peer_dram_host_ready` and `peer_ssd_host_ready` samples from authorization start
+through destination block reconstruction. Planning still maximizes contiguous
+coverage and binds one source medium first. Only equal-coverage owners then
+participate in execution selection, keyed by peer incarnation, representation,
+known stored-byte bucket and block count. `ORBITKV_COST_SELECTION=1` must be set
+together with `ORBITKV_COST_OBSERVATIONS=1`; all estimates must have at least
+four fresh successful samples and the winner must clear both empirical errors
+plus the 5% margin. Otherwise stable owner ordering is unchanged. Stale and
+transient resource-admission rejection may try another retained owner without
+removing valid Catalog evidence. Nested authorization and TE observations remain
+diagnostic and are never added to the complete-route estimate.
+
+This is real but deliberately narrow execution selection. It does not compare
+peer DRAM against peer SSD, local SSD against a peer, different coverage, or
+engine-ready completion. Those require matched admission and complete-route
+evidence plus the physical two-host gates.
+
+Validation for this increment: three decision tests cover explicit dual opt-in,
+fresh/complete evidence, incompatibility, empirical error and switching margin;
+five peer-planner tests include an end-to-end estimator-driven owner change.
+Strict Core Clippy passed in local-only and CPU-Mooncake configurations, and
+strict Server Clippy passed with CPU-Mooncake.
+
+The cross-medium shadow increment renames the io_uring preparation composite to
+`local_ssd_host_ready` and measures from enqueue through host-block
+reconstruction. Its key uses stored bytes and block count, matching peer
+HostReady evidence. Equal-coverage local SSD, peer DRAM and peer SSD routes enter
+shadow only when each peer route has one complete owner; unknown shape,
+different coverage and multi-owner prefixes remain incomparable. Fixed route
+priority is unchanged. Peer execution now returns `Complete`,
+`AuthorizationExhausted` or `PayloadFailed`: only the pre-payload authorization
+case can replan retained local/peer evidence, while a submitted Mooncake failure
+terminates that materialization attempt.
+
+Cross-medium execution is present only as a third experiment gate:
+`ORBITKV_CROSS_MEDIUM_SELECTION=1` requires both observation and base-selection
+opt-ins. The planner requires equal coverage and a complete cost key for every
+candidate; multi-owner, unknown, stale or incompatible alternatives preserve
+the fixed order. Acquisition and source authorization still revalidate the
+choice. This is implementation readiness, not H20 TCP/RDMA qualification or a
+recommended deployment setting.
+
+Comparable cost keys now carry an explicit completion intent and target
+resource. HostReady remains resource-neutral; EngineRestore identifies the
+destination GPU; GPU save completion identifies the source device whose pages
+become reusable. Path/resource rewrites recompute the target, preventing an
+estimate for one GPU from entering another GPU's comparison. This closes the
+target-identity prerequisite for future DecodeReady comparison but does not yet
+invent P/D alternatives without real admission and timing observations.
+
+Focused validation covers the normalized local SSD key, cross-resource
+HostReady compatibility, multi-owner exclusion, stable default priority and all
+three peer execution outcomes. Subprocess tests prove all three opt-ins are
+required and exercise an actual peer-to-local route change from seeded complete
+evidence. Cost, planning and peer-execution test groups remain host-safe; strict
+local-only and CPU-Mooncake Clippy pass.
+
+The shared-cache benchmark now accepts `--source-medium ssd`. It verifies a new
+source SSD commit, evicts only source DRAM, resynchronizes inventory, requires
+source io_uring bytes and successes alongside target Mooncake/GPU restore, and
+checks both nodes' extent/session/query/completion counters drain. The
+2026-09-28 H20→A100 forced-TCP serving run passes on both engines, with
+72/144 MiB of source SSD reads, remote READs and GPU restores for the two
+natural-text requests. RDMA and cancellation during staging/READ remain open;
+see [the recorded gate](shared-cache-qualification.md#forced-source-ssd-gate).
+
+The Mooncake registration-lifetime increment adds an RAII
+`MemoryRegistration` in `orbitkv-transfer`. A token retains its TransferEngine,
+supports explicit unregister, retries best-effort unregister on drop after an
+error, and cannot be silently orphaned by dropping another engine handle. Core's
+pinned-pool registrations now use these tokens and clear them before releasing
+the backing pool. This is the registration half of a future HBM grant; the GPU
+allocation/page generation must still be retained separately by the engine
+completion owner. Mooncake uses `cuda:N` for GPU locations and remains the only
+remote payload transport.
+
+Strict Transfer/Core/Server Clippy passed with the staged CPU-Mooncake runtime.
+All four `orbitkv-transfer` tests passed, including real TCP loopback, explicit
+unregister, re-registration, dropping the original engine handle before the
+token, notifications and uncertain batch drain. GPU registration remains an
+external H20 gate rather than a CPU-runtime claim.
+
+The TENT migration replaces the dynamically loaded legacy symbols with the
+upstream `tent_*` C ABI and builds only `tent_shared`. Segment open/close,
+extended memory registration with permissions/location, READ/WRITE batches,
+notifications, per-task status/cancel and NIC-load snapshots now all use TENT.
+The wheel bundles `libtent_shared.so`; stale `libtransfer_engine.so` files are
+removed while staging. TENT `freeBatch` is treated as asynchronous reclamation,
+never as a completion fence: deadline and partial-submit paths cancel pending
+tasks and retain buffers until all statuses are terminal before freeing.
+
+Both CPU and CUDA 13 `tent_shared` variants build from the pinned submodule;
+their staged directories contain no legacy library. Two sys ABI/config tests,
+five Transfer tests including a real TENT TCP batch/notification roundtrip, and
+128 P/D unit tests pass. Strict Transfer and full PyO3 all-target Clippy pass.
+The CUDA build links TENT's CUDA runtime, cuFile and GPU-capable transports, but
+actual H20 RDMA/GPUDirect execution remains an external qualification cell.
+
+The pinned SGLang `0.5.20` integration now reuses SGLang's bootstrap-room,
+rank-mapping, destination-page and request-completion state machine while
+installing OrbitKV's Rust TENT wrapper as its payload engine. The adapter is
+explicitly enabled with `ORBITKV_SGLANG_TENT=1`; selecting OrbitKV's radix
+backend in P/D mode rejects NIXL and an unmodified legacy Mooncake engine. The
+stable TENT C ABI still lacks its internal peer-liveness operation, so the
+optional SGLang failed-session probe is rejected rather than approximated with
+local availability or cached segment metadata.
+
+The first P/D-plus-cache gate attaches both SGLang workers to one Cache Manager,
+lets prefill restore before handoff, enables decode radix publication, restarts
+both workers, and requires a continuation to reuse state past the last boundary
+the original prefill could have published. The same-A100 two-replica TCP run
+passes both exact output comparisons. H20→A100 passes restart and 576-token
+reuse, but its 64-token equality gate fails after EOS; the eight-token follow-up
+matches. Decode advertises only its resident HBM prefix and publishes new state;
+Prefill owns external restores. See [the recorded limits](pd.md#sglang-qualification-on-2026-09-28).
+Distinct-GPU full-output, TP/PP, fault and RDMA/GPUDirect gates remain open.
+
+The vLLM P/D Python surface now targets only the pinned `0.29.0` API. The
+role-selecting `PdConnector`, old `handle_preemptions(set)` branch, alternate
+metrics API path, test-only worker attribute proxies and runtime-packaged no-op
+test connector were removed. Decode and prefill workers construct only their
+own handler and thread pools. TENT notification polling and per-request
+generation fencing moved into `orbitkv-transfer`; PyO3 releases the GIL for the
+native wait and Python retains only framework handshakes, layouts and completion
+delivery. The container gate covers 372 Python units, seven Transfer tests with
+real TCP notification delivery, and strict Transfer/PyO3 Clippy. The engine E2E
+remains an external GPU gate.
+
+The CPU-Mooncake check uses `--no-default-features --features
+mooncake,cudarc/cuda-12080,cudarc/nvrtc` on Core: Rust CUDA bindings compile, while
+the pinned Mooncake native library is built with CUDA disabled. This is a build
+and host-test configuration, not a GPU serving qualification. Reproduce the
+focused host tests after building that configuration:
+
+```bash
+cargo test --locked -p orbitkv-core --no-default-features \
+  --features mooncake,cudarc/cuda-12080,cudarc/nvrtc --lib -- \
+  cost:: planning:: peer::execute::tests:: storage::ssd::uring::tests:: \
+  transfer::worker::drain_tests:: \
+  --skip transfer_cost_shape_uses_logical_ranges_and_actual_encoding
+```
+
 ## Session startup and working constraints
 
 Read [AGENTS.md](../AGENTS.md), this plan, the affected owners and the relevant
-test gates. In the current environment the repository is `/workspace/orbitkv`,
+test gates. The recorded GPU qualification environment uses `/workspace/orbitkv`,
 with one H20 and Qwen3-8B under `/workspace/models/qwen3-8b`. Engine environments
 are `.venv/vllm-release` and `.venv/sglang-release`. Source references are available
 at `/workspace/benchmarks/dependencies/lmcache-0.5.5` and
 `/workspace/benchmarks/dependencies/flexkv`; verify their commits and clean status.
-These paths are conveniences, not portable test prerequisites.
+These paths describe historical qualification. Check the current checkout,
+toolchain and available devices before choosing gates; they are not portable
+test prerequisites.
 
-The user has no available bare-metal/two-host entry point for native acceptance.
-Continue implementation and reproducible scripts while that hardware gate is
-open. Do not repeat a request for the same unavailable access or relabel the
-current container as bare metal.
+Two GPU hosts became available on 2026-09-28: the local H20 and a remote A100,
+with reachable IPv6 TCP and matching native artifacts. Neither container exposes
+RDMA devices. Continue the [two-host gates](shared-cache-qualification.md) using
+that authorized setup; report TCP separately from RDMA and do not relabel a
+container run as bare-metal qualification.
 
 ```bash
 git status --short
@@ -804,8 +1136,8 @@ bounded replica collection and SSD/peer plans. Complete
 the consumed owner/node/resource, representation and byte descriptors while
 preserving immutable versions and explicit unknown evidence. Locality is relative
 to the consumer; io_uring/cuFile/Mooncake are access methods. Preserve the current
-physical namespace, and do not expose unsupported peer SSD/HBM as executable
-candidates. Source and destination engine HBM need real page-lifetime grants;
+physical namespace, and do not expose unsupported peer HBM as an executable
+candidate. Source and destination engine HBM need real page-lifetime grants;
 Manager staging is not automatically a retained replica.
 
 Build on batch-owned candidate retention, declared preparation/restore targets

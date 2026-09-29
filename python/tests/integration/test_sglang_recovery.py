@@ -20,13 +20,12 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
     pytest.importorskip("sglang")
     from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
     from sglang.srt.mem_cache.hybrid_cache.linker_pool_assembler import DevicePoolEntry
-    from sglang.srt.mem_cache.unified_cache.components import ComponentType
     from sglang.srt.mem_cache.unified_cache.unified_cache_linker import (
         UnifiedCacheLinkerWrapper,
     )
 
     from orbitkv.sglang.layout import GpuLayout, GpuPool
-    from orbitkv.sglang.linker import OrbitKVLinker
+    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter
     from orbitkv.sglang.recovery import RecoveryLinkerWrapper
     from tests.support.metrics import fetch_orbitkv_metrics
 
@@ -70,12 +69,16 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             ),
         },
     )
+    monkeypatch.setattr(
+        "sglang.srt.runtime_context.get_disagg",
+        lambda: SimpleNamespace(disaggregation_mode="null"),
+    )
     namespace = f"hybrid-proof-{uuid.uuid4().hex}"
-    monkeypatch.setattr(GpuLayout, "from_pool", classmethod(lambda cls, *args: layout))
+    cache = SimpleNamespace(layer_transfer_counter=_LayerDoneCounter(layout))
+    params = SimpleNamespace(token_to_kv_pool_allocator=SimpleNamespace(get_kvcache=lambda: cache))
     monkeypatch.setattr("orbitkv.sglang.linker.derive_namespace", lambda *args: namespace)
     monkeypatch.setenv("ORBITKV_SGLANG_ENDPOINT", f"unix://{channel_server.bootstrap_socket}")
-    component = ComponentType.MAMBA if kind == "recurrent" else ComponentType.SWA
-    linker = OrbitKVLinker(None, None, components={ComponentType.FULL, component})
+    linker = OrbitKVLinker(None, params)
     keys = [f"prefix-{i}" for i in range(4)]
     state_keys = keys[-1:] if kind == "recurrent" else keys[-2:]
     try:
@@ -262,6 +265,7 @@ def test_hybrid_recovery_requires_and_restores_complete_state(channel_server, mo
             ],
         )
         wrapper = object.__new__(RecoveryLinkerWrapper)
+        wrapper.restore_from_store = True
         wrapper.cache_linker = linker
         wrapper.cache = SimpleNamespace(dec_lock_ref=MagicMock())
         wrapper.hit_markers = {}

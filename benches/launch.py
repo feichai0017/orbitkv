@@ -41,6 +41,8 @@ def configure(args: Namespace, bytes_per_token: int) -> Launch:
     env = dict(os.environ)
     env.update(PYTHONHASHSEED="0", VLLM_LOG_STATS_INTERVAL="1")
     env.pop("VLLM_BATCH_INVARIANT", None)
+    if args.engine == "vllm" and args.deterministic_inference:
+        env["VLLM_BATCH_INVARIANT"] = "1"
     env.pop("ORBITKV_TRANSFER_BACKEND", None)
     env["PYTHONPATH"] = os.pathsep.join(
         [str(ROOT / "python"), str(args.output)]
@@ -239,6 +241,8 @@ def vllm_command(
         "42",
         "--enable-prompt-tokens-details",
     ]
+    if args.deterministic_inference:
+        command += ["--attention-backend", "FLASH_ATTN"]
     if args.backend == "cpu":
         connector = {
             "kv_connector": "OffloadingConnector",
@@ -312,6 +316,8 @@ def sglang_command(args: Namespace, port: int, cache_config: Path | None) -> lis
         "--enable-cache-report",
         "--enable-metrics",
     ]
+    if args.deterministic_inference:
+        command.append("--enable-deterministic-inference")
     if args.backend == "cpu":
         command += [
             "--enable-hierarchical-cache",

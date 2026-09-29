@@ -40,13 +40,14 @@ request and state identities are kept out of the exported series.
 
 | Metric family | Labels / meaning |
 | --- | --- |
-| `orbitkv_cost_operations_total` | `path`, `outcome`: completed, failed, cancelled, timed_out or abandoned |
-| `orbitkv_cost_stage_seconds` | `path`, `outcome`, `stage`: queue, admission, completed service or inclusive total; microsecond-to-second buckets |
+| `orbitkv_cost_operations_total` | `path`, `outcome`: completed, failed, cancelled, timed_out or abandoned; externally reported handoffs also carry bounded `admission` |
+| `orbitkv_cost_stage_seconds` | `path`, `outcome`, `stage`: queue, admission, completed service or inclusive total; externally reported handoffs also carry bounded `admission`; microsecond-to-second buckets |
 | `orbitkv_cost_logical_bytes_total` / `orbitkv_cost_logical_unknown_total` | Known attempted logical bytes versus unavailable unpadded sizes; do not sum nested owners |
 | `orbitkv_cost_io_bytes_total` / `orbitkv_cost_io_unknown_total` | Known physical bytes, including short I/O, versus unknown counts; same path/outcome labels |
-| `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-GPU-terminal total for the two SSD restore routes |
+| `orbitkv_cost_prediction_absolute_error_seconds` | Successful observation error against the prediction captured before submission: service for individual operations, enqueue-to-terminal total for complete SSD restore and HostReady routes |
 | `orbitkv_cost_shadow_candidates_total` / `orbitkv_cost_shadow_prediction_seconds` | Feasible raw-copy or SSD restore-route candidates, labelled by path and known/unknown evidence |
-| `orbitkv_cost_shadow_decisions_total` | agree, different or unknown; execution never follows this result |
+| `orbitkv_cost_shadow_decisions_total` | agree, different, within_margin, incomparable or unknown; execution never follows this result |
+| `orbitkv_cost_route_decisions_total` | `decision` is `default`, `selected`, `within_margin`, `unknown`, `incomparable` or `contention`; `scope` distinguishes `peer_owner` from `cross_medium` |
 | `orbitkv_cost_estimate_samples`, `orbitkv_cost_estimate_age_seconds`, `orbitkv_cost_estimate_error_seconds` | Count, sample age and EWMA absolute error supporting known shadow predictions |
 | `orbitkv_cost_estimate_evictions_total` / `orbitkv_cost_estimate_dropped_total` | Fixed-capacity eviction and skipped updates on estimator contention |
 
@@ -56,12 +57,79 @@ queueing and host materialization/H2D or GPU staging/scatter/decode. Other paths
 continue to estimate service from submission to observed completion; stage
 histograms retain their queue/admission/service/total meanings. Neither failed
 nor cancelled, timed-out or abandoned work trains successful estimates.
+Peer DRAM authorization uses `path="remote_authorization"`; peer SSD uses
+`path="remote_ssd_authorization"`, whose service interval also includes
+source-local io_uring staging. The following `remote_read` remains the Mooncake
+TE payload interval for either source medium.
+`peer_dram_host_ready` and `peer_ssd_host_ready` are non-additive composite
+samples from authorization start through destination block reconstruction.
+They alone feed the narrow peer-owner execution selector.
+`local_ssd_host_ready` spans queue admission, host allocation, io_uring reads,
+validation and host-block reconstruction. It uses stored bytes and block count,
+matching the peer HostReady shape. Equal-coverage, single-owner alternatives
+enter cross-medium shadow. They affect execution only under the separate
+three-flag experiment gate.
+
+`prefill_to_decode_handoff` is a decode-owned, enqueue-to-TENT-terminal
+observation for the registered destination GPU. It records raw logical and wire
+bytes plus target-layout fragment shape after successful completion; failed,
+cancelled and timed-out reports keep physical bytes unknown. The source
+endpoint is hashed into the internal execution-resource key; endpoint text,
+request identity, cache keys
+and transfer generation are not metric labels. The generation is required
+as freshness evidence but is not an estimator dimension. Only
+`admission="admitted", outcome="completed"` trains the estimate.
+`engine_local_restore` records native caller-to-GPU-drain duration, including
+readiness, dispatch, native queue and grant wait. The record is accepted once by
+the source owner for the same session/operation generation. Only a successful
+submitted drain trains its bounded estimate; failure durations are diagnostic.
+Its start boundary differs from `cache_restore` and P/D, so it is excluded from
+cross-route comparison. Cache restore resources separate the source domain,
+destination GPU and registered copy backend, so direct and kernel executions
+do not train the same estimate. Enable `ORBITKV_COST_OBSERVATIONS=1` in both the engine
+and Manager to collect it. `ORBITKV_TRACE_TRANSFERS=1` additionally exposes the
+stage decomposition and native result-consumption delay; tracing alone does not
+enable cost selection.
+
+`cache_restore` supplies the GPU-completed boundary for
+Manager-executed restores, from preparation after framework page allocation
+through terminal GPU completion. Its plan retains `RestoreTargetShape`
+(destination device, bytes and fragment count), source-set identity and source
+geometry. The shape is metadata; a separate permit owns device admission.
+Engine-local raw restores do not train this estimator until their actual
+drain evidence is connected. The observation does not enable direct/P-D
+selection: one execution owner must first acquire both source and handoff
+authority for the alternatives under consideration.
+
+The completion report carries bounded resource values: admitted decode bytes,
+queue depth, queue parallelism, TENT inflight bytes and TENT bandwidth. They
+live in a 128-entry process-local freshness cache for at most two seconds and
+are not exported as labels. Decode-route comparison accounts for queued waves
+and RDMA rail pressure only when every candidate has fresh, shape-compatible
+evidence; TCP legitimately reports an empty TENT NIC rail.
 
 Raw GPU-copy keys retain separate logarithmic buckets for input descriptors and
 DMA-coalesced ranges. Actual execution samples and shadow candidates use the
 same shape from the validated copy list; the executor's merge iterator supplies
 the range count. Refining that key does not restart queue/admission timing.
 These fields are bounded estimator dimensions, not additional metric labels.
+
+Shadow compares the existing load DMA/kernel pair, save DMA/kernel pair,
+complete io_uring/cuFile restore pair, and equal-coverage HostReady alternatives.
+The first three require matching resource identity. HostReady shadow permits
+different SSD-store/peer resources but still requires known representation and
+identical byte/block shape. Multi-owner peer prefixes have no single resource
+identity and are excluded. Matching buckets never authorize a source or prove
+resource admission. SSD GPU-restore keys additionally retain destination GPU,
+copy backend, source-store set and mixed DRAM presence.
+
+`different` requires the alternative's mean plus empirical error to beat the
+current mean minus its error by more than 5% of the current mean. A faster mean
+that fails this guard yields `within_margin`; a fastest or tied current mean
+yields `agree`. Missing samples yield `unknown`, and incompatible comparison
+families/resources/shapes or unknown representation yield `incomparable` when
+all estimates are present. The 5% margin is a declared shadow threshold, not a
+qualified execution policy or a statistical confidence bound.
 
 The bounded SSD-route key includes buckets for the complete stored source image's
 bytes/fragments and the SSD-derived portion of target bytes/fragments, alongside
@@ -76,6 +144,13 @@ This family and its shadow work are disabled by default. Enable them with
 metrics remain enabled independently. See the
 [overhead gate](implementation-plan.md#p41-final-evidence) before enabling cost
 observations in serving.
+Execution selection additionally requires `ORBITKV_COST_SELECTION=1`. It is
+currently limited to equal-coverage owners of one peer medium; it does not use
+nested authorization/READ timers as additive costs.
+Cross-medium execution additionally requires
+`ORBITKV_CROSS_MEDIUM_SELECTION=1`. The same `orbitkv_cost_route_decisions_total`
+reports its guarded decision; deployment labels and external transport/NIC
+evidence remain necessary to interpret the result.
 
 ### Storage encoding
 
@@ -325,7 +400,7 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
   - Use case: Monitor load throughput
 
 - **orbitkv_load_duration_seconds** (Histogram)
-  - GPU restore duration, including SSD reads on the selected cuFile or explicit io_uring restore lane
+  - Manager-worker restore duration, including SSD reads on the selected cuFile or explicit io_uring restore lane; engine-local caller-to-drain samples are included only when timing is enabled in the engine. Manager retirement time is never used for local samples.
   - Use case: Track load performance (p50, p99)
 
 - **orbitkv_load_failures_total** (Counter)
@@ -349,6 +424,7 @@ The setting remains configurable with `--metric-hll-bucket-bits`.
 - **orbitkv_ssd_gpu_staging_bytes** (Gauge) - Registered GPU storage staging memory.
 - **orbitkv_ssd_cufile_inflight_batches** (Gauge) - Occupied staging slots until I/O and scatter completion, at most two per instance/device.
 - **orbitkv_ssd_gpu_write_fallbacks_total** (Counter) - Write jobs using host publication after the eight-job GPU write admission limit is reached.
+- **orbitkv_ssd_gpu_read_fallbacks_total** (Counter) - Automatically selected cuFile restores changed to io_uring before submission because another instance owns this CUDA device's persistent staging. Explicit cuFile routes do not increment this counter or switch paths.
 - **orbitkv_ssd_pinned_write_skips_total** (Counter) - Reservations rejected to
   protect an active SSD read or write. See [GPU storage recovery](gds.md).
 - **orbitkv_ssd_write_bytes_total** (Counter) - Bytes written to SSD cache
@@ -389,6 +465,10 @@ For backing failure correlation, use:
   rejection before payload submission; `status="error"` counts other fetch failures.
 - `orbitkv_remote_fetch_plan_segments` includes attempted alternative-source
   segments; `orbitkv_remote_fetch_plan_completed_segments` counts completed ones.
+- `orbitkv_tent_nic_inflight_bytes` and `orbitkv_tent_nic_bandwidth_bytes_per_second`
+  sample TENT's live RDMA rail state after successful peer batches, labelled by
+  NIC. They are resource-pressure evidence, not proof that the sampled batch
+  used RDMA.
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
 - `orbitkv_remote_stage_duration_seconds{stage,status}` separates `discovery_rpc`,
   `authorization`, `allocation`, `read`, `rebuild` and `release`. Allocation/read/rebuild

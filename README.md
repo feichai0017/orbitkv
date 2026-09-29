@@ -28,7 +28,16 @@ Run an independent Cache Manager per host and connect the engines on that host
 to its shared cache. Engines own GPU memory and scheduling; OrbitKV manages
 external replicas and transfers. See [deployment patterns](docs/deployment.md)
 for shared-instance budgets and container qualification limits.
-The single-node path is GPU-tested on **vLLM 0.29.0** and **SGLang 0.5.20**.
+The pinned engine baselines are **vLLM 0.29.0** and **SGLang 0.5.20**.
+The recorded [engine-local raw Restore cutover](docs/engine-local-restore.md) passes
+single-H20 Qwen3-8B DRAM serving correctness and restart reuse in both engines.
+The [recorded vLLM end-to-end comparison](docs/single-node-performance.md#matched-vllm-end-to-end-comparison)
+shows gains over HBM-eviction recomputation, while native CPU offload remains
+faster. LMCache comparisons and their limits are recorded in the same report.
+The [matched communication measurements](docs/communication-performance.md)
+track the initial regression and the subsequent idle-stream/plan-compaction
+optimization. Dense transfers benefit; small-payload overhead and broader
+serving/deployment qualification remain open.
 Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 
 ## Key features
@@ -38,9 +47,12 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
 - **Optional reuse policies.** Rust can protect reused pages within a byte cap
   and admit SSD writes selectively. See the [policy controls](docs/cache-policies.md)
   and their cold-reuse tradeoff before enabling them.
-- **Direct GPU transfers.** Both engines register GPU buffers through CUDA IPC;
-  adapters fence the producing CUDA stream, and Rust handles cache queries,
-  reads and transfer completion.
+- **Native GPU transfers.** Unencoded DRAM Restore executes inside the engine
+  using independently imported shared payload arenas and retained tensors.
+  Per-layer CUDA dependencies let consumers start before later copies finish;
+  source and destination ownership lasts through the final drain.
+  SSD/codec Restore and Publish retain Manager workers and CUDA IPC bindings;
+  adapters supply the CUDA stream dependencies and Rust owns completion.
 - **Model-aware recovery.** Cache identity includes model artifacts, computation
   settings and storage layout. Compiled recovery rules select the required
   attention pages, sliding windows and recurrent/conv checkpoints, including
@@ -49,11 +61,21 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   active GPU transfers. Cancellation retains submitted I/O until completion.
 - **Observable behavior.** Inspect Prometheus metrics and optional request
   timelines, and reproduce the published latency and throughput measurements.
+  Opt-in cost observations compare matching copy/SSD-route evidence in shadow,
+  with resource identity and uncertainty checks before suggesting a change.
 - **Experimental shared cache.** Embedded catalog shards locate peer replicas,
-  Mooncake Transfer Engine moves bytes, and etcd tracks cluster membership.
+  Mooncake TENT moves bytes, and etcd tracks cluster membership.
   Source allocations remain budgeted through timeout; bounded completion records
   reconcile lost authorization replies and retry completion acknowledgements
-  using reusable windows and generation-fenced tickets.
+  using reusable windows and generation-fenced tickets. Both engines pass the
+  recorded [H20/A100 TCP natural-text recovery and restart gates](docs/shared-cache-qualification.md#two-host-tcp-2026-09-28),
+  with cross-GPU numerical and RDMA limits documented separately. Peer SSD reads use
+  exact-generation, bounded source-side io_uring staging before the same
+  Mooncake transfer path; physical two-host qualification remains open.
+- **Experimental P/D handoff.** vLLM uses OrbitKV's connector protocol;
+  SGLang `0.5.20` keeps its native bootstrap/room protocol and can opt into the
+  same Rust TENT payload owner with `ORBITKV_SGLANG_TENT=1`. SGLang external
+  H20 qualification remains open.
 
 See [supported deployments](docs/deployment.md) and
 [model qualification](docs/models.md) before selecting a checkpoint and topology.
@@ -127,23 +149,34 @@ container setup. Standalone caching requires neither etcd nor a gRPC listener.
 
 ## Architecture
 
-![OrbitKV architecture: engine-owned GPU memory, compiled page demand, and cache tiers](website/public/architecture.svg)
+![OrbitKV architecture: local restore ownership, peer cache READ and P/D WRITE](website/public/architecture.svg)
 
 The engine adapter identifies missing state and supplies GPU destinations.
 OrbitKV selects compatible cached ranges, reads them from the configured tiers,
 and retains page ownership until the GPU copy finishes. Newly computed KV is
-published for later reuse. The same adapter API serves DRAM, SSD and experimental
-remote fetches; physical placement stays inside the Cache Manager.
+published for later reuse. The Manager owns cache placement and source grants;
+raw DRAM copies execute in the engine, while SSD/codec work remains with Manager
+workers. The same adapter API serves these routes and experimental remote
+fetches. The local executor partitions fragmented raw plans into at most 1 MiB
+parts under one whole-operation fence, with 32 MiB operation and 64 MiB session
+metadata limits. Raw per-layer CUDA dependencies allow consumption before later
+copies finish, with external-event graph replay and a final ownership fence. See
+[execution scope and remaining gates](docs/engine-local-restore.md).
 
 The [implementation plan](docs/implementation-plan.md) maps pinned LMCache,
 FlexKV and Mooncake mechanisms to deployment and validation work. The next milestone
 uses measured path costs and resource budgets across local tiers and Mooncake
-TE transfers. Independent replicas, P/D handoff and TP/PP have separate
+TENT transfers. Independent replicas, P/D handoff and TP/PP have separate
 completion and recovery contracts. Bounded Rust cost observations, raw-copy
-shadow predictions and independent SSD read routes are implemented. SSD route
+shadow predictions, independent local SSD read routes and a fixed-priority peer
+SSD route are implemented. SSD route
 shadow compares complete restoration to GPU readiness without changing execution.
-This is the first source/path separation, not a completed planner across all tiers.
-Dynamic cost selection remains planned, and observations remain off by default:
+This is not yet a completed planner across all tiers. An opt-in selector can
+choose between equal-coverage owners of the same peer medium using fresh complete
+HostReady observations. Equal-coverage local SSD and single-owner peer routes
+also share a cross-medium shadow. A third, explicitly experimental opt-in can
+execute that choice, but it is not qualified until the external H20 TCP/RDMA
+matrix passes. All observations and execution selection remain off by default:
 the [earlier overhead qualification](docs/implementation-plan.md#p41-final-evidence)
 has one open SGLang ANS SSD latency gate. The route changes require their own
 [validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence).
@@ -151,7 +184,8 @@ has one open SGLang ANS SSD latency gate. The route changes require their own
 Read the [architecture](docs/architecture.md),
 [hybrid recovery contract](docs/hybrid-recovery.md), and
 [distributed design](docs/distributed-cache.md). Cross-engine byte conversion,
-production catalog HA and KV-aware request routing remain planned work.
+the etcd-backed local global-index replacement and KV-aware routing remain
+planned work. See the [selected metadata design](docs/distributed-cache.md#selected-target-local-global-index-and-etcd-metadata).
 
 ## Performance
 

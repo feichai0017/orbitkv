@@ -16,10 +16,21 @@ client.close()
 
 `CacheManagerClient` is the Rust owner exposed through PyO3. Construct
 `BlockHashes(page_hashes)` once per lookup; slices share its native allocation.
-`query_prefetch` owns submission, revision and polling. `start_restore` returns
-a client-bound handle for `poll_restore` or `wait_restore(timeout=...)`.
-Native calls release the GIL. A timeout does not release GPU destinations while
-a copy may still be running. See the [type reference](../python/orbitkv/orbitkv.pyi).
+`query_prefetch` owns submission, revision and polling.
+`register_context_batch(..., tensors=...)` retains actual tensor/exporter objects
+alongside the IPC metadata used by Publish and Manager SSD/codec routes.
+`start_restore(..., ready_stream=...)` takes the engine's destination-readiness
+stream and returns a client-bound handle for `poll_restore` or
+`wait_restore(timeout=...)`. Optional `layer_events` bind retained CUDA events
+to registered layers. `wait_restore_enqueued` waits for fresh event records,
+allowing per-layer consumer dependencies; it does not acknowledge destination
+page reuse. Unencoded DRAM copies execute in the native engine worker; their
+final local result follows DMA drain without waiting for Manager source reaping.
+vLLM requires piecewise graphs; SGLang installs external events before capture.
+See [layer consumption](engine-local-restore.md#layer-readiness-and-framework-consumption)
+for recurrent, packed-buffer and multi-part limits. Repeated registration of the same binding is rejected, and unregister
+or close drains accepted operations. Native calls release the GIL. A timeout
+does not release destination page assignments while a copy may still be running. See the [type reference](../python/orbitkv/orbitkv.pyi).
 
 ## Process channel
 
@@ -35,7 +46,12 @@ path. `orbitkv.timeout_ms` (default 5000) bounds hot requests and health;
 registration and unregister allow at least 120 seconds for CUDA setup/draining.
 `orbitkv.spin_iterations` defaults to 64. Standalone Cache Managers do
 not start gRPC. Client and Cache Manager must use matching
-bootstrap protocol versions (currently version 2).
+bootstrap protocol versions (currently bootstrap 7, channel ABI 11, cache schema 9, and lifecycle 4).
+Bootstrap transfers five metadata/notification FDs; GPU registration attaches
+the shared payload arena FDs separately. The local executor partitions large
+raw plans into at most 1 MiB parts under one whole-operation fence. Operation
+metadata is capped at 32 MiB and per-session prepared metadata at 64 MiB;
+see [execution scope and qualification gates](engine-local-restore.md).
 
 `orbitkv.wait_for_full_prefix` is supported on the local path: pending queries
 return `QueryLoading`, and repeated queries with the same instance/request/group
@@ -132,8 +148,8 @@ paths. Cross-host TP sharding needs a future node-local query fan-out design.
 vLLM normally exposes hashes only for complete KV blocks. In a P/D deployment,
 enable `orbitkv.pd_tail_save` on prefill and `orbitkv.pd_tail_load` on decode
 to reuse the final partial prompt block through the **external-cache**
-`OrbitKVConnector` path. These options are separate from the direct Mooncake
-`PdConnector`. Start both vLLM processes with
+`OrbitKVConnector` path. These options are separate from the direct TENT-backed
+`PdPrefillConnector` and `PdDecodeConnector`. Start both vLLM processes with
 the same explicit `PYTHONHASHSEED` and `--prefix-caching-hash-algo xxhash_cbor`.
 
 Prefill: `{"orbitkv.pd_tail_save": true}`

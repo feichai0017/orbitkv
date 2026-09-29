@@ -24,18 +24,27 @@ fetches. The cache manager decides where to source a hit; the inference engine
 still decides when to query and save. Remote fetch is experimental. There is no
 OrbitKV KV-aware request router today.
 
-```text
-       current multi-node cache (experimental)
-   host A                                      host B
-   vLLM or SGLang                             vLLM or SGLang
-   engine-owned HBM                           engine-owned HBM
-        | CUDA IPC + UDS/iceoryx2                   | CUDA IPC + UDS/iceoryx2
-   Cache Manager A ---- Mooncake RDMA/TCP ---- Cache Manager B
-   pinned DRAM / SSD                         pinned DRAM / SSD
-            \                                   /
-             \---- etcd members/placement ----/
-      catalog shards embedded in Managers; one copy per shard
-```
+The diagram separates four payload routes:
+
+| Route | Submission owner | Control and completion |
+| --- | --- | --- |
+| Raw local DRAM → HBM | Engine's Rust executor | Manager source grant; shared memfd arenas; per-layer CUDA events; final GPU drain and asynchronous source retirement |
+| Publish, SSD or encoded Restore | Manager GPU/storage worker | CUDA IPC tensor registration; retained source/destination and staging owners through completion |
+| Historical peer KV → local cache → HBM | Requester Manager, then its existing local Restore route | Catalog candidates and source gRPC authorization; TENT READ; acknowledged source release |
+| Current prefill KV → decode HBM | Engine P/D adapters | TENT WRITE; vLLM split-connector protocol or SGLang native bootstrap/rooms |
+
+UDS transfers descriptors during session setup; iceoryx2 carries local cache
+commands. Shared completion records and eventfd wakeups report local restore
+progress. The native executor records a layer event only after that layer's final
+required ranges; consumers can overlap later raw copies while source ownership
+remains retained through final drain. vLLM admits the restore into the consuming
+forward and requires piecewise graphs. SGLang installs persistent external event
+waits before its first graph capture. Packed buffers, vLLM recurrent operators
+and multi-part plans retain coarser dependencies; see the
+[layer readiness contract](engine-local-restore.md#layer-readiness-and-framework-consumption).
+etcd maintains membership, epochs and fixed catalog placement in the
+background, outside the cache lookup path. Peer metadata still uses gRPC.
+
 
 Single-node deployment connects engines to their host's Cache Manager and needs
 neither Catalog nor peer gRPC. The Manager shares external capacity across
@@ -57,7 +66,12 @@ and lock release. Process
 IPC supports query, publish, asynchronous restore completion, and lease
 release:
 iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
-passes a sealed memfd descriptor arena, and supplies an eventfd for wakeups.
+passes sealed descriptor and restore-result memfds, and supplies separate
+eventfds for restore completion and Publish replies. A required companion
+iceoryx2 event wakes request dispatch after
+enqueue; the Manager sleeps until a request event or maintenance deadline
+instead of polling every 50 us. Restore completion is read and acknowledged from its shared record;
+the GPU outcome waiter publishes it directly without a dispatcher scan or terminal RPC.
 The vLLM adapter requires this path and fails fast if the Cache Manager socket
 is missing. Each inference process must reach a Cache Manager on its own host.
 Pending queries return `Loading` and continue on Tokio. The endpoint owns one
@@ -110,7 +124,7 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Cache client | `orbitkv-channel/src/cache_client.rs`, `python/src/client.rs` | Rust query/warming ownership, independent publish session, client-bound restore handles and GIL-free waiting; PyO3 API |
 | Connection setup | `python/orbitkv/client/connection.py` | Engine endpoint options and same-host socket selection |
 | State contract | `orbitkv-state` | State identity, format compatibility, compiled page demand, recovery validation, page-reference types |
-| Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation |
+| Process IPC | `orbitkv-channel`, `orbitkv-server/src/endpoint/` | iceoryx2 requests/replies, UDS bootstrap and lifecycle, pending queries, descriptor generation and authenticated completion observations |
 | Process utilities | `orbitkv-common` | Shared logging setup and peer connection defaults |
 | Hardware locality | `orbitkv-core/src/memory/numa.rs` | NUMA topology and allocation/worker affinity |
 | Cache statistics | `orbitkv-server/src/metric/hll.rs` | Namespaced miss cardinality and windowed reuse estimates |
@@ -126,33 +140,98 @@ from DRAM to SSD or another node should not change `query_prefetch`, `save`,
 `start_restore`, or `release` for the caller. The process channel implements
 the current iceoryx2/UDS connection without defining a separate cache API.
 
+## Definitions and naming
+
+These terms describe responsibilities in the existing owners. A term does not
+require a new public type, wrapper or planner layer.
+
+| Term | Meaning and boundary |
+| --- | --- |
+| Demand | State groups and ranges needed for a legal recovery boundary. It does not allocate pages or authorize reads. |
+| Replica / candidate | A stored copy / evidence that a compatible copy may exist. A candidate does not hold the bytes. Medium, owner/locality and representation are separate dimensions. |
+| Route | Supported transfer, staging and decode steps from a source to a declared completion target. TENT is a transfer backend; remote is locality, not a medium. |
+| Plan | Bounded work description whose type declares its stage. `ReadPlan` holds unresolved candidates; `RestorePlan` binds selected sources and target geometry without owning payload or capacity; `RawRestorePlan` is the bounded copy description. |
+| Lease | A retained source lifetime tied to a specific version or allocation. Expiry cannot release submitted DMA resources. |
+| Grant | Authority to access retained resources under a fenced protocol. `RawRestoreGrant` retains sources, query reservations and the device permit. Registration alone grants no logical page lifetime. |
+| Permit / admission | A real capacity reservation / the decision to acquire one. `DecodeRestorePermit` reserves an operation slot; it does not own GPU pages. |
+| Shape | Descriptive bytes, fragments and geometry. `RestoreTargetShape` records the validated destination device and aggregate shape, with no resource ownership. |
+| Resource evidence | A bounded, expiring snapshot of usage or queue pressure. `cost/resource_evidence` records it; execution owners perform admission. |
+| Observation / estimate | A measured interval and outcome / a prediction derived from compatible observations. Neither authorizes execution. |
+| Ready | The requested state is successfully usable at the declared target. Current `CompletionIntent::EngineRestore` names the engine-target goal; `HostReady` ends at host materialization. |
+| Drained | Submitted accesses are terminal, including failure or cancellation. Drain permits safe release but does not imply successful recovery. |
+| Reaped | The Manager released the operation's retained source owners and credits. It is distinct from engine readiness and record acknowledgement. |
+
+`CostObservationKind` names a measurement boundary, `ExecutionResource` names
+the measured resource, and the completion target says where the result must
+be usable. They are independent. `CacheRestore` measures cache-to-engine
+restoration, including Manager SSD/codec routes, and is distinct from
+`PrefillToDecodeHandoff`. It begins after engine page allocation, not at
+request arrival. First engine use and TTFT remain separate measurements.
+
+Current cost estimates predict elapsed seconds with empirical error. Byte
+counts describe route shape and resource demand; capacity is enforced by
+execution owners. There is no combined score adding latency, bytes and
+retention cost without a defined objective.
+
+Keep protocol states tied to their authority transition. Rename misleading
+internal types and their consumers together; do not retain aliases or forwarding
+APIs. Wire/metric names need their own coordinated cutover when their actual
+measurement boundary changes. Unsupported paths do not get speculative types.
+
 ## Core module ownership
 
 | Module | Responsibility |
 | --- | --- |
-| `engine/` | Instance registration, `EngineConfig`, Publish orchestration, demand validation and restore handoff |
+| `engine/` | Instance registration, `EngineConfig`, Publish orchestration, demand validation, restore handoff and registered-target completion evidence |
 | `memory/` | NUMA placement, pinned allocations and pools |
-| `storage/` | Residency assembly and allocator-driven reclamation; `publish.rs` owns queued sealing and publication |
-| `storage/dram/` | Resident images, eviction/admission policy, exact insertion versions and inventory |
+| `storage/` | Residency assembly, shared replica inventory and allocator-driven reclamation; `publish.rs` owns queued sealing and publication |
+| `storage/dram/` | Resident images, eviction/admission policy and exact insertion versions |
 | `storage/ssd/` | Files, index, immutable extent leases, io_uring/cuFile I/O and registered staging |
-| `planning/` | Metadata-only discovery, batch replica evidence, completion targets and source/path eligibility |
+| `planning/` | Metadata-only discovery, batch replica evidence, bounded host routes and device-bound consumed restore plans |
 | `query/` | Admission budgets, shared reads, host materialization, query phases and leases |
 | `peer/` | Catalog client, cached candidates, authoritative exports, requester READs and completion recovery |
 | `transfer/` | Registered engine layouts, GPU copies/codecs and completion-drained workers |
 | `codec/` | Representation validation and encoding/decoding |
-| `cost/` | Operation observations, bounded estimates and same-target shadow comparisons |
+| `cost/` | Explicit operation/route sample boundaries, bounded resource-scoped estimates and guarded same-target shadow comparisons |
 
 `lib.rs` defines the public API. Tests mirror these modules under
 `crates/orbitkv-core/tests/unit/`; GPU integration gates stay in `tests/`.
 `backing/` and `internode/` have been removed. There is one SSD store with
 independent access routes; peer transport is not a storage medium. `PeerExports`
 checks live owner/version evidence and holds source memory until completion.
+Every pinned-pool shard has a size-sealed memfd backing mapped with `MAP_SHARED`;
+regular and huge pages share the same NUMA first-touch and CUDA registration
+path. GPU registration exports payload FDs to inference processes, which map
+and CUDA-register them independently. Unencoded DRAM restores execute in the
+inference process under a Manager-owned source grant; SSD, encoded and mixed
+restores retain Manager workers. See [engine-local restore](engine-local-restore.md).
 The Mooncake registration owner retains its pinned pool through unregister.
-Cost observations and shadow comparisons remain opt-in and do not select a new
-execution route. Remote SSD/HBM and GPU-direct cache endpoints remain future work.
+Each registered region is represented by an RAII token that also retains the
+TransferEngine; Core clears these tokens before releasing the pinned-pool
+backing. A future GPU-region token does not by itself own engine HBM: it must be
+bundled with the engine's generation-fenced page grant through completion.
+Cost observations and shadow comparisons remain opt-in; shadow results never
+select execution. A second opt-in may choose among equal-coverage owners of one
+peer medium using complete HostReady evidence, while broader cross-route choice
+remains open. Local SSD and single-owner peer routes share stored-byte/block
+HostReady keys; a third experimental opt-in may execute the cross-medium result,
+while the ordinary default stays fixed until H20 qualification. Peer SSD uses
+source io_uring staging plus Mooncake TE; remote HBM and GPU-direct cache
+endpoints remain future work.
+Instance-owned GPU workers share the bounded GPU SSD-write admission for their
+physical CUDA device; the permit remains with the submitted save until its
+completion owner releases it.
+One instance worker pool at a time owns that device's persistent cuFile and
+codec staging. Automatic SSD demand may switch to io_uring before submission
+when another pool owns staging; an explicit cuFile route never switches. The
+owner covers read and GPU-write workers and is released only after all lanes of
+that pool drain.
 
-Restore returns one completion receiver after all submitted DMA drains. The old
-shared-memory completion state and its second load API have been removed.
+`RestoreExecution` returns either a local raw source grant or a Manager-worker
+completion receiver. The process channel exposes one restore handle API with
+generation-fenced shared records. Engine-local results become consumable
+after drain, while Manager source retirement completes separately. The old
+terminal-poll RPC has been removed.
 
 ## Upstream designs and OrbitKV owners
 
@@ -169,8 +248,8 @@ allocation/event sharing and instance isolation to concrete OrbitKV work.
 | [LMCache v0.5.5 GDS context](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/gpu_connector/gds_context.py) | Preallocated storage, reusable registered staging, stream-ordered I/O with retained submission state | `storage/ssd` reserves capacity; `cufile/slot` owns registered streams/staging and stable asynchronous arguments/results through event completion. |
 | [LMCache MP serialization](https://docs.lmcache.ai/mp/serde.html) and [FlexKV compression](https://github.com/taco-project/FlexKV/tree/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/compression) | Separate engine precision from cache encoding; bound codec workspace and qualify formats | `codec/` owns batched GPU ANS/FP8/TurboQuant, reusable arenas, CPU SIMD and CRC validation; `transfer/worker/codec` owns engine-page and writeback lifetimes. Encoded DRAM, SSD and Mooncake payloads share versioned metadata. cuFile can write encoded GPU groups and restore through GPU validation/decode. Native GDS and broader model-quality qualification remain open. |
 | [FlexKV file-range coalescing](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/transfer_ssd.cpp) and [GDS](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/gds/gds_manager.cpp) | Merge physically compatible same-file ranges; keep storage geometry separate from engine tensor layouts | `transfer/worker/ssd` validates demand and coalesces leased ranges per file; its queue owns task/extent lifetime, bounded GPU write admission and batch-level read/write scheduling. |
-| [Mooncake TE v0.3.13.post1](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/include/transfer_engine.h) | Registered memory and batched remote transfers | Reused directly through `orbitkv-transfer` and `orbitkv-mooncake-sys`. Catalog/source authorization and state compatibility remain OrbitKV responsibilities. Two-host/RDMA qualification is still pending. |
-| [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) — draft proposal | Cached membership and embedded authority; keep coordination off per-key data paths | `orbitkv-catalog` and `server/cluster` already use embedded shards, cached membership and etcd leases/Watch. Catalog replication, online placement and repair remain future work; the RFC is not evidence that those features are implemented. |
+| [Mooncake TE v0.3.13.post1](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/include/transfer_engine.h) | Registered memory and batched remote transfers | Reused directly through `orbitkv-transfer` and `orbitkv-mooncake-sys`. Catalog/source authorization and state compatibility remain OrbitKV responsibilities. Scoped two-host TCP serving passes; RDMA remains unqualified. |
+| [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) — draft proposal | Cached membership and embedded authority; keep coordination off per-key data paths | `orbitkv-catalog` and `server/cluster` already use embedded shards, cached membership and etcd leases/Watch. The selected replacement is etcd block metadata plus complete local global indexes; it is not implemented yet. The RFC is a reference, not that implementation. |
 
 Compiled `required_ranges`, complete-state recovery and generation/lease checks
 remain the common acceptance boundary for every tier. A useful transfer policy
@@ -263,6 +342,14 @@ recovery contract:
 Adapters do not decide which component set is a legal recovery point. That
 logic belongs in the common recovery contract.
 
+The vLLM P/D adapter exposes separate prefill and decode connector classes;
+there is no role-selecting compatibility facade. Its framework callbacks and
+KV tensor layout inspection remain in Python. Registered-memory ownership,
+TENT batch completion and the notification wait mailbox live in Rust. Native
+waits release the GIL, preserve notifications consumed by competing waiter
+threads, and fence close/reopen with a monotonically increasing scope
+generation.
+
 ### `orbitkv-core`
 
 The current core provides content-addressed sealed blocks, NUMA-aware pinned
@@ -281,8 +368,9 @@ The native physical domains are:
 - local SSD;
 - remote OrbitKV replicas over Mooncake-selected RDMA or TCP.
 
-Mooncake Transfer Engine is the sole remote-movement backend in this codebase. It
-contributes Segment/BatchTransfer, multi-NIC topology selection, endpoint
+Mooncake TENT is the sole remote-movement backend in this codebase. The legacy
+Transfer Engine ABI is neither built nor loaded. TENT contributes
+Segment/BatchTransfer, multi-NIC topology selection, endpoint
 pooling, and rail failover. Mooncake Store Master is not OrbitKV's
 semantic authority: bundle completeness, leases, generations, and planning
 remain in OrbitKV.
@@ -316,6 +404,35 @@ connector scheduler contract. The original SSD readiness failure and successful
 follow-up remain in [SSD results](ssd-performance.md). The first
 [bounded queued-warming path](queued-warming.md) is implemented; cost selection
 remains in [state demand and transfer planning](state-planning.md).
+
+### P/D handoff
+
+The SGLang P/D path is deliberately separate from the external-cache linker.
+Pinned SGLang `0.5.20` owns bootstrap rooms, destination page allocation,
+parallel-rank mapping, chunk scheduling and request completion. With
+`ORBITKV_SGLANG_TENT=1`, the OrbitKV plugin replaces only SGLang's shared
+payload-engine constructor before initialization. The resulting adapter lowers
+SGLang's registered pointer ranges and WRITE batches into the same PyO3-backed
+Rust TENT owner as the vLLM P/D connector. It does not introduce another Python
+request state machine or send payload through the Cache Manager/control plane.
+
+Rust registration tokens retain HBM/host registrations, and Rust batch
+completion retains all submitted addresses until each TENT task is terminal.
+On a transfer error the adapter invalidates the cached segment and returns
+failure to SGLang's room owner. The SGLang CLI still spells the backend
+`mooncake` because that is its fixed dispatch key; OrbitKV packages and loads
+only `libtent_shared.so`. See [P/D transfer](pd.md) for operation and current
+qualification limits.
+
+The first P/D-plus-cache composition uses the existing owners rather than a
+new coordinator. Both workers may attach the OrbitKV external linker to the
+same Cache Manager namespace; decode additionally enables SGLang's radix cache.
+After exact identity/layout validation, prefill restores a reusable prefix,
+SGLang sends the live request state to decode through TENT, and decode can
+publish its longer completed prefix for a later prefill request. OrbitKV rejects
+this composition if the live P/D backend is not its TENT adapter. Direct-to-D
+restore versus P-restore-plus-handoff is not yet one comparable cost-model
+choice and remains a later planning step.
 
 ### Future: Radix lifecycle bridge for routing
 
@@ -361,8 +478,10 @@ member loss does not change placement. Cached member snapshots resolve each
 assigned Node ID to a current endpoint and runtime UUID. Ordinary block operations
 perform no etcd I/O.
 
-Managers asynchronously synchronize independently ordered DRAM inventory streams
-per shard. Bounded snapshots and deltas reconstruct lost evidence; incomplete
+Managers asynchronously synchronize independently ordered residency streams
+per shard, falling back to committed SSD evidence when an owner's DRAM copy is
+evicted, including representation family and known stored bytes. Bounded
+snapshots and deltas reconstruct lost evidence; incomplete
 replacement views stay hidden until commit. After a local miss, the requester
 checks its bounded positive candidate index and queries only missing shards.
 It plans source spans and obtains exact runtime/residency authorization before
@@ -382,7 +501,11 @@ but this does not prove safe source failure or partitions. See the
 [implemented protocol and limits](../crates/orbitkv-catalog/README.md).
 
 The next stages add replicated placement generations, controlled handoff,
-subscriptions and remote SSD. These are target features in the diagram below.
+subscriptions and measured remote source selection. Peer SSD routes now use
+source-local exact-generation staging with two-phase byte/session admission,
+but SSD discovery evidence alone still does not authorize a file or memory
+transfer. Cross-host qualification remains a separate gate. These are target
+features in the diagram below.
 The [distributed cache design](distributed-cache.md) defines the acceptance gates.
 A later KV-aware router can consume replica summaries and engine load events
 without entering the transfer path. Metadata replicas do not imply KV payload

@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 use orbitkv_state::RecoveryDemand;
 
 use crate::{
-    CallOptions, CancelQueryRequest, ChannelClient, ChannelError, PublishRequest,
-    QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode, QueryTicket,
-    RestoreRequest, RestoreResponse, RestoreState,
+    CallOptions, CancelQueryRequest, ChannelClient, ChannelError, CompletionObservationRequest,
+    PublishRequest, QueryBundleRequest, QueryBundleResponse, QueryCommand, QueryOutcomeCode,
+    QueryTicket, RestoreRequest, RestoreResponse, RestoreState,
 };
 
 const MAX_WARMUPS: usize = 16;
@@ -169,12 +169,13 @@ impl Queries {
     }
 }
 
-/// A GPU restore remains owned after a wait deadline. Only a terminal reply
-/// or confirmed Manager death permits the engine to reuse its destinations.
+/// A GPU restore remains owned after a wait deadline. Engine-local destinations
+/// remain leased until the native executor proves its own DMA drain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RestoreHandle {
     pub operation_id: u64,
     pub session_epoch: u64,
+    pub session_token: u64,
     owner: u64,
 }
 
@@ -267,13 +268,13 @@ impl CacheClient {
             self.cancel(query.ticket)?;
         }
         let previous = queries.pending.get(&key).map(|query| query.ticket);
-        let command = queries.prepare(&key, hashes, intent.clone())?;
+        let discover = intent == QueryIntent::Candidates;
+        let command = queries.prepare(&key, hashes, intent)?;
         let response = self
             .channel
             .query_bundle(next_id(&self.requests)?, &command);
         match response {
             Ok(response) => {
-                let discover = intent == QueryIntent::Candidates;
                 if (discover && response.outcome == QueryOutcomeCode::Ready)
                     || response.outcome == QueryOutcomeCode::Candidates
                         && (!discover
@@ -595,6 +596,14 @@ impl CacheClient {
         self.channel.release(next_id(&self.requests)?, lease)
     }
 
+    pub fn observe_completion(
+        &self,
+        observation: &CompletionObservationRequest,
+    ) -> Result<(), ChannelError> {
+        self.channel
+            .observe_completion(next_id(&self.requests)?, observation)
+    }
+
     pub fn publish(&self, request: &PublishRequest) -> Result<(), ChannelError> {
         // A long D2H publish must not hold the query/restore descriptor slot.
         let publisher = {
@@ -627,16 +636,59 @@ impl CacheClient {
         Ok(RestoreHandle {
             operation_id,
             session_epoch: self.channel.session_epoch(),
+            session_token: self.channel.session_token(),
             owner: self.owner,
         })
     }
 
     pub fn poll_restore(&self, handle: RestoreHandle) -> Result<RestoreResponse, ChannelError> {
-        if handle.owner != self.owner || handle.session_epoch != self.channel.session_epoch() {
+        // A configured Manager epoch can repeat after restart. The native
+        // issuer also fences handles against a new mapping with equal wire IDs.
+        if handle.owner != self.owner
+            || handle.session_token != self.channel.session_token()
+            || handle.session_epoch != self.channel.session_epoch()
+        {
+            return Err(ChannelError::SessionRequiresReconnect);
+        }
+        self.channel.restore_poll(handle.operation_id)
+    }
+
+    pub fn restore_completions(&self) -> Arc<crate::RestoreCompletions> {
+        self.channel.restore_completions()
+    }
+
+    pub fn claim_local_restore(
+        &self,
+        handle: RestoreHandle,
+    ) -> Result<Option<Vec<u8>>, ChannelError> {
+        if handle.owner != self.owner
+            || handle.session_token != self.channel.session_token()
+            || handle.session_epoch != self.channel.session_epoch()
+        {
             return Err(ChannelError::SessionRequiresReconnect);
         }
         self.channel
-            .restore_poll(next_id(&self.requests)?, handle.operation_id)
+            .restore_completions()
+            .claim_local(handle.operation_id)
+            .map_err(Into::into)
+    }
+
+    pub fn finish_local_restore(
+        &self,
+        handle: RestoreHandle,
+        result: Result<(), String>,
+        timing: Option<crate::RestoreTiming>,
+    ) -> Result<bool, ChannelError> {
+        if handle.owner != self.owner
+            || handle.session_token != self.channel.session_token()
+            || handle.session_epoch != self.channel.session_epoch()
+        {
+            return Err(ChannelError::SessionRequiresReconnect);
+        }
+        self.channel
+            .restore_completions()
+            .drained(handle.operation_id, result, timing)
+            .map_err(Into::into)
     }
 
     pub fn restore_completions_ready(&self, timeout: Duration) -> Result<bool, ChannelError> {

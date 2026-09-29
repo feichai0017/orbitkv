@@ -62,14 +62,27 @@ fn ready_result_stops_at_first_missing_prefetch_key() {
 }
 
 #[tokio::test]
-async fn shared_reads_require_the_same_ssd_prefetch_permission() {
+async fn shared_reads_require_the_same_placement_and_ssd_prefetch_permission() {
     use crate::{SsdBackend, SsdCacheConfig, SsdReadPath};
 
-    for (read_path, mode, existing_permission, share) in [
-        (None, QueryMode::Demand, true, true),
-        (None, QueryMode::Prepare, true, true),
-        (Some(SsdReadPath::Cufile), QueryMode::Demand, true, false),
-        (Some(SsdReadPath::Cufile), QueryMode::Prepare, false, false),
+    for (read_path, mode, existing_permission, existing_node, share) in [
+        (None, QueryMode::Demand, true, NumaNode(1), true),
+        (None, QueryMode::Prepare, true, NumaNode(1), true),
+        (
+            Some(SsdReadPath::Cufile),
+            QueryMode::Demand,
+            true,
+            NumaNode(1),
+            false,
+        ),
+        (
+            Some(SsdReadPath::Cufile),
+            QueryMode::Prepare,
+            false,
+            NumaNode(1),
+            false,
+        ),
+        (None, QueryMode::Prepare, true, NumaNode(0), false),
     ] {
         let directory = tempfile::tempdir().unwrap();
         let store = crate::storage::ssd::SsdStore::new(
@@ -81,7 +94,9 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
                 ..Default::default()
             },
             Arc::new(|_, _| None),
+            Arc::new(|bytes, _| Some(bytes)),
             false,
+            None,
         )
         .unwrap();
         let cache = Arc::new(DramStore::new(4096, false, None, None, 0));
@@ -99,6 +114,7 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
                 hit: 0,
                 wait_for_full_prefix: false,
                 allow_ssd_prefetch: existing_permission,
+                destination_nodes: vec![existing_node],
             },
             Arc::downgrade(&shared),
         );
@@ -114,7 +130,8 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
         }));
         assert!(futures::poll!(initializing.as_mut()).is_pending());
         let hashes = [vec![1]];
-        let mut read = Box::pin(scheduler.read_prefix("query", "ns", &hashes, mode));
+        let mut read =
+            Box::pin(scheduler.read_prefix("query", "ns", &hashes, mode, &[NumaNode(1)]));
         if share {
             assert!(futures::poll!(read.as_mut()).is_pending());
             release.send(()).unwrap();
@@ -126,7 +143,7 @@ async fn shared_reads_require_the_same_ssd_prefetch_permission() {
             let result = match futures::poll!(read.as_mut()) {
                 std::task::Poll::Ready(result) => result,
                 std::task::Poll::Pending => {
-                    panic!("different SSD permission shared a pending read: {mode:?}")
+                    panic!("different placement or SSD permission shared a pending read: {mode:?}")
                 }
             };
             assert!(result.blocks.is_empty());

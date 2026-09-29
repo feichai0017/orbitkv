@@ -1,7 +1,10 @@
 use super::{SsdStore, index::SsdIndexEntry, uring::UringIoEngine};
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation};
+use crate::cost::{
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+};
 use crate::metrics::core_metrics;
+use crate::peer::export::{PeerError, StagingReservation};
 use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, warn};
 use mea::oneshot;
@@ -20,33 +23,53 @@ type SingleMaterializedBlocks = (
     Arc<BatchContext>,
 );
 
+type BatchResult = Result<crate::storage::MaterializedBlocks, PeerError>;
+
 /// Batch of prefetch requests (sent as a unit to limit queue depth)
 pub(super) struct PrefetchBatch {
     pub requests: Vec<Arc<super::SsdReadLease>>,
-    pub done_tx: oneshot::Sender<crate::storage::MaterializedBlocks>,
+    pub done_tx: oneshot::Sender<BatchResult>,
     pub observation: Observation,
+    pub reservation: Option<StagingReservation>,
 }
 
 impl PrefetchBatch {
     pub(super) fn new(
         requests: Vec<Arc<super::SsdReadLease>>,
-        done_tx: oneshot::Sender<crate::storage::MaterializedBlocks>,
-        resource: u64,
+        done_tx: oneshot::Sender<BatchResult>,
+        resource: ExecutionResource,
+    ) -> Self {
+        Self::build(requests, done_tx, resource, None)
+    }
+
+    pub(super) fn for_export(
+        requests: Vec<Arc<super::SsdReadLease>>,
+        done_tx: oneshot::Sender<BatchResult>,
+        resource: ExecutionResource,
+        reservation: StagingReservation,
+    ) -> Self {
+        Self::build(requests, done_tx, resource, Some(reservation))
+    }
+
+    fn build(
+        requests: Vec<Arc<super::SsdReadLease>>,
+        done_tx: oneshot::Sender<BatchResult>,
+        resource: ExecutionResource,
+        reservation: Option<StagingReservation>,
     ) -> Self {
         if !crate::cost::enabled() {
             return Self {
                 requests,
                 done_tx,
                 observation: Observation::disabled(),
+                reservation,
             };
         }
         let mut logical_bytes = Some(0u64);
         let mut stored_bytes = 0u64;
-        let mut fragments = 0;
         let mut representation = None;
         for request in &requests {
             for slot in &request.entry.slots {
-                fragments += slot.num_segments();
                 stored_bytes = stored_bytes.saturating_add(slot.total_size());
                 if let Some(metadata) = &slot.encoding {
                     if metadata.len() != slot.num_segments() {
@@ -74,12 +97,12 @@ impl PrefetchBatch {
             }
         }
         let observation = Observation::new(
-            CostKey::new(
-                CostPath::SsdPrefetch,
+            CostEstimateKey::new(
+                CostObservationKind::LocalSsdHostReady,
                 resource,
                 representation.unwrap_or(Representation::Unknown),
-                logical_bytes.unwrap_or(stored_bytes),
-                fragments,
+                stored_bytes,
+                requests.len(),
             ),
             logical_bytes,
         );
@@ -87,6 +110,7 @@ impl PrefetchBatch {
             requests,
             done_tx,
             observation,
+            reservation,
         }
     }
 }
@@ -96,8 +120,9 @@ impl PrefetchBatch {
 pub(super) struct BatchContext {
     results: Mutex<crate::storage::MaterializedBlocks>,
     remaining: AtomicUsize,
-    done_tx: Mutex<Option<oneshot::Sender<crate::storage::MaterializedBlocks>>>,
+    done_tx: Mutex<Option<oneshot::Sender<BatchResult>>>,
     observation: Mutex<Option<Observation>>,
+    reservation: Mutex<Option<StagingReservation>>,
     failed: AtomicBool,
     submitted: AtomicBool,
     /// Pinned generations stay owned until every queued/submitted read drains.
@@ -107,15 +132,17 @@ pub(super) struct BatchContext {
 impl BatchContext {
     fn new(
         count: usize,
-        done_tx: oneshot::Sender<crate::storage::MaterializedBlocks>,
+        done_tx: oneshot::Sender<BatchResult>,
         observation: Observation,
         leases: Vec<Arc<super::SsdReadLease>>,
+        reservation: Option<StagingReservation>,
     ) -> Self {
         Self {
             results: Mutex::new(Vec::with_capacity(count)),
             remaining: AtomicUsize::new(count),
             done_tx: Mutex::new(Some(done_tx)),
             observation: Mutex::new(Some(observation)),
+            reservation: Mutex::new(reservation),
             failed: AtomicBool::new(false),
             submitted: AtomicBool::new(false),
             leases,
@@ -132,9 +159,31 @@ impl BatchContext {
             && let Some(tx) = self.done_tx.lock().take()
         {
             let results = std::mem::take(&mut *self.results.lock());
-            let delivered = tx.send(results).is_ok();
+            let failed = self.failed.load(Ordering::Acquire);
+            let reservation = self.reservation.lock().take();
+            let mut prepared = None;
+            let result = if let Some(reservation) = reservation {
+                if failed {
+                    Err(PeerError::StagingFailed)
+                } else {
+                    match reservation.commit(results.clone()) {
+                        Ok(transfer) => {
+                            prepared = Some(transfer);
+                            Ok(results)
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+            } else {
+                Ok(results)
+            };
+            let terminal_failed = failed || result.is_err();
+            let delivered = tx.send(result).is_ok();
+            if delivered && let Some(transfer) = prepared {
+                transfer.publish();
+            }
             if let Some(observation) = self.observation.lock().take() {
-                let outcome = if self.failed.load(Ordering::Acquire) {
+                let outcome = if terminal_failed {
                     Outcome::Failed
                 } else if !delivered {
                     Outcome::Cancelled
@@ -192,7 +241,12 @@ async fn ssd_prefetch_dispatcher(
 ) {
     while let Some(batch) = batch_rx.recv().await {
         if batch.requests.is_empty() {
-            let _ = batch.done_tx.send(Vec::new());
+            let result = if batch.reservation.is_some() {
+                Err(PeerError::StagingFailed)
+            } else {
+                Ok(Vec::new())
+            };
+            let _ = batch.done_tx.send(result);
             continue;
         }
 
@@ -217,6 +271,7 @@ async fn dispatch_prefetch_batch(
         requests,
         done_tx,
         mut observation,
+        reservation,
     } = batch;
     observation.admitted();
     let mut block_slots = Vec::with_capacity(requests.len());
@@ -232,7 +287,12 @@ async fn dispatch_prefetch_batch(
                         "SSD prefetch dispatcher: alloc failed for {size} bytes numa={numa_node:?}, failing entire batch"
                     );
                     observation.finish(Outcome::Failed, None);
-                    let _ = done_tx.send(Vec::new());
+                    let result = if reservation.is_some() {
+                        Err(PeerError::StagingFailed)
+                    } else {
+                        Ok(Vec::new())
+                    };
+                    let _ = done_tx.send(result);
                     return true;
                 };
                 segments.push(Segment::new(
@@ -253,6 +313,7 @@ async fn dispatch_prefetch_batch(
         done_tx,
         observation,
         requests,
+        reservation,
     ));
     let mut iter = ctx.leases.iter().zip(block_slots);
     while let Some((req, slots)) = iter.next() {
@@ -409,11 +470,7 @@ async fn execute_prefetch(task: PrefetchTask, io: Arc<UringIoEngine>) -> SingleM
         .any(|slot| slot.validate_encoding().is_err())
     {
         core_metrics().storage_codec_decode_failures.add(1, &[]);
-        task.store
-            .inner
-            .lock()
-            .ring
-            .invalidate_encoded(&key, &task.entry);
+        task.store.invalidate_encoded_entry(&key, &task.entry);
         warn!("SSD prefetch: corrupt encoded object {key:?}");
         None
     } else {

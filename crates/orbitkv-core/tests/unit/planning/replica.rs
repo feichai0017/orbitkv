@@ -23,7 +23,7 @@ fn replacing_memory_evidence_never_pins_either_generation() {
 #[cfg(feature = "mooncake")]
 #[test]
 fn peer_evidence_is_bounded_by_runtime_identity_and_preserves_local_memory() {
-    use orbitkv_state::CacheOwner;
+    use orbitkv_state::{CacheOwner, ReplicaMedium};
 
     let mut replicas = ReplicaSet::new(StateKey::new("ns".into(), vec![1]));
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
@@ -35,18 +35,53 @@ fn peer_evidence_is_bounded_by_runtime_identity_and_preserves_local_memory() {
                 incarnation: uuid::Uuid::from_u128(i as u128 + 1),
             },
             sequence: i as u64 + 1,
+            metadata: orbitkv_state::ReplicaMetadata {
+                medium: orbitkv_state::ReplicaMedium::Dram,
+                representation: orbitkv_state::ReplicaRepresentation::Raw,
+                stored_bytes: Some(4096),
+            },
         })
         .collect();
-    replicas.set_peer_dram(peers.clone());
-    assert_eq!(replicas.peer_dram().count(), DISCOVERY_MAX_REPLICAS);
+    replicas.set_peers(peers.clone());
+    assert_eq!(
+        replicas.peer(ReplicaMedium::Dram).count(),
+        DISCOVERY_MAX_REPLICAS
+    );
     assert_eq!(replicas.replicas.len(), DISCOVERY_MAX_REPLICAS + 1);
     assert_eq!(Arc::strong_count(&block), 1);
     replicas.reject_peer(&peers[0].owner);
-    assert_eq!(replicas.peer_dram().count(), DISCOVERY_MAX_REPLICAS - 1);
-    assert!(replicas.peer_dram().all(|p| p.owner != peers[0].owner));
-    replicas.set_peer_dram(vec![peers[1].clone(), peers[1].clone()]);
-    assert_eq!(replicas.peer_dram().count(), 1);
-    replicas.set_peer_dram(Vec::new());
+    assert_eq!(
+        replicas.peer(ReplicaMedium::Dram).count(),
+        DISCOVERY_MAX_REPLICAS - 1
+    );
+    assert!(
+        replicas
+            .peer(ReplicaMedium::Dram)
+            .all(|p| p.owner != peers[0].owner)
+    );
+    replicas.set_peers(vec![peers[1].clone(), peers[1].clone()]);
+    assert_eq!(replicas.peer(ReplicaMedium::Dram).count(), 1);
+    replicas.set_peers(vec![ReplicaLocation {
+        metadata: orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Ssd,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(4096),
+        },
+        ..peers[1].clone()
+    }]);
+    assert_eq!(replicas.peer(ReplicaMedium::Dram).count(), 0);
+    assert_eq!(replicas.peer(ReplicaMedium::Ssd).count(), 1);
+    replicas.set_peers(vec![ReplicaLocation {
+        metadata: orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Hbm,
+            representation: orbitkv_state::ReplicaRepresentation::Raw,
+            stored_bytes: Some(4096),
+        },
+        ..peers[1].clone()
+    }]);
+    assert_eq!(replicas.peer(ReplicaMedium::Dram).count(), 0);
+    assert_eq!(replicas.peer(ReplicaMedium::Ssd).count(), 0);
+    replicas.set_peers(Vec::new());
     assert!(
         replicas.is_available(),
         "peer refresh must preserve local evidence"

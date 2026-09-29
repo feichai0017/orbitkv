@@ -9,7 +9,7 @@ use orbitkv_core::{
 use thiserror::Error;
 
 fn trace_query(stage: &str, input: &QueryInput, elapsed_us: u64, hit_blocks: usize) {
-    crate::metric::timeline::record(stage, || {
+    orbitkv_common::timeline::record(stage, || {
         serde_json::json!({
             "request_id": input.request_id, "instance_id": input.instance_id,
             "group_id": input.group_id, "warmup": input.warmup,
@@ -82,7 +82,7 @@ pub(crate) struct RestoreInput {
 pub(crate) fn execute_restore(
     engine: &OrbitKVEngine,
     input: RestoreInput,
-) -> Result<tokio::sync::oneshot::Receiver<orbitkv_core::LoadOutcome>, EngineError> {
+) -> Result<orbitkv_core::RestoreExecution, EngineError> {
     if input.device_id < 0 {
         return Err(EngineError::InvalidArgument(format!(
             "device_id {} must be >= 0",

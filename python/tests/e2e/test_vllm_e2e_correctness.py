@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -246,9 +247,17 @@ class TestE2ECorrectness:
             yield server
 
     @pytest.fixture(scope="class")
+    def vllm_engine_args(self, request):
+        args = ["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")]
+        graph_mode = request.config.getoption("--vllm-cudagraph-mode")
+        if graph_mode is not None:
+            args += ["--compilation-config", json.dumps({"cudagraph_mode": graph_mode})]
+        return args
+
+    @pytest.fixture(scope="class")
     def baseline_outputs(
         self,
-        request,
+        vllm_engine_args,
         model: str,
         base_port: int,
         log_dir: Path,
@@ -270,7 +279,7 @@ class TestE2ECorrectness:
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
-            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
+            extra_args=vllm_engine_args,
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
                 if label == "long_warm":
@@ -294,9 +303,37 @@ class TestE2ECorrectness:
         return outputs
 
     @pytest.fixture(scope="class")
+    def orbitkv_connector_config(self, request, orbitkv_transfer_backend):
+        if not request.config.getoption("--vllm-multi-connector"):
+            return None
+        return {
+            "kv_connector": "MultiConnector",
+            "kv_role": "kv_both",
+            "kv_connector_extra_config": {
+                "connectors": [
+                    {
+                        "kv_connector": "NoopKVConnector",
+                        "kv_connector_module_path": "tests.support.noop_vllm_connector",
+                        "kv_role": "kv_both",
+                    },
+                    {
+                        "kv_connector": "OrbitKVConnector",
+                        "kv_connector_module_path": "orbitkv.vllm",
+                        "kv_role": "kv_both",
+                        "kv_connector_extra_config": {
+                            "orbitkv.transfer_backend": orbitkv_transfer_backend,
+                        },
+                    },
+                ]
+            },
+        }
+
+    @pytest.fixture(scope="class")
     def orbitkv_results(
         self,
         request,
+        vllm_engine_args,
+        orbitkv_connector_config,
         model: str,
         base_port: int,
         orbitkv_server: CacheManager,
@@ -318,12 +355,13 @@ class TestE2ECorrectness:
             model,
             orbitkv_port,
             use_orbitkv=True,
+            kv_transfer_config=orbitkv_connector_config,
             orbitkv_port=orbitkv_server.cache_port,
             log_file=log_dir / "orbitkv.log",
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
-            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
+            extra_args=vllm_engine_args,
             transfer_backend=orbitkv_transfer_backend,
         ):
             for label, prompt, expectation in EXECUTION_PLAN:
@@ -348,12 +386,13 @@ class TestE2ECorrectness:
             model,
             orbitkv_port,
             use_orbitkv=True,
+            kv_transfer_config=orbitkv_connector_config,
             orbitkv_port=orbitkv_server.cache_port,
             log_file=log_dir / "orbitkv-load.log",
             tensor_parallel_size=tensor_parallel_size,
             pipeline_parallel_size=pipeline_parallel_size,
             max_model_len=max_model_len,
-            extra_args=["--kv-cache-dtype", request.config.getoption("--kv-cache-dtype")],
+            extra_args=vllm_engine_args,
             transfer_backend=orbitkv_transfer_backend,
             server_label="OrbitKV load",
         ):

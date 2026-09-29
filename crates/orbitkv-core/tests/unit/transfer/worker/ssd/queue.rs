@@ -6,15 +6,23 @@ fn load_job() -> (Job, oneshot::Receiver<super::super::super::LoadOutcome>) {
         0,
         WorkerCommand::Load(
             LoadTask {
+                plan: crate::planning::restore::RestorePlan::new(
+                    0,
+                    std::iter::empty::<(usize, &crate::RestoreSource)>(),
+                )
+                .unwrap(),
                 layers: Vec::new(),
                 completion,
                 reservations: Vec::new(),
                 codec_budget: 64 << 20,
+                decode_ready_started: Instant::now(),
+                decode_ready_observation: Box::new(Observation::disabled()),
+                decode_admission: None,
             },
             Observation::new(
-                crate::cost::CostKey::new(
-                    crate::cost::CostPath::GpuSsdLoad,
-                    0,
+                crate::cost::CostEstimateKey::new(
+                    crate::cost::CostObservationKind::GpuSsdLoad,
+                    crate::cost::ExecutionResource::Gpu(0),
                     crate::cost::Representation::Raw,
                     0,
                     0,

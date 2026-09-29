@@ -60,8 +60,7 @@ impl Default for EngineConfig {
             transfer_lock_timeout: Duration::from_secs(120),
             transfer_budget_bytes: None,
             membership: None,
-            inventory_journal_bytes:
-                crate::storage::dram::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES,
+            inventory_journal_bytes: crate::storage::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES,
             pool_shards: 1,
         }
     }

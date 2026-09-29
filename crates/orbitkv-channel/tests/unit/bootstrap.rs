@@ -25,23 +25,50 @@ fn bootstrap_passes_arena_and_notification_descriptors() {
             assert_eq!(session.credentials().uid, geteuid().as_raw());
             assert!(session.credentials().pid > 0);
             session.notify().unwrap();
+            rustix::io::write(
+                session.reply_notification_fd().as_ref(),
+                &1u64.to_ne_bytes(),
+            )
+            .unwrap();
             session
         })
     };
 
     let client = BootstrapClient::connect(&path).unwrap();
-    assert_eq!(client.info().session_epoch, 29);
-    assert_eq!(client.info().service_name, "orbitkv/test/bootstrap");
-    assert_ne!(client.info().client_token, 0);
+    let session = server_thread.join().unwrap();
+    assert_eq!(client.info_ref().session_epoch, 29);
+    assert_eq!(client.info_ref().service_name, "orbitkv/test/bootstrap");
+    assert_ne!(client.info_ref().client_token, 0);
     assert!(
         client
             .wait_for_notification(Duration::from_secs(1))
             .unwrap()
     );
+    // Consuming Restore completion notifications must not steal Publish wakes.
+    let mut notification = [0u8; 8];
+    assert_eq!(
+        rustix::io::read(client.reply_notification_fd(), &mut notification).unwrap(),
+        8
+    );
+    assert_eq!(u64::from_ne_bytes(notification), 1);
+    assert!(!client.wait_for_notification(Duration::ZERO).unwrap());
+    // The reverse direction is independent too when one ChannelClient mixes
+    // an outstanding Restore with a Publish command.
+    session.notify().unwrap();
+    rustix::io::write(
+        session.reply_notification_fd().as_ref(),
+        &1u64.to_ne_bytes(),
+    )
+    .unwrap();
+    assert_eq!(
+        rustix::io::read(client.reply_notification_fd(), &mut notification).unwrap(),
+        8
+    );
+    assert!(client.wait_for_notification(Duration::ZERO).unwrap());
     let descriptor = client.write_request(b"query").unwrap();
     assert_eq!(
         server.descriptor_slot(descriptor.offset).unwrap(),
-        client.info().slot_index
+        client.info_ref().slot_index
     );
     assert_eq!(server.arena().read(descriptor).unwrap(), b"query");
     let response = server.arena().write_response(descriptor, b"ready").unwrap();
@@ -52,7 +79,7 @@ fn bootstrap_passes_arena_and_notification_descriptors() {
     assert_eq!(response.generation, descriptor.generation + 1);
 
     drop(client);
-    server_thread.join().unwrap();
+    drop(session);
 }
 
 #[test]
@@ -65,18 +92,23 @@ fn reused_slot_gets_a_new_generation_and_old_request_is_rejected() {
     let first = first_client.write_request(b"first").unwrap();
     let first_slot = server.descriptor_slot(first.offset).unwrap();
     first_session
-        .validate_request(first, first_client.info().client_token, first_slot)
+        .validate_request(first, first_client.info_ref().client_token, first_slot)
         .unwrap();
     first_session.complete_request().unwrap();
     drop(first_session);
     drop(first_client);
 
     let (second_client, mut second_session) = connect_pair(&server, &path);
-    assert_eq!(second_client.info().slot_index, first_slot);
-    assert!(second_client.info().initial_generation > first.generation);
-    assert!(!second_client.info().initial_generation.is_multiple_of(2));
+    assert_eq!(second_client.info_ref().slot_index, first_slot);
+    assert!(second_client.info_ref().initial_generation > first.generation);
+    assert!(
+        !second_client
+            .info_ref()
+            .initial_generation
+            .is_multiple_of(2)
+    );
     assert!(matches!(
-        second_session.validate_request(first, second_client.info().client_token, first_slot),
+        second_session.validate_request(first, second_client.info_ref().client_token, first_slot),
         Err(BootstrapError::UnexpectedGeneration { .. })
     ));
 }
@@ -128,19 +160,50 @@ fn session_rejects_wrong_identity_and_replayed_generation() {
     let slot = server.descriptor_slot(descriptor.offset).unwrap();
 
     assert!(matches!(
-        session.validate_request(descriptor, client.info().client_token + 1, slot),
+        session.validate_request(descriptor, client.info_ref().client_token + 1, slot),
         Err(BootstrapError::ClientTokenMismatch)
     ));
     assert!(matches!(
-        session.validate_request(descriptor, client.info().client_token, slot + 1),
+        session.validate_request(descriptor, client.info_ref().client_token, slot + 1),
         Err(BootstrapError::SlotMismatch { .. })
     ));
     session
-        .validate_request(descriptor, client.info().client_token, slot)
+        .validate_request(descriptor, client.info_ref().client_token, slot)
         .unwrap();
     session.complete_request().unwrap();
     assert!(matches!(
-        session.validate_request(descriptor, client.info().client_token, slot),
+        session.validate_request(descriptor, client.info_ref().client_token, slot),
         Err(BootstrapError::UnexpectedGeneration { .. })
     ));
+}
+
+#[test]
+fn detached_publishers_retain_the_global_completion_mapping_budget() {
+    let temp = tempfile::tempdir().unwrap();
+    let server = BootstrapServer::bind(
+        temp.path().join("budget.sock"),
+        "orbitkv/test/budget",
+        99,
+        16384,
+        1024,
+    )
+    .unwrap();
+    let mut held = Vec::new();
+    for token in 1..=MAX_COMPLETION_SESSIONS {
+        held.push(
+            server
+                .create_completions(token as u64, eventfd(0, EventfdFlags::NONBLOCK).unwrap())
+                .unwrap(),
+        );
+    }
+    assert!(matches!(
+        server.create_completions(100, eventfd(0, EventfdFlags::NONBLOCK).unwrap()),
+        Err(BootstrapError::CompletionBudget)
+    ));
+    held.pop();
+    assert!(
+        server
+            .create_completions(100, eventfd(0, EventfdFlags::NONBLOCK).unwrap())
+            .is_ok()
+    );
 }

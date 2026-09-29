@@ -29,6 +29,16 @@ fn allocate_rounds_up_to_unit_size() {
 }
 
 #[test]
+fn footprint_matches_allocation_rounding_without_consuming_space() {
+    let mut allocator =
+        ScaledOffsetAllocator::new_with_unit_size_and_max_allocs(1024, 64, 128 * 1024).unwrap();
+    assert_eq!(allocator.allocation_footprint(65), Ok(128));
+    assert_eq!(allocator.storage_report().total_free_bytes, 1024);
+    let allocation = allocator.allocate(65).unwrap().unwrap();
+    assert_eq!(allocation.size_bytes.get(), 128);
+}
+
+#[test]
 fn capacity_is_rounded_down_to_unit_size() {
     const MIB: u64 = 1024 * 1024;
     const GIB: u64 = 1024 * MIB;

@@ -102,9 +102,12 @@ deterministic controls below.
 
 `demand_prepare_ms` includes queued work, allocation, SSD reads and rebuilding.
 `manager_restore_ms` includes dispatch, the GPU worker queue and synchronized
-H2D work. `completion_delivery_ms` runs from the Manager's completed GPU task
-until it answers the engine's terminal poll. These are overlapping,
-process-local observations; adding their percentiles does not produce TTFT.
+H2D work. In these recorded runs, `completion_delivery_ms` ran from the Manager's
+completed GPU task until it answered the engine's terminal poll. The shared-memory
+completion protocol has since removed that RPC and its metric; current reports
+use the engine's `restore_ms` interval and Manager `completion_signal_ms`.
+Reproduce the recorded reports with their original revision. These are
+overlapping, process-local observations; adding their percentiles does not produce TTFT.
 Dense lookup combines candidate discovery and preparation in this workload.
 
 The initial queue/fence comparison, before page-granular staging, left both

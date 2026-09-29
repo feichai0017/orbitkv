@@ -31,7 +31,7 @@ fn a_full_write_queue_does_not_block_single_file_reads() {
     let engine = Arc::new(UringIoEngine {
         fds: vec![0], // No kernel worker: the test completes queued I/O itself.
         resources: vec![1],
-        cost_resource: 1,
+        cost_resource: ExecutionResource::SsdStore(1),
         txs: vec![write_tx, read_tx],
         write_shards: 1,
         next_read: AtomicUsize::new(0),
@@ -79,9 +79,9 @@ fn observed_completion_preserves_short_reads_errors_and_detached_delivery() {
     ] {
         let (complete, receiver) = oneshot::channel();
         let mut observation = Observation::new(
-            CostKey::new(
-                CostPath::SsdRead,
-                101,
+            CostEstimateKey::new(
+                CostObservationKind::SsdRead,
+                ExecutionResource::SsdFile(101),
                 Representation::Unknown,
                 SSD_ALIGNMENT as u64,
                 1,

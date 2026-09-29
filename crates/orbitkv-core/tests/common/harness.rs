@@ -1,6 +1,7 @@
 use std::sync::{Arc, OnceLock};
 
 use cudarc::driver::CudaContext;
+use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePart};
 use orbitkv_core::*;
 
 use super::gpu_buffer::GpuBuffer;
@@ -123,6 +124,7 @@ pub struct RegisteredLayer {
 }
 
 pub struct TestEnv {
+    local_restore: std::sync::Mutex<LocalRestoreExecutor>,
     pub engine: OrbitKVEngine,
     pub instance_id: String,
     pub layers: Vec<RegisteredLayer>,
@@ -313,7 +315,33 @@ impl TestEnvBuilder {
             );
         }
 
+        let tensors = layer_infos
+            .iter()
+            .enumerate()
+            .map(|(index, layer)| {
+                LocalTensor::new(
+                    layer.name.clone(),
+                    layer.gpu_ptr,
+                    layer.total_size,
+                    index,
+                    layer.num_blocks,
+                    layer.block_size,
+                    layer.kv_stride,
+                    layer.segments,
+                )
+                .expect("local destination binding")
+            })
+            .collect();
+        ctx.bind_to_thread().expect("bind engine tensor context");
+        let local_restore = LocalRestoreExecutor::new(
+            0,
+            tensors,
+            engine.payload_arenas().expect("export payload arenas"),
+            self.transfer_mode,
+        )
+        .expect("import payload arenas");
         TestEnv {
+            local_restore: std::sync::Mutex::new(local_restore),
             engine,
             instance_id: self.instance_id.to_string(),
             layers,
@@ -473,7 +501,42 @@ impl TestEnv {
                 &[(lease, vec![block_ids])],
             )
             .expect("submit load");
-        wait_for_load(receiver, LOAD_WAIT_TIMEOUT).await;
+        self.restore_outcome(receiver)
+            .await
+            .result
+            .expect("restore failed");
+    }
+
+    pub async fn restore_outcome(&self, execution: RestoreExecution) -> LoadOutcome {
+        match execution {
+            RestoreExecution::Local(mut grant) => {
+                let result = loop {
+                    let (bytes, more) = grant.encoded_plan();
+                    let plan = RawRestorePart::decode(bytes).expect("decode granted plan");
+                    let result = self
+                        .local_restore
+                        .lock()
+                        .unwrap()
+                        .execute(&plan, &mut Default::default(), true, || {}, None)
+                        .map_err(EngineError::Storage);
+                    if result.is_err() || !more {
+                        break result;
+                    }
+                    assert!(grant.advance_plan());
+                };
+                grant.finish(result.is_ok(), None);
+                LoadOutcome {
+                    result,
+                    completed_at: std::time::Instant::now(),
+                }
+            }
+            RestoreExecution::Managed(receiver) => {
+                tokio::time::timeout(LOAD_WAIT_TIMEOUT, receiver)
+                    .await
+                    .expect("restore timeout")
+                    .expect("restore worker disappeared")
+            }
+        }
     }
 
     /// Submit load and assert it fails synchronously with `expected_msg`.

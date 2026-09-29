@@ -82,6 +82,7 @@ def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
                 [1],
                 "direct",
                 False,
+                tensors=[tensor],
             )
             assert ok, message
 
@@ -91,6 +92,8 @@ def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
         assert ok, message
 
         def restore(request):
+            import torch
+
             from orbitkv import BlockHashes
 
             deadline = time.monotonic() + 30
@@ -108,6 +111,7 @@ def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
                 device,
                 [["kv:0"]],
                 [(result.lease, [list(range(pages))])],
+                ready_stream=torch.cuda.current_stream(tensors[1].device).cuda_stream,
             )
             status = clients[1].wait_restore(operation, timeout=15)
             assert status.success, status

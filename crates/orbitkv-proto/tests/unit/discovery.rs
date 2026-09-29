@@ -7,6 +7,11 @@ fn discovery_rejects_ambiguous_or_malformed_source_evidence() {
         endpoint: "owner:50055".into(),
         incarnation: "00000000-0000-0000-0000-000000000001".into(),
         sequence: 1,
+        metadata: Some(wire::ReplicaMetadata {
+            medium: wire::ReplicaMedium::Dram as i32,
+            representation: wire::ReplicaRepresentation::Raw as i32,
+            stored_bytes: Some(4096),
+        }),
     };
     let row = wire::BlockCandidates {
         block_hash: vec![1],
@@ -46,6 +51,18 @@ fn discovery_rejects_ambiguous_or_malformed_source_evidence() {
         },
         wire::ReplicaLocation {
             sequence: 0,
+            ..replica.clone()
+        },
+        wire::ReplicaLocation {
+            metadata: None,
+            ..replica.clone()
+        },
+        wire::ReplicaLocation {
+            metadata: Some(wire::ReplicaMetadata {
+                medium: wire::ReplicaMedium::Unknown as i32,
+                representation: wire::ReplicaRepresentation::Raw as i32,
+                stored_bytes: Some(4096),
+            }),
             ..replica.clone()
         },
     ] {

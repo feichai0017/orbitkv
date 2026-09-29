@@ -1,14 +1,20 @@
 [files]
 # Captured model text, request IDs and source diffs must remain verbatim.
 extend-exclude = [
+  "third-party/**",
   "benches/results/**/*.csv",
   "benches/results/**/*.json",
   "benches/results/**/*.jsonl",
 ]
 
 [default]
-extend-ignore-re = ['\b0x[0-9a-fA-F]+[uUlL]*\b']
+# Backticked Git revisions are machine identifiers, not prose.
+extend-ignore-re = ['\b0x[0-9a-fA-F]+[uUlL]*\b', '`[0-9a-f]{7,40}`']
 
 [default.extend-words]
 # Rust std library path (std::f64::consts)
 consts = "consts"
+
+[default.extend-identifiers]
+# POSIX msghdr field: ancillary data length.
+msg_controllen = "msg_controllen"

@@ -15,7 +15,7 @@ from pathlib import Path
 import requests
 
 from .metrics import REMOTE_STAGES, delta, metrics
-from .workload import generate
+from .workload import evict_host_cache, generate
 
 IDLE_METRICS = (
     "orbitkv_query_reserved_bytes",
@@ -24,6 +24,7 @@ IDLE_METRICS = (
     "orbitkv_transfer_reserved_bytes",
     "orbitkv_transfer_completion_outstanding",
     "orbitkv_ssd_prefetch_inflight",
+    "orbitkv_ssd_read_pinned_bytes",
     "orbitkv_ssd_write_queue_pending",
     "orbitkv_ssd_write_inflight",
 )
@@ -81,6 +82,18 @@ def verify_restore(before: dict, after: dict, expected: str, actual: dict) -> di
     }
 
 
+def verify_source_ssd(before: dict, after: dict) -> dict:
+    changes = delta(before, after)
+    read_bytes = changes.get("orbitkv_ssd_prefetch_bytes_total", 0)
+    successes = changes.get("orbitkv_ssd_prefetch_success_total", 0)
+    if read_bytes <= 0 or successes <= 0:
+        raise AssertionError(f"Expected source SSD materialization before Mooncake READ: {changes}")
+    return {
+        "source_ssd_read_bytes": int(read_bytes),
+        "source_ssd_reads": int(successes),
+    }
+
+
 def qualify(
     *,
     engine: str,
@@ -91,11 +104,14 @@ def qualify(
     target_manager: str,
     prompts: list[list[int]],
     output_tokens: int = 8,
+    source_medium: str = "dram",
 ) -> list[dict]:
     if source_url.rstrip("/") == target_url.rstrip("/") or source_manager.rstrip(
         "/"
     ) == target_manager.rstrip("/"):
         raise ValueError("Shared-cache qualification requires two engines and two Managers")
+    if source_medium not in {"dram", "ssd"}:
+        raise ValueError("source_medium must be dram or ssd")
     results = []
     for index, prompt in enumerate(prompts):
         source_before, _ = drain(source_manager, target_manager)
@@ -111,14 +127,31 @@ def qualify(
             "orbitkv_load_bytes_total", 0
         ):
             raise AssertionError("Source control unexpectedly restored cached pages")
+        preparation = None
+        source_transfer_before = source_after
+        if source_medium == "ssd":
+            ssd_written = source_after.get("orbitkv_ssd_write_bytes_total", 0) - source_before.get(
+                "orbitkv_ssd_write_bytes_total", 0
+            )
+            if ssd_written <= 0:
+                raise AssertionError(
+                    "Source did not commit SSD bytes; use write policy all and fresh prefixes"
+                )
+            preparation = evict_host_cache(source_manager)
+            synchronize(source_manager)
+            source_transfer_before, target_before = drain(source_manager, target_manager)
         restored = generate(target_url, engine, model, prompt, output_tokens)
-        _, target_after = drain(source_manager, target_manager)
+        source_transfer_after, target_after = drain(source_manager, target_manager)
         row = verify_restore(target_before, target_after, cold["text"], restored)
+        if source_medium == "ssd":
+            row.update(verify_source_ssd(source_transfer_before, source_transfer_after))
         row.update(
             prompt=index,
             input_tokens=len(prompt),
             source_ttft_ms=cold["ttft_ms"],
             save_bytes=int(saved),
+            source_medium=source_medium,
+            source_preparation=preparation,
             resources_drained=True,
         )
         results.append(row)
@@ -139,6 +172,12 @@ def main() -> None:
         "--prompts", type=Path, required=True, help="JSON array of fresh token-ID arrays"
     )
     parser.add_argument("--output-tokens", type=int, default=8)
+    parser.add_argument(
+        "--source-medium",
+        choices=("dram", "ssd"),
+        default="dram",
+        help="Require ordinary DRAM export or force source DRAM eviction and prove SSD staging",
+    )
     parser.add_argument(
         "--deployment",
         choices=("same-host-tcp", "two-host-tcp", "two-host-rdma"),
@@ -171,6 +210,7 @@ def main() -> None:
         target_manager=args.target_manager,
         prompts=prompts,
         output_tokens=args.output_tokens,
+        source_medium=args.source_medium,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
@@ -179,6 +219,7 @@ def main() -> None:
                 "engine": args.engine,
                 "model": args.model,
                 "deployment_declared": args.deployment,
+                "source_medium": args.source_medium,
                 "results": results,
             },
             indent=2,

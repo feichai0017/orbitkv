@@ -8,7 +8,6 @@ fn test_allocate_fn(calls: Arc<AtomicUsize>) -> AllocateFn {
         32 * 1024 * 1024,
         1,
         false,
-        false,
         None,
     ));
     Arc::new(move |size, _numa| {
@@ -147,4 +146,70 @@ fn raw_payload_alignment_does_not_imply_logical_bytes() {
         )];
         assert_eq!(transfer_shape(&blocks), (None, Representation::Raw));
     }
+}
+
+#[test]
+fn fetch_slabs_follow_receiver_slots_instead_of_source_numa() {
+    use orbitkv_proto::proto::engine::TransferSlotInfo;
+
+    let blocks = vec![TransferBlockInfo {
+        block_hash: vec![1],
+        slots: vec![
+            TransferSlotInfo {
+                numa_node: 0,
+                k_ptr: 0x1000,
+                k_size: 512,
+                v_ptr: 0x2000,
+                v_size: 1024,
+                ..Default::default()
+            },
+            TransferSlotInfo {
+                numa_node: 99,
+                k_ptr: 0x3000,
+                k_size: 2048,
+                ..Default::default()
+            },
+        ],
+    }];
+    let nodes = [NumaNode(1), NumaNode(3)];
+    let bytes = sum_segment_bytes_by_numa(&blocks, &nodes).unwrap();
+    assert_eq!(bytes, HashMap::from([(nodes[0], 1536), (nodes[1], 2048)]));
+    let allocations = Arc::new(Mutex::new(Vec::new()));
+    let recorded = allocations.clone();
+    let inner = test_allocate_fn(Arc::new(AtomicUsize::new(0)));
+    let allocate: AllocateFn = Arc::new(move |size, node| {
+        assert!(node.is_some_and(|node| nodes.contains(&node)));
+        recorded.lock().unwrap().push((size, node));
+        inner(size, node)
+    });
+    let mut slabs = ChunkedSlabs::new(&allocate, FETCH_CHUNK_BYTES, bytes);
+    let (key, key_owner) = slabs.alloc_segment(nodes[0], 512, "K").unwrap();
+    let (value, value_owner) = slabs.alloc_segment(nodes[0], 1024, "V").unwrap();
+    let (_, other_owner) = slabs.alloc_segment(nodes[1], 2048, "K").unwrap();
+    assert!(Arc::ptr_eq(&key_owner, &value_owner));
+    assert!(!Arc::ptr_eq(&key_owner, &other_owner));
+    assert_eq!(value.as_ptr() as usize - key.as_ptr() as usize, 512);
+    assert_eq!(
+        *allocations.lock().unwrap(),
+        vec![(1536, Some(nodes[0])), (2048, Some(nodes[1]))]
+    );
+
+    for invalid in [
+        &nodes[..0],
+        &nodes[..1],
+        &[nodes[0], nodes[1], nodes[0]][..],
+    ] {
+        assert!(
+            sum_segment_bytes_by_numa(&blocks, invalid)
+                .unwrap_err()
+                .contains("receiver registered")
+        );
+    }
+    let mut malformed = blocks;
+    malformed[0].slots[0].k_size = u64::MAX;
+    assert!(
+        sum_segment_bytes_by_numa(&malformed, &nodes)
+            .unwrap_err()
+            .contains("overflow")
+    );
 }

@@ -1,4 +1,5 @@
 pub(crate) mod dram;
+pub(crate) mod inventory;
 pub(crate) mod publish;
 pub(crate) mod ssd;
 
@@ -12,6 +13,7 @@ use self::ssd::SsdStore;
 use crate::EngineConfig;
 use crate::block::{SealedBlock, StateKey};
 use crate::memory::AllocateFn;
+use crate::memory::AllocationFootprintFn;
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
@@ -36,7 +38,7 @@ pub struct MemoryCacheCleanupStats {
 }
 
 pub(crate) struct Storage {
-    allocator: Arc<PinnedAllocator>,
+    pub(crate) allocator: Arc<PinnedAllocator>,
     pub(crate) codec: crate::StorageCodec,
     pub(crate) codec_budget: usize,
     pub(crate) dram: Arc<DramStore>,
@@ -88,7 +90,6 @@ impl Storage {
             info!("Blockwise allocation enabled for batch_save");
         }
 
-        let cpu_readable = ssd_cache_config.is_some() || config.codec != crate::StorageCodec::None;
         let pool_shards = config.pool_shards;
 
         // Create unified allocator based on NUMA configuration
@@ -102,7 +103,6 @@ impl Storage {
                 numa_nodes,
                 pool_shards,
                 use_hugepages,
-                cpu_readable,
                 unit_hint,
             ))
         } else {
@@ -111,20 +111,21 @@ impl Storage {
                 capacity_bytes,
                 pool_shards,
                 use_hugepages,
-                cpu_readable,
                 unit_hint,
             ))
         };
 
         // Sub-components
-        let dram = Arc::new(DramStore::new(
+        let inventory = config.membership.as_ref().map(|_| {
+            Arc::new(inventory::ResidencyInventory::new(
+                config.inventory_journal_bytes,
+            ))
+        });
+        let dram = Arc::new(DramStore::with_inventory(
             capacity_bytes,
             config.enable_lfu_admission,
             value_size_hint,
-            config
-                .membership
-                .as_ref()
-                .map(|_| config.inventory_journal_bytes),
+            inventory.clone(),
             (capacity_bytes as u128 * config.cache_protected_percent as u128 / 100) as u64,
         ));
 
@@ -147,9 +148,7 @@ impl Storage {
             let transfer =
                 MooncakeTransport::new(&mooncake_nic_names, allocator.clone(), advertise)
                     .map(Arc::new)
-                    .map_err(|error| {
-                        format!("Failed to initialise Mooncake Transfer Engine: {error}")
-                    })?;
+                    .map_err(|error| format!("Failed to initialise Mooncake TENT: {error}"))?;
             Some(transfer)
         } else {
             None
@@ -171,10 +170,23 @@ impl Storage {
                 .upgrade()?
                 .allocate(NonZeroU64::new(size)?, numa_node)
         });
+        let footprint_owner = allocator.clone();
+        let allocation_footprint_fn: AllocationFootprintFn = Arc::new(move |size, numa_node| {
+            footprint_owner.allocation_footprint(
+                NonZeroU64::new(size)?,
+                numa_node.unwrap_or(NumaNode::UNKNOWN),
+            )
+        });
         let ssd_store = ssd_cache_config
             .map(|cfg| {
-                SsdStore::new(cfg, allocate_fn.clone(), is_numa)
-                    .map_err(|error| format!("Failed to initialise SSD cache: {error}"))
+                SsdStore::new(
+                    cfg,
+                    allocate_fn.clone(),
+                    allocation_footprint_fn.clone(),
+                    is_numa,
+                    inventory.clone(),
+                )
+                .map_err(|error| format!("Failed to initialise SSD cache: {error}"))
             })
             .transpose()?;
         let engine = Arc::new({
@@ -208,6 +220,7 @@ impl Storage {
             let endpoint = None;
             let exports = crate::peer::export::PeerExports::new(
                 dram.clone(),
+                ssd_store.clone(),
                 config.membership.clone(),
                 endpoint,
                 transfer_lock_timeout,

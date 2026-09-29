@@ -21,6 +21,9 @@ pub struct InventoryRecord {
     pub key: StateKey,
     pub sequence: u64,
     pub present: bool,
+    /// Required for residency advertisements; authorization-only records may
+    /// omit it because the authoritative owner checks its live inventory.
+    pub metadata: Option<crate::ReplicaMetadata>,
 }
 
 impl InventoryRecord {

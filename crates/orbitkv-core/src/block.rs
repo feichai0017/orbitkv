@@ -44,6 +44,9 @@ pub enum RestoreSource {
     Ssd {
         lease: Arc<crate::storage::ssd::SsdReadLease>,
         path: crate::SsdReadPath,
+        /// Automatic cuFile choice may fall back before submission when this
+        /// target device has no staging owner. Explicit route controls cannot.
+        allow_uring_fallback: bool,
     },
 }
 
@@ -237,11 +240,34 @@ impl RawBlock {
         self.segments.as_slice().get(index).map(|s| s.ptr)
     }
 
-    pub(crate) fn segment_allocation_id(&self, index: usize) -> Option<usize> {
+    pub(crate) fn segment_registration_id(&self, index: usize) -> Option<usize> {
         self.segments
             .as_slice()
             .get(index)
-            .map(Segment::allocation_id)
+            .map(|segment| segment._allocation.registration_id())
+    }
+
+    pub(crate) fn source_range(
+        &self,
+        segment: usize,
+        offset: usize,
+        size: usize,
+    ) -> Result<crate::transfer::local::SourceRange, String> {
+        let segment = self
+            .segments
+            .as_slice()
+            .get(segment)
+            .ok_or_else(|| "missing raw source segment".to_string())?;
+        if size == 0
+            || offset
+                .checked_add(size)
+                .is_none_or(|end| end > segment.size)
+        {
+            return Err("raw source exceeds its host segment".into());
+        }
+        segment
+            ._allocation
+            .source_range(segment.ptr.add(offset).host(), size)
     }
 
     /// Get segment size by index.
@@ -260,6 +286,22 @@ impl RawBlock {
     /// Total memory footprint.
     pub(crate) fn memory_footprint(&self) -> u64 {
         self.total_size as u64
+    }
+
+    fn representation(&self) -> orbitkv_state::ReplicaRepresentation {
+        let Some(metadata) = &self.encoding else {
+            return orbitkv_state::ReplicaRepresentation::Raw;
+        };
+        let mut representation = None;
+        for segment in metadata {
+            let next = orbitkv_state::ReplicaRepresentation::from(segment.format);
+            representation = Some(match representation {
+                None => next,
+                Some(previous) if previous == next => previous,
+                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+            });
+        }
+        representation.unwrap_or_default()
     }
 }
 
@@ -395,6 +437,23 @@ impl SealedBlock {
 
     pub(crate) fn memory_footprint(&self) -> u64 {
         self.footprint
+    }
+
+    pub(crate) fn replica_metadata(&self) -> orbitkv_state::ReplicaMetadata {
+        let mut representation = None;
+        for slot in &self.slots {
+            let next = slot.representation();
+            representation = Some(match representation {
+                None => next,
+                Some(previous) if previous == next => previous,
+                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+            });
+        }
+        orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Dram,
+            representation: representation.unwrap_or_default(),
+            stored_bytes: Some(self.footprint),
+        }
     }
 
     pub(crate) fn pinned_allocations(&self) -> impl Iterator<Item = (usize, u64)> + '_ {

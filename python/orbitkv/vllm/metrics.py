@@ -11,14 +11,10 @@ from vllm.distributed.kv_transfer.kv_connector.v1.metrics import (
     PromMetric,
     PromMetricT,
 )
+from vllm.v1.metrics.utils import create_metric_per_engine
 
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
-
-try:
-    from vllm.v1.metrics.utils import create_metric_per_engine
-except ImportError:
-    create_metric_per_engine = None
 
 
 def build_buckets(mantissa_lst: list[int], max_value: int, start_exp=0) -> list[int]:
@@ -37,22 +33,6 @@ def build_buckets(mantissa_lst: list[int], max_value: int, start_exp=0) -> list[
             else:
                 return buckets
         exponent += 1
-
-
-def _bind_metric_per_engine(
-    prom_metrics: KVConnectorPromMetrics,
-    metric: PromMetric,
-) -> dict[int, PromMetric]:
-    bind_method = getattr(prom_metrics, "make_per_engine", None)
-    if callable(bind_method):
-        return bind_method(metric)
-    if create_metric_per_engine is None:
-        raise RuntimeError(
-            "Incompatible vLLM metrics API: missing both "
-            "KVConnectorPromMetrics.make_per_engine and "
-            "vllm.v1.metrics.utils.create_metric_per_engine"
-        )
-    return create_metric_per_engine(metric, prom_metrics.per_engine_labelvalues)
 
 
 class PrefetchTracker:
@@ -291,7 +271,9 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
             documentation="Number of requests waiting for SSD prefetch to complete.",
             labelnames=labelnames,
         )
-        self.gauge_pending_prefetches = _bind_metric_per_engine(self, gauge_pending_prefetches)
+        self.gauge_pending_prefetches = create_metric_per_engine(
+            gauge_pending_prefetches, self.per_engine_labelvalues
+        )
 
         # Gauge metrics for worker-side state
         gauge_pending_save_requests = self._gauge_cls(
@@ -299,8 +281,8 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
             documentation="Number of requests with pending save operations.",
             labelnames=labelnames,
         )
-        self.gauge_pending_save_requests = _bind_metric_per_engine(
-            self, gauge_pending_save_requests
+        self.gauge_pending_save_requests = create_metric_per_engine(
+            gauge_pending_save_requests, self.per_engine_labelvalues
         )
 
         # Histogram for prefetch operations (scheduler-side)
@@ -312,8 +294,8 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
             buckets=build_buckets([1, 2, 4, 8], 200, -2),
             labelnames=labelnames,
         )
-        self.histogram_prefetch_duration = _bind_metric_per_engine(
-            self, histogram_prefetch_duration
+        self.histogram_prefetch_duration = create_metric_per_engine(
+            histogram_prefetch_duration, self.per_engine_labelvalues
         )
 
         histogram_prefetch_blocks = self._histogram_cls(
@@ -322,7 +304,9 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
             buckets=build_buckets([1, 2, 4, 8], 2000, 0),
             labelnames=labelnames,
         )
-        self.histogram_prefetch_blocks = _bind_metric_per_engine(self, histogram_prefetch_blocks)
+        self.histogram_prefetch_blocks = create_metric_per_engine(
+            histogram_prefetch_blocks, self.per_engine_labelvalues
+        )
 
         # Histogram for load/save operations (worker-side), tuned for tail
         # visibility over sub-10ms jitter. Buckets: 10ms to 60s.
@@ -332,7 +316,9 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
             buckets=build_buckets([1, 2, 4, 8], 100, -2),
             labelnames=labelnames,
         )
-        self.histogram_load_duration = _bind_metric_per_engine(self, histogram_load_duration)
+        self.histogram_load_duration = create_metric_per_engine(
+            histogram_load_duration, self.per_engine_labelvalues
+        )
 
         histogram_load_blocks = self._histogram_cls(
             name="vllm:orbitkv_load_blocks",
@@ -340,21 +326,27 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
             buckets=build_buckets([1, 2, 4, 8], 2000, 0),
             labelnames=labelnames,
         )
-        self.histogram_load_blocks = _bind_metric_per_engine(self, histogram_load_blocks)
+        self.histogram_load_blocks = create_metric_per_engine(
+            histogram_load_blocks, self.per_engine_labelvalues
+        )
 
         counter_load_success = self._counter_cls(
             name="vllm:orbitkv_load_success_total",
             documentation="Number of successful KV cache load operations.",
             labelnames=labelnames,
         )
-        self.counter_load_success = _bind_metric_per_engine(self, counter_load_success)
+        self.counter_load_success = create_metric_per_engine(
+            counter_load_success, self.per_engine_labelvalues
+        )
 
         counter_load_failure = self._counter_cls(
             name="vllm:orbitkv_load_failure_total",
             documentation="Number of failed KV cache load operations.",
             labelnames=labelnames,
         )
-        self.counter_load_failure = _bind_metric_per_engine(self, counter_load_failure)
+        self.counter_load_failure = create_metric_per_engine(
+            counter_load_failure, self.per_engine_labelvalues
+        )
 
         # Histogram for save operations
         histogram_save_duration = self._histogram_cls(
@@ -363,7 +355,9 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
             buckets=build_buckets([1, 2, 4, 8], 100, -2),
             labelnames=labelnames,
         )
-        self.histogram_save_duration = _bind_metric_per_engine(self, histogram_save_duration)
+        self.histogram_save_duration = create_metric_per_engine(
+            histogram_save_duration, self.per_engine_labelvalues
+        )
 
         histogram_save_blocks = self._histogram_cls(
             name="vllm:orbitkv_save_blocks",
@@ -371,21 +365,27 @@ class OrbitKVPromMetrics(KVConnectorPromMetrics):
             buckets=build_buckets([1, 2, 4, 8], 2000, 0),
             labelnames=labelnames,
         )
-        self.histogram_save_blocks = _bind_metric_per_engine(self, histogram_save_blocks)
+        self.histogram_save_blocks = create_metric_per_engine(
+            histogram_save_blocks, self.per_engine_labelvalues
+        )
 
         counter_save_success = self._counter_cls(
             name="vllm:orbitkv_save_success_total",
             documentation="Number of successful KV cache save operations.",
             labelnames=labelnames,
         )
-        self.counter_save_success = _bind_metric_per_engine(self, counter_save_success)
+        self.counter_save_success = create_metric_per_engine(
+            counter_save_success, self.per_engine_labelvalues
+        )
 
         counter_save_failure = self._counter_cls(
             name="vllm:orbitkv_save_failure_total",
             documentation="Number of failed KV cache save operations.",
             labelnames=labelnames,
         )
-        self.counter_save_failure = _bind_metric_per_engine(self, counter_save_failure)
+        self.counter_save_failure = create_metric_per_engine(
+            counter_save_failure, self.per_engine_labelvalues
+        )
 
     def observe(self, transfer_stats_data: dict[str, Any], engine_idx: int = 0):
         """Record stats to Prometheus metrics."""

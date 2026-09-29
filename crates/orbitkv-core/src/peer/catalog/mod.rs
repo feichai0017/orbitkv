@@ -20,7 +20,8 @@ use tonic::{
 };
 
 use crate::metrics::core_metrics;
-use crate::storage::dram::{DramStore, inventory::InventoryReadError};
+use crate::storage::dram::DramStore;
+use crate::storage::inventory::InventoryReadError;
 use orbitkv_catalog::MembershipView;
 use orbitkv_proto::proto::engine::CatalogRoute;
 #[cfg(test)]

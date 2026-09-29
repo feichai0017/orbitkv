@@ -13,7 +13,53 @@ def register() -> None:
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     from .admission import abort_request, admit_request, enqueue_request
+    from .completion import (
+        capture_decode_pages,
+        capture_handoff_admission,
+        mark_decode_abort,
+        observe_decode_failure,
+        observe_decode_ready,
+        observe_deferred_release,
+    )
+    from .linker import initialize_layer_counter
+    from .pd import install_sglang_tent_backend
 
+    install_sglang_tent_backend()
+    HookRegistry.register(
+        "sglang.srt.managers.tp_worker.TpModelWorker.init_cuda_graphs",
+        initialize_layer_counter,
+        HookType.BEFORE,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.send_metadata",
+        capture_decode_pages,
+        HookType.AFTER,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.decode.DecodeTransferQueue.add",
+        capture_handoff_admission,
+        HookType.AFTER,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.decode.DecodeTransferQueue._commit_transfer_to_req",
+        observe_decode_ready,
+        HookType.AROUND,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.abort",
+        mark_decode_abort,
+        HookType.AFTER,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.mooncake.conn.MooncakeKVReceiver.failure_exception",
+        observe_decode_failure,
+        HookType.AROUND,
+    )
+    HookRegistry.register(
+        "sglang.srt.disaggregation.decode.DecodeTransferQueue._do_release",
+        observe_deferred_release,
+        HookType.AROUND,
+    )
     register_radix_cache_backend("orbitkv", create_cache)
     HookRegistry.register(
         "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",
@@ -36,9 +82,9 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
     """Factory selected by SGLang's ``--radix-cache-backend orbitkv``."""
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
+    from sglang.srt.runtime_context import get_disagg, get_memory
 
-    from .linker import OrbitKVLinker
-    from .recovery import RecoveryLinkerWrapper, RecurrentComponent
+    from .pd import validate_pd_cache_transport
 
     if ctx.disable_radix_cache:
         raise ValueError("OrbitKV direct GPU linker requires RadixCache")
@@ -55,8 +101,11 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
             "OrbitKV direct GPU linker cannot restore DSA, draft, or auxiliary GPU state; "
             "select a backend with a complete recovery contract for that model"
         )
-    from sglang.srt.runtime_context import get_disagg, get_memory
-
+    disaggregation = get_disagg()
+    validate_pd_cache_transport(
+        disaggregation.disaggregation_mode,
+        disaggregation.disaggregation_transfer_backend,
+    )
     if not get_memory().enable_unified_cache_external_linker:
         raise ValueError(
             "OrbitKV direct GPU linker requires --enable-unified-cache-external-linker "
@@ -64,6 +113,9 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
         )
     if get_disagg().disaggregation_decode_retraction_backup == "host_pool":
         raise ValueError("OrbitKV direct GPU linker does not support host-pool retraction")
+
+    from .linker import OrbitKVLinker
+    from .recovery import RecoveryLinkerWrapper, RecurrentComponent
 
     # SGLang's built-in unified-cache factory hardcodes Mooncake/Mori when the
     # external-linker flag is set. Construct its public RadixCache component
@@ -76,16 +128,14 @@ def create_cache(ctx: Any) -> UnifiedRadixCache:
         ctx.params.component_registry_override = {ComponentType.MAMBA: RecurrentComponent}
     ctx.params.tree_components = tuple(components)
     cache = UnifiedRadixCache(ctx.params)
-    linker = OrbitKVLinker(ctx.server_args, ctx.params, components=set(cache.components))
+    linker = OrbitKVLinker(ctx.server_args, ctx.params)
     try:
-        cache.linker = RecoveryLinkerWrapper(cache, linker)
+        cache.linker = RecoveryLinkerWrapper(
+            cache,
+            linker,
+            restore_from_store=disaggregation.disaggregation_mode != "decode",
+        )
     except Exception:
         linker.close()
         raise
-    counter = linker.layer_done_counter
-    kvcache = ctx.params.token_to_kv_pool_allocator.get_kvcache()
-    kvcache.register_layer_transfer_counter(counter)
-    if ctx.is_hybrid_ssm:
-        ctx.params.req_to_token_pool.register_layer_transfer_counter(counter)
-    ctx.tp_worker.register_hicache_layer_transfer_counter(counter)
     return cache

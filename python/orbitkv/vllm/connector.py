@@ -1,6 +1,4 @@
-"""
-Facade for the OrbitKV vLLM connector, split into scheduler/worker implementations.
-"""
+"""vLLM connector entry point with scheduler and worker-owned implementations."""
 
 from __future__ import annotations
 
@@ -9,6 +7,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import torch
+from vllm.config import CUDAGraphMode
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorBase_V1,
     KVConnectorRole,
@@ -50,6 +49,11 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         is_mla = detect_mla(vllm_config)
         cache_groups = tuple(getattr(kv_cache_config, "kv_cache_groups", ()) or ())
         if cache_groups and CacheGroupLayout.from_config(kv_cache_config).has_recurrent_state:
+            if not vllm_config.use_v2_model_runner:
+                raise RuntimeError(
+                    "OrbitKV recurrent Restore requires vLLM's V2 model runner so "
+                    "state is restored before checkpoint migration."
+                )
             from vllm.v1.core.sched.output import SchedulerOutput
 
             if "kv_connector_block_state" not in getattr(
@@ -250,6 +254,9 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
                     self._ctx.effective_world_size,
                 )
         else:
+            from orbitkv.vllm.runtime import install_restore_boundary
+
+            install_restore_boundary()
             self._worker = WorkerConnector(
                 self._ctx,
                 vllm_config=vllm_config,
@@ -293,7 +300,15 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         metadata = self._get_connector_metadata()
         if metadata is None:
             return
-        self._worker.start_load_kv(metadata, forward_context, **kwargs)
+        self._worker.start_load_kv(metadata)
+        # V2 full-graph replay calls the connector without attention metadata.
+        # Its captured graph has no Python layer callbacks, so link the whole
+        # Restore on the replay stream. Decode steps without Restore do no work.
+        if (
+            forward_context.attn_metadata is None
+            or forward_context.cudagraph_runtime_mode == CUDAGraphMode.FULL
+        ):
+            self._worker.wait_for_all_layers()
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         if not self._worker:
@@ -336,15 +351,10 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
         if self._worker:
             self._worker.unregister_context()
 
-    def handle_preemptions(self, preempted) -> None:
+    def handle_preemptions(self, metadata: OrbitKVConnectorMetadata) -> None:
         if not self._worker:
             return
-        # Compat: old vLLM passes set[str], new vLLM passes KVConnectorMetadata
-        if isinstance(preempted, set):
-            preempted_req_ids = preempted
-        else:
-            preempted_req_ids = getattr(preempted, "preempted_req_ids", None) or set()
-        self._worker.handle_preemptions(preempted_req_ids)
+        self._worker.handle_preemptions(metadata.preempted_req_ids)
 
     # ==============================
     # Scheduler-side methods
@@ -413,10 +423,6 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
     # ==============================
     # Defaults and shutdown
     # ==============================
-    def get_block_ids_with_load_errors(self) -> set[int]:
-        if not self._worker:
-            return set()
-        return self._worker.get_block_ids_with_load_errors()
 
     def get_kv_connector_stats(self) -> OrbitKVConnectorStats | None:
         stats: OrbitKVConnectorStats | None = None
@@ -479,56 +485,4 @@ class OrbitKVConnector(KVConnectorBase_V1, SupportsHMA):
             self._connections.close()
 
 
-class NoopKVConnector(KVConnectorBase_V1, SupportsHMA):
-    """Connector-path baseline for tests."""
-
-    def __init__(self, vllm_config, role: KVConnectorRole, kv_cache_config=None):
-        super().__init__(vllm_config, role, kv_cache_config)
-        self._is_mla = detect_mla(vllm_config)
-        self._cache_group_count = len(tuple(getattr(kv_cache_config, "kv_cache_groups", ()) or ()))
-
-    @property
-    def prefer_cross_layer_blocks(self) -> bool:
-        # MLA cannot use cross-layer KV (no num-layers stride); be honest.
-        return (
-            not self._is_mla
-            and self._cache_group_count <= 1
-            and os.environ.get("ORBITKV_CROSS_LAYER_BLOCKS", "1") == "1"
-        )
-
-    def start_load_kv(self, forward_context, **kwargs: Any) -> None:
-        return
-
-    def wait_for_layer_load(self, layer_name: str) -> None:
-        return
-
-    def save_kv_layer(
-        self,
-        layer_name: str,
-        kv_layer: torch.Tensor,
-        attn_metadata,
-        **kwargs: Any,
-    ) -> None:
-        return
-
-    def wait_for_save(self) -> None:
-        return
-
-    def get_num_new_matched_tokens(self, request, num_computed_tokens: int):
-        return (0, False)
-
-    def update_state_after_alloc(self, request, blocks, num_external_tokens: int) -> None:
-        return
-
-    def build_connector_meta(self, scheduler_output) -> OrbitKVConnectorMetadata:
-        return OrbitKVConnectorMetadata()
-
-    def request_finished_all_groups(
-        self,
-        request,
-        block_ids: tuple[list[int], ...],
-    ) -> tuple[bool, dict[str, Any] | None]:
-        return (False, None)
-
-
-__all__ = ["OrbitKVConnector", "NoopKVConnector", "KVConnectorRole"]
+__all__ = ["OrbitKVConnector", "KVConnectorRole"]

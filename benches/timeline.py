@@ -55,13 +55,33 @@ def collect(directory: Path, samples: list[dict]) -> dict:
             for event in group:
                 if "monotonic_ns" not in event:
                     continue
-                pid, now = event["pid"], event["monotonic_ns"]
+                clock = (event["source"], event["pid"])
+                now = event["monotonic_ns"]
                 if event["stage"] == start:
-                    starts[pid] = now
-                elif event["stage"] == end and pid in starts:
-                    intervals[label].append((now - starts.pop(pid)) / 1e6)
+                    starts[clock] = now
+                elif event["stage"] == end and clock in starts:
+                    intervals[label].append((now - starts.pop(clock)) / 1e6)
     for event in events:
-        if event["stage"] == "source_ready":
+        if event["stage"] == "local_restore_complete":
+            if not event["success"]:
+                continue
+            intervals["native_restore_ms"].append(event["drained_ns"] / 1e6)
+            previous = 0
+            for field, label in (
+                ("readiness_ns", "native_readiness_ms"),
+                ("dispatched_ns", "native_dispatch_ms"),
+                ("dequeued_ns", "native_queue_ms"),
+                ("claimed_ns", "native_grant_wait_ms"),
+                ("submitted_ns", "native_plan_submit_ms"),
+                ("drained_ns", "native_drain_wait_ms"),
+            ):
+                current = event[field]
+                intervals[label].append((current - previous) / 1e6)
+                previous = current
+        elif event["stage"] == "local_restore_observed":
+            if event["success"]:
+                intervals["native_consumer_wait_ms"].append(event["elapsed_ns"] / 1e6)
+        elif event["stage"] == "source_ready":
             label = (
                 "prepared_read_ms"
                 if event.get("prepare")
@@ -74,15 +94,34 @@ def collect(directory: Path, samples: list[dict]) -> dict:
             "discovery_ready",
             "restore_complete",
             "restore_notification",
-            "restore_delivered",
         ):
             labels = {
                 "discovery_ready": "candidate_discovery_ms",
                 "restore_complete": "manager_restore_ms",
                 "restore_notification": "completion_signal_ms",
-                "restore_delivered": "completion_delivery_ms",
             }
             intervals[labels[event["stage"]]].append(event["elapsed_us"] / 1000)
+
+    for label in (
+        "restore_ms",
+        "manager_restore_ms",
+        "completion_signal_ms",
+        "native_restore_ms",
+        "native_consumer_wait_ms",
+    ):
+        intervals.setdefault(label, [])
+    stage_counts = Counter(event["stage"] for event in events)
+    completion_batches = {
+        stage: {
+            event["restore_key"]
+            for event in events
+            if event["stage"] == stage and event.get("restore_key") in restores
+        }
+        for stage in ("restore_complete", "restore_notification", "local_restore_complete")
+    }
+
+    terminal = completion_batches["restore_complete"] | completion_batches["local_restore_complete"]
+    manager_notifications = restores.keys() - completion_batches["local_restore_complete"]
 
     with (directory / "timeline.jsonl").open("w") as output:
         for event in events:
@@ -90,17 +129,50 @@ def collect(directory: Path, samples: list[dict]) -> dict:
     summary = {
         "measured_requests": len(samples),
         "traced_requests": len(by_request),
-        "stage_counts": dict(Counter(event["stage"] for event in events)),
+        "stage_counts": dict(stage_counts),
+        "completion_coverage": {
+            "linked_restore_batches": len(restores),
+            "batches_with_worker_terminal": len(terminal),
+            "batches_with_local_terminal": len(completion_batches["local_restore_complete"]),
+            "batches_with_notification": len(completion_batches["restore_notification"]),
+            "batches_without_worker_terminal": len(restores.keys() - terminal),
+            "batches_without_notification": len(
+                manager_notifications - completion_batches["restore_notification"]
+            ),
+            "client_restore_submissions": sum(
+                event["stage"] == "restore_submit" and event["source"] == "engine.log"
+                for event in events
+            ),
+            "client_restore_intervals": len(intervals["restore_ms"]),
+        },
         "intervals": {
             label: {
                 "count": len(values),
-                "p50": percentile(values, 0.5),
-                "p95": percentile(values, 0.95),
-                "p99": percentile(values, 0.99),
+                "p50": percentile(values, 0.5) if values else None,
+                "p95": percentile(values, 0.95) if values else None,
+                "p99": percentile(values, 0.99) if values else None,
             }
             for label, values in intervals.items()
         },
-        "notes": "Durations use one process's monotonic clock or Manager-local elapsed_us. Manager restore includes submission/worker queue and synchronized copy; completion signal/delivery start at the worker's terminal timestamp. Manager batches are counted once even when several requests share them. Engine callback observations are not GPU kernel timestamps. Dense lookup can fuse discovery with preparation; missing stages are not zero latency.",
+        "notes": (
+            "Durations use one process's monotonic clock, transported native elapsed_ns, or Manager-local elapsed_us. "
+            "Native stages partition caller-to-drain: readiness includes caller lock/admission; dispatch "
+            "ends before native job construction; queue includes enqueue handoff until the worker dequeues; grant_wait includes "
+            "grant availability, worker scheduling and plan consumption; plan_submit includes validation "
+            "and CUDA enqueue; drain_wait ends after stream synchronization. Successful local samples "
+            "exclude failures. Native consumer wait runs from GPU drain to native poll/wait consumption. "
+            "Local terminal coverage needs no Manager notification. Manager retirement is excluded. "
+            "Manager restore includes submission/worker queue and synchronized copy; completion "
+            "signal starts at the worker's terminal timestamp and measures the notification attempt. "
+            "Shared-memory completion consumption has no isolated delivery timer. "
+            "Use restore_ms for the engine's submit-to-gpu_ready observation, including submission, "
+            "restore work and consumer scheduling; it is not a pure delivery interval. "
+            "Manager batches are counted once even when several requests share them; client restore "
+            "intervals are per request and process. Engine callback observations are not GPU kernel "
+            "timestamps. Dense lookup can fuse discovery with preparation. Missing interval samples "
+            "have count 0 and null quantiles, never zero latency. Do not subtract interval quantiles "
+            "to infer completion latency or add overlapping intervals to obtain TTFT."
+        ),
     }
     (directory / "timeline-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary

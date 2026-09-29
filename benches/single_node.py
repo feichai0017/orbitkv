@@ -122,6 +122,11 @@ def main() -> None:
     parser.add_argument("--read-timeout-ms", type=int, default=0)
     parser.add_argument("--read-max-batches", type=int, default=0)
     parser.add_argument("--trace-transfers", action="store_true")
+    parser.add_argument(
+        "--deterministic-inference",
+        action="store_true",
+        help="Enable the engine's deterministic kernels for output-parity qualification",
+    )
     parser.add_argument("--seed", type=int, default=20260920)
     parser.add_argument("--settle-seconds", type=float, default=1.2)
     args = parser.parse_args()

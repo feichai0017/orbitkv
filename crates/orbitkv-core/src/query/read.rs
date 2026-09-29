@@ -13,6 +13,7 @@ use parking_lot::Mutex;
 
 use crate::QueryMode;
 use crate::block::{QueryResult, RestoreSource, SealedBlock, StateKey};
+use crate::memory::numa::NumaNode;
 use crate::metrics::core_metrics;
 #[cfg(feature = "mooncake")]
 use crate::peer::read::PeerReader;
@@ -21,9 +22,7 @@ use crate::storage::{MaterializedBlocks, ssd::SsdStore};
 use super::tier_attribution::{
     AttributionSource, TierAttribution, record_cache_tier_block_requests,
 };
-#[cfg(feature = "mooncake")]
-use crate::planning::peer::FetchPlan;
-use crate::planning::read::ReadPlan;
+use crate::planning::read::{HostReadRoute, ReadPlan};
 use crate::storage::dram::DramStore;
 
 #[cfg(feature = "mooncake")]
@@ -45,6 +44,7 @@ struct ReadKey {
     hit: usize,
     wait_for_full_prefix: bool,
     allow_ssd_prefetch: bool,
+    destination_nodes: Vec<NumaNode>,
 }
 type SharedRead = OnceCell<MaterializedRead>;
 
@@ -80,6 +80,7 @@ impl ReadCoordinator {
         namespace: &str,
         hashes: &[Vec<u8>],
         mode: QueryMode,
+        destination_nodes: &[NumaNode],
     ) -> QueryResult {
         let warming = matches!(mode, QueryMode::Warmup | QueryMode::Prepare);
         let wait_for_full_prefix = mode == QueryMode::WaitForFullPrefix;
@@ -111,6 +112,7 @@ impl ReadCoordinator {
             && let Some(route) = plan.deferred_ssd(ssd, self.codec_budget)
         {
             let path = route.path;
+            let allow_uring_fallback = route.allow_uring_fallback;
             if let Some(leases) = route.acquire(self.codec_budget) {
                 let count = hit + leases.len();
                 ssd.ingest_batch(keys.iter().zip(&prefix_blocks), true);
@@ -124,11 +126,11 @@ impl ReadCoordinator {
                     blocks: prefix_blocks
                         .into_iter()
                         .map(RestoreSource::Memory)
-                        .chain(
-                            leases
-                                .into_iter()
-                                .map(|lease| RestoreSource::Ssd { lease, path }),
-                        )
+                        .chain(leases.into_iter().map(|lease| RestoreSource::Ssd {
+                            lease,
+                            path,
+                            allow_uring_fallback,
+                        }))
                         .collect(),
                     missing: keys.len() - count,
                 };
@@ -145,6 +147,7 @@ impl ReadCoordinator {
             hit,
             wait_for_full_prefix,
             allow_ssd_prefetch,
+            destination_nodes: destination_nodes.to_vec(),
         };
         let read = {
             let mut reads = self.reads.lock();
@@ -161,7 +164,7 @@ impl ReadCoordinator {
         let result = read
             .get_or_init(|| async {
                 let (source, blocks) = self
-                    .materialize(&mut plan, req_id, allow_ssd_prefetch)
+                    .materialize(&mut plan, req_id, allow_ssd_prefetch, destination_nodes)
                     .await;
                 let mut result =
                     build_ready_result(prefix_blocks, keys.len(), source, &keys[hit..], blocks);
@@ -211,6 +214,7 @@ impl ReadCoordinator {
         namespace: &str,
         hashes: &[Vec<u8>],
         mode: crate::QueryMode,
+        destination_nodes: &[NumaNode],
     ) -> Vec<Option<crate::RestoreSource>> {
         let keys: Vec<StateKey> = hashes
             .iter()
@@ -229,10 +233,16 @@ impl ReadCoordinator {
                     if block.is_some() {
                         return block.map(crate::RestoreSource::Memory);
                     }
-                    self.read_prefix(req_id, namespace, std::slice::from_ref(&hash), mode)
-                        .await
-                        .blocks
-                        .pop()
+                    self.read_prefix(
+                        req_id,
+                        namespace,
+                        std::slice::from_ref(&hash),
+                        mode,
+                        destination_nodes,
+                    )
+                    .await
+                    .blocks
+                    .pop()
                 }),
         )
         .buffered(8)
@@ -245,29 +255,50 @@ impl ReadCoordinator {
         plan: &mut ReadPlan,
         req_id: &str,
         allow_ssd_prefetch: bool,
+        destination_nodes: &[NumaNode],
     ) -> (Option<AttributionSource>, MaterializedBlocks) {
         #[cfg(feature = "mooncake")]
         if let Some(remote) = &self.remote_fetch {
             remote.discover(&mut plan.rows).await;
-            if let Some(route) = FetchPlan::new(&mut plan.rows, plan.required) {
-                return (
-                    Some(AttributionSource::Remote),
-                    remote.fetch_plan(route, req_id).await,
-                );
-            }
         }
+        #[cfg(feature = "mooncake")]
+        let peer_available = self.remote_fetch.is_some();
         #[cfg(not(feature = "mooncake"))]
-        let _ = req_id;
+        let peer_available = false;
+        #[cfg(not(feature = "mooncake"))]
+        let _ = (req_id, destination_nodes);
 
-        if allow_ssd_prefetch
-            && let Some(ssd) = &self.ssd_store
-            && let Some(route) = plan.ssd(crate::SsdReadPath::Uring, self.codec_budget)
-            && let Some(leases) = route.acquire(self.codec_budget)
-        {
-            return (
-                Some(AttributionSource::Ssd),
-                ssd.read_host_batch(leases).await.unwrap_or_default(),
-            );
+        let mut allow_local_ssd = allow_ssd_prefetch;
+        for _ in 0..3 {
+            match plan.host_route(peer_available, allow_local_ssd, self.codec_budget) {
+                #[cfg(feature = "mooncake")]
+                Some(HostReadRoute::Peer(route)) => {
+                    if let Some(remote) = &self.remote_fetch {
+                        let result = remote.fetch_plan(route, req_id, destination_nodes).await;
+                        if !result.can_replan() {
+                            return (Some(AttributionSource::Remote), result.blocks);
+                        }
+                        // No payload was submitted. Replan from the retained
+                        // local/peer evidence after rejected source admission.
+                        continue;
+                    }
+                }
+                Some(HostReadRoute::Ssd(route)) => {
+                    if let Some(ssd) = &self.ssd_store
+                        && let Some(leases) = route.acquire(self.codec_budget)
+                    {
+                        return (
+                            Some(AttributionSource::Ssd),
+                            ssd.read_host_batch(leases).await.unwrap_or_default(),
+                        );
+                    }
+                    // This exact local generation disappeared after planning.
+                    // Do not select it again; peer alternatives remain eligible.
+                    allow_local_ssd = false;
+                    continue;
+                }
+                None => break,
+            }
         }
 
         #[cfg(feature = "mooncake")]
@@ -278,13 +309,15 @@ impl ReadCoordinator {
             while started_at.elapsed() < REMOTE_WAIT_TIMEOUT {
                 tokio::time::sleep(REMOTE_WAIT_POLL_INTERVAL).await;
                 remote.discover(&mut plan.rows).await;
-                if let Some(route) = FetchPlan::new(&mut plan.rows, plan.required) {
+                if let Some(HostReadRoute::Peer(route)) =
+                    plan.host_route(true, false, self.codec_budget)
+                {
                     // A submitted payload failure completes this query; only
                     // missing advertisements participate in producer waiting.
-                    return (
-                        Some(AttributionSource::Remote),
-                        remote.fetch_plan(route, req_id).await,
-                    );
+                    let result = remote.fetch_plan(route, req_id, destination_nodes).await;
+                    if !result.can_replan() {
+                        return (Some(AttributionSource::Remote), result.blocks);
+                    }
                 }
             }
             warn!(

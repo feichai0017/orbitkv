@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use super::*;
+use orbitkv_state::catalog_shard;
 
 fn make_cache() -> DramStore {
     DramStore::new(1 << 20, false, None, None, 0)
@@ -374,10 +375,18 @@ fn residence_duration_is_non_negative_and_finite() {
 fn inventory_tracks_actual_residency_and_fences_old_reclaim_hints() {
     let cache = DramStore::new(1 << 20, false, None, Some(16 * 1024), 0);
     let key = StateKey::new("ns".into(), vec![1]);
-    cache.batch_insert_refs(&[(key.clone(), make_block())]);
+    cache.batch_insert_refs(&[(key.clone(), Arc::new(SealedBlock::for_policy_test(4096)))]);
     let shard = catalog_shard(&key);
     let first = cache.inventory_page(shard, None).unwrap();
     assert_eq!(first.len(), 1);
+    assert_eq!(
+        first[0].metadata,
+        Some(orbitkv_state::ReplicaMetadata {
+            medium: orbitkv_state::ReplicaMedium::Dram,
+            representation: orbitkv_state::ReplicaRepresentation::Unknown,
+            stored_bytes: Some(4096),
+        })
+    );
     cache.batch_insert_refs(&[(key.clone(), make_block())]);
     assert_eq!(cache.inventory_sequence(shard), 1);
     let pinned = cache.get_blocks_aligned(std::slice::from_ref(&key));

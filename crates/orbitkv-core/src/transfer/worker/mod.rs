@@ -1,5 +1,7 @@
 use crate::transfer::finish_gpu_transfer;
-use std::sync::{Arc, mpsc as std_mpsc};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Weak, mpsc as std_mpsc};
 use std::time::Instant;
 
 use cudarc::driver::{CudaContext, CudaStream};
@@ -8,11 +10,16 @@ use logforth::diagnostic::ThreadLocalDiagnostic;
 use parking_lot::Mutex;
 use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
+use crate::CompletionResourceEvidence;
 use crate::EngineError;
 use crate::block::{RawBlock, SealedBlock};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, enabled, shadow};
+use crate::cost::{
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+    enabled, record_resource_evidence, shadow,
+};
 use crate::memory::numa::{NumaNode, pin_thread_to_numa_node};
 use crate::metrics::core_metrics;
+use crate::planning::restore::RestorePlan;
 use crate::transfer::layout::{BlockCopies, KVCacheLayout};
 use crate::transfer::{CopyDesc, KernelBackend, MemcpyBackend, TransferBackend, TransferMode};
 
@@ -24,10 +31,14 @@ use ssd::GpuWrite;
 
 /// A task to restore KV blocks from leased sources to GPU layers
 pub(crate) struct LoadTask {
+    pub plan: RestorePlan,
     pub layers: Vec<LayerTransferData>,
     pub completion: oneshot::Sender<LoadOutcome>,
     pub reservations: Vec<crate::QueryReservation>,
     pub codec_budget: usize,
+    pub decode_ready_started: Instant,
+    pub decode_ready_observation: Box<Observation>,
+    pub decode_admission: Option<DecodeRestorePermit>,
 }
 
 /// Terminal GPU transfer evidence, timestamped before notifying the dispatcher.
@@ -124,15 +135,97 @@ enum WorkerCommand {
 pub(crate) struct GpuWorkerPool {
     device_id: i32,
     numa_node: NumaNode,
-    transfer_mode: TransferMode,
+    pub(crate) transfer_mode: TransferMode,
     ssd_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_host_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     codec_write_tx: Mutex<Option<mpsc::UnboundedSender<WorkerCommand>>>,
     ssd_write_admission: Arc<Semaphore>,
+    decode_restore_admission: Arc<DeviceRestoreAdmission>,
+    cufile_worker_admission: Arc<Semaphore>,
+    cufile_worker_owner: Mutex<Option<OwnedSemaphorePermit>>,
     load_tx: mpsc::UnboundedSender<WorkerCommand>,
     save_tx: mpsc::UnboundedSender<WorkerCommand>,
     closed: Mutex<bool>,
     drained: OnceCell<Result<(), String>>,
+}
+
+const MAX_DEVICE_RESTORES: usize = 128;
+
+struct DeviceRestoreAdmission {
+    permits: Arc<Semaphore>,
+    active: AtomicUsize,
+}
+
+pub(crate) struct DecodeRestorePermit {
+    _permit: OwnedSemaphorePermit,
+    admission: Arc<DeviceRestoreAdmission>,
+    depth: u32,
+}
+
+impl Drop for DecodeRestorePermit {
+    fn drop(&mut self) {
+        self.admission.active.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// One process-wide GPU-storage write budget per physical CUDA device. Worker
+/// pools are instance-owned, but their staging pressure is not.
+fn device_ssd_write_admission(device_id: i32) -> Arc<Semaphore> {
+    static ADMISSIONS: LazyLock<Mutex<HashMap<i32, Weak<Semaphore>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut admissions = ADMISSIONS.lock();
+    admissions.retain(|_, admission| admission.strong_count() > 0);
+    if let Some(admission) = admissions.get(&device_id).and_then(Weak::upgrade) {
+        return admission;
+    }
+    let admission = Arc::new(Semaphore::new(ssd::MAX_WRITES));
+    admissions.insert(device_id, Arc::downgrade(&admission));
+    admission
+}
+
+/// A cuFile worker owns two persistent registered GPU staging slots. Until
+/// staging is shared directly, one instance worker may own those slots per GPU.
+fn device_cufile_worker_admission(device_id: i32) -> Arc<Semaphore> {
+    static ADMISSIONS: LazyLock<Mutex<HashMap<i32, Weak<Semaphore>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut admissions = ADMISSIONS.lock();
+    admissions.retain(|_, admission| admission.strong_count() > 0);
+    if let Some(admission) = admissions.get(&device_id).and_then(Weak::upgrade) {
+        return admission;
+    }
+    let admission = Arc::new(Semaphore::new(1));
+    admissions.insert(device_id, Arc::downgrade(&admission));
+    admission
+}
+
+fn device_restore_admission(device_id: i32) -> Arc<DeviceRestoreAdmission> {
+    static ADMISSIONS: LazyLock<Mutex<HashMap<i32, Weak<DeviceRestoreAdmission>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let mut admissions = ADMISSIONS.lock();
+    admissions.retain(|_, admission| admission.strong_count() > 0);
+    if let Some(admission) = admissions.get(&device_id).and_then(Weak::upgrade) {
+        return admission;
+    }
+    let admission = Arc::new(DeviceRestoreAdmission {
+        permits: Arc::new(Semaphore::new(MAX_DEVICE_RESTORES)),
+        active: AtomicUsize::new(0),
+    });
+    admissions.insert(device_id, Arc::downgrade(&admission));
+    admission
+}
+
+impl DeviceRestoreAdmission {
+    fn try_acquire(self: &Arc<Self>) -> Result<DecodeRestorePermit, EngineError> {
+        let permit = Arc::clone(&self.permits)
+            .try_acquire_owned()
+            .map_err(|_| EngineError::Storage("decode restore queue is full".into()))?;
+        let depth = self.active.fetch_add(1, Ordering::AcqRel) + 1;
+        Ok(DecodeRestorePermit {
+            _permit: permit,
+            admission: Arc::clone(self),
+            depth: depth as u32,
+        })
+    }
 }
 
 impl GpuWorkerPool {
@@ -150,7 +243,10 @@ impl GpuWorkerPool {
             ssd_tx: Mutex::new(None),
             ssd_host_tx: Mutex::new(None),
             codec_write_tx: Mutex::new(None),
-            ssd_write_admission: Arc::new(Semaphore::new(ssd::MAX_WRITES)),
+            ssd_write_admission: device_ssd_write_admission(device_id),
+            decode_restore_admission: device_restore_admission(device_id),
+            cufile_worker_admission: device_cufile_worker_admission(device_id),
+            cufile_worker_owner: Mutex::new(None),
             closed: Mutex::new(false),
             drained: OnceCell::new(),
         })
@@ -158,7 +254,11 @@ impl GpuWorkerPool {
 
     fn submit(&self, command: WorkerCommand, disk: bool) -> Result<(), EngineError> {
         let reject = |command: WorkerCommand| match command {
-            WorkerCommand::Load(_, observation) | WorkerCommand::Save(_, observation) => {
+            WorkerCommand::Load(task, observation) => {
+                observation.finish(Outcome::Failed, Some(0));
+                task.decode_ready_observation.finish(Outcome::Failed, None);
+            }
+            WorkerCommand::Save(_, observation) => {
                 observation.finish(Outcome::Failed, Some(0));
             }
             WorkerCommand::Drain(_) => {}
@@ -188,7 +288,7 @@ impl GpuWorkerPool {
                 .as_ref()
                 .expect("encoded writeback worker initialized")
                 .send(command)
-        } else if matches!(&command, WorkerCommand::Load(task, _) if restore::ssd_path(&task.layers) == Ok(Some(crate::SsdReadPath::Uring))) {
+        } else if matches!(&command, WorkerCommand::Load(task, _) if task.plan.ssd_path() == Some(crate::SsdReadPath::Uring)) {
             let mut sender = self.ssd_host_tx.lock();
             if sender.is_none() {
                 match spawn_worker(self.device_id, self.numa_node, self.transfer_mode, "ssd-host") {
@@ -230,9 +330,48 @@ impl GpuWorkerPool {
         })
     }
 
-    pub(crate) fn submit_load(&self, task: LoadTask) -> Result<(), EngineError> {
+    fn own_cufile_worker(&self) -> bool {
+        let mut owner = self.cufile_worker_owner.lock();
+        if owner.is_some() {
+            return true;
+        }
+        match Arc::clone(&self.cufile_worker_admission).try_acquire_owned() {
+            Ok(permit) => {
+                *owner = Some(permit);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub(crate) fn admit_restore(
+        &self,
+        plan: &mut RestorePlan,
+        bytes: u64,
+        fragments: usize,
+    ) -> Result<DecodeRestorePermit, EngineError> {
+        if plan.device_id() != self.device_id {
+            return Err(EngineError::InvalidArgument(
+                "restore admission device mismatch".into(),
+            ));
+        }
+        let permit = self.decode_restore_admission.try_acquire()?;
+        plan.bind_target_shape(bytes, fragments)
+            .map_err(EngineError::InvalidArgument)?;
+        Ok(permit)
+    }
+
+    pub(crate) fn submit_load(&self, mut task: LoadTask) -> Result<(), EngineError> {
+        if task.plan.device_id() != self.device_id {
+            return Err(EngineError::InvalidArgument(format!(
+                "restore plan targets device {} but worker owns device {}",
+                task.plan.device_id(),
+                self.device_id
+            )));
+        }
+        let layers = &mut task.layers;
         let mut targets = Vec::new();
-        for layer in &task.layers {
+        for layer in layers.iter() {
             for block in &layer.blocks {
                 match layer
                     .layout
@@ -246,33 +385,80 @@ impl GpuWorkerPool {
                 }
             }
         }
+        let target_bytes = targets.iter().try_fold(0u64, |total, (_, bytes)| {
+            total
+                .checked_add(*bytes as u64)
+                .ok_or_else(|| EngineError::InvalidArgument("decode page bytes overflow".into()))
+        })?;
+        let target_fragments = targets.len();
         crate::codec::gpu::validate_targets(targets).map_err(EngineError::Storage)?;
-        let ssd_path = restore::ssd_path(&task.layers).map_err(EngineError::Storage)?;
+        let decode_admission =
+            self.admit_restore(&mut task.plan, target_bytes, target_fragments)?;
+        let decode_queue_depth = decode_admission.depth;
+        task.decode_admission = Some(decode_admission);
+        restore::validate_plan(&task.plan, layers)?;
+        let mut ssd_path = task.plan.ssd_path();
         if ssd_path == Some(crate::SsdReadPath::Cufile)
-            && task.layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
+            && layers.iter().flat_map(|layer| &layer.blocks).any(|block| {
                 matches!(&block.block, TransferPayload::Ssd { source, .. } if !source.cufile_eligible(task.codec_budget))
             })
         {
             return Err(EngineError::Storage("cuFile read route is no longer eligible".into()));
         }
+        if ssd_path == Some(crate::SsdReadPath::Cufile) && !self.own_cufile_worker() {
+            task.plan
+                .fallback_from_cufile()
+                .map_err(EngineError::Storage)?;
+            restore::set_ssd_path(layers, crate::SsdReadPath::Uring);
+            core_metrics().ssd_gpu_read_fallbacks.add(1, &[]);
+            ssd_path = task.plan.ssd_path();
+        }
         let disk = ssd_path.is_some();
-        let observation = if enabled() {
-            let (mut key, bytes) = transfer_key(
-                &task.layers,
-                self.device_id,
-                self.transfer_mode,
-                false,
-                disk,
-            );
+        let (observation, decode_ready_observation) = if enabled() {
+            let (mut key, bytes) =
+                transfer_key(layers, self.device_id, self.transfer_mode, false, disk);
             if let Some(path) = ssd_path {
-                key =
-                    restore::cost_key(&task.layers, self.device_id, self.transfer_mode, path, key);
-                restore::shadow(&task, path, key);
+                key = restore::cost_estimate_key(&task.plan, layers, self.transfer_mode, path, key);
+                restore::shadow(layers, task.codec_budget, path, key);
             }
-            Observation::new(key, Some(bytes))
+            let target_shape = task
+                .plan
+                .target_shape()
+                .expect("restore target shape bound before cost observation");
+            debug_assert_eq!(target_shape.device_id(), self.device_id);
+            debug_assert_eq!(target_shape.bytes(), bytes);
+            debug_assert_eq!(target_shape.fragments(), transfer_shape(&task.layers).1);
+            let decode_resource = ExecutionResource::CacheRestore {
+                source_set_hash: task.plan.source_set_hash(),
+                destination_device: self.device_id as u64,
+                copy_backend: self.transfer_mode as u8,
+            };
+            let decode_ready_key = key
+                .with_observation_kind_and_resource(
+                    CostObservationKind::CacheRestore,
+                    decode_resource,
+                )
+                .with_source_shape(task.plan.source_bytes(), task.plan.source_fragments())
+                .with_wire_bytes(task.plan.source_bytes());
+            record_resource_evidence(
+                decode_resource,
+                CompletionResourceEvidence {
+                    decode_page_bytes: target_shape.bytes(),
+                    queue_depth: decode_queue_depth,
+                    queue_parallelism: 1,
+                    tent_inflight_bytes: 0,
+                    tent_bandwidth_bytes_per_second: 0,
+                },
+                std::time::Duration::ZERO,
+            );
+            (
+                Observation::new(key, Some(bytes)),
+                Observation::new_enqueued(decode_ready_key, Some(bytes), task.decode_ready_started),
+            )
         } else {
-            Observation::disabled()
+            (Observation::disabled(), Observation::disabled())
         };
+        task.decode_ready_observation = Box::new(decode_ready_observation);
         self.submit(WorkerCommand::Load(task, observation), disk)
     }
 
@@ -284,6 +470,11 @@ impl GpuWorkerPool {
         storage: Option<Arc<crate::storage::Storage>>,
     ) -> Result<Vec<LayerTransferData>, EngineError> {
         let (reply, receiver) = oneshot::channel();
+        if (!ssd_writes.is_empty() || !codec_groups.is_empty()) && !self.own_cufile_worker() {
+            ssd_writes.clear();
+            codec_groups.clear();
+            core_metrics().ssd_gpu_write_fallbacks.add(1, &[]);
+        }
         let ssd_admission = if ssd_writes.is_empty() && codec_groups.is_empty() {
             None
         } else {
@@ -367,6 +558,7 @@ impl GpuWorkerPool {
                         .await
                         .map_err(|_| "GPU worker exited before draining".to_owned())??;
                 }
+                self.cufile_worker_owner.lock().take();
                 Ok(())
             })
             .await
@@ -416,22 +608,9 @@ fn spawn_worker(
 struct WorkerRuntime {
     stream: Arc<CudaStream>,
     backend: Box<dyn TransferBackend>,
+    max_dma_pitch: usize,
     codec: std::cell::RefCell<Option<crate::codec::gpu::GpuCodec>>,
     codec_write: std::cell::RefCell<Option<crate::storage::ssd::cufile::GpuSlot>>,
-}
-
-fn build_backend(
-    mode: TransferMode,
-    ctx: &std::sync::Arc<CudaContext>,
-) -> Result<Box<dyn TransferBackend>, EngineError> {
-    match mode {
-        TransferMode::Direct => Ok(Box::new(MemcpyBackend)),
-        TransferMode::Kernel => {
-            let kernel = KernelBackend::new(ctx)
-                .map_err(|e| EngineError::CudaInit(format!("kernel backend init failed: {e}")))?;
-            Ok(Box::new(kernel))
-        }
-    }
 }
 
 fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRuntime, EngineError> {
@@ -445,7 +624,12 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
     // Set thread-local diagnostic info
     ThreadLocalDiagnostic::insert("device_id", device_id.to_string());
 
-    let backend = build_backend(transfer_mode, &ctx)?;
+    let direct = MemcpyBackend::new(&ctx).map_err(EngineError::CudaInit)?;
+    let max_dma_pitch = direct.max_pitch;
+    let backend: Box<dyn TransferBackend> = match transfer_mode {
+        TransferMode::Direct => Box::new(direct),
+        TransferMode::Kernel => Box::new(KernelBackend::new(&ctx).map_err(EngineError::CudaInit)?),
+    };
 
     info!(
         "GPU worker initialized: device={} backend={}",
@@ -456,6 +640,7 @@ fn init_worker(device_id: i32, transfer_mode: TransferMode) -> Result<WorkerRunt
     Ok(WorkerRuntime {
         stream,
         backend,
+        max_dma_pitch,
         codec: Default::default(),
         codec_write: Default::default(),
     })
@@ -480,8 +665,9 @@ fn worker_loop(
             WorkerCommand::Load(mut task, mut observation) => {
                 let started = Instant::now();
                 observation.admitted();
-                let host_staged =
-                    restore::ssd_path(&task.layers) == Ok(Some(crate::SsdReadPath::Uring));
+                task.decode_ready_observation.admitted();
+                task.decode_ready_observation.submitted();
+                let host_staged = task.plan.ssd_path() == Some(crate::SsdReadPath::Uring);
                 let mut cancelled = false;
                 let mut gpu_observation = Observation::disabled();
                 let result = (|| {
@@ -489,9 +675,10 @@ fn worker_loop(
                         cancelled = true;
                         return Err(EngineError::Storage("GPU transfer consumer closed".into()));
                     }
+                    let layers = &mut task.layers;
                     if host_staged {
                         observation.submitted();
-                        restore::materialize_host(&mut task)?;
+                        restore::materialize_host(layers)?;
                         if task.completion.is_closed() {
                             cancelled = true;
                             return Err(EngineError::Storage(
@@ -504,8 +691,7 @@ fn worker_loop(
                             } else {
                                 TransferMode::Direct
                             };
-                            let (key, bytes) =
-                                transfer_key(&task.layers, device_id, mode, false, false);
+                            let (key, bytes) = transfer_key(layers, device_id, mode, false, false);
                             gpu_observation = Observation::new(key, Some(bytes));
                             gpu_observation.admitted();
                         }
@@ -516,17 +702,19 @@ fn worker_loop(
                         &mut observation
                     };
                     let decoded_bytes =
-                        codec::restore(&runtime, &task.layers, task.codec_budget, gpu_cost)
-                            .inspect_err(|_| {
+                        codec::restore(&runtime, layers, task.codec_budget, gpu_cost).inspect_err(
+                            |_| {
                                 core_metrics().storage_codec_decode_failures.add(1, &[]);
-                            })?;
-                    let (copies, bytes) = build_copy_descs(&task.layers)?;
+                            },
+                        )?;
+                    let (copies, bytes) = build_copy_descs(layers)?;
                     if decoded_bytes == 0 {
                         observe_raw_copies(
                             &copies,
                             device_id as u64,
                             runtime.backend.name(),
                             false,
+                            runtime.max_dma_pitch,
                             gpu_cost,
                         );
                     }
@@ -554,7 +742,7 @@ fn worker_loop(
                 } else {
                     observation.finish(outcome, actual_io);
                 }
-                finish_load(task, result.map(|_| ()), started, bytes);
+                finish_load(task, result.map(|_| ()), started, bytes, outcome);
             }
             WorkerCommand::Save(
                 SaveTask {
@@ -588,8 +776,7 @@ fn worker_loop(
                     }
                     process_save_task(
                         &layers,
-                        &runtime.stream,
-                        runtime.backend.as_ref(),
+                        &runtime,
                         &mut observation,
                         #[cfg(feature = "tracing")]
                         trace_ctx,
@@ -672,18 +859,18 @@ fn transfer_key(
     mode: TransferMode,
     write: bool,
     disk: bool,
-) -> (CostKey, u64) {
+) -> (CostEstimateKey, u64) {
     let (bytes, fragments) = transfer_shape(layers);
     let encoded = has_encoded(layers);
     let path = match (disk, encoded, write, mode) {
-        (true, _, false, _) => CostPath::GpuSsdLoad,
-        (true, _, true, _) => CostPath::GpuSsdSave,
-        (false, true, false, _) => CostPath::GpuDecode,
-        (false, true, true, _) => CostPath::GpuEncode,
-        (false, false, false, TransferMode::Direct) => CostPath::GpuLoadDirect,
-        (false, false, false, TransferMode::Kernel) => CostPath::GpuLoadKernel,
-        (false, false, true, TransferMode::Direct) => CostPath::GpuSaveDirect,
-        (false, false, true, TransferMode::Kernel) => CostPath::GpuSaveKernel,
+        (true, _, false, _) => CostObservationKind::GpuSsdLoad,
+        (true, _, true, _) => CostObservationKind::GpuSsdSave,
+        (false, true, false, _) => CostObservationKind::GpuDecode,
+        (false, true, true, _) => CostObservationKind::GpuEncode,
+        (false, false, false, TransferMode::Direct) => CostObservationKind::GpuLoadDirect,
+        (false, false, false, TransferMode::Kernel) => CostObservationKind::GpuLoadKernel,
+        (false, false, true, TransferMode::Direct) => CostObservationKind::GpuSaveDirect,
+        (false, false, true, TransferMode::Kernel) => CostObservationKind::GpuSaveKernel,
     };
     let mut representation = None;
     let mut add_format = |format| {
@@ -721,9 +908,9 @@ fn transfer_key(
         }
     }
     (
-        CostKey::new(
+        CostEstimateKey::new(
             path,
-            device as u64,
+            ExecutionResource::Gpu(device as u64),
             representation.unwrap_or(Representation::Raw),
             bytes,
             fragments,
@@ -732,19 +919,36 @@ fn transfer_key(
     )
 }
 
-fn raw_copy_keys(copies: &[CopyDesc], device: u64, write: bool) -> ([CostKey; 2], u64) {
+fn raw_copy_keys(
+    copies: &[CopyDesc],
+    device: u64,
+    write: bool,
+    max_pitch: usize,
+) -> ([CostEstimateKey; 2], u64) {
     let bytes = copies
         .iter()
         .fold(0u64, |bytes, copy| bytes.saturating_add(copy.size as u64));
-    let dma_ranges = crate::transfer::memcpy::merged_ranges(copies).count();
+    let dma_ranges = crate::transfer::memcpy::dma_copies(copies, max_pitch).count();
     let paths = if write {
-        [CostPath::GpuSaveDirect, CostPath::GpuSaveKernel]
+        [
+            CostObservationKind::GpuSaveDirect,
+            CostObservationKind::GpuSaveKernel,
+        ]
     } else {
-        [CostPath::GpuLoadDirect, CostPath::GpuLoadKernel]
+        [
+            CostObservationKind::GpuLoadDirect,
+            CostObservationKind::GpuLoadKernel,
+        ]
     };
     let keys = paths.map(|path| {
-        CostKey::new(path, device, Representation::Raw, bytes, copies.len())
-            .with_dma_ranges(dma_ranges)
+        CostEstimateKey::new(
+            path,
+            ExecutionResource::Gpu(device),
+            Representation::Raw,
+            bytes,
+            copies.len(),
+        )
+        .with_dma_ranges(dma_ranges)
     });
     (keys, bytes)
 }
@@ -754,12 +958,13 @@ fn observe_raw_copies(
     device: u64,
     backend: &str,
     write: bool,
+    max_pitch: usize,
     observation: &mut Observation,
 ) {
     if !enabled() || copies.is_empty() {
         return;
     }
-    let (keys, bytes) = raw_copy_keys(copies, device, write);
+    let (keys, bytes) = raw_copy_keys(copies, device, write, max_pitch);
     let selected = usize::from(backend == "kernel");
     if !observation.refine_raw_copy(keys[selected], bytes) {
         return;
@@ -773,92 +978,124 @@ fn observe_raw_copies(
     shadow(candidates, selected);
 }
 
-/// Build one `CopyDesc` per GPU segment of every block across all layers,
-/// pairing device ranges from the layout with the host segments of each
-/// block's `RawBlock`. Direction-agnostic: load and save submit the same
-/// descriptors to `h2d`/`d2h` respectively.
-///
-/// Returns `(copies, total_bytes)`.
+/// Bind validated device ranges to checked host segments without changing direction.
+/// Appends only when every segment fits and returns the actual transfer byte count.
+pub(crate) fn append_copy_descs(
+    copies: &mut Vec<CopyDesc>,
+    device_allocation: usize,
+    block_copies: BlockCopies,
+    raw: &RawBlock,
+    host_offset: usize,
+) -> Result<usize, EngineError> {
+    if raw.encoding.is_some() {
+        return Err(EngineError::InvalidArgument(
+            "encoded source cannot be submitted as raw copies".into(),
+        ));
+    }
+    let descriptor = |segment: usize, offset: usize, device, size: usize| {
+        let invalid = || EngineError::Storage("raw copy exceeds its host segment".into());
+        let end = offset.checked_add(size).ok_or_else(invalid)?;
+        let segment_size = raw.segment_size(segment).ok_or_else(invalid)?;
+        if end > segment_size {
+            return Err(invalid());
+        }
+        let ptr = raw
+            .segment_mapped_ptr(segment)
+            .ok_or_else(invalid)?
+            .add(offset);
+        Ok(CopyDesc {
+            device,
+            host: ptr.host().as_ptr(),
+            host_device: ptr.device().as_ptr() as u64,
+            size,
+            device_allocation,
+            host_registration: raw.segment_registration_id(segment).ok_or_else(invalid)?,
+        })
+    };
+    match block_copies {
+        BlockCopies::Contiguous(copy) => {
+            copies.push(descriptor(0, host_offset, copy.addr, copy.bytes)?);
+            Ok(copy.bytes)
+        }
+        BlockCopies::Split { k, v } => {
+            let k_copy = descriptor(0, host_offset, k.addr, k.bytes)?;
+            let (v_segment, v_offset) = if raw.num_segments() > 1 {
+                (1, host_offset)
+            } else {
+                (
+                    0,
+                    host_offset.checked_add(k.bytes).ok_or_else(|| {
+                        EngineError::Storage("raw copy host offset overflow".into())
+                    })?,
+                )
+            };
+            let v_copy = descriptor(v_segment, v_offset, v.addr, v.bytes)?;
+            let bytes = k
+                .bytes
+                .checked_add(v.bytes)
+                .ok_or_else(|| EngineError::Storage("raw copy byte count overflow".into()))?;
+            copies.extend([k_copy, v_copy]);
+            Ok(bytes)
+        }
+    }
+}
+
+/// Encoded/SSD restore and Publish retain layer payloads until their physical route
+/// is ready; compile their remaining raw ranges with the same source-bound checks.
 fn build_copy_descs(layers: &[LayerTransferData]) -> Result<(Vec<CopyDesc>, usize), EngineError> {
-    let mut copies: Vec<CopyDesc> = Vec::new();
+    let capacity = layers
+        .iter()
+        .map(|layer| {
+            layer.blocks.len()
+                * if layer.layout.geometry().is_split() {
+                    2
+                } else {
+                    1
+                }
+        })
+        .sum();
+    let mut copies = Vec::with_capacity(capacity);
     let mut total_bytes = 0usize;
-
     for (layer_index, layer) in layers.iter().enumerate() {
-        let layer_name = &layer.layer_name;
-
         for block in &layer.blocks {
             if matches!(block.block, TransferPayload::Ssd { .. }) {
                 continue;
             }
-            if block.block.raw().encoding.is_some() {
+            let raw = block.block.raw();
+            if raw.encoding.is_some() {
                 continue;
             }
-            let block_copies = layer
+            let ranges = layer
                 .layout
                 .block_copies(block.block_idx)
-                .map_err(|e| EngineError::Storage(format!("layer {layer_name}: {e}")))?;
-
-            // Page-first reads/writes every layer from one slot at its byte
-            // offset; layer-first leaves this 0 (slot == layer).
-            let host_offset = block.block.host_offset();
-
-            match block_copies {
-                BlockCopies::Split { k, v } => {
-                    let raw = block.block.raw();
-                    let k_ptr = raw.segment_mapped_ptr(0).unwrap().add(host_offset);
-                    // SAFETY: For a contiguous host block (segment 1 absent), the
-                    // allocation is 2 * segment size, so k + k.bytes is in bounds.
-                    let v_ptr = raw
-                        .segment_mapped_ptr(1)
-                        .map(|p| p.add(host_offset))
-                        .unwrap_or_else(|| k_ptr.add(k.bytes));
-
-                    copies.push(CopyDesc {
-                        device: k.addr,
-                        host: k_ptr.host().as_ptr(),
-                        host_device: k_ptr.device().as_ptr() as u64,
-                        size: k.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: raw.segment_allocation_id(0).unwrap(),
-                    });
-                    copies.push(CopyDesc {
-                        device: v.addr,
-                        host: v_ptr.host().as_ptr(),
-                        host_device: v_ptr.device().as_ptr() as u64,
-                        size: v.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: raw
-                            .segment_allocation_id(1)
-                            .unwrap_or_else(|| raw.segment_allocation_id(0).unwrap()),
-                    });
-                    total_bytes += k.bytes + v.bytes;
-                }
-                BlockCopies::Contiguous(c) => {
-                    let ptr = block
-                        .block
-                        .raw()
-                        .segment_mapped_ptr(0)
-                        .unwrap()
-                        .add(host_offset);
-                    copies.push(CopyDesc {
-                        device: c.addr,
-                        host: ptr.host().as_ptr(),
-                        host_device: ptr.device().as_ptr() as u64,
-                        size: c.bytes,
-                        device_allocation: layer_index,
-                        host_allocation: block.block.raw().segment_allocation_id(0).unwrap(),
-                    });
-                    total_bytes += c.bytes;
-                }
-            }
+                .map_err(|error| {
+                    EngineError::Storage(format!("layer {}: {error}", layer.layer_name))
+                })?;
+            let bytes = append_copy_descs(
+                &mut copies,
+                layer_index,
+                ranges,
+                raw,
+                block.block.host_offset(),
+            )?;
+            total_bytes = total_bytes
+                .checked_add(bytes)
+                .ok_or_else(|| EngineError::Storage("raw transfer byte count overflow".into()))?;
         }
     }
-
+    // Copy ownership IDs prevent coalescing across distinct allocations.
+    copies.sort_unstable_by_key(|copy| copy.device);
     Ok((copies, total_bytes))
 }
 
 /// Publish completion only after the worker establishes that all GPU access has ended.
-fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant, bytes: usize) {
+fn finish_load(
+    mut task: LoadTask,
+    result: Result<(), EngineError>,
+    started: Instant,
+    bytes: usize,
+    outcome: Outcome,
+) {
     if result.is_ok() {
         for layer in &task.layers {
             for block in &layer.blocks {
@@ -877,8 +1114,11 @@ fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant
         error!("GPU restore failed: {error}");
         core_metrics().load_failures.add(1, &[]);
     }
+    let wire_bytes = result.is_ok().then_some(task.plan.source_bytes());
+    task.decode_ready_observation.finish(outcome, wire_bytes);
     drop(task.layers);
     drop(task.reservations);
+    drop(task.decode_admission.take());
     let _ = task.completion.send(LoadOutcome {
         result,
         completed_at: Instant::now(),
@@ -890,13 +1130,14 @@ fn finish_load(task: LoadTask, result: Result<(), EngineError>, started: Instant
 /// backend, then synchronized once.
 fn process_save_task(
     layers: &[LayerTransferData],
-    stream: &Arc<CudaStream>,
-    backend: &dyn TransferBackend,
+    runtime: &WorkerRuntime,
     observation: &mut Observation,
     #[cfg(feature = "tracing")] trace_ctx: Option<::fastrace::prelude::SpanContext>,
 ) -> Result<(), EngineError> {
     trace_child!("gpu.save_task", trace_ctx);
     let start = std::time::Instant::now();
+    let stream = &runtime.stream;
+    let backend = runtime.backend.as_ref();
     let total_blocks: usize = layers.iter().map(|l| l.blocks.len()).sum();
 
     let (copies, total_bytes) = build_copy_descs(layers)?;
@@ -906,6 +1147,7 @@ fn process_save_task(
         stream.context().ordinal() as u64,
         backend.name(),
         true,
+        runtime.max_dma_pitch,
         observation,
     );
     observation.submitted();

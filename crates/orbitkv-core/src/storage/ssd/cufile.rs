@@ -16,6 +16,7 @@ use cudarc::driver::sys::CUstream;
 use libloading::Library;
 
 use super::GpuIo;
+use crate::cost::ExecutionResource;
 
 pub(crate) const ALIGNMENT: usize = 4096;
 pub(crate) const STAGING_BYTES: usize = 4 * 1024 * 1024;
@@ -162,7 +163,7 @@ pub(crate) struct CufileFile {
     handle: NonNull<c_void>,
     _file: File,
     pub(crate) gpu_io: Arc<GpuIo>,
-    cost_resource: u64,
+    cost_resource: ExecutionResource,
 }
 
 // SAFETY: cuFile's file APIs are thread-safe. The handle and fd stay live until
@@ -210,7 +211,7 @@ impl CufileFile {
             handle,
             _file: file,
             gpu_io,
-            cost_resource,
+            cost_resource: ExecutionResource::SsdFile(cost_resource),
         })
     }
 }

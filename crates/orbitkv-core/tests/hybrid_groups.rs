@@ -167,7 +167,10 @@ async fn recurrent_group_seals_final_block_save() {
             ],
         )
         .expect("submit hybrid load");
-    wait_for_load(receiver, LOAD_WAIT_TIMEOUT).await;
+    env.restore_outcome(receiver)
+        .await
+        .result
+        .expect("restore failed");
 
     // Attention blocks 0..2 restored, the rest still zero.
     for (layer_idx, expected) in attn_expected.iter().enumerate() {

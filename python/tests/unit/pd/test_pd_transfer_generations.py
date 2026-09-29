@@ -10,6 +10,7 @@ from .pd_connector_test_utils import (
     RELEASE_CONSUMER_ABORT,
     RELEASE_PRODUCER_PREEMPTED,
     BlockRegionSlice,
+    FakeKVTransferConfig,
     FakeMooncakeTransferEngine,
     FakeTensor,
     LayerBlockSlices,
@@ -18,8 +19,9 @@ from .pd_connector_test_utils import (
     PdPrefillWorkerConnector,
     PushReqMeta,
     RealMooncakePort,
-    hnd_remote_layer,
+    packed_remote_layer,
     prefill_worker_mod,
+    split_remote_layer,
 )
 
 
@@ -27,7 +29,7 @@ from .pd_connector_test_utils import (
 def push_state():
     engine = FakeMooncakeTransferEngine()
     transfer = RealMooncakePort(engine)
-    layer = hnd_remote_layer(block_ids=(0, 1))
+    layer = split_remote_layer(block_ids=(0, 1))
     transfer.register_local_layers((layer,))
     handshake = PdHandshake(
         request_id="remote-old",
@@ -100,18 +102,16 @@ def test_queued_push_cannot_borrow_reopened_request_authorization(push_state):
 
 
 def test_reopen_during_descriptor_construction_rejects_before_transport(push_state, monkeypatch):
-    import orbitkv.vllm.pd.mooncake as mooncake
-
     engine, transfer, handshake, blocks = push_state
     generation = transfer.open_request("req", handshake)
-    original = mooncake._layer_blocks_to_native
 
-    def replace_during_construction(blocks):
-        transfer.close_request("req")
-        transfer.open_request("req", replace(handshake, transfer_endpoint="new-peer:1"))
-        return original(blocks)
+    class ReopenedBlocks(list):
+        def __iter__(self):
+            transfer.close_request("req")
+            transfer.open_request("req", replace(handshake, transfer_endpoint="new-peer:1"))
+            return super().__iter__()
 
-    monkeypatch.setattr(mooncake, "_layer_blocks_to_native", replace_during_construction)
+    blocks = ReopenedBlocks(blocks)
     with pytest.raises(RuntimeError, match="stale Mooncake push generation"):
         transfer.push_layer("req", 0, blocks, request_generation=generation)
     assert engine.writes == []
@@ -175,22 +175,22 @@ def test_admitted_write_completion_cannot_update_replacement_statistics(push_sta
 @pytest.mark.parametrize("changed", ["authorization", "target", "empty_targets"])
 def test_active_chunks_cannot_replace_push_authorization(push_state, monkeypatch, changed):
     _, transfer, handshake, _ = push_state
-    handshake = replace(handshake, layers=(hnd_remote_layer(block_ids=(0, 1), block_len=4096),))
+    handshake = replace(handshake, layers=(packed_remote_layer(block_ids=(0, 1), block_len=8192),))
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
     )
     worker.register_kv_caches(
-        {"layer.0": FakeTensor(shape=(2, 8, 16, 4, 32), stride=(16384, 2048, 32, 512, 1))}
+        {"layer.0": FakeTensor(shape=(8, 4, 16, 64), stride=(4096, 1024, 64, 1))}
     )
     first = PushReqMeta(
         local_block_ids=([1],), target_request_id="remote-old", handshakes=(handshake,)
     )
     try:
-        worker.start_load_kv(PdConnectorMetadata(reqs_to_push={"req": first}), None)
+        worker.prepare_pushes(PdConnectorMetadata(reqs_to_push={"req": first}))
         original = worker._prefill._push_authorizations["req"]
         replacement = replace(first, local_block_ids=([2],))
         if changed == "authorization":
@@ -205,7 +205,7 @@ def test_active_chunks_cannot_replace_push_authorization(push_state, monkeypatch
                 worker._prefill, "_build_push_layout_plan", lambda *args: replace(plan, targets=())
             )
         with pytest.raises(RuntimeError, match="changed before release"):
-            worker.start_load_kv(PdConnectorMetadata(reqs_to_push={"req": replacement}), None)
+            worker.prepare_pushes(PdConnectorMetadata(reqs_to_push={"req": replacement}))
         assert worker._prefill._push_authorizations["req"] == original
         assert worker._prefill._logical_to_physical["req"] == ("req",)
         assert worker._prefill.push_reqs["req"] == first
@@ -219,19 +219,19 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
     push_state, monkeypatch, reason
 ):
     engine, transfer, handshake, _ = push_state
-    handshake = replace(handshake, layers=(hnd_remote_layer(block_ids=(0, 1), block_len=4096),))
+    handshake = replace(handshake, layers=(packed_remote_layer(block_ids=(0, 1), block_len=8192),))
     worker = PdPrefillWorkerConnector(
         SimpleNamespace(
-            kv_transfer_config=SimpleNamespace(engine_id="prefill"),
+            kv_transfer_config=FakeKVTransferConfig(engine_id="prefill"),
             parallel_config=SimpleNamespace(tensor_parallel_rank=0, tensor_parallel_size=1),
         ),
         transfer=transfer,
     )
-    tensor = FakeTensor(shape=(2, 8, 16, 4, 32), stride=(16384, 2048, 32, 512, 1))
+    tensor = FakeTensor(shape=(8, 4, 16, 64), stride=(4096, 1024, 64, 1))
     worker.register_kv_caches({"layer.0": tensor})
     submitted, completed, draining, retired = (threading.Event() for _ in range(4))
     errors = []
-    sender = worker._push_sender
+    sender = worker._prefill._push_sender
     original_write, original_wait = engine.write, sender.wait_req
 
     def blocked_write(*args, **kwargs):
@@ -245,9 +245,8 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
 
     def release():
         try:
-            worker.start_load_kv(
-                PdConnectorMetadata(reqs_to_release={"req"}, release_reasons={"req": reason}),
-                None,
+            worker.prepare_pushes(
+                PdConnectorMetadata(reqs_to_release={"req"}, release_reasons={"req": reason})
             )
         except BaseException as error:
             errors.append(error)
@@ -258,7 +257,7 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
     monkeypatch.setattr(sender, "wait_req", observe_drain)
     releaser = threading.Thread(target=release)
     try:
-        worker.start_load_kv(
+        worker.prepare_pushes(
             PdConnectorMetadata(
                 reqs_to_push={
                     "req": PushReqMeta(
@@ -267,8 +266,7 @@ def test_sender_error_cannot_retire_authorization_before_admitted_write_drains(
                         handshakes=(handshake,),
                     )
                 }
-            ),
-            None,
+            )
         )
         prepared = worker._prefill._push_layer_plans["req"][0].target_pushes[0]
         worker.save_kv_layer("layer.0", tensor, SimpleNamespace())

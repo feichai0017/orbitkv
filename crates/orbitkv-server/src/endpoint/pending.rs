@@ -155,7 +155,7 @@ impl PendingQueries {
             .is_some_and(|task| task.request.ticket == ticket)
             && let Some(task) = self.pending.remove(&key)
         {
-            crate::metric::timeline::record("query_cancel", || {
+            orbitkv_common::timeline::record("query_cancel", || {
                 serde_json::json!({
                     "request_id": task.request.request_id,
                     "operation_id": ticket.operation_id, "revision": ticket.revision,
@@ -306,7 +306,7 @@ impl PendingQueries {
             return Err(EngineError::Storage("cache query timed out".into()));
         }
         if !task.request.wait_for_full_prefix && !task.request.discover && task.control.expired() {
-            crate::metric::timeline::record("read_deadline", || {
+            orbitkv_common::timeline::record("read_deadline", || {
                 serde_json::json!({
                     "request_id": task.request.request_id,
                     "operation_id": ticket.operation_id, "revision": ticket.revision,

@@ -1,12 +1,12 @@
 use super::*;
-use crate::cost::{CostPath, Representation};
+use crate::cost::{CostObservationKind, ExecutionResource, Representation};
 use crate::cost::{MIN_SAMPLES, enabled};
 use std::time::Duration;
 
-fn key(resource: u64) -> CostKey {
-    CostKey::new(
-        CostPath::GpuLoadDirect,
-        resource,
+fn key(resource: u64) -> CostEstimateKey {
+    CostEstimateKey::new(
+        CostObservationKind::GpuLoadDirect,
+        ExecutionResource::Gpu(resource),
         Representation::Raw,
         65536,
         4,
@@ -59,17 +59,16 @@ fn failed_cancelled_and_unsubmitted_operations_never_train_estimates() {
     };
     let end = start + Duration::from_millis(130);
     for path in [
-        CostPath::GpuLoadDirect,
-        CostPath::SsdUringRestore,
-        CostPath::SsdCufileRestore,
+        CostObservationKind::GpuLoadDirect,
+        CostObservationKind::SsdUringRestore,
+        CostObservationKind::SsdCufileRestore,
     ] {
-        running.key.path = path;
+        running.key.kind = path;
         running.submitted = Some(start + Duration::from_millis(30));
         assert_eq!(running.service_sample(Outcome::Completed, end), Some(0.1));
         for outcome in [
             Outcome::Failed,
             Outcome::Cancelled,
-            #[cfg(feature = "mooncake")]
             Outcome::TimedOut,
             Outcome::Abandoned,
         ] {
@@ -83,7 +82,33 @@ fn failed_cancelled_and_unsubmitted_operations_never_train_estimates() {
 }
 
 #[test]
-fn ssd_routes_compare_enqueue_to_completion_despite_different_internal_admission() {
+fn completion_observations_train_only_after_admitted_completion() {
+    let elapsed = Duration::from_millis(25);
+    assert_eq!(
+        admitted_completion_seconds(true, Outcome::Completed, elapsed),
+        Some(0.025)
+    );
+    for admitted in [false, true] {
+        for outcome in [
+            Outcome::Failed,
+            Outcome::Cancelled,
+            Outcome::TimedOut,
+            Outcome::Abandoned,
+        ] {
+            assert_eq!(
+                admitted_completion_seconds(admitted, outcome, elapsed),
+                None
+            );
+        }
+    }
+    assert_eq!(
+        admitted_completion_seconds(false, Outcome::Completed, elapsed),
+        None
+    );
+}
+
+#[test]
+fn complete_routes_compare_enqueue_to_completion_despite_different_internal_admission() {
     let start = Instant::now();
     let end = start + Duration::from_millis(130);
     let mut running = Running {
@@ -97,10 +122,13 @@ fn ssd_routes_compare_enqueue_to_completion_despite_different_internal_admission
     assert_eq!(running.estimate_sample(Outcome::Completed, end), Some(0.1));
 
     for (path, submitted_ms, service) in [
-        (CostPath::SsdUringRestore, 30, 0.1),
-        (CostPath::SsdCufileRestore, 80, 0.05),
+        (CostObservationKind::SsdUringRestore, 30, 0.1),
+        (CostObservationKind::SsdCufileRestore, 80, 0.05),
+        (CostObservationKind::LocalSsdHostReady, 60, 0.07),
+        (CostObservationKind::CacheRestore, 40, 0.09),
+        (CostObservationKind::PrefillToDecodeHandoff, 20, 0.11),
     ] {
-        running.key.path = path;
+        running.key.kind = path;
         running.submitted = Some(start + Duration::from_millis(submitted_ms));
         assert_eq!(
             running.service_sample(Outcome::Completed, end),
@@ -111,7 +139,7 @@ fn ssd_routes_compare_enqueue_to_completion_despite_different_internal_admission
 }
 
 #[test]
-fn ssd_route_submission_preserves_the_prediction_taken_at_enqueue() {
+fn complete_route_submission_preserves_the_prediction_taken_at_enqueue() {
     let start = Instant::now();
     let prediction = Estimate {
         count: MIN_SAMPLES,
@@ -119,9 +147,15 @@ fn ssd_route_submission_preserves_the_prediction_taken_at_enqueue() {
         absolute_error: 0.03,
         updated: start,
     };
-    for path in [CostPath::SsdUringRestore, CostPath::SsdCufileRestore] {
+    for path in [
+        CostObservationKind::SsdUringRestore,
+        CostObservationKind::SsdCufileRestore,
+        CostObservationKind::LocalSsdHostReady,
+        CostObservationKind::CacheRestore,
+        CostObservationKind::PrefillToDecodeHandoff,
+    ] {
         let mut observation = Observation(Some(Running {
-            key: CostKey { path, ..key(9998) },
+            key: key(9998).with_observation_kind(path),
             logical_bytes: Some(4096),
             enqueued: start,
             admitted: None,
@@ -165,20 +199,20 @@ fn raw_shape_refinement_preserves_timing_and_cannot_relabel_composite_or_submitt
     let admitted = start + Duration::from_millis(10);
     let refined = key(9997).with_dma_ranges(1);
     for (path, raw) in [
-        (CostPath::GpuLoadDirect, true),
-        (CostPath::GpuLoadKernel, true),
-        (CostPath::GpuSaveDirect, true),
-        (CostPath::GpuSaveKernel, true),
-        (CostPath::GpuDecode, false),
-        (CostPath::GpuEncode, false),
-        (CostPath::GpuSsdLoad, false),
-        (CostPath::GpuSsdSave, false),
-        (CostPath::SsdUringRestore, false),
-        (CostPath::SsdCufileRestore, false),
+        (CostObservationKind::GpuLoadDirect, true),
+        (CostObservationKind::GpuLoadKernel, true),
+        (CostObservationKind::GpuSaveDirect, true),
+        (CostObservationKind::GpuSaveKernel, true),
+        (CostObservationKind::GpuDecode, false),
+        (CostObservationKind::GpuEncode, false),
+        (CostObservationKind::GpuSsdLoad, false),
+        (CostObservationKind::GpuSsdSave, false),
+        (CostObservationKind::SsdUringRestore, false),
+        (CostObservationKind::SsdCufileRestore, false),
     ] {
-        let original = key(9997).with_path(path);
+        let original = key(9997).with_observation_kind(path);
         let candidate = if raw {
-            refined.with_path(path)
+            refined.with_observation_kind(path)
         } else {
             refined
         };

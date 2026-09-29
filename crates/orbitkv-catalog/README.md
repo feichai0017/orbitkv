@@ -1,5 +1,10 @@
 # OrbitKV catalog
 
+This document describes the implemented sharded Catalog. The selected
+[local global-index replacement](../../docs/distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+uses etcd block metadata and complete local snapshots; that cutover is not yet
+implemented. Keep current deployment instructions until it lands.
+
 This library embeds replica discovery in Cache Managers. It owns fixed shard
 placement, cached membership, the inventory index, and the peer gRPC catalog
 service. There is no catalog executable, Python launcher, or separate HTTP port.
@@ -28,10 +33,13 @@ cluster, not network authentication. TLS/auth integration remains open.
 
 ## Inventory recovery
 
-Each Manager maintains an independently ordered DRAM inventory and bounded
-journal per shard. Actual insertions and removals update residency and sequence
-under the cache lock. Duplicate insertions and rejected admissions produce no
-event; journals retain no payload references. SSD-only replicas are not advertised.
+Each Manager maintains an independently ordered residency inventory and bounded
+journal per shard. Actual insertions and removals update residency, sequence,
+representation family and known stored bytes under the cache lock. Duplicate
+insertions and rejected admissions produce no event; journals retain no payload
+references. A committed SSD copy is advertised when no DRAM copy survives;
+pending, overwritten or invalidated extents are not. Requesters still filter
+SSD candidates until source-local staging is implemented and qualified.
 
 The [schema](../orbitkv-proto/proto/engine.proto) exposes `HeartbeatNode`,
 `SyncInventory`, `LocateBlocks`, and `UnregisterNode` on the Manager's peer port.
@@ -64,7 +72,7 @@ not wait for this barrier; remote visibility is asynchronous.
 | Catalog index admission | `--catalog-budget`, default 256 MiB, divided across assigned shards |
 | Inventory page/delta | 1,024 records, 512 KiB of accounted record bytes |
 | Cold discovery batch | 128 keys, 64 KiB of namespace/hash bytes, one catalog host |
-| Candidate row | At most four endpoint/incarnation/insertion-sequence hints |
+| Candidate row | At most four endpoint/incarnation/sequence/medium/representation/byte hints |
 | Cold query | Three-second deadline including coalescing; at most four hosts queried concurrently |
 | Catalog gRPC message | 4 MiB |
 | Concurrent catalog operations | 16 per Manager |
@@ -103,6 +111,7 @@ bounded accounting. Private units stay under `tests/unit/`; the cleanup workload
 [benches/catalog.rs](../../benches/catalog.rs).
 
 Each shard currently has one metadata copy. Replication, weighted/versioned
-handoff, subscriptions and remote SSD discovery remain planned. Recovery rebuilds
+handoff and subscriptions remain planned. DRAM/SSD discovery is implemented;
+peer SSD execution still needs physical two-host qualification. Recovery rebuilds
 metadata from surviving owners; it does not recover lost payloads or revoke
 orphaned source transfers. Single-host tests do not qualify cross-host HA.

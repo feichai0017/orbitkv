@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use crate::SsdReadPath;
+#[cfg(feature = "mooncake")]
+use crate::cost::{CostEstimateKey, CostObservationKind};
 use crate::storage::ssd::{SsdReadLease, SsdStore};
 
 use super::read::{ReadPlan, ReadTarget};
@@ -10,6 +12,7 @@ use super::replica::ReplicaSet;
 pub(crate) struct SsdReadPlan<'a> {
     rows: &'a [ReplicaSet],
     pub(crate) path: SsdReadPath,
+    pub(crate) allow_uring_fallback: bool,
     required: usize,
 }
 
@@ -19,15 +22,24 @@ impl ReadPlan {
         store: &SsdStore,
         codec_budget: usize,
     ) -> Option<SsdReadPlan<'_>> {
-        if self.target != ReadTarget::EngineRestore
-            || (store.read_path.is_none() && !store.gpu_io.available())
-        {
+        if self.target != ReadTarget::EngineRestore {
             return None;
         }
-        self.ssd(store.read_path.unwrap_or(SsdReadPath::Cufile), codec_budget)
+        let (path, allow_uring_fallback) =
+            deferred_route(store.read_path, store.gpu_io.available())?;
+        self.ssd_route(path, codec_budget, allow_uring_fallback)
     }
 
     pub(crate) fn ssd(&self, path: SsdReadPath, codec_budget: usize) -> Option<SsdReadPlan<'_>> {
+        self.ssd_route(path, codec_budget, false)
+    }
+
+    fn ssd_route(
+        &self,
+        path: SsdReadPath,
+        codec_budget: usize,
+        allow_uring_fallback: bool,
+    ) -> Option<SsdReadPlan<'_>> {
         let count = self
             .rows
             .iter()
@@ -48,12 +60,65 @@ impl ReadPlan {
         Some(SsdReadPlan {
             rows,
             path,
+            allow_uring_fallback,
             required: self.required,
         })
     }
 }
 
+fn deferred_route(
+    explicit: Option<SsdReadPath>,
+    cufile_available: bool,
+) -> Option<(SsdReadPath, bool)> {
+    match explicit {
+        Some(path) => Some((path, false)),
+        None if cufile_available => Some((SsdReadPath::Cufile, true)),
+        None => None,
+    }
+}
+
 impl SsdReadPlan<'_> {
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn block_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn cost_estimate_key(&self) -> Option<CostEstimateKey> {
+        let first = self.rows.first()?.local_ssd()?;
+        let resource = first.cost_resource()?;
+        let mut bytes = 0u64;
+        let mut representation = None;
+        for row in self.rows {
+            let candidate = row.local_ssd()?;
+            if candidate.cost_resource()? != resource {
+                return None;
+            }
+            let metadata = candidate.replica_metadata();
+            bytes = bytes.checked_add(metadata.stored_bytes?)?;
+            representation = Some(match representation {
+                None => metadata.representation,
+                Some(orbitkv_state::ReplicaRepresentation::Unknown) => {
+                    orbitkv_state::ReplicaRepresentation::Unknown
+                }
+                Some(_)
+                    if metadata.representation == orbitkv_state::ReplicaRepresentation::Unknown =>
+                {
+                    orbitkv_state::ReplicaRepresentation::Unknown
+                }
+                Some(previous) if previous == metadata.representation => previous,
+                Some(_) => orbitkv_state::ReplicaRepresentation::Mixed,
+            });
+        }
+        Some(CostEstimateKey::new(
+            CostObservationKind::LocalSsdHostReady,
+            resource,
+            representation.unwrap_or_default(),
+            bytes,
+            self.rows.len(),
+        ))
+    }
+
     pub(crate) fn acquire(self, codec_budget: usize) -> Option<Vec<Arc<SsdReadLease>>> {
         let leases: Vec<_> = self
             .rows
@@ -71,3 +136,7 @@ impl SsdReadPlan<'_> {
         Some(leases)
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/planning/ssd.rs"]
+mod tests;

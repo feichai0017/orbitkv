@@ -144,7 +144,15 @@ def metrics(url: str | None) -> dict[str, float]:
                 labels = dict(re.findall(r'(\w+)="([^"\\]*)"', series))
                 dimensions = [
                     f"{label}={labels[label]}"
-                    for label in ("path", "stage", "outcome", "evidence", "decision", "reason")
+                    for label in (
+                        "path",
+                        "stage",
+                        "outcome",
+                        "evidence",
+                        "decision",
+                        "scope",
+                        "reason",
+                    )
                     if label in labels
                 ]
                 if dimensions:

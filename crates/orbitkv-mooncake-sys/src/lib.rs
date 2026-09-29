@@ -1,9 +1,8 @@
-//! Raw dynamic bindings for the pinned upstream Mooncake Transfer Engine.
+//! Raw dynamic bindings for the pinned Mooncake TENT C ABI.
 //!
-//! This sys crate builds Mooncake from the pinned stable submodule. At runtime it loads
-//! the shared libraries next to the final executable/Python extension, from an
-//! explicit `ORBITKV_MOONCAKE_LIB_DIR`, or from Cargo's build output. This
-//! keeps Mooncake's C++ dependency graph out of every Rust final link.
+//! The sys crate builds only TENT from the pinned Mooncake submodule. Runtime
+//! loading stays dynamic so the native dependency graph is not linked into
+//! every Rust binary or Python extension.
 
 #![allow(
     clippy::missing_safety_doc,
@@ -11,7 +10,7 @@
 )]
 
 use std::env;
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, OsString, c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -31,55 +30,120 @@ const WORKSPACE_RUNTIME_LIB_DIR: &str = concat!(
 );
 
 pub type NativeEngine = *mut c_void;
-pub type SegmentId = i32;
+pub type SegmentId = u64;
 pub type BatchId = u64;
+
+pub const INVALID_SEGMENT: SegmentId = u64::MAX;
+pub const INVALID_BATCH: BatchId = 0;
+
+const GLOBAL_READ_WRITE: c_int = 2;
+const TRANSPORT_UNSPECIFIED: c_int = 0;
+
+struct SuspendedTentConfig(Option<OsString>);
+
+impl SuspendedTentConfig {
+    fn for_forced_tcp() -> Option<Self> {
+        env::var_os("MC_FORCE_TCP")?;
+        let previous = env::var_os("MC_TENT_CONF");
+        unsafe { env::remove_var("MC_TENT_CONF") };
+        Some(Self(previous))
+    }
+}
+
+impl Drop for SuspendedTentConfig {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(value) => unsafe { env::set_var("MC_TENT_CONF", value) },
+            None => unsafe { env::remove_var("MC_TENT_CONF") },
+        }
+    }
+}
 
 #[repr(C)]
 pub struct TransferRequest {
-    pub opcode: i32,
+    pub opcode: c_int,
     pub source: *mut c_void,
     pub target_id: SegmentId,
     pub target_offset: u64,
     pub length: u64,
+    pub priority: c_int,
+    pub transport_hint: c_int,
 }
 
 #[repr(C)]
 pub struct TransferStatus {
-    pub status: i32,
+    pub status: c_int,
     pub transferred_bytes: u64,
 }
 
 #[repr(C)]
-pub struct Notify {
-    pub name: *mut c_char,
-    pub message: *mut c_char,
+pub struct MemoryOptions {
+    pub location: [c_char; 64],
+    pub permission: c_int,
+    pub transport_type: c_int,
+    pub shm_path: [c_char; 256],
+    pub shm_offset: usize,
+    pub internal: c_int,
 }
 
-type Create =
-    unsafe extern "C" fn(*const c_char, *const c_char, *const c_char, u64, c_int) -> NativeEngine;
+#[repr(C)]
+pub struct NotificationRecord {
+    pub handle: SegmentId,
+    pub name: [c_char; 256],
+    pub message: [c_char; 4096],
+}
+
+#[repr(C)]
+pub struct NotificationInfo {
+    pub count: c_int,
+    pub records: *mut NotificationRecord,
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct NicLoadStat {
+    pub device_name: [c_char; 64],
+    pub inflight_bytes: u64,
+    pub ewma_bandwidth_bps: f64,
+}
+
+type SetConfig = unsafe extern "C" fn(*const c_char, *const c_char);
+type Create = unsafe extern "C" fn() -> NativeEngine;
 type Destroy = unsafe extern "C" fn(NativeEngine);
+type Available = unsafe extern "C" fn(NativeEngine) -> c_int;
 type LocalEndpoint = unsafe extern "C" fn(NativeEngine, *mut c_char, usize) -> c_int;
-type OpenSegment = unsafe extern "C" fn(NativeEngine, *const c_char) -> SegmentId;
+type OpenSegment = unsafe extern "C" fn(NativeEngine, *mut SegmentId, *const c_char) -> c_int;
 type CloseSegment = unsafe extern "C" fn(NativeEngine, SegmentId) -> c_int;
 type RegisterMemory =
-    unsafe extern "C" fn(NativeEngine, *mut c_void, usize, *const c_char, c_int) -> c_int;
-type UnregisterMemory = unsafe extern "C" fn(NativeEngine, *mut c_void) -> c_int;
+    unsafe extern "C" fn(NativeEngine, *mut c_void, usize, *mut MemoryOptions) -> c_int;
+type UnregisterMemory = unsafe extern "C" fn(NativeEngine, *mut c_void, usize) -> c_int;
 type AllocateBatch = unsafe extern "C" fn(NativeEngine, usize) -> BatchId;
 type Submit = unsafe extern "C" fn(NativeEngine, BatchId, *mut TransferRequest, usize) -> c_int;
-type SubmitWithNotify =
-    unsafe extern "C" fn(NativeEngine, BatchId, *mut TransferRequest, usize, Notify) -> c_int;
+type SubmitWithNotify = unsafe extern "C" fn(
+    NativeEngine,
+    BatchId,
+    *mut TransferRequest,
+    usize,
+    *const c_char,
+    *const c_char,
+) -> c_int;
 type TransferStatusFn =
     unsafe extern "C" fn(NativeEngine, BatchId, usize, *mut TransferStatus) -> c_int;
+type CancelTask = unsafe extern "C" fn(NativeEngine, BatchId, usize) -> c_int;
 type FreeBatch = unsafe extern "C" fn(NativeEngine, BatchId) -> c_int;
-type TakeNotifies = unsafe extern "C" fn(NativeEngine, *mut c_int) -> *mut Notify;
-type FreeNotifies = unsafe extern "C" fn(*mut Notify, c_int) -> c_int;
-type SendNotify = unsafe extern "C" fn(NativeEngine, u64, Notify) -> c_int;
+type ReceiveNotifications = unsafe extern "C" fn(NativeEngine, *mut NotificationInfo) -> c_int;
+type FreeNotifications = unsafe extern "C" fn(*mut NotificationInfo);
+type SendNotification =
+    unsafe extern "C" fn(NativeEngine, SegmentId, *const c_char, *const c_char) -> c_int;
+type GetNicLoadStats = unsafe extern "C" fn(NativeEngine, *mut NicLoadStat, *mut usize) -> c_int;
 
 struct Api {
     _dependencies: Vec<Library>,
     _library: Library,
+    set_config: SetConfig,
     create: Create,
     destroy: Destroy,
+    available: Available,
     local_endpoint: LocalEndpoint,
     open_segment: OpenSegment,
     close_segment: CloseSegment,
@@ -89,10 +153,12 @@ struct Api {
     submit: Submit,
     submit_with_notify: SubmitWithNotify,
     transfer_status: TransferStatusFn,
+    cancel_task: CancelTask,
     free_batch: FreeBatch,
-    take_notifies: TakeNotifies,
-    free_notifies: FreeNotifies,
-    send_notify: SendNotify,
+    receive_notifications: ReceiveNotifications,
+    free_notifications: FreeNotifications,
+    send_notification: SendNotification,
+    get_nic_load_stats: GetNicLoadStats,
 }
 
 static API: LazyLock<Result<Api, String>> = LazyLock::new(load_api);
@@ -103,7 +169,7 @@ pub fn ensure_loaded() -> Result<(), String> {
 
 fn api() -> &'static Api {
     API.as_ref()
-        .unwrap_or_else(|error| panic!("Mooncake runtime unavailable: {error}"))
+        .unwrap_or_else(|error| panic!("Mooncake TENT runtime unavailable: {error}"))
 }
 
 fn load_api() -> Result<Api, String> {
@@ -115,7 +181,7 @@ fn load_api() -> Result<Api, String> {
         }
     }
     Err(format!(
-        "could not load libtransfer_engine.so; searched {}",
+        "could not load libtent_shared.so; searched {}",
         attempted.join(", "),
     ))
 }
@@ -162,25 +228,29 @@ unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
         .map_err(|error| error.to_string())?;
     let common = unsafe { Library::open(Some(directory.join("libmooncake_common.so")), flags) }
         .map_err(|error| error.to_string())?;
-    let library = unsafe { Library::open(Some(directory.join("libtransfer_engine.so")), flags) }
+    let library = unsafe { Library::open(Some(directory.join("libtent_shared.so")), flags) }
         .map_err(|error| error.to_string())?;
 
     Ok(Api {
-        create: unsafe { symbol(&library, b"createTransferEngine\0")? },
-        destroy: unsafe { symbol(&library, b"destroyTransferEngine\0")? },
-        local_endpoint: unsafe { symbol(&library, b"getLocalIpAndPort\0")? },
-        open_segment: unsafe { symbol(&library, b"openSegment\0")? },
-        close_segment: unsafe { symbol(&library, b"closeSegment\0")? },
-        register_memory: unsafe { symbol(&library, b"registerLocalMemory\0")? },
-        unregister_memory: unsafe { symbol(&library, b"unregisterLocalMemory\0")? },
-        allocate_batch: unsafe { symbol(&library, b"allocateBatchID\0")? },
-        submit: unsafe { symbol(&library, b"submitTransfer\0")? },
-        submit_with_notify: unsafe { symbol(&library, b"submitTransferWithNotify\0")? },
-        transfer_status: unsafe { symbol(&library, b"getTransferStatus\0")? },
-        free_batch: unsafe { symbol(&library, b"freeBatchID\0")? },
-        take_notifies: unsafe { symbol(&library, b"getNotifsFromEngine\0")? },
-        free_notifies: unsafe { symbol(&library, b"freeNotifsMsgBuf\0")? },
-        send_notify: unsafe { symbol(&library, b"genNotifyInEngine\0")? },
+        set_config: unsafe { symbol(&library, b"tent_set_config\0")? },
+        create: unsafe { symbol(&library, b"tent_create_engine\0")? },
+        destroy: unsafe { symbol(&library, b"tent_destroy_engine\0")? },
+        available: unsafe { symbol(&library, b"tent_available\0")? },
+        local_endpoint: unsafe { symbol(&library, b"tent_segment_name\0")? },
+        open_segment: unsafe { symbol(&library, b"tent_open_segment\0")? },
+        close_segment: unsafe { symbol(&library, b"tent_close_segment\0")? },
+        register_memory: unsafe { symbol(&library, b"tent_register_memory_ex\0")? },
+        unregister_memory: unsafe { symbol(&library, b"tent_unregister_memory\0")? },
+        allocate_batch: unsafe { symbol(&library, b"tent_allocate_batch\0")? },
+        submit: unsafe { symbol(&library, b"tent_submit\0")? },
+        submit_with_notify: unsafe { symbol(&library, b"tent_submit_notif\0")? },
+        transfer_status: unsafe { symbol(&library, b"tent_task_status\0")? },
+        cancel_task: unsafe { symbol(&library, b"tent_cancel_task\0")? },
+        free_batch: unsafe { symbol(&library, b"tent_free_batch\0")? },
+        receive_notifications: unsafe { symbol(&library, b"tent_recv_notifs\0")? },
+        free_notifications: unsafe { symbol(&library, b"tent_free_notifs\0")? },
+        send_notification: unsafe { symbol(&library, b"tent_send_notifs\0")? },
+        get_nic_load_stats: unsafe { symbol(&library, b"tent_get_nic_load_stats\0")? },
         _dependencies: vec![asio, common],
         _library: library,
     })
@@ -189,7 +259,11 @@ unsafe fn load_api_from(directory: &Path) -> Result<Api, String> {
 unsafe fn symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, String> {
     unsafe { library.get::<T>(name) }
         .map(|symbol| *symbol)
-        .map_err(|error| format!("missing Mooncake symbol: {error}"))
+        .map_err(|error| format!("missing Mooncake TENT symbol: {error}"))
+}
+
+unsafe fn set_config(key: &CStr, value: &CStr) {
+    unsafe { (api().set_config)(key.as_ptr(), value.as_ptr()) };
 }
 
 pub unsafe fn create(
@@ -198,7 +272,43 @@ pub unsafe fn create(
     bind_host: *const c_char,
     rpc_port: u64,
 ) -> NativeEngine {
-    unsafe { (api().create)(metadata, local_server_name, bind_host, rpc_port, 1) }
+    // Explicit forced-TCP qualification must not be undone by a general TENT
+    // JSON config. TransferEngine::new serializes creation around this scope.
+    let _tent_config = SuspendedTentConfig::for_forced_tcp();
+    let Ok(port) = CString::new(rpc_port.to_string()) else {
+        return std::ptr::null_mut();
+    };
+    unsafe {
+        set_config(c"metadata_type", c"p2p");
+        set_config(c"metadata_servers", CStr::from_ptr(metadata));
+        set_config(c"local_segment_name", CStr::from_ptr(local_server_name));
+        set_config(c"rpc_server_hostname", CStr::from_ptr(bind_host));
+        set_config(c"rpc_server_port", &port);
+        set_config(c"metrics/enabled", c"false");
+        set_config(c"use_legacy_transport_selection", c"false");
+        set_config(c"enable_runtime_queue", c"false");
+        set_config(c"enable_auto_failover_on_poll", c"true");
+        set_config(c"transports/tcp/enable", c"true");
+        set_config(c"transports/shm/enable", c"false");
+        set_config(c"transports/gds/enable", c"false");
+        set_config(c"transports/io_uring/enable", c"false");
+        let native_paths = if env::var_os("MC_FORCE_TCP").is_some() {
+            c"false"
+        } else {
+            c"true"
+        };
+        set_config(c"transports/rdma/enable", native_paths);
+        set_config(c"transports/nvlink/enable", native_paths);
+        set_config(c"transports/mnnvl/enable", native_paths);
+        let engine = (api().create)();
+        if engine.is_null() || (api().available)(engine) != 1 {
+            if !engine.is_null() {
+                (api().destroy)(engine);
+            }
+            return std::ptr::null_mut();
+        }
+        engine
+    }
 }
 
 pub unsafe fn destroy(engine: NativeEngine) {
@@ -210,7 +320,12 @@ pub unsafe fn local_ip_and_port(engine: NativeEngine, output: *mut c_char, len: 
 }
 
 pub unsafe fn open_segment(engine: NativeEngine, name: *const c_char) -> SegmentId {
-    unsafe { (api().open_segment)(engine, name) }
+    let mut segment = 0;
+    if unsafe { (api().open_segment)(engine, &mut segment, name) } == 0 {
+        segment
+    } else {
+        INVALID_SEGMENT
+    }
 }
 
 pub unsafe fn close_segment(engine: NativeEngine, segment: SegmentId) -> c_int {
@@ -223,11 +338,30 @@ pub unsafe fn register_memory(
     length: usize,
     location: *const c_char,
 ) -> c_int {
-    unsafe { (api().register_memory)(engine, address, length, location, 1) }
+    let location = unsafe { CStr::from_ptr(location) }.to_bytes();
+    if location.len() >= 64 {
+        return -1;
+    }
+    let mut options = MemoryOptions {
+        location: [0; 64],
+        permission: GLOBAL_READ_WRITE,
+        transport_type: TRANSPORT_UNSPECIFIED,
+        shm_path: [0; 256],
+        shm_offset: 0,
+        internal: 0,
+    };
+    for (output, input) in options.location.iter_mut().zip(location) {
+        *output = *input as c_char;
+    }
+    unsafe { (api().register_memory)(engine, address, length, &mut options) }
 }
 
-pub unsafe fn unregister_memory(engine: NativeEngine, address: *mut c_void) -> c_int {
-    unsafe { (api().unregister_memory)(engine, address) }
+pub unsafe fn unregister_memory(
+    engine: NativeEngine,
+    address: *mut c_void,
+    length: usize,
+) -> c_int {
+    unsafe { (api().unregister_memory)(engine, address, length) }
 }
 
 pub unsafe fn allocate_batch(engine: NativeEngine, batch_size: usize) -> BatchId {
@@ -246,10 +380,18 @@ pub unsafe fn submit_with_notify(
     engine: NativeEngine,
     batch: BatchId,
     requests: &mut [TransferRequest],
-    notify: Notify,
+    name: *const c_char,
+    message: *const c_char,
 ) -> c_int {
     unsafe {
-        (api().submit_with_notify)(engine, batch, requests.as_mut_ptr(), requests.len(), notify)
+        (api().submit_with_notify)(
+            engine,
+            batch,
+            requests.as_mut_ptr(),
+            requests.len(),
+            name,
+            message,
+        )
     }
 }
 
@@ -262,18 +404,79 @@ pub unsafe fn transfer_status(
     unsafe { (api().transfer_status)(engine, batch, task, status) }
 }
 
+pub unsafe fn cancel_task(engine: NativeEngine, batch: BatchId, task: usize) -> c_int {
+    unsafe { (api().cancel_task)(engine, batch, task) }
+}
+
 pub unsafe fn free_batch(engine: NativeEngine, batch: BatchId) -> c_int {
     unsafe { (api().free_batch)(engine, batch) }
 }
 
-pub unsafe fn take_notifies(engine: NativeEngine, count: &mut c_int) -> *mut Notify {
-    unsafe { (api().take_notifies)(engine, count) }
+pub unsafe fn receive_notifications(engine: NativeEngine, info: &mut NotificationInfo) -> c_int {
+    unsafe { (api().receive_notifications)(engine, info) }
 }
 
-pub unsafe fn free_notifies(messages: *mut Notify, count: c_int) -> c_int {
-    unsafe { (api().free_notifies)(messages, count) }
+pub unsafe fn free_notifications(info: &mut NotificationInfo) {
+    unsafe { (api().free_notifications)(info) };
 }
 
-pub unsafe fn notify(engine: NativeEngine, target: SegmentId, notify: Notify) -> c_int {
-    unsafe { (api().send_notify)(engine, target as u64, notify) }
+pub unsafe fn notify(
+    engine: NativeEngine,
+    target: SegmentId,
+    name: *const c_char,
+    message: *const c_char,
+) -> c_int {
+    unsafe { (api().send_notification)(engine, target, name, message) }
+}
+
+pub unsafe fn nic_load_stats(
+    engine: NativeEngine,
+    stats: *mut NicLoadStat,
+    count: &mut usize,
+) -> c_int {
+    unsafe { (api().get_nic_load_stats)(engine, stats, count) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tent_c_abi_layouts_match_the_pinned_header() {
+        assert_eq!(std::mem::size_of::<TransferRequest>(), 48);
+        assert_eq!(std::mem::size_of::<TransferStatus>(), 16);
+        assert_eq!(std::mem::size_of::<MemoryOptions>(), 344);
+        assert_eq!(std::mem::size_of::<NotificationRecord>(), 4360);
+        assert_eq!(std::mem::size_of::<NotificationInfo>(), 16);
+        assert_eq!(std::mem::size_of::<NicLoadStat>(), 80);
+        assert_eq!(INVALID_BATCH, 0);
+        assert_eq!(INVALID_SEGMENT, u64::MAX);
+    }
+
+    #[test]
+    fn forced_tcp_temporarily_suppresses_general_tent_config() {
+        let original_force = env::var_os("MC_FORCE_TCP");
+        let original_config = env::var_os("MC_TENT_CONF");
+        unsafe {
+            env::set_var("MC_FORCE_TCP", "1");
+            env::set_var("MC_TENT_CONF", "original");
+        }
+        let guard = SuspendedTentConfig::for_forced_tcp().unwrap();
+        assert!(env::var_os("MC_TENT_CONF").is_none());
+        drop(guard);
+        assert_eq!(
+            env::var_os("MC_TENT_CONF").as_deref(),
+            Some(std::ffi::OsStr::new("original"))
+        );
+        unsafe {
+            match original_force {
+                Some(value) => env::set_var("MC_FORCE_TCP", value),
+                None => env::remove_var("MC_FORCE_TCP"),
+            }
+            match original_config {
+                Some(value) => env::set_var("MC_TENT_CONF", value),
+                None => env::remove_var("MC_TENT_CONF"),
+            }
+        }
+    }
 }

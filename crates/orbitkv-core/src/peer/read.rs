@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{info, warn};
-use orbitkv_proto::proto::engine::TransferBlockInfo;
+use orbitkv_proto::proto::engine::{QueryBlocksForTransferResponse, TransferBlockInfo};
 use orbitkv_transfer::{TransferOp, TransferSlice};
 
 use crate::memory::numa::NumaNode;
@@ -14,14 +14,19 @@ use crate::memory::numa::NumaNode;
 use opentelemetry::KeyValue;
 
 use super::completion::{TransferCompletions, TransferLockGuard};
-use super::execute::{SegmentFetcher, SegmentOutcome, execute_fetch_plan};
+use super::execute::{
+    AuthorizationError, AuthorizationMode, FetchResult, SegmentFetcher, execute_fetch_plan,
+};
 use super::transport::MooncakeTransport;
 use crate::block::{RawBlock, SealedBlock, Segment, StateKey};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation, resource_id};
+use crate::cost::{
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+    resource_id,
+};
 use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
 use crate::peer::catalog::CatalogClient;
-use crate::planning::peer::{FetchPlan, FetchSegment};
+use crate::planning::peer::{FetchPlan, FetchSegment, PeerSource};
 use crate::storage::MaterializedBlocks;
 
 /// Minimum usable transfer timeout. If the server's lock timeout minus the
@@ -49,30 +54,55 @@ pub(crate) struct PeerReader {
     allocate_fn: AllocateFn,
 }
 
+pub(super) struct AuthorizedSegment {
+    response: QueryBlocksForTransferResponse,
+    lock_guard: TransferLockGuard,
+    authorized_at: Instant,
+    query_elapsed: Duration,
+    resource: ExecutionResource,
+    route_observation: Observation,
+}
+
 #[tonic::async_trait]
 impl SegmentFetcher for PeerReader {
-    async fn fetch_segment(&self, segment: &FetchSegment, req_id: &str) -> SegmentOutcome {
+    type Grant = AuthorizedSegment;
+
+    async fn authorize_segment(
+        &self,
+        segment: &FetchSegment,
+        mode: AuthorizationMode,
+    ) -> Result<Self::Grant, AuthorizationError> {
         if !self.membership.permits(&segment.owner) {
-            return SegmentOutcome::Rejected;
+            return Err(AuthorizationError::Rejected);
         }
         let remote_addr = &segment.owner.endpoint;
-        let namespace = &segment.records[0].key.namespace;
-        let block_hashes: Vec<_> = segment.records.iter().map(|r| r.key.hash.clone()).collect();
-        let t0 = Instant::now();
+        // A prepared grant can wait for the preceding READ. That residence time
+        // is not this route's service cost; keep leaf authorization/READ samples
+        // but train the composite route only on demand-authorized segments.
+        let mut route_observation = if mode == AuthorizationMode::Demand && crate::cost::enabled() {
+            Observation::new(segment.cost_estimate_key(), None)
+        } else {
+            Observation::disabled()
+        };
+        route_observation.admitted();
+        route_observation.submitted();
 
         // Query the OrbitKV authority before exposing any physical addresses.
         let query_start = Instant::now();
-        let resource = if crate::cost::enabled() {
+        let resource = ExecutionResource::Peer(if crate::cost::enabled() {
             resource_id(&segment.owner)
         } else {
             0
-        };
+        });
         let mut authorization_observation = Observation::new(
-            CostKey::new(
-                CostPath::RemoteAuthorization,
+            CostEstimateKey::new(
+                match segment.source {
+                    PeerSource::Dram => CostObservationKind::RemoteAuthorization,
+                    PeerSource::Ssd => CostObservationKind::RemoteSsdAuthorization,
+                },
                 resource,
-                Representation::Unknown,
-                0,
+                segment.representation,
+                segment.stored_bytes.unwrap_or(0),
                 segment.records.len(),
             ),
             None,
@@ -103,6 +133,7 @@ impl SegmentFetcher for PeerReader {
         let (lock_guard, response) = match authorization {
             Ok(cr) => cr,
             Err(error) if error.code() == tonic::Code::FailedPrecondition => {
+                route_observation.finish(Outcome::Failed, None);
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "rejected")]);
@@ -112,37 +143,91 @@ impl SegmentFetcher for PeerReader {
                         &orbitkv_state::ReplicaLocation {
                             owner: segment.owner.clone(),
                             sequence: record.sequence,
+                            metadata: record.metadata.expect("planned peer metadata"),
                         },
                     );
                 }
-                return SegmentOutcome::Rejected;
+                return Err(AuthorizationError::Rejected);
+            }
+            Err(error)
+                if matches!(
+                    error.code(),
+                    tonic::Code::ResourceExhausted | tonic::Code::Unavailable
+                ) =>
+            {
+                route_observation.finish(Outcome::Failed, None);
+                core_metrics()
+                    .remote_fetch_total
+                    .add(1, &[KeyValue::new("status", "rejected")]);
+                return Err(AuthorizationError::Rejected);
             }
             Err(e) => {
+                route_observation.finish(
+                    if e.code() == tonic::Code::DeadlineExceeded {
+                        Outcome::TimedOut
+                    } else if e.code() == tonic::Code::Cancelled {
+                        Outcome::Cancelled
+                    } else {
+                        Outcome::Failed
+                    },
+                    None,
+                );
                 warn!("Remote query to {remote_addr} failed: {e}");
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "error")]);
-                return SegmentOutcome::Failed;
+                return Err(AuthorizationError::Failed);
             }
         };
 
         // The guard moves into the blocking transfer with the destination buffers.
         // Cancelling this future cannot release either while the READ is running.
         if response.transfer_endpoint.is_empty()
-            || response.blocks.len() != block_hashes.len()
+            || response.blocks.len() != segment.records.len()
             || response
                 .blocks
                 .iter()
-                .zip(&block_hashes)
-                .any(|(block, hash)| block.block_hash != *hash)
+                .zip(&segment.records)
+                .any(|(block, record)| block.block_hash != record.key.hash)
         {
+            route_observation.finish(Outcome::Failed, None);
             warn!("Remote query to {remote_addr} returned invalid transfer authorization");
             drop(lock_guard);
             core_metrics()
                 .remote_fetch_total
                 .add(1, &[KeyValue::new("status", "error")]);
-            return SegmentOutcome::Failed;
+            return Err(AuthorizationError::Failed);
         }
+
+        Ok(AuthorizedSegment {
+            response,
+            lock_guard,
+            authorized_at: Instant::now(),
+            query_elapsed,
+            resource,
+            route_observation,
+        })
+    }
+
+    async fn fetch_segment(
+        &self,
+        segment: &FetchSegment,
+        grant: Self::Grant,
+        req_id: &str,
+        destination_nodes: &[NumaNode],
+    ) -> Result<MaterializedBlocks, ()> {
+        let AuthorizedSegment {
+            response,
+            lock_guard,
+            authorized_at,
+            query_elapsed,
+            resource,
+            route_observation,
+        } = grant;
+        let prepared_wait = authorized_at.elapsed();
+        let transfer_start = Instant::now();
+        let remote_addr = &segment.owner.endpoint;
+        let namespace = &segment.records[0].key.namespace;
 
         // Mooncake READ all blocks + build SealedBlocks.
         let transfer_timeout = transfer_timeout_from_server(response.lock_timeout_secs);
@@ -158,6 +243,7 @@ impl SegmentFetcher for PeerReader {
             namespace,
             &response.transfer_endpoint,
             &blocks,
+            destination_nodes,
             transfer_timeout,
             lock_guard,
             resource,
@@ -166,6 +252,7 @@ impl SegmentFetcher for PeerReader {
         {
             Ok(r) => r,
             Err(e) => {
+                route_observation.finish(Outcome::Failed, None);
                 warn!("Mooncake transfer from {remote_addr} failed: {e}");
                 self.transfer
                     .engine()
@@ -173,11 +260,14 @@ impl SegmentFetcher for PeerReader {
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "error")]);
-                return SegmentOutcome::Failed;
+                return Err(());
             }
         };
+        route_observation.finish(Outcome::Completed, Some(total_bytes));
 
-        let elapsed = t0.elapsed();
+        // Retain authorization + payload service timing. Lookahead residence
+        // belongs to the pipeline queue, not the READ or its throughput sample.
+        let elapsed = query_elapsed + transfer_start.elapsed();
         let mb = total_bytes as f64 / (1024.0 * 1024.0);
         let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
         let throughput_mib_s = if elapsed.as_secs_f64() > 0.0 {
@@ -188,14 +278,15 @@ impl SegmentFetcher for PeerReader {
         info!(
             "Mooncake fetch summary: req_id={req_id} remote={remote_addr} blocks={}/{} slots={} descs={} slabs={} bytes_mib={mb:.1} total_ms={elapsed_ms:.2} tp_mib_s={throughput_mib_s:.0}",
             result.len(),
-            block_hashes.len(),
+            segment.records.len(),
             transfer_timing.slot_count,
             transfer_timing.transfer_desc_count,
             transfer_timing.numa_slab_count,
         );
         info!(
-            "Mooncake fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
+            "Mooncake fetch stages: req_id={req_id} remote={remote_addr} query_ms={:.2} prepared_wait_ms={:.2} build_transfer_tasks_ms={:.2} transfer_wait_ms={:.2} rebuild_ms={:.2}",
             query_elapsed.as_secs_f64() * 1000.0,
+            prepared_wait.as_secs_f64() * 1000.0,
             transfer_timing.build_transfer_tasks.as_secs_f64() * 1000.0,
             transfer_timing.mooncake_wait.as_secs_f64() * 1000.0,
             transfer_timing.rebuild.as_secs_f64() * 1000.0,
@@ -206,7 +297,17 @@ impl SegmentFetcher for PeerReader {
         m.remote_fetch_duration_seconds
             .record(elapsed.as_secs_f64(), ok);
         m.remote_fetch_bytes.add(total_bytes, ok);
+        if let Ok(stats) = self.transfer.engine().nic_load_stats() {
+            for stat in stats {
+                let attributes = [KeyValue::new("nic", stat.device_name)];
+                m.tent_nic_inflight_bytes
+                    .record(stat.inflight_bytes, &attributes);
+                m.tent_nic_bandwidth_bytes_per_second
+                    .record(stat.ewma_bandwidth_bps, &attributes);
+            }
+        }
         for (stage, duration) in [
+            ("prepared_wait", prepared_wait),
             ("allocation", transfer_timing.build_transfer_tasks),
             ("read", transfer_timing.mooncake_wait),
             ("rebuild", transfer_timing.rebuild),
@@ -216,7 +317,7 @@ impl SegmentFetcher for PeerReader {
                 &[KeyValue::new("stage", stage), KeyValue::new("status", "ok")],
             );
         }
-        SegmentOutcome::Fetched(result)
+        Ok(result)
     }
 }
 
@@ -244,7 +345,7 @@ impl PeerReader {
     /// alternatives. Directory hints still require authoritative source grants.
     pub(crate) async fn discover(&self, rows: &mut [crate::planning::replica::ReplicaSet]) {
         for row in rows.iter_mut() {
-            row.set_peer_dram(Vec::new());
+            row.set_peers(Vec::new());
         }
         if !self.membership.permits(self.membership.owner()) || rows.is_empty() {
             return;
@@ -268,28 +369,36 @@ impl PeerReader {
             candidate
                 .replicas
                 .retain(|replica| self.membership.permits(&replica.owner));
-            row.set_peer_dram(candidate.replicas);
+            row.set_peers(candidate.replicas);
         }
     }
 
-    pub(crate) async fn fetch_plan(&self, plan: FetchPlan<'_>, req_id: &str) -> MaterializedBlocks {
+    pub(crate) async fn fetch_plan(
+        &self,
+        plan: FetchPlan<'_>,
+        req_id: &str,
+        destination_nodes: &[NumaNode],
+    ) -> FetchResult {
         let planned_blocks = plan.block_count();
         let started_at = Instant::now();
-        let (fetched, attempts, completed) = execute_fetch_plan(self, plan, req_id).await;
+        let result = execute_fetch_plan(self, plan, req_id, destination_nodes).await;
         let metrics = core_metrics();
         metrics
             .remote_fetch_plan_segments
-            .record(attempts as u64, &[]);
+            .record(result.attempts as u64, &[]);
         metrics
             .remote_fetch_plan_completed_segments
-            .record(completed as u64, &[]);
+            .record(result.completed_segments as u64, &[]);
         info!(
-            "Mooncake fetch plan: req_id={req_id} attempted_segments={attempts} completed_segments={completed} planned_blocks={} fetched_blocks={} total_ms={:.2}",
+            "Mooncake fetch plan: req_id={req_id} attempted_segments={} completed_segments={} status={:?} planned_blocks={} fetched_blocks={} total_ms={:.2}",
+            result.attempts,
+            result.completed_segments,
+            result.status,
             planned_blocks,
-            fetched.len(),
+            result.blocks.len(),
             started_at.elapsed().as_secs_f64() * 1000.0
         );
-        fetched
+        result
     }
 }
 
@@ -314,9 +423,10 @@ async fn fetch_blocks_via_mooncake(
     namespace: &str,
     transfer_endpoint: &str,
     blocks: &[TransferBlockInfo],
+    destination_nodes: &[NumaNode],
     transfer_timeout: Duration,
     lock_guard: TransferLockGuard,
-    resource: u64,
+    resource: ExecutionResource,
 ) -> Result<(MaterializedBlocks, TransferTiming), String> {
     if blocks.is_empty() {
         return Ok((Vec::new(), TransferTiming::default()));
@@ -325,7 +435,7 @@ async fn fetch_blocks_via_mooncake(
     let mut slabs = ChunkedSlabs::new(
         allocate_fn,
         FETCH_CHUNK_BYTES,
-        sum_segment_bytes_by_numa(blocks)?,
+        sum_segment_bytes_by_numa(blocks, destination_nodes)?,
     );
 
     // (block_hash, Vec<(slot_segments, slot_numa)>) — for building SealedBlock afterwards.
@@ -341,9 +451,8 @@ async fn fetch_blocks_via_mooncake(
             slot_count += block_info.slots.len();
             let mut slot_allocs = Vec::with_capacity(block_info.slots.len());
 
-            for slot in &block_info.slots {
+            for (slot, &numa) in block_info.slots.iter().zip(destination_nodes) {
                 let mut segments = Vec::new();
-                let numa = NumaNode(slot.numa_node);
 
                 // K segment
                 if slot.k_size > 0 {
@@ -433,8 +542,8 @@ async fn fetch_blocks_via_mooncake(
         (0, None, Representation::Unknown)
     };
     let mut observation = Observation::new(
-        CostKey::new(
-            CostPath::RemoteRead,
+        CostEstimateKey::new(
+            CostObservationKind::RemoteRead,
             resource,
             representation,
             logical_bytes.unwrap_or(stored_bytes),
@@ -546,11 +655,18 @@ fn transfer_shape(blocks: &[StagedBlock]) -> (Option<u64>, Representation) {
 /// the last chunk of each NUMA so small fetches don't over-allocate.
 fn sum_segment_bytes_by_numa(
     blocks: &[TransferBlockInfo],
+    destination_nodes: &[NumaNode],
 ) -> Result<HashMap<NumaNode, u64>, String> {
     let mut bytes_per_numa: HashMap<NumaNode, u64> = HashMap::new();
     for block_info in blocks {
-        for slot in &block_info.slots {
-            let numa = NumaNode(slot.numa_node);
+        if block_info.slots.len() != destination_nodes.len() {
+            return Err(format!(
+                "remote block has {} slots, receiver registered {}",
+                block_info.slots.len(),
+                destination_nodes.len()
+            ));
+        }
+        for (slot, &numa) in block_info.slots.iter().zip(destination_nodes) {
             let mut add = 0u64;
             if slot.k_size > 0 {
                 add += slot.k_size;

@@ -26,17 +26,15 @@ import orbitkv.vllm.pd.prefill as prefill_mod  # noqa: E402
 import orbitkv.vllm.pd.prefill_worker as prefill_worker_mod  # noqa: E402
 import orbitkv.vllm.pd.worker as worker_mod  # noqa: E402
 from orbitkv.vllm.pd import (  # noqa: E402
-    PdConnector,
     PdDecodeConnector,
     PdPrefillConnector,
 )
 from orbitkv.vllm.pd.kv_params import parse_consumer  # noqa: E402
 from orbitkv.vllm.pd.layout import (  # noqa: E402
     BlockRegionSlice,
-    FlashAttnHndLayout,
+    KvCacheLayout,
     LayerBlockSlices,
     block_slices_bytes,
-    unique_blocks_from_slot_mapping,
 )
 from orbitkv.vllm.pd.metadata import (  # noqa: E402
     RELEASE_CONSUMER_ABORT,
@@ -57,7 +55,6 @@ from orbitkv.vllm.pd.metadata import (  # noqa: E402
 )
 from orbitkv.vllm.pd.mooncake import (  # noqa: E402
     RealMooncakePort,
-    _layer_blocks_to_native,
 )
 from orbitkv.vllm.pd.prefill import (  # noqa: E402
     AsyncPrefillSender,
@@ -91,7 +88,6 @@ class MockMooncakePort:
         self.peer_handshakes: dict[str, PdHandshake | None] = {}
         self.pushed_layers: dict[str, list[tuple[int, list[LayerBlockSlices]]]] = {}
         self._finished_sending: set[str] = set()
-        self._finished_recving: set[str] = set()
         self._request_generations: dict[str, int] = {}
         self._next_request_generation = 0
 
@@ -124,9 +120,6 @@ class MockMooncakePort:
         self.pushed_layers.setdefault(req_id, [])
         self.pushed_layers[req_id].append((layer_idx, blocks))
 
-    def wait_for_pushes(self, req_id: str) -> None:
-        return None
-
     def push_done(self, req_id: str) -> None:
         self._finished_sending.add(req_id)
 
@@ -147,10 +140,13 @@ class MockMooncakePort:
         return None
 
     def abort_request(self, req_id: str) -> None:
-        self._finished_recving.add(req_id)
+        return None
 
     def aggregated_link_speed(self) -> int:
         return 400_000_000_000
+
+    def nic_load_stats(self) -> list[tuple[str, int, float]]:
+        return []
 
     def wait_done(self, req_id: str) -> None:
         return None
@@ -160,18 +156,12 @@ class MockMooncakePort:
         self._finished_sending = set()
         return finished
 
-    def pop_finished_recving(self) -> set[str]:
-        finished = self._finished_recving
-        self._finished_recving = set()
-        return finished
-
     def close_request(self, req_id: str) -> None:
         self.registered.discard(req_id)
         self.peer_handshakes.pop(req_id, None)
         self._request_generations.pop(req_id, None)
         self.pushed_layers.pop(req_id, None)
         self._finished_sending.discard(req_id)
-        self._finished_recving.discard(req_id)
 
 
 class FakeTensor:
@@ -182,12 +172,29 @@ class FakeTensor:
         ptr: int = 0x1000,
         element_size: int = 2,
         device_index: int | None = None,
+        storage_bytes: int | None = None,
+        storage_offset: int = 0,
     ) -> None:
         self.shape = shape
         self._stride = stride
         self._ptr = ptr
         self._element_size = element_size
+        self._storage_base = ptr - storage_offset
+        self._storage_bytes = (
+            storage_bytes
+            if storage_bytes is not None
+            else (
+                storage_offset
+                + (1 + sum((dim - 1) * step for dim, step in zip(shape, stride, strict=True)))
+                * element_size
+            )
+        )
         self.device = SimpleNamespace(index=device_index) if device_index is not None else None
+
+    def untyped_storage(self):
+        return SimpleNamespace(
+            data_ptr=lambda: self._storage_base, nbytes=lambda: self._storage_bytes
+        )
 
     def stride(self) -> tuple[int, ...]:
         return self._stride
@@ -226,6 +233,9 @@ class FakePrefillSender:
     def cancel(self, request_id: str) -> None:
         self.cancelled.append(request_id)
 
+    def close(self) -> None:
+        return None
+
 
 class FakeMooncakeTransferEngine:
     def __init__(self) -> None:
@@ -233,6 +243,9 @@ class FakeMooncakeTransferEngine:
         self.registered_regions = []
         self.writes = []
         self.notifications = []
+        self.nic_stats = []
+        self.notification_generations = {}
+        self.next_notification_generation = 0
 
     def register_memory(self, regions):
         self.registered_regions.extend(regions)
@@ -253,10 +266,35 @@ class FakeMooncakeTransferEngine:
     def send_notification(self, remote_endpoint, name, message):
         self.notifications.append((name, message))
 
-    def take_notifications(self):
-        notifications = self.notifications
-        self.notifications = []
-        return notifications
+    def open_notification_scope(self, name):
+        self.next_notification_generation += 1
+        self.notification_generations[name] = self.next_notification_generation
+        self.notifications = [item for item in self.notifications if item[0] != name]
+        return self.next_notification_generation
+
+    def wait_for_status(self, name, generation, expected_done_count=1, timeout_s=30.0):
+        if self.notification_generations.get(name) != generation:
+            return None
+        counts = {
+            status: sum(item == (name, status) for item in self.notifications)
+            for status in ("failed", "aborted", "done")
+        }
+        if counts["failed"]:
+            return "failed"
+        if counts["aborted"]:
+            return "aborted"
+        if counts["done"] >= expected_done_count:
+            return "done"
+        raise TimeoutError(f"notification wait timed out after {timeout_s}s")
+
+    def close_notification_scope(self, name, generation):
+        if self.notification_generations.get(name) != generation:
+            return
+        self.notification_generations.pop(name)
+        self.notifications = [item for item in self.notifications if item[0] != name]
+
+    def nic_load_stats(self):
+        return self.nic_stats
 
     def complete(self, request_id: str, status: str = "done") -> None:
         self.notifications.append((request_id, status))
@@ -271,8 +309,8 @@ class FakeMooncakeTransferEngineCtor(FakeMooncakeTransferEngine):
 
 
 def drain_pd_pushes(worker: PdDecodeWorkerConnector | PdPrefillWorkerConnector) -> None:
-    worker._push_sender.wait_all()
-    worker._push_finalizer.wait_all()
+    worker._prefill._push_sender.wait_all()
+    worker._prefill._push_finalizer.wait_all()
 
 
 def pushed_layers_by_idx(
@@ -293,7 +331,7 @@ DUMMY_HANDSHAKE = PdHandshake(
 )
 
 
-def hnd_remote_layer(
+def split_remote_layer(
     *,
     layer_name: str = "layer.0",
     layer_idx: int = 0,
@@ -310,6 +348,22 @@ def hnd_remote_layer(
             TransferRegionLayout(region_idx=0, base_addr=k_base, block_len=block_len),
             TransferRegionLayout(region_idx=1, base_addr=v_base, block_len=block_len),
         ),
+    )
+
+
+def packed_remote_layer(
+    *,
+    layer_name="layer.0",
+    layer_idx=0,
+    block_ids=(0,),
+    base_addr=0x1000,
+    block_len=8192,
+):
+    return LayerRemoteLayout(
+        layer_name=layer_name,
+        layer_idx=layer_idx,
+        block_ids=block_ids,
+        regions=(TransferRegionLayout(region_idx=0, base_addr=base_addr, block_len=block_len),),
     )
 
 
@@ -335,7 +389,7 @@ def fake_mla_config(
     block_size: int = 64,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(engine_id="pd"),
+        kv_transfer_config=FakeKVTransferConfig(engine_id="pd"),
         model_config=SimpleNamespace(use_mla=True),
         cache_config=SimpleNamespace(block_size=block_size),
         parallel_config=SimpleNamespace(
@@ -349,7 +403,7 @@ def fake_mla_config(
 
 def fake_mtp_config() -> SimpleNamespace:
     return SimpleNamespace(
-        kv_transfer_config=SimpleNamespace(engine_id="pd"),
+        kv_transfer_config=FakeKVTransferConfig(engine_id="pd"),
         model_config=SimpleNamespace(
             use_mla=False,
             hf_text_config=SimpleNamespace(num_nextn_predict_layers=1),
@@ -380,9 +434,20 @@ def fake_kv_cache_config(
     )
 
 
+def fake_cache_spec(*, block_size=16, heads=4, content_bytes=128, states=None):
+    states = block_size if states is None else states
+    return SimpleNamespace(
+        block_size=block_size,
+        num_heads=heads,
+        num_states=states,
+        state_content_size_bytes=content_bytes,
+        page_size_bytes=heads * states * content_bytes,
+    )
+
+
 def fake_mtp_kv_cache_config(*, num_blocks: int = 8) -> SimpleNamespace:
-    base_spec = SimpleNamespace(block_size=16, page_size_bytes=2 * 16 * 4 * 32 * 2)
-    draft_spec = SimpleNamespace(block_size=16, page_size_bytes=2 * 16 * 4 * 32 * 2)
+    base_spec = fake_cache_spec()
+    draft_spec = fake_cache_spec()
     return SimpleNamespace(
         num_blocks=num_blocks,
         kv_cache_groups=[
@@ -402,6 +467,12 @@ def fake_mtp_kv_cache_config(*, num_blocks: int = 8) -> SimpleNamespace:
             ),
         ],
     )
+
+
+class FakeKVTransferConfig:
+    def __init__(self, engine_id="pd", kv_connector_extra_config=None):
+        self.engine_id = engine_id
+        self.kv_connector_extra_config = kv_connector_extra_config or {}
 
 
 __all__ = [name for name in globals() if not name.startswith("__") and name != "teardown_module"]

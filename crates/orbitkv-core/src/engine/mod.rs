@@ -1,10 +1,12 @@
 //! Cache orchestration and registration; storage and transfer owners retain resources.
 
+mod completion;
 pub(crate) mod config;
 pub(crate) mod instance;
 mod publish;
 mod query;
 mod restore;
+pub use restore::{RawRestoreGrant, RestoreExecution};
 
 use std::{
     collections::HashMap,
@@ -20,7 +22,7 @@ use crate::query::lease::QueryLeaseManager;
 use crate::storage::ssd::SSD_ALIGNMENT;
 use crate::storage::{MemoryCacheCleanupStats, Storage};
 use crate::transfer::TransferMode;
-use crate::transfer::layout::KVCacheLayout;
+use crate::transfer::layout::{KVCacheGeometry, KVCacheLayout};
 use instance::{GpuRegistration, InstanceContext};
 
 /// Errors that can occur during engine operations.
@@ -254,7 +256,7 @@ impl OrbitKVEngine {
     }
 
     /// Like [`Self::register_context_layer_batch`] but with an explicit per-layer
-    /// block stride (see [`KVCacheRegistration::with_block_stride`]). When
+    /// block stride, validated as part of the final cache geometry. When
     /// `block_stride_bytes_list` is `Some` it must match `layer_names` in length;
     /// each entry overrides that layer's stride.
     ///
@@ -332,37 +334,28 @@ impl OrbitKVEngine {
 
         for i in 0..batch_size {
             let layer_name = &layer_names[i];
-            let mut layout = KVCacheLayout::new(
-                data_ptrs[i],
-                size_bytes_list[i],
+            let geometry = KVCacheGeometry::new(
                 num_blocks_list[i],
                 bytes_per_block_list[i],
                 kv_stride_bytes_list[i],
                 segments_list[i],
+                block_stride_bytes_list.map(|strides| strides[i]),
+                if ssd_enabled { SSD_ALIGNMENT } else { 1 },
             )
             .map_err(|e| EngineError::InvalidArgument(format!("layer {layer_name}: {e}")))?;
-
+            if geometry.padded_segment_bytes() != geometry.segment_bytes() {
+                info!(
+                    "SSD alignment padding: layer={layer_name}, bytes_per_block={} -> padded={}",
+                    geometry.segment_bytes(),
+                    geometry.padded_segment_bytes()
+                );
+            }
+            let mut layout = KVCacheLayout::bind(data_ptrs[i], size_bytes_list[i], geometry)
+                .map_err(|e| EngineError::InvalidArgument(format!("layer {layer_name}: {e}")))?;
             layout.storage_format = self
                 .storage
                 .codec
                 .format(storage_formats.map_or(Default::default(), |formats| formats[i]));
-
-            if let Some(strides) = block_stride_bytes_list {
-                layout = layout.with_block_stride(strides[i]).map_err(|e| {
-                    EngineError::InvalidArgument(format!("layer {layer_name}: {e}"))
-                })?;
-            }
-
-            if ssd_enabled {
-                layout = layout.with_ssd_padding(SSD_ALIGNMENT);
-                if layout.padded_segment_bytes() != layout.segment_bytes() {
-                    info!(
-                        "SSD alignment padding: layer={layer_name}, bytes_per_block={} -> padded={}",
-                        layout.segment_bytes(),
-                        layout.padded_segment_bytes()
-                    );
-                }
-            }
 
             if kv_caches.insert(layer_name.clone(), layout).is_some() {
                 return Err(EngineError::InvalidArgument(format!(

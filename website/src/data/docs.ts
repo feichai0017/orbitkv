@@ -17,6 +17,7 @@ export const docGroups = [
     items: [
       { slug: "architecture", title: "System architecture" },
       { slug: "transport", title: "Process & network transport" },
+      { slug: "engine-local-restore", title: "Engine-local restore ownership" },
       { slug: "state-identity", title: "State identity & recovery" },
       { slug: "hybrid-recovery", title: "Compiled hybrid recovery" },
       { slug: "state-planning", title: "Demand & transfer planning" },
@@ -33,6 +34,7 @@ export const docGroups = [
     description: "Explore independent replicas and prefill/decode handoff.",
     items: [
       { slug: "p2p", title: "Cross-node deployment" },
+      { slug: "peer-control", title: "Peer control boundary" },
       { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
       { slug: "distributed-cache", title: "Embedded catalog design" },
       {
@@ -51,6 +53,7 @@ export const docGroups = [
       { slug: "metrics", title: "Metrics & observability" },
       { slug: "fault-qualification", title: "Single-node fault gates" },
       { slug: "client-performance", title: "Client control overhead" },
+      { slug: "communication-performance", title: "Communication measurements" },
       { slug: "single-node-performance", title: "Single-node comparisons" },
       { slug: "ssd-performance", title: "SSD recovery & capacity pressure" },
       { slug: "concurrent-performance", title: "Concurrent query budgets" },
@@ -63,6 +66,7 @@ export const docGroups = [
     description: "Follow the implementation gates and contribute changes.",
     items: [
       { slug: "implementation-plan", title: "Implementation plan & handoff" },
+      { slug: "communication-plan", title: "Communication optimization plan" },
       { slug: "roadmap", title: "Roadmap & validation gates" },
       { slug: "rust-quality", title: "Rust quality gates" },
       { slug: "releases", title: "Python releases" },

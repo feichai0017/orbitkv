@@ -541,7 +541,8 @@ class SchedulerConnector:
             self._release_pending_query_probe(req_id)
             return (0, False)
 
-        return (hit_tokens, True)
+        # Schedule this request in the consuming forward; layer events fence GPU reads.
+        return (hit_tokens, False)
 
     def update_state_after_alloc(
         self,
@@ -567,31 +568,44 @@ class SchedulerConnector:
             self._next_stored_block_idx[req_id] = base_block_idx
 
         if num_external_tokens > 0:
+            pending_probe = self._pending_query_probes.get(req_id)
+            if pending_probe is None:
+                raise RuntimeError(f"req {req_id} missing query lease for external load")
             block_ids_by_group = (
                 self._copy_block_ids_by_group(blocks.get_block_ids())
                 if blocks
                 else tuple(() for _ in range(self._cache_groups.group_count))
             )
             hash_group_index = self._cache_groups.hash_group_index
-            num_computed_blocks = (
-                sum(block.block_hash is not None for block in blocks.blocks[hash_group_index])
-                if blocks
-                else 0
-            )
+            # Synchronous allocation hashes external and newly scheduled pages
+            # before this callback. Only the query snapshot identifies local hits.
+            num_computed_blocks = pending_probe.computed_blocks
             start_block_idx = num_computed_blocks
             vbs = self._ctx.virtual_block_size
             num_load_blocks = (num_external_tokens + vbs - 1) // vbs
-            pending_probe = self._pending_query_probes.get(req_id)
             try:
+                query_hashes, tail_tokens = self._build_query(request, num_computed_blocks)
+                if not pending_probe.matches(num_computed_blocks, query_hashes, tail_tokens):
+                    raise RuntimeError(f"req {req_id} query identity changed before external load")
+                if pending_probe.recovery_hold is not None and (
+                    num_external_tokens != pending_probe.require_hit_blocks() * vbs
+                    or num_computed_blocks * vbs + num_external_tokens
+                    != pending_probe.selected_boundary
+                ):
+                    raise RuntimeError(f"req {req_id} allocation changed the recovery boundary")
+                leased_blocks = pending_probe.require_hit_blocks()
+                if leased_blocks != num_load_blocks:
+                    raise RuntimeError(
+                        f"req {req_id} leased block mismatch: "
+                        f"leased={leased_blocks} load={num_load_blocks}"
+                    )
+                if not pending_probe.leases or any(not lease for lease in pending_probe.leases):
+                    raise RuntimeError(f"req {req_id} missing query lease for external load")
                 load_block_ids_by_group = self._load_block_ids_by_group(
                     block_ids_by_group,
                     start_block_idx,
                     num_load_blocks,
-                    leased_blocks=(
-                        pending_probe.leased_blocks
-                        if pending_probe is not None
-                        else num_load_blocks
-                    ),
+                    leased_blocks=pending_probe.leased_blocks,
                 )
             except RuntimeError:
                 self._release_pending_query_probe(req_id)
@@ -599,31 +613,10 @@ class SchedulerConnector:
 
             load_intent = LoadIntent(
                 block_ids_by_group=load_block_ids_by_group,
-                leases=pending_probe.leases if pending_probe is not None else (),
+                leases=pending_probe.leases,
                 num_tokens=num_external_tokens,
-                recovery_hold=(pending_probe.recovery_hold if pending_probe is not None else None),
+                recovery_hold=pending_probe.recovery_hold,
             )
-            if pending_probe is not None:
-                query_hashes, tail_tokens = self._build_query(request, num_computed_blocks)
-                if not pending_probe.matches(num_computed_blocks, query_hashes, tail_tokens):
-                    self._release_pending_query_probe(req_id)
-                    raise RuntimeError(f"req {req_id} query identity changed before external load")
-                if pending_probe.recovery_hold is not None and (
-                    num_external_tokens != pending_probe.require_hit_blocks() * vbs
-                    or num_computed_blocks * vbs + num_external_tokens
-                    != pending_probe.selected_boundary
-                ):
-                    self._release_pending_query_probe(req_id)
-                    raise RuntimeError(f"req {req_id} allocation changed the recovery boundary")
-                leased_blocks = pending_probe.require_hit_blocks()
-                if leased_blocks != num_load_blocks:
-                    self._release_pending_query_probe(req_id)
-                    raise RuntimeError(
-                        f"req {req_id} leased block mismatch: "
-                        f"leased={leased_blocks} load={num_load_blocks}"
-                    )
-            if not load_intent.leases or any(not lease for lease in load_intent.leases):
-                raise RuntimeError(f"req {req_id} missing query lease for external load")
             self._pending_load_intents[req_id] = load_intent
             self._restores_awaiting_compute.add(req_id)
             self._pending_query_probes.pop(req_id, None)

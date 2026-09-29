@@ -27,8 +27,8 @@ class FakeTensor:
 def test_mla_blocks_first_physical_rows_are_grouped_into_logical_blocks():
     info = _infer_kv_cache_registration(
         FakeTensor(
-            shape=(6, 64, 576),
-            stride=(64 * 576, 576, 1),
+            shape=(6, 1, 64, 576),
+            stride=(64 * 576, 64 * 576, 576, 1),
             element_size=2,
         ),
         logical_block_size=128,
@@ -43,24 +43,20 @@ def test_mla_blocks_first_physical_rows_are_grouped_into_logical_blocks():
     assert info.physical_blocks_per_logical_block == 2
 
 
-def test_mla_standard_4d_view_reads_tokens_from_the_third_axis():
-    """vLLM's standardized view is ``[B, H, N, C]``; N is the kernel block."""
-    info = _infer_kv_cache_registration(
-        FakeTensor(
-            shape=(6, 1, 64, 576),
-            stride=(64 * 576, 64 * 576, 576, 1),
-            element_size=2,
-        ),
-        logical_block_size=128,
-        is_mla=True,
-    )
-
-    assert info.num_blocks == 3
-    assert info.bytes_per_block == 2 * 64 * 576 * 2
-    assert info.physical_blocks_per_logical_block == 2
+def test_mla_rejects_pre_029_three_dimensional_view():
+    with pytest.raises(ValueError, match=r"must use \[B, H, N, C\]"):
+        _infer_kv_cache_registration(
+            FakeTensor(
+                shape=(6, 64, 576),
+                stride=(64 * 576, 576, 1),
+                element_size=2,
+            ),
+            logical_block_size=128,
+            is_mla=True,
+        )
 
 
-def test_non_mla_kv_first_uses_legacy_block_stride():
+def test_non_mla_kv_first_uses_kv_stride():
     info = _infer_kv_cache_registration(
         FakeTensor(
             shape=(2, 6, 64, 4, 8),
@@ -78,11 +74,11 @@ def test_non_mla_kv_first_uses_legacy_block_stride():
     assert info.physical_blocks_per_logical_block == 1
 
 
-def test_mla_prefers_blocks_first_when_first_dimension_is_two():
+def test_mla_keeps_blocks_first_when_first_dimension_is_two():
     info = _infer_kv_cache_registration(
         FakeTensor(
-            shape=(2, 64, 576),
-            stride=(64 * 576, 576, 1),
+            shape=(2, 1, 64, 576),
+            stride=(64 * 576, 64 * 576, 576, 1),
             element_size=2,
         ),
         logical_block_size=128,
@@ -100,8 +96,8 @@ def test_mla_prefers_blocks_first_when_first_dimension_is_two():
 def test_mla_equal_physical_and_logical_block_size_is_unchanged():
     info = _infer_kv_cache_registration(
         FakeTensor(
-            shape=(3, 128, 576),
-            stride=(128 * 576, 576, 1),
+            shape=(3, 1, 128, 576),
+            stride=(128 * 576, 128 * 576, 576, 1),
             element_size=2,
         ),
         logical_block_size=128,
@@ -133,7 +129,7 @@ def test_recurrent_state_uses_one_page_per_logical_block():
     assert info.physical_blocks_per_logical_block == 1
 
 
-def test_non_mla_cross_layer_layout_uses_legacy_block_stride():
+def test_non_mla_cross_layer_layout_uses_block_stride():
     info = _infer_kv_cache_registration(
         FakeTensor(
             shape=(6, 93, 2, 64, 1, 128),
@@ -160,8 +156,8 @@ def test_logical_block_size_must_be_multiple_of_physical_block_size():
     with pytest.raises(ValueError, match="logical block size"):
         _infer_kv_cache_registration(
             FakeTensor(
-                shape=(3, 96, 576),
-                stride=(96 * 576, 576, 1),
+                shape=(3, 1, 96, 576),
+                stride=(96 * 576, 96 * 576, 576, 1),
                 element_size=2,
             ),
             logical_block_size=128,
@@ -173,8 +169,8 @@ def test_logical_block_size_must_be_positive():
     with pytest.raises(ValueError, match="logical block size must be > 0"):
         _infer_kv_cache_registration(
             FakeTensor(
-                shape=(3, 128, 576),
-                stride=(128 * 576, 576, 1),
+                shape=(3, 1, 128, 576),
+                stride=(128 * 576, 128 * 576, 576, 1),
                 element_size=2,
             ),
             logical_block_size=0,
@@ -186,8 +182,8 @@ def test_physical_block_count_must_be_positive():
     with pytest.raises(ValueError, match="physical block count must be > 0"):
         _infer_kv_cache_registration(
             FakeTensor(
-                shape=(0, 128, 576),
-                stride=(128 * 576, 576, 1),
+                shape=(0, 1, 128, 576),
+                stride=(128 * 576, 128 * 576, 576, 1),
                 element_size=2,
             ),
             logical_block_size=128,
@@ -199,8 +195,8 @@ def test_physical_block_size_must_be_positive():
     with pytest.raises(ValueError, match="physical block size must be > 0"):
         _infer_kv_cache_registration(
             FakeTensor(
-                shape=(3, 0, 576),
-                stride=(0, 576, 1),
+                shape=(3, 1, 0, 576),
+                stride=(0, 0, 576, 1),
                 element_size=2,
             ),
             logical_block_size=128,
@@ -212,8 +208,8 @@ def test_physical_block_count_must_be_divisible_by_split_ratio():
     with pytest.raises(ValueError, match="physical block count"):
         _infer_kv_cache_registration(
             FakeTensor(
-                shape=(5, 64, 576),
-                stride=(64 * 576, 576, 1),
+                shape=(5, 1, 64, 576),
+                stride=(64 * 576, 64 * 576, 576, 1),
                 element_size=2,
             ),
             logical_block_size=128,
@@ -225,8 +221,8 @@ def test_bytes_per_block_must_be_nonzero():
     with pytest.raises(ValueError, match="Invalid bytes_per_block"):
         _infer_kv_cache_registration(
             FakeTensor(
-                shape=(3, 128, 576),
-                stride=(0, 576, 1),
+                shape=(3, 1, 128, 576),
+                stride=(0, 0, 576, 1),
                 element_size=2,
             ),
             logical_block_size=128,

@@ -19,7 +19,8 @@ def test_three_component_recovery(channel_server, monkeypatch, temporal_state):
     from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
     from sglang.srt.mem_cache.unified_cache.components import ComponentType
 
-    from orbitkv.sglang.linker import OrbitKVLinker
+    from orbitkv.sglang.layout import GpuLayout
+    from orbitkv.sglang.linker import OrbitKVLinker, _LayerDoneCounter
     from tests.support.metrics import fetch_orbitkv_metrics
 
     # Real contiguous GPU buffers in the ordinary engine pool representation.
@@ -54,13 +55,24 @@ def test_three_component_recovery(channel_server, monkeypatch, temporal_state):
             translate_mamba_indices=lambda indices: indices,
         ),
     )
+    monkeypatch.setattr(
+        "sglang.srt.runtime_context.get_disagg",
+        lambda: SimpleNamespace(disaggregation_mode="null"),
+    )
     monkeypatch.setenv("ORBITKV_SGLANG_ENDPOINT", f"unix://{channel_server.bootstrap_socket}")
     monkeypatch.setattr(
         "orbitkv.sglang.linker.derive_namespace", lambda *args: f"combined-{uuid.uuid4().hex}"
     )
-    linker = OrbitKVLinker(
-        None, params, components={ComponentType.FULL, ComponentType.SWA, ComponentType.MAMBA}
+    cache.layer_transfer_counter = _LayerDoneCounter(
+        GpuLayout.from_pool(
+            params.page_size,
+            cache,
+            params.req_to_token_pool,
+            {ComponentType.FULL, ComponentType.SWA, ComponentType.MAMBA},
+            params.sliding_window_size,
+        )
     )
+    linker = OrbitKVLinker(None, params)
     tensors = [
         *cache.full_kv_pool.k_buffer,
         *cache.full_kv_pool.v_buffer,

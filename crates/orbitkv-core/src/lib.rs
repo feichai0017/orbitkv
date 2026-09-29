@@ -10,6 +10,7 @@ mod codec;
 mod cost;
 pub use codec::{EncodedSegment, StorageCodec};
 mod block;
+mod completion;
 mod engine;
 mod memory;
 mod metrics;
@@ -22,11 +23,15 @@ pub mod transfer;
 pub use block::{
     BlockHash, LayerBlock, LayerSave, QueryResult, RawBlock, RestoreSource, SealedBlock, StateKey,
 };
+pub use completion::{
+    CompletionAdmission, CompletionIntent, CompletionObservation, CompletionOutcome,
+    CompletionResourceEvidence, CompletionRoute,
+};
 pub use engine::config::EngineConfig;
 pub use engine::instance::{GpuContext, InstanceContext};
-pub use engine::{EngineError, OrbitKVEngine};
+pub use engine::{EngineError, OrbitKVEngine, RawRestoreGrant, RestoreExecution};
 pub use memory::numa::NumaNode;
-pub use memory::pool::PinnedAllocation;
+pub use memory::pool::{PayloadArena, PinnedAllocation};
 pub use orbitkv_state::{
     BundleComponent, RecoveryContract, StateBundle, StateComponent, StateDescriptor, StateFormat,
     TokenRange,
@@ -35,7 +40,7 @@ pub use peer::export::{PeerError, PeerExports, TransferTicket};
 pub use query::lease::QueryLeaseId;
 pub use query::{QueryAdmission, QueryMode, QueryOwner, QueryReservation};
 pub use storage::MemoryCacheCleanupStats;
-pub use storage::dram::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES;
+pub use storage::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES;
 pub use storage::ssd::metadata::SlotMeta;
 pub use storage::ssd::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,

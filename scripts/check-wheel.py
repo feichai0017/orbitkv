@@ -31,7 +31,7 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
         "orbitkv/sglang/config.py",
         "orbitkv/sglang/layout.py",
         "orbitkv/orbitkv-cache-manager-py",
-        "orbitkv/libtransfer_engine.so",
+        "orbitkv/libtent_shared.so",
         "orbitkv/libmooncake_common.so",
         "orbitkv/libasio.so",
     }
@@ -41,6 +41,7 @@ def check_wheel(path: Path, variant: str, version: str | None = None) -> None:
         if missing:
             raise ValueError(f"missing wheel files: {', '.join(sorted(missing))}")
         removed_files = {
+            "orbitkv/libtransfer_engine.so",
             "orbitkv/orbitkv-metaserver-py",
             "orbitkv/orbitkv-catalog-py",
             "orbitkv/_metaserver.py",

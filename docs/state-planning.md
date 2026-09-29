@@ -91,10 +91,13 @@ or cluster-wide cache placement. Optional Dynamo routing can later consume
 Manager summaries, while Managers retain discovery and physical decisions.
 
 Current implementation has embedded discovery, bounded candidate caching,
-source authorization and opt-in cost observations. Peer fetch selection still
-maximizes consecutive coverage from one owner; it does not rank by measured
-completion time. Per-residence advertisements, peer resource summaries and the
-joint local/peer decision loop above remain implementation work.
+per-residence advertisements, source authorization and opt-in cost observations.
+Peer fetch first maximizes consecutive coverage. Among owners with the same
+coverage and source medium, an additional opt-in can use fresh complete
+HostReady estimates scoped by peer incarnation. Unknown/incompatible estimates
+preserve the stable owner order, and source admission rejection replans within
+the bounded batch. Peer resource summaries and the joint local/peer decision
+loop above remain implementation work.
 
 ## What can be known ahead of time
 
@@ -247,10 +250,22 @@ traffic needs priority with bounded write starvation.
 ### Unified replicas, routes and execution ownership
 
 Core's `planning/` uses a bounded `ReplicaSet` for local DRAM, local SSD and
-peer DRAM. Each record separates medium from acquisition evidence: weak DRAM
+peer DRAM/SSD. Each record separates medium from acquisition evidence: weak DRAM
 ownership, an SSD index version, or peer owner/incarnation and inventory sequence.
 Peer refresh preserves local evidence and the directory's replica bound. Current
-peer evidence describes DRAM only; unknown peer size/encoding stays unknown.
+owner inventory advertises preferred DRAM or surviving committed SSD evidence,
+including representation family and known stored bytes. Unknown values remain
+explicit; HBM records do not become executable routes, and SSD records use their
+own source preparation plan rather than masquerading as peer DRAM.
+
+One Storage-owned residency stream tracks current DRAM plus committed SSD for
+each owner/key. DRAM is the advertised preference while present; its eviction
+reveals the surviving SSD evidence without losing the owner. SSD commit is the
+publication boundary, and ring overwrite or corruption removes its evidence.
+Peer SSD discovery is not treated as directly readable memory. The requester
+binds each selected segment to SSD evidence; the source revalidates an exact SSD
+generation and materializes it through bounded io_uring host staging before TE.
+Two-host correctness and performance qualification remain open.
 
 `ReadPlan` now retains unresolved candidates for an admitted query batch and
 declares host-ready preparation or engine restoration. The coordinator keeps
@@ -261,15 +276,35 @@ rediscover by key. Both queued and submitted reads retain these leases through
 cancellation until completion. Peer rejection updates only the rejected owner,
 without truncating the batch or discarding SSD alternatives.
 
-The selection order remains unchanged: local DRAM first; eligible deferred SSD
-restoration next; host materialization tries peer DRAM, then permitted SSD
-io_uring. Explicit SSD paths do not silently switch to host prefetch. Preparation
+The top-level selection order remains local DRAM first, then eligible deferred
+local SSD restoration. Host materialization tries peer DRAM, permitted local SSD
+io_uring, then peer SSD. Explicit local SSD paths do not silently switch to host prefetch. Preparation
 produces host state; an engine restore completes only through the existing GPU
 completion owner. Metadata discovery still returns positions to engines, so it
 is not a reusable read grant. Plans are per admitted query batch, not a joint
 optimizer across groups, ranks or all request batches. Full route/resource
 estimates, consumed endpoint descriptors and measured cross-source selection
 remain open.
+
+Host materialization now asks `ReadPlan` for one bounded `HostReadRoute`, which
+returns either the existing peer segment plan or the existing io_uring SSD plan.
+The query coordinator performs discovery and owns shared-read lifetime, but no
+longer duplicates peer-before-SSD route choice. Planning remains metadata-only:
+the selected peer still needs authoritative authorization, while SSD pins the
+exact indexed generation only when its execution owner acquires the route.
+Peer evaluation counts each candidate's consecutive coverage before allocating
+authorization records only for the winner. This removes allocation proportional
+to every rejected peer without changing source priority or retry semantics.
+
+After query leases meet real engine destinations, `engine::restore` builds a
+consumed `RestorePlan` from only referenced source indices. It binds the
+EngineRestore target to one CUDA device, deduplicates source geometry, records
+one SSD route plus source bytes/fragments and DRAM mixing, and owns no payload.
+The GPU worker rejects a plan for another device or payloads that disagree with
+its route. Lane dispatch and complete SSD cost shape consume this plan instead
+of independently rediscovering intent from every layer. Source leases, query
+reservations, destination pages and completion remain owned by `LoadTask` and
+the existing workers.
 
 | Concept | Information and responsibility |
 | --- | --- |
@@ -291,7 +326,7 @@ for every local/remote combination:
 | Medium | Consumer's node | Another node | Current executable scope |
 | --- | --- | --- | --- |
 | DRAM | Manager-owned pool | Peer Manager-owned pool | Both supported; peer payload currently stages into requester DRAM |
-| SSD | Manager-owned store | Peer Manager-owned store | Local supported; peer SSD preparation/authorization remains planned |
+| SSD | Manager-owned store | Peer Manager-owned store | Local supported; peer io_uring preparation/authorization and fixed-priority requester route implemented, two-host qualification open |
 | HBM | Engine pages or Manager GPU allocations, with distinct owners | Peer engine pages or peer Manager GPU allocations | Local registered restore destinations/staging supported; general HBM cache sourcing is not implemented; experimental P/D is a separate contract |
 
 Engine HBM becomes a source only with an engine grant binding instance/session,
@@ -333,14 +368,60 @@ every cluster resource or search an unrestricted transfer graph. Use bounded
 cached evidence and demand-driven directory queries; capability/health evidence
 filters routes before costing, and acquisition revalidates the chosen version.
 
+`CostEstimateKey` now carries that completion target explicitly as an intent plus its
+target resource. HostReady has no engine resource, EngineRestore names the
+destination GPU, and GPU save completion names the source whose pages become
+reusable. Rewriting a candidate observation kind or execution resource
+recomputes this field, so an
+SSD restore for GPU 1 cannot accidentally reuse evidence collected for GPU 0.
+This is already enforced by raw-copy/SSD shadow and host-route selection. Future
+direct-to-D and prefill-restore-plus-handoff candidates must both end at the
+same DecodeReady device identity before entering the comparison set.
+
+The first authenticated `CompletionObservation` boundary now records vLLM
+prefill-to-decode handoff evidence at the decode owner. The local process
+channel accepts a bounded frame containing the registered instance/device,
+prefill endpoint identity, nonzero transfer generation,
+representation, logical/wire bytes, fragments, admission, outcome and elapsed
+time. It contains no request ID or state key. Core hashes the source endpoint
+into an `ExecutionResource::PrefillToDecodeHandoff` identity and excludes the
+generation from the statistical key. Only admitted completed reports update
+the estimate; rejected, failed, cancelled and timed-out reports remain
+diagnostics. This adds
+evidence, not a candidate enumerator or execution selector. Direct cache restore
+records the same post-allocation DecodeReady boundary for Manager-executed
+restores: `Restore` begins
+after the framework has allocated decode pages, Core consumes fresh source
+leases, validates the registered destination ranges, and records their device,
+bytes and fragment count in `RestoreTargetShape`. This shape remains in the
+`RestorePlan` through completion; it owns no page lifetime or admission.
+The framework retains destination pages, and a separate `DecodeRestorePermit`
+owns device capacity. The worker finishes the observation only after every
+GPU operation is terminal.
+This supplies comparable completed-route evidence for those routes. Engine-local
+raw grants retain the same device admission but do not yet train this estimator;
+their actual drain occurs in the engine before Manager source retirement. See
+the [next measurement increment](communication-plan.md#next-increments-after-consolidating-pr-188).
+
+Completion resource evidence is separately bounded and freshness-checked. A
+direct restore has a per-device 128-operation admission owner retained through
+terminal completion. P/D observations carry exact admitted decode bytes,
+handoff queue depth and parallelism, and the TENT rail inflight-byte/bandwidth
+snapshot captured at admission. These values never become metric labels or
+stable estimate-key dimensions. Fresh evidence expires after two seconds;
+decode-route comparison adjusts estimates by queued execution waves and, when
+an RDMA rail is present, current TENT inflight bytes divided by observed rail
+bandwidth. Missing or shape-incompatible resource evidence preserves the
+deterministic default.
+
 ### Cost model for complete routes
 
 Keep the shared measurement substrate and make its two boundaries explicit:
 operation samples describe individual I/O/copy/codec work; complete-route samples
 describe a named start-to-declared-target completion interval. Engine-visible
 restore and host-ready preparation use distinct targets and estimate keys. The
-existing `CostPath` enum includes both operation and composite boundaries. It is
-not yet a set of additive graph-edge costs.
+`CostObservationKind` includes both operation and composite boundaries. It is
+not a set of additive graph-edge costs.
 
 The planner's estimate should report a predicted ready time, measured uncertainty
 and freshness, and the resources needed to execute. Resource demand includes
@@ -392,6 +473,26 @@ The implemented Core layout separates physical residency, planning, request
 ownership and execution. Existing crates are retained; no generic tier trait or
 compatibility re-export was added.
 
+GPU worker pools remain instance-owned so registration, transfer backend and
+drain lifetimes stay isolated. Their GPU-storage write admission is process-wide
+per CUDA device, because several instances on one Manager contend for the same
+staging and storage queue capacity. The lookup happens when a pool is created,
+not on the request hot path. `SaveTask` owns an acquired permit until terminal
+completion; caller cancellation cannot return capacity early. A full shared
+budget preserves the existing host-publication fallback. Shared read/staging
+admission and fair shares remain separate work.
+
+The first staging-owner boundary distinguishes automatic SSD demand from an
+explicit route control. Automatic demand prefers cuFile when capability is
+present but may switch the same immutable extent to io_uring before any worker
+submission if another instance owns this CUDA device's persistent staging.
+Explicit cuFile is a qualification contract and fails closed instead. One pool
+per device owns the persistent two-slot cuFile worker and codec/direct-write
+staging until all of its lanes drain; this bounds instance-multiplied HBM while
+keeping registered resources warm for its serving lifetime. Idle handoff and
+fair device shares remain later work and must be measured before relaxing this
+owner model.
+
 ```text
 orbitkv-state/       shared state/recovery and consumed descriptor contracts
 orbitkv-core/
@@ -434,7 +535,7 @@ endpoints still require their own implementation and qualification.
 The refactor sequence is:
 
 1. Bounded records now replace the three-field candidate shape for existing
-   DRAM/SSD/peer-DRAM sources, preserving exact namespaces, metadata-only
+   DRAM/SSD/peer-DRAM/peer-SSD sources, preserving exact namespaces, metadata-only
    discovery and version revalidation. Admitted read batches now retain these
    records through source selection and acquisition. Joint multi-group/request
    planning and richer consumed endpoint descriptors remain open.
@@ -446,9 +547,10 @@ The refactor sequence is:
 4. Connect complete-route shadow estimates and resource evidence. Qualify
    lifecycle, source invalidation, deadline/cancellation and matched overhead
    before allowing a measured route to change execution.
-5. Add source-side SSD preparation, then engine-authorized HBM replicas when
-   their protocols and deployment gates are ready. Cross-representation discovery
-   requires its own identity migration; none is implied by endpoint normalization.
+5. Source-side SSD preparation and fixed-priority requester execution now use
+   the same ticket owner and Mooncake TENT path. Add engine-authorized HBM replicas
+   only when their protocols and deployment gates are ready. Cross-representation
+   discovery requires its own identity migration; none is implied by endpoint normalization.
 
 Upstream mechanisms supporting this organization were checked at pinned sources:
 [LMCache MP](https://github.com/LMCache/LMCache/blob/05a013b29da78cf2321b9b46ec5039dde2fb0bb0/lmcache/v1/distributed/storage_controllers/prefetch_controller.py)
@@ -469,7 +571,7 @@ than a tier name alone. A block may have several replicas. Only discover
 metadata while enumerating alternatives; reserve and revalidate the selected
 sources before reading. Estimates never prove source availability or readiness.
 
-Core discovery now retains concrete local DRAM, local SSD and known peer DRAM
+Core discovery now retains concrete local DRAM, local SSD and known peer DRAM/SSD
 evidence together instead of collapsing each key immediately to a Boolean.
 DRAM evidence is a weak reference to its stored image; SSD evidence includes
 the indexed representation, bytes and immutable generation token. Neither
@@ -490,13 +592,14 @@ flowchart LR
     D <-->|io_uring| S[Local SSD]
     G <-->|cuFile| S
     P[Peer registered DRAM] -->|Mooncake TE| D
+    PS[Peer SSD] -->|Source io_uring staging| P
 ```
 
 CUDA IPC imports engine allocations; it is not the HBM/DRAM movement mechanism.
 Current GDS paths use registered GPU staging, not arbitrary direct engine-page
-I/O. Speculative SSD preparation targets DRAM. General remote SSD staging and
-peer-HBM cache sourcing remain future work; the experimental vLLM GPU-to-GPU
-P/D connector is a separate handoff path. See [GPU storage](gds.md) and
+I/O. Speculative SSD preparation targets DRAM. Peer SSD uses owner-local
+io_uring staging before the same TE path; peer-HBM cache sourcing remains future
+work. The experimental vLLM GPU-to-GPU P/D connector is a separate handoff path. See [GPU storage](gds.md) and
 [distributed source ownership](distributed-cache.md#transfer-lifetime-and-resource-control).
 
 Current selection is not a calibrated policy: DMA/kernel is selected at instance
@@ -567,7 +670,7 @@ cache tiers. Several residences may contain the same compatible state.
 | Peer DRAM → TE → local GPU staging → local HBM | Planned; GPU registration, capacity and decode/scatter ownership required |
 | Peer DRAM → TE → local engine HBM | Planned; registered destinations, exact engine-ready bytes/layout and completion visibility required |
 | Peer HBM → TE → local DRAM or GPU memory | General cache sourcing planned; source engine must grant a lifetime lease. GPU-to-GPU vLLM P/D is an existing experimental handoff, not general peer-HBM reuse |
-| Peer SSD → owner DRAM → TE → local DRAM or GPU memory | Planned owner-local staging with bounded credits at both ends |
+| Peer SSD → owner DRAM → TE → local DRAM or GPU memory | Source io_uring staging, two-phase source credits and explicit requester planning implemented; two-host qualification remains open |
 | Peer SSD → owner GPU staging via cuFile → TE → local GPU memory | Later candidate only on qualified source GDS and GPU RDMA paths; charge source GPU space and interference |
 | Mounted remote storage → cuFile → local GPU staging | Separate future storage deployment; not an implicit Mooncake peer-memory path |
 
@@ -652,6 +755,29 @@ unknown. Route totals overlap child operation timers and must not be added to
 them. Dynamic route, representation and legal-boundary selection remain later
 work. No measured speedup is attributed to an unexecuted path.
 
+The observer explicitly distinguishes submission-to-completion operation samples
+from enqueue-to-completion SSD-route samples. Resource keys separate GPU,
+SSD store/file and peer-incarnation identities; a complete SSD route retains
+its destination GPU, copy backend, source-store set and mixed DRAM presence.
+These are internal cost identities, not exported labels, live resource credits
+or full replica endpoint descriptors.
+
+Shadow now rejects incompatible comparison families, resource identities,
+representations or shape buckets. It accepts only the existing load-copy,
+save-copy and SSD-restore pairs derived by their execution owners from the same
+actual work. Matching estimator buckets alone does not prove equal demand.
+Cross-source local/peer comparisons still require a separate complete-route and
+admission contract; they cannot reuse this same-source check blindly.
+
+The declared margin is 5% of the current estimate. A different path is
+suggested only if its mean plus empirical error is below the current mean minus
+its error by more than that margin. Faster means inside this guard report
+`within_margin`, incompatible evidence reports `incomparable`, and missing
+estimates remain `unknown`. Shadow decisions never alter execution. The narrow
+peer-owner selector applies the same guard only to equal-coverage, same-medium
+HostReady routes; it does not qualify cross-medium or local/peer switching. See
+[cost metrics](metrics.md#bounded-cost-observations) for the complete labels.
+
 Observations and shadow work are **off by default**. Set
 `ORBITKV_COST_OBSERVATIONS=1` before starting the Manager to enable them;
 unset or `0` preserves the disabled baseline. The earlier observation-only matrix
@@ -659,6 +785,18 @@ passes five of six cells; SGLang ANS SSD exceeds the TTFT p50 budget, so default
 enablement remains unqualified. That matrix predates independent SSD-route
 execution; [current validation](implementation-plan.md#ssd-sourcepath-separation-final-evidence)
 is recorded separately.
+Set `ORBITKV_COST_SELECTION=1` in addition to observations to allow the guarded
+same-medium peer-owner choice. Either variable absent or unequal to `1` keeps
+the stable longest-coverage/owner ordering. Selection never expands candidate
+coverage, bypasses authorization or treats a prediction as a resource permit.
+With observations alone, equal-coverage local SSD, peer DRAM and peer SSD routes
+also enter a complete HostReady shadow when each peer alternative has one source
+owner. Different coverage, unknown shape and multi-owner prefixes do not compare.
+This shadow does not change the fixed host-route order. Experimental execution
+requires the two flags above plus `ORBITKV_CROSS_MEDIUM_SELECTION=1`; every
+equal-coverage candidate must have fresh compatible evidence. The selected
+source still performs authoritative acquisition/admission. Pre-payload rejection
+can replan; submitted payload failure cannot switch media.
 There are no Python hot-loop callbacks, extra GPU synchronizations or payload
 reads for telemetry. See [the paired workload](../benches/README.md#cost-observation-overhead)
 for the predeclared overhead budget and final qualification evidence.
@@ -758,8 +896,8 @@ Remote byte movement uses Mooncake TE through `orbitkv-transfer`. OrbitKV owns
 state compatibility, replica discovery, source capabilities, budgets and the
 restore plan; do not duplicate TE's transport implementation or infer RDMA from
 a successful transfer. Current shared-cache recovery stages peer bytes in local
-DRAM before GPU restore. Native RDMA, general peer-HBM restore, remote SSD and
-TP/PP integration each need separate evidence.
+DRAM before GPU restore. Native RDMA, general peer-HBM restore, peer-SSD
+two-host qualification and TP/PP integration each need separate evidence.
 
 Extend the same cost observations with discovery, authorization, owner-local
 preparation, TE transfer, destination decode/H2D and engine-visible completion.
@@ -768,10 +906,15 @@ without automatically adding them to the request critical path. Cached directory
 evidence avoids repeated discovery, not source lifetime checks; etcd remains
 membership/configuration coordination and never a per-read dependency.
 
-For later remote SSD support, the owner prepares only its own SSD bytes into
-bounded registered memory, then TE moves them. Reserve source and destination
-credits without holding unbounded partial reservations. Do not recursively fetch
-from another peer or advertise SSD-only state as immediately RDMA-readable.
+For remote SSD support, the owner prepares only its own SSD bytes into bounded
+registered memory, then TE moves them. Source-side io_uring staging now reserves
+ticket/session and allocator-rounded byte credits before allocation. Its detached
+batch owns exact extent leases and staging credit through drain, atomically
+commits actual allocation footprint, and publishes only after result handoff.
+Requester plans use this route only after peer DRAM and eligible local SSD host
+routes, with a distinct authorization cost path. Measured source selection and
+two-host destination qualification remain open. Do not recursively fetch from
+another peer or advertise SSD-only state as immediately RDMA-readable.
 Peer-HBM sourcing similarly needs engine-owned lifetime evidence; it is not a
 free Manager memory pool. Different TP/PP shapes require explicit compatibility
 or a separately implemented resharding step.
@@ -1007,7 +1150,7 @@ Identical prefix reads can be shared with independent owners and leases; SSD
 queue pressure waits for space. A too-large individual query bypasses restore.
 Expired replies drop resources while retaining a bounded tombstone until poll,
 cancel, or session teardown. Both adapters cancel superseded queries. Channel
-ABI 5 requires rebuilding the manager and client together.
+ABI 9 requires rebuilding the manager and client together.
 
 Deterministic [fault gates](fault-qualification.md) cover delayed SSD completion,
 cancelled ownership, lost completion notifications, stuck/malformed Publish
@@ -1146,8 +1289,8 @@ events; incrementing an adapter transfer counter does not supply that evidence.
 Qualify full-attention first. Hybrid checkpoints, sliding windows, MLA and
 auxiliary state each require their own complete recovery gate.
 
-P6 adds per-layer-group completion dependencies to Core's `transfer/worker/`, the backing
-pipeline, and both adapters. Start with whole-prefix SSD preparation plus
+P6 adds per-layer-group completion dependencies to the engine-local raw executor,
+the remaining Manager SSD/codec workers, the backing pipeline, and both adapters. Start with whole-prefix SSD preparation plus
 layer-group H2D/compute overlap; only then pipeline SSD chunks through a bounded
 staging ring. The current serialized full restore remains the reference for
 byte correctness during evaluation. GPU execution must wait on a dependency

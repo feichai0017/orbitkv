@@ -22,12 +22,8 @@ def normalize_block_ids(block_ids: Any) -> BlockIds:
     """Convert vLLM block-id containers to a tuple of mutable group lists."""
     if block_ids is None:
         return ()
-    if hasattr(block_ids, "get_unhashed_block_ids_all_groups"):
+    if not isinstance(block_ids, (tuple, list)):
         block_ids = block_ids.get_unhashed_block_ids_all_groups()
-    elif hasattr(block_ids, "get_block_ids_all_groups"):
-        block_ids = block_ids.get_block_ids_all_groups()
-    elif hasattr(block_ids, "get_block_ids"):
-        block_ids = block_ids.get_block_ids()
 
     if isinstance(block_ids, tuple):
         return tuple(list(group) for group in block_ids)

@@ -1,10 +1,12 @@
 //! Lifecycle metadata over the same authenticated UDS that bootstraps local IPC.
 use std::collections::HashMap;
+use std::os::fd::AsFd;
 use std::sync::Arc;
 use std::time::Duration;
 
 use orbitkv_channel::lifecycle::{
     LIFECYCLE_HEADER_BYTES, LifecycleCommand, LifecycleHeader, MAX_LIFECYCLE_PAYLOAD,
+    send_lifecycle_fds,
 };
 use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -42,9 +44,9 @@ pub(crate) async fn serve(
             tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut payload))
                 .await??;
             let result = dispatch(command, &payload, &lifecycle, &mut owners).await;
-            let (code, body) = match result {
-                Ok(body) => (0, body),
-                Err(error) => (error.code, error.message.into_bytes()),
+            let (code, body, arenas) = match result {
+                Ok((body, arenas)) => (0, body, arenas),
+                Err(error) => (error.code, error.message.into_bytes(), Vec::new()),
             };
             if body.len() > MAX_LIFECYCLE_PAYLOAD {
                 return Err(std::io::Error::new(
@@ -59,6 +61,15 @@ pub(crate) async fn serve(
             }
             .encode()?;
             tokio::time::timeout(Duration::from_secs(120), async {
+                let fds = arenas
+                    .iter()
+                    .map(|arena| arena.fd.as_fd())
+                    .collect::<Vec<_>>();
+                stream
+                    .async_io(tokio::io::Interest::WRITABLE, || {
+                        send_lifecycle_fds(&stream, &fds)
+                    })
+                    .await?;
                 stream.write_all(&response).await?;
                 stream.write_all(&body).await
             })
@@ -82,7 +93,7 @@ async fn dispatch(
     payload: &[u8],
     lifecycle: &LifecycleService,
     owners: &mut HashMap<String, u64>,
-) -> Result<Vec<u8>, ControlError> {
+) -> Result<(Vec<u8>, Vec<orbitkv_core::PayloadArena>), ControlError> {
     match command {
         LifecycleCommand::Health => {
             if !payload.is_empty() {
@@ -94,9 +105,21 @@ async fn dispatch(
         LifecycleCommand::Register => {
             let request = RegisterContextRequest::decode(payload)
                 .map_err(|e| ControlError::invalid_argument(e.to_string()))?;
+            let arenas = lifecycle.payload_arenas()?;
+            if arenas.len() > 64 {
+                return Err(ControlError::invalid_argument(
+                    "payload arena count exceeds session limit",
+                ));
+            }
             lifecycle
                 .register(crate::wire::registration(request))
                 .await?;
+            let mut body = Vec::with_capacity(arenas.len() * 16);
+            for arena in &arenas {
+                body.extend_from_slice(&arena.id.to_le_bytes());
+                body.extend_from_slice(&arena.size.to_le_bytes());
+            }
+            return Ok((body, arenas));
         }
         LifecycleCommand::Unregister => {
             let request = UnregisterRequest::decode(payload)
@@ -128,5 +151,5 @@ async fn dispatch(
             owners.insert(instance_id, token);
         }
     }
-    Ok(Vec::new())
+    Ok((Vec::new(), Vec::new()))
 }

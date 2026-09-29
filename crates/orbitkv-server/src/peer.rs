@@ -49,6 +49,7 @@ impl P2pTransferService {
             PeerError::Unavailable => {
                 Status::failed_precondition("Mooncake transfer engine is not configured")
             }
+            PeerError::StagingFailed => Status::unavailable("source SSD staging failed"),
             PeerError::StaleReplica => {
                 Status::failed_precondition("stale owner or residency candidate")
             }
@@ -143,6 +144,7 @@ impl Engine for P2pTransferService {
                 key: orbitkv_state::StateKey::new(req.namespace.clone(), hash.clone()),
                 sequence,
                 present: true,
+                metadata: None,
             })
             .collect();
         let ticket = Self::parse_ticket(req.ticket)?;
@@ -150,6 +152,7 @@ impl Engine for P2pTransferService {
             .engine
             .peer_exports()
             .authorize(owner, ticket, &records)
+            .await
             .map_err(Self::authorization_error)?;
 
         let blocks: Vec<TransferBlockInfo> = found_blocks

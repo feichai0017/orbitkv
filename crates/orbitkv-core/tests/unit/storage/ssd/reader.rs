@@ -1,13 +1,37 @@
 use super::*;
 
+fn staging_reservation(
+    count: usize,
+) -> (
+    crate::peer::export::TransferLockManager,
+    crate::TransferTicket,
+    crate::peer::export::StagingReservation,
+) {
+    let locks =
+        crate::peer::export::TransferLockManager::new(std::time::Duration::from_secs(30), 1);
+    let ticket = crate::TransferTicket {
+        window: locks.open(uuid::Uuid::new_v4()).unwrap(),
+        slot: 0,
+        generation: 1,
+    };
+    let reservation = locks.reserve(ticket, 1, count).unwrap();
+    (locks, ticket, reservation)
+}
+
 #[test]
 fn cancelled_batch_releases_results_and_finishes_after_every_reader() {
     let (done_tx, done_rx) = oneshot::channel();
     let observation = Observation::new(
-        CostKey::new(CostPath::SsdPrefetch, 99, Representation::Raw, 4096, 3),
+        CostEstimateKey::new(
+            CostObservationKind::LocalSsdHostReady,
+            ExecutionResource::SsdStore(99),
+            Representation::Raw,
+            4096,
+            3,
+        ),
         None,
     );
-    let context = Arc::new(BatchContext::new(3, done_tx, observation, Vec::new()));
+    let context = Arc::new(BatchContext::new(3, done_tx, observation, Vec::new(), None));
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
     drop(done_rx);
 
@@ -47,6 +71,7 @@ async fn cancelled_batch_retains_extent_until_the_last_reader_releases_its_conte
         done_tx,
         Observation::disabled(),
         vec![lease],
+        None,
     ));
     let submitted = Arc::clone(&context);
     drop(done_rx);
@@ -57,4 +82,54 @@ async fn cancelled_batch_retains_extent_until_the_last_reader_releases_its_conte
     assert_eq!(readers.load(Ordering::Acquire), 1);
     drop(submitted);
     assert_eq!(readers.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn cancelled_export_retains_reservation_until_every_reader_drains() {
+    let (locks, ticket, reservation) = staging_reservation(2);
+    let (done_tx, done_rx) = oneshot::channel();
+    let context = Arc::new(BatchContext::new(
+        2,
+        done_tx,
+        Observation::disabled(),
+        Vec::new(),
+        Some(reservation),
+    ));
+    let block = Arc::new(SealedBlock::from_slots(Vec::new()));
+    drop(done_rx);
+
+    context.complete_one(
+        StateKey::new("cancelled-export".into(), vec![0]),
+        Some(Arc::clone(&block)),
+    );
+    assert_eq!(locks.accounting(), (1, 1));
+    assert_eq!(locks.release(ticket), Ok(0));
+    assert_eq!(locks.accounting(), (1, 1));
+    context.complete_one(
+        StateKey::new("cancelled-export".into(), vec![1]),
+        Some(block),
+    );
+    assert_eq!(locks.accounting(), (0, 0));
+}
+
+#[test]
+fn partial_export_failure_rolls_back_and_reports_staging_failure() {
+    let (locks, _ticket, reservation) = staging_reservation(2);
+    let (done_tx, done_rx) = oneshot::channel();
+    let context = Arc::new(BatchContext::new(
+        2,
+        done_tx,
+        Observation::disabled(),
+        Vec::new(),
+        Some(reservation),
+    ));
+    let block = Arc::new(SealedBlock::from_slots(Vec::new()));
+
+    context.complete_one(StateKey::new("failed-export".into(), vec![0]), Some(block));
+    context.complete_one(StateKey::new("failed-export".into(), vec![1]), None);
+    assert!(matches!(
+        done_rx.try_recv(),
+        Ok(Err(PeerError::StagingFailed))
+    ));
+    assert_eq!(locks.accounting(), (0, 0));
 }

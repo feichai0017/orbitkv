@@ -34,6 +34,10 @@ types need separate qualification and an explicit `cufile` selection.
 On a GPU storage buffer or I/O failure in `auto`, the Manager stops admitting
 new cuFile work. With no read-route override, subsequent operations use io_uring
 until restart; an explicit cuFile read route does not silently switch routes.
+When several engine instances share one Manager, one pool owns each CUDA
+device's persistent cuFile/codec staging until its lanes drain. Another
+instance's automatically selected read may use io_uring over the same extent;
+an explicit cuFile read fails instead so qualification cannot pass on fallback.
 Submitted work retains its file/extent/page ownership and completes or reports
 its error; changing the backend does not revoke DMA or silently replay an
 already submitted restore. The failing operation retains normal error semantics.
@@ -220,7 +224,7 @@ sharing a handle does not itself move data. The
 [experimental vLLM P/D connector](pd-mooncake-push.md) already registers engine
 GPU tensors and submits remote writes, but remains outside the qualified shared
 cache path. Direct placement in that shared-cache path is a follow-up to
-qualify before adding remote SSD pools.
+qualify independently from the host-staged peer SSD route.
 
 GDS does not schedule requests or select reusable model state. Recovery planning
 selects the required ranges; the storage/transfer owners choose a viable data
@@ -484,7 +488,8 @@ preparation time alone as an improvement.
 
 With `ORBITKV_COST_OBSERVATIONS=1`, the `ssd_uring_restore` and
 `ssd_cufile_restore` cost paths measure complete restore totals. Child
-`ssd_prefetch`, `ssd_read` and cuFile/copy/codec observations overlap these totals;
+`local_ssd_host_ready`, `ssd_read` and cuFile/copy/codec observations overlap
+these totals;
 do not add them or count their physical bytes twice. Observations remain off by
 default while the earlier SGLang ANS overhead gate is open. The route changes have
 [separate validation](implementation-plan.md#ssd-sourcepath-separation-final-evidence);

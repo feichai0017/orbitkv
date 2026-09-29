@@ -1,4 +1,6 @@
 use super::*;
+use crate::memory::numa::NumaNode;
+use crate::memory::pinned::{PagePolicy, PinnedMemory};
 use crate::transfer::MemcpyBackend;
 use cudarc::driver::sys;
 
@@ -6,22 +8,6 @@ use cudarc::driver::sys;
 struct MappedHost {
     host: *mut u8,
     device: u64,
-}
-
-/// Allocate `len` bytes of mapped pinned host memory.
-fn alloc_mapped_host(len: usize) -> MappedHost {
-    let mut p: *mut std::ffi::c_void = std::ptr::null_mut();
-    let r = unsafe { sys::cuMemHostAlloc(&mut p, len, sys::CU_MEMHOSTALLOC_DEVICEMAP) };
-    assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemHostAlloc");
-
-    let mut device: sys::CUdeviceptr = 0;
-    let r = unsafe { sys::cuMemHostGetDevicePointer_v2(&mut device, p, 0) };
-    assert_eq!(r, sys::CUresult::CUDA_SUCCESS, "cuMemHostGetDevicePointer");
-
-    MappedHost {
-        host: p as *mut u8,
-        device,
-    }
 }
 
 fn alloc_device(len: usize) -> u64 {
@@ -42,7 +28,7 @@ fn descs(device_base: u64, host_base: MappedHost, n: usize, seg: usize) -> Vec<C
             host_device: host_base.device + (k * seg) as u64,
             size: seg,
             device_allocation: 0,
-            host_allocation: 0,
+            host_registration: 0,
         })
         .collect()
 }
@@ -60,9 +46,14 @@ fn kernel_matches_direct_both_directions() {
     let ctx = CudaContext::new(0).expect("ctx");
     let stream = ctx.default_stream();
     let kernel = KernelBackend::new(&ctx).expect("kernel backend");
-    let memcpy = MemcpyBackend;
+    let memcpy = MemcpyBackend::new(&ctx).expect("DMA backend");
 
-    let host = alloc_mapped_host(total);
+    let memory = PinnedMemory::allocate(total, PagePolicy::Regular, NumaNode::UNKNOWN)
+        .expect("shared pinned payload backing");
+    let host = MappedHost {
+        host: memory.as_ptr().cast_mut(),
+        device: memory.device_ptr().as_ptr() as u64,
+    };
     let device = alloc_device(total);
 
     let mut pattern = vec![0u8; total];
@@ -86,9 +77,9 @@ fn kernel_matches_direct_both_directions() {
     let reordered: Vec<_> = (0..N).map(|index| contiguous[index * 73 % N]).collect();
     let mut allocation_boundaries = contiguous.clone();
     for (index, copy) in allocation_boundaries.iter_mut().enumerate() {
-        // Model separate suballocations within the contiguous backing regions.
-        // Either side's owner boundary must prevent direct-copy coalescing.
-        copy.host_allocation = index / 3;
+        // Model separate registrations and GPU allocations. Either physical
+        // registration boundary must prevent direct-copy coalescing.
+        copy.host_registration = index / 3;
         copy.device_allocation = index / 5;
     }
 
@@ -137,6 +128,5 @@ fn kernel_matches_direct_both_directions() {
 
     unsafe {
         sys::cuMemFree_v2(device);
-        sys::cuMemFreeHost(host.host as *mut _);
     }
 }

@@ -9,7 +9,9 @@ use mea::oneshot;
 use parking_lot::Mutex;
 
 use crate::block::{SealedBlock, StateKey};
-use crate::cost::{CostKey, CostPath, Observation, Outcome, Representation};
+use crate::cost::{
+    CostEstimateKey, CostObservationKind, ExecutionResource, Observation, Outcome, Representation,
+};
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::PinnedAllocation;
 use crate::metrics::core_metrics;
@@ -24,7 +26,7 @@ mod uring;
 mod writer;
 
 use super::MaterializedBlocks;
-use crate::memory::AllocateFn;
+use crate::memory::{AllocateFn, AllocationFootprintFn};
 pub(crate) use config::SSD_ALIGNMENT;
 pub use config::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,
@@ -77,6 +79,16 @@ impl SsdReadCandidate {
             store,
         }))
     }
+
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn cost_resource(&self) -> Option<ExecutionResource> {
+        Some(self.store.upgrade()?.io.cost_resource)
+    }
+
+    #[cfg(feature = "mooncake")]
+    pub(crate) fn replica_metadata(&self) -> orbitkv_state::ReplicaMetadata {
+        self.entry.replica_metadata()
+    }
 }
 
 impl SsdReadLease {
@@ -93,7 +105,7 @@ impl SsdReadLease {
             })
     }
 
-    pub(crate) fn cost_resource(&self) -> u64 {
+    pub(crate) fn cost_resource(&self) -> ExecutionResource {
         self.store.io.cost_resource
     }
 
@@ -110,11 +122,7 @@ impl SsdReadLease {
     }
 
     pub(crate) fn invalidate_encoded(&self) {
-        self.store
-            .inner
-            .lock()
-            .ring
-            .invalidate_encoded(&self.key, &self.entry);
+        self.store.invalidate_encoded_entry(&self.key, &self.entry);
     }
 }
 
@@ -227,7 +235,9 @@ pub(crate) struct SsdStore {
     prefetch_tx: tokio::sync::mpsc::Sender<PrefetchBatch>,
     inner: Mutex<SsdInner>,
     allocate_fn: AllocateFn,
+    allocation_footprint_fn: AllocationFootprintFn,
     is_numa: bool,
+    inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
 }
 
 impl SsdStore {
@@ -260,8 +270,11 @@ impl SsdStore {
             index::Encoding::Raw
         };
         let entry = inner.ring.reserve(&key, slots, encoding)?;
+        let retired = inner.ring.take_retired();
         inner.pending_writes.insert(key.clone());
         core_metrics().ssd_write_inflight.add(1, &[]);
+        drop(inner);
+        self.retire_inventory(retired);
         Some(GpuWriteLease {
             entry,
             key: Some(key),
@@ -272,7 +285,9 @@ impl SsdStore {
     pub(crate) fn new(
         config: SsdCacheConfig,
         allocate_fn: AllocateFn,
+        allocation_footprint_fn: AllocationFootprintFn,
         is_numa: bool,
+        inventory: Option<Arc<crate::storage::inventory::ResidencyInventory>>,
     ) -> std::io::Result<Arc<Self>> {
         use std::fs::OpenOptions;
         use std::os::unix::io::AsRawFd;
@@ -378,7 +393,9 @@ impl SsdStore {
                 reuse_history: LruCache::new(REUSE_HISTORY_BLOCKS),
             }),
             allocate_fn,
+            allocation_footprint_fn,
             is_numa,
+            inventory,
         });
 
         Self::spawn_workers(
@@ -406,6 +423,70 @@ impl SsdStore {
             .collect()
     }
 
+    /// Validate the advertised inventory versions and pin their exact SSD
+    /// generations under the index lock before source staging begins.
+    pub(crate) fn pin_residencies(
+        self: &Arc<Self>,
+        records: &[orbitkv_state::InventoryRecord],
+    ) -> Option<Vec<Arc<SsdReadLease>>> {
+        let inner = self.inner.lock();
+        let inventory = self.inventory.as_ref()?;
+        if records.is_empty()
+            || !records
+                .iter()
+                .all(|record| inventory.contains_record(record))
+        {
+            return None;
+        }
+        let entries = records
+            .iter()
+            .map(|record| inner.ring.get(&record.key).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        let leases = records
+            .iter()
+            .zip(entries)
+            .map(|(record, entry)| {
+                entry.readers.fetch_add(1, Ordering::Relaxed);
+                core_metrics()
+                    .ssd_read_pinned_bytes
+                    .add(entry.len as i64, &[]);
+                Arc::new(SsdReadLease {
+                    entry,
+                    key: record.key.clone(),
+                    store: Arc::clone(self),
+                })
+            })
+            .collect();
+        Some(leases)
+    }
+
+    /// Exact upper bound for the pool allocations made by the host reader.
+    /// Each stored segment is materialized into its own rounded allocation.
+    pub(crate) fn staging_footprint(&self, leases: &[Arc<SsdReadLease>]) -> Option<u64> {
+        let mut bytes = 0u64;
+        for lease in leases {
+            if !std::ptr::eq(self, Arc::as_ptr(&lease.store)) {
+                return None;
+            }
+            for slot in &lease.entry.slots {
+                let numa_node = if self.is_numa {
+                    if slot.numa_node.is_unknown() {
+                        return None;
+                    }
+                    slot.numa_node
+                } else {
+                    NumaNode::UNKNOWN
+                };
+                for &size in &slot.segment_sizes {
+                    let numa_node = (!numa_node.is_unknown()).then_some(numa_node);
+                    let footprint = (self.allocation_footprint_fn)(size, numa_node)?;
+                    bytes = bytes.checked_add(footprint)?;
+                }
+            }
+        }
+        Some(bytes)
+    }
+
     pub(super) fn is_offset_valid(&self, entry: &SsdIndexEntry) -> bool {
         self.inner.lock().ring.is_offset_valid(entry)
     }
@@ -420,8 +501,34 @@ impl SsdStore {
 
     pub(super) fn commit_write(&self, key: &StateKey, success: bool) {
         let mut inner = self.inner.lock();
-        inner.ring.commit(key, success);
+        let committed = inner.ring.commit(key, success);
+        let metadata = if committed {
+            inner.ring.get(key).map(SsdIndexEntry::replica_metadata)
+        } else {
+            None
+        };
+        let retired = inner.ring.take_retired();
         inner.pending_writes.remove(key);
+        drop(inner);
+        self.retire_inventory(retired);
+        if let (Some(inventory), Some(metadata)) = (&self.inventory, metadata) {
+            inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, Some(metadata));
+        }
+    }
+
+    pub(super) fn invalidate_encoded_entry(&self, key: &StateKey, entry: &SsdIndexEntry) {
+        let invalidated = self.inner.lock().ring.invalidate_encoded(key, entry);
+        if invalidated && let Some(inventory) = &self.inventory {
+            inventory.change(key, orbitkv_state::ReplicaMedium::Ssd, None);
+        }
+    }
+
+    pub(super) fn retire_inventory(&self, keys: Vec<StateKey>) {
+        if let Some(inventory) = &self.inventory {
+            for key in keys {
+                inventory.change(&key, orbitkv_state::ReplicaMedium::Ssd, None);
+            }
+        }
     }
 
     pub(super) fn is_numa(&self) -> bool {
@@ -520,8 +627,8 @@ impl SsdStore {
         }
         let len = admitted.len();
         let observation = Observation::new(
-            CostKey::new(
-                CostPath::SsdWriteBatch,
+            CostEstimateKey::new(
+                CostObservationKind::SsdWriteBatch,
                 self.io.cost_resource,
                 representation.unwrap_or(Representation::Unknown),
                 logical_bytes.unwrap_or(stored_bytes),
@@ -587,7 +694,42 @@ impl SsdStore {
         }
         let result = done_rx
             .await
-            .map_err(|_| crate::EngineError::Storage("SSD host reader lost completion".into()));
+            .map_err(|_| crate::EngineError::Storage("SSD host reader lost completion".into()))?
+            .map_err(|_| crate::EngineError::Storage("SSD host reader failed".into()));
+        core_metrics()
+            .ssd_prefetch_duration_seconds
+            .record(started.elapsed().as_secs_f64(), &[]);
+        result
+    }
+
+    /// Materialize a remote export while the detached batch owns its source
+    /// admission. A successful result atomically publishes the transfer grant.
+    pub(crate) async fn read_host_batch_for_export(
+        &self,
+        leases: Vec<Arc<SsdReadLease>>,
+        reservation: crate::peer::export::StagingReservation,
+    ) -> Result<MaterializedBlocks, crate::PeerError> {
+        if leases.is_empty()
+            || leases
+                .iter()
+                .any(|lease| !std::ptr::eq(self, Arc::as_ptr(&lease.store)))
+        {
+            return Err(crate::PeerError::StagingFailed);
+        }
+        let started = std::time::Instant::now();
+        let count = leases.len();
+        let (done_tx, done_rx) = oneshot::channel();
+        let batch = PrefetchBatch::for_export(leases, done_tx, self.io.cost_resource, reservation);
+        if let Err(error) = self.prefetch_tx.send(batch).await {
+            core_metrics()
+                .ssd_prefetch_queue_closed
+                .add(count as u64, &[]);
+            error.0.observation.finish(Outcome::Failed, None);
+            return Err(crate::PeerError::StagingFailed);
+        }
+        let result = done_rx
+            .await
+            .unwrap_or(Err(crate::PeerError::StagingFailed));
         core_metrics()
             .ssd_prefetch_duration_seconds
             .record(started.elapsed().as_secs_f64(), &[]);

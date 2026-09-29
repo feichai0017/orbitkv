@@ -7,7 +7,7 @@ use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 
 fn shared_slab() -> (Vec<(StateKey, Arc<SealedBlock>)>, Arc<PinnedAllocation>) {
-    let pool = PinnedAllocator::new_global(1024 * 1024, 1, false, false, None);
+    let pool = PinnedAllocator::new_global(1024 * 1024, 1, false, None);
     let allocation = pool
         .allocate(NonZeroU64::new(4096).unwrap(), NumaNode::UNKNOWN)
         .unwrap();
@@ -26,12 +26,87 @@ fn shared_slab() -> (Vec<(StateKey, Arc<SealedBlock>)>, Arc<PinnedAllocation>) {
     (blocks, allocation)
 }
 
+fn metadata_blocks() -> Vec<(StateKey, Arc<SealedBlock>)> {
+    (0..2)
+        .map(|index| {
+            (
+                StateKey::new("ns".into(), vec![index]),
+                Arc::new(SealedBlock::from_slots(Vec::new())),
+            )
+        })
+        .collect()
+}
+
 fn ticket(manager: &TransferLockManager) -> TransferTicket {
     TransferTicket {
         window: manager.open(Uuid::new_v4()).unwrap(),
         slot: 0,
         generation: 1,
     }
+}
+
+#[test]
+fn staging_release_fences_commit_without_releasing_budget_early() {
+    let blocks = metadata_blocks();
+    let manager = TransferLockManager::new(Duration::ZERO, 1);
+    let ticket = ticket(&manager);
+    let reservation = manager.reserve(ticket, 1, blocks.len()).unwrap();
+
+    assert_eq!(manager.inner.lock().reserved_bytes, 1);
+    assert_eq!(manager.release(ticket), Ok(0));
+    assert_eq!(manager.inner.lock().reserved_bytes, 1);
+    assert_eq!(manager.inner.lock().active, 1);
+    assert!(matches!(
+        reservation.commit(blocks.clone()),
+        Err(PeerError::StaleTicket)
+    ));
+    assert_eq!(manager.inner.lock().reserved_bytes, 0);
+    assert_eq!(manager.inner.lock().active, 0);
+
+    let replacement = TransferTicket {
+        generation: 2,
+        ..ticket
+    };
+    manager.lock_blocks(replacement, blocks).unwrap();
+    assert_eq!(manager.release(replacement), Ok(2));
+}
+
+#[test]
+fn staging_commit_uses_actual_footprint_and_failed_handoff_rolls_back() {
+    let blocks = metadata_blocks();
+    let manager = TransferLockManager::new(Duration::ZERO, 2);
+    let first = ticket(&manager);
+    let reservation = manager.reserve(first, 2, blocks.len()).unwrap();
+    let prepared = reservation.commit(blocks.clone()).unwrap();
+    assert_eq!(manager.inner.lock().reserved_bytes, 0);
+    drop(prepared);
+    assert_eq!(manager.inner.lock().reserved_bytes, 0);
+    assert_eq!(manager.inner.lock().active, 0);
+
+    let second = TransferTicket {
+        generation: 2,
+        ..first
+    };
+    let reservation = manager.reserve(second, 1, blocks.len()).unwrap();
+    let prepared = reservation.commit(blocks).unwrap();
+    assert_eq!(manager.inner.lock().reserved_bytes, 0);
+    prepared.publish();
+    assert_eq!(manager.release(second), Ok(2));
+    assert_eq!(manager.inner.lock().reserved_bytes, 0);
+}
+
+#[test]
+fn actual_footprint_cannot_grow_past_the_shared_budget() {
+    let blocks = metadata_blocks();
+    let manager = TransferLockManager::new(Duration::ZERO, 1);
+    let ticket = ticket(&manager);
+    let reservation = manager.reserve(ticket, 1, blocks.len()).unwrap();
+    assert!(matches!(
+        reservation.commit_with_footprint(blocks, 2),
+        Err(PeerError::BudgetExhausted)
+    ));
+    assert_eq!(manager.inner.lock().reserved_bytes, 0);
+    assert_eq!(manager.inner.lock().active, 0);
 }
 
 #[test]
@@ -221,6 +296,7 @@ fn exports() -> (PeerExports, Arc<orbitkv_catalog::MembershipView>) {
     (
         PeerExports::new(
             dram,
+            None,
             Some(membership.clone()),
             Some("127.0.0.1:12345".into()),
             Duration::ZERO,
@@ -230,8 +306,8 @@ fn exports() -> (PeerExports, Arc<orbitkv_catalog::MembershipView>) {
     )
 }
 
-#[test]
-fn export_revalidates_residency_and_drains_after_fencing() {
+#[tokio::test]
+async fn export_revalidates_residency_and_drains_after_fencing() {
     let (exports, membership) = exports();
     let owner = membership.owner().incarnation;
     let (blocks, allocation) = shared_slab();
@@ -246,7 +322,7 @@ fn export_revalidates_residency_and_drains_after_fencing() {
     drop(exports.dram.remove_all());
     exports.dram.batch_insert(blocks);
     assert!(matches!(
-        exports.authorize(owner, ticket, &records),
+        exports.authorize(owner, ticket, &records).await,
         Err(PeerError::StaleReplica)
     ));
     assert_eq!(exports.locks.inner.lock().reserved_bytes, 0);
@@ -254,7 +330,7 @@ fn export_revalidates_residency_and_drains_after_fencing() {
         .dram
         .inventory_page(orbitkv_state::catalog_shard(&key), None)
         .unwrap();
-    let authorized = exports.authorize(owner, ticket, &records).unwrap();
+    let authorized = exports.authorize(owner, ticket, &records).await.unwrap();
     assert_eq!(authorized.len(), records.len());
     let bytes = allocation.size_bytes();
     assert_eq!(exports.locks.inner.lock().reserved_bytes, bytes);
@@ -268,7 +344,7 @@ fn export_revalidates_residency_and_drains_after_fencing() {
         Err(PeerError::StaleReplica)
     );
     assert!(matches!(
-        exports.authorize(owner, ticket, &records),
+        exports.authorize(owner, ticket, &records).await,
         Err(PeerError::StaleReplica)
     ));
     assert_eq!(exports.expire(), 1);
@@ -282,8 +358,8 @@ fn export_revalidates_residency_and_drains_after_fencing() {
     assert_eq!(exports.locks.inner.lock().reserved_bytes, 0);
 }
 
-#[test]
-fn export_rejects_invalid_evidence_before_reserving_resources() {
+#[tokio::test]
+async fn export_rejects_invalid_evidence_before_reserving_resources() {
     use orbitkv_state::InventoryRecord;
 
     let (mut exports, membership) = exports();
@@ -312,6 +388,7 @@ fn export_rejects_invalid_evidence_before_reserving_resources() {
         key: StateKey::new("ns".into(), vec![1]),
         sequence: 1,
         present: true,
+        metadata: None,
     };
     let mut mixed = valid.clone();
     mixed.key.namespace = "other".into();
@@ -332,7 +409,7 @@ fn export_rejects_invalid_evidence_before_reserving_resources() {
         }],
     ] {
         assert!(matches!(
-            exports.authorize(owner, ticket, &records),
+            exports.authorize(owner, ticket, &records).await,
             Err(PeerError::InvalidRequest(_))
         ));
     }
@@ -343,7 +420,7 @@ fn export_rejects_invalid_evidence_before_reserving_resources() {
         Err(PeerError::Unavailable)
     );
     assert!(matches!(
-        exports.authorize(owner, ticket, &[valid]),
+        exports.authorize(owner, ticket, &[valid]).await,
         Err(PeerError::Unavailable)
     ));
 }

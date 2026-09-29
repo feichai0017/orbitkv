@@ -76,7 +76,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run typos check
-        uses: crate-ci/typos@master
+        uses: crate-ci/typos@v1.50.2
 
   rust-fmt-check:
     name: rust fmt check
@@ -111,10 +111,16 @@ jobs:
           linux-local-args: '["--toolkit"]'
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
-      - name: Install protobuf compiler and RDMA headers
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+          sudo apt-get install -y libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+      - name: Install protocol compiler
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          version: "27.5"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:
@@ -158,7 +164,7 @@ jobs:
           uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest
       - name: Check benchmark measurements and reporting
         run: |
-          uv run --isolated --no-project --with pytest --with 'requests>=2.26.0' pytest benches/tests
+          uv run --isolated --no-project --with pytest --with numpy --with 'requests>=2.26.0' pytest benches/tests
 
   cargo-check-variant:
     name: cargo check (${{ matrix.cuda-variant }})
@@ -186,10 +192,16 @@ jobs:
           linux-local-args: '["--toolkit"]'
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
-      - name: Install protobuf compiler and RDMA headers
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+          sudo apt-get install -y libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev
+      - name: Install protocol compiler
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          version: "27.5"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
       - name: Setup sccache
@@ -253,10 +265,16 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "nvrtc-dev", "cudart-dev"]'
 
-      - name: Install protobuf compiler and RDMA headers
+      - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
+          sudo apt-get install -y libibverbs-dev librdmacm-dev libnuma-dev libyaml-cpp-dev libjsoncpp-dev libgoogle-glog-dev libgflags-dev libcurl4-openssl-dev ninja-build libboost-dev patchelf
+
+      - name: Install protocol compiler
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
+        with:
+          version: "27.5"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
@@ -264,8 +282,8 @@ jobs:
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install wheel build tools
+        run: pip install maturin "auditwheel==6.8.2" "patchelf>=0.14.5" wheel
 
       - name: Build wheel
         run: |

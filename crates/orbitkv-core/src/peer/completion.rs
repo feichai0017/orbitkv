@@ -10,18 +10,19 @@ use orbitkv_proto::proto::engine::{
 };
 use orbitkv_state::CacheOwner;
 use parking_lot::Mutex;
-use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Notify, OnceCell, OwnedSemaphorePermit, Semaphore};
 use tonic::Status;
 use tonic::transport::{Channel, Endpoint};
 use uuid::Uuid;
 
 use crate::metrics::core_metrics;
 use crate::peer::export::TRANSFER_WINDOW_SLOTS;
-use crate::planning::peer::FetchSegment;
+use crate::planning::peer::{FetchSegment, PeerSource};
 
 const MAX_COMPLETIONS: usize = 1024;
 const CACHED_PEERS: usize = 64;
 const RPC_TIMEOUT: Duration = Duration::from_secs(3);
+const SSD_AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MIN_RETRY: Duration = Duration::from_millis(100);
 const MAX_RETRY: Duration = Duration::from_secs(5);
 
@@ -29,6 +30,7 @@ const MAX_RETRY: Duration = Duration::from_secs(5);
 struct Slot {
     generation: u64,
     busy: bool,
+    releasing: bool,
 }
 
 struct PeerState {
@@ -39,6 +41,53 @@ struct PeerState {
 struct Peer {
     client: EngineClient<Channel>,
     state: Mutex<PeerState>,
+    released: Notify,
+}
+
+/// Only tickets whose READ has already drained may delay pressure recovery.
+/// A later authorization (including the rejected attempt) cannot satisfy or
+/// extend this snapshot; slot reuse must retain its generation distinction.
+struct PendingReleases {
+    peer: Arc<Peer>,
+    tickets: Vec<(usize, u64)>,
+}
+
+impl PendingReleases {
+    async fn wait(self) -> bool {
+        let started = tokio::time::Instant::now();
+        let result = tokio::time::timeout(RPC_TIMEOUT, async {
+            loop {
+                let released = self.peer.released.notified();
+                tokio::pin!(released);
+                // Register before checking state so an ACK between the check
+                // and the await cannot be lost, including notify_waiters.
+                released.as_mut().enable();
+                let pending = {
+                    let state = self.peer.state.lock();
+                    self.tickets.iter().any(|&(index, generation)| {
+                        let slot = &state.slots[index];
+                        slot.busy && slot.releasing && slot.generation == generation
+                    })
+                };
+                if !pending {
+                    break;
+                }
+                released.await;
+            }
+        })
+        .await;
+        core_metrics().remote_stage_duration_seconds.record(
+            started.elapsed().as_secs_f64(),
+            &[
+                opentelemetry::KeyValue::new("stage", "release_wait"),
+                opentelemetry::KeyValue::new(
+                    "status",
+                    if result.is_ok() { "ok" } else { "timeout" },
+                ),
+            ],
+        );
+        result.is_ok()
+    }
 }
 
 /// Owns peer channels, authorization tickets and completion retries. Capacity
@@ -81,7 +130,6 @@ impl TransferCompletions {
         let channel = Endpoint::from_shared(url)
             .map_err(|e| Status::invalid_argument(e.to_string()))?
             .connect_timeout(RPC_TIMEOUT)
-            .timeout(RPC_TIMEOUT)
             .connect_lazy();
         const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
         let peer = Arc::new(Peer {
@@ -92,6 +140,7 @@ impl TransferCompletions {
                 window: Arc::new(OnceCell::new()),
                 slots: std::array::from_fn(|_| Slot::default()),
             }),
+            released: Notify::new(),
         });
         peers.insert(owner.clone(), Arc::clone(&peer));
         Ok(peer)
@@ -132,7 +181,7 @@ impl TransferCompletions {
                 index,
                 generation,
                 remote: owner.endpoint.clone(),
-                _permit: permit,
+                permit: Some(permit),
             }),
             handle: tokio::runtime::Handle::current(),
         };
@@ -170,6 +219,41 @@ impl TransferCompletions {
         segment: &FetchSegment,
         requester: Uuid,
     ) -> Result<(TransferLockGuard, QueryBlocksForTransferResponse), Status> {
+        // Capture before submitting: the rejected attempt's own empty close
+        // must not look like progress that has freed an older source slab.
+        let releases = self.pending_releases(&segment.owner);
+        let result = self.authorize_once(segment, requester).await;
+        if matches!(&result, Err(error) if error.code() == tonic::Code::ResourceExhausted)
+            && let Some(releases) = releases
+            && releases.wait().await
+        {
+            // One retry after actual ACKs. An outage times out the waiter while
+            // the independent completion owner retains and retries its ticket.
+            return self.authorize_once(segment, requester).await;
+        }
+        result
+    }
+
+    fn pending_releases(&self, owner: &CacheOwner) -> Option<PendingReleases> {
+        let peer = self.peers.lock().get(owner)?.clone();
+        let tickets = peer
+            .state
+            .lock()
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| {
+                (slot.busy && slot.releasing).then_some((index, slot.generation))
+            })
+            .collect::<Vec<_>>();
+        (!tickets.is_empty()).then_some(PendingReleases { peer, tickets })
+    }
+
+    async fn authorize_once(
+        &self,
+        segment: &FetchSegment,
+        requester: Uuid,
+    ) -> Result<(TransferLockGuard, QueryBlocksForTransferResponse), Status> {
         let guard = self.reserve(&segment.owner, requester).await?;
         let completion = guard
             .completion
@@ -182,10 +266,14 @@ impl TransferCompletions {
             residency_sequences: segment.records.iter().map(|r| r.sequence).collect(),
             ticket: completion.ticket(),
         };
+        let timeout = match segment.source {
+            PeerSource::Dram => RPC_TIMEOUT,
+            PeerSource::Ssd => SSD_AUTHORIZATION_TIMEOUT,
+        };
         // The ticket is already known: dropping this future can safely close it
         // even if the RPC is still queued or its successful reply never arrives.
         let response = tokio::time::timeout(
-            RPC_TIMEOUT,
+            timeout,
             completion
                 .peer
                 .client
@@ -219,7 +307,7 @@ struct Completion {
     index: usize,
     generation: u64,
     remote: String,
-    _permit: OwnedSemaphorePermit,
+    permit: Option<OwnedSemaphorePermit>,
 }
 
 impl Completion {
@@ -270,8 +358,15 @@ impl Completion {
 
 impl Drop for Completion {
     fn drop(&mut self) {
-        self.peer.state.lock().slots[self.index].busy = false;
+        // A woken requester must observe both local admission budgets freed.
+        {
+            let mut state = self.peer.state.lock();
+            drop(self.permit.take());
+            state.slots[self.index].busy = false;
+            state.slots[self.index].releasing = false;
+        }
         core_metrics().transfer_completion_outstanding.add(-1, &[]);
+        self.peer.released.notify_waiters();
     }
 }
 
@@ -302,6 +397,9 @@ impl Drop for TransferLockGuard {
         if let Some(completion) = self.completion.take()
             && completion.window.get().is_some()
         {
+            // Mark synchronously: once READ returns, the next authorization can
+            // snapshot its pending release without waiting for this task to poll.
+            completion.peer.state.lock().slots[completion.index].releasing = true;
             self.handle.spawn(completion.acknowledge());
         }
     }

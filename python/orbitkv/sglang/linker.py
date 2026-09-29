@@ -9,7 +9,7 @@ import queue
 import threading
 import time
 import uuid
-from concurrent.futures import Future
+from concurrent.futures import CancelledError, Future
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,54 +52,113 @@ class _Load:
 
 
 class _LayerDoneCounter:
-    """SGLang waits on this counter before consuming restored GPU KV."""
+    """Own stable per-layer events before capture and admit each consuming forward."""
 
-    def __init__(self, num_layers: int):
-        self.num_layers = num_layers
+    def __init__(self, layout: GpuLayout):
+        self.layout = layout
+        self.num_layers = layout.num_layers
         self.producer_index = -1
         self.consumer_index = -1
-        self._futures: dict[int, list[Future[None]]] = {}
+        self._activations: dict[int, Future[int]] = {}
+        self._staged: dict[int, Future[None]] = {}
         self.request_ids: dict[int, list[str]] = {}
+        self.layer_events: dict[str, torch.cuda.Event] = {}
+        self.layer_groups: list[list[str]] = []
+        self._events_by_layer: list[list[torch.cuda.Event]] = [[] for _ in range(self.num_layers)]
+        start = min(layer for pool in layout.pools.values() for layer in pool.entry.layer_mapping)
+        for pool in layout.pools.values():
+            layers = {local: global_id for global_id, local in pool.entry.layer_mapping.items()}
+            names_by_layer: dict[int, list[str]] = {}
+            for index, name in enumerate(pool.layer_names):
+                event = torch.cuda.Event(external=True)
+                event.record()
+                self.layer_events[name] = event
+                layer = layers[index % len(layers)]
+                self._events_by_layer[layer - start].append(event)
+                names_by_layer.setdefault(layer, []).append(name)
+            self.layer_groups.append(
+                [name for layer in sorted(names_by_layer) for name in names_by_layer[layer]]
+            )
 
     def update_producer(self) -> int:
         self.producer_index += 1
-        self._futures[self.producer_index] = [Future() for _ in range(self.num_layers)]
+        self._activations[self.producer_index] = Future()
+        self._staged[self.producer_index] = Future()
         return self.producer_index
 
     def set_consumer(self, index: int) -> None:
         self.consumer_index = index
-        # CUDA graph replay can bypass Python pool accessors. This linker
-        # completes whole restores, so fence them before forward construction.
-        self.wait_until(0)
-        self.wait_until(self.num_layers - 1)
+        activation = self._activations.get(index)
+        if activation is None:
+            return
+        # Serialize event reuse against the previous users on the actual forward stream.
+        activation.set_result(torch.cuda.current_stream().cuda_stream)
+        try:
+            self._staged[index].result()
+        finally:
+            self._activations.pop(index)
+            self._staged.pop(index)
+        for rid in self.request_ids.pop(index, ()):
+            trace_transfer("first_use", rid, engine="sglang")
 
     def wait_until(self, threshold: int) -> None:
-        index = self.consumer_index
-        futures = self._futures.get(index)
-        if futures is None:
-            return
-        try:
-            futures[threshold].result()
-            if threshold == 0:
-                for rid in self.request_ids.pop(index, ()):
-                    trace_transfer("first_use", rid, engine="sglang")
-        finally:
-            if threshold == self.num_layers - 1:
-                self._futures.pop(index, None)
-                self.request_ids.pop(index, None)
+        # Emit these waits during capture even when no Restore is pending. External
+        # event nodes use the newly recorded generation on every graph replay.
+        stream = torch.cuda.current_stream()
+        for event in self._events_by_layer[threshold]:
+            stream.wait_event(event)
 
-    def complete(self, index: int, error: Exception | None = None) -> None:
-        for future in self._futures[index]:
-            if error is None:
-                future.set_result(None)
-            else:
-                future.set_exception(error)
+    def publish_events(self, index: int, error: Exception | None = None) -> None:
+        future = self._staged.get(index)
+        if future is None or future.done():
+            return
+        if error is None:
+            future.set_result(None)
+        else:
+            future.set_exception(error)
+
+    def cancel_pending(self) -> None:
+        for index, activation in tuple(self._activations.items()):
+            if activation.cancel():
+                self._staged[index].cancel()
 
     def reset(self) -> None:
         self.producer_index = -1
         self.consumer_index = -1
-        self._futures.clear()
+        self._activations.clear()
+        self._staged.clear()
         self.request_ids.clear()
+
+
+def initialize_layer_counter(worker: Any, capture_decode_cuda_graph: bool = True) -> None:
+    """Install replay dependencies before SGLang's first graph capture."""
+    from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
+    from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
+    from sglang.srt.runtime_context import get_memory
+
+    if get_memory().radix_cache_backend != "orbitkv":
+        return
+    request_pool, allocator = worker.get_memory_pool()
+    kvcache = allocator.get_kvcache()
+    if isinstance(kvcache.layer_transfer_counter, _LayerDoneCounter):
+        return
+    components = {ComponentType.FULL}
+    if isinstance(kvcache, HybridLinearKVPool):
+        components.add(ComponentType.MAMBA)
+    if isinstance(kvcache, SWAKVPool):
+        components.add(ComponentType.SWA)
+    layout = GpuLayout.from_pool(
+        kvcache.page_size,
+        kvcache,
+        request_pool,
+        components,
+        worker.sliding_window_size or 0,
+    )
+    counter = _LayerDoneCounter(layout)
+    kvcache.register_layer_transfer_counter(counter)
+    if ComponentType.MAMBA in components:
+        request_pool.register_layer_transfer_counter(counter)
+    worker.register_hicache_layer_transfer_counter(counter)
 
 
 class OrbitKVLinker(UnifiedCacheLinker):
@@ -111,12 +170,15 @@ class OrbitKVLinker(UnifiedCacheLinker):
     model-scoped namespace that other replicas of the same rank can reuse.
     """
 
-    _RESTORE_WINDOW = 8
     _QUERY_WAIT_SECONDS = 5.0
 
-    def __init__(self, server_args: Any, params: Any, *, components: set[ComponentType]):
+    def __init__(self, server_args: Any, params: Any):
         transfer_backend = resolve_transfer_backend()
-        self.layout = GpuLayout.from_pool(params, components)
+        counter = params.token_to_kv_pool_allocator.get_kvcache().layer_transfer_counter
+        if not isinstance(counter, _LayerDoneCounter):
+            raise RuntimeError("OrbitKV layer events must be installed before graph capture")
+        self.layer_done_counter = counter
+        self.layout = counter.layout
         self.page_size = self.layout.page_size
         self.namespace = derive_namespace(server_args, params, self.layout)
         self.recovery = RecoveryContract(
@@ -133,6 +195,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         try:
             self.client.start_session_watcher(self.instance_id, self.namespace, 1, 1)
             pools = list(self.layout.pools.values())
+            self._torch_device = pools[0].entry.kv_buffer[0].device
             wrappers = [
                 serialize_gpu_buffer(tensor) for pool in pools for tensor in pool.entry.kv_buffer
             ]
@@ -152,6 +215,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
                 [1] * len(wrappers),
                 transfer_backend,
                 False,
+                tensors=[tensor for pool in pools for tensor in pool.entry.kv_buffer],
                 layer_group_ids=[pool.group_id for pool in pools for _ in pool.layer_names],
                 layer_attention=[
                     item
@@ -175,20 +239,24 @@ class OrbitKVLinker(UnifiedCacheLinker):
             )
             if not ok:
                 raise RuntimeError(f"OrbitKV GPU registration failed: {message}")
+            from sglang.srt.runtime_context import get_disagg
+
+            from .completion import register_completion_reporter
+
+            mode = get_disagg().disaggregation_mode
+            if mode == "decode":
+                register_completion_reporter(self.client, self.instance_id, self.device_id)
         except Exception:
             self.client.close()
             raise
 
-        self.layer_done_counter = _LayerDoneCounter(self.layout.num_layers)
         self._lookups: dict[str, _Lookup] = {}
         self._origins: dict[str, int] = {}
         self._load_boundaries: dict[str, tuple[int, dict[PoolName, set[str]]]] = {}
         self._pending_queries: dict[str, tuple[tuple[str, ...], float]] = {}
         self._expired_queries: set[str] = set()
         self._queued_loads: dict[str, _Load] = {}
-        self._load_queue: queue.Queue[tuple[int, list[_Load], torch.cuda.Event] | None] = (
-            queue.Queue()
-        )
+        self._load_queue: queue.Queue[tuple[int, list[_Load]] | None] = queue.Queue()
         self._offload_queue: queue.Queue[
             tuple[list[tuple[str, list[int], list[bytes]]], torch.cuda.Event] | None
         ] = queue.Queue()
@@ -450,9 +518,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self._queued_loads.clear()
         index = self.layer_done_counter.update_producer()
         self.layer_done_counter.request_ids[index] = [load.rid for load in pending]
-        ready = torch.cuda.Event()
-        ready.record()
-        self._load_queue.put((index, pending, ready))
+        self._load_queue.put((index, pending))
         return index
 
     def _load_worker(self) -> None:
@@ -461,67 +527,59 @@ class OrbitKVLinker(UnifiedCacheLinker):
             try:
                 if task is None:
                     return
-                index, pending, ready = task
-                submitted = 0
+                index, pending = task
+                submitted = False
                 try:
+                    ready_stream = self.layer_done_counter._activations[index].result()
                     self._check_load_failure()
-                    ready.synchronize()
-                    for offset in range(0, len(pending), self._RESTORE_WINDOW):
-                        restores = []
-                        for load in pending[offset : offset + self._RESTORE_WINDOW]:
-                            # A lost submission acknowledgement still leaves GPU ownership
-                            # unresolved. Only leases never attempted can be released.
-                            submitted += 1
-                            trace_transfer("restore_submit", load.rid, engine="sglang")
-                            restores.append(
-                                self.client.start_restore(
-                                    self.instance_id,
-                                    0,
-                                    self.device_id,
-                                    [pool.layer_names for pool in self.layout.pools.values()],
-                                    [
-                                        (
-                                            lease,
-                                            [
-                                                list(targets)
-                                                if name == pool_name
-                                                else [None] * len(targets)
-                                                for name in self.layout.pools
-                                            ],
-                                        )
-                                        for pool_name, lease, targets in load.groups
-                                    ],
-                                )
+                    for load in pending:
+                        trace_transfer("restore_submit", load.rid, engine="sglang")
+                    submitted = True
+                    restore = self.client.start_restore(
+                        self.instance_id,
+                        0,
+                        self.device_id,
+                        self.layer_done_counter.layer_groups,
+                        [
+                            (
+                                lease,
+                                [
+                                    list(targets) if name == pool_name else [None] * len(targets)
+                                    for name in self.layout.pools
+                                ],
                             )
-                            if TRANSFER_TRACING:
-                                trace_transfer(
-                                    "restore_link",
-                                    load.rid,
-                                    engine="sglang",
-                                    restore_key=restores[-1].key,
-                                )
-                        for load, restore in zip(
-                            pending[offset : offset + self._RESTORE_WINDOW], restores, strict=True
-                        ):
-                            status = self.client.wait_restore(restore, timeout=120)
-                            if not status.success:
-                                raise RuntimeError(status.message)
-                            trace_transfer("gpu_ready", load.rid, engine="sglang", success=True)
-                    self.layer_done_counter.complete(index)
+                            for load in pending
+                            for pool_name, lease, targets in load.groups
+                        ],
+                        ready_stream=ready_stream,
+                        layer_events=list(self.layer_done_counter.layer_events.items()),
+                    )
+                    if TRANSFER_TRACING:
+                        for load in pending:
+                            trace_transfer(
+                                "restore_link", load.rid, engine="sglang", restore_key=restore.key
+                            )
+                    self.client.wait_restore_enqueued(restore, timeout=120)
+                    self.layer_done_counter.publish_events(index)
+                    status = self.client.wait_restore(restore, timeout=120)
+                    if not status.success:
+                        raise RuntimeError(status.message)
+                    for load in pending:
+                        trace_transfer("gpu_ready", load.rid, engine="sglang", success=True)
                     self._completed_loads.put([load.rid for load in pending])
+                except CancelledError:
+                    # A batch never admitted to forward has not consumed its source leases.
+                    for load in pending:
+                        for _, lease, _ in load.groups:
+                            self.client.release(lease)
                 except Exception as error:
                     self._load_error = error
                     logger.exception("OrbitKV SGLang GPU restore failed")
-                    for load in pending[submitted:]:
-                        try:
+                    if not submitted:
+                        for load in pending:
                             for _, lease, _ in load.groups:
                                 self.client.release(lease)
-                        except Exception:
-                            logger.warning(
-                                "Could not release an unsubmitted SGLang restore lease",
-                                exc_info=True,
-                            )
-                    self.layer_done_counter.complete(index, error)
+                    self.layer_done_counter.publish_events(index, error)
             finally:
                 self._load_queue.task_done()
 
@@ -609,6 +667,7 @@ class OrbitKVLinker(UnifiedCacheLinker):
         return self._completed_offloads.get_nowait()
 
     def reset(self) -> None:
+        self.layer_done_counter.cancel_pending()
         self._load_queue.join()
         self._offload_queue.join()
         for rid in list(self._pending_queries):
@@ -627,6 +686,9 @@ class OrbitKVLinker(UnifiedCacheLinker):
         self.layer_done_counter.reset()
 
     def close(self) -> None:
+        from .completion import unregister_completion_reporter
+
+        unregister_completion_reporter(self.client)
         self.reset()
         self._load_queue.put(None)
         self._offload_queue.put(None)
