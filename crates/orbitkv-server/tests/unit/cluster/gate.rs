@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,6 +18,7 @@ struct GateState {
 pub(crate) struct TcpGate {
     pub(crate) endpoint: String,
     state: watch::Sender<GateState>,
+    admission: Arc<Mutex<()>>,
     active: Arc<AtomicUsize>,
     idle: Arc<Notify>,
     listener: JoinHandle<()>,
@@ -36,14 +37,17 @@ impl TcpGate {
         let listen_state = state.clone();
         let active = Arc::new(AtomicUsize::new(0));
         let idle = Arc::new(Notify::new());
+        let admission = Arc::new(Mutex::new(()));
         let listen_active = Arc::clone(&active);
         let listen_idle = Arc::clone(&idle);
+        let listen_admission = Arc::clone(&admission);
         let task = tokio::spawn(async move {
             loop {
                 let Ok((client, _)) = listener.accept().await else {
                     return;
                 };
                 let state = listen_state.subscribe();
+                let admission_guard = listen_admission.lock().unwrap();
                 if state.borrow().partitioned {
                     drop(client);
                     continue;
@@ -55,11 +59,13 @@ impl TcpGate {
                     let _guard = ActiveConnection { active, idle };
                     proxy(client, target, state).await;
                 });
+                drop(admission_guard);
             }
         });
         Self {
             endpoint,
             state,
+            admission,
             active,
             idle,
             listener: task,
@@ -72,14 +78,18 @@ impl TcpGate {
     }
 
     pub(crate) async fn partition(&self) {
-        self.state.send_modify(|state| {
-            state.generation += 1;
-            state.partitioned = true;
-        });
+        {
+            let _admission = self.admission.lock().unwrap();
+            self.state.send_modify(|state| {
+                state.generation += 1;
+                state.partitioned = true;
+            });
+        }
         wait_for_idle(&self.active, &self.idle).await;
     }
 
     pub(crate) fn heal(&self, downstream_delay: Duration) {
+        let _admission = self.admission.lock().unwrap();
         self.state.send_modify(|state| {
             state.partitioned = false;
             state.downstream_delay = downstream_delay;
@@ -89,16 +99,20 @@ impl TcpGate {
     pub(crate) async fn shutdown(self) {
         let Self {
             state,
+            admission,
             active,
             idle,
             listener,
             ..
         } = self;
-        state.send_modify(|state| {
-            state.generation += 1;
-            state.partitioned = true;
-        });
-        listener.abort();
+        {
+            let _admission = admission.lock().unwrap();
+            state.send_modify(|state| {
+                state.generation += 1;
+                state.partitioned = true;
+            });
+            listener.abort();
+        }
         let _ = listener.await;
         wait_for_idle(&active, &idle).await;
     }
@@ -131,15 +145,28 @@ async fn wait_for_idle(active: &AtomicUsize, idle: &Notify) {
 }
 
 async fn proxy(client: TcpStream, target: SocketAddr, state: watch::Receiver<GateState>) {
-    let Ok(server) = TcpStream::connect(target).await else {
-        return;
-    };
     let generation = state.borrow().generation;
+    let mut connect_state = state.clone();
+    let server = tokio::select! {
+        result = TcpStream::connect(target) => {
+            let Ok(server) = result else { return };
+            server
+        }
+        _ = wait_for_disconnect(&mut connect_state, generation) => return,
+    };
     let (client_read, client_write) = client.into_split();
     let (server_read, server_write) = server.into_split();
     tokio::select! {
         _ = copy_upstream(client_read, server_write, state.clone(), generation) => {}
         _ = copy_downstream(server_read, client_write, state, generation) => {}
+    }
+}
+
+async fn wait_for_disconnect(state: &mut watch::Receiver<GateState>, generation: u64) {
+    while !disconnected(*state.borrow(), generation) {
+        if state.changed().await.is_err() {
+            return;
+        }
     }
 }
 

@@ -402,10 +402,10 @@ resume attempts. While isolated, the reader retains the old complete revision;
 after healing it must become unavailable during rebuild and expose only the final
 SSD/source state when the complete snapshot reaches the committed revision.
 
-The final reviewed implementation run observed 422.26 ms delayed-Watch
-application, a 1.50 s partition, 2.32 s from heal to complete coverage and 1.41 s with incomplete
+The final implementation run observed 422.29 ms delayed-Watch application, a
+1.50 s partition, 2.31 s from heal to complete coverage and 1.41 s with incomplete
 coverage hidden. Final revision was 9, logical index accounting was 863 bytes and
-etcd reported 40,960 backend bytes. These are one deterministic fault run and
+etcd reported 36,864 backend bytes. These are one deterministic fault run and
 diagnostic timings, not a capacity or latency envelope.
 
 Build and freeze native artifacts first, then run the test executable without a
@@ -427,7 +427,9 @@ passing attempt whose partition-duration label included recovery time.
 pre-review gate. The review correction and final frozen run are under
 `/root/orbitkv-artifacts/s2-s51-20260929/s2-2-correction/`; `publish.log`,
 `publish/*/watch-partition-recovery.json` and `frozen-sha256.txt` identify the
-final behavior and binaries. Earlier failures and intermediate runs remain intact.
+typed-error and measurement correction. The gate-drain correction and final
+candidate are under `s2-2-gate-correction/` with the same filenames. Earlier
+failures and intermediate runs remain intact.
 
 Only explicitly recognized transport failures retain the old complete snapshot.
 An arbitrary gRPC `Unknown`, invalid metadata, a changed format, compaction or a
