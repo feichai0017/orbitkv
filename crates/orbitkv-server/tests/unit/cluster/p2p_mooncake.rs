@@ -1081,11 +1081,17 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
     let expiry_started = Instant::now();
     wait_for(|| !source_view.registration_valid()).await;
     wait_for(|| {
-        locate(&observer_index, &namespace, &final_stored)
-            .iter()
-            .all(|row| row.replicas.is_empty())
+        let observer = observer_index.status();
+        observer.available
+            && observer.registration_valid
+            && !observer_view.permits(source_view.owner())
+            && locate(&observer_index, &namespace, &final_stored)
+                .iter()
+                .all(|row| row.replicas.is_empty())
     })
     .await;
+    assert!(observer_index.status().available);
+    assert!(!observer_view.permits(source_view.owner()));
     restore_cached_image(
         &engine,
         &gpu,
@@ -1122,6 +1128,7 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
             "local_payload_exact_after_transient_partition": true,
             "local_payload_exact_after_lease_expiry": true,
             "last_complete_view_retained_during_transient_partition": true,
+            "observer_available_after_source_expiry": true,
             "expired_incarnation_remained_fenced_after_heal": true,
         }))
         .unwrap(),
