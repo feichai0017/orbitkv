@@ -1024,6 +1024,16 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
         .all(|row| row.replicas.is_empty()),
         "partition exposed an unpublished replacement"
     );
+    assert!(
+        locate(
+            &observer_index,
+            &engine.instance_namespace(INSTANCE).unwrap(),
+            &initial_stored,
+        )
+        .iter()
+        .all(|row| { row.replicas.len() == 1 && row.replicas[0].owner == *source_view.owner() }),
+        "partition discarded the last complete source view"
+    );
     restore_cached_image(
         &engine,
         &gpu,
@@ -1111,6 +1121,7 @@ async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata
             "local_payload_bytes": BYTES,
             "local_payload_exact_after_transient_partition": true,
             "local_payload_exact_after_lease_expiry": true,
+            "last_complete_view_retained_during_transient_partition": true,
             "expired_incarnation_remained_fenced_after_heal": true,
         }))
         .unwrap(),
