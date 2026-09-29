@@ -4,13 +4,45 @@ use std::process::{Child, Command, Stdio};
 pub(crate) struct Etcd {
     processes: Vec<Child>,
     pub(crate) endpoints: Vec<String>,
-    _directory: tempfile::TempDir,
+    pub(crate) directory: std::path::PathBuf,
+    _temporary: Option<tempfile::TempDir>,
 }
 
 impl Etcd {
     pub(crate) async fn start(count: usize) -> Self {
+        Self::start_with_args(count, &[]).await
+    }
+
+    pub(crate) async fn start_with_args(count: usize, args: &[&str]) -> Self {
+        static LOGGING: std::sync::Once = std::sync::Once::new();
+        LOGGING.call_once(|| orbitkv_common::logging::init_stderr("warn"));
         let binary = std::env::var("ETCD_BIN").expect("set ETCD_BIN to an etcd 3.x binary");
-        let directory = tempfile::tempdir().unwrap();
+        let (directory, temporary) = match std::env::var_os("ORBITKV_METADATA_ARTIFACT_DIR") {
+            Some(root) => {
+                std::fs::create_dir_all(&root).unwrap();
+                let root = std::fs::canonicalize(root).unwrap();
+                let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../..")
+                    .canonicalize()
+                    .unwrap();
+                assert!(
+                    !root.starts_with(checkout),
+                    "metadata evidence must be outside checkout"
+                );
+                (
+                    tempfile::Builder::new()
+                        .prefix("etcd-")
+                        .tempdir_in(root)
+                        .unwrap()
+                        .keep(),
+                    None,
+                )
+            }
+            None => {
+                let temporary = tempfile::tempdir().unwrap();
+                (temporary.path().to_path_buf(), Some(temporary))
+            }
+        };
         let mut reservations = Vec::new();
         let mut endpoints = Vec::new();
         let mut peers = Vec::new();
@@ -30,12 +62,11 @@ impl Etcd {
         drop(reservations);
         let mut processes = Vec::new();
         for i in 0..count {
-            let log =
-                std::fs::File::create(directory.path().join(format!("etcd-{i}.log"))).unwrap();
+            let log = std::fs::File::create(directory.join(format!("etcd-{i}.log"))).unwrap();
             processes.push(
                 Command::new(&binary)
                     .args(["--name", &format!("test{i}"), "--data-dir"])
-                    .arg(directory.path().join(format!("data-{i}")))
+                    .arg(directory.join(format!("data-{i}")))
                     .args([
                         "--listen-client-urls",
                         &endpoints[i],
@@ -54,6 +85,7 @@ impl Etcd {
                         "--log-level",
                         "error",
                     ])
+                    .args(args)
                     .stdout(Stdio::null())
                     .stderr(log)
                     .spawn()
@@ -63,7 +95,8 @@ impl Etcd {
         let mut server = Self {
             processes,
             endpoints,
-            _directory: directory,
+            directory,
+            _temporary: temporary,
         };
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
@@ -84,7 +117,7 @@ impl Etcd {
         }
     }
 
-    async fn leader(&self) -> usize {
+    pub(crate) async fn leader(&self) -> usize {
         for (i, endpoint) in self.endpoints.iter().enumerate() {
             if let Ok(mut client) = Client::connect([endpoint], None).await
                 && let Ok(status) = rpc(client.status()).await
@@ -96,7 +129,7 @@ impl Etcd {
         panic!("no leader");
     }
 
-    fn kill(&mut self, node: usize) {
+    pub(crate) fn kill(&mut self, node: usize) {
         let _ = self.processes[node].kill();
         let _ = self.processes[node].wait();
     }
@@ -273,4 +306,69 @@ async fn leader_loss_recovers_and_quorum_loss_fences_remote_admission() {
     assert!(!a.permits(b.owner()));
     member_b.shutdown().await;
     member_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires ETCD_BIN; registration reply reconciliation and competing identity rejection"]
+async fn registration_reconciles_its_committed_reply_without_advancing_epoch_or_stealing_a_node() {
+    let server = Etcd::start(1).await;
+    let mut client = Client::connect(&server.endpoints, None).await.unwrap();
+    let grant = client.lease_grant(60, None).await.unwrap();
+    let cluster = cluster_id(grant.header()).unwrap();
+    let owner = view(57001);
+    let prefix = "/orbitkv/v2/register-retry/";
+    watch::install_format(&mut client, prefix, cluster)
+        .await
+        .unwrap();
+    let first =
+        registration::register(&mut client, prefix, "a", owner.owner(), grant.id(), cluster)
+            .await
+            .unwrap();
+    // Repeat the same intent as after a lost response; the committed identity is authoritative.
+    let repeated =
+        registration::register(&mut client, prefix, "a", owner.owner(), grant.id(), cluster)
+            .await
+            .unwrap();
+    assert_eq!(first, repeated);
+    assert_eq!(first.epoch, 1);
+    assert_eq!(
+        client
+            .get(format!("{prefix}epochs/a"), None)
+            .await
+            .unwrap()
+            .kvs()[0]
+            .value(),
+        b"1"
+    );
+    let other = view(57001);
+    assert!(matches!(
+        registration::register(&mut client, prefix, "a", other.owner(), grant.id(), cluster).await,
+        Err(BootstrapError::Rejected(_))
+    ));
+    let other_lease = client.lease_grant(60, None).await.unwrap();
+    assert!(matches!(
+        registration::register(
+            &mut client,
+            prefix,
+            "a",
+            owner.owner(),
+            other_lease.id(),
+            cluster
+        )
+        .await,
+        Err(BootstrapError::Rejected(_))
+    ));
+    client.lease_revoke(grant.id()).await.unwrap();
+    let replacement = registration::register(
+        &mut client,
+        prefix,
+        "a",
+        other.owner(),
+        other_lease.id(),
+        cluster,
+    )
+    .await
+    .unwrap();
+    assert_eq!(replacement.epoch, 2);
+    assert_ne!(first.owner.incarnation, replacement.owner.incarnation);
 }

@@ -19,6 +19,20 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_MEMBERS: usize = 4096;
 const MEMBER_BYTES: usize = 1024;
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum BootstrapError {
+    #[error("{0}")]
+    Transport(String),
+    #[error("{0}")]
+    Rejected(String),
+}
+
+impl From<String> for BootstrapError {
+    fn from(error: String) -> Self {
+        Self::Transport(error)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Member {
@@ -104,16 +118,31 @@ impl Cluster {
                 return Err("initial membership lease acknowledgement expired".into());
             }
             let prefix = format!("/orbitkv/v2/{cluster}/");
-            watch::install_format(&mut membership.client, &prefix, cluster_id).await.map_err(|error| format!("metadata format: {error}"))?;
-            let member = registration::register(
-                &mut membership.client,
-                &prefix,
-                node,
-                membership.view.owner(),
-                lease,
-                cluster_id,
-            )
-            .await.map_err(|error| format!("member registration: {error}"))?;
+            let deadline = Instant::now() + RPC_TIMEOUT * 4;
+            let member = loop {
+                let attempt = async {
+                    watch::install_format(&mut membership.client, &prefix, cluster_id).await?;
+                    registration::register(
+                        &mut membership.client,
+                        &prefix,
+                        node,
+                        membership.view.owner(),
+                        lease,
+                        cluster_id,
+                    ).await
+                }.await;
+                match attempt {
+                    Ok(member) if membership.view.registration_valid() => break member,
+                    Ok(_) => return Err("membership expired during metadata bootstrap".into()),
+                    Err(BootstrapError::Transport(error))
+                        if membership.view.registration_valid() && Instant::now() < deadline =>
+                    {
+                        warn!("Metadata bootstrap will retry without changing its lease or incarnation: {error}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(error) => return Err(format!("metadata bootstrap: {error}")),
+                }
+            };
             info!(
                 "Membership registered: node={} epoch={} incarnation={} endpoint={}",
                 member.node_id, member.epoch, member.owner.incarnation, member.owner.endpoint

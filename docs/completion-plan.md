@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Next runtime stage: metadata reliability and capacity qualification. |
+| S2 | Partial: S2.1 quota/index-budget recovery gates implemented; independent review pending. Remaining fault and capacity cells stay open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: existing adapters; release alignment, public interfaces and deployment gates below. |
@@ -126,6 +126,28 @@ core inventory and metadata diagnostics.
   authorization, bounded memory/queues, local cache still usable during metadata
   loss, and a repeatable capacity/recovery report. A fenced runtime restarts with
   a new incarnation; it cannot silently resume using the expired one.
+
+### S2.1 — Quota and index-budget recovery
+
+The real-etcd metadata-owner gate now covers backend quota exhaustion, a stalled
+publication cursor, compaction/defragmentation/alarm disarm and resumed publication
+without resurrecting a deleted replica. A separate small-index case rejects all
+partial results, keeps lease renewal alive beyond its initial conservative
+validity window and rebuilds only after eviction permits a complete snapshot.
+The existing lost-reply, paginated-snapshot, incarnation, leader-loss and
+quorum-loss gates remain part of this substage's validation. The leader-loss
+rerun exposed startup failure on an unavailable balanced endpoint after a lease
+was granted. Metadata bootstrap now retries transport failures with the same
+lease/incarnation under a finite startup budget; format/identity rejection is
+terminal. A repeated registration reconciles only its exact committed owner and
+lease without advancing the node epoch or stealing another registration.
+
+This scope uses etcd 3.5.21 processes on one container/host and the actual Rust
+publisher, Watch, membership and index owners. Synthetic residency records enter
+the publisher directly; it does not qualify GPU storage publication, journal
+churn through live stores, data-plane availability, cross-host HA or capacity.
+Those S2 obligations remain open. The [metadata gate recipe](distributed-cache.md#quota-and-index-budget-recovery)
+records commands, external evidence and operational recovery boundaries.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 

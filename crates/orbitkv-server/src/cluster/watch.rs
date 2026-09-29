@@ -8,7 +8,7 @@ use orbitkv_state::InventoryRecord;
 use prost::Message;
 
 use super::publish::{MAX_RECORD_BYTES, Progress, record_key};
-use super::{MAX_MEMBERS, MEMBER_BYTES, Member, cluster_id, parse_label, rpc};
+use super::{BootstrapError, MAX_MEMBERS, MEMBER_BYTES, Member, cluster_id, parse_label, rpc};
 
 const FORMAT: &[u8] = b"orbitkv/global-index/v2";
 
@@ -109,7 +109,7 @@ pub(super) async fn install_format(
     client: &mut Client,
     prefix: &str,
     expected_cluster: u64,
-) -> Result<(), String> {
+) -> Result<(), BootstrapError> {
     use etcd_client::{Compare, CompareOp, Txn, TxnOp};
     let key = format!("{prefix}format");
     let response = rpc(client.txn(
@@ -118,16 +118,20 @@ pub(super) async fn install_format(
             .and_then([TxnOp::put(key.clone(), FORMAT, None)]),
     ))
     .await?;
-    if cluster_id(response.header())? != expected_cluster {
-        return Err("coordinator changed during format registration".into());
+    if cluster_id(response.header()).map_err(BootstrapError::Rejected)? != expected_cluster {
+        return Err(BootstrapError::Rejected(
+            "coordinator changed during format registration".into(),
+        ));
     }
     let response = rpc(client.get(key, None)).await?;
-    if cluster_id(response.header())? != expected_cluster
+    if cluster_id(response.header()).map_err(BootstrapError::Rejected)? != expected_cluster
         || response.kvs().len() != 1
         || response.kvs()[0].value() != FORMAT
         || response.kvs()[0].lease() != 0
     {
-        return Err("cluster metadata format differs".into());
+        return Err(BootstrapError::Rejected(
+            "cluster metadata format differs".into(),
+        ));
     }
     Ok(())
 }

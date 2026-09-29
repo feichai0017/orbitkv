@@ -326,3 +326,62 @@ physical two-host serving on the new revision. RDMA, multi-rank deployment,
 long-running churn and partition/rejoin remain separate gates. Permanently lost
 requester reclamation still needs transport revocation proof. Current SSD files
 are truncated on Manager restart; metadata redundancy does not change that.
+
+## Quota and index-budget recovery
+
+The S2.1 metadata gate uses real etcd and the production publisher, Watch,
+membership and complete-index owners. It requires no GPU payload allocation.
+After leader loss, an existing balanced channel can still route bootstrap
+requests to the stopped endpoint. Startup now retries transient format/registration
+requests under a finite budget while preserving the lease and runtime incarnation.
+Permanent metadata/identity conflicts fail immediately. Retrying a committed
+registration returns the same epoch only for the exact owner and lease; a new
+incarnation or lease cannot take over a live node. A runtime whose conservative
+registration deadline expires still has to restart with a new incarnation.
+
+A 2 MiB etcd backend quota is exhausted with actual writes. The publication cursor
+must remain unchanged while NOSPACE is active; after deleting the filler,
+compacting, defragmenting and disarming each affected member's alarm, the pending
+transaction must converge without restoring a retired replica. Quota checks use
+committed backend size, so a rapid burst alone is not evidence that quota was hit.
+
+The 2 KiB index case deliberately overflows with 24 residency records. Every
+lookup stays empty while coverage is incomplete; lease renewal continues for
+longer than the initial conservative registration window. Evicting 23 records
+allows a fresh complete snapshot and restores the single surviving candidate.
+These bounds are fault triggers, not production sizing recommendations.
+
+Build Manager, extension, TENT and tests before starting services. Freeze the
+printed test executable and native artifacts outside the checkout, then run:
+
+```bash
+ETCD_BIN=/path/to/frozen/etcd \
+ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-evidence/metadata-publish \
+  /path/to/frozen/server-tests cluster::publish::tests \
+  --ignored --nocapture --test-threads=1
+
+ETCD_BIN=/path/to/frozen/etcd \
+ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-evidence/metadata-membership \
+  /path/to/frozen/server-tests cluster::tests::etcd \
+  --ignored --nocapture --test-threads=1
+```
+
+Use `cargo test --release -p orbitkv-server --no-default-features --features
+cuda-13,mooncake --lib --no-run` during the build phase to obtain the executable.
+`ORBITKV_METADATA_ARTIFACT_DIR` preserves each owned etcd data directory, logs and
+fault summaries on success or failure and rejects a checkout-local destination.
+Without it, the test helper uses ordinary temporary directories.
+
+The current run evidence is under
+`/root/orbitkv-artifacts/s2-s51-20260929/s2-1/`: `frozen-v5-manifest.json` identifies
+the exact binaries, `publish-after-bootstrap-fix.log` and `membership-final.log` retain complete
+gate output, and the `publish-after-bootstrap-fix/` / `membership-after-fix/` trees retain etcd data
+and fault summaries. Failed quota setup attempts and their frozen binaries are
+retained alongside the final run. No performance advantage is claimed.
+
+This is metadata-owner qualification with synthetic records and same-host etcd
+process faults. GPU compute has not passed in this container; storage-originated
+journal churn and local-cache availability during metadata loss remain separate
+gates. A three-process quorum is not three independent host failure domains.
+Quota recovery must preserve registration/incarnation and cursor fencing; never
+remove those checks to make a recovered publisher appear healthy.
