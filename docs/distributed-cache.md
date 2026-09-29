@@ -496,3 +496,47 @@ records, not Managers receiving DRAM/SSD events from live GPU storage. One etcd
 process avoids quorum replication cost. Continue with larger loads, update churn,
 three independent etcd hosts and live-store journal overflow before defining an
 operating envelope.
+
+## Live DRAM journal overflow and metadata loss
+
+The ignored A100 gate uses the production GPU save path, DRAM store,
+`ResidencyInventory`, Cluster publisher, Watch and `GlobalIndex`. It publishes 64
+blocks, isolates only the source's etcd connection, evicts those live blocks and
+saves 64 replacements. The 1 KiB journal advances from sequence 64 to 192 and
+must return `HistoryGap` from the last published cursor. Before healing, an
+available observer must still expose the exact old owner and no replacement.
+After healing, a publisher snapshot must expose only the replacements.
+
+The gate zeroes the registered GPU allocation and verifies all 65,536 restored
+bytes during the transient partition. It then partitions the source through its
+12-second lease deadline and waits until an independently connected, available
+observer no longer permits that exact incarnation and exposes no source rows.
+The same local bytes must still restore exactly, while healing must not revive
+the expired runtime.
+
+Build and freeze the test and native libraries before running:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 MC_FORCE_TCP=1 \
+ORBITKV_MOONCAKE_LIB_DIR=/path/to/frozen \
+LD_LIBRARY_PATH=/path/to/frozen \
+ETCD_BIN=/path/to/frozen/etcd \
+ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-evidence/live-journal \
+  /path/to/frozen/server-tests \
+  cluster::tests::p2p_mooncake::live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata_loss \
+  --ignored --nocapture --test-threads=1
+```
+
+The final frozen artifact and accepted review are under
+`/root/orbitkv-artifacts/s2-s51-20260929/s2-4-live-journal-correction/`.
+The implementation and reviewer runs remain on the test-owned A100 path
+`/workspace/orbitkv-three-host-20260929/s2-4-live-journal-correction-f7d953a8/`;
+the copied implementation evidence is under
+`/root/orbitkv-artifacts/three-host-20260929/node-b-s2-4-live-journal-correction-f7d953a8/`.
+The corrected `server-tests` SHA-256 is
+`3efb6137b795560a8e3f8bb6f9cf228ecd77d2dec3c765cfcc2b81272d9a6176`.
+
+This is a bounded one-host A100 correctness gate, not sustained journal capacity.
+The source is a real `OrbitKVEngine` but not a complete Manager process. SSD,
+cross-host/two-GPU recovery, P/D, RDMA, native GDS and three-host etcd remain
+independent qualification cells.

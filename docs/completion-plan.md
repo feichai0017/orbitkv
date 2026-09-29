@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1, S2.2 and the S2.3 measured metadata smoke are independently accepted; S2.3's final exact-convergence correction is `680eaa1a`. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; journal/live-storage and larger capacity cells remain open. |
+| S2 | Partial: S2.1–S2.3 and the bounded S2.4 live-DRAM metadata-loss gate are independently accepted; S2.4's final observer barrier is `f7d953a8`. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; sustained journal, full-Manager/SSD and larger capacity cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -196,6 +196,25 @@ This is a tested smoke envelope, not a maximum: one etcd process per run,
 synthetic Publisher records, no inference load and at most 16 registered sources.
 Larger node/key/update loads, sustained live-store journal churn, concurrent
 Managers, three-host etcd and failure-domain capacity remain open.
+
+### S2.4 — Bounded live-DRAM journal and metadata-loss correctness
+
+An A100 gate now sends real GPU blocks through the production Engine DRAM store,
+evicts them and saves replacements while a test-owned TCP gate disconnects the
+source Cluster from real etcd. A 1 KiB inventory journal advances from sequence
+64 to 192 and explicitly reports a history gap. The observer retains its last
+complete view during the partition; after reconnection the publisher snapshot
+removes every old key and publishes every replacement under the exact source
+owner. Zeroed GPU memory restores exactly 65,536 local bytes both during the
+transient partition and after the source's real lease disappears from an
+available observer. Healing cannot revive the expired incarnation.
+
+Codex independently reran the frozen A100 artifact and accepted the final
+observer-availability barrier at `f7d953a8`. This is one bounded live-DRAM
+correctness scenario using Engine and Cluster owners in one test process. It is
+not sustained churn or a capacity envelope, and does not qualify a complete
+Manager process, SSD, cross-host cache, P/D, RDMA, native GDS or three-host etcd.
+See the [live metadata-loss recipe](distributed-cache.md#live-dram-journal-overflow-and-metadata-loss).
 
 ## S3 — Transfer lifetime and generation-safe ownership
 
