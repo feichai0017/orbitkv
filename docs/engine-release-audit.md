@@ -30,7 +30,7 @@ OrbitKV adapter even though the API is still explicitly marked experimental.
 | vLLM callback family | Released calls consumed or evaluated by OrbitKV |
 | --- | --- |
 | Scheduler lookup/allocation | `get_num_new_matched_tokens`, `update_state_after_alloc`, `on_new_request`, `build_connector_meta` |
-| Scheduler completion/ownership | `update_connector_output`, `request_finished`, `request_finished_all_groups`, `register_finished_partial_tail`, `has_pending_block_frees`, `has_pending_push_work` |
+| Scheduler completion/ownership | `requires_kv_delivery`, `update_connector_output`, `request_finished`, `request_finished_all_groups`, `register_finished_partial_tail`, `has_pending_block_frees`, `has_pending_push_work` |
 | Worker registration/order | `register_kv_caches`, `set_host_xfer_buffer_ops`, `handle_preemptions`, `start_load_kv`, `wait_for_layer_load`, `finish_forward`, `reset_capture_state` |
 | Worker save/completion | `save_kv_layer`, `wait_for_save`, `get_transfer_results`, `get_block_ids_with_load_errors`, `build_connector_worker_meta`, `shutdown` |
 | Topology and integration | `bind_kv_cache_manager`, `bind_gpu_block_pool`, `get_required_kvcache_layout`, `requires_piecewise_for_cudagraph`, handshake setters, stats/metrics/events and `reset_cache` |
@@ -82,20 +82,23 @@ replacement for TENT plus OrbitKV state contracts.
 | --- | --- | --- |
 | Layout and ranks | Dense transfer requests `LBHNC`; MLA uses the default layout. NIXL exchanges PP/TP/DCP metadata and implements heterogeneous block-size, region/group and head-placement paths. | Implement a narrow TENT transport backend or equivalent released construction point, then compare its descriptors with OrbitKV HND/BHNC, MLA and heterogeneous-TP mappings. Reject unsupported resharding. |
 | Hybrid state | `SupportsHMA`, SWA clipping, Mamba speculative-slot clipping and `mamba_cache_mode` handling are present. Full/SWA/Mamba groups are selected together at the connector boundary. | Prove exact Full + SWA + recurrent boundaries and state bytes against OrbitKV's compiled recovery demand. A capability flag or group count does not prove atomic all-state readiness. |
-| Cancellation and preemption | Scheduler paths clean aborted/preempted requests; workers defer failure until submitted handles finish and retain a handle when release fails. | Reuse these engine lifecycle events. Keep OrbitKV generation checks and current destination/source retention until real abort, partial-submit and restart gates prove the TENT adaptation. |
+| Cancellation and preemption | Scheduler paths clean aborted/preempted requests; workers defer failure until submitted handles finish and retain a handle when release fails. `requires_kv_delivery` makes preempted reliable handoffs recompute, and `MultiConnector` requires delivery when any child does. | Reuse these engine lifecycle semantics. Keep the earlier OrbitKV preemption fence, generation checks and current destination/source retention until real abort, partial-submit and restart gates prove the TENT adaptation. |
 | Completion and failure | `KVConnectorTransferResults` distinguishes finished sends, finished receives and failed receives. NIXL polls transfer state and releases completed handles. | Map TENT terminal status into this result exactly once. A timeout, heartbeat loss or lease expiry must not stand in for native drain. The native NIXL TTL behavior is not evidence for OrbitKV source reclamation. |
 | Cache composition | `MultiConnector` now gives non-loading caches real blocks and tracks extra asynchronous saves. LMCache documents NIXL handoff plus LMCache offload using this path. | Test cold, partial and full handoff with OrbitKV `save_only` and ordinary read/write cache modes. Exactly one connector may load/write each destination; all required save completions must delay block free. |
 | Request routing | The vLLM router and NIXL own the released P/D request flow. | Remove OrbitKV's proxy only after an executable released router scenario carries the required request IDs, rank metadata, errors and cancellation. Routing remains outside Cache Manager policy. |
 
-One released ordering gap remains decisive. In vLLM 0.30.0,
-`ActiveKVConnector.pre_forward` calls `handle_preemptions` and starts synchronous
-loads immediately before model execution, after `GPUModelRunner` has already run
-Mamba `preprocess_state`. OrbitKV 0.29.0's `runtime.py` starts restore after page
-initialization/COW and before recurrent preprocessing. The 0.30.0 callback is a
-replacement for dense pre-forward loading and preemption fencing, but not yet for
-recurrent-state restore ordering. The upgrade must either consume an upstream
-ordering fix or keep a narrowly bounded release-specific owner until that fix is
-released and qualified.
+Two released ordering gaps remain decisive. In vLLM 0.30.0, the model runner
+updates requests and performs page zeroing/COW before
+`ActiveKVConnector.pre_forward` calls `handle_preemptions`; moving OrbitKV's
+preemption fence there could let an asynchronous save read an overwritten page.
+The runner also executes Mamba `preprocess_state` before `pre_forward`, so a
+recurrent restore submitted there is too late. OrbitKV 0.29.0's `runtime.py`
+drains preempted saves before `update_requests`, then starts restore after page
+initialization/COW and before recurrent preprocessing. A later upgrade may use
+`pre_forward` for dense load submission only after proving its page ownership,
+but it cannot replace either current ordering fence. The upgrade needs released
+pre-update and post-update/preprocess lifecycle boundaries, or must retain one
+narrow release-specific owner until equivalent hooks are released and qualified.
 
 ## Current adapter inventory and removal gates
 
@@ -113,7 +116,7 @@ consumed released replacement and tests; this audit deletes no protection.
 | `vllm/metadata.py` | Scheduler-to-worker and worker-to-scheduler connector callbacks | Keep; migrate to 0.30.0 transfer results without compatibility aliases |
 | `vllm/scheduler.py` | Released scheduler callbacks; owns pending queries, leases, save intents and prepared state | Keep. Replace the `BlockPool.get_cached_block` monkey patch only after all-group native-hit correctness is consumed |
 | `vllm/worker.py` | Released worker callbacks; owns GPU registrations, restore handles, CUDA dependencies and save thread | Keep. Port completion/failure callbacks to 0.30.0 and retain drain ownership |
-| `vllm/runtime.py` | Plugin-installed `GPUModelRunner.update_requests` monkey patch; orders preemption and recurrent restore | Dense behavior can move to 0.30.0 `pre_forward`; recurrent ordering needs a released pre-preprocess contract and GPU gates before removal |
+| `vllm/runtime.py` | Plugin-installed `GPUModelRunner.update_requests` monkey patch; drains preempted saves before page overwrite and starts restore after page setup but before recurrent preprocessing | `pre_forward` is too late for both fences. Remove only after released pre-update and post-update/preprocess contracts pass page-reuse, dense and recurrent GPU gates |
 | `vllm/state_manager.py` | Created by `connector.py`; restore errors call `mark_unavailable`; health thread can run | `is_available` has no production caller. Remove the class, context field, thread and mocks while preserving real errors and drain; no retry facade replaces them |
 | `vllm/metrics.py` | vLLM metric callbacks and scheduler/worker aggregation | Keep metrics with production consumers; remove fields only with their producer and dashboard |
 | `vllm/tp_shards.py` | Scheduler multi-Manager query fan-out for same-host TP shards | Keep bounded local responsibility; cross-host fan-out belongs to S5.5 Manager work |
@@ -174,14 +177,20 @@ The 0.30.0 upgrade must parse and validate these once, without old/new aliases.
 | Owner | Current entries |
 | --- | --- |
 | vLLM cache endpoint/session | `orbitkv.host`, `orbitkv.port`, `orbitkv.bootstrap_socket`, `orbitkv.tp_shard_endpoints`, `orbitkv.tp_shard_bootstrap_sockets`, `orbitkv.timeout_ms`, `orbitkv.spin_iterations`; environment overrides `ORBITKV_HOST`, `ORBITKV_PORT`, `ORBITKV_INSTANCE_ID` |
-| vLLM cache behavior | `orbitkv.mode`, `orbitkv.transfer_backend`, `orbitkv.wait_for_full_prefix`, `orbitkv.pd_tail_save`, `orbitkv.pd_tail_load`; `ORBITKV_CROSS_LAYER_BLOCKS`, `ORBITKV_LOAD_TIMEOUT_SECONDS`, `ORBITKV_PREPARE_REQUESTS`, `ORBITKV_QUEUE_WARMUP` |
-| vLLM custom P/D | `orbitkv.pd.mooncake.bind_host`, `orbitkv.pd.mooncake.rank_map`, `orbitkv.pd.prefill_tp_size`, `orbitkv.pd.prefill_sender_worker_count`, `orbitkv.pd.push_worker_count`, `orbitkv.pd.push_finalizer_worker_count`, `orbitkv.pd.validate_runtime_layout`, `orbitkv.pd.completion_observation_socket`, `orbitkv.pd.completion_observation_instance_id`; request parameters parsed in `kv_params.py` |
+| vLLM cache behavior and identity | `orbitkv.mode`, `orbitkv.transfer_backend`, `orbitkv.wait_for_full_prefix`, `orbitkv.pd_tail_save`, `orbitkv.pd_tail_load`; `ORBITKV_CROSS_LAYER_BLOCKS`, `ORBITKV_LOAD_TIMEOUT_SECONDS`, `ORBITKV_PREPARE_REQUESTS`, `ORBITKV_QUEUE_WARMUP`, `PYTHONHASHSEED`, `CUDA_VISIBLE_DEVICES` |
+| vLLM custom P/D connector | `orbitkv.pd.mooncake.bind_host`, `orbitkv.pd.mooncake.rank_map`, `orbitkv.pd.prefill_tp_size`, `orbitkv.pd.prefill_sender_worker_count`, `orbitkv.pd.push_worker_count`, `orbitkv.pd.push_finalizer_worker_count`, `orbitkv.pd.validate_runtime_layout`, `orbitkv.pd.completion_observation_socket`, `orbitkv.pd.completion_observation_instance_id` |
+| vLLM custom P/D request fields | Consumer: `do_remote_prefill`, `prefill_url`, `remote_request_id`, `done_request_id`, `prefill_max_tokens`, `proxy_start_ts_ns`. Producer: `do_remote_prefill_sender`, `target_engine_id`, `target_request_id`, `pd_handshakes`, `pd_consumer_abort_returns_ack` |
+| vLLM custom P/D proxy CLI | `--listen-host`, `--listen-port`, `--prefill-url`, `--decode-url`, `--prefill-urls`, `--decode-urls`, `--routing-policy`, `--timeout-s`, `--prefill-max-tokens`, `--decode-warmup-connections`, `--log-file` |
 | SGLang | `ORBITKV_SGLANG_ENDPOINT`, `ORBITKV_TRANSFER_BACKEND`, `ORBITKV_PREPARE_REQUESTS`, `ORBITKV_QUEUE_WARMUP`, `ORBITKV_SGLANG_TENT`, `ORBITKV_SGLANG_TENT_TIMEOUT_S`, `SGLANG_ENABLE_FAILED_SESSION_PROBE`, `MC_FORCE_TCP`; standard SGLang flags select the plugin/backend and native P/D mode |
 
-The P/D worker-count, rank-map, completion-observation and custom proxy request
-parameters retire with the custom P/D controller unless a released TENT backend
-still consumes them. Cache Manager socket, timeout, physical backend and identity
-configuration remain OrbitKV responsibilities.
+`PYTHONHASHSEED` is part of cache identity and is required by partial-tail reuse;
+`CUDA_VISIBLE_DEVICES` affects GPU ordinal/UUID resolution. Preserve both inputs
+until their consumers have an explicit replacement. The proxy CLI and request
+fields retire with the custom router/control plane. P/D worker counts, rank maps
+and completion-observation settings retire with the custom connector unless a
+released TENT backend still consumes them. Cache Manager socket, timeout,
+physical backend and model/adapter identity configuration remain OrbitKV
+responsibilities.
 
 ## Upgrade and contribution sequence
 
@@ -189,10 +198,10 @@ configuration remain OrbitKV responsibilities.
    update the lock and submodule together, and adapt only to the released API.
    Do not change the public support matrix until source-only, installed-wheel,
    cold/partial/full, restart, eager/graph and overhead gates pass.
-2. Move dense preemption/load ordering to released `pre_forward` and completion to
-   `KVConnectorTransferResults`. Retain the recurrent ordering patch until a
-   released callback runs after page initialization/COW and before
-   `preprocess_state`; propose that narrow ordering contract upstream.
+2. Move completion reporting to `KVConnectorTransferResults`. Use `pre_forward`
+   only for load submission proven safe at that point. Retain preemption drain
+   before `update_requests` and restore after page initialization/COW but before
+   `preprocess_state`; propose those two narrow ordering boundaries upstream.
 3. Replace the blanket HMA block-pool override with released divergent-hit and
    all-group readiness only after dense+recurrent state is proven atomic.
 4. Upstream one vLLM registration/configuration/tests/docs change, then any
