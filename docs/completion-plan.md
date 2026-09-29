@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1 and S2.2 independently accepted; S2.3 measured metadata smoke implemented with review pending. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; journal/live-storage and larger capacity cells remain open. |
+| S2 | Partial: S2.1, S2.2 and the S2.3 measured metadata smoke are independently accepted; S2.3's final exact-convergence correction is `680eaa1a`. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; journal/live-storage and larger capacity cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -186,6 +186,11 @@ host using identical frozen artifacts. At the largest checked point (16 owners,
 p50 about 2.08 ms, snapshot rebuild medians 56.2/60.1 ms and 2,315,392 logical
 index bytes. The 1 ms observer makes Watch values quantized diagnostics rather
 than transport-only latency. See the [capacity smoke recipe](distributed-cache.md#measured-metadata-scaling-smoke).
+
+The final correction verifies every retained key, owner/incarnation, sequence and
+complete metadata on both the original and rebuilt readers. Codex independently
+reran that frozen gate and accepted S2.3 at `680eaa1a`; the earlier sandbox bind
+failure is retained separately as an environmental control.
 
 This is a tested smoke envelope, not a maximum: one etcd process per run,
 synthetic Publisher records, no inference load and at most 16 registered sources.

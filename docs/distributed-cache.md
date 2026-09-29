@@ -480,12 +480,12 @@ ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-evidence/capacity-repeat-1 \
   --ignored --nocapture --test-threads=1
 ```
 
-The final H20 evidence and frozen hashes are under
-`/root/orbitkv-artifacts/s2-s51-20260929/s2-3-correction/`. The A100 copies,
-per-run JSON/logs and hash comparison are under
-`/root/orbitkv-artifacts/three-host-20260929/node-b-s2-3-correction/` and the
-test-owned remote directory
-`/workspace/orbitkv-three-host-20260929/s2-3-correction/`.
+The final exact-row assertion, frozen H20 runs and independent acceptance are under
+`/root/orbitkv-artifacts/s2-s51-20260929/s2-3-exact/`. The final A100 frozen rerun
+is under `/root/orbitkv-artifacts/three-host-20260929/node-b-s2-3-exact-680eaa1a/`
+and the test-owned remote directory
+`/workspace/orbitkv-three-host-20260929/s2-3-exact-680eaa1a/`. The preceding
+correction runs used for the table remain under `s2-3-correction/` on each host.
 The initial stale-`db_size` run and the first evidence version that did not
 verify the exact deleted key set remain under `s2-3-final/` and
 `s2-3-qualified/`; both are excluded from this table.
