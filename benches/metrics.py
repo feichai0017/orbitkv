@@ -11,7 +11,7 @@ from contextlib import contextmanager
 
 import requests
 
-REMOTE_STAGES = ("discovery_rpc", "authorization", "allocation", "read", "rebuild", "release")
+REMOTE_STAGES = ("authorization", "allocation", "read", "rebuild", "release")
 ENGINE_ITL = {engine: f"{engine}:inter_token_latency_seconds" for engine in ("vllm", "sglang")}
 
 

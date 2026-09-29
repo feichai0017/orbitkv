@@ -62,6 +62,14 @@ impl BenchFixture {
     }
 
     fn with_inventory(num_blocks: usize, bytes_per_block: usize, enable_inventory: bool) -> Self {
+        let membership = enable_inventory.then(|| {
+            Arc::new(orbitkv_catalog::MembershipView::new(
+                orbitkv_state::CacheOwner {
+                    endpoint: ADVERTISE_ADDR.into(),
+                    incarnation: uuid::Uuid::new_v4(),
+                },
+            ))
+        });
         Self::with_config(
             num_blocks,
             bytes_per_block,
@@ -69,15 +77,15 @@ impl BenchFixture {
                 enable_lfu_admission: false,
                 hint_value_size_bytes: Some(bytes_per_block),
                 enable_numa_affinity: false,
-                membership: enable_inventory.then(|| {
-                    Arc::new(orbitkv_catalog::MembershipView::new(
-                        orbitkv_state::CacheOwner {
-                            endpoint: ADVERTISE_ADDR.into(),
-                            incarnation: uuid::Uuid::new_v4(),
-                        },
-                        orbitkv_catalog::Placement::new(vec!["bench".into()]).unwrap(),
+                global_index: membership
+                    .as_ref()
+                    .map(|view| Arc::new(orbitkv_catalog::GlobalIndex::new(view.clone(), 1 << 20))),
+                inventory: enable_inventory.then(|| {
+                    Arc::new(orbitkv_core::ResidencyInventory::new(
+                        orbitkv_core::DEFAULT_INVENTORY_JOURNAL_BYTES,
                     ))
                 }),
+                membership,
                 ..EngineConfig::default()
             },
             TransferMode::Direct,
@@ -475,9 +483,9 @@ fn save_flush_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-fn save_flush_catalog_benchmarks(c: &mut Criterion) {
+fn save_flush_inventory_benchmarks(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
-    let mut group = c.benchmark_group("cpu_path/save_flush_unique_catalog_enqueue");
+    let mut group = c.benchmark_group("cpu_path/save_flush_unique_inventory");
     group.sample_size(10);
 
     for &num_blocks in BLOCK_CASES {
@@ -916,7 +924,7 @@ fn check_cuda(result: sys::CUresult, op: &str) {
 criterion_group!(
     benches,
     save_flush_benchmarks,
-    save_flush_catalog_benchmarks,
+    save_flush_inventory_benchmarks,
     save_flush_multilayer_cpu_benchmarks,
     save_submit_multilayer_cpu_benchmarks,
     save_insert_flush_multilayer_cpu_benchmarks,

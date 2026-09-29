@@ -25,9 +25,9 @@ use crate::cost::{
 };
 use crate::memory::AllocateFn;
 use crate::metrics::core_metrics;
-use crate::peer::catalog::CatalogClient;
 use crate::planning::peer::{FetchPlan, FetchSegment, PeerSource};
 use crate::storage::MaterializedBlocks;
+use orbitkv_catalog::GlobalIndex;
 
 /// Minimum usable transfer timeout. If the server's lock timeout minus the
 /// safety margin falls below this, we use this floor to avoid instant timeouts.
@@ -47,7 +47,7 @@ const FETCH_CHUNK_BYTES: u64 = 256 * 1024 * 1024;
 /// location, picks the best remote node, and uses gRPC authorization plus a
 /// Mooncake READ to fetch them.
 pub(crate) struct PeerReader {
-    catalog_client: Arc<CatalogClient>,
+    global_index: Arc<GlobalIndex>,
     completions: Arc<TransferCompletions>,
     membership: Arc<orbitkv_catalog::MembershipView>,
     transfer: Arc<MooncakeTransport>,
@@ -137,16 +137,8 @@ impl SegmentFetcher for PeerReader {
                 core_metrics()
                     .remote_fetch_total
                     .add(1, &[KeyValue::new("status", "rejected")]);
-                for record in &segment.records {
-                    self.catalog_client.reject_candidate(
-                        &record.key,
-                        &orbitkv_state::ReplicaLocation {
-                            owner: segment.owner.clone(),
-                            sequence: record.sequence,
-                            metadata: record.metadata.expect("planned peer metadata"),
-                        },
-                    );
-                }
+                // A batch rejection does not identify the stale key. Exclude the
+                // route only from this request; Watch owns shared index updates.
                 return Err(AuthorizationError::Rejected);
             }
             Err(error)
@@ -323,7 +315,7 @@ impl SegmentFetcher for PeerReader {
 
 impl PeerReader {
     pub(crate) fn new(
-        catalog_client: Arc<CatalogClient>,
+        global_index: Arc<GlobalIndex>,
         transfer: Arc<MooncakeTransport>,
         allocate_fn: AllocateFn,
         membership: Arc<orbitkv_catalog::MembershipView>,
@@ -333,7 +325,7 @@ impl PeerReader {
             membership.owner().endpoint
         );
         Self {
-            catalog_client,
+            global_index,
             completions: Arc::new(TransferCompletions::default()),
             membership,
             transfer,
@@ -343,25 +335,15 @@ impl PeerReader {
 
     /// Refresh peer evidence in the same request records that retain local SSD
     /// alternatives. Directory hints still require authoritative source grants.
-    pub(crate) async fn discover(&self, rows: &mut [crate::planning::replica::ReplicaSet]) {
+    pub(crate) fn discover(&self, rows: &mut [crate::planning::replica::ReplicaSet]) {
         for row in rows.iter_mut() {
             row.set_peers(Vec::new());
         }
         if !self.membership.permits(self.membership.owner()) || rows.is_empty() {
             return;
         }
-        let namespace = &rows[0].key.namespace;
-        if rows.iter().any(|row| &row.key.namespace != namespace) {
-            return;
-        }
-        let hashes: Vec<_> = rows.iter().map(|row| row.key.hash.clone()).collect();
-        let candidates = match self.catalog_client.locate_blocks(namespace, &hashes).await {
-            Ok(candidates) => candidates,
-            Err(e) => {
-                warn!("Candidate discovery failed: {e}");
-                return;
-            }
-        };
+        let keys: Vec<_> = rows.iter().map(|row| row.key.clone()).collect();
+        let candidates = self.global_index.lookup(&keys);
         for (row, mut candidate) in rows.iter_mut().zip(candidates) {
             if candidate.key != row.key {
                 continue;

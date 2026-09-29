@@ -124,6 +124,12 @@ async fn cleanup_memory_cache_handler(
     })
 }
 
+async fn metadata_handler(
+    State(state): State<AppState>,
+) -> Json<Option<orbitkv_core::MetadataStatus>> {
+    Json(state.engine.metadata_status())
+}
+
 async fn sync_cache_handler(State(state): State<AppState>) -> impl IntoResponse {
     match tokio::time::timeout(
         std::time::Duration::from_secs(30),
@@ -131,14 +137,17 @@ async fn sync_cache_handler(State(state): State<AppState>) -> impl IntoResponse 
     )
     .await
     {
-        Ok(Ok(())) => (
+        Ok(Ok(revision)) => (
             StatusCode::OK,
-            "published residency acknowledged".to_string(),
+            Json(serde_json::json!({"published_revision": revision})).into_response(),
         ),
-        Ok(Err(error)) => (StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        Ok(Err(error)) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            error.to_string().into_response(),
+        ),
         Err(_) => (
             StatusCode::GATEWAY_TIMEOUT,
-            "cache synchronization timed out".to_string(),
+            "cache synchronization timed out".into_response(),
         ),
     }
 }
@@ -189,17 +198,18 @@ pub(crate) async fn start_http_server_with_lifecycle(
         .route("/instances", get(list_instances_handler))
         .route("/instances/cleanup", post(cleanup_handler))
         .route("/cache/sync", post(sync_cache_handler))
+        .route("/cache/metadata", get(metadata_handler))
         .route("/cache/memory/cleanup", post(cleanup_memory_cache_handler));
 
     if enable_prometheus {
         app = app.route("/metrics", get(metrics_handler));
         info!(
-            "Starting HTTP server on {} (/health, /metrics, /instances, /instances/cleanup, /cache/sync, /cache/memory/cleanup)",
+            "Starting HTTP server on {} (/health, /metrics, /instances, /instances/cleanup, /cache/sync, /cache/metadata, /cache/memory/cleanup)",
             addr
         );
     } else {
         info!(
-            "Starting HTTP server on {} (/health, /instances, /instances/cleanup, /cache/sync, /cache/memory/cleanup)",
+            "Starting HTTP server on {} (/health, /instances, /instances/cleanup, /cache/sync, /cache/metadata, /cache/memory/cleanup)",
             addr
         );
     }

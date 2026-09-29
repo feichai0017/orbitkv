@@ -1,6 +1,8 @@
 use super::*;
 
-mod etcd;
+pub(crate) mod etcd;
+#[cfg(feature = "mooncake")]
+mod p2p_mooncake;
 
 #[test]
 fn node_and_cluster_labels_cannot_escape_their_key_prefix() {

@@ -1,22 +1,21 @@
 # Peer control and Mooncake ownership
 
-**Current source-control RPCs remain implemented; the local global-index
-replacement is selected but not yet implemented.** The earlier custom binary
-TENT session proposal is retired. The selected
-[distributed design](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
-removes directory RPCs through background etcd synchronization and local lookup.
+Block discovery and inventory synchronization now use the
+[local global index](distributed-cache.md#local-global-index-and-etcd-metadata).
+The custom binary TENT session proposal is retired; its experimental ABI is not
+part of OrbitKV runtime.
 
 ## Application and transport boundary
 
-| Operation | Current path | Selected target |
-| --- | --- | --- |
-| Block discovery | TTL hints, then batched Catalog gRPC on a miss | Complete local global index; no foreground network query |
-| Inventory publication | Snapshots/deltas to assigned Catalog Managers | Background batched etcd block metadata |
-| Index synchronization | Catalog replay and demand-cached results | Fixed-revision etcd snapshot followed by Watch |
-| Membership/incarnations | Background etcd registration and Watch | Extend the same coordination boundary |
-| Source grants/completion | Bounded batched OrbitKV gRPC | Retain; optimize from measured cost |
-| Remote payload | TENT READ under source grants | Retain |
-| P/D payload | TENT WRITE under engine handoff contracts | Retain; sessions/page ownership stay in OrbitKV and engine adapters |
+| Operation | Implemented path |
+| --- | --- |
+| Block discovery | Complete local global index; no foreground network query |
+| Inventory publication | Background fenced, batched etcd metadata transactions |
+| Index synchronization | Fixed-revision etcd snapshot followed by Watch |
+| Membership/incarnations | Background etcd registration, lease renewal and Watch |
+| Source grants/completion | Bounded batched OrbitKV gRPC |
+| Remote payload | TENT READ under source grants |
+| P/D payload | TENT WRITE under engine handoff contracts |
 
 Admission, incarnation/generation fences, idempotent completion and retry
 ownership belong to OrbitKV. TENT owns registered-memory transfer and native

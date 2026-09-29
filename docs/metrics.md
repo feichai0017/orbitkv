@@ -292,7 +292,7 @@ include warmups and demand; they are not end-user request hit rates.
 
 - **orbitkv_cache_policy_promotions_total**, **orbitkv_cache_policy_demotions_total** (Counters)
   - Foreground promotions into the protected segment and capacity demotions
-    back to probation. Speculative peeks do not promote. Catalog demotion and
+    back to probation. Speculative peeks do not promote. Pressure eviction and
     cleanup affect protected bytes but are not policy-capacity demotions.
 
 - **orbitkv_ssd_write_admission_skips_total** (Counter)
@@ -470,9 +470,9 @@ For backing failure correlation, use:
   NIC. They are resource-pressure evidence, not proof that the sampled batch
   used RDMA.
 - `orbitkv_ssd_prefetch_failures_total` for SSD prefetch failures
-- `orbitkv_remote_stage_duration_seconds{stage,status}` separates `discovery_rpc`,
+- `orbitkv_remote_stage_duration_seconds{stage,status}` separates
   `authorization`, `allocation`, `read`, `rebuild` and `release`. Allocation/read/rebuild
-  describe completed successful transfers; discovery includes timed-out attempts.
+  describe completed successful transfers.
   Authorization includes first-use window setup and its bounded single-flight wait.
   Release measures time from native completion/abandonment to acknowledgement,
   including retry delays.
@@ -544,24 +544,21 @@ For an existing OpenTelemetry deployment, add
 `--metrics-otel-endpoint http://127.0.0.1:4321` with the collector's configured
 endpoint. Direct Prometheus remains available.
 
-### Distributed inventory recovery
+### Distributed metadata progress
 
-Manager synchronization counters are:
+`GET /cache/metadata` reports the complete local index's `revision`,
+`accounted_bytes`, `registration_valid` and `available`, plus the publisher's
+`sequence`, committed `revision`, `ready` and the current `inventory_sequence`.
+Standalone Managers return JSON `null`. `POST /cache/sync` returns a
+`published_revision`; consumers must apply that revision before a test can assert
+remote visibility. These are background synchronization boundaries, independent
+of source authorization and native completion.
 
-| Metric | Meaning |
-| --- | --- |
-| `orbitkv_inventory_records_sent` | Snapshot/delta records whose RPC acknowledgement was received |
-| `orbitkv_inventory_snapshots_started` | Replacement inventory attempts |
-| `orbitkv_inventory_snapshots_completed` | Acknowledged commits of complete inventory cuts |
-| `orbitkv_inventory_history_gaps` | Retained history no longer covers directory progress |
-| `orbitkv_inventory_sync_failures` | Failed inventory RPCs |
-| `orbitkv_catalog_heartbeat_failures` | Failed liveness/progress requests |
-| `orbitkv_catalog_unregister_failures` | Failed graceful owner cleanup |
-
-These are background synchronization metrics, separate from request discovery
-and Mooncake data transfer. Lost replies can undercount applied records; a
-snapshot may retransmit already known entries. Repeated snapshot starts without
-commits indicate failure to converge. See [directory recovery](../crates/orbitkv-catalog/README.md).
+The old per-shard Catalog gauges, inventory-RPC counters and candidate-lookup
+metrics were removed with their runtime. Transfer, source budget, remote-stage
+and release metrics remain. Repeated reconciliation warnings or an unavailable
+index indicate incomplete coverage; inspect membership, the metadata budget and
+etcd capacity/connectivity. See [directory recovery](distributed-cache.md).
 
 ### Environment Variables
 
@@ -636,7 +633,7 @@ curl http://localhost:9091/metrics
 | Service | Port or path | Protocol | Purpose |
 | --- | --- | --- | --- |
 | Cache Manager | `/tmp/orbitkv-<addr-port>.sock` | UDS and iceoryx2 | Inference process connection |
-| Cache Manager | 50055 | gRPC | Catalog, peer authorization and lease control in distributed mode |
+| Cache Manager | 50055 | gRPC | Peer source authorization and release in distributed mode |
 | Cache Manager | 9091 | HTTP | Health and Prometheus metrics |
 | OTel Collector | configured endpoint | gRPC | Optional OTLP receiver |
 | Prometheus | 9090 | HTTP | Query API and Web UI |

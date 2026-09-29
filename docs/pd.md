@@ -17,7 +17,7 @@ The NIXL integration described here is
 
 | Path | Trigger | KV destination | Discovery/control | OrbitKV status |
 | --- | --- | --- | --- | --- |
-| OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; experimental remote Catalog + peer lease | GPU-validated locally; multi-node experimental |
+| OrbitKV external cache | Repeated-prefix lookup | Cache Manager DRAM/SSD, then engine HBM | Local index; global location index + exact source grant | GPU-validated locally; multi-node experimental |
 | OrbitKV vLLM split P/D connectors | P-to-D request handoff | Decode worker's GPU KV pages | OrbitKV handshake and proxy; Mooncake TENT moves bytes | A100 same-host TCP output gate passes; H20→A100 byte gate passes, strict output gate fails |
 | OrbitKV SGLang TENT adapter | P-to-D request handoff | Decode worker's GPU KV pages | SGLang 0.5.20 bootstrap/room protocol; OrbitKV Rust/TENT moves bytes | A100 same-host TCP output/restart gate passes; H20→A100 reuse passes, strict 64-token output gate fails |
 | vLLM `NixlConnector` | P-to-D request handoff | Decode worker's GPU KV pages | vLLM's NIXL side channel and request router | Upstream vLLM connector, not OrbitKV code |
@@ -227,7 +227,7 @@ write-through publication remain enabled. It does not yet let one cost decision 
 directly into decode HBM and routing through prefill; that requires comparable
 completion targets and resource-admission evidence on both alternatives.
 
-Neither OrbitKV's P/D paths nor the current Catalog provides production KV-aware
+Neither OrbitKV's P/D paths nor the current global index provides production KV-aware
 request routing. Production qualification still needs real multi-GPU and
 cross-machine correctness, cancellation/restart tests, and throughput/latency
 comparison against the vLLM NIXL baseline.

@@ -13,22 +13,7 @@ name = "orbitkv_catalog"
 path = "src/lib.rs"
 
 [dependencies]
+serde.workspace = true
 orbitkv-state.workspace = true
-orbitkv-proto = { path = "../orbitkv-proto" }
-tonic.workspace = true
-tokio.workspace = true
-dashmap.workspace = true
 parking_lot.workspace = true
 uuid.workspace = true
-opentelemetry.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-sha2 = "0.10"
-
-[dev-dependencies]
-criterion.workspace = true
-
-[[bench]]
-name = "unregister_node"
-path = "../../benches/catalog.rs"
-harness = false

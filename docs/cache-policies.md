@@ -24,7 +24,7 @@ protected pages, using recency within each class. It skips pages held by query
 leases or transfers. Protection does not prevent eventual pressure eviction or
 override GPU completion ownership. Promotion validates the resident allocation;
 a stale reference cannot protect a replacement allocation for the same key.
-Catalog-driven replica demotion and memory cleanup update the protected count.
+Pressure eviction and memory cleanup update the protected count.
 
 The existing `--enable-lfu-admission` option is independent. Leave it disabled
 when measuring this policy so admission and replacement effects are separable.

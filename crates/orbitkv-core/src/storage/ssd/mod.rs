@@ -434,7 +434,7 @@ impl SsdStore {
         if records.is_empty()
             || !records
                 .iter()
-                .all(|record| inventory.contains_record(record))
+                .all(|record| inventory.contains_record(record, orbitkv_state::ReplicaMedium::Ssd))
         {
             return None;
         }

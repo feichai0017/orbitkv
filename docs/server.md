@@ -34,7 +34,7 @@ orbitkv-cache-manager
 - `GET /instances`: List registered instance IDs.
 - `POST /instances/cleanup[?id=<instance_id>]`: Remove one instance, or all instances when `id` is omitted.
 - `POST /cache/memory/cleanup`: Evict resident in-memory cache blocks while preserving backing-store data. `evicted_bytes` is the cache footprint removed from residency; `reclaimed_bytes` is the pinned-pool memory actually released immediately.
-- `POST /cache/sync`: Wait for already submitted saves and acknowledged catalog residency. Returns 503 on synchronization failure or 504 after 30 seconds; it does not make SSD payloads restart-durable.
+- `POST /cache/sync`: Wait for already submitted saves and return their committed etcd `published_revision`; remote indexes may still be applying it. Returns 503 on synchronization failure or 504 after 30 seconds; it does not make SSD payloads restart-durable.
 
 ### SSD Cache
 
@@ -114,26 +114,26 @@ See [request preparation](request-preparation.md) for limits and control runs.
 ### Cross-Node (Multi-Node Setup)
 
 - `--nics`: Optional Mooncake RDMA rail allow-list (e.g., `--nics mlx5_0,mlx5_1` or `--nics mlx5_0 mlx5_1`). Omit it to let Mooncake select the available transport, including TCP fallback.
-- `--etcd-endpoints`: comma-separated HTTP etcd endpoints; enables distributed cache. Requires `--node-id` and `--catalog-nodes`. Peers must reach the concrete `--addr` endpoint.
-- `--catalog-nodes`: identical set of 1–16 stable catalog host Node IDs on every Manager. Placement is immutable; incompatible joins fail. Missing members do not remap shards.
-- `--catalog-budget`: accounted index and retained retry bytes across this Manager's assigned shards; defaults to 256 MiB. This is not a process RSS cap.
+- `--etcd-endpoints`: comma-separated HTTP etcd endpoints; enables distributed cache. Requires `--node-id`. Peers must reach the concrete `--addr` endpoint.
+- `--index-budget`: logical accounting for this Manager's complete global index; defaults to 256 MiB. This is not a process RSS cap.
 - `--cluster-name`: etcd namespace, default `orbitkv`. `--membership-ttl-secs` defaults to 30 and accepts 12–3600; remote admission uses half the acknowledged TTL. See [deployment](p2p.md#leased-manager-membership).
 - `--transfer-lock-timeout-secs`: Mark source transfers overdue after this many seconds (default: `120`). Timeout never releases memory still exposed to a remote READ.
 - `--transfer-budget`: Source allocation reservations, defaulting to half the pinned pool. Entire allocations are charged once per session, including overdue sessions. At most 1024 sessions can be retained. New authorizations fail when either limit is exhausted; permanent requester loss still requires safe transport revocation or coordinated teardown.
 - `--inventory-journal-bytes`: Retained residency-change bytes (default: `16777216`, 16 MiB). Lag beyond this history triggers a paginated inventory resnapshot.
 
-## Embedded catalog
+## Distributed metadata
 
-The same Cache Manager binary hosts its assigned directory shards on the peer
-gRPC port. There is no directory executable or separate HTTP service. Start all
-Managers with the same etcd namespace and catalog host set:
+The same Cache Manager binary owns local storage and a complete global index.
+All distributed Managers use the same etcd cluster and namespace, with distinct
+Node IDs. The peer gRPC endpoint serves source grants and completion only.
 
 ```bash
-orbitkv-cache-manager --addr <routable-ip>:50055 \
-  --etcd-endpoints http://<etcd-host>:2379 \
-  --node-id cache-a --catalog-nodes cache-a,cache-b
+orbitkv-cache-manager --addr 10.0.0.1:50055 --pool-size 30gb \
+  --etcd-endpoints http://10.0.0.101:2379 --cluster-name inference \
+  --node-id cache-a --index-budget 256mb
 ```
 
-Use the other host's address and Node ID there. Catalog placement is immutable in
-this stage; each shard has one metadata copy. See [deployment and failure
-behavior](p2p.md) and the [recovery protocol](../crates/orbitkv-catalog/README.md).
+Use the other host's address and Node ID there. `GET /cache/metadata` exposes
+index revision, available coverage, logical bytes, registration validity and
+publisher progress; standalone mode returns JSON `null`. See [deployment and
+failure behavior](p2p.md) and [metadata recovery](distributed-cache.md).

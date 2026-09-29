@@ -3,7 +3,7 @@ use crate::StateKey;
 /// Discovery is bounded, positive evidence, never a complete cluster inventory.
 pub const DISCOVERY_MAX_KEYS: usize = 128;
 pub const DISCOVERY_MAX_BYTES: usize = 64 * 1024;
-pub const DISCOVERY_MAX_REPLICAS: usize = 4;
+pub const DISCOVERY_MAX_REPLICAS_PER_MEDIUM: usize = 4;
 pub const DISCOVERY_MAX_ENDPOINT_BYTES: usize = 4096;
 
 #[derive(

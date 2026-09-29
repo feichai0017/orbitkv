@@ -17,8 +17,8 @@ an OrbitKV implementation or qualification item.
   in Rust. Python supplies engine callbacks and registration evidence.
 - Keep UDS/iceoryx2 for engine-to-Manager control and CUDA allocation sharing for
   GPU access. Local and peer placement remain invisible to the cache API.
-- Use Mooncake TE for OrbitKV remote payload transfer. Embedded catalog shards
-  provide candidate evidence; etcd provides membership/configuration. There is
+- Use Mooncake TE for OrbitKV remote payload transfer. Complete local global indexes
+  provide candidate evidence; etcd stores locations and membership. There is
   no additional central metadata service or per-block etcd request path.
 - Keep cluster-aware cache decisions [below the engine](state-planning.md#cache-manager-decisions-below-the-engine).
   Each Manager combines bounded replica/resource evidence with local costs and
@@ -62,7 +62,7 @@ are recorded below; dynamic execution selection remains planned.
 | Codecs | Batched GPU ANS/FP8/TurboQuant, reusable workspace, CRC; CPU FP8 scalar/AVX2/AVX-512 | General lossy quality qualification and adaptive representation selection |
 | Lifecycle | Query budgets, shared reads, cancellation, completion ownership, restart and process-fault gates | Multi-rank and sustained fault soak; no timeout-only DMA reclamation |
 | Policies | Optional preparation, protected retention, reuse-based SSD admission and opt-in bounded cost/shadow observations | Calibration under shared-device contention, first-use prediction and dynamic path/boundary selection |
-| Peer cache | Embedded catalogs, etcd Watch, bounded per-query coalescing and per-owner discovery concurrency, source authorization, bounded TE transfers and release recovery | H20/A100 TCP natural-text sharing and restarts pass; cross-GPU numerical limits, RDMA, catalog replication and orphan revocation remain open |
+| Peer cache | Complete local global indexes, fenced etcd publication and snapshot/Watch, source authorization, bounded TE transfers and release recovery | H20/A100 TCP natural-text sharing and restarts pass; cross-GPU numerical limits, RDMA, metadata scale and orphan revocation remain open |
 | Packaging | Source-buildable CUDA wheels and installed-artifact checks | First Python release, qualified container images, shared-instance deployment and Kubernetes installation |
 
 Use the maintained [storage-format results](storage-formats.md#qualification),
@@ -72,7 +72,7 @@ are existing evidence, not tests rerun for this handoff. ANS's recorded SSD
 benefit and DRAM median-TTFT regressions support measuring policy tradeoffs;
 they do not prove a universal advantage over LMCache or FlexKV.
 
-SSD files currently reset on Manager restart. Catalog replay reconstructs
+SSD files currently reset on Manager restart. Snapshot/Watch reconstructs
 evidence from surviving inventories; it cannot recover lost payloads. Persistent
 SSD manifests would be a separate feature, not an implied HA guarantee.
 
@@ -100,7 +100,7 @@ also checks Dynamo v1.5.0, NIXL v1.4.1 and the experimental KVCR source.
 | [LMCache P2P][lm-p2p] | Membership discovery, peer source locking and remote loads into requester L1 | Keep membership off payload lookup and budget both endpoints; use OrbitKV's catalog evidence and Mooncake TE |
 | [LMCache P/D composition][lm-pd] | Current-request handoff and cross-request cache reuse are distinct connectors | Preserve that semantic separation with OrbitKV's Mooncake handoff; qualify cached-P-prefix and later D-to-P reuse |
 | [FlexKV transfer scheduler][flex-scheduler], [GDS][flex-gds] and [ANS][flex-ans] | Dependency-driven movement, reusable GPU storage staging and GPU compression | Extend existing Rust queues, coalescing and codec arenas; retain resource ownership across dependencies |
-| [FlexKV distributed reuse][flex-distributed] | Local index snapshots, Redis metadata and Mooncake movement | Reuse bounded cached discovery ideas; retain etcd membership and embedded catalogs rather than replacing them with Redis |
+| [FlexKV distributed reuse][flex-distributed] | Local index snapshots, Redis metadata and Mooncake movement | Reuse bounded cached discovery ideas; use complete local global indexes with etcd publication and revisioned snapshot/Watch |
 | [Mooncake TE][mc-te] and [RFC #3504][mc-rfc] | Released memory-transfer API; separate draft for cached membership and peer authorities | Reuse TE directly. Treat the RFC as design input, not an implemented HA store dependency |
 | [Dynamo v1.5.0 routing](state-planning.md#reuse-dynamo-for-request-routing) | Rust selection service, tier credits, topology constraints and experimental custom scoring | Reuse upstream selection; integrate compatible events and qualified Manager estimates. Avoid deprecated KVBM |
 | [NIXL v1.4.1](state-planning.md#reuse-dynamo-for-request-routing) | Unified transfers, optional cost estimates and a Preview Mooncake backend | Evaluate native integration before adding another generic transfer layer; the Mooncake backend does not implement its own estimator |
@@ -133,7 +133,7 @@ the table describes target packaging and gates, not new launch flags.
 | Shared node | Several engine instances connect to one Manager on their host | Distinct registrations, simultaneous serving, budgets, cache-domain isolation, engine/Manager restart and device mapping |
 | Containers | Separate pinned Manager and engine images; same-host resource access | First qualify explicit shared IPC/PID wiring, then the isolated profile below; check from installed images, not the source tree |
 | Kubernetes | Manager DaemonSet on selected inference nodes; vLLM/SGLang Deployments connect to their node's Manager | Node-local endpoint wiring, GPU access without duplicate exclusive allocation, SSD mounts, startup/readiness, drain and rolling restart |
-| DP / independent replicas | One Manager per host, embedded catalogs and etcd membership; peer bytes through TE | Two physical hosts, matching model/engine/layout, separate TCP and RDMA evidence; then same-host TP within a replica |
+| DP / independent replicas | One Manager per host, local global indexes and etcd metadata; peer bytes through TE | Two physical hosts, matching model/engine/layout, separate TCP and RDMA evidence; then same-host TP within a replica |
 | P/D pools | P and D workers use their respective host Managers plus a P/D-aware router and explicit TE handoff | Complete current-request state, P-side cache hits reaching D, later reuse of D-published state, cancellation/restart and backpressure |
 | Cross-host TP/PP | Each worker reaches its own host Manager; rank/stage work is coordinated by the engine | Common legal boundary, shard/stage dependencies and bounded fan-out; resharding is separately implemented |
 | Dedicated cache nodes | Later DRAM/SSD contributors reached by inference-host Managers | A cache-only service profile, source-local SSD staging, capacity and failure gates; not currently a qualified CPU-only deployment |
@@ -192,7 +192,7 @@ flowchart LR
     X --> T[Mooncake TE]
     T --> R[Peer registered memory]
     X -.->|Observed costs and resource pressure| P
-    K[Embedded catalog and cached candidates] --> S
+    K[Complete local global index] --> S
     M[etcd membership and configuration] -.-> K
     X -->|Completion evidence| E
 ```
@@ -224,8 +224,8 @@ decode/H2D. Directory hints never authorize a memory read. A pending remote SSD
 replica must be staged by its owner with bounded credits; that owner cannot
 recursively fetch another peer. A peer-HBM source requires an engine lease.
 
-Current discovery uses bounded hints and batched Catalog requests. The selected
-[local global-index replacement](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+Current discovery uses the implemented
+[local global index](distributed-cache.md#local-global-index-and-etcd-metadata)
 stores block metadata in etcd and synchronizes a complete local view through
 snapshot/Watch. Bound publication, staging and index capacity; fail readiness
 explicitly rather than silently evicting rows from a complete view. Foreground
@@ -258,7 +258,7 @@ work proceed alongside distributed qualification; no warming speedup gates DP.
 | P4.4 | Useful retention and writes, optional deferred publication and representation admission | Read cache, write path, codec and worker ownership | Independent policy ablations, write/read amplification and source-hold measurements; lossy quality is a separate gate |
 | D1, in parallel | Real two-host independent-replica recovery, first TP=1 | Catalog/cluster, peer authorization, TE and existing serving driver | Output controls, positive remote/GPU bytes, incarnation rejection, loss/partition cleanup; TCP and RDMA reported separately |
 | After D1: P/D plus reuse | Compose the existing vLLM handoff with cache; qualify the implemented SGLang handoff/TENT adapter and compose it with cache | Engine adapters/P-D integration plus shared Rust lifetime logic | Cached P prefix reaches D; later P reuses D state; failed/cancelled handoffs cannot expose partial state |
-| D2, before production distributed use | Replicated catalog evidence, placement generations, repair and operational recovery | Catalog, inventory sync and server cluster | Three failure domains, coordinator/catalog outage, bounded replay and source holds; etcd replication alone is insufficient |
+| D2, before production distributed use | Replicated etcd locations, complete local indexes and operational recovery | Global index, inventory and server cluster | Three failure domains, leader/quorum failure, snapshot/Watch repair and bounded source holds; qualify scale and physical host loss separately |
 | D3 | Measured peer selection and source-local SSD staging; evaluate dedicated cache nodes | Existing SSD/peer workers and common cost observations | Forced source DRAM eviction, real SSD/TE bytes, bounded two-sided credits and useful latency under mixed load |
 | Later topology gates / P6 | Same-host TP per replica, then cross-host TP/PP and layer overlap | Engine coordination, state contract and transfer dependencies | Rank/stage completion, compatible layouts, graph-capture/overlap tests; resharding separately gated |
 | R1 | Optional pinned Dynamo worker routing fed by cache/engine summaries | Server-side optional integration | Correct event/hash mapping and request reservations; selected Manager revalidates actual state |

@@ -550,24 +550,27 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   reproduce and submit the two remaining C-string termination and terminal
   teardown defects as upstream issues/PRs. Record evidence and related fixes
   in [peer control](docs/peer-control.md#upstream-audit-2026-09-29).
-- [ ] Implement the [local global-index design](docs/distributed-cache.md#selected-target-local-global-index-and-etcd-metadata):
+- [x] Implement the [local global-index design](docs/distributed-cache.md#local-global-index-and-etcd-metadata):
   background etcd block publication with lease/incarnation fences and ordered
   retry reconciliation; complete fixed-revision snapshots followed by Watch.
-- [ ] Replace Catalog lookup and inventory RPCs with local discovery and etcd
+- [x] Replace Catalog lookup and inventory RPCs with local discovery and etcd
   synchronization in one cutover. Remove fixed placement, `--catalog-nodes`,
   the TTL hint cache and remote lookup coalescing; retain source grant/completion
   RPCs. The isolated native binary experiment is outside the delivery plan.
 - [x] D0: sequence all owner residency transitions and keep bounded replay
   history; detect lost notifications and require resynchronization.
 - [x] D0: implement paginated inventory snapshots with a complete delta cut,
-  including concurrent eviction, duplicates and replay overflow.
+  including concurrent eviction, duplicates and replay overflow. D2 uses one
+  owner stream with independent DRAM/SSD records.
 - [x] D1: use etcd for member incarnations and configuration; recover Watches
-  after disconnection or compaction without per-block etcd operations.
-- [x] D1 discovery: bounded positive candidate indexing, coalesced batched
-  lookup, Manager-side planning and source runtime/residency checks.
+  after disconnection or compaction. D2 extends background etcd publication to
+  block locations; request-time lookups remain local.
+- [x] D2 discovery: replace D1 positive hints and coalesced Catalog lookup with
+  local global-index reads; retain planning and exact source checks.
 - [x] D1 cancellation: hold destination buffers and source-release guard in the
   blocking transfer until it finishes; caller cancellation cannot drop them.
-- [x] D1: embed fixed catalog shards with per-shard replay and etcd membership/configuration.
+- [x] D2: replace the D1 fixed Catalog shards with complete local indexes and
+  replicated etcd location metadata; remove placement, serving and lookup RPCs.
 - [x] D1 source ownership: retain overdue source pins, account entire allocations
   under a byte/session budget, retry completion releases and export native stage timing.
 - [x] D1 receiver placement: derive per-slot NUMA allocation from the receiving
@@ -582,9 +585,9 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 - [x] D1 completion recovery: reserve bounded per-requester/per-peer release capacity
   before window setup; retain idempotent retries until acknowledged and drain
   uncertain native batches.
-- [x] D1 discovery RPC reduction: batch shards by catalog host, share connections,
+- [x] Historical D1 discovery RPC reduction (removed by D2): batch shards by catalog host, share connections,
   bound host concurrency and include coalescing in the common lookup deadline.
-- [x] Coalesce matching directory batches without serializing unrelated queries.
+- [x] Historical D1: coalesce matching directory batches without serializing unrelated queries.
   Bound pending metadata and per-owner/global RPC concurrency; cancellation and
   membership changes cannot leave stale evidence or detached lookup owners.
 - [x] D1 authorization reconciliation: source-issued windows and generation-fenced
@@ -596,10 +599,15 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   cancellation and sender/receiver budgets on two real hosts for both engines.
 - [x] D1: replace the standalone directory with `orbitkv-catalog` and remove
   obsolete executables, Python launcher and fixed-directory APIs.
-- [ ] D2: qualify complete local indexes against three-member etcd: leader loss,
-  quorum loss, snapshot/Watch compaction, delete/recreate, uncertain publication,
-  Manager restart and metadata capacity limits. Measure background churn and
-  index memory; require zero foreground directory requests for cold and warm keys.
+- [x] D2: qualify leader loss and quorum-loss fencing with three etcd processes;
+  cover snapshot/Watch compaction, lease deletion/incarnation restart, uncertain
+  publication, bounded-index failure and snapshots larger than 4 MiB.
+- [x] D2 serving: repeat same-host and physical H20/A100 TCP sharing, index restart
+  and source-loss recovery on vLLM/SGLang; qualify forced source SSD recovery on
+  both engines. See `docs/shared-cache-qualification.md` for the exact scope.
+- [ ] D2 scale: measure background churn, index memory and recovery lag; qualify
+  etcd quota exhaustion and separate host-failure domains. Foreground discovery
+  now reads the local index and has no directory RPC implementation.
 - [ ] D3: qualify requester peer-SSD routes and add measured source selection
   without recursive peer fetches or unbounded staging. Fixed-priority peer-SSD
   planning, source-local io_uring staging and two-phase byte/session admission
@@ -612,8 +620,8 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   candidate/inventory records; preserve surviving SSD evidence after DRAM
   eviction. Keep temporary staging private unless explicitly admitted. Engine
   leases remain required before advertising general peer-HBM sources.
-- [x] Measure cold discovery RPCs and source authorization, READ and completion
-  stages independently in the shared-cache serving gate.
+- [x] Measure source authorization, READ and completion independently in the
+  shared-cache serving gate; retire the removed directory-RPC metric after D2.
 - [ ] Measure background synchronization and etcd traffic, index bytes and recovery
   lag under multi-host load and failure.
 
@@ -687,7 +695,7 @@ M5, with no measured latency claim. The general compiler work remains open:
   mounts separately from container functional recovery.
 - [ ] Keep all public capability claims tied to a reproducible test.
 - [ ] Separate client and Cache Manager release artifacts when their contracts are
-  stable; the planned complete global index remains embedded in the Manager.
+  stable; the complete global index remains embedded in the Manager.
 - [ ] Keep heavy GPU/RDMA gates explicitly marked.
 - [ ] Preserve license and upstream provenance requirements.
 - [ ] Keep SGLang support claims aligned with the direct-linker E2E gate.

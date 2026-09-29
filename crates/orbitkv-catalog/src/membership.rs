@@ -1,37 +1,28 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use orbitkv_state::CacheOwner;
 use parking_lot::RwLock;
 
-use crate::Placement;
-
 /// Cached membership evidence and this runtime's conservative registration deadline.
 /// The control-plane adapter updates it; cache operations perform no coordinator I/O.
 pub struct MembershipView {
     owner: CacheOwner,
-    placement: Placement,
-    placement_id: String,
-    hosts: [String; orbitkv_state::CATALOG_SHARDS],
     state: RwLock<View>,
 }
 
 #[derive(Default)]
 struct View {
-    members: HashSet<CacheOwner>,
-    nodes: BTreeMap<String, CacheOwner>,
+    members: HashMap<uuid::Uuid, CacheOwner>,
     ready: bool,
     valid_until: Option<Instant>,
     fenced: bool,
 }
 
 impl MembershipView {
-    pub fn new(owner: CacheOwner, placement: Placement) -> Self {
+    pub fn new(owner: CacheOwner) -> Self {
         Self {
             owner,
-            placement_id: placement.id(),
-            hosts: std::array::from_fn(|shard| placement.host(shard).expect("valid shard").into()),
-            placement,
             state: RwLock::new(View::default()),
         }
     }
@@ -40,16 +31,7 @@ impl MembershipView {
         &self.owner
     }
 
-    pub fn placement(&self) -> &Placement {
-        &self.placement
-    }
-
-    pub fn placement_id(&self) -> &str {
-        &self.placement_id
-    }
-
-    /// Resolves one committed assignment from the cached member snapshot.
-    pub fn catalog_owner(&self, shard: usize) -> Option<CacheOwner> {
+    pub fn resolve(&self, incarnation: uuid::Uuid) -> Option<CacheOwner> {
         let state = self.state.read();
         if state.fenced
             || !state.ready
@@ -59,7 +41,7 @@ impl MembershipView {
         {
             return None;
         }
-        state.nodes.get(self.hosts.get(shard)?).cloned()
+        state.members.get(&incarnation).cloned()
     }
 
     /// A delayed acknowledgement cannot revive an expired runtime. Half the
@@ -81,10 +63,12 @@ impl MembershipView {
 
     pub fn replace_members(&self, members: impl IntoIterator<Item = (String, CacheOwner)>) {
         let mut state = self.state.write();
-        state.nodes = members.into_iter().collect();
-        state.members = state.nodes.values().cloned().collect();
+        state.members = members
+            .into_iter()
+            .map(|(_, owner)| (owner.incarnation, owner))
+            .collect();
         state.ready = true;
-        if !state.members.contains(&self.owner) {
+        if state.members.get(&self.owner.incarnation) != Some(&self.owner) {
             state.fenced = true;
         }
     }
@@ -94,7 +78,6 @@ impl MembershipView {
         let mut state = self.state.write();
         state.ready = false;
         state.members.clear();
-        state.nodes.clear();
     }
 
     pub fn fence(&self) {
@@ -116,7 +99,7 @@ impl MembershipView {
             && state
                 .valid_until
                 .is_some_and(|until| Instant::now() < until)
-            && state.members.contains(owner)
+            && state.members.get(&owner.incarnation) == Some(owner)
     }
 }
 

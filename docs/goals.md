@@ -32,9 +32,9 @@ that different engines' KV bytes are interchangeable.
 
 ## Experimental and planned work
 
-The embedded catalog, etcd membership and Mooncake transfer path support
+Local global indexes, replicated etcd metadata and the Mooncake transfer path support
 experimental remote-cache development. Real two-host serving qualification,
-catalog replication, broader parallelism and P/D with cache reuse have separate
+metadata scale/failure recovery, broader parallelism and P/D with cache reuse have separate
 gates. A future KV-aware router can use cache location and transfer costs without
 moving inference scheduling into the Manager.
 

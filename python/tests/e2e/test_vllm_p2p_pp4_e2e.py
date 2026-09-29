@@ -266,8 +266,6 @@ class CacheManager(ManagedProcess):
                 coordinator.endpoint,
                 "--node-id",
                 label,
-                "--catalog-nodes",
-                "source,remote",
                 "--nics",
                 nics,
             ]

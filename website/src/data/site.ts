@@ -38,7 +38,7 @@ export const layers = [
     name: "orbitkv-catalog",
     role: "Locate replicas.",
     detail:
-      "Embedded directory shards, residency journals, candidate indexes and etcd membership; one copy per shard today.",
+      "Complete local global indexes and member admission; background etcd metadata synchronization is owned by the server.",
     path: "crates/orbitkv-catalog/src/lib.rs",
   },
   {

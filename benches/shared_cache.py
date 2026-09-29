@@ -47,9 +47,22 @@ def drain(*manager_urls: str, timeout: float = 30) -> list[dict]:
         time.sleep(0.1)
 
 
-def synchronize(manager_url: str) -> None:
+def synchronize(manager_url: str, *readers: str, timeout: float = 30) -> int:
     response = requests.post(f"{manager_url}/cache/sync", timeout=35)
     response.raise_for_status()
+    revision = response.json()["published_revision"]
+    deadline = time.monotonic() + timeout
+    for reader in readers:
+        while True:
+            response = requests.get(f"{reader}/cache/metadata", timeout=5)
+            response.raise_for_status()
+            status = response.json()
+            if status and status["index"]["available"] and status["index"]["revision"] >= revision:
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"{reader} has not applied publication {revision}: {status}")
+            time.sleep(0.05)
+    return revision
 
 
 def verify_restore(before: dict, after: dict, expected: str, actual: dict) -> dict:
@@ -67,7 +80,6 @@ def verify_restore(before: dict, after: dict, expected: str, actual: dict) -> di
         "e2e_ms": actual["e2e_ms"],
         "remote_bytes": int(remote),
         "h2d_bytes": int(restored),
-        "discovery_rpcs": int(changes.get("orbitkv_candidate_lookup_rpcs_total", 0)),
         "remote_stages": {
             stage: {
                 "calls": int(
@@ -116,7 +128,7 @@ def qualify(
     for index, prompt in enumerate(prompts):
         source_before, _ = drain(source_manager, target_manager)
         cold = generate(source_url, engine, model, prompt, output_tokens)
-        synchronize(source_manager)
+        synchronize(source_manager, target_manager)
         source_after, target_before = drain(source_manager, target_manager)
         saved = source_after.get("orbitkv_save_bytes_total", 0) - source_before.get(
             "orbitkv_save_bytes_total", 0
@@ -138,7 +150,7 @@ def qualify(
                     "Source did not commit SSD bytes; use write policy all and fresh prefixes"
                 )
             preparation = evict_host_cache(source_manager)
-            synchronize(source_manager)
+            synchronize(source_manager, target_manager)
             source_transfer_before, target_before = drain(source_manager, target_manager)
         restored = generate(target_url, engine, model, prompt, output_tokens)
         source_transfer_after, target_after = drain(source_manager, target_manager)

@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use super::*;
-use orbitkv_state::catalog_shard;
 
 fn make_cache() -> DramStore {
     DramStore::new(1 << 20, false, None, None, 0)
@@ -70,7 +69,7 @@ fn demand_protection_survives_scans_and_demotes_by_bytes() {
 }
 
 #[test]
-fn protection_revalidates_generations_and_respects_replica_demotion() {
+fn protection_revalidates_generations_and_bounds_retained_bytes() {
     let cache = DramStore::new(100, false, None, Some(16 * 1024), 60);
     let key = StateKey::new("ns".into(), vec![1]);
     let old = Arc::new(SealedBlock::for_policy_test(40));
@@ -82,10 +81,6 @@ fn protection_revalidates_generations_and_respects_replica_demotion() {
     assert_class(&cache, &key, ResidentClass::Probationary);
     cache.retain_demand(std::slice::from_ref(&key), &[current]);
     assert_class(&cache, &key, ResidentClass::Retained);
-    let inventory = cache.inventory_page(catalog_shard(&key), None).unwrap();
-    cache.mark_reclaimable_records(&inventory);
-    assert_class(&cache, &key, ResidentClass::Reclaimable);
-    assert_eq!(cache.inner.lock().retained_bytes, 0);
     // A page larger than the protected allowance remains usable probation.
     cache.remove_all();
     cache.batch_insert(vec![(
@@ -332,22 +327,6 @@ fn already_existing_insert_preserves_residence_start() {
 }
 
 #[test]
-fn class_migration_preserves_residence_start() {
-    let cache = make_cache();
-    let key = StateKey::new("ns".into(), vec![1]);
-    cache.batch_insert(vec![(key.clone(), make_block())]);
-    let inserted_at = backdate_resident(&cache, &key, Duration::from_secs(60));
-
-    cache.mark_reclaimable_hashes("ns", std::slice::from_ref(&key.hash));
-
-    assert_eq!(
-        resident_metadata(&cache, &key).unwrap().inserted_at,
-        inserted_at
-    );
-    assert_class(&cache, &key, ResidentClass::Reclaimable);
-}
-
-#[test]
 fn reinsert_after_eviction_starts_new_residence_episode() {
     let cache = make_cache();
     let key = StateKey::new("ns".into(), vec![1]);
@@ -372,12 +351,19 @@ fn residence_duration_is_non_negative_and_finite() {
 }
 
 #[test]
-fn inventory_tracks_actual_residency_and_fences_old_reclaim_hints() {
+fn inventory_tracks_actual_residency_and_fences_old_grants() {
     let cache = DramStore::new(1 << 20, false, None, Some(16 * 1024), 0);
     let key = StateKey::new("ns".into(), vec![1]);
     cache.batch_insert_refs(&[(key.clone(), Arc::new(SealedBlock::for_policy_test(4096)))]);
-    let shard = catalog_shard(&key);
-    let first = cache.inventory_page(shard, None).unwrap();
+
+    let first = cache
+        .inner
+        .lock()
+        .inventory
+        .as_ref()
+        .unwrap()
+        .page(None)
+        .unwrap();
     assert_eq!(first.len(), 1);
     assert_eq!(
         first[0].metadata,
@@ -388,55 +374,52 @@ fn inventory_tracks_actual_residency_and_fences_old_reclaim_hints() {
         })
     );
     cache.batch_insert_refs(&[(key.clone(), make_block())]);
-    assert_eq!(cache.inventory_sequence(shard), 1);
+    assert_eq!(cache.inner.lock().inventory.as_ref().unwrap().sequence(), 1);
     let pinned = cache.get_blocks_aligned(std::slice::from_ref(&key));
     assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
-    assert_eq!(cache.inventory_sequence(shard), 1);
+    assert_eq!(cache.inner.lock().inventory.as_ref().unwrap().sequence(), 1);
     drop(pinned);
     assert_eq!(cache.remove_lru_batch(1, u64::MAX).len(), 1);
-    assert_eq!(cache.inventory_sequence(shard), 2);
-    assert!(!cache.inventory_changes(shard, 1, 2).unwrap()[0].present);
+    assert_eq!(cache.inner.lock().inventory.as_ref().unwrap().sequence(), 2);
+    assert!(
+        !cache
+            .inner
+            .lock()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .changes(1, 2)
+            .unwrap()[0]
+            .present
+    );
     // SSD restore uses the retained insertion path, and publishes a new episode.
     cache.batch_insert(vec![(key.clone(), make_block())]);
-    cache.mark_reclaimable_records(&first);
+    assert!(cache.pin_residencies(&first).is_none());
     assert_class(&cache, &key, ResidentClass::Retained);
-    cache.mark_reclaimable_records(&cache.inventory_page(shard, None).unwrap());
-    assert_class(&cache, &key, ResidentClass::Reclaimable);
     cache.remove_all();
-    assert_eq!(cache.inventory_sequence(shard), 4);
-    assert!(cache.inventory_page(shard, None).unwrap().is_empty());
-    assert!(!cache.inventory_changes(shard, 3, 4).unwrap()[0].present);
-}
-
-#[test]
-fn reclaimable_hashes_move_only_matching_residents() {
-    let cache = make_cache();
-    let retained = StateKey::new("ns".into(), vec![1]);
-    let reclaimable = StateKey::new("ns".into(), vec![2]);
-    let other_namespace = StateKey::new("other".into(), vec![1]);
-
-    cache.batch_insert(vec![
-        (retained.clone(), make_block()),
-        (other_namespace.clone(), make_block()),
-    ]);
-    cache.batch_insert_reclaimable(vec![(reclaimable.clone(), make_block())]);
-    cache.mark_reclaimable_hashes("ns", &[vec![1], vec![2], vec![3]]);
-
-    assert_class(&cache, &retained, ResidentClass::Reclaimable);
-    assert_class(&cache, &reclaimable, ResidentClass::Reclaimable);
-    assert_class(&cache, &other_namespace, ResidentClass::Retained);
-}
-
-#[test]
-fn reclaimable_hash_for_evicted_block_is_noop() {
-    let cache = make_cache();
-    let key = StateKey::new("ns".into(), vec![1]);
-    cache.batch_insert(vec![(key.clone(), make_block())]);
-    cache.remove_lru_batch(1, u64::MAX);
-
-    cache.mark_reclaimable_hashes("ns", &[key.hash]);
-
-    assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
+    assert_eq!(cache.inner.lock().inventory.as_ref().unwrap().sequence(), 4);
+    assert!(
+        cache
+            .inner
+            .lock()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .page(None)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !cache
+            .inner
+            .lock()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .changes(3, 4)
+            .unwrap()[0]
+            .present
+    );
 }
 
 #[test]
@@ -444,15 +427,29 @@ fn pin_residencies_fences_eviction_and_reinsertion() {
     let cache = DramStore::new(1024 * 1024, false, None, Some(4096), 0);
     let key = StateKey::new("ns".into(), vec![1]);
     cache.batch_insert(vec![(key.clone(), make_block())]);
-    let shard = catalog_shard(&key);
-    let first = cache.inventory_page(shard, None).unwrap();
+
+    let first = cache
+        .inner
+        .lock()
+        .inventory
+        .as_ref()
+        .unwrap()
+        .page(None)
+        .unwrap();
     let pinned = cache.pin_residencies(&first).unwrap();
     assert!(cache.remove_lru_batch(1, u64::MAX).is_empty());
     drop(pinned);
     assert_eq!(cache.remove_lru_batch(1, u64::MAX).len(), 1);
     cache.batch_insert(vec![(key.clone(), make_block())]);
     assert!(cache.pin_residencies(&first).is_none());
-    let current = cache.inventory_page(shard, None).unwrap();
+    let current = cache
+        .inner
+        .lock()
+        .inventory
+        .as_ref()
+        .unwrap()
+        .page(None)
+        .unwrap();
     let mut mixed = current.clone();
     mixed.extend(first);
     assert!(cache.pin_residencies(&mixed).is_none());
@@ -493,7 +490,7 @@ fn inventory_excludes_lfu_rejections_and_duplicate_restores() {
     let cache = DramStore::new(1, true, Some(1), Some(16 * 1024), 0);
     let hot = StateKey::new("ns".into(), vec![1]);
     let cold = StateKey::new("ns".into(), vec![2]);
-    let shard = catalog_shard(&hot);
+
     cache.batch_insert_reclaimable(vec![(hot.clone(), make_block())]);
     for _ in 0..2 {
         assert_eq!(
@@ -508,30 +505,29 @@ fn inventory_excludes_lfu_rejections_and_duplicate_restores() {
     cache.batch_insert_reclaimable(vec![(cold.clone(), make_block())]);
     cache.batch_insert_reclaimable(vec![(hot.clone(), make_block())]);
     assert!(!cache.inner.lock().reclaimable.contains_key(&cold));
-    assert_eq!(cache.inventory_sequence(shard), 1);
-    assert_eq!(cache.inventory_page(shard, None).unwrap()[0].key, hot);
-    assert_eq!(cache.inventory_changes(shard, 0, 1).unwrap().len(), 1);
-}
-
-impl DramStore {
-    fn mark_reclaimable_hashes(&self, namespace: &str, hashes: &[Vec<u8>]) {
-        if hashes.is_empty() {
-            return;
-        }
-
-        let mut inner = self.inner.lock();
-        for hash in hashes {
-            let key = StateKey::new(namespace.to_string(), hash.clone());
-            mark_reclaimable(&mut inner, &key);
-        }
-    }
-
-    pub(crate) fn insert_retained_for_test(&self, key: StateKey, block: Arc<SealedBlock>) {
-        let mut inner = self.inner.lock();
-        insert_block(&mut inner, key, block, ResidentClass::Retained);
-    }
-
-    pub(crate) fn clear_for_test(&self) {
-        self.remove_all();
-    }
+    assert_eq!(cache.inner.lock().inventory.as_ref().unwrap().sequence(), 1);
+    assert_eq!(
+        cache
+            .inner
+            .lock()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .page(None)
+            .unwrap()[0]
+            .key,
+        hot
+    );
+    assert_eq!(
+        cache
+            .inner
+            .lock()
+            .inventory
+            .as_ref()
+            .unwrap()
+            .changes(0, 1)
+            .unwrap()
+            .len(),
+        1
+    );
 }

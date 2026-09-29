@@ -36,7 +36,7 @@ export const docGroups = [
       { slug: "p2p", title: "Cross-node deployment" },
       { slug: "peer-control", title: "Peer control boundary" },
       { slug: "shared-cache-qualification", title: "Shared-cache qualification" },
-      { slug: "distributed-cache", title: "Embedded catalog design" },
+      { slug: "distributed-cache", title: "Distributed global index" },
       {
         slug: "distributed-comparison",
         title: "LMCache, FlexKV & Mooncake comparison",

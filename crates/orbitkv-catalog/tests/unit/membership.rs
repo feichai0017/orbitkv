@@ -11,7 +11,7 @@ fn owner(endpoint: &str) -> CacheOwner {
 fn registration_and_complete_snapshot_are_both_required() {
     let local = owner("127.0.0.1:50055");
     let peer = owner("127.0.0.1:50056");
-    let view = MembershipView::new(local.clone(), Placement::new(vec!["local".into()]).unwrap());
+    let view = MembershipView::new(local.clone());
     view.replace_members([
         ("local".into(), local.clone()),
         ("peer".into(), peer.clone()),
@@ -31,8 +31,7 @@ fn registration_and_complete_snapshot_are_both_required() {
 fn expired_or_fenced_runtime_cannot_be_revived_by_delayed_acknowledgements() {
     for cause in ["deadline", "explicit", "replacement"] {
         let local = owner("127.0.0.1:50055");
-        let view =
-            MembershipView::new(local.clone(), Placement::new(vec!["local".into()]).unwrap());
+        let view = MembershipView::new(local.clone());
         view.replace_members([("local".into(), local.clone())]);
         assert!(view.renew(Instant::now(), Duration::from_secs(30)));
         match cause {
@@ -47,10 +46,7 @@ fn expired_or_fenced_runtime_cannot_be_revived_by_delayed_acknowledgements() {
         view.replace_members([("local".into(), local.clone())]);
         assert!(!view.permits(&local));
     }
-    let view = MembershipView::new(
-        owner("127.0.0.1:50055"),
-        Placement::new(vec!["local".into()]).unwrap(),
-    );
+    let view = MembershipView::new(owner("127.0.0.1:50055"));
     assert!(!view.renew(
         Instant::now() - Duration::from_secs(20),
         Duration::from_secs(30)

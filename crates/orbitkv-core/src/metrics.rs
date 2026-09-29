@@ -139,15 +139,6 @@ pub(crate) struct CoreMetrics {
     pub ssd_prefetch_inflight: UpDownCounter<i64>,
     pub ssd_prefetch_queue_closed: Counter<u64>,
 
-    // Owner inventory synchronization
-    pub inventory_records_sent: Counter<u64>,
-    pub inventory_sync_failures: Counter<u64>,
-    pub inventory_snapshots_started: Counter<u64>,
-    pub inventory_snapshots_completed: Counter<u64>,
-    pub inventory_history_gaps: Counter<u64>,
-    pub catalog_heartbeat_failures: Counter<u64>,
-    pub catalog_unregister_failures: Counter<u64>,
-
     // Cross-node transfer lock (serving side)
     pub transfer_lock_active: UpDownCounter<i64>,
     pub transfer_lock_timeouts_total: Counter<u64>,
@@ -164,10 +155,6 @@ pub(crate) struct CoreMetrics {
     pub transfer_completion_rejections: Counter<u64>,
     #[cfg(feature = "mooncake")]
     pub remote_fetch_total: Counter<u64>,
-    #[cfg(feature = "mooncake")]
-    pub candidate_cache_lookups: Counter<u64>,
-    #[cfg(feature = "mooncake")]
-    pub candidate_lookup_rpcs: Counter<u64>,
     #[cfg(feature = "mooncake")]
     pub remote_fetch_duration_seconds: Histogram<f64>,
     #[cfg(feature = "mooncake")]
@@ -633,35 +620,6 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_description("Prefetch requests dropped due to full queue")
                 .build(),
 
-            inventory_records_sent: meter
-                .u64_counter("orbitkv_inventory_records_sent")
-                .with_description("Inventory records acknowledged by the catalog")
-                .build(),
-            inventory_sync_failures: meter
-                .u64_counter("orbitkv_inventory_sync_failures")
-                .with_description("Failed inventory synchronization RPCs")
-                .build(),
-            inventory_snapshots_started: meter
-                .u64_counter("orbitkv_inventory_snapshots_started")
-                .with_description("Owner inventory snapshots started")
-                .build(),
-            inventory_snapshots_completed: meter
-                .u64_counter("orbitkv_inventory_snapshots_completed")
-                .with_description("Owner inventory snapshots committed")
-                .build(),
-            inventory_history_gaps: meter
-                .u64_counter("orbitkv_inventory_history_gaps")
-                .with_description("Inventory journal gaps requiring a fresh snapshot")
-                .build(),
-            catalog_heartbeat_failures: meter
-                .u64_counter("orbitkv_catalog_heartbeat_failures")
-                .with_description("Catalog HeartbeatNode RPC failures")
-                .build(),
-            catalog_unregister_failures: meter
-                .u64_counter("orbitkv_catalog_unregister_failures")
-                .with_description("Catalog UnregisterNode RPC failures")
-                .build(),
-
             // Transfer lock
             transfer_lock_active: meter
                 .i64_up_down_counter("orbitkv_transfer_lock_active")
@@ -730,12 +688,6 @@ pub(crate) fn core_metrics() -> &'static CoreMetrics {
                 .with_unit("By/s")
                 .with_description("TENT RDMA rail EWMA bandwidth snapshot after a peer batch")
                 .build(),
-            #[cfg(feature = "mooncake")]
-            candidate_cache_lookups: meter.u64_counter("orbitkv_candidate_cache_lookups")
-                .with_description("Candidate keys checked before discovery coalescing, by hit or miss").build(),
-            #[cfg(feature = "mooncake")]
-            candidate_lookup_rpcs: meter.u64_counter("orbitkv_candidate_lookup_rpcs")
-                .with_description("Batched directory lookups, by RPC outcome").build(),
             #[cfg(feature = "mooncake")]
             remote_fetch_plan_segments: meter
                 .u64_histogram("orbitkv_remote_fetch_plan_segments")

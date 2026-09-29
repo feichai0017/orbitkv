@@ -206,17 +206,13 @@ pub struct Cli {
     #[arg(long, value_delimiter = ',', value_parser = parse_nic_name, num_args = 1..)]
     pub nics: Option<Vec<String>>,
 
-    /// etcd endpoints for distributed cache membership and immutable catalog placement.
-    #[arg(long, value_delimiter = ',', requires_all = ["node_id", "catalog_nodes"])]
+    /// etcd endpoints for membership and background block-location synchronization.
+    #[arg(long, value_delimiter = ',', requires = "node_id")]
     pub etcd_endpoints: Vec<String>,
 
-    /// Stable Manager node IDs that host catalog shards; must match across the cluster.
-    #[arg(long, value_delimiter = ',', requires = "etcd_endpoints", value_parser = cluster::parse_label)]
-    pub catalog_nodes: Vec<String>,
-
-    /// Accounted catalog metadata bytes across all shards hosted by this Manager.
+    /// Maximum accounted bytes in this Manager's complete global index.
     #[arg(long, default_value = "256mb", value_parser = parse_memory_size)]
-    pub catalog_budget: usize,
+    pub index_budget: usize,
 
     /// Stable, unique identity of this Manager across process restarts.
     #[arg(long, requires = "etcd_endpoints", value_parser = cluster::parse_label)]
@@ -620,23 +616,29 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         if cli.addr.ip().is_unspecified() || cli.addr.port() == 0 {
             return Err("distributed --addr must be a concrete, routable peer endpoint".into());
         }
-        if cli.catalog_budget
-            < orbitkv_state::CATALOG_SHARDS * orbitkv_state::INVENTORY_BATCH_BYTES * 2
-        {
-            return Err(
-                "--catalog-budget must allow two inventory batches per shard (16 MiB)".into(),
-            );
+        if cli.index_budget < orbitkv_state::INVENTORY_BATCH_BYTES * 2 {
+            return Err("--index-budget must hold at least two inventory batches".into());
         }
         Some(Arc::new(orbitkv_catalog::MembershipView::new(
             orbitkv_state::CacheOwner {
                 endpoint: cli.addr.to_string(),
                 incarnation: uuid::Uuid::new_v4(),
             },
-            orbitkv_catalog::Placement::new(cli.catalog_nodes.clone())?,
         )))
     } else {
         None
     };
+    let global_index = membership_view.as_ref().map(|view| {
+        Arc::new(orbitkv_catalog::GlobalIndex::new(
+            view.clone(),
+            cli.index_budget,
+        ))
+    });
+    let inventory = membership_view.as_ref().map(|_| {
+        Arc::new(orbitkv_core::ResidencyInventory::new(
+            cli.inventory_journal_bytes,
+        ))
+    });
     let storage_config = orbitkv_core::EngineConfig {
         query_budget_bytes: cli.query_budget,
         query_instance_budget_bytes: cli.query_instance_budget,
@@ -652,7 +654,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         transfer_lock_timeout: Duration::from_secs(cli.transfer_lock_timeout_secs),
         transfer_budget_bytes: cli.transfer_budget,
         membership: membership_view.clone(),
-        inventory_journal_bytes: cli.inventory_journal_bytes,
+        global_index: global_index.clone(),
+        inventory: inventory.clone(),
         pool_shards: cli.pool_shards,
     };
 
@@ -720,7 +723,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     runtime.block_on(async move {
         let membership = match membership_view.clone() {
             Some(view) => Some(
-                cluster::Membership::join(
+                cluster::Cluster::join(
                     &cli.etcd_endpoints,
                     &cli.cluster_name,
                     cli.node_id
@@ -728,6 +731,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                         .ok_or("--node-id is required with etcd")?,
                     cli.membership_ttl_secs,
                     view,
+                    inventory.clone().ok_or("missing distributed inventory")?,
+                    global_index.clone().ok_or("missing global index")?,
                 )
                 .await?,
             ),
@@ -824,38 +829,12 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             }
         };
 
-        if let Some(view) = membership_view {
+        if membership_view.is_some() {
             let service = P2pTransferService::new(Arc::clone(&engine));
             info!("Cache Manager peer control listening on {}", cli.addr);
 
             const MAX_GRPC_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
 
-            let assigned_shards = (0..orbitkv_state::CATALOG_SHARDS)
-                .filter(|&shard| view.placement().host(shard) == cli.node_id.as_deref()).count();
-            let stores = std::array::from_fn(|_| Arc::new(orbitkv_catalog::BlockHashStore::with_config(
-                orbitkv_catalog::store::StoreConfig {
-                    metadata_bytes: cli.catalog_budget / assigned_shards.max(1),
-                    ..Default::default()
-                }
-            )));
-            let _catalog_metrics = orbitkv_catalog::metric::register_store_gauges(&stores);
-            let catalog = orbitkv_catalog::CatalogService::new(stores.clone(), view);
-            // Derived directory evidence expires independently of payload lifetimes.
-            let catalog_shutdown = shutdown.clone();
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(30));
-                loop {
-                    tokio::select! {
-                        _ = catalog_shutdown.notified() => break,
-                        _ = interval.tick() => {
-                            let sweep = stores.clone();
-                            let _ = tokio::task::spawn_blocking(move || {
-                                for store in sweep { orbitkv_catalog::metric::record_sweep(store.sweep_expired()); }
-                            }).await;
-                        }
-                    }
-                }
-            });
             let grpc_service = EngineServer::new(service)
                 .max_decoding_message_size(MAX_GRPC_MESSAGE_SIZE)
                 .max_encoding_message_size(MAX_GRPC_MESSAGE_SIZE);
@@ -865,9 +844,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 .http2_keepalive_timeout(Some(GRPC_SERVER_HTTP2_KEEPALIVE_TIMEOUT))
                 .concurrency_limit_per_connection(16)
                 .add_service(grpc_service)
-                .add_service(proto::engine::catalog_server::CatalogServer::new(catalog)
-                    .max_decoding_message_size(4 * 1024 * 1024)
-                    .max_encoding_message_size(4 * 1024 * 1024))
                 .serve_with_shutdown(cli.addr, shutdown_signal)
                 .await
             {
@@ -887,9 +863,6 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         lifecycle.shutdown().await?;
         let _ = http_server_handle.await;
 
-        // Catalogs authenticate owner cleanup against membership. Withdraw the
-        // inventory while our registration is still valid, then revoke it.
-        engine.shutdown_catalog_client().await;
         if let Some(membership) = membership {
             membership.shutdown().await;
         }

@@ -70,7 +70,6 @@ impl OrbitKVEngine {
         let topology = instance.sealed_topology()?;
         topology.group_total_slots(group_id)?;
         let mut positions = Vec::new();
-        let deadline = tokio::time::Instant::now() + crate::planning::discover::DISCOVERY_TIMEOUT;
         'discovery: for (batch, hashes) in
             hashes.chunks(orbitkv_state::DISCOVERY_MAX_KEYS).enumerate()
         {
@@ -81,12 +80,10 @@ impl OrbitKVEngine {
             let candidates = crate::planning::discover::discover(
                 &self.storage.dram,
                 self.storage.ssd_store.as_ref(),
-                self.storage.catalog_client.as_ref(),
+                self.storage.global_index.as_ref(),
                 &topology.cache_namespace,
                 &encoded,
-                deadline,
-            )
-            .await;
+            );
             for (position, candidate) in candidates.into_iter().enumerate() {
                 debug_assert_eq!(candidate.key.hash, encoded[position]);
                 if candidate.is_available() {

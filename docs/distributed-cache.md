@@ -1,232 +1,163 @@
 # Distributed cache design
 
-**Implemented runtime, before the planned index cutover:** D0 inventory recovery and the D1 candidate index, source validation,
-leased membership and embedded catalog are implemented. Managers host 16 fixed
-logical shards, each with one directory copy, and route through cached member
-information. The standalone MetaServer has been removed. The local global-index replacement below is not implemented; broad failure
-qualification also remains open. Scoped two-host
-TCP serving passes the [recorded gates](shared-cache-qualification.md); RDMA
-remains unqualified. Source Managers can materialize an exact SSD generation into
-bounded pinned DRAM; Mooncake TE carries all remote KV bytes.
+Distributed discovery now uses a complete local global index on every Manager,
+with block locations and membership replicated by etcd. Publication and
+snapshot/Watch synchronization run in the background. Cold and warm discovery
+perform local reads; source grants and completion remain OrbitKV gRPC, and
+Mooncake TENT carries the payload. There is one implementation: the sharded
+Catalog, fixed placement, TTL hints and directory RPCs have been removed.
 
-Owners retain bounded journals and recover each shard independently using
-paginated snapshots and a complete delta interval. Catalog epochs and member
-incarnations trigger repair even for idle caches. See the
-[implemented protocol and limits](../crates/orbitkv-catalog/README.md).
-Upgrade all Managers together; there is no old-protocol fallback.
+This cutover changes metadata availability, not payload durability. Broad RDMA,
+physical multi-host failure, large-cluster churn and permanently orphaned
+transfer reclamation still require qualification. The new path passes same-host
+and H20/A100 TCP serving, restart and forced-source-SSD gates on both engines;
+see [shared-cache qualification](shared-cache-qualification.md) for its scope
+and the separately labeled historical results.
 
-Implemented discovery behavior:
-
-- Each row carries the exact StateKey and up to four candidates, qualified by
-  owner endpoint, runtime UUID, insertion sequence, medium, representation and
-  known stored bytes. Rows remain aligned with
-  the request across gaps; empty rows do not prove global absence.
-- An owner advertises live DRAM ahead of its committed SSD copy. SSD commit,
-  DRAM eviction, ring overwrite and corruption update the same ordered stream;
-  requesters accept DRAM and SSD evidence but still reject unknown/HBM media.
-  Peer SSD is a fixed-priority fallback behind peer DRAM and eligible local SSD.
-  Ordinary two-host TCP recovery is qualified; measured selection, cancellation
-  during source staging and RDMA retain separate gates.
-- Managers retain positive hints in an LRU index with a 16 MiB logical byte
-  budget and a five-second TTL. Reads do not extend the TTL. Misses are not
-  cached. A failed directory lookup preserves any already-known prefix.
-  Concurrent misses recheck after an in-flight lookup; warm hits do not
-  wait for the directory. Empty results cause waiting callers to look up again;
-  this does not provide negative-result coalescing or a subscription stream.
-- Cold lookups use batches of at most 128 keys and 64 KiB of namespace/hash
-  bytes. Each cold query has a three-second total RPC budget after coalescing. The source-channel LRU retains
-  at most 64 clients. These are initial fixed limits, not calibrated SLOs.
-- The requester selects the longest contiguous span, using endpoint/incarnation
-  ordering to break ties. Source authorization checks the runtime UUID and all
-  insertion sequences before pinning under the cache lock. Rejection grants no
-  addresses and creates no transfer session.
-- A source rejection removes only the attempted candidate versions from the
-  index. Planning can try existing alternatives at most twice per fetch; it
-  issues no new directory RPC during these retries. Another query can refresh
-  missing evidence. Payload-transfer failures stop the prefix without retries.
-- A blocking READ owns its destination buffers and source-release guard until
-  it returns, even if the asynchronous caller is cancelled. Source expiry now
-  retains its pins and charges whole allocations against `--transfer-budget`
-  (default: half the pool), with at most 1024 sessions. Completion release uses
-  bounded idempotent retries. Reclaiming a permanently orphaned source hold
-  still requires transport revocation; partition handling remains unqualified.
-
-Implemented membership behavior (required on every distributed Manager):
-
-- `--etcd-endpoints`, `--cluster-name`, `--node-id` and `--membership-ttl-secs`
-  configure registration. A transaction requires an absent live Node ID,
-  increments its persistent epoch and writes a leased record containing the
-  peer endpoint and runtime UUID. The directory inventory uses that same UUID.
-- Member snapshots use pages of 128 records at one revision, followed by Watch
-  from the next revision. Reconnect, compaction, malformed records or overflow
-  invalidate the view and trigger a fresh snapshot. The limit is 4,096 members,
-  with at most 1 KiB of JSON per member. etcd stores no block hashes or payloads.
-- Keepalives run separately from snapshot/Watch repair. Local registration is
-  valid until half the acknowledged TTL, measured from sending the request.
-  Delayed responses cannot revive an expired or explicitly fenced runtime.
-  Restart the Manager to obtain a new incarnation after registration expires.
-- Source admission and requester candidate selection consult only this local
-  view. An incomplete view or expired registration disables new remote work;
-  local DRAM/SSD operations continue. Existing transfer holds can still be
-  released. Membership expiry does not forcibly free transfer buffers.
-- Graceful shutdown revokes the lease. Abrupt shutdown stops renewal and lets
-  etcd expire it. An observed own-record removal, changed epoch/lease binding,
-  or coordinator cluster change
-  fences the runtime. Watch evidence is a hint, not an authorization or transport
-  revocation guarantee; bounded-clock assumptions and multi-host failure behavior
-  still need qualification.
-
-Implemented placement behavior:
-
-- `--catalog-nodes` declares 1–16 stable Node IDs. etcd atomically installs the
-  canonical host set at `/orbitkv/v1/<cluster>/placement`; mismatched joins fail.
-- Domain-separated SHA-256 maps StateKeys to 16 shards; equal-weight rendezvous
-  hashing chooses one configured host per shard. Temporary liveness changes do
-  not alter assignments. Catalog endpoints and UUIDs come from cached membership.
-- RPCs carry the shard, placement fingerprint and destination incarnation.
-  Receivers reject wrong destinations, unregistered publishers and cross-shard keys.
-- Every owner has independently ordered shard streams. Journals total 16 MiB;
-  each catalog host defaults to 256 MiB of accounted index and retry storage
-  across its assigned shards. Missing catalogs do not block local Publish.
-- Configuration is immutable for this stage. Observed changes fence members;
-  the selected D2 design replaces this placement mechanism. Missing hosts leave
-  their shards unavailable until they return and owners rebuild the index.
-
-The directory is distributed across Managers but each shard still has one copy;
-this is not HA. [Catalog availability](p2p.md#catalog-availability-and-etcd)
-distinguishes optional remote-cache discovery continuity from source correctness
-and etcd availability. The initial etcd connector exposes HTTP endpoints, without
-credential/TLS options. See [deployment](p2p.md#leased-manager-membership).
-
-## Selected target: local global index and etcd metadata
-
-**Selected on 2026-09-29; not yet implemented.** Every Manager maintains a complete
-local index of advertised block locations in its configured OrbitKV cluster.
-etcd stores those locations as well as membership and incarnations. Background
-publication and revisioned snapshot/Watch synchronization replace Manager-hosted
-Catalog shards and request-time directory RPCs. The target has no sharded-catalog
-fallback on a cold lookup.
-
-This supersedes replicated Catalog placement, migration and subscriptions, and
-the proposed OrbitKV metadata message bus inside Mooncake TENT. Source grants
-and completions remain bounded batched OrbitKV RPCs; TENT remains the registered
-memory data plane. See the [control boundary](peer-control.md).
-
-### Reference and consistency contract
-
-The inspected [FlexKV design](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/docs/dist_reuse/README_en.md)
-uses a local global-index snapshot, Redis metadata and Mooncake transfers.
-Its [metadata channel](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/dist/redis_meta_channel.cpp)
-batches per-block publications; its
-[refresh worker](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/dist/distributed_radix_tree.cpp)
-periodically rebuilds the view. OrbitKV adopts local global discovery, using
-etcd revisions and Watch instead of copying that Redis refresh implementation.
-Using Redis alone does not establish coordinator HA.
-
-The index contains candidate evidence for immutable, sealed cache state. Only
-the owning Manager can authorize and pin actual source residency. Local Publish
-completes independently of background advertisement; remote visibility is
-asynchronous. There is no transaction across GPU memory, Manager storage and
-etcd. Stale evidence may reduce reuse but cannot authorize a reused address.
-Metadata redundancy does not preserve a payload held only by a failed owner.
-
-### Responsibilities and deployment
-
-| Component | Responsibility |
-| --- | --- |
-| Engine | HBM allocation, scheduling and valid recovery boundaries |
-| Manager inventory | Actual local residencies, versions and bounded change journal |
-| Manager global index | Complete advertised locations at an applied etcd revision; local discovery |
-| Manager planner/source owner | Select routes; authorize, pin, transfer and release exact data |
-| etcd cluster | Replicated member/incarnation and block-location metadata; revisions and Watch history |
-| Mooncake TENT | Memory registration, payload READ/WRITE and native completion |
+## Local global index and etcd metadata
 
 ```mermaid
 flowchart TB
-    E[etcd quorum: members and block locations]
+    E[etcd quorum: members, publisher cursors, block locations]
     subgraph A[Host A]
         EA[Inference engine] -->|UDS bootstrap and iceoryx2 requests| MA[Cache Manager A]
-        IA[Local global index] -->|Local lookup| MA
+        IA[Complete local global index] -->|Local lookup| MA
+        MA --> SA[Owned DRAM and SSD residencies]
     end
     subgraph B[Host B]
         EB[Inference engine] -->|UDS bootstrap and iceoryx2 requests| MB[Cache Manager B]
-        IB[Local global index] -->|Local lookup| MB
+        IB[Complete local global index] -->|Local lookup| MB
+        MB --> SB[Owned DRAM and SSD residencies]
     end
     MA -.->|Background batched publication| E
     MB -.->|Background batched publication| E
-    E -.->|Snapshot and Watch| IA
-    E -.->|Snapshot and Watch| IB
+    E -.->|Fixed-revision snapshot and Watch| IA
+    E -.->|Fixed-revision snapshot and Watch| IB
     MA <-->|OrbitKV source grant and completion RPC| MB
-    MA <-->|TENT payload READ and WRITE| MB
+    MA <-->|TENT payload READ| MB
+    EA <-->|P/D adapters and TENT WRITE| EB
 ```
 
-Standalone mode still needs only one Manager. Distributed mode adds shared etcd
-and peer connectivity. Qualify HA with three etcd members across failure domains;
-three processes on one machine do not establish host-failure availability.
+The [inspected FlexKV design](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/docs/dist_reuse/README_en.md)
+uses local global discovery with Redis metadata and Mooncake transfers.
+OrbitKV uses etcd revisions and Watch. Every Manager has an index of the same
+advertised namespace, with asynchronous visibility; independent local snapshots
+are not themselves a consensus system. The etcd deployment supplies metadata
+replication. Deploy its members across failure domains to protect against host
+loss; three processes on one host only test process/leader failures.
 
-### Identity and metadata publication
+### Ownership and consistency
 
-Retain the representation-bound StateKey and complete hybrid recovery contract.
-Records identify owner Node ID/incarnation, StateKey, residence, generation,
-representation, stored bytes and update sequence. Keep raw addresses, rkeys,
-transfer tickets and pins out of etcd. Advertise only sealed DRAM or committed
-SSD data. Evicting one residence must preserve another surviving copy.
+| Owner | Responsibility |
+| --- | --- |
+| Engine | HBM, scheduling, page lifetime and legal recovery boundaries |
+| Core inventory | Actual sealed DRAM and committed SSD residencies; generation and bounded journal |
+| `orbitkv-catalog` | Local global index, applied revision, capacity and cached membership |
+| `orbitkv-server/cluster` | etcd leases, fenced publication, snapshot/Watch and shutdown |
+| Core planner and peer owners | Route selection, exact source grants, staging, READ and release |
+| etcd | Replicated locations and membership; transaction ordering and Watch history |
+| Mooncake TENT | Registered-memory transfer and native completion |
 
-Use a new versioned metadata prefix, partitioned by owner incarnation for
-lifecycle cleanup. This organizes storage keys, not directory query placement.
-Records use the owner lease. Every write transaction also checks live member
-incarnation and lease binding; an old publisher cannot write as its replacement.
-A missing member invalidates its candidates even before all cleanup events arrive.
+Index rows are hints. Only the source can pin actual residency and authorize
+addresses. Publish completes locally without waiting for etcd. There is no
+transaction across GPU memory, storage and metadata. A stale row can cause a
+miss, but cannot authorize a reused address. A missing row is not proof that
+no remote copy exists. Loss of a sole payload owner still needs recomputation.
 
-Drain the existing bounded inventory journal, coalesce repeated changes, and
-batch by encoded bytes and transaction operations. Transactional publisher
-watermarks must fence delayed retries, uncertain write outcomes and deletion/
-recreation. Reconcile lost replies before advancing. An old Put retried after a
-newer Delete must not resurrect evidence. Only the owner mutates its records.
+### Identity and publication
 
-Journal overflow requires explicit reconciliation, including obsolete advertised
-entries and a complete concurrent-change interval. Bound its memory, work and
-retries separately from foreground operations and lease renewal. Local Publish
-must remain independent of coordinator latency; incomplete publication remains
-observable rather than being declared synchronized.
+All distributed Managers use `/orbitkv/v2/<cluster>/`:
 
-### Consistent bootstrap and Watch repair
+| Key suffix | Value and lifetime |
+| --- | --- |
+| `format` | Persistent `orbitkv/global-index/v2` schema identifier |
+| `epochs/<node>` | Persistent monotonically increasing registration epoch |
+| `members/<node>` | Leased endpoint, runtime UUID and epoch |
+| `publishers/<uuid>` | Leased operation cursor, inventory sequence and readiness |
+| `blocks/<uuid>/<state-digest>/<dram-or-ssd>` | Leased protobuf StateKey, generation, representation and byte estimate |
 
-1. Capture revision R; read every metadata and membership page at that revision.
-2. Build a staging index within its budget; do not expose partial coverage as
-   a complete view.
-3. Watch from R + 1. Preserve whole transaction revisions, including fragmented
-   responses, before publishing the next applied revision.
-4. Reconnect from the last fully applied revision. On compaction, cluster identity
-   change or buffer overflow, mark coverage incomplete and take a fresh snapshot.
+The digest is domain-separated SHA-256 over the namespace length, namespace
+and state hash. It organizes keys, not query placement. StateKeys retain their
+existing model/layout/representation compatibility contract. DRAM and SSD are
+independent entries; a DRAM eviction preserves committed SSD evidence. Metadata
+contains no raw addresses, rkeys, transfer tickets or pins.
 
-Old/staging indexes, decoded records and event buffers share a bounded budget.
-If both views cannot fit, withdraw distributed-index readiness while rebuilding.
-A complete global index cannot silently drop rows like today's LRU hints. If
-the complete view itself exceeds capacity, expose that limit and retain local
-caching; do not restore a cold Catalog lookup path.
+Each owner has one monotonic residency sequence. Every publication transaction
+compares the exact member record, member lease and previous publisher cursor.
+The cursor changes atomically with its puts/deletes. Lost replies reconcile
+against that committed cursor before advancing; a delayed old Put cannot pass
+the comparison after a newer Delete. Deletes retain the old medium in the
+in-memory journal. Batches coalesce repeated changes to the same etcd key.
 
-An applied revision is a consistent historical view, not instantaneous freshness.
-Track Watch progress, lag and registration validity separately. The
-[etcd guarantees](https://etcd.io/docs/v3.6/learning/api_guarantees/) provide ordered,
-resumable history subject to compaction; Watch is not a linearizable read. Source
-checks remain mandatory even when the index is ready.
+When the journal no longer covers publication progress, reconciliation:
 
-### Request path
+1. Atomically withdraws publisher readiness and deletes that owner's advertised blocks.
+2. Captures sequence S and publishes bounded pages of current residencies.
+3. Replays every change from S through a captured end sequence.
+4. Commits the final sequence and readiness. Readers hide the owner until then.
 
-1. Inspect local storage and the local global index. No foreground etcd call,
-   Catalog RPC or cluster broadcast occurs.
-2. Select candidate spans with existing layout/cost/resource checks. A local
-   index miss becomes a miss or recomputation; background repair is independent.
-3. Batch source grants. The source validates incarnation and exact residency,
-   pins it and returns transfer capabilities. Try another indexed candidate
-   within the same deadline if rejected.
-4. TENT READ and local restore fill engine destinations. Release source holds
-   only after native drain. P/D still uses WRITE under its handoff contract.
+Another history gap restarts reconciliation. Local storage and lease renewal
+remain independent; no partial publication is declared complete. Uncertain
+transactions retry the same fenced operation with bounded exponential delay
+while local registration remains valid. Startup lease acquisition tolerates a
+balanced connection initially choosing an unavailable etcd endpoint.
 
-Once synchronized, both warm and previously unqueried keys avoid directory
-network latency. Source grants and payload copies remain; an offloaded hit is
-not equivalent to an engine-resident HBM hit.
+### Snapshot and Watch
+
+A Manager reads all metadata pages at one revision R while its index is hidden,
+then Watches from R + 1. Normal reconnect resumes the last applied revision;
+compaction, invalid metadata or decoder failure resets the index and rebuilds.
+The client requests whole transaction Watch responses, not fragmented responses.
+Oversized responses are recovered through paginated snapshots. A budget overflow
+withdraws the entire view instead of silently dropping entries from a supposedly
+complete index. Increase capacity or reduce advertised state before it can recover.
+
+Membership renewal runs separately from publication and Watch. Admission uses
+half the acknowledged lease TTL, measured from request send time. Expired or
+fenced runtimes cannot revive; restart for a new UUID. Own-record replacement,
+removal or coordinator identity change fences remote work. Local DRAM/SSD remains
+usable. Metadata expiry never proves that a native payload transfer has drained.
+
+### Request path and bounded work
+
+1. Read local DRAM/SSD evidence and the local global index.
+2. Retain up to four remote candidates **per medium**, preserving SSD alternatives.
+3. Select a compatible route and ask its source to validate UUID and exact residency sequences.
+4. Pin the source, execute TENT READ into requester-owned staging, and acknowledge release after drain.
+5. Restore through the existing GPU path; newly resident requester copies publish in the background.
+
+Batch rejection excludes the route from the current request. It does not erase
+shared index rows: the response may identify neither the stale key nor a permanent
+residency failure. Watch remains the sole owner of shared directory changes.
+
+| Bound | Value |
+| --- | --- |
+| Owner replay journal | `--inventory-journal-bytes`, 16 MiB by default |
+| Complete local index | `--index-budget`, 256 MiB of logical accounting by default |
+| Inventory page | At most 1,024 records / 512 KiB |
+| Publication transaction | At most 48 block operations plus its cursor; bounded bytes |
+| Encoded block record | At most 128 KiB |
+| Fixed-revision etcd page | 128 records |
+| Membership | At most 4,096 members; 1 KiB per member record |
+| Source authorization | Existing 128-key / 64 KiB demand segments and bounded sessions |
+
+Index accounting includes conservative entry overhead, not a process RSS cap.
+Every Manager pays memory and update CPU for the whole advertised namespace.
+No cluster-size or sustainable-churn SLO is established yet.
+
+### Synchronization and observability
+
+`POST /cache/sync` waits for submitted saves and returns `published_revision`:
+the etcd revision committing the captured local inventory. It does **not** wait
+for other Managers. `GET /cache/metadata` reports index revision, accounted bytes,
+registration validity, index availability, local inventory sequence and publisher
+sequence/revision/readiness. Standalone Managers return JSON `null`.
+
+For a controlled cross-Manager barrier, capture the source's published revision
+and wait until the requester has an available index at or above it. The shared
+cache qualification driver performs this barrier; ordinary requests remain
+asynchronous and issue no directory query. A barrier does not retain payloads
+against subsequent source eviction. See [metrics](metrics.md).
 
 ### Residency, proximity and access paths
 
@@ -380,41 +311,18 @@ deployments. Measure actual encoded metadata, churn, lease deletion bursts,
 compaction, defragmentation and quota exhaustion. A higher quota does not prove
 sustainable throughput, and the quota is not KV-payload capacity.
 
-## Code ownership and implementation order
+## Qualification and remaining work
 
-Keep existing Rust owners: `orbitkv-catalog` owns the local index, revision
-application and membership evidence; `orbitkv-server/cluster` owns etcd clients,
-leases, publication and Watch orchestration. Core storage owns residencies and
-the journal; peer code owns selection, grants, staging and release. The transfer
-crate owns TENT registration/completion. Do not add a generic metadata transport
-facade or move engine P/D state machines into TENT.
+Run the [native and process gates](p2p.md#validation) sequentially with builds.
+The new native gates use real etcd for fixed-revision bootstrap, compaction,
+restart, duplicate identity, lost publication replies, delayed retry fencing,
+leader loss and quorum loss. GPU gates use the same publisher/Watch path before
+TENT READ and raw/encoded restoration; they do not emulate a directory.
 
-| Step | Deliverable | Gate and deletion |
-| --- | --- | --- |
-| D0/D1, implemented | Owner recovery, source validation, sharded Catalog, candidate hints and transfer ownership | Scoped two-host TCP evidence is the baseline; runtime is unchanged by this design |
-| D2 implementation | Fenced etcd publication, fixed-revision snapshot/Watch and complete local index wired into discovery | Lost replies, delete/recreate, compaction, journal overflow, memory limits and restart |
-| D2 cutover | One local discovery and background synchronization path | Remove fixed placement, `--catalog-nodes`, Catalog serving/lookup RPCs, remote lookup coalescing and TTL hint cache together; no legacy fallback |
-| D2 qualification | Three-member etcd and two-host serving with both engines | Manager/leader failure, quorum loss, restore/rejoin, bounded resources, output controls and zero foreground discovery RPCs |
-| D3, separate | Calibrated local/peer selection and qualified remote SSD routes | Source admission and transfer lifetimes; no recursive peer fetches |
-
-Permanent-requester-loss reclamation still needs native revocation proof. The
-index cannot provide it. Current SSD files are truncated on Manager restart;
-durable payload recovery remains separate.
-
-## Measurements and acceptance
-
-Compare current sharded Catalog and new local global-index revisions on matched
-cold/warm, churn and failure workloads. Record:
-
-- TTFT/restore P50/P95/P99, throughput, remote hit rate and recomputation;
-- foreground discovery separately from grants/completions and background etcd
-  writes, keepalives, snapshots and Watches;
-- index resident/staging bytes, update CPU, encoded record bytes, Watch lag,
-  etcd database size, write latency and quota headroom;
-- bootstrap/rebuild duration and incomplete coverage after failure;
-- source pins, destination staging and outstanding completions through failure.
-
-After synchronization, both warm and cold-key discovery must issue zero network
-requests. Include background metadata and source authorization in end-to-end
-claims. Establish supported cluster-size and churn limits before declaring this
-design production qualified.
+Before production-scale claims, measure cold/warm TTFT, restore tail latency,
+throughput, remote hit rate, index memory/update CPU, publication latency,
+etcd database growth, Watch lag, compaction and quota exhaustion. Requalify
+physical two-host serving on the new revision. RDMA, multi-rank deployment,
+long-running churn and partition/rejoin remain separate gates. Permanently lost
+requester reclamation still needs transport revocation proof. Current SSD files
+are truncated on Manager restart; metadata redundancy does not change that.

@@ -21,14 +21,11 @@ pub use bundle::{
 pub use component::StateComponent;
 pub use discovery::{
     BlockCandidates, CacheOwner, DISCOVERY_MAX_BYTES, DISCOVERY_MAX_ENDPOINT_BYTES,
-    DISCOVERY_MAX_KEYS, DISCOVERY_MAX_REPLICAS, ReplicaLocation, ReplicaMedium, ReplicaMetadata,
-    ReplicaRepresentation, validate_discovery_query,
+    DISCOVERY_MAX_KEYS, DISCOVERY_MAX_REPLICAS_PER_MEDIUM, ReplicaLocation, ReplicaMedium,
+    ReplicaMetadata, ReplicaRepresentation, validate_discovery_query,
 };
 pub use format::{AttentionRole, Scalar16, StateDType, StateFormat, StateLayout, StorageFormat};
-pub use inventory::{
-    CATALOG_SHARDS, INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryOperation,
-    InventoryRecord, InventoryStatus, catalog_shard,
-};
+pub use inventory::{INVENTORY_BATCH_BYTES, INVENTORY_BATCH_RECORDS, InventoryRecord};
 pub use key::{
     ContractError, Digest, StateDescriptor, StateKey, StorageSlot, TokenRange, group_hash,
     storage_namespace,
