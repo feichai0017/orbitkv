@@ -72,7 +72,8 @@ S2 starts only after independent S1 acceptance.
   Qualify both engines in cuFile compatibility mode; native GDS remains a separate gate.
 - [ ] [S4][s4] — **qualification open**: Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.
-- [ ] [S4][s4] — **qualification open**: Qualify direct registered engine-page I/O, multi-writer GPU assembly,
+- [ ] [S4][s4] — **implementation partial**: Extend the existing staged GPU path to direct registered
+  engine-page I/O and multi-writer GPU assembly, then qualify those paths
   and workload-based path selection. Include registration cost,
   engine-page hold times, I/O fragmentation and additional HBM in the decision.
 
@@ -661,7 +662,11 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   `tent_shared`, bind `tent_*` symbols, use terminal task status plus best-effort
   cancellation before free, and expose TENT NIC pressure to P/D diagnostics.
 - [x] Map OrbitKV remote-cache authorization to Mooncake Segment addresses.
-- [ ] [S5][s5] — **qualification open**: Qualify RDMA READ demand fetch and RDMA WRITE replication.
+- [ ] [S5][s5] — **qualification open**: Qualify the existing RDMA READ demand-fetch path
+  with visible NICs and physical transport counters.
+- [ ] [S6][s6] — **deferred research decision**: Decide whether to add RDMA WRITE cache
+  replication and its admission/ownership contract. Existing P/D WRITE support
+  does not implement an active cache-replication owner.
 - [ ] [S6][s6] — **deferred research decision**: Import topology-aware slicing, endpoint pooling, and alternate-rail retry.
 - Maintained invariant: rkeys/raw addresses stay out of the global index (`crates/orbitkv-catalog/src/index.rs`, `crates/orbitkv-proto/proto/engine.proto`). Discovery records contain state/location metadata; authoritative exports remain source-owned.
 - [x] Delete native v1 and vendored v2 RDMA implementations.
