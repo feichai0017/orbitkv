@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::etcd::{Etcd, join, view, wait_for};
+use super::gate::TcpGate;
 use crate::P2pTransferService;
 use crate::proto::engine::engine_server::EngineServer;
 use cudarc::driver::CudaContext;
@@ -252,6 +253,43 @@ async fn wait_for_cache(
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+async fn restore_cached_image(
+    engine: &OrbitKVEngine,
+    gpu: &GpuBuffer,
+    instance_id: &str,
+    request_id: &str,
+    layer: &str,
+    block_hashes: &[Vec<u8>],
+    block_ids: &[usize],
+    expected: &[u8],
+) {
+    gpu.zero();
+    let result = engine
+        .count_prefix_hit_blocks_with_prefetch(
+            instance_id,
+            request_id,
+            block_hashes,
+            orbitkv_core::QueryMode::Demand,
+        )
+        .await
+        .expect("query local cache");
+    assert_eq!(result.blocks.len(), block_hashes.len());
+    let lease = engine
+        .create_query_lease(instance_id, result.blocks)
+        .expect("create local query lease");
+    let receiver = engine
+        .restore(
+            instance_id,
+            0,
+            DEVICE_ID,
+            &[vec![layer]],
+            &[(lease, vec![block_ids.iter().copied().map(Some).collect()])],
+        )
+        .expect("restore local cache image");
+    restore_and_wait(engine, gpu, layer, block_hashes.len(), receiver).await;
+    assert_eq!(gpu.copy_to_host(), expected);
 }
 
 async fn wait_for_index_registration(
@@ -824,6 +862,264 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     );
     cluster_b.shutdown().await;
     cluster_a.shutdown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CUDA, Mooncake and ETCD_BIN; live DRAM journal overflow and metadata loss"]
+async fn live_dram_journal_overflow_rebuilds_and_local_payload_survives_metadata_loss() {
+    orbitkv_common::logging::init_stdout_colored("debug");
+    let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
+
+    let coordinator = Etcd::start(1).await;
+    let observer_view = view(get_free_port());
+    let (observer_cluster, observer_index, _) = join(
+        &coordinator,
+        "live-journal",
+        "observer",
+        observer_view.clone(),
+        60,
+    )
+    .await;
+    let gate = TcpGate::start(&coordinator.endpoints[0]).await;
+    let source_view = view(get_free_port());
+    let source_index = Arc::new(GlobalIndex::new(source_view.clone(), 1 << 20));
+    let inventory = Arc::new(ResidencyInventory::new(1024));
+    let source_cluster = crate::cluster::Cluster::join(
+        std::slice::from_ref(&gate.endpoint),
+        "live-journal",
+        "source",
+        12,
+        source_view.clone(),
+        inventory.clone(),
+        source_index.clone(),
+    )
+    .await
+    .expect("join source through TCP gate");
+    wait_for(|| {
+        observer_view.permits(source_view.owner())
+            && source_view.permits(observer_view.owner())
+            && observer_index.status().available
+    })
+    .await;
+
+    const BLOCKS: usize = 64;
+    const BYTES: usize = BLOCKS * BLOCK_SIZE;
+    const INSTANCE: &str = "live-journal-source";
+    const NAMESPACE: &str = "live-journal-payload";
+    let engine = OrbitKVEngine::new_with_config(
+        4 << 20,
+        false,
+        EngineConfig {
+            membership: Some(source_view.clone()),
+            global_index: Some(source_index),
+            inventory: Some(inventory.clone()),
+            mooncake_nic_names: Vec::new(),
+            ..EngineConfig::default()
+        },
+    )
+    .expect("create live-store engine");
+    let gpu = GpuBuffer::alloc(BYTES);
+    let mut expected = vec![0u8; BYTES];
+    fill_test_pattern(&mut expected, BLOCK_SIZE);
+    gpu.copy_from_host(&expected);
+    engine
+        .register_context_layer_batch(
+            INSTANCE,
+            NAMESPACE,
+            DEVICE_ID,
+            0,
+            0,
+            1,
+            1,
+            &[LAYER.to_string()],
+            &[gpu.as_u64()],
+            &[BYTES],
+            &[BLOCKS],
+            &[BLOCK_SIZE],
+            &[0],
+            &[1],
+            TransferMode::Direct,
+            false,
+        )
+        .expect("register live-store GPU layer");
+    let block_ids = make_block_ids(BLOCKS);
+    let initial_hashes = make_block_hashes(BLOCKS, 71);
+    let initial_stored: Vec<_> = initial_hashes
+        .iter()
+        .map(|hash| group_hash(hash, 0))
+        .collect();
+    engine
+        .batch_save_kv_blocks_from_ipc(
+            INSTANCE,
+            0,
+            0,
+            DEVICE_ID,
+            vec![LayerSave {
+                layer_name: LAYER.into(),
+                block_ids: block_ids.clone(),
+                block_hashes: initial_hashes.clone(),
+            }],
+        )
+        .await
+        .expect("save initial live-store blocks");
+    engine
+        .flush_saves_and_inventory()
+        .await
+        .expect("publish initial live-store blocks");
+    wait_for_index_registration(
+        &observer_index,
+        &engine.instance_namespace(INSTANCE).unwrap(),
+        &initial_stored,
+        BLOCKS,
+        Duration::from_secs(10),
+    )
+    .await;
+    let published_before = inventory.published();
+    assert!(published_before.ready);
+
+    gate.partition().await;
+    let transient_partition_started = Instant::now();
+    assert_eq!(engine.cleanup_memory_cache().evicted_blocks, BLOCKS);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let final_hashes = make_block_hashes(BLOCKS, 72);
+    let final_stored: Vec<_> = final_hashes
+        .iter()
+        .map(|hash| group_hash(hash, 0))
+        .collect();
+    engine
+        .batch_save_kv_blocks_from_ipc(
+            INSTANCE,
+            0,
+            0,
+            DEVICE_ID,
+            vec![LayerSave {
+                layer_name: LAYER.into(),
+                block_ids: block_ids.clone(),
+                block_hashes: final_hashes.clone(),
+            }],
+        )
+        .await
+        .expect("save replacement live-store blocks");
+    wait_for_cache(
+        &engine,
+        INSTANCE,
+        &final_hashes,
+        BLOCKS,
+        Duration::from_secs(5),
+    )
+    .await;
+    let through = inventory.sequence();
+    assert_eq!(
+        inventory.changes(published_before.sequence, through),
+        Err(InventoryReadError::HistoryGap),
+        "live-store churn did not overflow the retained journal"
+    );
+    assert!(
+        locate(
+            &observer_index,
+            &engine.instance_namespace(INSTANCE).unwrap(),
+            &final_stored,
+        )
+        .iter()
+        .all(|row| row.replicas.is_empty()),
+        "partition exposed an unpublished replacement"
+    );
+    restore_cached_image(
+        &engine,
+        &gpu,
+        INSTANCE,
+        "partition-local-restore",
+        LAYER,
+        &final_hashes,
+        &block_ids,
+        &expected,
+    )
+    .await;
+    let transient_partition_ms = transient_partition_started.elapsed().as_secs_f64() * 1000.0;
+
+    gate.heal(Duration::ZERO);
+    let reconciliation_started = Instant::now();
+    let final_revision = engine
+        .flush_saves_and_inventory()
+        .await
+        .expect("reconcile live-store snapshot after journal overflow");
+    let namespace = engine.instance_namespace(INSTANCE).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let initial = locate(&observer_index, &namespace, &initial_stored);
+        let final_rows = locate(&observer_index, &namespace, &final_stored);
+        if observer_index
+            .revision()
+            .is_some_and(|revision| revision >= final_revision)
+            && initial.iter().all(|row| row.replicas.is_empty())
+            && final_rows
+                .iter()
+                .all(|row| row.replicas.len() == 1 && row.replicas[0].owner == *source_view.owner())
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "live-store snapshot did not converge after journal overflow"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let reconciliation_ms = reconciliation_started.elapsed().as_secs_f64() * 1000.0;
+    assert!(source_view.registration_valid());
+
+    gate.partition().await;
+    let expiry_started = Instant::now();
+    wait_for(|| !source_view.registration_valid()).await;
+    wait_for(|| {
+        locate(&observer_index, &namespace, &final_stored)
+            .iter()
+            .all(|row| row.replicas.is_empty())
+    })
+    .await;
+    restore_cached_image(
+        &engine,
+        &gpu,
+        INSTANCE,
+        "expired-membership-local-restore",
+        LAYER,
+        &final_hashes,
+        &block_ids,
+        &expected,
+    )
+    .await;
+    assert!(!inventory.published().ready);
+    let expiry_ms = expiry_started.elapsed().as_secs_f64() * 1000.0;
+    gate.heal(Duration::ZERO);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        !source_view.registration_valid(),
+        "expired runtime silently resumed its old incarnation"
+    );
+
+    std::fs::write(
+        coordinator.directory.join("live-journal-overflow.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "initial_sequence": published_before.sequence,
+            "final_sequence": through,
+            "final_revision": final_revision,
+            "journal_bytes": 1024,
+            "initial_records": BLOCKS,
+            "final_records": BLOCKS,
+            "transient_partition_ms": transient_partition_ms,
+            "reconciliation_ms": reconciliation_ms,
+            "lease_expiry_ms": expiry_ms,
+            "local_payload_bytes": BYTES,
+            "local_payload_exact_after_transient_partition": true,
+            "local_payload_exact_after_lease_expiry": true,
+            "expired_incarnation_remained_fenced_after_heal": true,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    source_cluster.shutdown().await;
+    observer_cluster.shutdown().await;
+    gate.shutdown().await;
 }
 
 #[tokio::test]
