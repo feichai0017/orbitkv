@@ -657,3 +657,303 @@ async fn delayed_and_compacted_watch_recovers_from_a_partition_without_partial_v
     reader_cluster.shutdown().await;
     gate.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires ETCD_BIN and ORBITKV_METADATA_ARTIFACT_DIR; real increasing metadata load"]
+async fn increasing_metadata_load_records_publication_watch_rebuild_cpu_rss_and_etcd_growth() {
+    let output = std::path::PathBuf::from(
+        std::env::var_os("ORBITKV_METADATA_ARTIFACT_DIR")
+            .expect("capacity evidence requires ORBITKV_METADATA_ARTIFACT_DIR"),
+    );
+    let profiles = [(1usize, 512usize), (4, 512), (16, 512)];
+    let mut results = Vec::new();
+    for (profile, (node_count, keys_per_node)) in profiles.into_iter().enumerate() {
+        let server = Etcd::start(1).await;
+        let mut client = Client::connect(&server.endpoints, None).await.unwrap();
+        let db_before = client.status().await.unwrap().db_size();
+        let process_before = process_sample(std::iter::once(std::process::id()));
+        let etcd_before = process_sample(server.pids().into_iter());
+
+        let reader = view(59000 + profile as u16);
+        let index = Arc::new(orbitkv_catalog::GlobalIndex::new(reader.clone(), 64 << 20));
+        let reader_cluster = crate::cluster::Cluster::join(
+            &server.endpoints,
+            &format!("capacity-{profile}"),
+            "reader",
+            120,
+            reader.clone(),
+            Arc::new(ResidencyInventory::new(4096)),
+            index.clone(),
+        )
+        .await
+        .unwrap();
+        wait_for(|| index.status().available).await;
+        let cluster = cluster_id(client.status().await.unwrap().header()).unwrap();
+        let prefix = format!("/orbitkv/v2/capacity-{profile}/");
+        let mut publishers = Vec::new();
+        let mut leases = Vec::new();
+        let mut keys_by_node = Vec::new();
+        let mut publication_ms = Vec::new();
+        let mut watch_lag_ms = Vec::new();
+
+        for node in 0..node_count {
+            let source = view(59100 + node as u16);
+            let sent_at = Instant::now();
+            let grant = client.lease_grant(120, None).await.unwrap();
+            assert!(source.renew(sent_at, Duration::from_secs(120)));
+            let member = crate::cluster::registration::register(
+                &mut client,
+                &prefix,
+                &format!("source-{node}"),
+                source.owner(),
+                grant.id(),
+                cluster,
+            )
+            .await
+            .unwrap();
+            wait_for(|| reader.permits(source.owner())).await;
+            let mut publisher = Publisher {
+                client: client.clone(),
+                prefix: prefix.clone(),
+                member,
+                view: source,
+                cluster,
+                progress: Progress::default(),
+                previous: None,
+            };
+            let records: Vec<_> = (0..keys_per_node)
+                .map(|key| capacity_record(node, key, key as u64 + 1, true))
+                .collect();
+            for batch in records.chunks(MAX_BATCH_RECORDS) {
+                let sequence = batch.last().unwrap().sequence;
+                let started = Instant::now();
+                let revision = publisher.records(batch, sequence, false).await.unwrap();
+                publication_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+                watch_lag_ms.push(wait_for_revision(&index, revision).await.as_secs_f64() * 1000.0);
+            }
+            let sequence = records.last().unwrap().sequence;
+            let started = Instant::now();
+            let revision = publisher.commit(Vec::new(), sequence, true).await.unwrap();
+            publication_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+            watch_lag_ms.push(wait_for_revision(&index, revision).await.as_secs_f64() * 1000.0);
+            keys_by_node.push(
+                records
+                    .into_iter()
+                    .map(|record| record.key)
+                    .collect::<Vec<_>>(),
+            );
+            leases.push(grant.id());
+            publishers.push(publisher);
+        }
+
+        let keys: Vec<_> = keys_by_node.iter().flatten().cloned().collect();
+        wait_for(|| {
+            index
+                .lookup(&keys)
+                .iter()
+                .all(|row| row.replicas.len() == 1)
+        })
+        .await;
+        let index_bytes_peak = index.bytes();
+
+        let rebuild_view = view(59200 + profile as u16);
+        let rebuild_index = Arc::new(orbitkv_catalog::GlobalIndex::new(
+            rebuild_view.clone(),
+            64 << 20,
+        ));
+        let rebuild_started = Instant::now();
+        let rebuild_cluster = crate::cluster::Cluster::join(
+            &server.endpoints,
+            &format!("capacity-{profile}"),
+            "rebuild-reader",
+            120,
+            rebuild_view,
+            Arc::new(ResidencyInventory::new(4096)),
+            rebuild_index.clone(),
+        )
+        .await
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !(rebuild_index.status().available
+            && rebuild_index
+                .lookup(&keys)
+                .iter()
+                .all(|row| row.replicas.len() == 1))
+        {
+            assert!(
+                Instant::now() < deadline,
+                "capacity snapshot did not rebuild"
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let rebuild_ms = rebuild_started.elapsed().as_secs_f64() * 1000.0;
+
+        for (node, publisher) in publishers.iter_mut().enumerate() {
+            let retired: Vec<_> = (0..keys_per_node / 2)
+                .map(|key| capacity_record(node, key, keys_per_node as u64 + key as u64 + 1, false))
+                .collect();
+            for batch in retired.chunks(MAX_BATCH_RECORDS) {
+                let sequence = batch.last().unwrap().sequence;
+                let started = Instant::now();
+                let revision = publisher.records(batch, sequence, true).await.unwrap();
+                publication_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+                watch_lag_ms.push(wait_for_revision(&index, revision).await.as_secs_f64() * 1000.0);
+            }
+        }
+        wait_for(|| {
+            let rows = index.lookup(&keys);
+            rows.iter().filter(|row| row.replicas.len() == 1).count()
+                == node_count * keys_per_node / 2
+                && rows.iter().filter(|row| row.replicas.is_empty()).count()
+                    == node_count * keys_per_node / 2
+        })
+        .await;
+
+        // etcd updates backend-size status asynchronously after applying the
+        // final transaction. Keep this fixed stabilization outside every
+        // publication/Watch latency sample.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let db_after = client.status().await.unwrap().db_size();
+        let process_after = process_sample(std::iter::once(std::process::id()));
+        let etcd_after = process_sample(server.pids().into_iter());
+        let result = serde_json::json!({
+            "nodes": node_count,
+            "keys_per_node": keys_per_node,
+            "published_records": node_count * keys_per_node,
+            "remaining_records": node_count * keys_per_node / 2,
+            "publication_ms": duration_summary(&publication_ms),
+            "watch_lag_ms": duration_summary(&watch_lag_ms),
+            "snapshot_rebuild_ms": rebuild_ms,
+            "index_bytes_peak": index_bytes_peak,
+            "index_bytes_final": index.bytes(),
+            "etcd_db_bytes_before": db_before,
+            "etcd_db_bytes_after": db_after,
+            "etcd_db_growth_bytes": db_after - db_before,
+            "clock_ticks_per_second": clock_ticks_per_second(),
+            "observer_resolution_ms": 1,
+            "backend_status_stabilization_ms": 500,
+            "test_processes": process_after.processes,
+            "test_process_cpu_ticks": process_after.cpu_ticks - process_before.cpu_ticks,
+            "test_process_rss_kib_before": process_before.rss_kib,
+            "test_process_rss_kib_after": process_after.rss_kib,
+            "test_process_rss_kib_delta": process_after.rss_kib as i64 - process_before.rss_kib as i64,
+            "etcd_processes": etcd_after.processes,
+            "etcd_cpu_ticks": etcd_after.cpu_ticks - etcd_before.cpu_ticks,
+            "etcd_rss_kib_before": etcd_before.rss_kib,
+            "etcd_rss_kib_after": etcd_after.rss_kib,
+            "etcd_rss_kib_delta": etcd_after.rss_kib as i64 - etcd_before.rss_kib as i64,
+        });
+        std::fs::write(
+            server.directory.join("capacity.json"),
+            serde_json::to_vec_pretty(&result).unwrap(),
+        )
+        .unwrap();
+        results.push(result);
+        rebuild_cluster.shutdown().await;
+        reader_cluster.shutdown().await;
+        for lease in leases {
+            let _ = client.lease_revoke(lease).await;
+        }
+    }
+    std::fs::write(
+        output.join("capacity-matrix.json"),
+        serde_json::to_vec_pretty(&results).unwrap(),
+    )
+    .unwrap();
+}
+
+fn capacity_record(node: usize, key: usize, sequence: u64, present: bool) -> InventoryRecord {
+    let mut hash = Vec::with_capacity(16);
+    hash.extend_from_slice(&(node as u64).to_le_bytes());
+    hash.extend_from_slice(&(key as u64).to_le_bytes());
+    InventoryRecord {
+        key: StateKey::new(format!("capacity-{node}"), hash),
+        sequence,
+        present,
+        metadata: Some(ReplicaMetadata {
+            medium: ReplicaMedium::Dram,
+            representation: ReplicaRepresentation::Raw,
+            stored_bytes: Some(4096),
+        }),
+    }
+}
+
+fn duration_summary(values: &[f64]) -> serde_json::Value {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let percentile = |value: f64| sorted[((sorted.len() - 1) as f64 * value).round() as usize];
+    serde_json::json!({
+        "samples": sorted.len(),
+        "p50": percentile(0.50),
+        "p95": percentile(0.95),
+        "max": *sorted.last().unwrap(),
+    })
+}
+
+struct ProcessSample {
+    processes: usize,
+    cpu_ticks: u64,
+    rss_kib: u64,
+}
+
+fn process_sample(pids: impl IntoIterator<Item = u32>) -> ProcessSample {
+    let mut cpu_ticks = 0u64;
+    let mut rss_kib = 0u64;
+    let mut sampled = 0usize;
+    for pid in pids {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
+        let Some((_, fields)) = stat.rsplit_once(") ") else {
+            continue;
+        };
+        let fields: Vec<_> = fields.split_ascii_whitespace().collect();
+        let Ok(utime) = fields[11].parse::<u64>() else {
+            continue;
+        };
+        let Ok(stime) = fields[12].parse::<u64>() else {
+            continue;
+        };
+        let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+        let rss = status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmRSS:"))
+            .and_then(|value| value.split_ascii_whitespace().next())
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        cpu_ticks += utime + stime;
+        rss_kib += rss;
+        sampled += 1;
+    }
+    ProcessSample {
+        processes: sampled,
+        cpu_ticks,
+        rss_kib,
+    }
+}
+
+async fn wait_for_revision(index: &orbitkv_catalog::GlobalIndex, revision: i64) -> Duration {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(20);
+    while !index.revision().is_some_and(|value| value >= revision) {
+        assert!(
+            Instant::now() < deadline,
+            "metadata revision did not converge"
+        );
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    started.elapsed()
+}
+
+fn clock_ticks_per_second() -> u64 {
+    let output = std::process::Command::new("getconf")
+        .arg("CLK_TCK")
+        .output()
+        .expect("run getconf CLK_TCK");
+    assert!(output.status.success(), "getconf CLK_TCK failed");
+    std::str::from_utf8(&output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}

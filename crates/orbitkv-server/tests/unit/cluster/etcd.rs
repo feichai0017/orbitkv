@@ -131,6 +131,10 @@ impl Etcd {
         let _ = self.processes[node].kill();
         let _ = self.processes[node].wait();
     }
+
+    pub(crate) fn pids(&self) -> Vec<u32> {
+        self.processes.iter().map(Child::id).collect()
+    }
 }
 
 fn checkout_root() -> Option<std::path::PathBuf> {

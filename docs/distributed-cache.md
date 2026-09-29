@@ -441,3 +441,56 @@ delete without required previous metadata still resets coverage and rebuilds.
 Registration expiry fences discovery even if the last index snapshot was
 complete. Production Watch/RPC metrics, sustained store-originated journal
 overflow, CPU/RSS and increasing-key capacity measurements remain open.
+
+## Measured metadata scaling smoke
+
+The S2.3 ignored test drives the production registration, Publisher, Watch and
+GlobalIndex owners against one real etcd 3.5.21 process. It repeats three fixed
+profiles: 1, 4 and 16 source registrations, each with 512 unique 4 KiB logical
+residencies. Initial publication stays hidden until each publisher's ready marker;
+a fresh reader then rebuilds the complete snapshot. Finally every publisher
+deletes half its keys and both readers converge to the exact remaining count.
+
+Publication latency is the Publisher transaction call. Watch lag starts after
+that transaction returns and is observed with a 1 ms polling interval. Snapshot
+rebuild includes Cluster join through complete candidate visibility. Process CPU
+is Linux user+system ticks at 100 ticks/second; RSS is `/proc` VmRSS. Etcd backend
+size is sampled after a fixed 500 ms stabilization outside timed operations.
+These definitions make repeated runs comparable, but the Watch observer and
+process-wide counters are not instrumentation of pure service time.
+
+Median of three runs on each checked host:
+
+| Host | Sources / records | Publish p50 / p95, ms | Watch p50 / p95, ms | Rebuild, ms | Index peak | Etcd growth | Test / etcd CPU ticks | Test / etcd RSS delta |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| H20 container | 1 / 512 | 0.63 / 0.84 | 2.18 / 2.28 | 7.90 | 144,640 B | 200,704 B | 1 / 5 | 5,540 / 6,828 KiB |
+| H20 container | 4 / 2,048 | 0.63 / 0.91 | 2.08 / 2.40 | 13.35 | 578,176 B | 790,528 B | 3 / 23 | 4,136 / 12,660 KiB |
+| H20 container | 16 / 8,192 | 0.64 / 1.10 | 2.08 / 2.43 | 56.16 | 2,315,392 B | 3,137,536 B | 14 / 149 | 11,304 / 24,288 KiB |
+| A100 host | 1 / 512 | 0.73 / 0.91 | 2.15 / 2.31 | 7.34 | 144,640 B | 196,608 B | 2 / 7 | 5,652 / 6,584 KiB |
+| A100 host | 4 / 2,048 | 0.69 / 1.03 | 2.08 / 2.40 | 14.17 | 578,176 B | 790,528 B | 5 / 23 | 4,472 / 10,952 KiB |
+| A100 host | 16 / 8,192 | 0.71 / 1.25 | 2.08 / 2.43 | 60.10 | 2,315,392 B | 3,141,632 B | 19 / 133 | 10,376 / 23,504 KiB |
+
+Build and freeze first, then run with a new external evidence directory:
+
+```bash
+ETCD_BIN=/path/to/frozen/etcd \
+ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-evidence/capacity-repeat-1 \
+  /path/to/frozen/server-tests \
+  cluster::publish::tests::increasing_metadata_load \
+  --ignored --nocapture --test-threads=1
+```
+
+The H20 evidence and frozen hashes are under
+`/root/orbitkv-artifacts/s2-s51-20260929/s2-3-qualified/`. The A100 copies,
+per-run JSON/logs and hash comparison are under
+`/root/orbitkv-artifacts/three-host-20260929/node-b-s2-3/` and the test-owned
+remote directory `/workspace/orbitkv-three-host-20260929/s2-3-qualified/`.
+The first capacity run, where immediate `db_size` sampling was stale, remains
+under `s2-3-final/` and is excluded from this table.
+
+This does not qualify 16 nodes as a production maximum or model CPU/RSS under
+contention. Sources are real registered metadata publishers with synthetic
+records, not Managers receiving DRAM/SSD events from live GPU storage. One etcd
+process avoids quorum replication cost. Continue with larger loads, update churn,
+three independent etcd hosts and live-store journal overflow before defining an
+operating envelope.

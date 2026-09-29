@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1 and S2.2 independently accepted. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; journal/live-storage and capacity-envelope cells remain open. |
+| S2 | Partial: S2.1 and S2.2 independently accepted; S2.3 measured metadata smoke implemented with review pending. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; journal/live-storage and larger capacity cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -170,6 +170,27 @@ This substage uses synthetic publication records and one etcd process on one
 host. It does not close sustained inventory-journal overflow, concurrent live
 DRAM/SSD publication, local-cache availability through Manager metadata loss,
 multi-host partitions or the measured operating envelope.
+
+### S2.3 — Measured metadata scaling smoke
+
+The real-etcd capacity gate registers 1, 4 and 16 source owners with 512 keys per
+owner, publishes complete owner states, starts a fresh reader to measure snapshot
+rebuild and deletes half of every owner's records. It reports transaction
+latency, observed Watch lag, rebuild time, logical index bytes, process CPU ticks
+and RSS, and etcd backend growth. A fixed 500 ms delay lets etcd backend-size
+statistics settle outside the timed publication and Watch samples.
+
+Three repetitions pass on both the current H20 container and the separate A100
+host using identical frozen artifacts. At the largest checked point (16 owners,
+8,192 records), the two hosts report publication p50 0.64/0.71 ms, observed Watch
+p50 about 2.08 ms, snapshot rebuild medians 56.2/60.1 ms and 2,315,392 logical
+index bytes. The 1 ms observer makes Watch values quantized diagnostics rather
+than transport-only latency. See the [capacity smoke recipe](distributed-cache.md#measured-metadata-scaling-smoke).
+
+This is a tested smoke envelope, not a maximum: one etcd process per run,
+synthetic Publisher records, no inference load and at most 16 registered sources.
+Larger node/key/update loads, sustained live-store journal churn, concurrent
+Managers, three-host etcd and failure-domain capacity remain open.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 
