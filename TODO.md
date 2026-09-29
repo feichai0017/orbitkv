@@ -543,6 +543,13 @@ qualification remain open. See the
 
 Implementation order and failure contracts: `docs/distributed-cache.md`.
 
+- [x] Audit current Mooncake main and existing notification/lifecycle issues;
+  reproduce and submit the two remaining C-string termination and terminal
+  teardown defects as upstream issues/PRs. Record evidence and related fixes
+  in [peer control](docs/peer-control.md#upstream-audit-2026-09-29).
+- [ ] Reconcile the native binary prototype with upstream notification fixes,
+  qualify the resulting pinned artifact and migrate all Rust/P/D consumers
+  together before replacing hot metadata RPCs.
 - [x] D0: sequence all owner residency transitions and keep bounded replay
   history; detect lost notifications and require resynchronization.
 - [x] D0: implement paginated inventory snapshots with a complete delta cut,

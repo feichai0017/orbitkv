@@ -420,6 +420,11 @@ metadata authority onto it. A bounded Rust channel alone does not bound native
 memory. A successful notification send is not proof that the receiver consumed
 it or that a separate payload READ drained.
 
+The [upstream audit](peer-control.md#upstream-audit-2026-09-29) distinguishes
+defects in the pinned release from fixes already in Mooncake main, related open
+PRs and two newly submitted regressions. Reuse upstream fixes when updating the
+native base; submitting them does not complete OrbitKV's binary session cutover.
+
 Only after revocation/drain is qualified should hotspot grants be issued ahead
 of demand. Each grant must hold the precise source allocation and consume a
 bounded budget. A local directory hint is not an authorization. Unused and

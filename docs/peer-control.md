@@ -105,6 +105,45 @@ Relevant pinned implementation:
 - [RDMA transport receive queue](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/tent/src/transport/rdma/rdma_transport.cpp#L780-L794).
 - [TCP notification path](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/tent/src/transport/tcp/tcp_transport.cpp#L299-L324).
 
+## Upstream audit, 2026-09-29
+
+The prerequisite table above describes OrbitKV's pinned release. Separately,
+latest upstream `main` was checked at
+[`be2c57101de5be131729a8b7a8f0c14da61e634c`](https://github.com/kvcache-ai/Mooncake/commit/be2c57101de5be131729a8b7a8f0c14da61e634c).
+Existing fixes and open work must be reconciled before updating the native pin;
+they are not all unresolved upstream bugs.
+
+| Finding | Upstream status at audit | OrbitKV action |
+| --- | --- | --- |
+| Retiring notification QPs must remain discoverable until their completions drain | Fixed by [#4062](https://github.com/kvcache-ai/Mooncake/pull/4062) | Reuse the upstream retirement rules when rebasing the binary transport |
+| Notification QP RTR/RTS attributes must honor endpoint parameters | Fixed by [#4064](https://github.com/kvcache-ai/Mooncake/pull/4064) | Reuse the upstream parameter handling |
+| Notifications received through multiple installed transports must all be collected | Fixed by [#4068](https://github.com/kvcache-ai/Mooncake/pull/4068), with send fallback | Reuse receive aggregation; explicit per-peer binary transport negotiation is still a separate requirement |
+| Named notification sends can close a cached peer handle | Open [#4252](https://github.com/kvcache-ai/Mooncake/pull/4252) | Track the existing fix; do not duplicate it |
+| C notification result release/reset can leave stale ownership | Open [#4253](https://github.com/kvcache-ai/Mooncake/pull/4253) | Track the existing fix; it does not terminate full-length fields |
+| Full-length C notification fields lack a terminating NUL | Reproduced on main; [issue #4380](https://github.com/kvcache-ai/Mooncake/issues/4380), draft [fix #4381](https://github.com/kvcache-ai/Mooncake/pull/4381) | Explicitly terminate both fields; retain the length-aware ABI requirement for binary messages |
+| Terminal endpoint/context destructors ignore unsuccessful native teardown | Reproduced on main; [issue #4382](https://github.com/kvcache-ai/Mooncake/issues/4382), draft [fix #4383](https://github.com/kvcache-ai/Mooncake/pull/4383) | Fail-stop before member destruction if native resources still cannot be released; explicit cleanup remains retryable |
+
+The TCP RPC coroutine already owns its request and server address by value in
+both the pinned release and inspected main. Moving arguments into that coroutine
+can remove copies; it is not evidence of an upstream borrowed-request lifetime
+bug. Binary framing, queue budgets, admission, peer identity and the application
+session protocol are additional requirements, not covered by these bug fixes.
+
+Both new fixes were independently built from
+`1ad008bc41c6de7c74e02fb1d48713309b880c0d`; the subsequent main commit only changes
+CI build parallelism. The string regression fails on unchanged code with glibc
+allocation poisoning and passes with the fix (7 local-notification tests).
+The teardown regression fails all three terminal-destructor death cases on
+unchanged code; the fix passes 29 endpoint tests and 104 RDMA transport tests,
+with 2 hardware-dependent skips. All 29 endpoint tests also pass a full native
+ASan/UBSan build with leak detection. These are CPU fault-injection results,
+not RNIC/provider qualification. Both PRs are drafts pending human review;
+local passing tests do not establish upstream CI success or merge status.
+
+OrbitKV's runtime pin and application protocol are unchanged by this audit.
+The isolated binary prototype still requires reproducible integration, Rust/P/D
+consumer migration and the session/serving gates below before production use.
+
 ## Bootstrap, identity and fencing
 
 Replace export-window-only bootstrap with a peer-session bootstrap. The request
