@@ -3,9 +3,17 @@ use super::*;
 #[cfg(feature = "mooncake")]
 #[tokio::test]
 async fn mooncake_initialization_failure_is_returned_to_caller() {
+    let membership = test_membership();
     let config = crate::EngineConfig {
         mooncake_nic_names: vec!["definitely-not-a-real-nic".to_string()],
-        membership: Some(test_membership()),
+        membership: Some(membership.clone()),
+        global_index: Some(std::sync::Arc::new(orbitkv_catalog::GlobalIndex::new(
+            membership,
+            1 << 20,
+        ))),
+        inventory: Some(std::sync::Arc::new(crate::ResidencyInventory::new(
+            16 << 10,
+        ))),
         ..crate::EngineConfig::default()
     };
 
@@ -21,9 +29,17 @@ async fn mooncake_initialization_failure_is_returned_to_caller() {
 #[cfg(not(feature = "mooncake"))]
 #[tokio::test]
 async fn remote_transfer_config_is_ignored_without_feature() {
+    let membership = test_membership();
     let config = crate::EngineConfig {
         mooncake_nic_names: vec!["mlx5_0".to_string()],
-        membership: Some(test_membership()),
+        membership: Some(membership.clone()),
+        global_index: Some(std::sync::Arc::new(orbitkv_catalog::GlobalIndex::new(
+            membership,
+            1 << 20,
+        ))),
+        inventory: Some(std::sync::Arc::new(crate::ResidencyInventory::new(
+            16 << 10,
+        ))),
         ..crate::EngineConfig::default()
     };
 
@@ -39,6 +55,5 @@ fn test_membership() -> std::sync::Arc<orbitkv_catalog::MembershipView> {
             endpoint: "127.0.0.1:50055".into(),
             incarnation: uuid::Uuid::new_v4(),
         },
-        orbitkv_catalog::Placement::new(vec!["a".into()]).unwrap(),
     ))
 }

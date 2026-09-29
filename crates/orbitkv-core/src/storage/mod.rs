@@ -17,9 +17,9 @@ use crate::memory::AllocationFootprintFn;
 use crate::memory::numa::NumaNode;
 use crate::memory::pool::{PinnedAllocation, PinnedAllocator};
 use crate::metrics::core_metrics;
-use crate::peer::catalog::CatalogClient;
 #[cfg(feature = "mooncake")]
 use crate::peer::{read::PeerReader, transport::MooncakeTransport};
+use orbitkv_catalog::GlobalIndex;
 
 use crate::query::read::ReadCoordinator;
 use dram::DramStore;
@@ -48,7 +48,8 @@ pub(crate) struct Storage {
     #[cfg(feature = "mooncake")]
     mooncake_transport: Option<Arc<MooncakeTransport>>,
     blockwise_alloc: bool,
-    pub(crate) catalog_client: Option<Arc<CatalogClient>>,
+    pub(crate) global_index: Option<Arc<GlobalIndex>>,
+    pub(crate) inventory: Option<Arc<inventory::ResidencyInventory>>,
     pub(crate) exports: crate::peer::export::PeerExports,
 }
 
@@ -116,11 +117,14 @@ impl Storage {
         };
 
         // Sub-components
-        let inventory = config.membership.as_ref().map(|_| {
-            Arc::new(inventory::ResidencyInventory::new(
-                config.inventory_journal_bytes,
-            ))
-        });
+        if config.membership.is_some() != config.global_index.is_some()
+            || config.membership.is_some() != config.inventory.is_some()
+        {
+            return Err(
+                "distributed cache requires membership, global index and inventory together".into(),
+            );
+        }
+        let inventory = config.inventory.clone();
         let dram = Arc::new(DramStore::with_inventory(
             capacity_bytes,
             config.enable_lfu_admission,
@@ -129,16 +133,12 @@ impl Storage {
             (capacity_bytes as u128 * config.cache_protected_percent as u128 / 100) as u64,
         ));
 
-        let catalog_client = config
-            .membership
-            .as_ref()
-            .map(|view| CatalogClient::new(view.clone(), Arc::downgrade(&dram)).map(Arc::new))
-            .transpose()?;
+        let global_index = config.global_index.clone();
 
         // Mooncake must be created after the allocator so it can register the
         // pinned pool. An empty rail filter lets Mooncake choose TCP fallback.
         #[cfg(feature = "mooncake")]
-        let mooncake_transport = if catalog_client.is_some() {
+        let mooncake_transport = if global_index.is_some() {
             let advertise = &config
                 .membership
                 .as_ref()
@@ -155,7 +155,7 @@ impl Storage {
         };
 
         #[cfg(not(feature = "mooncake"))]
-        if catalog_client.is_some() {
+        if global_index.is_some() {
             log::warn!(
                 "Catalog was configured, but this binary was built without the `mooncake` feature; remote transfer is disabled"
             );
@@ -192,7 +192,7 @@ impl Storage {
         let engine = Arc::new({
             #[cfg(feature = "mooncake")]
             let remote_fetch = mooncake_transport.as_ref().and_then(|transfer| {
-                let ms = catalog_client.as_ref()?;
+                let ms = global_index.as_ref()?;
                 Some(Arc::new(PeerReader::new(
                     Arc::clone(ms),
                     Arc::clone(transfer),
@@ -239,7 +239,8 @@ impl Storage {
                 #[cfg(feature = "mooncake")]
                 mooncake_transport,
                 blockwise_alloc,
-                catalog_client,
+                global_index,
+                inventory,
                 exports,
             }
         });
@@ -306,13 +307,6 @@ impl Storage {
         if let Some(ssd) = &self.ssd_store {
             ssd.flush().await;
         }
-    }
-
-    pub(crate) async fn flush_inventory(&self) -> Result<(), String> {
-        if let Some(client) = &self.catalog_client {
-            client.flush().await?;
-        }
-        Ok(())
     }
 
     pub(crate) fn filter_hashes_not_in_cache_inplace(
@@ -470,12 +464,6 @@ impl Storage {
         self.mooncake_transport
             .as_ref()
             .map(|transport| transport.transfer_endpoint())
-    }
-
-    pub(crate) async fn shutdown_catalog_client(&self) {
-        if let Some(client) = &self.catalog_client {
-            client.shutdown().await;
-        }
     }
 }
 

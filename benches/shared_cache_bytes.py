@@ -173,7 +173,7 @@ def qualify(args: argparse.Namespace) -> dict:
         return response.json()
 
     command(args.source_url, "save")
-    synchronize(args.source_manager)
+    synchronize(args.source_manager, args.target_manager)
     rows = []
     for source, target, worker_url in [
         (args.source_manager, args.target_manager, args.target_url),
@@ -197,9 +197,9 @@ def qualify(args: argparse.Namespace) -> dict:
             raise AssertionError("Missing acknowledged source release")
         rows.append(restored)
         if len(rows) == 1:
-            synchronize(args.target_manager)
+            synchronize(args.target_manager, args.source_manager)
             evict_host_cache(args.source_manager)
-            synchronize(args.source_manager)
+            synchronize(args.source_manager, args.target_manager)
     if rows[0]["sha256"] != rows[1]["sha256"]:
         raise AssertionError("Re-served replica changed GPU bytes")
     return {"forward": rows[0], "reverse_from_received_replica": rows[1], "resources_drained": True}

@@ -16,9 +16,9 @@ the P4.1 implementation contract and evidence. It is the starting point for cont
 The starting point is a tested single-node DRAM/SSD path for both pinned engine
 releases, with TP=1 dense full-attention as the shared qualification baseline.
 Owned asynchronous queries, byte admission, shared backing reads and GPU
-completion lifetimes already exist. Embedded catalog discovery and membership
-also exist; scoped two-host TCP serving passes, while the local global-index
-replacement and broader failure/RDMA qualification remain open. Automatic queued warming stays
+completion lifetimes already exist. Complete local global indexes and etcd metadata synchronization are
+implemented; historical two-host TCP serving passes, while the new path needs
+physical multi-host, scale and RDMA qualification. Automatic queued warming stays
 opt-in because the recorded controls do not establish a throughput benefit.
 
 SGLang hybrid pools and vLLM window/aligned recurrent groups use the same recovery
@@ -45,9 +45,9 @@ the later general semantic compiler.
 | First: reliable ordinary demand | Maintain deterministic cancellation, lost-notification, engine/Manager restart and stuck-Publish gates; extend concurrent model-serving fault stress. Profile the normal DRAM/SSD restore path. | Exact restored bytes and engine output controls; no stale result adoption or page reuse during active DMA; unrelated requests progress; reservations drain after terminal completion or proven revocation. A timeout alone cannot release memory. |
 | First: complete state-layout coverage | Full/MLA, Full + SWA, Full + recurrent/conv, and their combination in both adapters. | Exact DRAM/SSD bytes, missing-component rejection, legal recovery boundaries and GPU source ownership. Report native model-serving coverage separately from constructed GPU layouts. |
 | Implemented, opt-in: bounded preparation | Small arrival-order lookahead, retained leases, bounded reads and stopping controls. | Three matched pairs per engine completed. Keep off by default because SGLang P95 regresses despite a throughput gain; cutoffs also reduce throughput. |
-| First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the existing embedded catalog and Mooncake TENT path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
+| First distributed serving gate: DP | Qualify two real hosts running independent matching TP=1 replicas, separately for vLLM and SGLang, through the local global-index and Mooncake TENT path. | Positive remote transfer and GPU restore bytes, output controls, source-restart rejection, catalog replay and bounded failure handling. Report discovery, authorization and etcd traffic separately. |
 | Then: P/D with cache reuse | Qualify the existing vLLM handoff together with external caching; qualify the implemented SGLang native handoff/TENT adapter, then compose it with external caching. | A cached P-side prefix still reaches D; completed D-side state can be reused by a later P request. Cancellation and worker restart cannot expose incomplete state. |
-| Next distributed metadata: local global index | Store block locations in etcd and synchronize a complete view at each Manager; remove sharded Catalog discovery. | Three-member etcd failures, snapshot/Watch repair, ordered publication and bounded metadata resources; zero foreground directory RPCs. Source lifetimes and payload durability remain separate. |
+| Implemented distributed metadata: local global index | Store block locations in etcd and synchronize a complete view at each Manager; remove sharded Catalog discovery. | Three-member etcd failures, snapshot/Watch repair, ordered publication and bounded metadata resources; zero foreground directory RPCs. Source lifetimes and payload durability remain separate. |
 | Later expansion | Calibrated peer selection over the implemented remote DRAM/SSD routes, broader model recovery, copy/compute overlap and optional Dynamo routing. | Each has its own recovery, resource and performance gate; remote SSD has scoped two-host TCP evidence; mixed-load/RDMA, cross-host TP/PP and cross-engine format conversion have separate gates. |
 
 Start the two-host DP harness once the ordinary-demand lifetime gate passes;
@@ -91,7 +91,7 @@ below remain independent.
    DeepSeek and Kimi coverage. GLM-5.3-Flash sparse indexers and DeepSeek-V4
    compressed/request state need additional contracts before serving claims.
 3. **Qualify real two-host DP.** Use independent matching TP=1 replicas,
-   embedded Manager catalogs, etcd membership and Mooncake TE. Require positive
+   local global indexes, etcd location metadata and Mooncake TE. Require positive
    remote and GPU-copy bytes, output controls, source-incarnation rejection,
    catalog replay and bounded failed transfers. Start with full attention,
    then carry the same complete-state contract into hybrid remote recovery.
@@ -100,7 +100,7 @@ below remain independent.
    hit must produce a complete D-side handoff and reusable completed state.
    Replace sharded Catalog discovery with etcd-synchronized local indexes;
    qualify quorum failure, Watch repair and metadata scale. See
-   [the selected design](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata).
+   [the selected design](distributed-cache.md#local-global-index-and-etcd-metadata).
    KV-aware routing and cross-host TP/PP have separate topology gates.
 
 Local performance work continues alongside DP: retain the existing
@@ -261,18 +261,18 @@ continues.
 
 The [distributed cache design](distributed-cache.md) selects etcd for membership
 and block-location metadata, complete local global indexes, and Mooncake TENT
-for payloads. That replacement is not implemented yet. Current D0/D1 uses owner
-recovery, candidate hints and single-copy embedded shards; scoped two-host TCP
-serving passes for each engine. Keep those results as a comparison baseline
-and qualify the new synchronization path separately.
+for payloads. This replacement is implemented. Historical D0/D1 used owner
+recovery, candidate hints and single-copy embedded shards; its scoped two-host
+TCP results remain a comparison baseline. Qualify physical two-host serving and
+metadata scale on the new synchronization path separately.
 
 Deliver in order:
 
 - D0 (implemented): versioned DRAM inventories, bounded journals and
   snapshot/delta recovery. Tests cover real directory restart, concurrent
   residency changes, lost replies and history overflow;
-- D1 discovery (implemented): bounded positive candidate caching, batched and
-  coalesced lookup grouped by catalog host under one deadline, Manager-side planning,
+- D1 discovery (superseded by D2): bounded hints and batched Catalog lookup;
+  the retained source planning and ownership provide
   exact source runtime/residency checks,
   and buffer/hold ownership through asynchronous cancellation;
 - D1 completion (implemented): bounded requester records retain release retries
@@ -283,17 +283,17 @@ Deliver in order:
 - D1 membership (implemented): transactional Node ID registration, persistent
   epochs, lease deadlines, bounded snapshots and Watch repair; new remote work
   stops when membership evidence or registration validity is unavailable;
-- D1 deployment (implemented): per-shard inventory replay and catalogs embedded
+- D1 deployment (superseded by D2): per-shard inventory replay and catalogs embedded
   in Managers; standalone directory binaries and flags removed. Scoped two-host
   TCP serving passes; RDMA and orphaned-transfer revocation remain open;
-- D2: etcd block metadata and complete local global indexes, revisioned recovery,
+- D2 (implemented): etcd block metadata and complete local global indexes, revisioned recovery,
   three-member coordinator failure gates and removal of Catalog discovery RPCs;
 - D3: qualify the implemented remote SSD staging route and add calibrated source
   selection under sender and receiver budgets.
 
 The requesting Manager plans transfers. Source Managers validate and pin data;
-directory hints cannot authorize reads. Current etcd stores no blocks; the target
-publishes block metadata in background without per-request etcd calls.
+directory hints cannot authorize reads. Etcd stores block locations and members;
+publication runs in the background without per-request etcd calls.
 Retain prior baseline reports and compare metadata traffic and recovery costs.
 
 Gate:

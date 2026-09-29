@@ -83,6 +83,13 @@ pub struct OrbitKVEngine {
     query_budget: Arc<QueryBudget>,
 }
 
+#[derive(serde::Serialize)]
+pub struct MetadataStatus {
+    pub index: orbitkv_catalog::IndexStatus,
+    pub published: crate::PublishedInventory,
+    pub inventory_sequence: u64,
+}
+
 impl OrbitKVEngine {
     /// Create an engine with full custom configuration.
     ///
@@ -498,11 +505,6 @@ impl OrbitKVEngine {
         self.storage.cleanup_memory_cache()
     }
 
-    /// Best-effort graceful unregister from Catalog, if configured.
-    pub async fn shutdown_catalog_client(&self) {
-        self.storage.shutdown_catalog_client().await;
-    }
-
     /// Wait until all previously submitted save batches have been processed
     /// by the insert worker.
     ///
@@ -513,14 +515,43 @@ impl OrbitKVEngine {
         self.storage.writes.flush().await;
     }
 
-    /// Flush saves and wait for directory acknowledgement of current residency.
-    /// Returns an error if synchronization cannot complete within its deadline.
-    pub async fn flush_saves_and_inventory(&self) -> Result<(), EngineError> {
+    /// Flush saves and return the etcd revision committing current residency.
+    /// Other Managers may still be applying that revision through Watch.
+    pub async fn flush_saves_and_inventory(&self) -> Result<i64, EngineError> {
         self.storage.writes.flush().await;
-        self.storage
-            .flush_inventory()
-            .await
-            .map_err(EngineError::Storage)
+        let Some(inventory) = &self.storage.inventory else {
+            return Ok(0);
+        };
+        let valid = || {
+            self.storage
+                .global_index
+                .as_ref()
+                .is_some_and(|index| index.status().registration_valid)
+        };
+        if !valid() {
+            return Err(EngineError::Storage(
+                "metadata publisher registration expired".into(),
+            ));
+        }
+        let revision = inventory.flush().await.map_err(EngineError::Storage)?;
+        if !valid() {
+            return Err(EngineError::Storage(
+                "metadata publisher registration expired".into(),
+            ));
+        }
+        Ok(revision)
+    }
+
+    pub fn metadata_status(&self) -> Option<MetadataStatus> {
+        let index = self.storage.global_index.as_ref()?.status();
+        let inventory = self.storage.inventory.as_ref()?;
+        let mut published = inventory.published();
+        published.ready &= index.registration_valid;
+        Some(MetadataStatus {
+            index,
+            published,
+            inventory_sequence: inventory.sequence(),
+        })
     }
 
     /// Flush write pipeline and SSD writer.

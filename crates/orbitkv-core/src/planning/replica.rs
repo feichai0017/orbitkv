@@ -2,7 +2,7 @@ use std::sync::Weak;
 
 use orbitkv_state::ReplicaMedium;
 #[cfg(feature = "mooncake")]
-use orbitkv_state::{DISCOVERY_MAX_REPLICAS, ReplicaLocation};
+use orbitkv_state::{DISCOVERY_MAX_REPLICAS_PER_MEDIUM, ReplicaLocation};
 use smallvec::SmallVec;
 
 use crate::block::{SealedBlock, StateKey};
@@ -99,19 +99,16 @@ impl ReplicaSet {
     #[cfg(feature = "mooncake")]
     pub(crate) fn set_peers(&mut self, replicas: Vec<ReplicaLocation>) {
         self.replicas.retain(|replica| !replica.is_peer());
-        for location in replicas
-            .into_iter()
-            .filter(|location| {
-                matches!(
-                    location.metadata.medium,
-                    ReplicaMedium::Dram | ReplicaMedium::Ssd
-                )
-            })
-            .take(DISCOVERY_MAX_REPLICAS)
-        {
-            if !self
-                .peer(location.metadata.medium)
-                .any(|peer| peer.owner == location.owner)
+        for location in replicas.into_iter().filter(|location| {
+            matches!(
+                location.metadata.medium,
+                ReplicaMedium::Dram | ReplicaMedium::Ssd
+            )
+        }) {
+            if self.peer(location.metadata.medium).count() < DISCOVERY_MAX_REPLICAS_PER_MEDIUM
+                && !self
+                    .peer(location.metadata.medium)
+                    .any(|peer| peer.owner == location.owner)
             {
                 self.replicas.push(ReplicaCandidate {
                     medium: location.metadata.medium,

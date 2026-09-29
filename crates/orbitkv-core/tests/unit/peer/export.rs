@@ -272,25 +272,27 @@ fn metadata_is_bounded_even_for_zero_byte_blocks() {
     assert!(manager.open(Uuid::new_v4()).is_some());
 }
 
-fn exports() -> (PeerExports, Arc<orbitkv_catalog::MembershipView>) {
-    use orbitkv_catalog::{MembershipView, Placement};
+fn exports() -> (
+    PeerExports,
+    Arc<orbitkv_catalog::MembershipView>,
+    Arc<crate::ResidencyInventory>,
+) {
+    use orbitkv_catalog::MembershipView;
     use orbitkv_state::CacheOwner;
 
     let owner = CacheOwner {
         endpoint: "127.0.0.1:50055".into(),
         incarnation: Uuid::new_v4(),
     };
-    let membership = Arc::new(MembershipView::new(
-        owner.clone(),
-        Placement::new(vec!["source".into()]).unwrap(),
-    ));
+    let membership = Arc::new(MembershipView::new(owner.clone()));
     assert!(membership.renew(Instant::now(), Duration::from_secs(3600)));
     membership.replace_members([("source".into(), owner)]);
-    let dram = Arc::new(crate::storage::dram::DramStore::new(
+    let inventory = Arc::new(crate::ResidencyInventory::new(16 * 1024));
+    let dram = Arc::new(crate::storage::dram::DramStore::with_inventory(
         1 << 20,
         false,
         None,
-        Some(16 * 1024),
+        Some(inventory.clone()),
         0,
     ));
     (
@@ -303,20 +305,17 @@ fn exports() -> (PeerExports, Arc<orbitkv_catalog::MembershipView>) {
             1 << 20,
         ),
         membership,
+        inventory,
     )
 }
 
 #[tokio::test]
 async fn export_revalidates_residency_and_drains_after_fencing() {
-    let (exports, membership) = exports();
+    let (exports, membership, inventory) = exports();
     let owner = membership.owner().incarnation;
     let (blocks, allocation) = shared_slab();
-    let key = blocks[0].0.clone();
     exports.dram.batch_insert(blocks.clone());
-    let records = exports
-        .dram
-        .inventory_page(orbitkv_state::catalog_shard(&key), None)
-        .unwrap();
+    let records = inventory.page(None).unwrap();
     let ticket = TransferTicket::new(exports.open(owner, Uuid::new_v4()).unwrap(), 0, 1).unwrap();
     // Replacing the same key invalidates previously discovered evidence.
     drop(exports.dram.remove_all());
@@ -326,10 +325,7 @@ async fn export_revalidates_residency_and_drains_after_fencing() {
         Err(PeerError::StaleReplica)
     ));
     assert_eq!(exports.locks.inner.lock().reserved_bytes, 0);
-    let records = exports
-        .dram
-        .inventory_page(orbitkv_state::catalog_shard(&key), None)
-        .unwrap();
+    let records = inventory.page(None).unwrap();
     let authorized = exports.authorize(owner, ticket, &records).await.unwrap();
     assert_eq!(authorized.len(), records.len());
     let bytes = allocation.size_bytes();
@@ -362,7 +358,7 @@ async fn export_revalidates_residency_and_drains_after_fencing() {
 async fn export_rejects_invalid_evidence_before_reserving_resources() {
     use orbitkv_state::InventoryRecord;
 
-    let (mut exports, membership) = exports();
+    let (mut exports, membership, _inventory) = exports();
     let owner = membership.owner().incarnation;
     assert_eq!(
         exports.open(Uuid::new_v4(), Uuid::new_v4()),

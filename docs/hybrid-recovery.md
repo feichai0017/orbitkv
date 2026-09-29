@@ -63,7 +63,7 @@ The output does not assert that any of these pages are cached or leased.
 flowchart LR
   Pools[Declared group rules] --> Compile[Compiled page requirements]
   Tree[Valid HBM origin and known hashes] --> Query[Metadata-only discovery]
-  Query --> Tiers[DRAM / SSD indexes / catalog]
+  Query --> Tiers[DRAM / SSD / global index]
   Tiers --> Evidence[Candidate group positions]
   Compile --> Validate[Validate legal boundaries]
   Evidence --> Validate
@@ -79,7 +79,7 @@ flowchart LR
 
 SGLang discovers positions in each registered group without loading payloads or
 reserving payload bytes. Discovery inspects DRAM presence, the SSD index and
-batched catalog candidates. Rust intersects the compiled legal boundaries;
+local global-index candidates. Rust intersects the compiled legal boundaries;
 SGLang then intersects those sets across attention ranks. Metadata is a hint:
 concurrent eviction or a remote restart can invalidate it.
 

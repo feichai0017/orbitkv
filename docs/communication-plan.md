@@ -403,17 +403,16 @@ Their current Manager execution remains a supported physical route. Moving
 CUDA submission does not remove the physical host-to-HBM transfer or establish
 an advantage over an engine's resident HBM hit.
 
-## Next: local global index and background metadata
+## Implemented: local global index and background metadata
 
-The selected [distributed design](distributed-cache.md#selected-target-local-global-index-and-etcd-metadata)
+The implemented [distributed design](distributed-cache.md#local-global-index-and-etcd-metadata)
 replaces sharded Catalog discovery with a complete local global index at every
 Manager. etcd stores block locations and membership; publication, snapshot and
 Watch run in background. Both warm and previously unqueried keys use local
 discovery. No etcd call or remote Catalog fallback enters the request path.
 
 Retain bounded batched OrbitKV source grants/completions and Mooncake TENT
-READ/WRITE. Remove Catalog serving, placement, lookup coalescing and TTL hints
-together at cutover. The custom native binary prototype is outside this plan;
+READ/WRITE. Catalog serving, placement, lookup coalescing and TTL hints are removed. The custom native binary prototype is outside this plan;
 its application protocol was never deployed. The [control boundary and upstream
 audit](peer-control.md) distinguish it from independent upstream defects/fix PRs.
 
@@ -436,8 +435,8 @@ proposing another transport, and keep application protocols in OrbitKV.
 | Next: residual raw overhead | Profile native scheduling, fragmented plans and scratch reuse | Measured redundant work in the remaining path | Small-payload latency, unchanged source/destination drain guarantees and failure gates |
 | Implemented: large raw plans | Bounded parts under one operation ID, with a final completion fence and per-session metadata credits | Rejection solely because a compacted plan exceeds the 1 MiB shared bank | Fragmented large-prefix bytes, cancellation between partitions and bounded plan/source credits |
 | Implemented, H20 dense/hybrid serving qualified: raw execution overlap | Native layer events with one final retirement fence; vLLM layer callbacks/full-graph entry waits and SGLang external graph waits | vLLM asynchronous load notification bookkeeping, SGLang per-request Restore window and whole-operation first-use wait | Pinned engine releases, eager/graph replay, page reuse, TTFT/ITL and CPU cost |
-| Next: global synchronization | Fenced etcd publication, snapshot/Watch and complete local index | Sharded inventory replay and Catalog hosting | Delete/recreate, uncertain writes, compaction, restart, memory and etcd quota limits |
-| Next: local discovery | Warm/cold-key local lookup; existing source grants and TENT payloads | Catalog lookup RPCs, fixed placement, TTL hints and remote lookup coalescing | Zero foreground discovery RPCs, two-host output controls, three-member etcd failures and metadata cost |
+| Implemented: global synchronization | Fenced etcd publication, snapshot/Watch and complete local index | Sharded inventory replay and Catalog hosting | Delete/recreate, uncertain writes, compaction, restart, memory and etcd quota limits |
+| Implemented: local discovery | Warm/cold-key local lookup; existing source grants and TENT payloads | Catalog lookup RPCs, fixed placement, TTL hints and remote lookup coalescing | Zero foreground discovery RPCs, two-host output controls, three-member etcd failures and metadata cost |
 
 Each cutover replaces its old implementation and updates all callers in the
 same change. Capability-specific SSD preparation or codec work remains with

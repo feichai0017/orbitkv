@@ -30,7 +30,7 @@ The diagram separates four payload routes:
 | --- | --- | --- |
 | Raw local DRAM → HBM | Engine's Rust executor | Manager source grant; shared memfd arenas; per-layer CUDA events; final GPU drain and asynchronous source retirement |
 | Publish, SSD or encoded Restore | Manager GPU/storage worker | CUDA IPC tensor registration; retained source/destination and staging owners through completion |
-| Historical peer KV → local cache → HBM | Requester Manager, then its existing local Restore route | Catalog candidates and source gRPC authorization; TENT READ; acknowledged source release |
+| Historical peer KV → local cache → HBM | Requester Manager, then its existing local Restore route | Local index candidates and source gRPC authorization; TENT READ; acknowledged source release |
 | Current prefill KV → decode HBM | Engine P/D adapters | TENT WRITE; vLLM split-connector protocol or SGLang native bootstrap/rooms |
 
 UDS transfers descriptors during session setup; iceoryx2 carries local cache
@@ -42,8 +42,9 @@ forward and requires piecewise graphs. SGLang installs persistent external event
 waits before its first graph capture. Packed buffers, vLLM recurrent operators
 and multi-part plans retain coarser dependencies; see the
 [layer readiness contract](engine-local-restore.md#layer-readiness-and-framework-consumption).
-etcd maintains membership, epochs and fixed catalog placement in the
-background, outside the cache lookup path. Peer metadata still uses gRPC.
+etcd stores membership, epochs and block locations. Background publication and
+snapshot/Watch maintain a complete local global index. Discovery stays local;
+peer source authorization and release use gRPC.
 
 
 Single-node deployment connects engines to their host's Cache Manager and needs
@@ -53,16 +54,14 @@ Container GPU/PID/IPC wiring and concurrent multi-engine serving require
 [separate qualification](deployment.md#containers-and-kubernetes).
 Current SSD backing is a cache
 file truncated on Cache Manager startup, not durable KV storage across manager
-restarts. Distributed Managers advertise sealed replicas to assigned catalog
-shards using cached membership, then query missing evidence in bounded batches.
-They authorize/pin source data before Mooncake reads bytes. Catalog restart is
-repaired from surviving owner inventories. Each shard has one metadata copy;
-replication and online placement handoff remain future work.
+restarts. Distributed Managers asynchronously publish DRAM and SSD residencies
+to etcd. Their complete local global indexes supply candidates; exact source
+authorization and pins still precede Mooncake READ. Metadata replication cannot
+preserve a payload held only by a failed source.
 
-Standalone deployment has no gRPC listener. Registration, health, sessions, and
-cleanup use the authenticated bootstrap UDS. `--etcd-endpoints` with Node ID and catalog placement enables a
-peer gRPC listener for catalog synchronization, discovery, source authorization
-and lock release. Process
+Standalone deployment has no gRPC listener. Registration, health, sessions and
+cleanup use the authenticated bootstrap UDS. `--etcd-endpoints` with a Node ID
+enables source authorization and release on the peer gRPC listener. Process
 IPC supports query, publish, asynchronous restore completion, and lease
 release:
 iceoryx2 carries fixed descriptors while a Unix socket authenticates the peer,
@@ -131,7 +130,7 @@ See [transport.md](transport.md) for the measured process-transport baseline.
 | Cache service | `orbitkv-server/src/cache/` | Transport-neutral operations, registration, and session cleanup |
 | Cache engine | `orbitkv-core` | Leases, HBM transfer scheduling, pinned DRAM, SSD, local and remote lookup |
 | Peer control | `orbitkv-server/src/peer.rs`, `orbitkv-core/src/peer/export.rs` | Server translates RPCs; Core validates and owns source grants |
-| Replica catalog | `orbitkv-catalog`, `orbitkv-core/src/peer/catalog` | Candidate ownership and node liveness; embedded fixed shards with cached member admission |
+| Global index | `orbitkv-catalog`, `orbitkv-server/src/cluster` | Complete local candidate index; fenced etcd publication, snapshot/Watch and member admission |
 | Byte movement | `orbitkv-transfer`, `orbitkv-mooncake-sys` | Mooncake Segment/BatchTransfer over RDMA or TCP |
 
 Transport-specific names belong at physical boundaries. Cache operations and
@@ -189,7 +188,7 @@ measurement boundary changes. Unsupported paths do not get speculative types.
 | `storage/ssd/` | Files, index, immutable extent leases, io_uring/cuFile I/O and registered staging |
 | `planning/` | Metadata-only discovery, batch replica evidence, bounded host routes and device-bound consumed restore plans |
 | `query/` | Admission budgets, shared reads, host materialization, query phases and leases |
-| `peer/` | Catalog client, cached candidates, authoritative exports, requester READs and completion recovery |
+| `peer/` | Local candidate discovery, authoritative exports, requester READs and completion recovery |
 | `transfer/` | Registered engine layouts, GPU copies/codecs and completion-drained workers |
 | `codec/` | Representation validation and encoding/decoding |
 | `cost/` | Explicit operation/route sample boundaries, bounded resource-scoped estimates and guarded same-target shadow comparisons |
@@ -249,7 +248,7 @@ allocation/event sharing and instance isolation to concrete OrbitKV work.
 | [LMCache MP serialization](https://docs.lmcache.ai/mp/serde.html) and [FlexKV compression](https://github.com/taco-project/FlexKV/tree/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/flexkv/transfer/compression) | Separate engine precision from cache encoding; bound codec workspace and qualify formats | `codec/` owns batched GPU ANS/FP8/TurboQuant, reusable arenas, CPU SIMD and CRC validation; `transfer/worker/codec` owns engine-page and writeback lifetimes. Encoded DRAM, SSD and Mooncake payloads share versioned metadata. cuFile can write encoded GPU groups and restore through GPU validation/decode. Native GDS and broader model-quality qualification remain open. |
 | [FlexKV file-range coalescing](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/transfer_ssd.cpp) and [GDS](https://github.com/taco-project/FlexKV/blob/738ddc141a198b4e20de6c5d1f0128e387f7fdb2/csrc/gds/gds_manager.cpp) | Merge physically compatible same-file ranges; keep storage geometry separate from engine tensor layouts | `transfer/worker/ssd` validates demand and coalesces leased ranges per file; its queue owns task/extent lifetime, bounded GPU write admission and batch-level read/write scheduling. |
 | [Mooncake TE v0.3.13.post1](https://github.com/kvcache-ai/Mooncake/blob/719735896c86b56fabec6cf3e825fb2ea640597a/mooncake-transfer-engine/include/transfer_engine.h) | Registered memory and batched remote transfers | Reused directly through `orbitkv-transfer` and `orbitkv-mooncake-sys`. Catalog/source authorization and state compatibility remain OrbitKV responsibilities. Scoped two-host TCP serving passes; RDMA remains unqualified. |
-| [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) — draft proposal | Cached membership and embedded authority; keep coordination off per-key data paths | `orbitkv-catalog` and `server/cluster` already use embedded shards, cached membership and etcd leases/Watch. The selected replacement is etcd block metadata plus complete local global indexes; it is not implemented yet. The RFC is a reference, not that implementation. |
+| [Mooncake RFC #3504](https://github.com/kvcache-ai/Mooncake/issues/3504) — draft proposal | Cached membership and embedded authority; keep coordination off per-key data paths | `orbitkv-catalog` owns complete local global indexes; `server/cluster` owns etcd metadata, leases and snapshot/Watch. The RFC is a reference, not a claim of implementation equivalence. |
 
 Compiled `required_ranges`, complete-state recovery and generation/lease checks
 remain the common acceptance boundary for every tier. A useful transfer policy
@@ -281,7 +280,7 @@ block hashes / CUDA IPC     radix hashes / CUDA IPC
                            |
                     peer DRAM / SSD
 
-     peer control: tonic / gRPC, only with distributed etcd/placement configuration
+     peer control: tonic / gRPC, only with distributed etcd membership configuration
 
     orbitkv-state: shared state identity and recovery semantics
 ```
@@ -471,56 +470,37 @@ and destination ownership through terminal DMA completion.
 
 ## Multi-node cache path and deployment
 
-`orbitkv-catalog` is an embedded library served on each distributed Manager's
-peer endpoint. All Managers agree on an immutable catalog host set in etcd.
-Sixteen fixed logical shards are assigned by equal-weight rendezvous hashing;
-member loss does not change placement. Cached member snapshots resolve each
-assigned Node ID to a current endpoint and runtime UUID. Ordinary block operations
-perform no etcd I/O.
+Each Manager has a complete local global index. Owner inventories record real
+DRAM and SSD residencies independently; server cluster tasks publish their bounded
+change journal to etcd using member/lease and publisher-cursor comparisons.
+Fixed-revision snapshots plus Watch synchronize indexes without request-time
+directory RPCs. A restarted Manager reconstructs locations from etcd; a failed
+Manager does not take another Manager's index with it.
 
-Managers asynchronously synchronize independently ordered residency streams
-per shard, falling back to committed SSD evidence when an owner's DRAM copy is
-evicted, including representation family and known stored bytes. Bounded
-snapshots and deltas reconstruct lost evidence; incomplete
-replacement views stay hidden until commit. After a local miss, the requester
-checks its bounded positive candidate index and queries only missing shards.
-It plans source spans and obtains exact runtime/residency authorization before
-Mooncake reads bytes into pinned DRAM, then restores them through the same engine
-API. The destination also advertises its newly resident replicas.
+The requester reads local index evidence, plans source spans and obtains exact
+runtime/residency authorization. TENT READ moves bytes into owned pinned DRAM;
+the existing local path restores them to HBM. Newly resident requester copies
+are published asynchronously. Source SSD uses bounded exact-generation staging.
+Source grants and release use gRPC; native TENT remains the payload transport.
 
-Catalog and source control use gRPC; Mooncake carries KV bytes. Mooncake's P2P
-handshake provides transport metadata rather than KV ownership. Each catalog
-shard currently has one metadata copy, so losing a host makes those cold lookups
-unavailable until it returns and inventories replay. Other shards and valid
-cached candidates remain usable. etcd membership gates new remote admission;
-local DRAM/SSD operations continue through coordinator loss.
+There are no catalog shards, fixed placement, TTL hints, directory lookup RPCs
+or compatibility runtime. Incomplete snapshots or capacity failures withdraw
+index availability. Etcd quorum loss stops new remote admission after conservative
+lease expiry while local caches remain usable. See [protocol and limits](distributed-cache.md).
 
-Source transfer timeout reclamation still lacks transport revocation qualification.
-Caller cancellation retains buffers and source holds through blocking completion,
-but this does not prove safe source failure or partitions. See the
-[implemented protocol and limits](../crates/orbitkv-catalog/README.md).
+Source timeout does not prove transport revocation: overdue pins remain charged
+until completion. Permanently lost requesters, physical partitions, RDMA and
+large-cluster update capacity retain separate qualification gates. Metadata
+redundancy does not imply payload replicas, durable SSD restart, or a unified
+route optimizer.
 
-The next stages add replicated placement generations, controlled handoff,
-subscriptions and measured remote source selection. Peer SSD routes now use
-source-local exact-generation staging with two-phase byte/session admission,
-but SSD discovery evidence alone still does not authorize a file or memory
-transfer. Cross-host qualification remains a separate gate. These are target
-features in the diagram below.
-The [distributed cache design](distributed-cache.md) defines the acceptance gates.
-A later KV-aware router can consume replica summaries and engine load events
-without entering the transfer path. Metadata replicas do not imply KV payload
-replicas or general object-store CAS semantics.
-
-```text
-host A                                           host B
-engine HBM                                      engine HBM
-    | UDS + iceoryx2 / CUDA IPC                      | UDS + iceoryx2 / CUDA IPC
-Cache Manager A  <---- Mooncake KV bytes ---->  Cache Manager B
-  DRAM / SSD · local candidate index              DRAM / SSD · local candidate index
-  catalog shards  <---- replicated metadata ---> catalog shards
-         \________ etcd membership/placement _________/
-
-catalog summaries ----> future KV-aware router <---- engine load/events
+```mermaid
+flowchart LR
+    EA[Engine A] <--> MA[Manager A: DRAM, SSD, complete local index]
+    EB[Engine B] <--> MB[Manager B: DRAM, SSD, complete local index]
+    MA <-->|TENT READ; OrbitKV grants and release| MB
+    MA <-->|Background publication and snapshot/Watch| E[etcd quorum: locations and members]
+    MB <-->|Background publication and snapshot/Watch| E
 ```
 
 ## Planning direction

@@ -1,5 +1,10 @@
 # Shared-cache qualification
 
+The 2026-09-28/29 historical results below precede the local global-index cutover
+unless explicitly labeled otherwise. Their directory-RPC counts and catalog
+restart terminology describe that older revision. The cutover section records
+fresh qualification of the new metadata path.
+
 This gate covers independent replicas of the same model, engine and TP=1 storage
 layout. Every engine uses its host's Cache Manager. Rust owns candidate lookup,
 source validation, memory budgets and Mooncake transfers; Python only drives
@@ -11,6 +16,45 @@ not automatic proof of distinct physical hosts or an RDMA transport. Keep these
 three results separate: same-host TCP, two-host TCP and two-host RDMA.
 
 ## Recorded result
+
+### Global-index cutover, 2026-09-29
+
+The new `/orbitkv/v2` path uses fenced etcd publication and fixed-revision
+snapshot/Watch into each Manager's complete global index. The tests build native
+artifacts first and run with Cargo stopped. Both pinned engines pass the same-host
+H20 Qwen3-8B serving/restart gate: three remote restores per engine, 288 MiB TENT
+READ and H2D, exact output matching, acknowledged releases and drained resources.
+Restarting the consumer rebuilds its index; restarting the empty source causes
+correct recomputation with zero remote/H2D bytes.
+
+Physical two-host TCP runs on the H20 and A100 pass with the same Qwen3-8B model,
+TP=1, 64-token pages and deterministic eager settings used by the historical
+natural-text gate. Both engines restore the requested cabinet keys exactly.
+
+| New metadata-path gate | vLLM 0.29.0 | SGLang 0.5.20 |
+| --- | --- | --- |
+| DRAM sharing and consumer index restart | Passed; 288 MiB READ/H2D | Passed; 288 MiB READ/H2D |
+| Empty source restart | Passed; recomputation, zero remote/H2D | Passed; recomputation, zero remote/H2D |
+| Forced source SSD after DRAM eviction | Passed; 216 MiB SSD reads, READ and H2D | Passed; 216 MiB SSD reads, READ and H2D |
+| Output equality and resource drain | Passed in all six cases | Passed in all six cases |
+
+The cluster group passes seven cases, including six real-etcd/GPU gates: duplicate identity and
+incarnation restart, compaction, three-member leader loss and quorum-loss fencing,
+lost publication replies and delayed retry rejection, independent DRAM/SSD
+entries, a paginated snapshot exceeding the default 4 MiB gRPC decoder, owner
+reconciliation, 260-block raw GPU recovery and four encoded formats. Logical
+index budget failure and per-medium candidate bounds are covered in unit tests.
+Three etcd processes on one host qualify process faults, not host-failure domains.
+
+The release Manager and extension used on both physical hosts have matching
+SHA-256 values:
+
+- Manager: `38937c1104a659436cf81e38f719d52f055ecf37c34a83bb7d2c87ce1acd6964`.
+- Extension: `b87a1f828119cc6e25f9a32449804cfc1f2f1b0da0c6bc2a0f7538e8482376b6`.
+
+This is source-build correctness evidence, not a throughput comparison, installed
+wheel/container qualification, RDMA validation or permanent-requester revocation
+proof. Raw runs are retained under `/workspace/orbitkv-index-runs/`.
 
 ### Two-host TCP, 2026-09-28
 
@@ -98,9 +142,10 @@ ports. Do not serve unrelated traffic during the gate.
 
 For deterministic Qwen3 controls, set `VLLM_BATCH_INVARIANT=1` for vLLM or
 `--enable-deterministic-inference` for SGLang. Keep preparation disabled. Start
-with DRAM-only Managers for the existing recorded baseline. Peer SSD routing is
-implemented but not yet qualified; force source DRAM eviction and record SSD
-read/staging evidence in a separate run. A two-host TCP
+with DRAM-only Managers for the sharing/restart baseline. Qualify peer SSD in a
+separate run: force source DRAM eviction and record SSD read/staging evidence.
+The cutover results above cover this ordinary two-host SSD route; mixed-load
+selection and cancellation still need separate qualification. A two-host TCP
 run sets `MC_FORCE_TCP=1` on both Managers. For RDMA, expose the devices and
 select the appropriate `--nics`; record the actual Mooncake transport and NIC
 counters with the result.
@@ -162,7 +207,8 @@ Use `--engine sglang` for its native serving endpoint. The driver requires only
 the benchmark HTTP dependencies, not an installed engine or CUDA runtime.
 
 The source must publish new bytes. `POST /cache/sync` waits for already submitted
-saves and acknowledged catalog residency, with a bounded error when synchronization
+saves and committed etcd residency, returning `published_revision`; wait for
+the consumer index via `/cache/metadata` to apply that revision, with a bounded error when synchronization
 cannot finish. Each consumer request must increase both Mooncake READ and GPU
 restore bytes, match the cold source output, and drain query, source-transfer
 and I/O reservations, including requester completion records awaiting a source
@@ -191,7 +237,7 @@ checks below. For each prompt:
 1. Execute it on the source, call `POST /cache/sync`, and verify the SSD write
    completed before changing residency.
 2. Call `POST /cache/memory/cleanup` on the source. Require positive evicted
-   blocks, zero `still_referenced_blocks`, and surviving Catalog evidence with
+   blocks, zero `still_referenced_blocks`, and surviving global-index evidence with
    medium `ssd`; do not clear the SSD ring or restart the source.
 3. Send the prompt to a target replica with a cold local namespace. Require an
    increase in source `orbitkv_ssd_prefetch_bytes_total`, target
@@ -239,8 +285,8 @@ RDMA, NVLink or GPUDirect.
 ## Restart and ownership gates
 
 The repository's model-serving test starts etcd, two Managers and two replicas
-on one GPU. It checks ordinary sharing, replay after restarting the sole catalog
-host, and a clean recomputation after the source restarts without its payload.
+on one GPU. It checks ordinary sharing, a complete index rebuild after restarting
+the consumer, and a clean recomputation after the source restarts without its payload.
 It runs separately in the pinned vLLM and SGLang environments:
 
 ```bash

@@ -5,7 +5,7 @@ import { layers, localUrl } from "../data/site";
 
 <SiteLayout
   title="Architecture — OrbitKV"
-  description="Engine-owned HBM, one Cache Manager per host, embedded catalogs and Mooncake transfers."
+  description="Engine-owned HBM, one Cache Manager per host, local global indexes, replicated etcd metadata and Mooncake transfers."
   active="Architecture"
 >
   <div class="container interior">
@@ -29,11 +29,11 @@ import { layers, localUrl } from "../data/site";
           src={localUrl("/architecture.svg")}
           width="1280"
           height="850"
-          alt="Engine-owned HBM and raw DRAM restore; Manager-owned Publish, SSD and codec work. Peer gRPC controls historical TENT READs; P/D adapters issue current-request TENT WRITEs. etcd maintains membership and fixed placement."
+          alt="Engine-owned HBM and raw DRAM restore; Manager-owned Publish, SSD and codec work. Peer gRPC controls historical TENT READs; P/D adapters issue current-request TENT WRITEs. etcd replicates block locations and membership; snapshot/Watch update local indexes."
         />
         <figcaption>
           Single-node recovery is validated. The multi-node path is
-          experimental; catalogs currently have one copy per shard. A shared API
+          experimental; each Manager has a complete local index backed by etcd metadata. A shared API
           does not imply interchangeable KV layouts. Declared page demand is
           implemented; general lifetime and physical planning remain future work.
         </figcaption>
@@ -59,8 +59,8 @@ import { layers, localUrl } from "../data/site";
           <span class="package-name">02 / Independent replicas</span>
           <h3>Reuse across workers.</h3>
           <p>
-            Managers share compatible replicas through embedded catalogs. Cached
-            candidates reduce discovery work. Peer gRPC authorizes exact source
+            Managers discover compatible replicas in complete local global indexes,
+            synchronized through etcd publication and snapshot/Watch. Peer gRPC authorizes exact source
             replicas; TENT READ moves their bytes into the consumer Manager's
             host memory before GPU restore. Cross-host serving is a separate gate.
           </p>
@@ -153,9 +153,9 @@ import { layers, localUrl } from "../data/site";
       <p class="reading-copy">
         Qualify matching replicas on two real hosts, then P/D with reusable cache.
         Single-node preparation and stopping controls are implemented and stay
-        opt-in after the first repeated measurements. Replicated catalog shards
-        and controlled placement handoff precede production distributed deployment.
-        General lifetime analysis, resharding, cross-engine byte conversion and
+        opt-in after the first repeated measurements. Global-index scale, metadata churn and cross-host failure behavior
+        require qualification before production claims.
+        General lifetime analysis, cross-engine byte conversion and
         KV-aware routing remain future work.
       </p>
       <div class="doc-links">
@@ -166,7 +166,7 @@ import { layers, localUrl } from "../data/site";
           Transfer costs and deployment policies <span>→</span>
         </a>
         <a href={localUrl("/docs/distributed-cache/")}>
-          Distributed catalog design <span>→</span>
+          Distributed index design <span>→</span>
         </a>
         <a href={localUrl("/docs/state-identity/")}>
           Model-aware identity <span>→</span>

@@ -29,7 +29,7 @@ pub use completion::{
 };
 pub use engine::config::EngineConfig;
 pub use engine::instance::{GpuContext, InstanceContext};
-pub use engine::{EngineError, OrbitKVEngine, RawRestoreGrant, RestoreExecution};
+pub use engine::{EngineError, MetadataStatus, OrbitKVEngine, RawRestoreGrant, RestoreExecution};
 pub use memory::numa::NumaNode;
 pub use memory::pool::{PayloadArena, PinnedAllocation};
 pub use orbitkv_state::{
@@ -40,7 +40,9 @@ pub use peer::export::{PeerError, PeerExports, TransferTicket};
 pub use query::lease::QueryLeaseId;
 pub use query::{QueryAdmission, QueryMode, QueryOwner, QueryReservation};
 pub use storage::MemoryCacheCleanupStats;
-pub use storage::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES;
+pub use storage::inventory::{
+    DEFAULT_INVENTORY_JOURNAL_BYTES, InventoryReadError, PublishedInventory, ResidencyInventory,
+};
 pub use storage::ssd::metadata::SlotMeta;
 pub use storage::ssd::{
     DEFAULT_SSD_PREFETCH_INFLIGHT, DEFAULT_SSD_PREFETCH_QUEUE_DEPTH, DEFAULT_SSD_WRITE_INFLIGHT,

@@ -2034,17 +2034,9 @@ dependencies = [
 name = "orbitkv-catalog"
 version = "0.1.0"
 dependencies = [
- "criterion",
- "dashmap",
- "opentelemetry",
- "orbitkv-proto",
  "orbitkv-state",
  "parking_lot",
  "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tonic",
  "uuid",
 ]
 
@@ -2177,6 +2169,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tikv-jemallocator",

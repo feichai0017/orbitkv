@@ -1,29 +1,31 @@
 //! P2P Mooncake remote fetch integration test.
 //!
 //! Verifies the end-to-end flow:
-//! Engine A saves blocks → Catalog discovers them → Engine B fetches via Mooncake READ
+//! Engine A saves blocks → etcd publishes locations → local index discovers them → Engine B fetches via Mooncake READ
 //! → data integrity verified.
 //!
-//! Run with: `cargo test -p orbitkv-server --test p2p_mooncake -- --ignored`
+//! Run with: `cargo test -p orbitkv-server --lib cluster::tests::p2p_mooncake -- --ignored`
+//! Requires ETCD_BIN, CUDA, and a prebuilt Mooncake runtime.
 
 use std::ffi::c_void;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::etcd::{Etcd, join, view, wait_for};
+use crate::P2pTransferService;
+use crate::proto::engine::engine_server::EngineServer;
 use cudarc::driver::CudaContext;
 use cudarc::driver::sys;
-use orbitkv_catalog::{BlockHashStore, CatalogService, MembershipView, Placement};
+use orbitkv_catalog::GlobalIndex;
 use orbitkv_core::transfer::local::{LocalRestoreExecutor, LocalTensor, RawRestorePart};
 use orbitkv_core::*;
 use orbitkv_proto::proto::engine::{
     OpenTransferWindowRequest, QueryBlocksForTransferRequest, ReleaseTransferLockRequest,
-    TransferTicket, catalog_server::CatalogServer, engine_client::EngineClient,
+    TransferTicket, engine_client::EngineClient,
 };
-use orbitkv_server::P2pTransferService;
-use orbitkv_server::proto::engine::engine_server::EngineServer;
 use orbitkv_state::group_hash;
-use orbitkv_state::{BlockCandidates, CATALOG_SHARDS, StateKey, catalog_shard};
+use orbitkv_state::{BlockCandidates, StateKey};
 use tonic::transport::Server;
 
 // ── GPU buffer (from crates/orbitkv-core/tests/common/gpu_buffer.rs) ──────────────
@@ -193,39 +195,30 @@ async fn wait_for_grpc_ready(port: u16) {
 async fn spawn_engine_server(
     engine: Arc<OrbitKVEngine>,
     port: u16,
-    view: Arc<MembershipView>,
-) -> [Arc<BlockHashStore>; CATALOG_SHARDS] {
-    let stores = std::array::from_fn(|_| Arc::new(BlockHashStore::new()));
-    let catalog = CatalogService::new(stores.clone(), view);
+) -> tokio::sync::oneshot::Sender<()> {
     let service = P2pTransferService::new(engine);
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         Server::builder()
             .add_service(EngineServer::new(service))
-            .add_service(CatalogServer::new(catalog))
-            .serve(addr)
+            .serve_with_shutdown(addr, async {
+                let _ = stopped.await;
+            })
             .await
-            .expect("peer services");
+            .expect("peer service");
     });
     wait_for_grpc_ready(port).await;
-    stores
+    stop
 }
 
-fn locate(
-    stores: &[Arc<BlockHashStore>; CATALOG_SHARDS],
-    namespace: &str,
-    hashes: &[Vec<u8>],
-    exclude: &str,
-) -> Vec<BlockCandidates> {
-    hashes
-        .iter()
-        .map(|hash| {
-            let shard = catalog_shard(&StateKey::new(namespace.into(), hash.clone()));
-            stores[shard]
-                .locate_blocks(namespace, std::slice::from_ref(hash), exclude)
-                .remove(0)
-        })
-        .collect()
+fn locate(index: &GlobalIndex, namespace: &str, hashes: &[Vec<u8>]) -> Vec<BlockCandidates> {
+    index.lookup(
+        &hashes
+            .iter()
+            .map(|hash| StateKey::new(namespace.into(), hash.clone()))
+            .collect::<Vec<_>>(),
+    )
 }
 
 async fn wait_for_cache(
@@ -261,8 +254,8 @@ async fn wait_for_cache(
     }
 }
 
-async fn wait_for_catalog_registration(
-    store: &[Arc<BlockHashStore>; CATALOG_SHARDS],
+async fn wait_for_index_registration(
+    store: &GlobalIndex,
     namespace: &str,
     hashes: &[Vec<u8>],
     expected: usize,
@@ -270,7 +263,7 @@ async fn wait_for_catalog_registration(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        let found = locate(store, namespace, hashes, "");
+        let found = locate(store, namespace, hashes);
         let count = found
             .iter()
             .take_while(|row| !row.replicas.is_empty())
@@ -280,7 +273,7 @@ async fn wait_for_catalog_registration(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for Catalog registration ({} / {})",
+            "timed out waiting for global index registration ({} / {})",
             count,
             expected
         );
@@ -288,8 +281,8 @@ async fn wait_for_catalog_registration(
     }
 }
 
-async fn wait_for_catalog_ownership(
-    store: &[Arc<BlockHashStore>; CATALOG_SHARDS],
+async fn wait_for_index_ownership(
+    store: &GlobalIndex,
     namespace: &str,
     hashes: &[Vec<u8>],
     node: &str,
@@ -298,7 +291,7 @@ async fn wait_for_catalog_ownership(
 ) {
     let deadline = Instant::now() + timeout;
     loop {
-        let found = locate(store, namespace, hashes, "");
+        let found = locate(store, namespace, hashes);
         let owned = found
             .iter()
             .filter(|entry| entry.replicas.iter().any(|r| r.owner.endpoint == node))
@@ -308,7 +301,7 @@ async fn wait_for_catalog_ownership(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for Catalog ownership by {node} ({owned} / {expected})"
+            "timed out waiting for global index ownership by {node} ({owned} / {expected})"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -345,21 +338,23 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     orbitkv_common::logging::init_stdout_colored("debug");
     let _cuda_ctx = CudaContext::new(0).expect("CUDA init");
 
-    // Allocate ephemeral ports
+    let coordinator = Etcd::start(1).await;
+    let (_observer, stores, _) = join(
+        &coordinator,
+        "raw-gpu",
+        "observer",
+        view(get_free_port()),
+        60,
+    )
+    .await;
     let port_a = get_free_port();
-
-    // ── 2. Create Engine A (source of blocks) ──
-    let membership_a = Arc::new(MembershipView::new(
-        orbitkv_state::CacheOwner {
-            endpoint: format!("127.0.0.1:{port_a}"),
-            incarnation: uuid::Uuid::new_v4(),
-        },
-        Placement::new(vec!["a".into()]).unwrap(),
-    ));
-    membership_a.replace_members([("a".into(), membership_a.owner().clone())]);
-    assert!(membership_a.renew(Instant::now(), Duration::from_secs(300)));
+    let membership_a = view(port_a);
+    let (cluster_a, index_a, inventory_a) =
+        join(&coordinator, "raw-gpu", "a", membership_a.clone(), 60).await;
     let config_a = EngineConfig {
         membership: Some(membership_a.clone()),
+        global_index: Some(index_a),
+        inventory: Some(inventory_a),
         mooncake_nic_names: mooncake_nics(),
         transfer_budget_bytes: Some(TOTAL_SIZE),
         transfer_lock_timeout: Duration::ZERO,
@@ -370,7 +365,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     );
 
     // ── 3. Start Engine A gRPC server ──
-    let stores = spawn_engine_server(Arc::clone(&engine_a), port_a, membership_a.clone()).await;
+    let _source_server = spawn_engine_server(Arc::clone(&engine_a), port_a).await;
 
     // ── 4. Save blocks on Engine A ──
     let gpu_a = GpuBuffer::alloc(TOTAL_SIZE);
@@ -439,7 +434,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .flush_saves_and_inventory()
         .await
         .expect("publish inventory");
-    wait_for_catalog_registration(
+    wait_for_index_registration(
         &stores,
         &cache_namespace,
         &stored_hashes,
@@ -449,7 +444,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     .await;
 
     // Source authorization fences both restarts and individual residency episodes.
-    let evidence = locate(&stores, &cache_namespace, &stored_hashes, "requester");
+    let evidence = locate(&stores, &cache_namespace, &stored_hashes);
     let grant_blocks = orbitkv_state::DISCOVERY_MAX_KEYS;
     let mut peer = EngineClient::connect(format!("http://127.0.0.1:{port_a}"))
         .await
@@ -478,7 +473,6 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
             .map(|r| r.replicas[0].sequence)
             .collect(),
     };
-    assert!(membership_a.renew(Instant::now(), Duration::from_secs(300)));
     let mut stale_runtime = authorization.clone();
     stale_runtime.owner_incarnation = uuid::Uuid::new_v4().to_string();
     let mut stale_residency = authorization.clone();
@@ -578,22 +572,14 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // ── 7. Create Engine B (fetcher) ──
     let port_b = get_free_port();
-    let membership_b = Arc::new(MembershipView::new(
-        orbitkv_state::CacheOwner {
-            endpoint: format!("127.0.0.1:{port_b}"),
-            incarnation: uuid::Uuid::new_v4(),
-        },
-        Placement::new(vec!["a".into()]).unwrap(),
-    ));
-    let members = [
-        ("a".into(), membership_a.owner().clone()),
-        ("b".into(), membership_b.owner().clone()),
-    ];
-    membership_a.replace_members(members.clone());
-    membership_b.replace_members(members);
-    assert!(membership_b.renew(Instant::now(), Duration::from_secs(300)));
+    let membership_b = view(port_b);
+    let (cluster_b, index_b, inventory_b) =
+        join(&coordinator, "raw-gpu", "b", membership_b.clone(), 60).await;
+    wait_for(|| membership_b.permits(membership_a.owner())).await;
     let config_b = EngineConfig {
         membership: Some(membership_b.clone()),
+        global_index: Some(index_b),
+        inventory: Some(inventory_b),
         mooncake_nic_names: mooncake_nics(),
         ..EngineConfig::default()
     };
@@ -657,7 +643,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .await
         .expect("save delayed blocks on engine A");
 
-    wait_for_catalog_registration(
+    wait_for_index_registration(
         &stores,
         &cache_namespace,
         &stored_delayed,
@@ -676,14 +662,14 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         .create_query_lease("inst-b", result.blocks)
         .expect("lease");
 
-    // ── 9b. Verify Engine B re-registered fetched blocks to Catalog ──
+    // ── 9b. Verify Engine B re-registered fetched blocks to global index ──
     // Mooncake-fetched blocks are now resident on B, so B must advertise them so
     // other nodes can discover and fetch from B (not just from A).
     engine_b
         .flush_saves_and_inventory()
         .await
         .expect("restored inventory");
-    wait_for_catalog_ownership(
+    wait_for_index_ownership(
         &stores,
         &cache_namespace,
         &stored_delayed,
@@ -695,11 +681,12 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 
     // Eviction removes A's evidence while the copied replica on B remains usable.
     assert!(engine_a.cleanup_memory_cache().evicted_blocks > 0);
-    engine_a
+    let revision = engine_a
         .flush_saves_and_inventory()
         .await
         .expect("evicted inventory");
-    let remaining = locate(&stores, &cache_namespace, &stored_delayed, "");
+    wait_for(|| stores.revision().is_some_and(|r| r >= revision)).await;
+    let remaining = locate(&stores, &cache_namespace, &stored_delayed);
     assert_eq!(remaining.len(), NUM_BLOCKS);
     for entry in remaining {
         assert_eq!(
@@ -712,7 +699,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         );
     }
     assert!(
-        locate(&stores, NAMESPACE, &delayed_hashes, "")
+        locate(&stores, NAMESPACE, &delayed_hashes)
             .iter()
             .all(|row| row.replicas.is_empty())
     );
@@ -748,7 +735,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
     );
 
     // ── 10. Load from Engine B cache → GPU ──
-    let fresh = locate(&stores, &cache_namespace, &stored_hashes, "requester");
+    let fresh = locate(&stores, &cache_namespace, &stored_hashes);
     let fresh_authorization = QueryBlocksForTransferRequest {
         namespace: cache_namespace.clone(),
         block_hashes: stored_hashes[..grant_blocks].to_vec(),
@@ -835,6 +822,8 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
         loaded, host_data,
         "GPU data mismatch: remote-fetched blocks differ from original"
     );
+    cluster_b.shutdown().await;
+    cluster_a.shutdown().await;
 }
 
 #[tokio::test]
@@ -842,6 +831,7 @@ async fn p2p_mooncake_remote_fetch_roundtrip() {
 async fn encoded_peer_payloads_restore_the_same_gpu_image() {
     use orbitkv_state::{AttentionRole, Scalar16, StorageFormat};
     let _cuda = CudaContext::new(0).unwrap();
+    let coordinator = Etcd::start(1).await;
     for (index, codec) in [
         StorageCodec::Ans,
         StorageCodec::Fp8,
@@ -853,25 +843,16 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
     {
         let port_a = get_free_port();
         let port_b = get_free_port();
-        let make_view = |port| {
-            Arc::new(MembershipView::new(
-                orbitkv_state::CacheOwner {
-                    endpoint: format!("127.0.0.1:{port}"),
-                    incarnation: uuid::Uuid::new_v4(),
-                },
-                Placement::new(vec!["a".into()]).unwrap(),
-            ))
-        };
-        let view_a = make_view(port_a);
-        let view_b = make_view(port_b);
-        for view in [&view_a, &view_b] {
-            view.replace_members([
-                ("a".into(), view_a.owner().clone()),
-                ("b".into(), view_b.owner().clone()),
-            ]);
-            assert!(view.renew(Instant::now(), Duration::from_secs(120)));
-        }
-        let make_engine = |view, ssd_cache_config| {
+        let view_a = view(port_a);
+        let view_b = view(port_b);
+        let cluster_name = format!("encoded-gpu-{index}");
+        let (cluster_a, index_a, inventory_a) =
+            join(&coordinator, &cluster_name, "a", view_a.clone(), 60).await;
+        let (cluster_b, index_b, inventory_b) =
+            join(&coordinator, &cluster_name, "b", view_b.clone(), 60).await;
+        wait_for(|| view_b.permits(view_a.owner())).await;
+        let stores = index_b.clone();
+        let make_engine = |view, global_index, inventory, ssd_cache_config| {
             Arc::new(
                 OrbitKVEngine::new_with_config(
                     16 << 20,
@@ -880,6 +861,8 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                         codec,
                         ssd_cache_config,
                         membership: Some(view),
+                        global_index: Some(global_index),
+                        inventory: Some(inventory),
                         mooncake_nic_names: mooncake_nics(),
                         ..Default::default()
                     },
@@ -887,7 +870,7 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                 .unwrap(),
             )
         };
-        let source = make_engine(view_a.clone(), None);
+        let source = make_engine(view_a.clone(), index_a, inventory_a, None);
         let target_disk = tempfile::tempdir().unwrap();
         let read_path = if index % 2 == 0 {
             SsdReadPath::Uring
@@ -896,6 +879,8 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
         };
         let target = make_engine(
             view_b.clone(),
+            index_b,
+            inventory_b,
             Some(SsdCacheConfig {
                 cache_paths: vec![target_disk.path().join("peer-target.bin")],
                 capacity_bytes: 4 << 20,
@@ -904,8 +889,8 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
                 ..SsdCacheConfig::default()
             }),
         );
-        let stores = spawn_engine_server(source.clone(), port_a, view_a).await;
-        spawn_engine_server(target.clone(), port_b, view_b).await;
+        let _source_server = spawn_engine_server(source.clone(), port_a).await;
+        let _target_server = spawn_engine_server(target.clone(), port_b).await;
         let gpu_source = GpuBuffer::alloc(8192);
         let gpu_target = GpuBuffer::alloc(8192);
         gpu_source.copy_from_host(&[0xa0, 0x3f].repeat(4096));
@@ -962,7 +947,7 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
         wait_for_cache(&source, "source", &hashes, 1, Duration::from_secs(10)).await;
         source.flush_saves_and_inventory().await.unwrap();
         let namespace = source.instance_namespace("source").unwrap();
-        wait_for_catalog_registration(
+        wait_for_index_registration(
             &stores,
             &namespace,
             &[group_hash(&hashes[0], 0)],
@@ -1004,5 +989,7 @@ async fn encoded_peer_payloads_restore_the_same_gpu_image() {
         );
         source.unregister_instance_and_wait("source").await.unwrap();
         target.unregister_instance_and_wait("target").await.unwrap();
+        cluster_b.shutdown().await;
+        cluster_a.shutdown().await;
     }
 }

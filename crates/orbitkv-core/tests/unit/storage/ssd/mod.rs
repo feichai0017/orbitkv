@@ -267,11 +267,11 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
     ));
     let (store, _queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), false);
     let key = StateKey::new("queued-lease".into(), vec![0]);
-    let shard = orbitkv_state::catalog_shard(&key);
-    assert!(inventory.page(shard, None).unwrap().is_empty());
+
+    assert!(inventory.page(None).unwrap().is_empty());
 
     store.commit_write(&key, true);
-    let ssd = inventory.page(shard, None).unwrap();
+    let ssd = inventory.page(None).unwrap();
     assert_eq!(ssd.len(), 1);
     assert_eq!(
         ssd[0].metadata.unwrap().medium,
@@ -294,18 +294,12 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
         Arc::new(SealedBlock::for_policy_test(2048)),
     )]);
     assert_eq!(
-        inventory.page(shard, None).unwrap()[0]
-            .metadata
-            .unwrap()
-            .medium,
+        inventory.page(None).unwrap()[0].metadata.unwrap().medium,
         orbitkv_state::ReplicaMedium::Dram
     );
     dram.remove_all();
     assert_eq!(
-        inventory.page(shard, None).unwrap()[0]
-            .metadata
-            .unwrap()
-            .medium,
+        inventory.page(None).unwrap()[0].metadata.unwrap().medium,
         orbitkv_state::ReplicaMedium::Ssd
     );
 
@@ -329,20 +323,17 @@ fn ssd_evidence_appears_only_after_commit_and_survives_dram_eviction() {
     };
     assert_eq!(retired, [key]);
     store.retire_inventory(retired);
-    assert!(inventory.page(shard, None).unwrap().is_empty());
+    assert!(inventory.page(None).unwrap().is_empty());
 
     store.commit_write(&replacement, true);
-    let replacement_shard = orbitkv_state::catalog_shard(&replacement);
+
     assert_eq!(
-        inventory.page(replacement_shard, None).unwrap()[0]
-            .metadata
-            .unwrap()
-            .medium,
+        inventory.page(None).unwrap()[0].metadata.unwrap().medium,
         orbitkv_state::ReplicaMedium::Ssd
     );
     let entry = store.inner.lock().ring.get(&replacement).unwrap().clone();
     store.invalidate_encoded_entry(&replacement, &entry);
-    assert!(inventory.page(replacement_shard, None).unwrap().is_empty());
+    assert!(inventory.page(None).unwrap().is_empty());
 }
 
 #[test]
@@ -352,11 +343,7 @@ fn export_pins_exact_ssd_evidence_and_accounts_staging_allocations() {
     ));
     let (store, _queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), true);
     let key = StateKey::new("queued-lease".into(), vec![0]);
-    let record = inventory
-        .page(orbitkv_state::catalog_shard(&key), None)
-        .unwrap()
-        .pop()
-        .unwrap();
+    let record = inventory.page(None).unwrap().pop().unwrap();
     let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
     let leases = store
         .pin_residencies(std::slice::from_ref(&record))
@@ -375,13 +362,18 @@ fn export_pins_exact_ssd_evidence_and_accounts_staging_allocations() {
             stored_bytes: Some(SSD_ALIGNMENT as u64),
         }),
     );
+    let leases = store
+        .pin_residencies(std::slice::from_ref(&record))
+        .unwrap();
+    drop(leases);
+    inventory.change(&key, orbitkv_state::ReplicaMedium::Ssd, None);
     assert!(store.pin_residencies(&[record]).is_none());
     assert_eq!(readers.load(Ordering::Acquire), 0);
 }
 
 #[tokio::test]
 async fn cancelled_ssd_authorization_keeps_admission_with_queued_batch() {
-    use orbitkv_catalog::{MembershipView, Placement};
+    use orbitkv_catalog::MembershipView;
     use orbitkv_state::CacheOwner;
 
     let inventory = Arc::new(crate::storage::inventory::ResidencyInventory::new(
@@ -389,18 +381,13 @@ async fn cancelled_ssd_authorization_keeps_admission_with_queued_batch() {
     ));
     let (store, mut queued) = queued_read_store_with_inventory(Some(Arc::clone(&inventory)), true);
     let key = StateKey::new("queued-lease".into(), vec![0]);
-    let records = inventory
-        .page(orbitkv_state::catalog_shard(&key), None)
-        .unwrap();
+    let records = inventory.page(None).unwrap();
     let readers = Arc::clone(&store.inner.lock().ring.get(&key).unwrap().readers);
     let owner = CacheOwner {
         endpoint: "127.0.0.1:50055".into(),
         incarnation: uuid::Uuid::new_v4(),
     };
-    let membership = Arc::new(MembershipView::new(
-        owner.clone(),
-        Placement::new(vec!["source".into()]).unwrap(),
-    ));
+    let membership = Arc::new(MembershipView::new(owner.clone()));
     assert!(membership.renew(
         std::time::Instant::now(),
         std::time::Duration::from_secs(30)

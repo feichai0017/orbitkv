@@ -57,6 +57,7 @@ prometheus.workspace = true
 tikv-jemallocator.workspace = true
 fastrace = { workspace = true, features = ["enable"], optional = true }
 thiserror = "2"
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

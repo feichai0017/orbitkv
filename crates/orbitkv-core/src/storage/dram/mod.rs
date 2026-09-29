@@ -9,9 +9,8 @@ use std::{
 use hashlink::LruCache;
 use orbitkv_state::InventoryRecord;
 use parking_lot::Mutex;
-use tokio::sync::Notify;
 
-use crate::storage::inventory::{InventoryReadError, ResidencyInventory};
+use crate::storage::inventory::ResidencyInventory;
 
 use crate::block::{SealedBlock, StateKey};
 use crate::metrics::{
@@ -94,45 +93,6 @@ impl DramStore {
                 protected_limit,
             }),
         }
-    }
-
-    pub(crate) fn inventory_sequence(&self, shard: usize) -> u64 {
-        self.inventory().sequence(shard)
-    }
-
-    pub(crate) fn inventory_changed(&self, shard: usize) -> Arc<Notify> {
-        self.inventory().changed(shard)
-    }
-
-    pub(crate) fn inventory_page(
-        &self,
-        shard: usize,
-        after: Option<&StateKey>,
-    ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
-        self.inventory().page(shard, after)
-    }
-
-    pub(crate) fn inventory_changes(
-        &self,
-        shard: usize,
-        after: u64,
-        through: u64,
-    ) -> Result<Vec<InventoryRecord>, InventoryReadError> {
-        self.inventory().changes(shard, after, through)
-    }
-
-    pub(crate) fn inventory_covers(&self, shard: usize, after: u64) -> bool {
-        self.inventory().covers(shard, after)
-    }
-
-    fn inventory(&self) -> Arc<ResidencyInventory> {
-        Arc::clone(
-            self.inner
-                .lock()
-                .inventory
-                .as_ref()
-                .expect("inventory enabled"),
-        )
     }
 
     pub(crate) fn contains_keys(&self, keys: &[StateKey]) -> Vec<bool> {
@@ -228,7 +188,7 @@ impl DramStore {
         if records.is_empty()
             || !records
                 .iter()
-                .all(|record| inventory.contains_record(record))
+                .all(|record| inventory.contains_record(record, orbitkv_state::ReplicaMedium::Dram))
         {
             return None;
         }
@@ -347,19 +307,6 @@ impl DramStore {
             removed
         };
         record_residence_durations(removed, &*CACHE_RESIDENCE_REASON_CLEANUP)
-    }
-
-    pub(crate) fn mark_reclaimable_records(&self, records: &[InventoryRecord]) {
-        let mut inner = self.inner.lock();
-        for record in records {
-            if inner
-                .inventory
-                .as_ref()
-                .is_some_and(|inventory| inventory.contains_record(record))
-            {
-                mark_reclaimable(&mut inner, &record.key);
-            }
-        }
     }
 }
 
@@ -511,31 +458,6 @@ fn refresh_recency(inner: &mut DramStoreInner, key: &StateKey) {
         classified || !inner.cache.contains_key(key),
         "resident block is missing its replacement class"
     );
-}
-
-fn mark_reclaimable(inner: &mut DramStoreInner, key: &StateKey) -> bool {
-    if !inner.cache.contains_key(key) {
-        return false;
-    }
-    if move_resident(
-        inner,
-        key,
-        ResidentClass::Retained,
-        ResidentClass::Reclaimable,
-    ) || move_resident(
-        inner,
-        key,
-        ResidentClass::Probationary,
-        ResidentClass::Reclaimable,
-    ) {
-        true
-    } else {
-        debug_assert!(
-            inner.reclaimable.contains_key(key),
-            "resident block is missing its replacement class"
-        );
-        false
-    }
 }
 
 fn remove_lru(inner: &mut DramStoreInner, class: ResidentClass) -> Option<RemovedResident> {

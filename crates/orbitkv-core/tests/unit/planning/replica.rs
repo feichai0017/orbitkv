@@ -28,7 +28,7 @@ fn peer_evidence_is_bounded_by_runtime_identity_and_preserves_local_memory() {
     let mut replicas = ReplicaSet::new(StateKey::new("ns".into(), vec![1]));
     let block = Arc::new(SealedBlock::from_slots(Vec::new()));
     replicas.set_memory(Arc::downgrade(&block));
-    let peers: Vec<_> = (0..DISCOVERY_MAX_REPLICAS + 1)
+    let peers: Vec<_> = (0..DISCOVERY_MAX_REPLICAS_PER_MEDIUM + 1)
         .map(|i| ReplicaLocation {
             owner: CacheOwner {
                 endpoint: "same-address".into(),
@@ -45,14 +45,17 @@ fn peer_evidence_is_bounded_by_runtime_identity_and_preserves_local_memory() {
     replicas.set_peers(peers.clone());
     assert_eq!(
         replicas.peer(ReplicaMedium::Dram).count(),
-        DISCOVERY_MAX_REPLICAS
+        DISCOVERY_MAX_REPLICAS_PER_MEDIUM
     );
-    assert_eq!(replicas.replicas.len(), DISCOVERY_MAX_REPLICAS + 1);
+    assert_eq!(
+        replicas.replicas.len(),
+        DISCOVERY_MAX_REPLICAS_PER_MEDIUM + 1
+    );
     assert_eq!(Arc::strong_count(&block), 1);
     replicas.reject_peer(&peers[0].owner);
     assert_eq!(
         replicas.peer(ReplicaMedium::Dram).count(),
-        DISCOVERY_MAX_REPLICAS - 1
+        DISCOVERY_MAX_REPLICAS_PER_MEDIUM - 1
     );
     assert!(
         replicas

@@ -31,7 +31,7 @@ move the inference request to another worker or take over engine HBM allocation.
 ```mermaid
 flowchart TB
     E["Inference engine: demand and page lifetimes"] --> M["Local Cache Manager: recovery and cost decisions"]
-    M <--> C["Catalog shards inside Managers: replica evidence"]
+    M <--> C["Complete local global index: replica evidence"]
     M <-->|"Preparation, authorization and credits"| P["Peer Cache Manager"]
     M --> L["Local CUDA / io_uring / cuFile execution"]
     M --> T["Mooncake TE: peer payload movement"]
@@ -39,22 +39,22 @@ flowchart TB
 ```
 
 The cluster view is queryable across the cache deployment. Each Manager keeps
-its exact local inventory, its assigned catalog shards and bounded evidence
-for relevant peers and state domains. It does not synchronously mirror every
-block or queue in the cluster. Extend the existing [catalog design](distributed-cache.md)
-rather than introducing another central decision service.
+its exact local inventory and a complete index of advertised block locations,
+asynchronously synchronized through etcd. Resource-pressure summaries remain
+bounded evidence rather than replicated execution authority. Extend the existing
+[global-index design](distributed-cache.md) without another central decision service.
 
 | Planning evidence | Distribution and use | Authority at execution |
 | --- | --- | --- |
 | Membership, incarnation, capabilities and topology | Cached membership/configuration; etcd stays off per-read paths | Current owner incarnation and operation compatibility |
-| Key, residence, representation, bytes and generation | Ordered owner inventory into catalog shards; batched lookup and bounded hot subscriptions | Source validates and pins the selected residence |
+| Key, residence, representation, bytes and generation | Ordered owner inventory into etcd; fixed-revision snapshot/Watch into complete local indexes | Source validates and pins the selected residence |
 | Source preparation pressure and export/staging capacity | Bounded, timestamped summaries; optionally refresh only a shortlisted owner | Source admits or rejects against its current credits |
 | Transfer, decode and consumer-ready costs | Destination observations keyed by route, source/resource, representation and size; source supplies its own preparation evidence | Actual completion updates the estimates |
 
 Resource summaries need sequence, incarnation, age and uncertainty. A queue
 summary from another host is not a reservation or a synchronized clock reading.
-Expire derived estimates conservatively, bound discovery fan-out, and coalesce
-duplicate lookups. Incomplete catalog coverage remains unknown. Correctness
+Expire derived estimates conservatively and bound source probing. Incomplete
+index coverage remains unknown; ordinary block discovery performs only local reads. Correctness
 comes from source ownership and destination completion, independently of how
 fresh the planning hints are.
 
@@ -504,7 +504,7 @@ orbitkv-core/
   planning/         discovery -> batch replica evidence -> eligible source routes
   query/            admission, shared reads, materialization and query leases
   transfer/         GPU movement, staging, submission and completion/drain
-  peer/             catalog, source exports, remote READ and release recovery
+  peer/             local discovery, source exports, remote READ and release recovery
   codec/            representation validation and encoding/decoding
   cost/             observations, bounded estimates and shadow comparisons
 orbitkv-server/
@@ -524,8 +524,8 @@ The former `backing/` and `internode/` trees are removed. `peer/export.rs` is th
 authoritative source owner: it checks incarnation, membership, namespace and
 residency sequence, accounts pinned allocations and drains completion after
 fencing. `peer/transport.rs` holds the registered pinned pool until unregister.
-Server owns the inbound gRPC adapter; outbound catalog/requester clients remain
-with their Core peer workflows. The Mooncake crate remains the byte-transfer
+Server owns etcd publication/Watch and the inbound source gRPC adapter; outbound
+source-requester clients remain with their Core peer workflows. The Mooncake crate remains the byte-transfer
 boundary, including NIC and transport selection.
 
 These ownership changes preserve default source priority and the opt-in cost

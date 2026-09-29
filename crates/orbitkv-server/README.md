@@ -23,7 +23,7 @@ cargo run -r --bin orbitkv-cache-manager -- --pool-size 30gb
 
 Adjust the Python path if your venv uses a different minor version.
 
-For peer control, configure `--etcd-endpoints`, `--node-id`, matching `--catalog-nodes`, and a routable `--addr`. The embedded catalog shares the peer port.
+For peer control, configure `--etcd-endpoints`, `--node-id`, and a routable `--addr`. Background etcd publication and snapshot/Watch maintain a complete local global index; the peer port serves source grants and release.
 `--devices` selects CUDA device IDs; omitting it detects available devices
 automatically. Keep the Python extension and Cache Manager from
 the same build because the bootstrap protocol is versioned.

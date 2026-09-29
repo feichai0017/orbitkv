@@ -1,6 +1,6 @@
 """Same-host TP=1 serving qualification; not a physical two-host/RDMA benchmark.
 
-Trigger: peer transfer, catalog recovery, source ownership or adapter changes.
+Trigger: peer transfer, global-index recovery, source ownership or adapter changes.
 Requires ETCD_BIN, a prebuilt Manager, one GPU and the selected engine environment.
 """
 
@@ -83,8 +83,6 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                     endpoint,
                     "--node-id",
                     node,
-                    "--catalog-nodes",
-                    "consumer",
                     "--membership-ttl-secs",
                     "12",
                 ]
@@ -125,7 +123,6 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
                 )
             )
 
-        # Catalog must be reachable before the source completes registration.
         start("consumer")
         start("source")
         source, target = launches["source"], launches["consumer"]
@@ -143,21 +140,21 @@ def test_shared_cache_serving_and_restart(engine, request, tmp_path, monkeypatch
         expected = generate(source.base_url, engine, str(model), prompts[0], 8)["text"]
         drain(source.manager_url, target.manager_url)
 
-        # Restart the sole catalog host and its empty consumer cache. Source KV survives.
+        # Restart the consumer and rebuild its complete index from etcd. Source KV survives.
         engines["consumer"].close()
         managers["consumer"].close()
         start("consumer")
-        synchronize(source.manager_url)
+        synchronize(source.manager_url, target.manager_url)
         before = metrics(target.manager_url)
         recovered = generate(target.base_url, engine, str(model), prompts[0], 8)
         _, after = drain(source.manager_url, target.manager_url)
         row = verify_restore(before, after, expected, recovered)
-        report.append({"case": "catalog_restart", **row, "resources_drained": True})
+        report.append({"case": "index_restart", **row, "resources_drained": True})
 
         # Remove all consumer copies and restart the source with no payload.
         engines["consumer"].close()
         evict_host_cache(target.manager_url)
-        synchronize(target.manager_url)
+        synchronize(target.manager_url, source.manager_url)
         engines["source"].close()
         managers["source"].close()
         start("source", with_engine=False)

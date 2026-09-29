@@ -1,6 +1,6 @@
 """Real etcd + two Manager processes: embedded discovery and Mooncake GPU recovery.
 
-Gate for distributed startup, placement, catalog protocol and packaging changes.
+Gate for distributed startup, global-index synchronization and packaging changes.
 Requires ETCD_BIN, built native artifacts, CUDA and MC_FORCE_TCP=1 on one host.
 """
 
@@ -18,9 +18,7 @@ from tests.support.metrics import fetch_orbitkv_metrics
 pytestmark = [pytest.mark.integration, pytest.mark.gpu]
 
 
-def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
-    tmp_path, monkeypatch
-):
+def test_global_index_transfers_between_managers_and_preserves_local_hits(tmp_path, monkeypatch):
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required")
@@ -50,8 +48,6 @@ def test_embedded_catalog_transfers_between_managers_and_preserves_local_hits(
                     endpoint,
                     "--node-id",
                     node,
-                    "--catalog-nodes",
-                    "source,consumer",
                     "--membership-ttl-secs",
                     "12",
                 ),

@@ -259,7 +259,7 @@ impl ReadCoordinator {
     ) -> (Option<AttributionSource>, MaterializedBlocks) {
         #[cfg(feature = "mooncake")]
         if let Some(remote) = &self.remote_fetch {
-            remote.discover(&mut plan.rows).await;
+            remote.discover(&mut plan.rows);
         }
         #[cfg(feature = "mooncake")]
         let peer_available = self.remote_fetch.is_some();
@@ -308,7 +308,7 @@ impl ReadCoordinator {
             let started_at = Instant::now();
             while started_at.elapsed() < REMOTE_WAIT_TIMEOUT {
                 tokio::time::sleep(REMOTE_WAIT_POLL_INTERVAL).await;
-                remote.discover(&mut plan.rows).await;
+                remote.discover(&mut plan.rows);
                 if let Some(HostReadRoute::Peer(route)) =
                     plan.host_route(true, false, self.codec_budget)
                 {

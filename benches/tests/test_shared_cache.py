@@ -95,7 +95,7 @@ def test_forced_source_ssd_qualification_evicts_dram_and_checks_both_nodes(monke
     )
     monkeypatch.setattr("benches.shared_cache.generate", lambda *_: next(generated))
     syncs = []
-    monkeypatch.setattr("benches.shared_cache.synchronize", lambda url: syncs.append(url))
+    monkeypatch.setattr("benches.shared_cache.synchronize", lambda *urls: syncs.append(urls))
     cleanup = {"cleanup": {"evicted_blocks": 1, "still_referenced_blocks": 0}}
     monkeypatch.setattr("benches.shared_cache.evict_host_cache", lambda _: cleanup)
 
@@ -110,7 +110,7 @@ def test_forced_source_ssd_qualification_evicts_dram_and_checks_both_nodes(monke
         source_medium="ssd",
     )
 
-    assert syncs == ["http://source-manager", "http://source-manager"]
+    assert syncs == [("http://source-manager", "http://target-manager")] * 2
     assert result[0]["source_medium"] == "ssd"
     assert result[0]["source_preparation"] == cleanup
     assert result[0]["source_ssd_read_bytes"] == 4096

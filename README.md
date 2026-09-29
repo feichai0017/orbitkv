@@ -63,11 +63,11 @@ Multi-node cache sharing is experimental. Interfaces may change before 1.0.
   timelines, and reproduce the published latency and throughput measurements.
   Opt-in cost observations compare matching copy/SSD-route evidence in shadow,
   with resource identity and uncertainty checks before suggesting a change.
-- **Experimental shared cache.** Embedded catalog shards locate peer replicas,
-  Mooncake TENT moves bytes, and etcd tracks cluster membership.
+- **Experimental shared cache.** Complete local global indexes locate peer replicas;
+  etcd replicates locations and membership, and Mooncake TENT moves bytes.
   Source allocations remain budgeted through timeout; bounded completion records
   reconcile lost authorization replies and retry completion acknowledgements
-  using reusable windows and generation-fenced tickets. Both engines pass the
+  using reusable windows and generation-fenced tickets. Before the metadata cutover, both engines passed the
   recorded [H20/A100 TCP natural-text recovery and restart gates](docs/shared-cache-qualification.md#two-host-tcp-2026-09-28),
   with cross-GPU numerical and RDMA limits documented separately. Peer SSD reads use
   exact-generation, bounded source-side io_uring staging before the same
@@ -184,8 +184,9 @@ has one open SGLang ANS SSD latency gate. The route changes require their own
 Read the [architecture](docs/architecture.md),
 [hybrid recovery contract](docs/hybrid-recovery.md), and
 [distributed design](docs/distributed-cache.md). Cross-engine byte conversion,
-the etcd-backed local global-index replacement and KV-aware routing remain
-planned work. See the [selected metadata design](docs/distributed-cache.md#selected-target-local-global-index-and-etcd-metadata).
+and KV-aware routing remain planned work. The local global index and etcd
+metadata cutover are implemented; scale and multi-host failure qualification
+remain open. See the [metadata design](docs/distributed-cache.md#local-global-index-and-etcd-metadata).
 
 ## Performance
 

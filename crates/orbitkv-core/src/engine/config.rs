@@ -37,8 +37,8 @@ pub struct EngineConfig {
     pub transfer_budget_bytes: Option<usize>,
     /// Optional leased membership. Its incarnation also identifies this inventory.
     pub membership: Option<Arc<orbitkv_catalog::MembershipView>>,
-    /// Byte limit for retained residency changes used by directory synchronization.
-    pub inventory_journal_bytes: usize,
+    pub global_index: Option<Arc<orbitkv_catalog::GlobalIndex>>,
+    pub inventory: Option<Arc<crate::ResidencyInventory>>,
     /// Number of shards for the pinned memory pool (reduces allocator lock contention).
     pub pool_shards: usize,
 }
@@ -60,7 +60,8 @@ impl Default for EngineConfig {
             transfer_lock_timeout: Duration::from_secs(120),
             transfer_budget_bytes: None,
             membership: None,
-            inventory_journal_bytes: crate::storage::inventory::DEFAULT_INVENTORY_JOURNAL_BYTES,
+            global_index: None,
+            inventory: None,
             pool_shards: 1,
         }
     }

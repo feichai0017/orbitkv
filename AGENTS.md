@@ -25,7 +25,7 @@ orbitkv/
 │   ├── orbitkv-core/             # Storage owners, planning, costs and execution
 │   ├── orbitkv-proto/            # Protobuf and gRPC definitions
 │   ├── orbitkv-server/           # Cache Manager orchestration and protocol adapters
-│   ├── orbitkv-catalog/       # Embedded sharded replica directory
+│   ├── orbitkv-catalog/          # Complete local global index
 │   ├── orbitkv-mooncake-sys/     # Pinned native build and dynamic C ABI
 │   └── orbitkv-transfer/         # Mooncake transfer wrapper
 ├── python/                       # PyO3 package and framework adapters
@@ -51,7 +51,7 @@ orbitkv/
 | GPU storage codecs, CPU SIMD fallback and encoding metadata | `crates/orbitkv-core/src/codec/` |
 | gRPC protocol changes | `crates/orbitkv-proto/` |
 | Cache Manager cache operations and process endpoint | `crates/orbitkv-server/src/cache/`, `endpoint/` |
-| Cross-node metadata service | `crates/orbitkv-catalog/` |
+| Local global index | `crates/orbitkv-catalog/` |
 | etcd member registration, renewal and Watch | `crates/orbitkv-server/src/cluster/` |
 | Cached membership and remote admission | `crates/orbitkv-catalog/src/membership.rs` |
 | Mooncake remote transfer path | `crates/orbitkv-transfer/` |
@@ -78,13 +78,13 @@ orbitkv/
 - `crates/orbitkv-core/src/cost/`: bounded observations, estimates and shadow comparisons
 - `crates/orbitkv-core/src/planning/`: batch candidates/targets, SSD route eligibility/acquisition and peer source segmentation
 - `crates/orbitkv-core/src/query/`: byte admission, shared-read coordination, query leases and ownership handoff
-- `crates/orbitkv-core/src/peer/`: catalog discovery, authoritative source exports, remote READ and completion ownership
+- `crates/orbitkv-core/src/peer/`: local index discovery, authoritative source exports, remote READ and completion ownership
 - `crates/orbitkv-server/src/peer.rs`: peer transfer control service
 - `crates/orbitkv-server/src/cache/`: cache operations, lifecycle, and pending queries
 - `crates/orbitkv-server/src/endpoint/`: two-process iceoryx2 endpoint and authenticated UDS lifecycle channel
 - `crates/orbitkv-server/src/wire.rs`: protobuf-to-cache registration conversion
 - `crates/orbitkv-server/src/http_server.rs`: HTTP health and metrics
-- `crates/orbitkv-catalog/src/`: embedded catalog implementation
+- `crates/orbitkv-catalog/src/`: local global-index implementation
 - `crates/orbitkv-transfer/src/`: transfer engine implementation
 - `python/src/lib.rs`, `python/src/client.rs`: PyO3 module and cache client bindings
 - `python/orbitkv/vllm/scheduler.py`: vLLM scheduler-side connector
@@ -147,7 +147,7 @@ Notes:
 | Integration | Server/native/client/session lifecycle changes | `cd python && uv run --group test pytest -m integration` | Requires built native extension, server binary, and GPU where the test uses CUDA IPC. |
 | vLLM correctness E2E | Python test gates, vLLM connector, connector-visible cache semantics, save/load, query planning, or release-confidence changes | `cd python && ../.venv/vllm-release/bin/python -m pytest -m e2e tests/e2e/test_vllm_e2e_correctness.py --model /path/to/model --max-model-len 4096` | Use the vLLM `0.29.0` release environment described in `python/README.md`; reviewer reruns the gate on the GPU machine. |
 | SGLang direct GPU E2E | SGLang linker, CUDA IPC layout, or plugin changes | `cd python && ../.venv/sglang-release/bin/python -m pytest -m e2e tests/e2e/test_sglang_direct_e2e.py --model /path/to/model` | Checks actual GPU load bytes after SGLang process restart against a cold-control namespace. |
-| Shared-cache serving E2E | Peer transfers, catalog recovery, source ownership or shared-cache adapter changes | See `docs/shared-cache-qualification.md`; run `tests/e2e/test_shared_cache.py` separately in both engine environments | Requires etcd and a prebuilt Manager; one GPU, two TP=1 replicas, same-host TCP only. |
+| Shared-cache serving E2E | Peer transfers, index recovery, source ownership or shared-cache adapter changes | See `docs/shared-cache-qualification.md`; run `tests/e2e/test_shared_cache.py` separately in both engine environments | Requires etcd and a prebuilt Manager; one GPU, two TP=1 replicas, same-host TCP only. |
 | Stress | Warm-hit pressure, lease cleanup, scheduler/cache concurrency | `cd python && uv run --group test pytest -m stress tests/stress/test_vllm_warm_hit_stress.py --model /data/models/Qwen3-4B --max-model-len 2048` | Targeted single-GPU evidence, not default PR feedback. |
 | Release smoke | Published wheel/image, loader path, installed console script, CUDA runtime | See `python/tests/README.md` | Validates final installed artifact, not the source checkout. |
 
@@ -171,8 +171,9 @@ cargo run -r --bin orbitkv-cache-manager -- --addr 127.0.0.1:50055 --pool-size 3
 ### Distributed cache
 
 Run the same Manager with `--etcd-endpoints`, `--node-id`, and matching
-`--catalog-nodes` on every host. Catalog shards share its peer gRPC endpoint;
-there is no standalone directory binary. See `docs/p2p.md`.
+`--cluster-name` on every host. etcd stores locations and members; background
+snapshot/Watch maintains local global indexes. Peer gRPC serves source grants and
+release; there is no standalone directory binary. See `docs/p2p.md`.
 
 ## Code Style
 
