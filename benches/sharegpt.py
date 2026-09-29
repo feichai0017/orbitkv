@@ -3,8 +3,8 @@
 Benchmark vLLM server using ShareGPT dataset with multi-turn conversations.
 
 Usage:
-    python -m benches.sharegpt --model meta-llama/Llama-3.1-8B
-    python -m benches.sharegpt --model Qwen/Qwen2.5-7B --num-conversations 50
+    python -m benches.sharegpt --model meta-llama/Llama-3.1-8B --output-dir /var/tmp/sharegpt
+    python -m benches.sharegpt --model Qwen/Qwen2.5-7B --num-conversations 50 --output-dir /var/tmp/sharegpt
 """
 
 import argparse
@@ -13,6 +13,8 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+
+from .artifacts import external_path
 
 # Default ShareGPT dataset URL
 DEFAULT_DATASET_URL = "https://huggingface.co/datasets/philschmid/sharegpt-raw/resolve/main/sharegpt_20230401_clean_lang_split.json"
@@ -255,9 +257,9 @@ def main():
     )
     parser.add_argument(
         "--output-dir",
-        type=str,
-        default="benches/results/runs",
-        help="Directory to save benchmark results (default: benches/results/runs)",
+        type=external_path,
+        required=True,
+        help="Result and dataset directory outside the source checkout",
     )
 
     args = parser.parse_args()

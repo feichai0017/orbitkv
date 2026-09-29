@@ -356,7 +356,7 @@ CUFILE_ALLOW_COMPAT_MODE=true CUFILE_FORCE_COMPAT_MODE=true \
   tests/e2e/test_vllm_e2e_correctness.py --model /workspace/models/qwen3-8b \
   --vllm-cache-tier ssd --ssd-backend cufile \
   --max-model-len 4096 --orbitkv-pool-size 1gb \
-  --basetemp=/workspace/orbitkv/benches/results/runs/cufile-vllm
+  --basetemp=/var/tmp/orbitkv-bench/cufile-vllm
 
 ORBITKV_CACHE_MANAGER_BINARY=../target/release/orbitkv-cache-manager-py \
 LD_PRELOAD=/usr/local/cuda/lib64/libcufile.so.0 \
@@ -364,7 +364,7 @@ CUFILE_ALLOW_COMPAT_MODE=true CUFILE_FORCE_COMPAT_MODE=true \
 ../.venv/sglang-release/bin/python -m pytest -m e2e \
   tests/e2e/test_sglang_direct_e2e.py -k ssd --model /workspace/models/qwen3-8b \
   --ssd-backend cufile \
-  --basetemp=/workspace/orbitkv/benches/results/runs/cufile-sglang
+  --basetemp=/var/tmp/orbitkv-bench/cufile-sglang
 ```
 
 Use a separate `--basetemp` for each run and run GPU gates sequentially. Change

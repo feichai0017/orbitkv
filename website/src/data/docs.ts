@@ -53,6 +53,7 @@ export const docGroups = [
       { slug: "metrics", title: "Metrics & observability" },
       { slug: "fault-qualification", title: "Single-node fault gates" },
       { slug: "client-performance", title: "Client control overhead" },
+      { slug: "benchmark-evidence", title: "Benchmark evidence & archives" },
       { slug: "communication-performance", title: "Communication measurements" },
       { slug: "single-node-performance", title: "Single-node comparisons" },
       { slug: "ssd-performance", title: "SSD recovery & capacity pressure" },

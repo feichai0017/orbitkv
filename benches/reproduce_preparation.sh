@@ -3,12 +3,17 @@
 set -euo pipefail
 
 export ORBITKV_CACHE_MANAGER_BINARY="${ORBITKV_CACHE_MANAGER_BINARY:-$PWD/python/orbitkv/orbitkv-cache-manager-py}"
-trial_root="${1:-benches/results/runs/20260922-preparation}"
+trial_root="${1:?provide an external output root, e.g. /var/tmp/orbitkv-bench/preparation}"
+trial_root="$(realpath -m -- "$trial_root")"
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+case "$trial_root/" in
+  "$repo_dir/"*) echo "output root must be outside the source checkout" >&2; exit 2 ;;
+esac
 
 for engine in vllm sglang; do
-  export TORCHINDUCTOR_CACHE_DIR="$PWD/benches/results/runs/preparation-compiler-cache/$engine/inductor"
-  export TRITON_CACHE_DIR="$PWD/benches/results/runs/preparation-compiler-cache/$engine/triton"
-  export VLLM_CACHE_ROOT="$PWD/benches/results/runs/preparation-compiler-cache/$engine/vllm"
+  export TORCHINDUCTOR_CACHE_DIR="${trial_root}-compiler-cache/$engine/inductor"
+  export TRITON_CACHE_DIR="${trial_root}-compiler-cache/$engine/triton"
+  export VLLM_CACHE_ROOT="${trial_root}-compiler-cache/$engine/vllm"
   command=(".venv/$engine-release/bin/python" -m benches.single_node
     --engine "$engine" --backend orbitkv --model /workspace/models/qwen3-8b
     --workload sustained --lengths 1024 4096 --concurrencies 4
@@ -36,9 +41,9 @@ done
 
 # Dedicated DRAM-only tier controls; the larger host pool is recorded explicitly.
 for engine in vllm sglang; do
-  export TORCHINDUCTOR_CACHE_DIR="$PWD/benches/results/runs/preparation-compiler-cache/$engine/inductor"
-  export TRITON_CACHE_DIR="$PWD/benches/results/runs/preparation-compiler-cache/$engine/triton"
-  export VLLM_CACHE_ROOT="$PWD/benches/results/runs/preparation-compiler-cache/$engine/vllm"
+  export TORCHINDUCTOR_CACHE_DIR="${trial_root}-compiler-cache/$engine/inductor"
+  export TRITON_CACHE_DIR="${trial_root}-compiler-cache/$engine/triton"
+  export VLLM_CACHE_ROOT="${trial_root}-compiler-cache/$engine/vllm"
   ".venv/$engine-release/bin/python" -m benches.single_node \
     --engine "$engine" --backend orbitkv --model /workspace/models/qwen3-8b \
     --workload concurrent --lengths 1024 4096 --concurrencies 1 4 --repeats 3 \

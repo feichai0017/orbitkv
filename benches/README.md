@@ -1,7 +1,7 @@
 # OrbitKV benchmarks
 
-Run performance experiments from the repository root. Benchmark code, harness
-tests, curated measurements, and local raw runs all live here. Runtime Python
+Run performance experiments from the repository root. Benchmark programs, reusable workloads and harness
+tests live here. Generated measurements and reports belong outside the checkout. Runtime Python
 code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 
 ## Layout
@@ -10,7 +10,6 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | --- | --- |
 | `client.py` | Admitted-query polling overhead with a held byte budget; no storage or model compute in the timed loop |
 | `communication.py` | Real Query miss/hit, Publish D2H, Restore submit-to-ready and empty-restore controls using matching external artifacts |
-| `catalog.rs` | Rust directory cleanup microbenchmark, run through Cargo |
 | `cpu_codec.rs` | Production scalar/AVX2/AVX-512/auto CPU FP8 conversion with an independent oracle before timing |
 | `cost_observations.py` | Same-binary off/on observation overhead, three reversed-order pairs on both engines |
 | `single_node.py` | Fixed-capacity cold, HBM-hit, and post-pressure experiment |
@@ -26,8 +25,8 @@ code belongs in `python/orbitkv/`; correctness gates belong in `python/tests/`.
 | `serving.sh` | vLLM serving measurements against an already running endpoint |
 | `sharegpt.py` | Multi-turn workload using the pinned vLLM benchmark scripts |
 | `tests/` | CPU-only checks for measurement and report correctness |
-| `results/` | Maintained final reports; new output is ignored by default |
-| `results/runs/` | Ignored raw runs: manifests, responses, counters, logs, and failures |
+| `artifacts.py` | Validate external output locations, including symlink resolution |
+| `reproduce_preparation.sh` | Repeated preparation controls with an explicit external output root |
 
 ## CPU codec benchmark
 
@@ -84,14 +83,18 @@ not OrbitKV package dependencies.
 
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \
-  --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b
+  --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
+  --output /var/tmp/orbitkv-bench/vllm-dram
 
 .venv/sglang-release/bin/python -m benches.single_node \
-  --engine sglang --backend orbitkv --model /workspace/models/qwen3-8b
+  --engine sglang --backend orbitkv --model /workspace/models/qwen3-8b \
+  --output /var/tmp/orbitkv-bench/sglang-dram
 ```
 
-By default, each run gets a new timestamped directory below `results/runs/`.
-Use `--output benches/results/runs/<name>` for an explicit empty directory. The
+Choose an explicit empty directory with `--output /var/tmp/orbitkv-bench/<name>`.
+The harness rejects output inside this checkout, including symlinks back into it.
+See [benchmark evidence](../docs/benchmark-evidence.md) for historical archives,
+hashes, retention and CI artifact handling. The
 harness owns the engine and the OrbitKV/LMCache process; do not start other GPU
 workloads during measurement. An OrbitKV source run uses the staged Cache Manager
 binary in `python/orbitkv/` and the Python adapters from this checkout.
@@ -169,7 +172,7 @@ Linux process I/O accounting is not a measurement of GPU DMA bytes.
 ```bash
 .venv/vllm-release/bin/python -m benches.single_node \
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
-  --ssd-gib 32 --output benches/results/runs/qwen3-8b-ssd-vllm
+  --ssd-gib 32 --output /var/tmp/orbitkv-bench/qwen3-8b-ssd-vllm
 ```
 
 For an independent read-path control, keep cuFile initialized and direct GPU
@@ -180,7 +183,7 @@ writes enabled while restoring through io_uring host staging:
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
   --ssd-gib 16 --host-gib 1 --gpu-tokens 8192 --prefill-tokens 4096 \
   --lengths 1024 4096 --ssd-backend cufile --ssd-read-path uring \
-  --output benches/results/runs/vllm-cufile-uring-reads
+  --output /var/tmp/orbitkv-bench/vllm-cufile-uring-reads
 ```
 
 Use the SGLang environment and `--engine sglang` for its matching control.
@@ -377,7 +380,7 @@ Additional DRAM-only runs record their larger host capacity explicitly.
   --workload sustained --concurrencies 1 4 8 --duration-seconds 60 \
   --working-set 12 --reuse-ratio 0.75 --max-requests 10000 \
   --host-gib 4 --ssd-gib 16 --query-budget-gib 2 \
-  --output benches/results/runs/sustained-vllm-ssd
+  --output /var/tmp/orbitkv-bench/sustained-vllm-ssd
 ```
 
 Use the SGLang environment and `--engine sglang` for its gate. For DRAM coverage,
@@ -443,7 +446,7 @@ token reports alone do not distinguish HBM, DRAM, and SSD in these summaries.
   --engine sglang --backend orbitkv --model /workspace/models/qwen3-8b \
   --workload concurrent --concurrencies 1 4 8 --repeats 3 \
   --ssd-gib 32 --query-budget-gib 2 \
-  --output benches/results/runs/query-budgets-sglang
+  --output /var/tmp/orbitkv-bench/query-budgets-sglang
 ```
 
 Run vLLM with its release environment and `--engine vllm`. The query budget can
@@ -484,10 +487,10 @@ process clocks is used, and overlapping intervals must not be added to obtain TT
 
 ```bash
 python -m benches.report \
-  benches/results/runs/<cpu-run> benches/results/runs/<orbitkv-run> \
-  benches/results/runs/<lmcache-run> \
-  --reference-run benches/results/runs/<native-run> \
-  --output benches/results/runs/<report-name>
+  /var/tmp/orbitkv-bench/<cpu-run> /var/tmp/orbitkv-bench/<orbitkv-run> \
+  /var/tmp/orbitkv-bench/<lmcache-run> \
+  --reference-run /var/tmp/orbitkv-bench/<native-run> \
+  --output /var/tmp/orbitkv-bench/<report-name>
 ```
 
 This needs only `requests`, not torch, either inference engine, or the native
@@ -502,17 +505,19 @@ a replacement for deterministic correctness gates. Native HBM-only runs record
 zero configured host-cache bytes, while CPU/OrbitKV/LMCache runs record their
 configured host pools. Manifests also retain the launch CPU affinity.
 Copy reviewed exports into `results/` when publishing a measurement;
-keep raw logs and dataset downloads in the ignored `results/runs/` directory.
+pass `--output-dir /var/tmp/orbitkv-bench/sharegpt` to keep logs and dataset downloads outside the checkout.
 
 ## Additional workloads and harness checks
 
 ```bash
-BASE_URL=http://127.0.0.1:8000 MODEL=/path/to/model LABEL=orbitkv \
+RESULT_DIR=/var/tmp/orbitkv-bench/serving-001 \
+  BASE_URL=http://127.0.0.1:8000 MODEL=/path/to/model LABEL=orbitkv \
   bash benches/serving.sh
 
 git submodule update --init third-party/vllm
 .venv/vllm-release/bin/python -m benches.sharegpt \
-  --model /path/to/model --dataset-path /path/to/sharegpt.json
+  --model /path/to/model --dataset-path /path/to/sharegpt.json \
+  --output-dir /var/tmp/orbitkv-bench/sharegpt
 
 uv run --isolated --no-project --with pytest --with numpy --with requests pytest benches/tests
 ```
@@ -522,23 +527,18 @@ The ShareGPT workload requires the dependencies listed by the pinned vLLM
 own workload definitions; do not combine their numbers with the fixed-capacity
 single-node comparison.
 
-## Catalog cleanup
+## Rust microbenchmarks
 
-```bash
-cargo bench -p orbitkv-catalog --bench unregister_node
-```
-
-This benchmark registers one million keys, then removes an owner of 10,000.
-Inventory population and destruction of the remaining directory are outside
-the timed section. It measures owner-index cleanup, not remote discovery or
-end-to-end serving latency. Criterion writes local raw output to
-`target/criterion/`; copy reviewed reports into `benches/results/`.
+Set `CARGO_TARGET_DIR=/var/tmp/orbitkv-bench/cargo` before running a Criterion
+benchmark so its generated reports stay outside the checkout. The old Catalog
+cleanup benchmark was removed with the directory RPC implementation; metadata
+capacity and recovery are qualified through completion stage S2.
 
 ## Native client polling
 
 ```bash
 PYTHONPATH=python .venv/sglang-release/bin/python -m benches.client \
-  --label rust-client --output benches/results/runs/client-poll
+  --label rust-client --output /var/tmp/orbitkv-bench/client-poll
 ```
 
 Requires built source artifacts in `target/release`, the native extension, and
@@ -570,14 +570,14 @@ builds native artifacts. `ORBITKV_CACHE_MANAGER_BINARY` can replace `--manager`.
 PYTHONPATH=/artifacts/baseline/python /path/to/cuda-python/bin/python \
   -m benches.communication \
   --manager /artifacts/baseline/orbitkv-cache-manager \
-  --label baseline --output benches/results/runs/communication-baseline \
+  --label baseline --output /var/tmp/orbitkv-bench/communication-baseline \
   --iterations 100 --warmup 20 --repeats 3 \
   --payload-bytes 4096 262144 4194304 --idle-ms 0 1
 
 PYTHONPATH=/artifacts/candidate/python /path/to/cuda-python/bin/python \
   -m benches.communication \
   --manager /artifacts/candidate/orbitkv-cache-manager \
-  --label candidate --output benches/results/runs/communication-candidate \
+  --label candidate --output /var/tmp/orbitkv-bench/communication-candidate \
   --iterations 100 --warmup 20 --repeats 3 \
   --payload-bytes 4096 262144 4194304 --idle-ms 0 1
 ```
@@ -653,7 +653,7 @@ export ORBITKV_NVCOMP_LIBRARY=/path/to/libnvcomp.so.5
   --model /path/to/qwen3-8b \
   --manager /absolute/path/to/prebuilt/orbitkv-cache-manager \
   --ssd-dir /path/to/ssd-test-directory \
-  --output benches/results/runs/cost-observations
+  --output /var/tmp/orbitkv-bench/cost-observations
 ```
 
 Predeclared budgets are 3% throughput loss, 3% TTFT p50 growth and 5% TTFT
@@ -696,7 +696,7 @@ observation comparison continues to reject mismatched backends.
   --model /path/to/qwen3-8b \
   --manager /absolute/path/to/prebuilt/orbitkv-cache-manager \
   --ssd-dir /path/to/existing-test-directory \
-  --output benches/results/runs/transfer-backends
+  --output /var/tmp/orbitkv-bench/transfer-backends
 ```
 
 This produces 12 sessions: three direct/kernel pairs per engine, reversing the

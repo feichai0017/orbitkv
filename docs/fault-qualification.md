@@ -175,7 +175,7 @@ ORBITKV_FAULT_TESTS=1 ORBITKV_PREPARE_REQUESTS=1 \
 ORBITKV_CACHE_MANAGER_BINARY=/absolute/path/to/test-hooks-manager \
 ../.venv/vllm-release/bin/python -m pytest -m stress \
   tests/stress/test_recovery_faults.py -k vllm --model /workspace/models/qwen3-8b \
-  --basetemp=/workspace/orbitkv/benches/results/runs/serving-fault-vllm
+  --basetemp=/var/tmp/orbitkv-bench/serving-fault-vllm
 ```
 
 Use the SGLang interpreter and `-k sglang` for its gate. Set

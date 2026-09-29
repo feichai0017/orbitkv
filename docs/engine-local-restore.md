@@ -352,7 +352,7 @@ The no-op composition tests metadata routing and recurrent initialization; it
 is not a P/D transfer qualification.
 
 Raw logs and the source/binary manifest are under
-`benches/results/runs/layered-restore-20260929/`. Reproduction switches are in
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/layered-restore-20260929/`. Reproduction switches are in
 [the Python test guide](../python/tests/README.md). These gates establish
 correctness and native copy/compute overlap. The separate
 [30-cohort serving matrix](communication-performance.md#repeated-serving-comparison-after-layer-readiness)

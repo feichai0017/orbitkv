@@ -1,5 +1,8 @@
 # Preparing queued requests
 
+For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md) retains full tables and historical run details.
+
 vLLM 0.29.0 and SGLang 0.5.20 can announce an exact missing prefix when a
 request enters their ordinary serving queue. OrbitKV uses that interval to
 prepare DRAM pages from SSD or a peer. This is the first P3 implementation;
@@ -86,14 +89,7 @@ Set `ORBITKV_TRACE_TRANSFERS=1` for both Manager and engine. Their logs emit
 `cache_timeline` JSON records containing request IDs, process IDs, stage and
 timestamps, without tokens or cache keys:
 
-| Stage | Observation |
-| --- | --- |
-| `queued` | Request accepted by the engine queue |
-| `read_start` | Manager begins the admitted preparation operation |
-| `source_ready` | Manager preparation returns; includes hit count, warmup flag and local elapsed microseconds |
-| `restore_submit` | Adapter submits H2D for engine-owned destinations |
-| `gpu_ready` | Adapter observes successful transfer completion |
-| `first_use` | vLLM schedules the first compute step; SGLang passes the first-layer wait for a restored batch |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md)
 
 `first_use` is an engine callback observation, not a CUDA kernel timestamp.
 SGLang records it for restored requests; cold/HBM-only requests have no external
@@ -115,14 +111,7 @@ joining a demand-started read or hitting existing DRAM does not create warmup
 bytes. Joining a warmup-started read does not count them again. Rereading an
 evicted key creates a new cohort.
 
-| Metric | Meaning |
-| --- | --- |
-| `orbitkv_warmup_prepared_bytes_total` | Page footprints returned by warmup-started backing reads |
-| `orbitkv_warmup_restored_bytes_total` | Those footprints contributing to at least one successfully completed local H2D, once per physical page |
-| `orbitkv_warmup_unused_bytes_total` | Those footprints released by the last owner before any successful local H2D |
-| `orbitkv_warmup_pending_bytes` | Live footprints still awaiting a successful local H2D; includes cache, query and transfer owners |
-| `orbitkv_warmup_wait_byte_seconds_total{outcome="restored\|unused"}` | Footprint times time from host readiness to first successful H2D or final unused release |
-| `orbitkv_warmup_foreground_skips_total` | Hints rejected while foreground query ownership is active |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/queued-warming.md)
 
 At quiescence, prepared bytes equal restored + unused + pending bytes. Query
 success, lease creation and cancellation do not resolve a pending page. The
@@ -191,8 +180,8 @@ gates remain separate correctness evidence.
 The summaries, complete window counters, native output control and its
 reproduction script remain in the
 [historical dataset snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
-Raw samples and logs remain under `benches/results/runs/queued-warming-*` on the
-measurement host. Initial SGLang logs repeat the first-layer wait callback;
+The earlier raw samples use `historical run label: queued-warming-*`; those
+ignored logs were absent at the S1 migration. Initial SGLang logs repeat the first-layer wait callback;
 the collector pairs each enqueue with its first callback, and the adapter now
 emits `first_use` once per restored batch.
 
@@ -206,7 +195,7 @@ Reproduce an experimental window from the repository root:
   --lengths 4096 --gpu-tokens 8192 --output-tokens 16 \
   --host-gib 4 --query-budget-gib 3 --ssd-gib 16 \
   --queue-warmup on --trace-transfers \
-  --output benches/results/runs/queued-warming-vllm-on
+  --output /var/tmp/orbitkv-bench/queued-warming-vllm-on
 ```
 
 Use a fresh output directory for each run; switch `on` to `off` for the control.
@@ -267,8 +256,8 @@ this implementation.
 The [historical accounting dataset](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results)
 retains final summaries, complete window counters and the recorded native
 output comparison.
-Raw samples, prefixes and logs remain under
-`benches/results/runs/warmup-accounting-*` on the measurement host. Use the
+Earlier raw samples use `historical run label: warmup-accounting-*`; those
+ignored logs were absent at the S1 migration. Use the
 reproduction command above with a fresh output directory and this source revision.
 
 ## Reference implementations and policy order

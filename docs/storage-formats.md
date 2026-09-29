@@ -215,10 +215,7 @@ use **io_uring**, isolating codec improvements from GDS backend selection.
 Throughput uses actual time to complete all 64 requests and excludes model
 startup and prefix preparation.
 
-| Engine | Output token/s, before → after | TTFT p50 ms, before → after | TTFT p95 ms, before → after |
-| --- | ---: | ---: | ---: |
-| vLLM | 32.57 → 60.98 | 1,290.8 → 611.0 | 3,665.9 → 1,936.0 |
-| SGLang | 24.26 → 60.65 | 2,661.8 → 1,022.3 | 3,484.3 → 1,418.8 |
+[Historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
 
 During the measured window, vLLM batches 142,920 codec segments into 620 batches;
 SGLang batches 271,872 into 1,136. They record two and one workspace allocations,
@@ -239,18 +236,7 @@ io_uring payload reads during the window, including repeated reads; it is not
 cache size. Different representations change residency, misses and recomputation
 as well as transfer cost.
 
-| Engine | Codec | Output token/s | TTFT p50 ms | TTFT p95 ms | SSD read GiB | Text differences vs `none` |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| vLLM | none | 52.83 | 1,291.7 | 1,994.3 | 18.95 | 0/64 |
-| vLLM | ans | 60.98 | 611.0 | 1,936.0 | 18.32 | 0/64 |
-| vLLM | fp8 | 65.06 | 529.0 | 1,808.2 | 11.25 | 4/64 |
-| vLLM | turboquant-4 | 67.95 | 463.6 | 1,775.6 | 7.35 | 0/64 |
-| vLLM | turboquant-3 | 67.96 | 882.6 | 1,333.9 | 5.67 | 9/64 |
-| SGLang | none | 50.38 | 1,202.3 | 1,747.4 | 17.75 | 0/64 |
-| SGLang | ans | 60.65 | 1,022.3 | 1,418.8 | 16.96 | 0/64 |
-| SGLang | fp8 | 61.92 | 1,001.4 | 1,400.7 | 11.90 | 0/64 |
-| SGLang | turboquant-4 | 62.49 | 969.5 | 1,389.1 | 7.23 | 6/64 |
-| SGLang | turboquant-3 | 62.90 | 964.3 | 1,389.8 | 5.43 | 24/64 |
+[Historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
 
 ANS improves throughput over unencoded SSD storage by about 15% on vLLM and
 20% on SGLang in this cohort. Moving from 4-bit to 3-bit reduces reads further,
@@ -267,12 +253,7 @@ approximately 15.19 GiB of distinct logical KV after cold traffic. Compression
 therefore still changes eviction and residency. Every generated text matches
 the corresponding `none` control.
 
-| Engine | Codec | Output token/s | TTFT p50 ms | TTFT p95 ms |
-| --- | --- | ---: | ---: | ---: |
-| vLLM | none | 55.65 | 849.3 | 1,719.5 |
-| vLLM | ans | 61.16 | 953.1 | 1,715.1 |
-| SGLang | none | 54.32 | 886.1 | 1,731.0 |
-| SGLang | ans | 56.52 | 1,036.4 | 1,750.0 |
+[Historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/storage-formats.md)
 
 ANS improves throughput by about 10% and 4%, respectively, while median TTFT
 increases by about 12% and 17%. This is a workload-dependent capacity/latency

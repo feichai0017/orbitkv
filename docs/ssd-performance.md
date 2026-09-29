@@ -1,5 +1,8 @@
 # Single-node offload under SSD pressure
 
+For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/ssd-performance.md) retains full tables and historical run details.
+
 The September 23, 2026 Qwen3-8B experiment keeps DRAM and SSD enabled together
 and uses a working set larger than their in-memory capacity. It measures
 request latency, transfer stages, bytes and cleanup under natural eviction.
@@ -25,10 +28,10 @@ and transfer tracing is on. Throughput includes the admitted-request tail but
 excludes initialization, reference preparation and the later resource-drain
 check. It is not an arrival-rate SLO experiment.
 
-The [final CSV](../benches/results/20260923-offload/summary.csv) and
-[reproduction instructions](../benches/results/20260923-offload/README.md)
+The [final CSV](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-offload/summary.csv) and
+[reproduction instructions](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-offload/README.md)
 identify revisions, configuration and counters. Raw samples, manifests,
-process-local timelines and service logs stay in ignored `benches/results/runs/`.
+process-local timelines and service logs stay in external artifact directories.
 The baseline uses vLLM 0.29.0 and SGLang 0.5.20 with the same engine releases
 and model for every candidate run.
 
@@ -62,16 +65,7 @@ held page and compares its exact GPU bytes.
 
 Milliseconds for TTFT; generated tokens per second for throughput.
 
-| Engine | Configuration | Requests | TTFT P50 | P95 | P99 | Output tokens/s |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| vllm | Before, 8K | 227 | 1,145.45 | 3,133.77 | 4,014.06 | 59.35 |
-| vllm | Queue/fence control, 8K | 223 | 1,181.32 | 3,233.63 | 4,018.17 | 58.23 |
-| vllm | Current, 8K | 232 | 1,178.52 | 3,157.50 | 3,650.18 | 59.39 |
-| vllm | Current, 4K | 216 | 1,195.28 | 2,674.29 | 3,666.07 | 56.71 |
-| sglang | Before, 8K | 226 | 1,240.44 | 3,432.28 | 4,568.53 | 59.01 |
-| sglang | Queue/fence control, 8K | 224 | 1,487.66 | 3,339.70 | 3,902.59 | 58.18 |
-| sglang | Current, 8K | 226 | 1,615.55 | 3,591.38 | 4,773.39 | 57.83 |
-| sglang | Current, 4K | 217 | 1,450.97 | 3,623.50 | 4,145.95 | 55.44 |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/ssd-performance.md)
 
 At the unchanged 8K prefill limit, vLLM throughput is essentially flat
 (59.35 → 59.39); SGLang is 2.0% lower (59.01 → 57.83). SGLang P95 is

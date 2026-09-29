@@ -1,9 +1,0 @@
-engine,case,input_tokens,source_ttft_ms,ttft_ms,e2e_ms,remote_bytes,h2d_bytes,discovery_rpcs,discovery_rpc_ms,authorization_ms,allocation_ms,read_ms,rebuild_ms,release_calls,release_ms,output_match,resources_drained
-vllm,remote_restore,513,112.166,113.441,295.679,75497472,75497472,3,1.252,1.055,0.072,35.305,0.075,3,0.426,True,True
-vllm,remote_restore,1025,146.113,136.158,319.294,150994944,150994944,6,1.740,1.143,0.107,69.654,0.119,6,0.897,True,True
-vllm,catalog_restart,513,,117.360,297.420,75497472,75497472,3,1.231,1.185,0.066,35.270,0.067,3,0.607,True,True
-vllm,source_restart_miss,513,,114.165,,0,0,,,,,,,,,True,True
-sglang,remote_restore,513,115.840,157.676,234.191,75497472,75497472,3,1.558,1.345,0.101,72.254,0.124,3,0.732,True,True
-sglang,remote_restore,1025,146.264,122.087,200.825,150994944,150994944,6,1.888,1.363,0.197,62.490,0.204,6,0.920,True,True
-sglang,catalog_restart,513,,159.030,235.668,75497472,75497472,3,1.197,1.174,0.096,73.716,0.102,3,0.637,True,True
-sglang,source_restart_miss,513,,117.587,,0,0,,,,,,,,,True,True

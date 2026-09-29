@@ -14,6 +14,7 @@ from pathlib import Path
 
 import requests
 
+from .artifacts import external_path
 from .metrics import REMOTE_STAGES, delta, metrics
 from .workload import evict_host_cache, generate
 
@@ -196,7 +197,7 @@ def main() -> None:
         required=True,
         help="Operator-declared environment; this driver does not detect physical hosts or RDMA",
     )
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
     prompts = json.loads(args.prompts.read_text())
     if (

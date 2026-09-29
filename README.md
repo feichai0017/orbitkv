@@ -191,7 +191,7 @@ remain open. See the [metadata design](docs/distributed-cache.md#local-global-in
 ## Performance
 
 Performance depends on prefix reuse, cache capacity, storage and engine scheduling.
-Reports include configurations, final results and reproduction commands:
+The maintained guides link historical evidence and explain configurations, limits and reproduction:
 
 | Report | Coverage |
 | --- | --- |
@@ -204,7 +204,7 @@ Reports include configurations, final results and reproduction commands:
 Request preparation remains **off by default**: the current Qwen3-8B controls
 improve throughput in both engines, but SGLang P95 latency regresses. These
 single-H20 measurements do not establish a universal advantage over other caches.
-Benchmark code and final summaries live in [`benches/`](benches/README.md).
+Benchmark programs live in [`benches/`](benches/README.md); generated results follow the [external evidence policy](docs/benchmark-evidence.md).
 
 ## Documentation and contributing
 

@@ -357,7 +357,7 @@ Twelve process-fault cases pass, including Manager death after claim,
 engine-death quarantine, lost notifications and partial-submit drain.
 Qwen3-8B passes the vLLM deterministic gate (six checks; one hybrid-only skip)
 and SGLang DRAM restart recovery. Raw logs and artifact hashes are retained under
-`benches/results/runs/strided-dma-20260928/`.
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/strided-dma-20260928/`.
 
 The [three-round serving comparison](communication-performance.md#repeated-serving-comparison-after-strided-dma)
 now covers both engines and all four backends, with 24 accepted cohorts and
@@ -384,7 +384,7 @@ all destination bytes, no early result or load-byte accounting, retained query
 credits between parts, second-part partial-enqueue drain, and Manager death
 between parts. All three cases pass; seven existing local ownership/fault cases
 also pass. Raw artifacts and test-build hashes are under
-`benches/results/runs/partitioned-restore-20260928/`. This is correctness and
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/partitioned-restore-20260928/`. This is correctness and
 fault evidence, not a measured serving speedup.
 
 The normal release build also passes the vLLM Qwen3-8B correctness gate

@@ -1,5 +1,7 @@
 # Implementation plan and agent handoff
 
+Historical run labels below refer to the [evidence inventory and availability limits](benchmark-evidence.md).
+
 The [completion plan](completion-plan.md) is the current stage-by-stage handoff.
 This document retains the detailed design contracts and historical evidence;
 read dated measurements as evidence for their recorded revisions only.
@@ -403,14 +405,7 @@ All values below are **medians of paired percentage changes**. Budgets are 3%
 throughput loss, 3% TTFT p50 growth and 5% p95/p99 growth. Negative values are
 finite-cohort variation, not a claimed optimization benefit.
 
-| Engine / tier / format | Throughput loss | TTFT p50 | TTFT p95 | TTFT p99 | Budget |
-| --- | ---: | ---: | ---: | ---: | --- |
-| vLLM / DRAM / raw | -0.050% | -0.513% | +0.268% | +0.177% | Pass |
-| vLLM / SSD / raw | -0.039% | -0.906% | -0.036% | +0.124% | Pass |
-| vLLM / SSD / ANS | +0.323% | -1.617% | -0.244% | +0.109% | Pass |
-| SGLang / DRAM / raw | -0.547% | -7.577% | -1.832% | -2.656% | Pass |
-| SGLang / SSD / raw | +0.010% | +0.330% | -1.524% | +1.217% | Pass |
-| SGLang / SSD / ANS | +0.762% | **+5.915%** | +0.665% | +0.144% | **Fail: p50** |
+[Historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md)
 
 The failing cell's three p50 changes are +1.407%, +14.376% and +5.915%; its
 off/on p50 ranges are 296.240–327.792 / 329.959–338.827 ms. This is an unmet
@@ -427,28 +422,14 @@ samples; the minimum fraction within 100 ms across all 36 runs is 97.917%.
 ITL quantiles are bucket-interpolated, and the two engines have different timing
 boundaries as documented in the protocol.
 
-| Engine / tier / format | TTFT p50 / p95 / p99 (ms) | ITL p50 / p95 / p99 (ms, approximate) | Goodput (requests/s) |
-| --- | ---: | ---: | ---: |
-| vLLM / DRAM / raw | 168.08 / 1095.74 / 1288.16 | 5.19 / 9.86 / 130.59 | 8.239 |
-| vLLM / SSD / raw | 200.33 / 1062.28 / 1290.97 | 5.13 / 9.74 / 119.60 | 7.896 |
-| vLLM / SSD / ANS | 263.48 / 1236.23 / 1607.29 | 5.28 / 11.10 / 122.07 | 7.176 |
-| SGLang / DRAM / raw | 221.66 / 1173.98 / 1360.37 | 6.96 / 7.95 / 9.50 | 7.915 |
-| SGLang / SSD / raw | 243.81 / 1147.85 / 1409.08 | 6.95 / 8.40 / 51.00 | 7.377 |
-| SGLang / SSD / ANS | 332.40 / 1275.77 / 1478.76 | 7.03 / 9.43 / 52.00 | 6.692 |
+[Historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md)
 
 Restore prediction error is for `gpu_load_direct` in raw cells and `gpu_decode`
 in ANS cells, not request TTFT. SSD bytes come only from completed `ssd_read`
 and `ssd_write` I/O owners, excluding their aggregate aliases and parent/GPU
 paths. These are three-run medians; CPU columns are off → on.
 
-| Engine / tier / format | Restore prediction samples | Restore MAE (ms) | Actual SSD read / write (GiB) | Manager CPU (s) |
-| --- | ---: | ---: | ---: | ---: |
-| vLLM / DRAM / raw | 80 | 0.841 | N/A | 3.95 → 4.02 |
-| vLLM / SSD / raw | 84 | 0.917 | 29.452 / 7.989 | 6.68 → 7.11 |
-| vLLM / SSD / ANS | 86 | 3.415 | 17.681 / 6.529 | 12.34 → 12.51 |
-| SGLang / DRAM / raw | 72 | 0.642 | N/A | 3.85 → 3.99 |
-| SGLang / SSD / raw | 69 | 0.536 | 25.497 / 8.227 | 7.48 → 7.61 |
-| SGLang / SSD / ANS | 69 | 1.414 | 17.573 / 6.562 | 13.46 → 13.04 |
+[Historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md)
 
 All raw shadow decisions remain `unknown`: the selected path has evidence,
 but the unexecuted alternative does not. ANS has no matched shadow alternative.
@@ -459,9 +440,9 @@ separately by the Rust and engine gates above. Same-host TCP, forced cuFile CPU
 compatibility and this container's io_uring path do not qualify native GDS,
 physical two-host TCP/RDMA, multi-instance isolation or dynamic selection.
 
-Final machine-readable summaries are in ignored
-`benches/results/runs/20260924-p41-cost-final/final/`; request traces remain under
-its `runs/` directory. The paired driver can reproduce and validate this
+The earlier report identifies machine-readable summaries by
+`historical run label: 20260924-p41-cost-final/final/` and request traces by its
+`runs/` label. Those raw files were absent at the S1 migration. The paired driver can reproduce and validate this
 protocol without building native artifacts.
 
 The source references remain clean at LMCache
@@ -540,7 +521,7 @@ coalescing-key change was not rerun through the engine matrix.
 
 Raw logs, executable artifacts and machine-readable `rust-summary.json`,
 `final-rust-summary.json` and `engine-summary.json` remain in ignored
-`benches/results/runs/20260924-p42-routes/`. Native builds and runtime gates ran
+`historical run label: 20260924-p42-routes/`. Native builds and runtime gates ran
 sequentially; no Manager was running while Cargo could restage Mooncake.
 
 This revision establishes functional route separation and lifecycle evidence.
@@ -594,10 +575,7 @@ budget for fixed kernel execution.** The following values are medians of the
 three paired percentage changes, kernel relative to direct; the budgets remain
 3% throughput loss, 3% TTFT p50 growth and 5% p95/p99 growth.
 
-| Engine / DRAM / raw | Throughput loss | TTFT p50 | TTFT p95 | TTFT p99 | Budget |
-| --- | ---: | ---: | ---: | ---: | --- |
-| vLLM | +4.246% | +5.370% | +0.658% | +2.233% | Fail: throughput, p50 |
-| SGLang | +3.870% | +3.392% | +3.068% | +3.225% | Fail: throughput, p50 |
+[Historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md)
 
 SGLang's individual p50 changes are +3.392%, -10.473% and +9.801%; this
 variation does not remove the failed median gate. These results do not support
@@ -611,12 +589,7 @@ throughput. Each run has 1,920 official ITL samples; at least 98.177% are within
 boundaries. Matched concurrent outputs have zero text differences; exact
 recovery is separately covered by the gates above.
 
-| Engine / backend | TTFT p50 / p95 / p99 (ms) | ITL p50 / p95 / p99 (ms, approximate) | Goodput (requests/s) | Manager CPU (s) | Logical save / restore (GiB) |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| vLLM / direct | 268.18 / 1010.28 / 1276.08 | 5.15 / 9.79 / 134.35 | 7.579 | 4.27 | 9.984 / 30.929 |
-| vLLM / kernel | 281.32 / 1017.08 / 1301.77 | 5.77 / 20.78 / 130.83 | 7.257 | 5.28 | 9.984 / 30.551 |
-| SGLang / direct | 324.10 / 1133.08 / 1315.39 | 6.92 / 7.94 / 9.23 | 7.409 | 4.24 | 9.984 / 30.771 |
-| SGLang / kernel | 337.75 / 1153.96 / 1358.53 | 7.03 / 9.50 / 14.11 | 7.150 | 4.84 | 9.984 / 30.902 |
+[Historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md)
 
 The [fixed-backend protocol](../benches/README.md#fixed-dmakernel-comparison)
 compares both D2H saves and H2D restores with observations disabled on both
@@ -629,7 +602,7 @@ comparison. Native GDS, shared-device admission, per-batch switching and the
 earlier SGLang ANS SSD observation-overhead gate remain open.
 
 Raw logs, frozen artifacts and machine-readable summaries remain in ignored
-`benches/results/runs/20260925-p42-dma/`; paired results are under `paired/final/`.
+`historical run label: 20260925-p42-dma/`; paired results are under `paired/final/`.
 
 ## Recovery demand and residency candidates
 
@@ -757,7 +730,7 @@ over host staging; their physical two-host qualification remains open.
 
 Only this final summary is tracked. Frozen artifacts, exact commands, logs and
 machine-readable results remain in ignored
-`benches/results/runs/20260925-core-layout/`. Reproduce with the existing
+`historical run label: 20260925-core-layout/`. Reproduce with the existing
 [engine gates](../python/tests/README.md) and
 [shared-cache gates](shared-cache-qualification.md#restart-and-ownership-gates),
 using the matching prebuilt Manager/client and no concurrent native builds.

@@ -1,5 +1,8 @@
 # Sustained single-node serving
 
+For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/sustained-performance.md) retains full tables and historical run details.
+
 Both adapters complete bounded mixed-prefix traffic with native HBM caching,
 OrbitKV DRAM and OrbitKV SSD backing. This extends the
 [concurrent burst baseline](concurrent-performance.md) with ongoing arrivals
@@ -38,16 +41,7 @@ vLLM uses `VLLM_BATCH_INVARIANT=1` and `FLASH_ATTN`; SGLang uses
 latency must not be compared with the ordinary-mode historical table below
 as an effect of the cache changes. Compare backends within one engine.
 
-| Engine | Backend | Requests/s | TTFT p50, ms | TTFT p95, ms | E2E p50, ms |
-| --- | --- | ---: | ---: | ---: | ---: |
-| vllm | Native HBM | 3.14 | 623.22 | 1171.91 | 1466.07 |
-| vllm | Native CPU / HiCache | 4.57 | 231.74 | 653.81 | 770.57 |
-| vllm | OrbitKV direct DRAM | 4.38 | 263.60 | 636.19 | 788.55 |
-| vllm | LMCache MP | 4.20 | 303.13 | 788.27 | 849.35 |
-| sglang | Native HBM | 3.72 | 665.42 | 1246.17 | 1228.57 |
-| sglang | Native CPU / HiCache | 7.38 | 201.41 | 660.96 | 415.90 |
-| sglang | OrbitKV direct DRAM | 7.21 | 209.02 | 705.49 | 421.44 |
-| sglang | LMCache integration | 6.82 | 211.08 | 653.34 | 453.20 |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/sustained-performance.md)
 
 OrbitKV remains 4.1%/2.3% behind the native CPU caches in vLLM/SGLang throughput
 and is 4.4%/5.8% ahead of the corresponding LMCache configuration in this single
@@ -60,7 +54,7 @@ OrbitKV restores 11,871,977,472 bytes for vLLM and 11,183,063,040 for SGLang;
 the benchmark's post-window ownership/drain assertions pass. These are actual
 GPU restore bytes, distinct from engine HBM hits. Raw samples, manifests,
 process audits and per-engine reports are retained under
-`benches/results/runs/completion-evidence-20260928/deterministic-c4/`.
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/completion-evidence-20260928/deterministic-c4/`.
 
 Run each backend (`native`, `cpu`, `orbitkv`, `lmcache`) in its engine environment,
 using a fresh output directory and the matching prebuilt Manager/extension:
@@ -169,14 +163,7 @@ without confidence intervals or a long-duration soak.
 
 ## Results
 
-| Engine | Cache | Completed | Requests/s | TTFT P50 (ms) | P95 (ms) | P99 (ms) |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| vLLM | Native HBM | 117 | 1.89 | 3,884 | 6,318 | 7,048 |
-| vLLM | OrbitKV DRAM | 260 | 4.30 | 1,418 | 3,623 | 4,339 |
-| vLLM | OrbitKV SSD | 235 | 3.72 | 1,505 | 4,504 | 5,244 |
-| SGLang | Native HBM | 111 | 1.77 | 4,270 | 6,698 | 7,347 |
-| SGLang | OrbitKV DRAM | 276 | 4.45 | 1,683 | 3,385 | 4,039 |
-| SGLang | OrbitKV SSD | 226 | 3.68 | 1,780 | 4,434 | 5,053 |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/sustained-performance.md)
 
 There are 1,225 completed requests and no request failures in these six runs.
 Relative to each engine's native control, DRAM throughput is 2.28× for vLLM and
@@ -254,7 +241,7 @@ in the [single-node guide](single-node.md). From the repository root:
   --workload sustained --concurrencies 8 --duration-seconds 60 \
   --max-requests 1000 --working-set 12 --query-budget-gib 2 \
   --host-gib 4 --ssd-gib 16 \
-  --output benches/results/runs/sustained-vllm-ssd-new
+  --output /var/tmp/orbitkv-bench/sustained-vllm-ssd-new
 ```
 
 For the DRAM control use `--host-gib 16 --ssd-gib 0`. For native use
@@ -269,14 +256,14 @@ incomplete, duplicated or out-of-budget windows:
 
 ```bash
 python -m benches.report \
-  benches/results/runs/sustained-vllm-ssd-new \
+  /var/tmp/orbitkv-bench/sustained-vllm-ssd-new \
   --output /tmp/orbitkv-sustained-report
 ```
 
 Request rows, manifests, window counters and summaries remain in the
 [historical dataset snapshot](https://github.com/feichai0017/orbitkv/tree/44c1e5f9a253aa7378c6187b2aeea9bff93df304/benches/results).
-Large raw logs remain in ignored `benches/results/runs/sustained-{engine}-{tier}/`
-on the measurement host.
+The earlier raw logs use `historical run label: sustained-{engine}-{tier}/`;
+those ignored logs were absent at the S1 migration.
 
 ## Next gates
 

@@ -134,12 +134,23 @@ def test_unused_nan_metrics_do_not_poison_json(monkeypatch):
     ],
 )
 @pytest.mark.parametrize("engine", ["vllm", "sglang"])
-def test_non_orbitkv_runs_reject_inapplicable_controls(monkeypatch, flag, engine):
+def test_non_orbitkv_runs_reject_inapplicable_controls(monkeypatch, tmp_path, flag, engine):
     from benches.single_node import main
 
     monkeypatch.setattr(
         "sys.argv",
-        ["bench", "--engine", engine, "--backend", "native", "--model", "/missing", *flag],
+        [
+            "bench",
+            "--engine",
+            engine,
+            "--backend",
+            "native",
+            "--output",
+            str(tmp_path / "run"),
+            "--model",
+            "/missing",
+            *flag,
+        ],
     )
     with pytest.raises(SystemExit) as error:
         main()
@@ -258,23 +269,7 @@ def test_disk_prefetch_without_gpu_load_is_not_a_cache_hit(engine, read_counter)
     ],
 )
 def test_read_path_rejects_missing_ssd_capability_and_native_claims_for_host_reads(
-    monkeypatch, flags
-):
-    from benches.single_node import main
-
-    monkeypatch.setattr(
-        "sys.argv",
-        ["bench", "--engine", "vllm", "--backend", "orbitkv", "--model", "/missing", *flags],
-    )
-    with pytest.raises(SystemExit) as error:
-        main()
-    assert error.value.code == 2
-
-
-@pytest.mark.parametrize("read_path", ["uring", "cufile"])
-@pytest.mark.parametrize("preparation", ["--queue-warmup", "--prepare-requests"])
-def test_explicit_read_path_rejects_preparation_before_model_or_runtime_access(
-    monkeypatch, capsys, read_path, preparation
+    monkeypatch, tmp_path, flags
 ):
     from benches.single_node import main
 
@@ -286,6 +281,35 @@ def test_explicit_read_path_rejects_preparation_before_model_or_runtime_access(
             "vllm",
             "--backend",
             "orbitkv",
+            "--output",
+            str(tmp_path / "run"),
+            "--model",
+            "/missing",
+            *flags,
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("read_path", ["uring", "cufile"])
+@pytest.mark.parametrize("preparation", ["--queue-warmup", "--prepare-requests"])
+def test_explicit_read_path_rejects_preparation_before_model_or_runtime_access(
+    monkeypatch, capsys, tmp_path, read_path, preparation
+):
+    from benches.single_node import main
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "bench",
+            "--engine",
+            "vllm",
+            "--backend",
+            "orbitkv",
+            "--output",
+            str(tmp_path / "run"),
             "--model",
             "/missing",
             "--ssd-gib",

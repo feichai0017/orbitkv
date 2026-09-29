@@ -4,8 +4,12 @@ set -euo pipefail
 BASE_URL="${BASE_URL:?set BASE_URL, for example http://127.0.0.1:8300}"
 MODEL="${MODEL:?set MODEL, for example /data/models/Kimi-K2.5}"
 LABEL="${LABEL:?set LABEL, for example tp8-baseline}"
-BENCH_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-RESULT_DIR="${RESULT_DIR:-${BENCH_DIR}/results/runs/serving}"
+RESULT_DIR="${RESULT_DIR:?set RESULT_DIR to an external artifact directory}"
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+RESULT_DIR="$(realpath -m -- "$RESULT_DIR")"
+case "$RESULT_DIR/" in
+  "$repo_dir/"*) echo "RESULT_DIR must be outside the source checkout" >&2; exit 2 ;;
+esac
 VLLM_BIN="${VLLM_BIN:-vllm}"
 SEED="${SEED:-20260521}"
 NUM_PROMPTS="${NUM_PROMPTS:-30}"

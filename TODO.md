@@ -9,26 +9,33 @@ Use the [staged completion and acceptance plan](docs/completion-plan.md) as the
 current delivery order. It separates missing implementation, unqualified paths
 and obsolete checklist entries; each stage has an independent review gate.
 
-Follow the [current delivery priorities](docs/roadmap.md#current-delivery-priorities):
-close the single-node hybrid-layout gates, maintain deterministic demand and
-model-serving fault coverage, and extend two-host DP qualification to the remaining
-fault, numerical and RDMA gates.
-Build measured Rust transfer planning alongside these gates, using shared
-local/peer observations and distinct DP/P/D/TP/PP completion contracts.
-Warming gains are not a DP prerequisite. P/D with cache reuse follows. The
+After S1 acceptance, S2 qualifies metadata reliability and capacity; S3 then
+extends transfer termination and page generations. S4–S8 consume those contracts
+according to the completion plan. The [roadmap](docs/roadmap.md#current-delivery-priorities)
+groups capability areas; it is not a competing execution queue. The
 metadata implementation has replaced single-copy Catalog shards with a complete
 local global index on every Manager, synchronized through etcd block metadata.
 Same-host and physical H20/A100 TCP sharing/restart/SSD gates pass on both engines;
 scale, host-failure-domain and transfer-revocation gates remain open.
 Milestone numbers group work areas rather than imposing a strict
-serial schedule.
+serial schedule. Every open item below names its S2–S8 owner. **Implementation
+open** means the consumed extension is missing; **implementation partial** means
+existing owners need extending; **qualification open** means code exists but the
+listed hardware, failure, model or performance gate remains open. **Release gate**
+is a recurring S8 obligation. **Deferred research decision** requires an explicit
+scope decision before implementation and does not block the current supported
+path. Retired entries are explanatory text, never a claim that an unrun gate passed.
+
+S1 separates historical evidence through [the artifact policy](docs/benchmark-evidence.md).
+Its implementation and acceptance evidence are supplied with the delivery commit;
+S2 starts only after independent S1 acceptance.
 
 ## GPU storage
 
 - [x] Implement Rust cuFile demand reads and complete-group GPU writes with SSD extent
   leases, bounded GPU staging, split/page-first layouts, oversized checkpoints,
   cancellation, failed writes and short reads; keep both engines on the existing cache API.
-- [ ] Qualify native GDS on a supported NVMe mount with CPU fallback disabled;
+- [ ] [S4][s4] — **qualification open**: Qualify native GDS on a supported NVMe mount with CPU fallback disabled;
   distinguish first writes from overwrites and compare io_uring using matched
   working sets, TTFT, throughput, CPU use and bytes.
 - [x] Provide a bare-metal acceptance script with fallback rejection and matched
@@ -52,20 +59,20 @@ serial schedule.
   exhaustive BF16/FP16 value checks and a reproducible single-core benchmark.
 - [x] Verify optional FP8 storage, bounded scratch, mixed raw/encoded
   prefixes, cancellation, corruption rejection/repair and raw fallback.
-- [ ] Qualify lossy storage on representative model-quality workloads; Qwen3-8B
+- [ ] [S4][s4] — **qualification open**: Qualify lossy storage on representative model-quality workloads; Qwen3-8B
   encoded slots shrink, but vLLM greedy-output checks still fail with TurboQuant.
 - [x] Qualify engine-native FP8 KV on Qwen3-8B in both engines; isolate external
   SGLang scale artifacts and compare against same-dtype cold controls.
-- [ ] Extend quality and latency qualification of GPU codecs across hybrid models; retain
+- [ ] [S4][s4] — **qualification open**: Extend quality and latency qualification of GPU codecs across hybrid models; retain
   exact recurrent state until model-quality and recovery gates pass.
 - [x] Batch codec segments and reuse GPU scratch to reduce per-segment launches,
   allocations and synchronization; compare complete-request latency under inference load.
 - [x] Add compressed cuFile reads and complete-group writes with GPU CRC validation,
   bounded decode workspace, corruption isolation and cancellation ownership.
   Qualify both engines in cuFile compatibility mode; native GDS remains a separate gate.
-- [ ] Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
+- [ ] [S4][s4] — **qualification open**: Measure selective DRAM admission and shorter source-HBM holds for GPU writeback;
   retained staging and unpublished SSD reservations must survive disk completion.
-- [ ] Qualify direct registered engine-page I/O, multi-writer GPU assembly,
+- [ ] [S4][s4] — **qualification open**: Qualify direct registered engine-page I/O, multi-writer GPU assembly,
   and workload-based path selection. Include registration cost,
   engine-page hold times, I/O fragmentation and additional HBM in the decision.
 
@@ -83,7 +90,7 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   namespace compatibility, exact source versions and unknown peer metadata.
   Move SSD route eligibility/acquisition and peer source segmentation into
   `planning/`, preserving existing execution defaults and completion owners.
-- [ ] Complete consumed endpoint descriptors for owner/resource identity,
+- [ ] [S6][s6] — **implementation partial**: Complete consumed endpoint descriptors for owner/resource identity,
   representation and bytes; bind actual TE transport capability to GPU routes
   without treating GPUDirect RDMA as a tier or assuming peer HBM authorization.
 - [x] Make Mooncake memory registration an RAII token that retains the
@@ -115,7 +122,7 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   acquisition in its execution owner and avoid allocating peer authorization
   records for every rejected source candidate. Preserve peer-before-SSD defaults,
   full-prefix coverage requirements and immutable source versions.
-- [ ] Extend batch plans into complete-route comparisons and joint demand
+- [ ] [S6][s6] — **implementation partial**: Extend batch plans into complete-route comparisons and joint demand
   coverage across groups/ranks, with actual destination and staging admission.
 - [x] Add explicit completion intent and target resource to every comparable
   cost key; recompute it when paths/resources change and reject evidence for a
@@ -132,7 +139,7 @@ Structural work: [unified replicas, routes and owned plans](docs/state-planning.
   persistent cuFile/codec staging owner per CUDA device. Automatic restores
   fall back to the same extent's io_uring route before submission; explicit
   cuFile remains fail-closed. Retain ownership until every instance lane drains.
-- [ ] Separate operation observations from complete-route estimates and attach
+- [ ] [S6][s6] — **implementation partial**: Separate operation observations from complete-route estimates and attach
   live resource evidence, without double-counting queue time or composite stages.
 - [x] Make operation/route sample boundaries explicit and distinguish GPU,
   SSD store/file and peer-incarnation cost resources. Guard existing same-source
@@ -197,18 +204,18 @@ qualification remain open. See the
 - [x] Complete [current route correctness and lifecycle validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence)
   across both engines, same-generation raw/ANS recovery, cancellation and remote
   misses. The previous 36-run observation matrix does not qualify these executor changes' overhead.
-- [ ] Close the SGLang ANS SSD TTFT p50 overhead gate before default enablement:
+- [ ] [S4][s4] — **qualification open**: Close the SGLang ANS SSD TTFT p50 overhead gate before default enablement:
   the matched three-pair result is +5.915%, above the predeclared 3% budget.
-- [ ] Extend shadow decisions to legal boundaries and additional qualified paths;
+- [ ] [S6][s6] — **implementation partial**: Extend shadow decisions to legal boundaries and additional qualified paths;
   retain unknown alternatives when existing metadata or measurements are absent.
-- [ ] Qualify per-batch DMA/kernel selection, then io_uring/native cuFile choice,
+- [ ] [S6][s6] — **implementation partial**: Qualify per-batch DMA/kernel selection, then io_uring/native cuFile choice,
   with both SSD routes independently eligible over one index/extent lifetime;
   separate capability and failure handling from measured choice. Include shared
   device budgets, switching margins, fixed-format data and inference contention.
-- [ ] Compare legal `required_ranges` boundaries and engine-owned recomputation;
+- [ ] [S6][s6] — **implementation partial**: Compare legal `required_ranges` boundaries and engine-owned recomputation;
   calibrate preparation deadlines and retention/write admission. Bound DRAM,
   GPU workspace, SSD/TE work and per-instance shares through terminal completion.
-- [ ] Extend qualified peer source selection with discovery, authorization,
+- [ ] [S6][s6] — **implementation partial**: Extend qualified peer source selection with discovery, authorization,
   TE and decode/H2D costs. Keep same-host TCP and physical two-host/RDMA evidence
   separate; DP qualification does not wait for local policy gains.
 - [x] Add guarded execution selection between equal-coverage owners of the same
@@ -226,13 +233,13 @@ qualification remain open. See the
 - [x] Add a separate `ORBITKV_CROSS_MEDIUM_SELECTION=1` experiment gate. Require
   both existing cost opt-ins, equal coverage, complete single-owner resource
   identity and fresh compatible estimates; preserve fixed defaults otherwise.
-- [ ] Qualify cross-medium execution on the external H20 TCP/RDMA matrix before
+- [ ] [S6][s6] — **qualification open**: Qualify cross-medium execution on the external H20 TCP/RDMA matrix before
   recommending or enabling it in ordinary deployments.
-- [ ] Implement the [Manager-owned cluster decision loop](docs/state-planning.md#cache-manager-decisions-below-the-engine):
+- [ ] [S6][s6] — **implementation partial**: Implement the [Manager-owned cluster decision loop](docs/state-planning.md#cache-manager-decisions-below-the-engine):
   bounded residence/resource evidence with freshness, joint local/peer route
   ranking, source credit admission and bounded replanning. Qualify without a
   request router and with concurrent destinations contending for one peer.
-- [ ] Integrate P/D completion/admission evidence separately from cache misses;
+- [ ] [S6][s6] — **implementation partial**: Integrate P/D completion/admission evidence separately from cache misses;
   qualify rank-common TP and stage-dependent PP plans as later topology gates.
 - [x] Add the first bounded authenticated P/D completion observation: vLLM's
   decode-side TENT waiter reports its registered target device, hashed prefill
@@ -248,7 +255,7 @@ qualification remain open. See the
   depth/parallelism, admission-time TENT NIC pressure, and an authoritative
   SGLang decode callback after metadata and HiCache restore commit. Keep this
   resource evidence out of metric labels and expire it after two seconds.
-- [ ] Make one consumed planner own both the direct source lease and P/D
+- [ ] [S6][s6] — **implementation partial**: Make one consumed planner own both the direct source lease and P/D
   handoff authorization, then enable the guarded decode-route selector.
 
 ## M0 — framework-neutral foundation
@@ -283,7 +290,7 @@ qualification remain open. See the
 - [x] Add Python `ChannelProbeClient` bindings with epoch fencing.
 - [x] Replace the copied native RDMA stacks with the pinned Mooncake TENT C ABI
   and one clean transfer API; do not build or load the legacy TE runtime.
-- [ ] Add Python representations/serialization for `orbitkv-state`.
+- Retired: unused Python state representations. `python/src/recovery.rs` already consumes shared Rust recovery contracts; add only a binding required by an adapter.
 - [x] Run the full M0 validation matrix and record results in the commit.
 
 ## M1 — SGLang direct GPU-page linker
@@ -305,12 +312,12 @@ qualification remain open. See the
 - [x] Qualify same-A100 two-replica SGLang P/D plus external-cache restart/reuse
   with strict output controls; keep Decode external hits out of the HiCache-only
   restore path. H20→A100 reuse passes but its 64-token equality gate fails.
-- [ ] Qualify strict SGLang P/D output across distinct GPUs, then two hosts with
+- [ ] [S5][s5] — **qualification open**: Qualify strict SGLang P/D output across distinct GPUs, then two hosts with
   RDMA counters; cover abort, worker restart and partial failure.
-- [ ] Expose TENT peer-liveness probing through its stable C ABI before enabling
+- [ ] [S3][s3] — **implementation open**: Expose TENT peer-liveness probing through its stable C ABI before enabling
   SGLang's optional failed-session recovery probe.
 - [x] Reject SGLang representations without a complete recovery contract.
-- [ ] Add cold-miss, partial-prefix, warm-hit, cancellation, and restart tests.
+- Retired: the undifferentiated SGLang test request. `python/tests/e2e/test_sglang_direct_e2e.py`, integration admission/recovery tests and the P/D restart gate cover existing paths; S5 owns the remaining P/D fault and deployment cells.
 - [x] Run one real SGLang model E2E, including restore after radix-cache flush.
 - [x] Register a SGLang RadixCache plugin that transfers full-attention GPU KV
   through CUDA IPC and iceoryx2, with a real Cache Manager load after SGLang
@@ -325,13 +332,13 @@ qualification remain open. See the
   SGLang Full + SWA + convolution with Inkling; retain Qwen3.5 regression gates.
   SGLang covers DRAM/SSD, concurrent restore, HBM flush and engine restart;
   vLLM compares matched native-cache execution plans and restart loads.
-- [ ] Qualify native model serving with Full + SWA + temporal recurrent state
+- [ ] [S5][s5] — **qualification open**: Qualify native model serving with Full + SWA + temporal recurrent state
   in both engines; current combined temporal coverage is exact GPU recovery.
 - [x] Qualify Qwen3.8-27B-FP8 on both engines with DRAM and forced SSD recovery;
   qualify GLM-4.7-Flash, DeepSeek-V2-Lite and Kimi Linear FP8 with SSD-enabled
   reuse, native output controls and engine restart. Keep exact artifacts,
   settings and larger-model blockers in [model qualification](docs/models.md).
-- [ ] Add recovery contracts for DSA, draft-model and further auxiliary state.
+- [ ] [S7][s7] — **deferred research decision**: Add recovery contracts for DSA, draft-model and further auxiliary state.
 
 ## M2 — common bundle and local IPC
 
@@ -343,7 +350,7 @@ qualification remain open. See the
   shared recovery validation; intersect legal boundary sets across ranks.
 - [x] Carry vLLM hybrid spans and leased component evidence into shared recovery
   validation; intersect absolute legal boundaries across shards.
-- [ ] Support adapter identities and invalidate caches on live weight updates.
+- [ ] [S5][s5] — **implementation open**: Support adapter identities and invalidate caches on live weight updates.
 - [x] Compile vLLM cache-group requirements and assemble hybrid `StateBundle`
   evidence through the shared native binding.
 - [x] Compile prefix/window/checkpoint rules and validate complete token coverage
@@ -365,13 +372,13 @@ qualification remain open. See the
 - [x] Send complete selected-boundary `RecoveryDemand` to the Manager with each
   group read. Validate registered groups before admission, include all ranges
   in query revisions and reject incomplete selected-group leases.
-- [ ] Add joint multi-group physical planning and admission; retain engine-owned
+- [ ] [S6][s6] — **implementation partial**: Add joint multi-group physical planning and admission; retain engine-owned
   rank agreement, HBM allocation and legal recovery boundaries.
 - [x] Handle asynchronous vLLM checkpoint queries from SSD, retain completed
   groups during preparation, and retire pending groups on cancel/drift/expiry.
   Verify native validation and exact DRAM/SSD GPU restoration in
   `python/tests/integration/test_vllm_recovery.py`.
-- [ ] Define framework-neutral region registration RPCs.
+- Retired: a second generic registration RPC. The UDS lifecycle endpoint already owns registration; S3 replaces `wrapper_bytes` in that consumed path.
 - [x] Pass the descriptor-arena memfd and notification eventfd over UDS.
 - [x] Add bounded restore operations that replace per-load `PyLoadState`
   for the native Cache Manager client.
@@ -383,7 +390,7 @@ qualification remain open. See the
 - [x] Require the node-local process endpoint; fail fast if its socket is missing.
 - [x] Group the Cache Manager's cache operations and process endpoint separately;
   convert protobuf registration messages before entering the cache lifecycle.
-- [ ] Replace framework CUDA IPC wrapper pickle in the Cache Manager with an explicit
+- [ ] [S3][s3] — **implementation open**: Replace framework CUDA IPC wrapper pickle in the Cache Manager with an explicit
   region registration contract after the existing vLLM path is qualified.
 - [x] Serialize lifecycle operations and drain GPU queues before unmapping CUDA IPC.
 - [x] Remove per-load `PyLoadState` from the vLLM path.
@@ -397,14 +404,14 @@ qualification remain open. See the
   the earlier cold-vs-warm comparison reproduced native vLLM divergence.
 - [x] Requalify the vLLM E2E against release 0.29.0, including a hybrid model
   that exercises scheduler boundary-state hand-offs.
-- [ ] Add generation validation to every local page reference.
+- [ ] [S3][s3] — **implementation open**: Add generation validation to every local page reference.
 - [x] Keep restore destinations held on lost acknowledgements, poll failures,
   and deadlines; fail the engine instead of claiming DMA was cancelled.
 - [x] Drain partially submitted H2D/D2H work before returning a backend error;
   terminate the manager if CUDA cannot establish completion.
 - [x] Split Publish metadata to the negotiated descriptor capacity while
   preserving per-page layer completeness and retaining sources through all chunks.
-- [ ] Benchmark the M2 path against the current CUDA IPC baseline.
+- Retired: the pre-cutover CUDA IPC baseline task. The implemented process channel and engine-local Restore have matched controls in `docs/communication-performance.md`; new increments use S4 gates.
 - [x] Record Qwen3-8B serial cold, resident, and post-eviction latency against
   vLLM CPU offload and SGLang HiCache, with equal payload budgets and verified
   cache sources; retain raw measurements and commands in
@@ -439,9 +446,8 @@ qualification remain open. See the
   engines with the final merged production build: 512 completed requests,
   384 cross-backend comparisons without differences. Keep this single-cohort
   result separate from repeated performance acceptance.
-- [ ] Refresh the repeated matched merged-build native/CPU/OrbitKV/LMCache
-  serving baseline before accepting the next communication optimization.
-- [ ] Profile remaining adapter hashing, per-page metadata and PyO3 conversion
+- Retired: the stale baseline refresh. Three reversed-order layer-readiness comparisons are recorded in `docs/communication-performance.md#repeated-serving-comparison-after-layer-readiness`; S4 requires new matched controls for the next optimization.
+- [ ] [S4][s4] — **qualification open**: Profile remaining adapter hashing, per-page metadata and PyO3 conversion
   under matched workloads before claiming a latency improvement from the Rust client.
 - [x] Share identical backing reads with independent cancellation and leases;
   make SSD read queue pressure wait for capacity.
@@ -456,7 +462,7 @@ qualification remain open. See the
   separate throughput, transfer evidence and output diagnostics.
 - [x] Retire SGLang queries when HBM covers the legal recovery boundary;
   enforce admission expiry without another lookup and test simultaneous recovery.
-- [ ] Profile vLLM duplicate H2D restores for shared prefixes; any reuse must
+- [ ] [S4][s4] — **qualification open**: Profile vLLM duplicate H2D restores for shared prefixes; any reuse must
   respect engine-owned GPU destinations, mutable tails, and completion fences.
 - [x] Qualify deterministic SSD delay/cancel, lost restore notifications,
   Manager restart with live old clients, and stalled/malformed Publish replies
@@ -494,7 +500,7 @@ qualification remain open. See the
   turnovers. Selective writes improve throughput by 15.8%/13.7% here while
   reducing writes; keep this distinct from the short-window regression and
   require repeated workload-specific evidence before changing defaults.
-- [ ] Add per-request deadline/priority hints and long-running serving fault/soak
+- [ ] [S4][s4] — **implementation partial**: Add per-request deadline/priority hints and long-running serving fault/soak
   runs; qualify multi-rank SGLang TP independently of TP=1 admission tests.
 - [x] Add bounded queued-prefix DRAM warming for both pinned engine releases;
   keep foreground headroom, revalidate demand, and retire warmups without a lease
@@ -527,12 +533,12 @@ qualification remain open. See the
 - [x] Complete three matched preparation pairs per engine, stopping controls and
   DRAM-only recovery. Retain final variation, read bytes, output diagnostics and
   cleanup. Keep preparation off: SGLang throughput improves but P95 regresses.
-- [ ] Calibrate expected use time and priority from engine HBM hits, prepared
+- [ ] [S6][s6] — **implementation partial**: Calibrate expected use time and priority from engine HBM hits, prepared
   consumption and restorable-prefix/bundle coverage. Qualify bounded writer
   staging, source-expiration accounting and multi-rank behavior.
-- [ ] Profile the measured restore latency gap to both built-in CPU caches;
+- [ ] [S4][s4] — **qualification open**: Profile the measured restore latency gap to both built-in CPU caches;
   measure transfer batching, completion observation, and inference overlap.
-- [ ] Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,
+- [ ] [S4][s4] — **qualification open**: Record vLLM/SGLang cold, warm, partial, and restart TTFT/TPOT,
   throughput, P50/P95 query/save/restore, and pinned-memory use against
   native-engine and no-cache baselines.
 - [x] Make waiting local QueryBundle operations asynchronous; support
@@ -541,10 +547,10 @@ qualification remain open. See the
   its reply until framework-owned source pages may be reused.
 - [x] Give Publish a separate on-demand local descriptor session so a blocked
   save does not serialize Query/Restore calls from the same worker.
-- [ ] Profile the deferred Publish path under concurrent Query/Publish load.
+- [ ] [S4][s4] — **qualification open**: Profile the deferred Publish path under concurrent Query/Publish load.
 - [x] Make Publish wait fail closed: keep vLLM source pages pinned until D2H
   completion or confirmed Cache Manager process death, even past the normal IPC timeout.
-- [ ] Add an operational watchdog for a live Cache Manager that never finishes a
+- [ ] [S3][s3] — **implementation open**: Add an operational watchdog for a live Cache Manager that never finishes a
   Publish; correctness currently takes priority over save-worker availability.
 
 ## M2.5 — distributed cache reliability
@@ -598,9 +604,9 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 - [x] D1 authorization reconciliation: source-issued windows and generation-fenced
   slots identify holds before authorization; reconcile lost grant replies and
   cancellation, reject delayed authorizations, and bound idle replay metadata.
-- [ ] D1 revocation: reclaim orphaned source reservations only after transport
+- [ ] [S3][s3] — **implementation open**: D1 revocation: reclaim orphaned source reservations only after transport
   termination is established; a timeout or membership expiry cannot free them.
-- [ ] D1: qualify source incarnation checks, transfer completion/revocation,
+- [ ] [S5][s5] — **qualification open**: D1: qualify source incarnation checks, transfer completion/revocation,
   cancellation and sender/receiver budgets on two real hosts for both engines.
 - [x] D1: replace the standalone directory with `orbitkv-catalog` and remove
   obsolete executables, Python launcher and fixed-directory APIs.
@@ -610,10 +616,10 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
 - [x] D2 serving: repeat same-host and physical H20/A100 TCP sharing, index restart
   and source-loss recovery on vLLM/SGLang; qualify forced source SSD recovery on
   both engines. See `docs/shared-cache-qualification.md` for the exact scope.
-- [ ] D2 scale: measure background churn, index memory and recovery lag; qualify
+- [ ] [S2][s2] — **qualification open**: D2 scale: measure background churn, index memory and recovery lag; qualify
   etcd quota exhaustion and separate host-failure domains. Foreground discovery
   now reads the local index and has no directory RPC implementation.
-- [ ] D3: qualify requester peer-SSD routes and add measured source selection
+- [ ] [S6][s6] — **qualification open**: D3: qualify requester peer-SSD routes and add measured source selection
   without recursive peer fetches or unbounded staging. Fixed-priority peer-SSD
   planning, source-local io_uring staging and two-phase byte/session admission
   are implemented. Ordinary two-host H20→A100 TCP SSD recovery passes on both
@@ -627,27 +633,27 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   leases remain required before advertising general peer-HBM sources.
 - [x] Measure source authorization, READ and completion independently in the
   shared-cache serving gate; retire the removed directory-RPC metric after D2.
-- [ ] Measure background synchronization and etcd traffic, index bytes and recovery
+- [ ] [S2][s2] — **qualification open**: Measure background synchronization and etcd traffic, index bytes and recovery
   lag under multi-host load and failure.
 
 ## M3 — routing and replica planning
 
-- [ ] Normalize vLLM and SGLang KV events.
-- [ ] Build a worker/tier replica catalog with sequence recovery.
-- [ ] Delegate cross-host TP query fan-out to node-local Cache Managers.
-- [ ] Integrate pinned `dynamo-kv-router` worker selection and production service
+- [ ] [S6][s6] — **deferred research decision**: Normalize vLLM and SGLang KV events.
+- Retired: a second replica catalog. `crates/orbitkv-catalog/src/index.rs` and Server cluster synchronization already own sequenced DRAM/SSD discovery; capacity and recovery qualification belongs to S2.
+- [ ] [S5][s5] — **implementation open**: Delegate cross-host TP query fan-out to node-local Cache Managers.
+- [ ] [S6][s6] — **deferred research decision**: Integrate pinned `dynamo-kv-router` worker selection and production service
   lifecycle; verify hash/event mapping and request-load reservations (R1 in
   `docs/state-planning.md`).
-- [ ] Evaluate NIXL's Preview Mooncake backend before expanding transfer
+- [ ] [S6][s6] — **deferred research decision**: Evaluate NIXL's Preview Mooncake backend before expanding transfer
   abstraction: qualify registration/completion, pinned TE compatibility and
   overhead; treat missing backend cost estimates as unknown. Keep direct TE
   until evidence justifies migration; do not add deprecated KVBM.
-- [ ] Feed qualified local/peer restore, recompute and queue estimates from
+- [ ] [S6][s6] — **deferred research decision**: Feed qualified local/peer restore, recompute and queue estimates from
   [measured transfer planning](#measured-transfer-planning) into router summaries.
-- [ ] Add eviction externality and replica-risk terms.
-- [ ] Select a worker through the router, then revalidate and lease its
+- [ ] [S6][s6] — **deferred research decision**: Add eviction externality and replica-risk terms.
+- [ ] [S6][s6] — **deferred research decision**: Select a worker through the router, then revalidate and lease its
   transfer/restore plan at the Cache Manager.
-- [ ] Evaluate load-only, overlap-only, and joint planning on the same trace.
+- [ ] [S6][s6] — **deferred research decision**: Evaluate load-only, overlap-only, and joint planning on the same trace.
 
 - [x] Add the pinned Mooncake TENT native sys/build boundary, dynamic ABI,
   cancellation drain, notifications and relocatable runtime packaging.
@@ -655,21 +661,21 @@ Implementation order and failure contracts: `docs/distributed-cache.md`.
   `tent_shared`, bind `tent_*` symbols, use terminal task status plus best-effort
   cancellation before free, and expose TENT NIC pressure to P/D diagnostics.
 - [x] Map OrbitKV remote-cache authorization to Mooncake Segment addresses.
-- [ ] Qualify RDMA READ demand fetch and RDMA WRITE replication.
-- [ ] Import topology-aware slicing, endpoint pooling, and alternate-rail retry.
-- [ ] Keep rkeys and raw addresses out of the global replica directory.
+- [ ] [S5][s5] — **qualification open**: Qualify RDMA READ demand fetch and RDMA WRITE replication.
+- [ ] [S6][s6] — **deferred research decision**: Import topology-aware slicing, endpoint pooling, and alternate-rail retry.
+- Maintained invariant: rkeys/raw addresses stay out of the global index (`crates/orbitkv-catalog/src/index.rs`, `crates/orbitkv-proto/proto/engine.proto`). Discovery records contain state/location metadata; authoritative exports remain source-owned.
 - [x] Delete native v1 and vendored v2 RDMA implementations.
 
 ## M4 — generation-safe page references
 
-- [ ] Introduce manager-authored external `PageHandle { pool, page, generation }`
+- [ ] [S3][s3] — **implementation open**: Introduce manager-authored external `PageHandle { pool, page, generation }`
   and validate engine-owned GPU page generations at transfer boundaries.
-- [ ] Track the semantic frontier independently from execution completion.
-- [ ] Unify CUDA event, RDMA completion, and SSD completion fences.
-- [ ] Reject stale page generations at every adapter boundary.
-- [ ] Integrate handles into SGLang Radix lifecycle events.
-- [ ] Migrate the vLLM adapter without regressing its E2E path.
-- [ ] Add cancellation, preemption, crash, and delayed-completion stress tests.
+- [ ] [S7][s7] — **implementation open**: Track the semantic frontier independently from execution completion.
+- Retired: an unused generic fence framework. S3 extends the existing CUDA, TENT and SSD operation owners and keeps their distinct termination proofs.
+- [ ] [S3][s3] — **implementation open**: Reject stale page generations at every adapter boundary.
+- [ ] [S5][s5] — **implementation open**: Integrate handles into SGLang Radix lifecycle events.
+- [ ] [S3][s3] — **implementation open**: Migrate the vLLM adapter without regressing its E2E path.
+- [ ] [S3][s3] — **qualification open**: Add cancellation, preemption, crash, and delayed-completion stress tests.
 
 ## M5 — semantic state compiler
 
@@ -678,29 +684,43 @@ The M2 increment adds deterministic page demand and adapter consumption of the
 same rules; its gate is tracked above. This is a limited implementation toward
 M5, with no measured latency claim. The general compiler work remains open:
 
-- [ ] Define the `may_read(query, state)` IR.
-- [ ] Compile full-attention retention.
-- [ ] Compile sliding-window and sink-local retention.
-- [ ] Derive recurrent checkpoint placement and retention from the general IR;
+- [ ] [S7][s7] — **implementation open**: Define the `may_read(query, state)` IR.
+- [ ] [S7][s7] — **implementation open**: Compile full-attention retention.
+- [ ] [S7][s7] — **implementation open**: Compile sliding-window and sink-local retention.
+- [ ] [S7][s7] — **implementation open**: Derive recurrent checkpoint placement and retention from the general IR;
   declared exact-boundary checkpoint recovery is already implemented.
-- [ ] Solve Minimum Persistent State Realization for hybrid bundles.
-- [ ] Emit placement, checkpoint, prefetch, and reclamation plans.
-- [ ] Measure Retention Amplification and semantic reclaim latency.
+- [ ] [S7][s7] — **implementation open**: Solve Minimum Persistent State Realization for hybrid bundles.
+- [ ] [S7][s7] — **implementation open**: Emit placement, checkpoint, prefetch, and reclamation plans.
+- [ ] [S7][s7] — **implementation open**: Measure Retention Amplification and semantic reclaim latency.
 
 ## Hygiene and release
 
 - [x] Document independent per-node Managers, shared-instance capacity and automatic
   SSD selection; keep backend overrides in diagnosis/qualification instructions.
-- [ ] Replace the engine-coupled Docker build with independently versioned Manager
+- [ ] [S8][s8] — **implementation open**: Replace the engine-coupled Docker build with independently versioned Manager
   and engine images built from the validated wheel artifacts.
-- [ ] Qualify concurrent engines sharing one Manager: matched runtime/device
+- [ ] [S5][s5] — **qualification open**: Qualify concurrent engines sharing one Manager: matched runtime/device
   identities, bounded query ownership, engine/Manager restart and resource drain.
-- [ ] Qualify container GPU access, shared UDS/iceoryx2/PyTorch IPC and pidfd
+- [ ] [S5][s5] — **qualification open**: Qualify container GPU access, shared UDS/iceoryx2/PyTorch IPC and pidfd
   visibility before publishing DaemonSet/Deployment manifests. Test native SSD
   mounts separately from container functional recovery.
-- [ ] Keep all public capability claims tied to a reproducible test.
-- [ ] Separate client and Cache Manager release artifacts when their contracts are
+- [ ] [S8][s8] — **release gate**: Keep all public capability claims tied to a reproducible test.
+- [ ] [S8][s8] — **implementation open**: Separate client and Cache Manager release artifacts when their contracts are
   stable; the complete global index remains embedded in the Manager.
-- [ ] Keep heavy GPU/RDMA gates explicitly marked.
-- [ ] Preserve license and upstream provenance requirements.
-- [ ] Keep SGLang support claims aligned with the direct-linker E2E gate.
+- [ ] [S8][s8] — **release gate**: Keep heavy GPU/RDMA gates explicitly marked.
+- [ ] [S8][s8] — **release gate**: Preserve license and upstream provenance requirements.
+- [ ] [S8][s8] — **release gate**: Keep SGLang support claims aligned with the direct-linker E2E gate.
+
+[s2]: docs/completion-plan.md#s2--metadata-reliability-and-measured-capacity
+
+[s3]: docs/completion-plan.md#s3--transfer-lifetime-and-generation-safe-ownership
+
+[s4]: docs/completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains
+
+[s5]: docs/completion-plan.md#s5--complete-engine-deployment-and-pd-contracts
+
+[s6]: docs/completion-plan.md#s6--one-consumed-route-and-admission-planner
+
+[s7]: docs/completion-plan.md#s7--semantic-retention-and-checkpoint-compiler
+
+[s8]: docs/completion-plan.md#s8--product-organization-final-artifacts-and-release

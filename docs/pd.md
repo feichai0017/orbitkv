@@ -190,13 +190,13 @@ output comparisons. Neither deployment establishes RDMA, throughput gains,
 TP/PP behavior or mid-transfer fault recovery.
 
 Raw outputs, launch commands, retained failure logs and driver snapshots are in
-`benches/results/runs/two-host-natural-20260928/sglang-pd/` and
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/two-host-natural-20260928/sglang-pd/` and
 `sglang-pd-same-a100/`. The production fix keeps external hits out of Decode's
 HiCache-only restore state machine; the maintained E2E also checks the actual
 TENT engine-ready marker and passes the router's explicit bootstrap port.
 The final normal release with bounded Restore partitioning repeats the
 same-A100 gate successfully; its matching native hashes and outputs are under
-`benches/results/runs/partitioned-restore-20260928/sglang-pd-same-a100/`,
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/partitioned-restore-20260928/sglang-pd-same-a100/`,
 with hashes in the parent directory.
 
 To compose P/D with the external cache manually, point both workers at the same

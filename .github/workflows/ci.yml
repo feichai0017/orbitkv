@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "24.19.0"
@@ -64,6 +65,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Reject tracked experiment output
+        run: python3 scripts/check-experiment-output.py
       - name: Check Rust and Python package versions stay in sync
         run: python3 scripts/check-versions.py
 

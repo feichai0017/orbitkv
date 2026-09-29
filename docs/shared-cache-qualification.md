@@ -76,7 +76,7 @@ The natural-text prompts require retrieving a specific cabinet key from the
 cached first page among distractors. Complete eight-token outputs match the
 source controls and contain the correct key. Each engine transfers and restores
 288 MiB in total. Raw launches, request outputs and counter deltas are under
-`benches/results/runs/two-host-natural-20260928/`.
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/two-host-natural-20260928/`.
 
 A separate [byte-exact gate](#byte-exact-gpu-recovery) passes 8 MiB in each
 direction, including re-serving the received replica after original-source
@@ -88,7 +88,7 @@ placement from the receiving instance's registered slots; host NUMA identifiers
 never define cross-host storage identity. The final normal release with bounded
 Restore partitioning repeats this bidirectional byte gate successfully; its
 outputs and matching native hashes are retained under
-`benches/results/runs/partitioned-restore-20260928/`.
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/partitioned-restore-20260928/`.
 
 **Numerical scope:** the initial random-token model suite did not pass strict
 cross-GPU output equality. Native monolithic H20/A100 controls also differ for
@@ -96,9 +96,9 @@ some of those prompts; forcing FA2 on both hosts alone does not close the
 remote-output failure. A100 native HBM prefix hits match their own cold controls. The same random
 513/1025-token requests also pass through two vLLM/FA2 replicas on one A100,
 with 72/144 MiB remote/GPU restores; those diagnostic logs are under
-`benches/results/runs/same-host-a100-20260928/`.
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/same-host-a100-20260928/`.
 Keep the rejected cross-GPU runs and native controls under
-`benches/results/runs/two-host-20260928/`; do not describe the natural-text or
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/two-host-20260928/`; do not describe the natural-text or
 byte gate as proving arbitrary cross-GPU token equality.
 
 The model-serving rows above are source-build correctness results. A later
@@ -116,7 +116,7 @@ replay and correct recomputation after source payload loss. Each transferred
 and restored 288 MiB; outputs matched and checked resource counters drained.
 This remains single-H20, same-host TCP evidence.
 
-The [2026-09-23 Qwen3-8B gate](../benches/results/20260923-shared-cache/README.md)
+The [2026-09-23 Qwen3-8B gate](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-shared-cache/README.md)
 passed on one H20 with vLLM 0.29.0 and SGLang 0.5.20, tested separately. Each
 engine completed three remote GPU restores, including catalog restart recovery,
 and one correct recomputation after source payload loss. Outputs matched and
@@ -181,7 +181,7 @@ python -m benches.shared_cache_bytes worker \
 python -m benches.shared_cache_bytes run \
   --source-url http://10.0.0.1:8002 --target-url http://10.0.0.2:8002 \
   --source-manager http://10.0.0.1:9091 --target-manager http://10.0.0.2:9091 \
-  --output benches/results/runs/gpu-byte-roundtrip.json
+  --output /var/tmp/orbitkv-bench/gpu-byte-roundtrip.json
 ```
 
 The source DRAM cleanup is intentional. Stop both workers after the gate; use
@@ -200,7 +200,7 @@ python -m benches.shared_cache \
   --source-url http://10.0.0.1:8000 --target-url http://10.0.0.2:8000 \
   --source-manager http://10.0.0.1:9091 --target-manager http://10.0.0.2:9091 \
   --prompts /path/to/prompts.json --deployment two-host-tcp \
-  --output benches/results/runs/shared-cache-vllm.json
+  --output /var/tmp/orbitkv-bench/shared-cache-vllm.json
 ```
 
 Use `--engine sglang` for its native serving endpoint. The driver requires only
@@ -224,7 +224,7 @@ source DRAM eviction, each engine recovers 513/1025-token requests with
 restores. Complete outputs match the source controls, source staging succeeds,
 and both sides' checked reservations drain. Raw launches, output controls and
 counter snapshots are under
-`benches/results/runs/partitioned-restore-20260928/{vllm,sglang}-shared-ssd/`.
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/partitioned-restore-20260928/{vllm,sglang}-shared-ssd/`.
 This qualifies ordinary source-SSD recovery over TCP; it does not cover
 cancellation during SSD staging/READ, RDMA or a throughput advantage.
 
@@ -299,7 +299,7 @@ ORBITKV_CACHE_MANAGER_BINARY=/path/to/orbitkv-cache-manager \
 
 Repeat with `.venv/sglang-release/bin/python` and `-k sglang`. Build the Manager
 before starting these processes. Native builds restage Mooncake libraries.
-Raw logs belong in ignored `benches/results/runs/` or CI artifacts; retain only
+Raw logs belong in external artifact directories or CI artifacts; retain only
 the final summary and reproduction commands in a PR.
 
 Rust tests separately verify stale owner/residency rejection, source budget

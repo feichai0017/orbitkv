@@ -165,7 +165,7 @@ second receive-completion queue; that queue has been removed. The final byte
 comparison includes the transferred partial tail pages. Hashing synchronizes
 GPU reads, so this run is correctness evidence, not an overlap or latency
 benchmark. Raw logs and launch commands are under
-`benches/results/runs/two-host-natural-20260928/vllm-pd-same-a100/` and
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/two-host-natural-20260928/vllm-pd-same-a100/` and
 `vllm-pd-byte-probe/`.
 
 The heterogeneous strict-output gate **fails** and is not waived by byte
