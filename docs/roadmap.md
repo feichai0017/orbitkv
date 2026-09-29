@@ -1,7 +1,8 @@
 # OrbitKV roadmap
 
-The execution order is single-node hybrid-layout qualification, independent-replica
-cache sharing (DP), P/D plus cache reuse, then local global indexes and scale.
+Follow the [staged completion plan](completion-plan.md) for the current execution
+order and independent acceptance gates. Local global indexes are implemented;
+metadata scale, lifetime recovery and deployment qualification come next.
 Cancellation and transport lifetime safety apply at every stage. Cross-host
 TP/PP and KV-aware routing have later gates. See the
 [deployment comparison and priority rationale](distributed-comparison.md).
@@ -9,7 +10,8 @@ Milestones describe intended gates, not deployed capabilities. The
 detailed work queue lives in [TODO.md](../TODO.md).
 The [implementation plan and agent handoff](implementation-plan.md) records
 pinned upstream mechanisms, LMCache-style deployment profiles, code owners and
-the P4.1 implementation contract and evidence. It is the starting point for continuing this work.
+the P4.1 implementation contract and historical evidence. Use the completion
+plan for the current delivery sequence.
 
 ## Current delivery priorities
 
@@ -17,8 +19,9 @@ The starting point is a tested single-node DRAM/SSD path for both pinned engine
 releases, with TP=1 dense full-attention as the shared qualification baseline.
 Owned asynchronous queries, byte admission, shared backing reads and GPU
 completion lifetimes already exist. Complete local global indexes and etcd metadata synchronization are
-implemented; historical two-host TCP serving passes, while the new path needs
-physical multi-host, scale and RDMA qualification. Automatic queued warming stays
+implemented; the new path passes H20/A100 TCP sharing, restart and source-SSD
+recovery. Scale, host-failure-domain and RDMA qualification remain open.
+Automatic queued warming stays
 opt-in because the recorded controls do not establish a throughput benefit.
 
 SGLang hybrid pools and vLLM window/aligned recurrent groups use the same recovery

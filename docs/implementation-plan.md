@@ -1,5 +1,9 @@
 # Implementation plan and agent handoff
 
+The [completion plan](completion-plan.md) is the current stage-by-stage handoff.
+This document retains the detailed design contracts and historical evidence;
+read dated measurements as evidence for their recorded revisions only.
+
 Design and source review: **2026-09-24**. This is the execution map for local
 transfer planning, LMCache-style service deployment and distributed cache
 qualification. It combines the decisions in [state planning](state-planning.md),

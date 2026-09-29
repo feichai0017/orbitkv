@@ -65,6 +65,7 @@ export const docGroups = [
     title: "Development",
     description: "Follow the implementation gates and contribute changes.",
     items: [
+      { slug: "completion-plan", title: "Completion stages & acceptance" },
       { slug: "implementation-plan", title: "Implementation plan & handoff" },
       { slug: "communication-plan", title: "Communication optimization plan" },
       { slug: "roadmap", title: "Roadmap & validation gates" },
