@@ -30,10 +30,22 @@ OrbitKV adapter even though the API is still explicitly marked experimental.
 | vLLM callback family | Released calls consumed or evaluated by OrbitKV |
 | --- | --- |
 | Scheduler lookup/allocation | `get_num_new_matched_tokens`, `update_state_after_alloc`, `on_new_request`, `build_connector_meta` |
-| Scheduler completion/ownership | `requires_kv_delivery`, `update_connector_output`, `request_finished`, `request_finished_all_groups`, `register_finished_partial_tail`, `has_pending_block_frees`, `has_pending_push_work` |
+| Scheduler completion/ownership | `requires_kv_delivery`, `supports_divergent_local_hybrid_hits`, `update_connector_output`, `request_finished`, `request_finished_all_groups`, `register_finished_partial_tail`, `has_pending_block_frees`, `has_pending_push_work` |
 | Worker registration/order | `register_kv_caches`, `set_host_xfer_buffer_ops`, `handle_preemptions`, `start_load_kv`, `wait_for_layer_load`, `finish_forward`, `reset_capture_state` |
 | Worker save/completion | `save_kv_layer`, `wait_for_save`, `get_transfer_results`, `get_block_ids_with_load_errors`, `build_connector_worker_meta`, `shutdown` |
 | Topology and integration | `bind_kv_cache_manager`, `bind_gpu_block_pool`, `get_required_kvcache_layout`, `requires_piecewise_for_cudagraph`, handshake setters, stats/metrics/events and `reset_cache` |
+
+These two capability properties need explicit values during the upgrade. Ordinary
+OrbitKV read/write and `save_only` cache publication is best effort: a dropped
+save becomes a future miss, so `OrbitKVConnector.requires_kv_delivery` must be
+false. A reliable P/D producer must return true until its handoff is delivered or
+fails terminally; a consumer does not own producer delivery. `MultiConnector`
+returns true when **any** child requires delivery, ensuring a best-effort cache
+cannot weaken the P/D producer. The base divergent-hybrid property defaults to
+false, NIXL reports true, and `MultiConnector` reports true only when **all**
+children do. OrbitKV must remain false until its released 0.30.0 adapter proves
+that divergent local Full/SWA/Mamba hits are completed atomically across every
+required group; the existing block-pool suppression cannot be removed first.
 
 vLLM's 0.30.0 LMCache entry is not one fixed built-in implementation. At import
 time it prefers `LMCacheMPConnector` from the installed LMCache package and falls
@@ -81,7 +93,7 @@ replacement for TENT plus OrbitKV state contracts.
 | Requirement | Released vLLM 0.30.0 behavior | Decision before removing OrbitKV code |
 | --- | --- | --- |
 | Layout and ranks | Dense transfer requests `LBHNC`; MLA uses the default layout. NIXL exchanges PP/TP/DCP metadata and implements heterogeneous block-size, region/group and head-placement paths. | Implement a narrow TENT transport backend or equivalent released construction point, then compare its descriptors with OrbitKV HND/BHNC, MLA and heterogeneous-TP mappings. Reject unsupported resharding. |
-| Hybrid state | `SupportsHMA`, SWA clipping, Mamba speculative-slot clipping and `mamba_cache_mode` handling are present. Full/SWA/Mamba groups are selected together at the connector boundary. | Prove exact Full + SWA + recurrent boundaries and state bytes against OrbitKV's compiled recovery demand. A capability flag or group count does not prove atomic all-state readiness. |
+| Hybrid state | `SupportsHMA`, SWA clipping, Mamba speculative-slot clipping and `mamba_cache_mode` handling are present. Full/SWA/Mamba groups are selected together at the connector boundary. NIXL opts into divergent local hybrid hits; `MultiConnector` requires every child to opt in. | Keep OrbitKV's divergent-hit property false until exact Full + SWA + recurrent boundaries and state bytes pass against compiled recovery demand. A capability flag or group count does not prove atomic all-state readiness. |
 | Cancellation and preemption | Scheduler paths clean aborted/preempted requests; workers defer failure until submitted handles finish and retain a handle when release fails. `requires_kv_delivery` makes preempted reliable handoffs recompute, and `MultiConnector` requires delivery when any child does. | Reuse these engine lifecycle semantics. Keep the earlier OrbitKV preemption fence, generation checks and current destination/source retention until real abort, partial-submit and restart gates prove the TENT adaptation. |
 | Completion and failure | `KVConnectorTransferResults` distinguishes finished sends, finished receives and failed receives. NIXL polls transfer state and releases completed handles. | Map TENT terminal status into this result exactly once. A timeout, heartbeat loss or lease expiry must not stand in for native drain. The native NIXL TTL behavior is not evidence for OrbitKV source reclamation. |
 | Cache composition | `MultiConnector` now gives non-loading caches real blocks and tracks extra asynchronous saves. LMCache documents NIXL handoff plus LMCache offload using this path. | Test cold, partial and full handoff with OrbitKV `save_only` and ordinary read/write cache modes. Exactly one connector may load/write each destination; all required save completions must delay block free. |
@@ -110,7 +122,7 @@ consumed released replacement and tests; this audit deletes no protection.
 | --- | --- | --- |
 | `vllm/__init__.py` | Package import surface for connector classes | Keep a small public export surface |
 | `vllm/plugin.py` | `vllm.general_plugins` entry point; registers OrbitKV connector names | Prefer one official factory entry; remove duplicate registration only when the selected release resolves the class without it |
-| `vllm/connector.py` | vLLM factory; public callback adapter and role construction; owns selected client/context | Keep public class; reduce it to configuration plus scheduler/worker delegation during the 0.30.0 upgrade |
+| `vllm/connector.py` | vLLM factory; public callback adapter and role construction; owns selected client/context | Keep public class; reduce it to configuration plus scheduler/worker delegation. Explicitly return false for best-effort delivery and divergent hits until the latter is qualified |
 | `vllm/config.py` | Connector construction and scheduler/worker helpers; owns immutable identity/topology values | Keep engine-specific identity and rank mapping; remove the unused service-state field with `state_manager.py` |
 | `vllm/layout.py` | Worker registration and scheduler boundary code; maps released cache groups to physical layouts | Keep while layouts are consumed; qualify against 0.30.0 HMA/MLA/Mamba specs |
 | `vllm/metadata.py` | Scheduler-to-worker and worker-to-scheduler connector callbacks | Keep; migrate to 0.30.0 transfer results without compatibility aliases |
@@ -203,7 +215,10 @@ responsibilities.
    before `update_requests` and restore after page initialization/COW but before
    `preprocess_state`; propose those two narrow ordering boundaries upstream.
 3. Replace the blanket HMA block-pool override with released divergent-hit and
-   all-group readiness only after dense+recurrent state is proven atomic.
+   all-group readiness only after dense+recurrent state is proven atomic. Keep
+   the property false until then. Mark ordinary cache delivery best effort and
+   P/D producer delivery reliable; test their any/all aggregation in
+   `MultiConnector`.
 4. Upstream one vLLM registration/configuration/tests/docs change, then any
    generic recurrent-ordering or TENT transport work separately. Record submitted,
    merged and released states separately.
