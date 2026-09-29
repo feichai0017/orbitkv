@@ -1,5 +1,10 @@
 # Communication implementation sequence
 
+Use the [completion plan](completion-plan.md) for the current delivery and review
+sequence. Strided DMA, bounded raw parts, single-part raw layer readiness and
+local global indexes are implemented. Remaining execution work is identified
+below; completed mechanisms do not need a second implementation.
+
 The goal is to reduce the time between a valid recovery decision and the
 engine consuming the required state. Transport ping latency alone is not the
 acceptance criterion. A complete engine-owned HBM hit must not require a new
@@ -211,7 +216,8 @@ must not train the complete-route service-cost estimator.
 
 ## Next increments after consolidating PR #188
 
-Development now continues in the main checkout on `refactor/route-cost-evidence`.
+This section records the priorities after PR #188. The current execution order
+is maintained in the [completion plan](completion-plan.md).
 The communication branch's measured runtime is `eb61d166`; its last report
 commit is `5c029ed9`. Those measurements are reference evidence, not timings of
 the later merged binaries. The [serial](single-node-performance.md#matched-vllm-end-to-end-comparison)
@@ -248,7 +254,7 @@ Neither result establishes a universal performance advantage.
    For overlap, validate actual eager and graph-replay dependencies, cancellation,
    partial enqueue and page reuse. A retained whole-operation source fence is
    still required even when the engine can consume an earlier group.
-5. **Remove directory round trips with a local global index.** Publish block
+5. **Completed: remove directory round trips with a local global index.** Publish block
    metadata to etcd in bounded background batches and maintain a complete view
    through a fixed-revision snapshot and Watch. Remove Catalog lookup RPCs at
    cutover; retain source grants/completions and upstream TENT READ/WRITE.

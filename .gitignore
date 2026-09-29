@@ -13,8 +13,11 @@ python/uv.lock
 node_modules/
 dist/
 .astro/
-# Generated benchmark output; existing reviewed summaries remain tracked.
+# Historical tracked results are migrated under completion-plan S1.
+# New experiment output belongs outside the source checkout.
 /benches/results/
+/results/
+/runs/
 examples/pd_logs/
 python/tests/**/*.log
 cufile.log
@@ -32,6 +35,7 @@ python/orbitkv/libasio.so
 *.swp
 *.swo
 CLAUDE.local.md
-/.agents/
+/.agents/*
+!/.agents/skills/
 /.codex/
 /.trae/

@@ -5,17 +5,22 @@ and a passing gate; design text alone does not close an item.
 The [implementation plan and agent handoff](docs/implementation-plan.md) maps
 upstream references, deployment profiles and the P4.1 implementation contract to these gates.
 
+Use the [staged completion and acceptance plan](docs/completion-plan.md) as the
+current delivery order. It separates missing implementation, unqualified paths
+and obsolete checklist entries; each stage has an independent review gate.
+
 Follow the [current delivery priorities](docs/roadmap.md#current-delivery-priorities):
 close the single-node hybrid-layout gates, maintain deterministic demand and
 model-serving fault coverage, and extend two-host DP qualification to the remaining
 fault, numerical and RDMA gates.
 Build measured Rust transfer planning alongside these gates, using shared
 local/peer observations and distinct DP/P/D/TP/PP completion contracts.
-Warming gains are not a DP prerequisite. P/D with cache reuse follows. The next
-metadata design replaces single-copy Catalog shards with a complete local global
-index on every Manager, synchronized through etcd block metadata. This is a plan,
-not the current runtime; quorum, synchronization and transfer-lifetime gates
-remain required. Milestone numbers group work areas rather than imposing a strict
+Warming gains are not a DP prerequisite. P/D with cache reuse follows. The
+metadata implementation has replaced single-copy Catalog shards with a complete
+local global index on every Manager, synchronized through etcd block metadata.
+Same-host and physical H20/A100 TCP sharing/restart/SSD gates pass on both engines;
+scale, host-failure-domain and transfer-revocation gates remain open.
+Milestone numbers group work areas rather than imposing a strict
 serial schedule.
 
 ## GPU storage
