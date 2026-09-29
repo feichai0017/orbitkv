@@ -67,6 +67,7 @@ export const docGroups = [
     description: "Follow the implementation gates and contribute changes.",
     items: [
       { slug: "completion-plan", title: "Completion stages & acceptance" },
+      { slug: "engine-release-audit", title: "Released engine interface audit" },
       { slug: "rust-quality", title: "Rust quality gates" },
       { slug: "releases", title: "Python releases" },
     ],
