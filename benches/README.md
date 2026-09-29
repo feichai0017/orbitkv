@@ -368,8 +368,10 @@ default for ordinary demand. Prepared reads always use at most 32 MiB per
 batch, or one oversized page. Retained prepared pages remain budgeted.
 See [ownership and stopping](../docs/request-preparation.md) and the
 [ordinary recovery profile](../docs/recovery-performance.md).
-The [paired reproduction script](results/20260922-preparation/reproduce.sh)
-compares preparation on/off three times, reverses the middle pair's order,
+The [paired reproduction script](reproduce_preparation.sh) takes an external
+output root as its first argument, for example
+`bash benches/reproduce_preparation.sh /var/tmp/orbitkv-bench/preparation-001`.
+It compares preparation on/off three times, reverses the middle pair's order,
 and separates unbounded, deadline and one-batch controls. Fixed request caps
 preserve the request sequence; duration-only runs can sample different traffic.
 Additional DRAM-only runs record their larger host capacity explicitly.
@@ -504,8 +506,10 @@ text differences remain explicit; exact text comparisons are diagnostic, not
 a replacement for deterministic correctness gates. Native HBM-only runs record
 zero configured host-cache bytes, while CPU/OrbitKV/LMCache runs record their
 configured host pools. Manifests also retain the launch CPU affinity.
-Copy reviewed exports into `results/` when publishing a measurement;
-pass `--output-dir /var/tmp/orbitkv-bench/sharegpt` to keep logs and dataset downloads outside the checkout.
+Retain reviewed exports in versioned external storage or CI artifacts. Publish
+concise conclusions and stable evidence links in the repository. For ShareGPT,
+pass `--output-dir /var/tmp/orbitkv-bench/sharegpt` to keep logs and dataset
+downloads outside the checkout.
 
 ## Additional workloads and harness checks
 
