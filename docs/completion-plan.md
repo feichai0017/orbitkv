@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1 quota/index-budget recovery gates implemented; independent review pending. Remaining fault and capacity cells stay open. |
+| S2 | Partial: S2.1 independently accepted; S2.2 Watch delay/partition/compaction recovery implemented with review pending. Journal/live-storage and capacity-envelope cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
@@ -148,6 +148,28 @@ the publisher directly; it does not qualify GPU storage publication, journal
 churn through live stores, data-plane availability, cross-host HA or capacity.
 Those S2 obligations remain open. The [metadata gate recipe](distributed-cache.md#quota-and-index-budget-recovery)
 records commands, external evidence and operational recovery boundaries.
+
+### S2.2 — Watch delay, partition and compaction recovery
+
+A test-owned TCP gate now isolates one Manager's actual etcd connection while the
+real etcd service remains writable. It delays Watch responses, severs existing
+HTTP/2 streams, permits source publication and compaction through an independent
+connection, then heals the Manager connection. The reader retains its last
+complete index during the transient partition, hides the index while compacted
+history is rebuilt and exposes only the final complete snapshot afterward.
+
+The gate exposed a real classification defect: tonic reports an HTTP/2 Watch-body
+reset as gRPC `Unknown`. Treat only `Unknown` messages that identify HTTP/2 or
+transport failure as resumable disconnections; other unknown statuses still
+force a rebuild. Resume starts at the last applied revision, and etcd compaction
+or missing previous metadata then triggers the normal reset/snapshot path. The
+[Watch fault recipe](distributed-cache.md#watch-delay-partition-and-compaction)
+records the observed lag/rebuild measurements and remaining scope.
+
+This substage uses synthetic publication records and one etcd process on one
+host. It does not close sustained inventory-journal overflow, concurrent live
+DRAM/SSD publication, local-cache availability through Manager metadata loss,
+multi-host partitions or the measured operating envelope.
 
 ## S3 — Transfer lifetime and generation-safe ownership
 

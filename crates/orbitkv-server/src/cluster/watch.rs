@@ -22,19 +22,27 @@ impl From<etcd_client::Error> for FollowError {
             etcd_client::Error::IoError(_) | etcd_client::Error::TransportError(_) => {
                 Self::Disconnected(error.to_string())
             }
-            etcd_client::Error::GRpcStatus(status)
-                if matches!(
-                    status.code(),
-                    tonic::Code::Unavailable
-                        | tonic::Code::Cancelled
-                        | tonic::Code::DeadlineExceeded
-                ) =>
-            {
+            etcd_client::Error::GRpcStatus(status) if disconnected_status(status) => {
                 Self::Disconnected(error.to_string())
             }
             _ => Self::Rebuild(error.to_string()),
         }
     }
+}
+
+fn disconnected_status(status: &tonic::Status) -> bool {
+    if matches!(
+        status.code(),
+        tonic::Code::Unavailable | tonic::Code::Cancelled | tonic::Code::DeadlineExceeded
+    ) {
+        return true;
+    }
+    // tonic maps an HTTP/2 connection reset while reading a Watch body to
+    // Unknown. Resume from the last applied revision; etcd requests a rebuild
+    // if that history was compacted while the connection was unavailable.
+    status.code() == tonic::Code::Unknown
+        && (status.message().contains("h2 protocol error")
+            || status.message().contains("transport error"))
 }
 
 impl From<String> for FollowError {
@@ -427,3 +435,7 @@ fn decode_member(node: &str, kv: &KeyValue) -> Result<Member, String> {
     }
     Ok(member)
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/cluster/watch.rs"]
+mod tests;

@@ -385,3 +385,50 @@ journal churn and local-cache availability during metadata loss remain separate
 gates. A three-process quorum is not three independent host failure domains.
 Quota recovery must preserve registration/incarnation and cursor fencing; never
 remove those checks to make a recovered publisher appear healthy.
+
+## Watch delay, partition and compaction
+
+The S2.2 gate inserts a test-only loopback TCP proxy between one Cluster and a
+real etcd 3.5.21 process. Source registration/publication uses an independent
+direct connection, so the test can keep committing while only the reader's
+Watch, bootstrap and keepalive streams are delayed or disconnected. This is a
+controlled same-host network fault, not a physical cross-host partition.
+
+The gate establishes an initial DRAM candidate, delays the Watch downstream by
+400 ms and requires the measured application lag to reflect that delay. It then
+disconnects the reader, commits a DRAM delete plus a different final key, compacts
+through the committed revision and holds the partition long enough for Watch
+resume attempts. While isolated, the reader retains the old complete revision;
+after healing it must become unavailable during rebuild and expose only the final
+SSD/source state when the complete snapshot reaches the committed revision.
+
+The recorded run observed 422.09 ms delayed-Watch application, a 1.50 s
+partition, 2.26 s from heal to complete coverage and 1.41 s with incomplete
+coverage hidden. Final revision was 9, logical index accounting was 863 bytes and
+etcd reported 36,864 backend bytes. These are one deterministic fault run and
+diagnostic timings, not a capacity or latency envelope.
+
+Build and freeze native artifacts first, then run the test executable without a
+concurrent build:
+
+```bash
+ETCD_BIN=/path/to/frozen/etcd \
+ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-evidence/watch-fault \
+  /path/to/frozen/server-tests \
+  cluster::publish::tests::delayed_and_compacted_watch \
+  --ignored --nocapture --test-threads=1
+```
+
+The current external evidence is under
+`/root/orbitkv-artifacts/s2-s51-20260929/s2-2/`. `run-1.log` preserves the
+failure that revealed premature index reset. `run-2` preserves an intermediate
+passing attempt whose partition-duration label included recovery time.
+`publish-v3.log` and `publish-v3/*/watch-partition-recovery.json` contain the
+final corrected gate; `frozen-v3-sha256.txt` identifies its binaries.
+
+Only explicitly recognized transport failures retain the old complete snapshot.
+An arbitrary gRPC `Unknown`, invalid metadata, a changed format, compaction or a
+delete without required previous metadata still resets coverage and rebuilds.
+Registration expiry fences discovery even if the last index snapshot was
+complete. Production Watch/RPC metrics, sustained store-originated journal
+overflow, CPU/RSS and increasing-key capacity measurements remain open.

@@ -1,5 +1,6 @@
 use super::*;
 use crate::cluster::tests::etcd::{Etcd, join, view, wait_for};
+use crate::cluster::tests::gate::TcpGate;
 use orbitkv_state::{ReplicaMetadata, ReplicaRepresentation, StateKey};
 use std::time::Instant;
 
@@ -502,4 +503,148 @@ async fn index_budget_exhaustion_hides_partial_results_until_eviction_allows_a_c
     .unwrap();
     client.lease_revoke(grant.id()).await.unwrap();
     member.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires ETCD_BIN; real delayed Watch, network partition, compaction and rebuild"]
+async fn delayed_and_compacted_watch_recovers_from_a_partition_without_partial_visibility() {
+    let server = Etcd::start(1).await;
+    let gate = TcpGate::start(&server.endpoints[0]).await;
+    let reader = view(58002);
+    let index = Arc::new(orbitkv_catalog::GlobalIndex::new(reader.clone(), 1 << 20));
+    let reader_cluster = crate::cluster::Cluster::join(
+        std::slice::from_ref(&gate.endpoint),
+        "watch-fault",
+        "reader",
+        120,
+        reader.clone(),
+        Arc::new(ResidencyInventory::new(4096)),
+        index.clone(),
+    )
+    .await
+    .unwrap();
+    wait_for(|| index.status().available).await;
+
+    let source = view(58001);
+    let mut client = Client::connect(&server.endpoints, None).await.unwrap();
+    let sent_at = Instant::now();
+    let grant = client.lease_grant(120, None).await.unwrap();
+    assert!(source.renew(sent_at, Duration::from_secs(120)));
+    let cluster = cluster_id(grant.header()).unwrap();
+    let prefix = "/orbitkv/v2/watch-fault/";
+    let registered = crate::cluster::registration::register(
+        &mut client,
+        prefix,
+        "source",
+        source.owner(),
+        grant.id(),
+        cluster,
+    )
+    .await
+    .unwrap();
+    let mut publisher = Publisher {
+        client: client.clone(),
+        prefix: prefix.into(),
+        member: registered,
+        view: source.clone(),
+        cluster,
+        progress: Progress::default(),
+        previous: None,
+    };
+    wait_for(|| reader.permits(source.owner())).await;
+
+    let dram = record(1, ReplicaMedium::Dram, true);
+    let key = dram.key.clone();
+    let revision = publisher.records(&[dram], 1, true).await.unwrap();
+    wait_for(|| index.revision().is_some_and(|value| value >= revision)).await;
+    assert_eq!(
+        index.lookup(std::slice::from_ref(&key))[0].replicas.len(),
+        1
+    );
+
+    gate.set_downstream_delay(Duration::from_millis(400));
+    let delayed_at = Instant::now();
+    let revision = publisher
+        .records(&[record(2, ReplicaMedium::Ssd, true)], 2, true)
+        .await
+        .unwrap();
+    wait_for(|| index.revision().is_some_and(|value| value >= revision)).await;
+    let watch_delay = delayed_at.elapsed();
+    assert!(
+        watch_delay >= Duration::from_millis(300),
+        "configured Watch delay was not observed: {watch_delay:?}"
+    );
+    gate.set_downstream_delay(Duration::ZERO);
+
+    let old_revision = index.revision().unwrap();
+    gate.partition().await;
+    let partitioned_at = Instant::now();
+    let second_key = StateKey::new("partition-final".into(), vec![2; 32]);
+    let mut second = record(4, ReplicaMedium::Dram, true);
+    second.key = second_key.clone();
+    let committed = publisher
+        .records(&[record(3, ReplicaMedium::Dram, false), second], 4, true)
+        .await
+        .unwrap();
+    client.compact(committed, None).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(index.revision(), Some(old_revision));
+    assert!(index.status().available && reader.registration_valid());
+    assert_eq!(
+        index.lookup(std::slice::from_ref(&key))[0].replicas.len(),
+        2
+    );
+    assert!(
+        index.lookup(std::slice::from_ref(&second_key))[0]
+            .replicas
+            .is_empty()
+    );
+
+    let partition_duration = partitioned_at.elapsed();
+    gate.heal(Duration::from_millis(200));
+    let healed_at = Instant::now();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut unavailable_at = None;
+    loop {
+        let status = index.status();
+        if !status.available {
+            unavailable_at.get_or_insert_with(Instant::now);
+        }
+        let first = index.lookup(std::slice::from_ref(&key));
+        let second = index.lookup(std::slice::from_ref(&second_key));
+        if status.available
+            && status.revision.is_some_and(|value| value >= committed)
+            && first[0].replicas.len() == 1
+            && first[0].replicas[0].metadata.medium == ReplicaMedium::Ssd
+            && second[0].replicas.len() == 1
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "compacted Watch did not rebuild");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let unavailable_at = unavailable_at.expect("compaction rebuild never hid incomplete coverage");
+    assert!(reader.registration_valid() && reader.permits(source.owner()));
+    let status = client.status().await.unwrap();
+    std::fs::write(
+        server.directory.join("watch-partition-recovery.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "configured_watch_delay_ms": 400,
+            "observed_watch_delay_ms": watch_delay.as_secs_f64() * 1000.0,
+            "partition_ms": partition_duration.as_secs_f64() * 1000.0,
+            "heal_to_complete_ms": healed_at.elapsed().as_secs_f64() * 1000.0,
+            "incomplete_visibility_ms": unavailable_at.elapsed().as_secs_f64() * 1000.0,
+            "old_revision": old_revision,
+            "committed_revision": committed,
+            "final_revision": index.revision(),
+            "index_bytes": index.bytes(),
+            "etcd_db_size": status.db_size(),
+            "registration_valid": reader.registration_valid(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    client.lease_revoke(grant.id()).await.unwrap();
+    reader_cluster.shutdown().await;
+    gate.shutdown().await;
 }
