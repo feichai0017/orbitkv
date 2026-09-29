@@ -1,5 +1,8 @@
 # Qwen3-8B concurrent query ownership baseline
 
+For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/concurrent-performance.md) retains full tables and historical run details.
+
 Measured September 21, 2026 at source commit `3a64513f`, after adding versioned
 queries, byte admission, shared backing reads, and the SGLang shared-prefix
 admission fix. Both measured runs had no uncommitted source diff. This is a
@@ -40,20 +43,7 @@ Client TTFT is time to the first nonempty streamed text. Median milliseconds
 across all three lengths; each phase has 3/12/24 samples at concurrency 1/4/8.
 Throughput divides requests by measured burst wall time, excluding preparation.
 
-| Engine | Pattern | Concurrency | Cold TTFT | After GPU pressure | After DRAM eviction | SSD-phase requests/s |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| vLLM | Shared | 1 | 474.63 | 42.48 | 129.78 | 4.17 |
-| vLLM | Shared | 4 | 521.95 | 78.92 | 182.79 | 13.01 |
-| vLLM | Shared | 8 | 556.24 | 109.35 | 216.50 | 22.35 |
-| vLLM | Mixed | 1 | 474.43 | 38.38 | 156.81 | 4.10 |
-| vLLM | Mixed | 4 | 1,634.16 | 99.48 | 295.25 | 7.02 |
-| vLLM | Mixed | 8 | 2,364.82 | 229.01 | 383.11 | 7.92 |
-| SGLang | Shared | 1 | 473.99 | 43.42 | 162.39 | 3.84 |
-| SGLang | Shared | 4 | 1,147.81 | 78.55 | 164.74 | 13.02 |
-| SGLang | Shared | 8 | 1,188.35 | 118.78 | 214.27 | 21.15 |
-| SGLang | Mixed | 1 | 473.39 | 41.95 | 170.18 | 3.75 |
-| SGLang | Mixed | 4 | 1,622.90 | 109.76 | 381.46 | 6.68 |
-| SGLang | Mixed | 8 | 3,245.89 | 322.62 | 398.28 | 7.40 |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/concurrent-performance.md)
 
 The machine-readable summaries also contain descriptive p95/p99, end-to-end
 latency, output-token throughput, and client decode milliseconds per token.
@@ -107,8 +97,8 @@ logprob limits, cancels unused queries and ready leases, and observes expiry
 without requiring another lookup. Controlled admission regressions pass. The
 GPU E2E now restores four identical page-aligned requests simultaneously after
 engine restart, for both DRAM and SSD, against a deterministic cold control.
-The incomplete run remains in
-`benches/results/runs/query-budgets-sglang-failed-shared-prefix/` and is excluded
+The earlier report identifies the incomplete run as
+`historical run label: query-budgets-sglang-failed-shared-prefix/` and is excluded
 from latency summaries.
 
 Ordinary performance runs retain **13 vLLM and 3 SGLang output differences**
@@ -145,23 +135,23 @@ Build the release wheel and use the isolated release environments from the
   --engine sglang --backend orbitkv --model /workspace/models/qwen3-8b \
   --workload concurrent --concurrencies 1 4 8 --repeats 3 \
   --ssd-gib 32 --query-budget-gib 2 \
-  --output benches/results/runs/query-budgets-sglang
+  --output /var/tmp/orbitkv-bench/query-budgets-sglang
 
 .venv/vllm-release/bin/python -m benches.single_node \
   --engine vllm --backend orbitkv --model /workspace/models/qwen3-8b \
   --workload concurrent --concurrencies 1 4 8 --repeats 3 \
   --ssd-gib 32 --query-budget-gib 2 \
-  --output benches/results/runs/query-budgets-vllm
+  --output /var/tmp/orbitkv-bench/query-budgets-vllm
 
 python -m benches.report \
-  benches/results/runs/query-budgets-vllm \
-  benches/results/runs/query-budgets-sglang \
-  --output benches/results/runs/query-budgets-report
+  /var/tmp/orbitkv-bench/query-budgets-vllm \
+  /var/tmp/orbitkv-bench/query-budgets-sglang \
+  --output /var/tmp/orbitkv-bench/query-budgets-report
 ```
 
-Use empty output directories and run one engine at a time. Raw responses,
-metrics, logs and control scripts remain under `benches/results/runs/` on the
-measurement host. These measurements support byte-bounded restoration on this
+Use empty external output directories and run one engine at a time. The fixed
+Git snapshot above preserves tracked responses and controls; missing historical
+raw logs are described in the evidence inventory. These measurements support byte-bounded restoration on this
 workload. The subsequent [queued-warming implementation](queued-warming.md)
 is outside these measurements. First-use deadlines, fair scheduling, and
 calibrated restore-versus-recompute policy still require implementation and

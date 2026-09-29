@@ -5,7 +5,7 @@ export const docGroups = [
     items: [
       { slug: "goals", title: "Overview & supported features" },
       { slug: "single-node", title: "Installation & quickstart" },
-      { slug: "adapters", title: "Engine adapter configuration" },
+      { slug: "adapters", title: "vLLM & SGLang integration" },
       { slug: "models", title: "Model qualification" },
       { slug: "deployment", title: "Deployment patterns" },
       { slug: "server", title: "Manager configuration" },
@@ -53,6 +53,7 @@ export const docGroups = [
       { slug: "metrics", title: "Metrics & observability" },
       { slug: "fault-qualification", title: "Single-node fault gates" },
       { slug: "client-performance", title: "Client control overhead" },
+      { slug: "benchmark-evidence", title: "Benchmark evidence & archives" },
       { slug: "communication-performance", title: "Communication measurements" },
       { slug: "single-node-performance", title: "Single-node comparisons" },
       { slug: "ssd-performance", title: "SSD recovery & capacity pressure" },
@@ -66,9 +67,6 @@ export const docGroups = [
     description: "Follow the implementation gates and contribute changes.",
     items: [
       { slug: "completion-plan", title: "Completion stages & acceptance" },
-      { slug: "implementation-plan", title: "Implementation plan & handoff" },
-      { slug: "communication-plan", title: "Communication optimization plan" },
-      { slug: "roadmap", title: "Roadmap & validation gates" },
       { slug: "rust-quality", title: "Rust quality gates" },
       { slug: "releases", title: "Python releases" },
     ],

@@ -131,4 +131,4 @@ references or hybrid recovery proofs for arbitrary models. Publish can still
 retain a source indefinitely if a live manager never completes it;
 the Publish watchdog reports stalled ownership; deterministic fault tests cover
 restart and lost notifications. Broader concurrent fault/soak qualification remains. See
-[the work queue](../TODO.md) and [transport ownership](transport.md).
+[the work queue](completion-plan.md) and [transport ownership](transport.md).

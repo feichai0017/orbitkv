@@ -1,10 +1,7 @@
 [files]
-# Captured model text, request IDs and source diffs must remain verbatim.
+# Upstream sources retain their original spelling.
 extend-exclude = [
   "third-party/**",
-  "benches/results/**/*.csv",
-  "benches/results/**/*.json",
-  "benches/results/**/*.jsonl",
 ]
 
 [default]

@@ -95,7 +95,7 @@ each engine:
 ```
 
 The pinned model source, test logs and per-case artifacts are retained under
-`benches/results/runs/partitioned-restore-20260928/` as `qwen35-source.json`,
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/partitioned-restore-20260928/` as `qwen35-source.json`,
 `qwen35-vllm-dram*`, `qwen35-vllm-ssd*` and `qwen35-sglang*`. Release native
 hashes are recorded in `release-artifacts.sha256` in the same directory.
 

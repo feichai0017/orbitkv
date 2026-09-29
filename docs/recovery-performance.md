@@ -1,5 +1,8 @@
 # Ordinary recovery profile
 
+For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/recovery-performance.md) retains full tables and historical run details.
+
 The 2026-09-22 Qwen3-8B profile measures ordinary demand before enabling
 consumer-owned preparation. It identifies where to investigate next; it does
 not establish a speedup from compiled hybrid ranges or from speculation.
@@ -25,7 +28,7 @@ concurrency. They contain 356 vLLM and 353 SGLang requests. Outputs have 16 toke
 retain aggregate latency, throughput, transfer bytes and output-difference
 counts. The maintained report now measures
 [natural SSD capacity pressure](ssd-performance.md). Raw manifests, samples, timelines and service logs remain
-in ignored `benches/results/runs/` directories on the measurement host.
+in external artifact directories on the measurement host.
 
 ## Stage observations
 

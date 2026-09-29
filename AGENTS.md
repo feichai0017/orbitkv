@@ -5,8 +5,8 @@ This file provides guidance for agents working in the OrbitKV repository.
 ## Current execution and review
 
 Use [the completion plan](docs/completion-plan.md) for the next delivery sequence.
-`TODO.md` is the detailed checklist; architecture documents explain contracts,
-not independent completion claims. Check the current code before reviving an old
+It is the only execution queue; architecture documents explain contracts,
+not independent completion claims. Do not recreate a root TODO or parallel roadmap. Check the current code before reviving an old
 unchecked item. Mark implemented-but-unqualified work separately from missing code.
 
 For the current handoff, the implementation agent delivers one stage or coherent
@@ -44,14 +44,15 @@ remaining limits. A missing hardware gate stays unqualified, not passed.
 Project skills live in `.agents/skills/` and are versioned with the code. Launch
 Codex inside this repository so repository-scoped discovery applies. Read the
 relevant `SKILL.md` for Python bindings, Manager operations, version changes or
-vLLM loading diagnosis; resolve repository paths from the Git root. Keep one
+released-engine integration and lifecycle diagnosis; resolve repository paths from the Git root. Keep one
 maintained skill per workflow and update it when the consumed API changes.
 
 ## Project Overview
 
 OrbitKV is a framework-neutral state cache with compiled recovery requirements
 for LLM inference; general physical planning remains future work. The single-node data plane is validated with vLLM `0.29.0`
-and SGLang `0.5.20`; deeper RadixAttention integration is still planned.
+and SGLang `0.5.20`; the SGLang UnifiedRadixCache linker is implemented, while
+public lifecycle integration and broader deployment qualification remain open.
 
 - Single-node KV cache offloading between GPU and host memory
 - Cross-node KV cache sharing via Mooncake Transfer Engine (RDMA/TCP)
@@ -77,7 +78,7 @@ orbitkv/
 ├── third-party/                  # Pinned Mooncake, vLLM, and SGLang sources
 ├── examples/                     # Runnable usage examples
 ├── benches/                       # Benchmark code, workloads and reproduction
-├── docs/                         # Architecture and roadmap
+├── docs/                         # Architecture and completion plan
 ├── scripts/                      # Project helper scripts
 ├── .agents/skills/                # Repository-scoped Codex workflows
 └── prek.toml                     # Local check configuration
@@ -149,7 +150,12 @@ The supported engine baselines are the pinned `third-party/vllm` v0.29.0 and
 `third-party/sglang` v0.5.20 tags. Keep Python optional dependency pins and
 the source submodules aligned when updating a release. Native builds and wheel
 CI only initialize `third-party/mooncake`; initialize engine submodules for
-source inspection or compatibility work.
+source inspection or release upgrades. The latest-release reference is vLLM
+0.30.0 and SGLang 0.5.20 as checked on 2026-09-29; vLLM 0.30.0 remains an upgrade
+target until S5.1 qualification. Check official release tags again when starting
+an upgrade. Use main only to locate fixes and prepare upstream contributions.
+See `docs/adapters.md` and the `engine-integration` skill for ownership and
+removal gates; do not delete a correctness Hook before its replacement is consumed.
 
 ### Rust
 
@@ -203,7 +209,7 @@ Do not default to running all of `python/tests`. Current project taste is `uv` +
 
 ```bash
 uv run python examples/basic_vllm.py --model /path/to/immutable-model
-.venv/vllm-release/bin/python -m benches.single_node --engine vllm --backend orbitkv --model /path/to/model
+.venv/vllm-release/bin/python -m benches.single_node --engine vllm --backend orbitkv --model /path/to/model --output /var/tmp/orbitkv-bench/run-001
 ```
 
 ## Run Services

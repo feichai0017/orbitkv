@@ -115,4 +115,4 @@ The remaining design is a work plan. Single-node GPU recovery and model/storage
 identity isolation are implemented for the validated adapters and layouts;
 further model capabilities, page-generation enforcement
 and full performance qualification remain open. See [single-node deployment](single-node.md),
-[architecture](architecture.md), and [the implementation checklist](../TODO.md).
+[architecture](architecture.md), and [the implementation checklist](completion-plan.md).

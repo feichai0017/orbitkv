@@ -13,9 +13,9 @@ python/uv.lock
 node_modules/
 dist/
 .astro/
-# Historical tracked results are migrated under completion-plan S1.
 # New experiment output belongs outside the source checkout.
 /benches/results/
+/benches/runs/
 /results/
 /runs/
 examples/pd_logs/

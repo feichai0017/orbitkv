@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, globSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,16 +18,31 @@ test("published pages have valid internal links, fragments and repository target
     "Build the site before running publication checks",
   );
   const failures = [];
+  const historicalTargets = new Set();
   for (const file of files) {
     const html = readFileSync(join(dist, file), "utf8");
     const current = new URL(file.replace(/index\.html$/, ""), base);
     for (const [, attribute] of html.matchAll(/\b(?:href|src)="([^"]*)"/g)) {
       const target = new URL(decode(attribute), current);
       if (target.origin === "https://github.com") {
-        const path = target.pathname.match(
-          /^\/feichai0017\/orbitkv\/blob\/[^/]+\/(.+)$/,
-        )?.[1];
-        if (path && !existsSync(join(repository, decodeURIComponent(path)))) {
+        const match = target.pathname.match(
+          /^\/feichai0017\/orbitkv\/blob\/([^/]+)\/(.+)$/,
+        );
+        const [, revision, path] = match ?? [];
+        // Historical snapshots can contain evidence removed from the current tree.
+        const historical = revision && /^[a-f0-9]{40}$/.test(revision);
+        if (path && historical) {
+          const object = `${revision}:${decodeURIComponent(path)}`;
+          if (!historicalTargets.has(object)) {
+            historicalTargets.add(object);
+            const result = spawnSync("git", ["cat-file", "-e", object], {
+              cwd: repository,
+              encoding: "utf8",
+            });
+            if (result.status !== 0)
+              failures.push(`${file}: missing historical target ${object}; fetch Git history before checking`);
+          }
+        } else if (path && !existsSync(join(repository, decodeURIComponent(path)))) {
           failures.push(`${file}: missing repository file ${path}`);
         }
         continue;

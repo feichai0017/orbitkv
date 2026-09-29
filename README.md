@@ -7,7 +7,7 @@
   <a href="https://feichai0017.github.io/orbitkv/docs/">Documentation</a> ·
   <a href="docs/single-node.md">Quickstart</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
-  <a href="docs/roadmap.md">Roadmap</a>
+  <a href="docs/completion-plan.md">Completion plan</a>
 </p>
 
 <p align="center">
@@ -163,7 +163,7 @@ metadata limits. Raw per-layer CUDA dependencies allow consumption before later
 copies finish, with external-event graph replay and a final ownership fence. See
 [execution scope and remaining gates](docs/engine-local-restore.md).
 
-The [implementation plan](docs/implementation-plan.md) maps pinned LMCache,
+The [completion plan](docs/completion-plan.md) maps pinned LMCache,
 FlexKV and Mooncake mechanisms to deployment and validation work. The next milestone
 uses measured path costs and resource budgets across local tiers and Mooncake
 TENT transfers. Independent replicas, P/D handoff and TP/PP have separate
@@ -177,9 +177,9 @@ HostReady observations. Equal-coverage local SSD and single-owner peer routes
 also share a cross-medium shadow. A third, explicitly experimental opt-in can
 execute that choice, but it is not qualified until the external H20 TCP/RDMA
 matrix passes. All observations and execution selection remain off by default:
-the [earlier overhead qualification](docs/implementation-plan.md#p41-final-evidence)
+the [earlier overhead qualification](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#p41-final-evidence)
 has one open SGLang ANS SSD latency gate. The route changes require their own
-[validation](docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence).
+[validation](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence).
 
 Read the [architecture](docs/architecture.md),
 [hybrid recovery contract](docs/hybrid-recovery.md), and
@@ -191,7 +191,7 @@ remain open. See the [metadata design](docs/distributed-cache.md#local-global-in
 ## Performance
 
 Performance depends on prefix reuse, cache capacity, storage and engine scheduling.
-Reports include configurations, final results and reproduction commands:
+The maintained guides link historical evidence and explain configurations, limits and reproduction:
 
 | Report | Coverage |
 | --- | --- |
@@ -204,14 +204,14 @@ Reports include configurations, final results and reproduction commands:
 Request preparation remains **off by default**: the current Qwen3-8B controls
 improve throughput in both engines, but SGLang P95 latency regresses. These
 single-H20 measurements do not establish a universal advantage over other caches.
-Benchmark code and final summaries live in [`benches/`](benches/README.md).
+Benchmark programs live in [`benches/`](benches/README.md); generated results follow the [external evidence policy](docs/benchmark-evidence.md).
 
 ## Documentation and contributing
 
 - **Get started:** [Installation](docs/single-node.md) · [Adapter configuration](docs/adapters.md) · [Manager options](docs/server.md)
 - **Operate:** [Metrics](docs/metrics.md) · [Fault qualification](docs/fault-qualification.md) · [Deployment patterns](docs/deployment.md)
 - **Develop:** [Contributor guide](AGENTS.md) · [Python package](python/README.md) · [Test gates](python/tests/README.md) · [Releases](docs/releases.md)
-- **Plan:** [Roadmap](docs/roadmap.md) · [Work queue](TODO.md)
+- **Development:** [Completion plan](docs/completion-plan.md) · [Engine integration](docs/adapters.md)
 
 Technical pages in `docs/` are also published on the website. Contributions
 should include the relevant checks and documentation changes.

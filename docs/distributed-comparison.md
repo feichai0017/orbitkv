@@ -61,7 +61,7 @@ The pinned [default prefetch policy](https://github.com/LMCache/LMCache/blob/05a
 chooses the first matching adapter by index. Prefetch retention, store targeting
 and eviction have separate owners. These are useful boundaries, not evidence
 that an adaptive cost optimizer is already available. The
-[implementation plan](implementation-plan.md#upstream-mechanisms-and-how-to-apply-them)
+[upstream design mapping](architecture.md#upstream-designs-and-orbitkv-owners)
 records those mechanisms, optional lazy offload, isolated registration, and
 release-note/configuration discrepancies that require explicit runtime checks.
 

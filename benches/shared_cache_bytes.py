@@ -10,10 +10,10 @@ import socket
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from pathlib import Path
 
 import requests
 
+from .artifacts import external_path
 from .metrics import metrics
 from .shared_cache import drain, synchronize
 from .workload import evict_host_cache
@@ -217,7 +217,7 @@ def main() -> None:
     run = modes.add_parser("run", help="check forward Restore and re-serving after source eviction")
     for name in ("source-url", "target-url", "source-manager", "target-manager"):
         run.add_argument(f"--{name}", required=True)
-    run.add_argument("--output", type=Path, required=True)
+    run.add_argument("--output", type=external_path, required=True)
     args = parser.parse_args()
     if args.mode == "worker":
         worker(args)

@@ -145,7 +145,7 @@ retain their `CacheRestore` completion observations. Local raw grants report
 caller-to-drain durations as `engine_local_restore`; this separate estimate
 cannot select against Manager-preparation or P/D intervals. Manager reaping
 never substitutes for engine readiness. See the
-[completion evidence contract](communication-plan.md#engine-local-completion-evidence).
+[completion evidence contract](engine-local-restore.md#engine-local-completion-evidence).
 
 
 [Affine geometry](../crates/orbitkv-core/src/transfer/layout.rs) remains the
@@ -352,7 +352,7 @@ The no-op composition tests metadata routing and recurrent initialization; it
 is not a P/D transfer qualification.
 
 Raw logs and the source/binary manifest are under
-`benches/results/runs/layered-restore-20260929/`. Reproduction switches are in
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/layered-restore-20260929/`. Reproduction switches are in
 [the Python test guide](../python/tests/README.md). These gates establish
 correctness and native copy/compute overlap. The separate
 [30-cohort serving matrix](communication-performance.md#repeated-serving-comparison-after-layer-readiness)
@@ -400,3 +400,34 @@ observation, first engine use, and source-retirement lag separately. Compare
 serving TTFT/ITL and goodput at equal CPU, host/HBM memory, model, and quality
 budgets. The [communication measurements](communication-performance.md) record
 matched microbenchmarks; a metadata speedup alone is not a serving improvement.
+
+## Engine-local completion evidence
+
+The native worker carries six cumulative nanosecond offsets from one engine
+`Instant`: readiness finished, dispatched, dequeued, grant claimed, CUDA enqueue
+returned, and GPU drain observed. The first interval includes native argument
+conversion, client/executor locking and destination readiness. Dispatch reaches
+native job construction; the queue interval includes enqueue handoff and worker
+delay. Grant wait includes worker scheduling and plan consumption.
+Submission includes validation and descriptor compilation. These are host
+observations, not GPU kernel timestamps.
+
+The existing session/operation-fenced completion record transports the bounded
+report with `Active -> Drained`. The Manager accepts it when consuming the source
+owner, once, before reaping. Invalid, absent or over-one-day reports are ignored
+without blocking drain, reaping or record reuse. Failed and never-submitted
+operations do not train success estimates. Late Manager observation cannot
+extend engine-ready latency, and no cross-process timestamp subtraction is used.
+
+`ORBITKV_COST_OBSERVATIONS=1` on both processes records the independent
+`engine_local_restore` cost key. It is deliberately excluded from route selection:
+Manager `cache_restore` starts at preparation, and P/D starts at handoff enqueue.
+A shared target GPU does not make these start boundaries comparable.
+
+`ORBITKV_TRACE_TRANSFERS=1` additionally emits `local_restore_complete` from the
+Manager and `local_restore_observed` from native result consumption. The common
+Rust tracer serves both processes. The benchmark parser joins those records to
+existing connector request links, counts each physical batch once, and reports
+native stage and consumer-wait quantiles separately from framework first-use
+callbacks. Local completions do not require a Manager-to-engine notification.
+Tracing and cost collection are opt-in; the disabled path takes no stage clocks.

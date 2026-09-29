@@ -15,8 +15,8 @@ import statistics
 import sys
 import sysconfig
 import time
-from pathlib import Path
 
+from .artifacts import external_path
 from .runtime import ROOT, free_port, server
 
 
@@ -27,7 +27,7 @@ def main() -> None:
     from orbitkv.client.gpu import serialize_gpu_buffer
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=external_path, required=True)
     parser.add_argument("--label", required=True)
     parser.add_argument("--iterations", type=int, default=1000)
     parser.add_argument("--repeats", type=int, default=3)

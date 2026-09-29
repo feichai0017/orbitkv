@@ -1,7 +1,7 @@
 """Measure cold prefill, HBM hits, and external-cache reuse after HBM pressure.
 
 Run from the repository root with the selected engine's Python environment:
-python -m benches.single_node --engine sglang --backend orbitkv --model /path/to/model
+python -m benches.single_node --engine sglang --backend orbitkv --model /path/to/model --output /tmp/orbitkv-single-node
 """
 
 from __future__ import annotations
@@ -14,13 +14,13 @@ import shutil
 import subprocess
 import tempfile
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from . import concurrent, sustained
+from .artifacts import external_path
 from .launch import STORAGE_CODECS, configure, storage_codec_budget
 from .metrics import codec_summary, delta, metrics, summarize
-from .runtime import ROOT, manifest, process_usage, server, storage_manifest
+from .runtime import manifest, process_usage, server, storage_manifest
 from .workload import run_workload
 
 
@@ -35,8 +35,9 @@ def main() -> None:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument(
         "--output",
-        type=Path,
-        help="Empty result directory (default: benches/results/runs/<timestamp>-<engine>-<backend>)",
+        type=external_path,
+        required=True,
+        help="Empty result directory outside the source checkout",
     )
     parser.add_argument("--lengths", type=int, nargs="+", default=[1024, 4096, 8192])
     parser.add_argument("--repeats", type=int, default=5)
@@ -175,12 +176,6 @@ def main() -> None:
     if args.backend != "orbitkv" and (args.queue_warmup == "on" or args.trace_transfers):
         parser.error("--queue-warmup on and --trace-transfers require --backend orbitkv")
     args.model = args.model.resolve()
-    args.output = (
-        args.output
-        or ROOT
-        / "benches/results/runs"
-        / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}-{args.engine}-{args.backend}"
-    ).resolve()
     if args.orbitkv_transfer_backend and args.backend != "orbitkv":
         parser.error("--orbitkv-transfer-backend requires --backend orbitkv")
     if args.ssd_gib < 0 or (args.ssd_gib and args.backend != "orbitkv"):

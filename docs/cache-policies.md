@@ -1,5 +1,8 @@
 # Retention and SSD write admission
 
+For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/cache-policies.md) retains full tables and historical run details.
+
 OrbitKV provides two optional Rust policies for workloads larger than GPU and
 host memory: protect demand-reused pages from scans, and avoid writing every
 new page to SSD. They use the existing cache and backing-store owners; Python
@@ -96,7 +99,7 @@ provides the preceding allocation and queue controls.
 
 ## Measured capacity pressure (2026-09-23)
 
-The [final aggregates and reproduction instructions](../benches/results/20260923-cache-policies/README.md)
+The [final aggregates and reproduction instructions](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260923-cache-policies/README.md)
 use one H20, BF16 Qwen3-8B, TP=1, vLLM 0.29.0 and SGLang 0.5.20. A 27 GiB
 prefix working set competes for 9 GiB GPU KV and 4 GiB Manager DRAM; SSD is
 64 GiB, query admission is 3 GiB and concurrency is eight. Warming and consumer
@@ -107,16 +110,7 @@ and 50 cold requests. There are three repetitions per configuration, with the
 middle repetition's order reversed. Values below are means of per-window
 measurements; brackets show their min/max, not confidence intervals.
 
-| Engine | Policy | Output token/s | P95 TTFT (ms) | SSD writes (GiB/window) |
-| --- | --- | ---: | ---: | ---: |
-| vLLM | 0 / all | 63.49 [62.94–64.11] | 3071 [2979–3177] | 41.23 |
-| vLLM | 80 / all | 64.34 [63.72–64.92] | 3056 [2781–3263] | 26.22 |
-| vLLM | 0 / reuse | 44.58 [44.31–44.93] | 3099 [3078–3137] | 26.43 |
-| vLLM | 80 / reuse | 41.31 [41.12–41.49] | 3236 [3167–3275] | 25.74 |
-| SGLang | 0 / all | 59.22 [59.06–59.51] | 3512 [3234–3670] | 36.86 |
-| SGLang | 80 / all | 59.40 [59.38–59.44] | 3421 [3168–3652] | 20.56 |
-| SGLang | 0 / reuse | 41.46 [41.09–41.81] | 4456 [4207–4677] | 26.19 |
-| SGLang | 80 / reuse | 37.00 [36.66–37.30] | 4861 [4525–5519] | 25.17 |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/cache-policies.md)
 
 Protection alone changes throughput by +1.3% in vLLM and +0.3% in SGLang;
 there is no consistent paired tail-latency improvement. Committed SSD writes
@@ -199,4 +193,4 @@ These are reuse heuristics, not model execution prediction. Compiled recovery
 requirements still determine which pages, windows and checkpoints are legal
 to restore. Cost-based restore-versus-recompute decisions, execution-time
 forecasting and finer copy/compute overlap remain separate work in the
-[roadmap](roadmap.md).
+[completion plan](completion-plan.md).

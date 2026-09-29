@@ -238,9 +238,9 @@ LMCache, FlexKV and Mooncake provide implementation references for concrete
 cache mechanisms. OrbitKV applies them through its existing state contract and
 Rust resource owners. vLLM and SGLang adapters continue to supply engine layouts,
 scheduler signals and page ownership; they do not gain separate cache schedulers.
-The [complete implementation plan](implementation-plan.md#upstream-mechanisms-and-how-to-apply-them)
-also maps LMCache MP deployment, prefetch/store policies, lazy offload,
-allocation/event sharing and instance isolation to concrete OrbitKV work.
+The [integration reference](adapters.md#lmcache-reference)
+maps released LMCache callback and P/D contracts to OrbitKV ownership;
+remaining execution work is tracked only in the completion plan.
 
 | Reference | Mechanism to use | OrbitKV owner and status |
 | --- | --- | --- |
@@ -256,7 +256,7 @@ must reduce request latency or resource cost under matched workloads without
 weakening those checks. Reuse, prefetch and retention policies keep their
 [existing evidence gates](queued-warming.md#reference-implementations-and-policy-order);
 an upstream default alone does not justify enabling an OrbitKV policy.
-The [roadmap](roadmap.md#current-delivery-priorities) keeps single-node correctness,
+The [completion plan](completion-plan.md) keeps single-node correctness,
 DP sharing, P/D reuse and catalog availability separately qualified.
 
 ## Layering
@@ -555,7 +555,7 @@ engine owns execution admission and HBM allocation. A routing load reservation
 does not replace a transfer lease.
 
 The [Dynamo integration boundary](state-planning.md#reuse-dynamo-for-request-routing)
-and [implementation stages](state-planning.md#implementation-sequence) specify
+and [implementation stages](completion-plan.md) specify
 the reusable components, pending engine-interface dependency, and acceptance
 gates. No router dependency is introduced into the current single-node core.
 

@@ -1,5 +1,8 @@
 # Native client control-path measurements
 
+For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/client-performance.md) retains full tables and historical run details.
+
 On 2026-09-22, the final control path reduced median polling time for a
 1024-hash, budget-waiting query from 123.50 to 106.39 microseconds on one H20
 host. This is a narrow control-path measurement, not model TTFT, SSD throughput,
@@ -53,7 +56,7 @@ run from the repository root in a Torch/CUDA environment:
 
 ```bash
 PYTHONPATH=python .venv/sglang-release/bin/python -m benches.client \
-  --label rust-client --output benches/results/runs/client-poll
+  --label rust-client --output /var/tmp/orbitkv-bench/client-poll
 ```
 
 The output directory must be new. Do not run Cargo builds or other GPU workloads

@@ -33,11 +33,11 @@ that different engines' KV bytes are interchangeable.
 ## Experimental and planned work
 
 Local global indexes, replicated etcd metadata and the Mooncake transfer path support
-experimental remote-cache development. Real two-host serving qualification,
-metadata scale/failure recovery, broader parallelism and P/D with cache reuse have separate
-gates. A future KV-aware router can use cache location and transfer costs without
+experimental remote-cache development. Scoped two-host TCP serving has recorded correctness evidence. Metadata
+scale/failure recovery, RDMA, broader parallelism and P/D with cache reuse retain
+separate gates. A future KV-aware router can use cache location and transfer costs without
 moving inference scheduling into the Manager.
 
 General lifetime analysis, page-generation enforcement and joint
 retention/placement planning remain open. See [deployment support](deployment.md),
-[architecture](architecture.md), and [the roadmap](roadmap.md).
+[architecture](architecture.md), and [the completion plan](completion-plan.md).

@@ -1,6 +1,6 @@
 ---
 name: python-binding
-description: Modify OrbitKV PyO3 APIs, Python type stubs, vLLM/SGLang adapters, or native wheel packaging. Use for binding and engine-integration changes in this repository.
+description: Modify OrbitKV PyO3 APIs, native client ownership, Python type stubs or wheel packaging. Use for native binding and installed-artifact changes in this repository.
 ---
 
 # OrbitKV Python bindings and adapters
@@ -13,11 +13,8 @@ machines, batching, waiting and execution belong to the existing Rust owners.
   `python/orbitkv/orbitkv.pyi`. Update stubs when an exposed API changes. Verify
   actual call sites rather than restoring removed aliases or client facades.
 - Common client ownership: `crates/orbitkv-channel/src/cache_client.rs`.
-- vLLM: `python/orbitkv/vllm/{connector,scheduler,worker}.py`; use the pinned
-  `third-party/vllm` contract, currently v0.29.0.
-- SGLang: `python/orbitkv/sglang/linker.py` and its registered plugin. The direct
-  GPU linker exists; inspect its admission and recovery hooks against the pinned
-  SGLang v0.5.20 before changing callbacks.
+- Engine callback changes: use `.agents/skills/engine-integration/SKILL.md` and
+  `docs/adapters.md`; release targets and current qualification are distinct.
 - Model/layout identity and hybrid recovery are shared contracts. Do not equate
   compatible API shapes with cross-engine byte compatibility.
 

@@ -1,5 +1,8 @@
 # Consumer-owned request preparation
 
+For artifact locations and verification limits, see [benchmark evidence](benchmark-evidence.md).
+The [pre-migration report](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/request-preparation.md) retains full tables and historical run details.
+
 Request preparation is an opt-in single-node experiment for the pinned vLLM
 and SGLang dense-attention paths. It starts host reads for a small number of
 accepted requests before ordinary cache admission. Engines still own GPU
@@ -122,12 +125,15 @@ hit as evidence of causal latency savings. Default activation requires repeated
 paired measurements, including order reversal, with bounded cleanup and no
 material read amplification.
 
+For current launches, use [the maintained preparation script](../benches/reproduce_preparation.sh)
+with an explicit external output root.
+
 ## Measured results
 
 The 2026-09-23 qualification completed 20 Qwen3-8B runs on one H20:
 18 SSD-backed policy runs and two DRAM-only runs. Source `ffada83e`, vLLM 0.29.0,
 SGLang 0.5.20, BF16, TP=1. See the
-[final CSVs and reproduction script](../benches/results/20260922-preparation/README.md).
+[historical final CSVs and commands](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/benches/results/20260922-preparation/README.md).
 
 Each policy run uses the same 64-request sequence at concurrency four, 75%
 reuse selection, 12 prefixes, 1,024/4,096-token inputs and 16-token outputs.
@@ -136,14 +142,7 @@ There are three matched 32 MiB demand/preparation pairs per engine; the middle
 pair reverses execution order. Tracing is on and unowned warming is off.
 These short windows finish in 6–15 seconds; they do not replace a long soak.
 
-| Engine / pair | Throughput change | P95 TTFT change | SSD bytes/request change |
-| --- | ---: | ---: | ---: |
-| vLLM / 1 | +1.9% | −3.7% | −17.7% |
-| vLLM / 2 | +2.7% | −11.7% | −19.0% |
-| vLLM / 3 | +2.9% | −14.9% | −20.7% |
-| SGLang / 1 | +2.9% | +13.2% | −16.4% |
-| SGLang / 2 | +8.4% | +11.6% | −17.8% |
-| SGLang / 3 | +5.8% | +7.5% | −17.8% |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/request-preparation.md)
 
 **Keep preparation disabled by default.** vLLM improves both measures in these
 controls, but SGLang trades worse tail latency for throughput. Every paired
@@ -155,14 +154,7 @@ Stopping policies use preparation with 32 MiB batches. The unbounded control
 uses ordinary demand; it isolates the default behavior rather than pairing
 another policy change with preparation.
 
-| Engine / policy | P95 TTFT (ms) | Output tokens/s |
-| --- | ---: | ---: |
-| vLLM / unbounded demand | 517.4 | 154.8 |
-| vLLM / 100 ms deadline | 771.6 | 94.9 |
-| vLLM / one batch | 934.0 | 74.6 |
-| SGLang / unbounded demand | 583.0 | 142.8 |
-| SGLang / 100 ms deadline | 1517.7 | 84.1 |
-| SGLang / one batch | 1353.3 | 68.8 |
+[Full historical measurement table](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/request-preparation.md)
 
 These cutoffs increase recomputation and reduce throughput in this workload.
 Keep ordinary read cutoffs at zero. Submitted reads retain their owners until

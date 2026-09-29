@@ -8,6 +8,7 @@ import json
 import math
 from pathlib import Path
 
+from .artifacts import external_path
 from .metrics import cache_source, summarize, workload_phases
 
 
@@ -172,7 +173,9 @@ def collect_run(directory: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("runs", nargs="+", type=Path)
-    parser.add_argument("--output", type=Path, required=True, help="Empty report directory")
+    parser.add_argument(
+        "--output", type=external_path, required=True, help="Empty report directory"
+    )
     parser.add_argument(
         "--reference-run",
         type=Path,

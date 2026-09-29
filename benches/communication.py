@@ -21,6 +21,7 @@ from pathlib import Path
 
 import requests
 
+from .artifacts import external_path
 from .metrics import metrics
 from .runtime import free_port, process_usage, server
 
@@ -31,7 +32,7 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "--manager", type=Path, default=os.environ.get("ORBITKV_CACHE_MANAGER_BINARY")
     )
     parser.add_argument("--label", required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=external_path, required=True)
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--repeats", type=int, default=3)

@@ -1,4 +1,4 @@
-# Trace a vLLM cache load
+# Trace engine state recovery
 
 All paths below are relative to the repository root. Start with the actual
 adapter and pinned engine; search function names instead of assuming old logs.
@@ -22,3 +22,26 @@ For a preemption/restart failure, follow the pinned vLLM scheduler under
 operation. Distinguish a cache miss from a failed submitted copy. A stale lease,
 registration change or canceled request must not release an allocation before
 its GPU/native work is drained. Check unrelated requests still make progress.
+
+## SGLang
+
+Trace `plugin.py:create_cache` into native tree match and
+`RecoveryLinkerWrapper.match/load_back`, then `OrbitKVLinker.lookup/load` and
+`start_layer_wise_loading`. Track tree locks, full/window/checkpoint boundaries,
+actual pool indices and rank-common agreement before diagnosing a byte copy.
+Follow the layer counter and native Restore final wait separately. On abort or
+reset, inspect queued-load cancellation and submitted-work drain before releasing
+request/tree slots. Generic checkpoint operations belong to engine components;
+OrbitKV's compiled recovery requirements do not allocate the engine's pages.
+
+## P/D
+
+Current vLLM `pd/` owns its handoff state; SGLang `pd.py` supplies payload movement
+under native request states. Trace producer CUDA readiness, authorized decoder
+ranges, TENT completion, rank agreement and the one DecodeReady transition.
+Do not report a WRITE return or a telemetry observation as engine readiness.
+For composition, identify which connector may restore each missing interval;
+verify neither concurrent writes nor double release can occur.
+
+These paths describe the present implementation. Re-audit them against the
+selected release before replacing internal hooks or adopting newer result APIs.

@@ -15,7 +15,9 @@ different operations. Existing session authorization still applies.
    without upgrading unrelated dependencies.
 2. Run `python3 scripts/check-versions.py --tag vVERSION`. Both `orbitkv-llm`
    and `orbitkv-llm-cu13` must have the same version and retain their documented
-   engine/runtime constraints.
+   engine/runtime constraints. Check the release matrix in
+   `docs/completion-plan.md`; an engine target becomes supported only after its
+   upgrade gate passes. Keep license and bundled upstream provenance with artifacts.
 3. Build the candidate with `scripts/build-wheel.sh` or the manual Release
    workflow. Check the complete installed package, Manager and loaded TENT paths,
    then execute the relevant installed-engine and two-host gates.

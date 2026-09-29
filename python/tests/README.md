@@ -228,7 +228,7 @@ ORBITKV_FAULT_TESTS=1 ORBITKV_PREPARE_REQUESTS=1 \
 ORBITKV_CACHE_MANAGER_BINARY=/path/to/test-hooks/orbitkv-cache-manager-py \
 ../.venv/vllm-release/bin/python -m pytest -m stress \
   tests/stress/test_recovery_faults.py -k vllm --model /workspace/models/qwen3-8b \
-  --basetemp=/workspace/orbitkv/benches/results/runs/serving-fault-vllm
+  --basetemp=/var/tmp/orbitkv-bench/serving-fault-vllm
 ```
 
 Use `ORBITKV_PREPARE_REQUESTS=0` for ordinary demand, and the SGLang environment
@@ -253,7 +253,7 @@ After installing the candidate wheel in the pinned engine environment, run:
 .venv/vllm-release/bin/python -m pytest -m release_smoke \
   python/tests/release/test_installed_wheel.py -k vllm \
   --model /workspace/models/qwen3-8b \
-  --basetemp=/workspace/orbitkv/benches/results/runs/wheel-smoke-vllm
+  --basetemp=/var/tmp/orbitkv-bench/wheel-smoke-vllm
 ```
 
 Run from the repository root; substitute the SGLang environment and `-k sglang`

@@ -18,6 +18,7 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from .artifacts import external_path
 from .launch import STORAGE_CODECS, storage_codec_budget
 from .report import collect_run, compare_outputs
 
@@ -245,7 +246,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--ssd-dir",
-        type=Path,
+        type=external_path,
         required=True,
         help="Writable NVMe directory; only a new private subdirectory is used",
     )

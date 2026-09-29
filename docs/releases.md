@@ -101,7 +101,7 @@ Python imports, remove external TENT library directories and verify loaded
 runtime paths under the installed package.
 
 Logs, installed paths, native library identities and the wheel manifest are in
-`benches/results/runs/layered-restore-20260929/ci-wheel/`. This qualifies the new
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/layered-restore-20260929/ci-wheel/`. This qualifies the new
 installed single-node artifact. The two-host evidence below belongs to the
 previous candidate; it has not been rerun with this SHA256. No PyPI release or
 RDMA qualification is claimed.
@@ -134,7 +134,7 @@ scripts and native clients pass 8 MiB of exact GPU recovery in each direction
 over IPv6 TCP, including re-serving the received replica after original-source
 eviction. Every payload/gap hash matches and checked ownership counters drain.
 Raw evidence, package paths and the wheel hash are under
-`benches/results/runs/partitioned-restore-20260928/` in `wheel-vllm/`,
+`/root/orbitkv-artifacts/s1-evidence-20260929/legacy-results/runs/partitioned-restore-20260928/` in `wheel-vllm/`,
 `wheel-sglang/`, `installed-wheel-byte-roundtrip/` and `wheel.sha256`.
 
 The independently downloaded CUDA 13/CPython 3.11 x86_64 artifact from Release
@@ -164,4 +164,4 @@ controls show a throughput/latency tradeoff on SGLang; see
 [the policy results](request-preparation.md#measured-results).
 Distributed serving, metadata HA, automatic hybrid lookahead and cross-host TP
 remain outside the qualified single-node release scope. See
-[deployment support](deployment.md) and [the roadmap](roadmap.md).
+[deployment support](deployment.md) and [the completion plan](completion-plan.md).

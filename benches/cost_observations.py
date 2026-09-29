@@ -20,6 +20,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from .artifacts import external_path
 from .metrics import engine_itl_summary, percentile
 from .report import collect_run
 from .runtime import ROOT
@@ -506,7 +507,7 @@ def main() -> None:
         "--manager", type=Path, required=True, help="Prebuilt Manager; never rebuilt here"
     )
     parser.add_argument("--ssd-dir", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=external_path, required=True)
     parser.add_argument(
         "--engines", nargs="+", choices=("vllm", "sglang"), default=["vllm", "sglang"]
     )

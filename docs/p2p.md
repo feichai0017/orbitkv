@@ -96,7 +96,7 @@ Lookahead can retain source memory earlier, so benchmark with identical source
 budgets and delayed release ACKs. `prepared_wait` records residence between
 authorization and consumption; speculative grants do not train the sequential
 composite route estimate. No distributed throughput improvement is claimed yet.
-See the [communication implementation sequence](communication-plan.md) for
+See the [communication implementation sequence](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains) for
 batched metadata and engine-side execution work that remains planned.
 
 ## Failure and configuration behavior
