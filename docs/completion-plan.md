@@ -36,7 +36,7 @@ record submitted, merged and released as different states.
 | --- | --- |
 | S0 | Agent handoff and Codex skill migration merged in PR #190. |
 | S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
-| S2 | Partial: S2.1 independently accepted; S2.2 Watch delay/partition/compaction recovery implemented with review pending. Journal/live-storage and capacity-envelope cells remain open. |
+| S2 | Partial: S2.1 and S2.2 independently accepted. Three-host metadata is blocked by CPU-node SSH authorization and mutually unreachable A/B container data addresses; journal/live-storage and capacity-envelope cells remain open. |
 | S3 | Open: native termination proof, page generations and explicit registration. |
 | S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
 | S5 | Partial: [S5.1 release/interface audit](engine-release-audit.md) independently accepted at `38f8dbb2`. vLLM 0.30.0 remains an unqualified upgrade target, and public lifecycle/deployment gates remain open. |
