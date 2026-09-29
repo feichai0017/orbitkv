@@ -731,6 +731,14 @@ async fn increasing_metadata_load_records_publication_watch_rebuild_cpu_rss_and_
                 publication_ms.push(started.elapsed().as_secs_f64() * 1000.0);
                 watch_lag_ms.push(wait_for_revision(&index, revision).await.as_secs_f64() * 1000.0);
             }
+            let source_keys: Vec<_> = records.iter().map(|record| record.key.clone()).collect();
+            assert!(
+                index
+                    .lookup(&source_keys)
+                    .iter()
+                    .all(|row| row.replicas.is_empty()),
+                "publisher records became visible before its ready marker"
+            );
             let sequence = records.last().unwrap().sequence;
             let started = Instant::now();
             let revision = publisher.commit(Vec::new(), sequence, true).await.unwrap();
@@ -788,6 +796,7 @@ async fn increasing_metadata_load_records_publication_watch_rebuild_cpu_rss_and_
         }
         let rebuild_ms = rebuild_started.elapsed().as_secs_f64() * 1000.0;
 
+        let mut final_revision = 0;
         for (node, publisher) in publishers.iter_mut().enumerate() {
             let retired: Vec<_> = (0..keys_per_node / 2)
                 .map(|key| capacity_record(node, key, keys_per_node as u64 + key as u64 + 1, false))
@@ -796,18 +805,37 @@ async fn increasing_metadata_load_records_publication_watch_rebuild_cpu_rss_and_
                 let sequence = batch.last().unwrap().sequence;
                 let started = Instant::now();
                 let revision = publisher.records(batch, sequence, true).await.unwrap();
+                final_revision = final_revision.max(revision);
                 publication_ms.push(started.elapsed().as_secs_f64() * 1000.0);
                 watch_lag_ms.push(wait_for_revision(&index, revision).await.as_secs_f64() * 1000.0);
             }
         }
         wait_for(|| {
-            let rows = index.lookup(&keys);
-            rows.iter().filter(|row| row.replicas.len() == 1).count()
-                == node_count * keys_per_node / 2
-                && rows.iter().filter(|row| row.replicas.is_empty()).count()
-                    == node_count * keys_per_node / 2
+            index
+                .revision()
+                .is_some_and(|value| value >= final_revision)
+                && rebuild_index
+                    .revision()
+                    .is_some_and(|value| value >= final_revision)
         })
         .await;
+        let mut remaining_records = 0;
+        for observed in [&index, &rebuild_index] {
+            for node_keys in &keys_by_node {
+                for (position, row) in observed.lookup(node_keys).iter().enumerate() {
+                    if position < keys_per_node / 2 {
+                        assert!(row.replicas.is_empty(), "retired key remained visible");
+                    } else {
+                        assert_eq!(row.replicas.len(), 1, "retained key disappeared");
+                        assert_eq!(row.replicas[0].metadata.medium, ReplicaMedium::Dram);
+                        if Arc::ptr_eq(observed, &index) {
+                            remaining_records += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(remaining_records, node_count * keys_per_node / 2);
 
         // etcd updates backend-size status asynchronously after applying the
         // final transaction. Keep this fixed stabilization outside every
@@ -820,7 +848,7 @@ async fn increasing_metadata_load_records_publication_watch_rebuild_cpu_rss_and_
             "nodes": node_count,
             "keys_per_node": keys_per_node,
             "published_records": node_count * keys_per_node,
-            "remaining_records": node_count * keys_per_node / 2,
+            "remaining_records": remaining_records,
             "publication_ms": duration_summary(&publication_ms),
             "watch_lag_ms": duration_summary(&watch_lag_ms),
             "snapshot_rebuild_ms": rebuild_ms,

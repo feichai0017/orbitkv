@@ -463,12 +463,12 @@ Median of three runs on each checked host:
 
 | Host | Sources / records | Publish p50 / p95, ms | Watch p50 / p95, ms | Rebuild, ms | Index peak | Etcd growth | Test / etcd CPU ticks | Test / etcd RSS delta |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| H20 container | 1 / 512 | 0.63 / 0.84 | 2.18 / 2.28 | 7.90 | 144,640 B | 200,704 B | 1 / 5 | 5,540 / 6,828 KiB |
-| H20 container | 4 / 2,048 | 0.63 / 0.91 | 2.08 / 2.40 | 13.35 | 578,176 B | 790,528 B | 3 / 23 | 4,136 / 12,660 KiB |
-| H20 container | 16 / 8,192 | 0.64 / 1.10 | 2.08 / 2.43 | 56.16 | 2,315,392 B | 3,137,536 B | 14 / 149 | 11,304 / 24,288 KiB |
-| A100 host | 1 / 512 | 0.73 / 0.91 | 2.15 / 2.31 | 7.34 | 144,640 B | 196,608 B | 2 / 7 | 5,652 / 6,584 KiB |
-| A100 host | 4 / 2,048 | 0.69 / 1.03 | 2.08 / 2.40 | 14.17 | 578,176 B | 790,528 B | 5 / 23 | 4,472 / 10,952 KiB |
-| A100 host | 16 / 8,192 | 0.71 / 1.25 | 2.08 / 2.43 | 60.10 | 2,315,392 B | 3,141,632 B | 19 / 133 | 10,376 / 23,504 KiB |
+| H20 container | 1 / 512 | 0.61 / 0.83 | 2.16 / 2.26 | 5.74 | 144,640 B | 196,608 B | 1 / 5 | 5,776 / 7,000 KiB |
+| H20 container | 4 / 2,048 | 0.60 / 0.90 | 2.13 / 2.31 | 14.07 | 578,176 B | 790,528 B | 4 / 27 | 4,560 / 12,540 KiB |
+| H20 container | 16 / 8,192 | 0.63 / 1.16 | 2.12 / 2.41 | 56.33 | 2,315,392 B | 3,137,536 B | 15 / 176 | 11,636 / 23,088 KiB |
+| A100 host | 1 / 512 | 0.66 / 0.82 | 2.07 / 2.28 | 7.11 | 144,640 B | 196,608 B | 1 / 6 | 5,332 / 6,572 KiB |
+| A100 host | 4 / 2,048 | 0.66 / 1.19 | 2.07 / 2.34 | 14.34 | 578,176 B | 790,528 B | 4 / 23 | 4,360 / 11,436 KiB |
+| A100 host | 16 / 8,192 | 0.68 / 0.95 | 2.07 / 2.45 | 59.78 | 2,315,392 B | 3,141,632 B | 17 / 116 | 10,420 / 22,604 KiB |
 
 Build and freeze first, then run with a new external evidence directory:
 
@@ -480,13 +480,15 @@ ORBITKV_METADATA_ARTIFACT_DIR=/var/tmp/orbitkv-evidence/capacity-repeat-1 \
   --ignored --nocapture --test-threads=1
 ```
 
-The H20 evidence and frozen hashes are under
-`/root/orbitkv-artifacts/s2-s51-20260929/s2-3-qualified/`. The A100 copies,
+The final H20 evidence and frozen hashes are under
+`/root/orbitkv-artifacts/s2-s51-20260929/s2-3-correction/`. The A100 copies,
 per-run JSON/logs and hash comparison are under
-`/root/orbitkv-artifacts/three-host-20260929/node-b-s2-3/` and the test-owned
-remote directory `/workspace/orbitkv-three-host-20260929/s2-3-qualified/`.
-The first capacity run, where immediate `db_size` sampling was stale, remains
-under `s2-3-final/` and is excluded from this table.
+`/root/orbitkv-artifacts/three-host-20260929/node-b-s2-3-correction/` and the
+test-owned remote directory
+`/workspace/orbitkv-three-host-20260929/s2-3-correction/`.
+The initial stale-`db_size` run and the first evidence version that did not
+verify the exact deleted key set remain under `s2-3-final/` and
+`s2-3-qualified/`; both are excluded from this table.
 
 This does not qualify 16 nodes as a production maximum or model CPU/RSS under
 contention. Sources are real registered metadata publishers with synthetic
