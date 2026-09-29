@@ -8,7 +8,7 @@ the foundation.
 The [SSD experiment](ssd-performance.md) supplies initial
 measurements; predictive policies require separate evaluation.
 
-The [implementation sequence](#implementation-sequence) below turns the
+The [completion plan](completion-plan.md) turns the
 proposal into reviewable changes. [Manager decisions below the engine](#cache-manager-decisions-below-the-engine)
 define the primary planning boundary; [Dynamo reuse](#reuse-dynamo-for-request-routing)
 is a later integration for worker selection.
@@ -16,9 +16,6 @@ The design covers local tiers and Mooncake TE peer transfers with shared cost
 observations, resource accounting and recovery checks. Implement local decisions
 first; qualify distributed modes separately. Worker routing remains a later
 milestone and is not required for transfer planning.
-The [implementation plan](implementation-plan.md) connects these contracts to
-LMCache/FlexKV/Mooncake source references, deployment packaging and the next
-agent's bounded implementation packet.
 
 ## Cache Manager decisions below the engine
 
@@ -401,7 +398,7 @@ GPU operation is terminal.
 This supplies comparable completed-route evidence for those routes. Engine-local
 raw grants retain the same device admission but do not yet train this estimator;
 their actual drain occurs in the engine before Manager source retirement. See
-the [next measurement increment](communication-plan.md#next-increments-after-consolidating-pr-188).
+the [next measurement increment](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains).
 
 Completion resource evidence is separately bounded and freshness-checked. A
 direct restore has a per-device 128-operation admission owner retained through
@@ -743,7 +740,7 @@ count and DMA-coalesced range count, using the executor's own merge iterator.
 The actual descriptors refine the observation and shadow together without
 restarting queue timing. These shapes still do not model NUMA placement or
 interference with inference kernels.
-The [fixed-backend DRAM comparison](implementation-plan.md#dmakernel-comparison-final-evidence)
+The [fixed-backend DRAM comparison](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#dmakernel-comparison-final-evidence)
 exceeds the throughput and TTFT p50 regression budgets for kernel in both
 engines; it does not qualify automatic selection or change registration defaults.
 
@@ -783,7 +780,7 @@ Observations and shadow work are **off by default**. Set
 unset or `0` preserves the disabled baseline. The earlier observation-only matrix
 passes five of six cells; SGLang ANS SSD exceeds the TTFT p50 budget, so default
 enablement remains unqualified. That matrix predates independent SSD-route
-execution; [current validation](implementation-plan.md#ssd-sourcepath-separation-final-evidence)
+execution; [current validation](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence)
 is recorded separately.
 Set `ORBITKV_COST_SELECTION=1` in addition to observations to allow the guarded
 same-medium peer-owner choice. Either variable absent or unequal to `1` keeps
@@ -1077,250 +1074,22 @@ combines explicit demand, legal recovery boundaries, resource scheduling, and
 measured restore-versus-recompute decisions. Performance and novelty claims
 require comparisons against compatible implementations on the same workloads.
 
-## Implementation sequence
+## Delivery and qualification
 
-The initial SSD measurements, stage metrics, and direct GPU byte tests are
-complete in the SSD measurement change. The following stages are planned;
-each needs its own implementation and acceptance evidence. Start with dense
-full-attention, TP=1, and the currently pinned vLLM/SGLang releases. Broader
-model and topology support needs separate qualification.
-
-These stage identifiers group local planning work. Follow the
-[current delivery priorities](roadmap.md#current-delivery-priorities) for the
-next changes and the DP/P/D gates. Qualify ordinary-demand lifetimes first;
-optional warming gains and the later cost model do not gate two-host DP work.
-Fix identity or page-lifetime failures in every supported path as they are
-found, without waiting for completion of the broader P5 recovery contract.
-
-| Stage | Reviewable deliverable | Main code owners | Prerequisite |
-| --- | --- | --- | --- |
-| P0 | Prove a supported SGLang readiness/admission hook | `python/orbitkv/sglang/`, pinned engine interface | Current source audit and SSD reproduction |
-| P1 | Owned pending operations, cancellation and bounded completion retention | `orbitkv-core`, `orbitkv-server`, `orbitkv-channel`, Python bindings/client | Can proceed while P0 establishes the engine contract |
-| P2 | SGLang consumes SSD results in actual serving | SGLang linker and its qualified admission hook | P0 and P1 |
-| P3 | Explicit demand and bounded early warming to DRAM | Engine adapters, state/channel contracts, core prefetch | P1 and P2 |
-| P4 | Measured path/boundary decisions and SSD write admission, with shared peer observations | Core storage/query/transfer/peer and `benches/` | Existing demand/codec measurements; P3 evidence for preparation decisions |
-| P5 | Recovery evidence, page generations and layer completion fences | State contracts, adapters, core GPU workers | P2; required before P6 |
-| P6 | Qualified overlap of storage, H2D and computation | Core transfer/storage/peer and engine layer callbacks | P3 and P5 |
-| R1 | Upstream Dynamo routing with OrbitKV events | Optional server routing component and event integration | Recoverable distributed catalog and qualified remote restores |
-
-### P0: establish the SGLang scheduling contract
-
-The pinned `UnifiedCacheLinker.lookup` returns `list[int]` of fully restorable
-boundaries; it has no pending result. In the pinned scheduler, request-arrival
-prefetch and admission-time `check_prefetch_progress` are guarded by
-`enable_hicache_storage`. The current OrbitKV plugin constructs the external
-linker and rejects the separate hierarchical-cache mode. Merely overriding a
-cache method does not make those guarded scheduler calls run.
-
-The implemented admission hook is the release's general plugin
-`HookRegistry` around `sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req`.
-It returns `CONTINUE` without adding the pending request to the batch. The
-scheduler retains that request and can admit the next one. This is a pinned
-engine integration: hook signatures and serving behavior must be checked on
-an engine upgrade. Controlled-completion integration tests exercise local
-waiting, other-request progress, changed keys, cancellation, and rank decisions.
-
-The single-rank serving gate passes DRAM and forced-SSD recovery across engine
-restart, with cached tokens, positive GPU-load bytes, and equal deterministic
-outputs. Real-buffer integration tests also cancel or disconnect during SSD
-reads and verify unconsumed results leave no pinned blocks. Other-request
-progress and delayed completion are covered by controlled admission tests.
-The serving gate also restores four shared prefixes concurrently. The
-[bounded 1/4/8-request baseline](concurrent-performance.md) records shared and
-mixed workloads; sustained contention and multi-rank admission still need
-separate qualification.
-
-### P1: make pending work an owned operation
-
-Implemented foundation: `orbitkv-server/src/endpoint/pending.rs` is now the
-only query polling registry. Explicit operation/revision tickets are scoped by
-authenticated session and bind the instance, request, group, and query content.
-Submission and polling are separate; a poll cannot recreate retired work. The core returns a terminal
-`QueryResult` from its future; its request-string prefetch table and stale
-prefetch GC are removed. Completion inserts/discards fetched data without
-requiring another client poll.
-
-`CancelQuery` drops waiting interest. In-flight work drains on Tokio and drops
-an undelivered lease on completion. A cancelled read continues occupying its
-operation permit until completion; limits are 128 per session and 1024 globally.
-Operation-capacity exhaustion reports unadmitted `Loading`. Byte pressure keeps
-an admitted ticket pending until its registered group footprint fits globally
-and per instance. Reservations survive result delivery and every GPU consumer.
-Identical prefix reads can be shared with independent owners and leases; SSD
-queue pressure waits for space. A too-large individual query bypasses restore.
-Expired replies drop resources while retaining a bounded tombstone until poll,
-cancel, or session teardown. Both adapters cancel superseded queries. Channel
-ABI 9 requires rebuilding the manager and client together.
-
-Deterministic [fault gates](fault-qualification.md) cover delayed SSD completion,
-cancelled ownership, lost completion notifications, stuck/malformed Publish
-acknowledgements and Manager restart with live old clients. Broader concurrent
-serving fault/soak runs and deadline/priority hints remain separate work. The current budget charges each owner's padded
-payload conservatively; physical allocator occupancy is a separate metric.
-It distinguishes preparation, ready leases, and restoration, with queueing and
-backing reconstruction included in preparation. Exact per-device staging and
-first-use scheduling are P3/P4 work.
-
-The wire request ID remains message correlation; tickets identify semantic
-work. The core owns backing operations and resources, while the endpoint owns
-encoding, authentication, and delivery. Polling observes one operation and
-cannot start a retired read or mint a second lease. An abandoned reply releases
-its lease. Cancellation ends waiting interest; submitted I/O and GPU consumers
-retain their buffers until completion. Reconnecting cannot adopt old work.
-
-Current gates cover session isolation, changed revisions, repeated polls,
-retirement, cancellation/disconnect during a shared SSD read, delivered-lease
-cleanup, and reservation lifetime through multiple consumers. The new process
-fault gate verifies drain after delayed completion and rejects old handles and
-leases after restart; unknown DMA completion retains pages. The burst baseline checks that retained query bytes return to zero
-without a stale-entry sweep after every completed burst.
-
-### P2: qualify actual SGLang SSD recovery
-
-The single-rank serving gate and the
-[Qwen3-8B SSD follow-up](ssd-performance.md#query-readiness-follow-up) now pass:
-both engines consume all 15 forced-SSD restores with matching SSD-read and
-GPU-load bytes. Cold and DRAM controls are retained, including the observed
-vLLM 1K storage-stage latency increase. The later
-[concurrent baseline](concurrent-performance.md) retains shared/mixed burst
-measurements and output controls. Multi-rank serving, sustained contention, and
-injected faults under concurrent serving remain separate gates.
-
-Connect the P0 admission lifecycle to P1. A ready, leased result must be consumed
-by the request's subsequent prefix match and restore. A verified miss, bounded
-waiting-policy expiration, or pre-transfer failure may lead to recomputation
-from a valid boundary. A submitted GPU load keeps its existing fail-closed
-ownership rules; there is no arbitrary fallback while DMA may still be active.
-
-Extend the current SGLang serving E2E and `benches.single_node` workload.
-For each of the 15 forced-SSD requests, require an actual external GPU load and
-the expected restored prefix, including SGLang's last-page rule. Keep the
-existing exact GPU-byte tests as a separate transfer check. Add delayed SSD
-completion, partial/missing suffixes, cancellation, and an unrelated request
-that progresses while another waits. The test must use the serving adapter's
-waiting path, not poll readiness on its behalf from the test process.
-
-Run the vLLM correctness gate after shared query changes. Retain the 1K/4K/8K
-DRAM controls and investigate regressions before introducing predictive policy.
-
-### P3: prepare declared demand within a byte budget
-
-Operation revisions, conservative byte ownership, and shared backing reads are
-implemented in P1. The first [queued-warming implementation](queued-warming.md)
-announces exact prefixes from both engine queues, caps warmup bytes at a quarter
-of global/per-instance budgets, skips hints under pressure, and releases their
-ownership without a lease or another poll. Optional logs expose the transfer
-lifecycle. P3 is not complete. Follow the
-[reviewed implementations and policy order](queued-warming.md#reference-implementations-and-policy-order):
-first qualify bounded consumer-owned preparation and result retention, then
-explicit best-effort/timeout stopping with submitted work draining. Existing
-demand leases already provide ownership; extend that lifecycle for a bounded
-lookahead rather than pinning every enqueue hint. Add calibrated first-use
-estimates only after these controls. Begin with exact queued prompts and
-engine-provided scheduling evidence. Relative budgets are interpreted at the
-receiver; do not compare monotonic clocks across hosts.
-
-Warmup-origin physical pages now carry first-successful-H2D / last-owner-release
-accounting with pending bytes and completed byte-seconds. New hints yield while
-foreground query ownership is active, and warmup peeks do not change recency.
-These measurements describe page reuse, not causal latency savings or confirmed
-engine consumption; use them to calibrate the next admission policy.
-The [matched page-use controls](queued-warming.md#page-use-and-reclamation-controls)
-leave 92.9% of SGLang's prepared footprint unused and admit little vLLM warming.
-Queue position can bound the first lookahead without an execution-time model.
-The absence of a query lease is not proof that a queued request can soon
-consume prepared KV; prepared residency must remain inside the admission
-budget through handoff or expiry.
-
-Extend the shared-read owner in `query/read.rs` rather than adding a second scheduler facade.
-Refine the current global/per-instance ownership budget with device and staging
-accounting. Keep capacity for normal demand restores and independent leases
-for owners of shared reads. Give overdue demand work priority, cap speculative traffic, and bound write
-starvation. Application workflow hints remain disabled until this lifecycle
-and resource accounting pass their gates.
-
-Acceptance: concurrent requests larger than the DRAM working-set budget,
-duplicate prefixes, request reordering and cancellations stay bounded. Record
-enqueue, read start, host-ready, restore submission, GPU-ready, and first-use
-timestamps. Measure useful prefetch bytes and unused retained byte-seconds.
-Demonstrate that early warming reduces exposed wait on a workload with real
-queueing; a serial idle server need not gain anything from earlier demand.
-
-### P4: calibrate costs and choose useful writes
-
-Implement the [path observations](#transfer-paths-and-cost-observations) and
-[deployment contracts](#policies-by-deployment-mode) in separate changes:
-
-1. Record queue/service/completion evidence and bounded cost estimates in Rust.
-   Run shadow decisions without changing source selection. Compare predictions
-   with actual executed paths; unselected alternatives are not measured savings.
-2. Select among qualified local paths for the same bytes, first DMA/kernel,
-   then io_uring/cuFile once native measurements exist. Require improvement above
-   uncertainty and a switching margin; avoid oscillation and foreground probes
-   that duplicate expensive I/O. Keep current behavior when evidence is weak.
-3. Compare legal boundaries and restore/recompute proposals using engine admission
-   evidence. Refine first-use preparation, resource shares and bounded batches.
-4. Tune retention, write admission and permitted representations from observed
-   reuse and capacity pressure. Charge source holds, staging and unused prepared
-   byte-seconds. Reuse existing admission/eviction owners.
-
-Carry peer identity and stage measurements alongside local work so DP does not
-need a replacement planner. Activate peer source comparisons after remote
-recovery qualification; P/D and TP/PP retain their distinct completion gates.
-Extend Core's existing storage/query and transfer/peer owners, with shared
-cost state only where it has consumers. Do not add a scheduler facade, generic
-transport registry or Python policy loops. Adapters provide engine evidence.
-
-Acceptance: separate ablations for early demand, read scheduling, and write
-admission. Report p50/p95/p99 TTFT, inter-token latency, goodput under declared
-SLOs, prediction error, physical read/write bytes, unused prefetch bytes, source
-holds and memory occupancy. Pair source/path choices under matching pressure;
-test queue changes, stale estimates, mixed instances, cancellation and slow
-peers. A policy is not accepted on hit rate alone. Keep established behavior as the initial
-policy configuration until the new policy passes these measurements; this
-does not require maintaining duplicate implementations or compatibility APIs.
-
-### P5 and P6: prove recovery and then overlap execution
-
-P5 puts absolute token spans, component coverage, and format evidence into the
-actual transfer path. Enforce engine page allocation generations, including
-reuse during preemption. Generation values must come from allocation/reuse
-events; incrementing an adapter transfer counter does not supply that evidence.
-Qualify full-attention first. Hybrid checkpoints, sliding windows, MLA and
-auxiliary state each require their own complete recovery gate.
-
-P6 adds per-layer-group completion dependencies to the engine-local raw executor,
-the remaining Manager SSD/codec workers, the backing pipeline, and both adapters. Start with whole-prefix SSD preparation plus
-layer-group H2D/compute overlap; only then pipeline SSD chunks through a bounded
-staging ring. The current serialized full restore remains the reference for
-byte correctness during evaluation. GPU execution must wait on a dependency
-that is valid on every CUDA graph replay, not only on a host wait during graph
-capture. Drain cancellation before reusing any ring slot or engine page.
-
-Acceptance: exact poisoned-destination byte checks, eager and graph-replay
-inference, partial submission faults, cancellation, and allocation reuse under
-pressure. Measure decode interference as well as TTFT. Publish overlap gains
-only for qualified engine/model/layout combinations.
-
-### R1: reuse the upstream router after distributed recovery
-
-First build a small pinned `dynamo-kv-router` integration and replay known
-events and worker loads through the upstream selector. Use its service builder
-for production lifecycle. Validate the event/hash mapping and reservation
-accounting before adding custom cost inputs. Keep this component optional and
-outside `orbitkv-core`; no current single-node dependency or service is added.
-
-Then exercise multiple engine replicas with OrbitKV tier events and the
-recovered catalog. Compare upstream default routing with load-only routing,
-and separately evaluate any calibrated selector extension. Test event loss,
-reordering, node restart, expired cost summaries, and failed source reservation.
-A stale routing hint may degrade latency; it must never become a false cache
-hit. Router-level load booking and Manager transfer leases are released through
-their respective lifecycle events.
+The [completion plan](completion-plan.md) owns the execution sequence. Its S3
+covers page generations and drain; S4 covers storage/copy overlap; S5 covers
+released engine lifecycles; S6 covers consumed physical choices and optional
+router work; S7 covers semantic retention. The former P0–P6/R1 chronology is
+retained in [the historical design](https://github.com/feichai0017/orbitkv/blob/ec3add9bcaf91a0171685ba42b5ae8330076c397/docs/state-planning.md#implementation-sequence).
+Current pending-query ownership is documented in [transport](transport.md),
+SGLang admission in [adapters](adapters.md), preparation in
+[request preparation](request-preparation.md), and layer dependencies in
+[engine-local restore](engine-local-restore.md). Completed mechanisms must not
+be reimplemented from an old stage number.
 
 ## Evaluation contract
 
-Keep scripts and results in `benches/`; keep correctness and failure tests in
+Keep programs in `benches/` and results in external artifact storage; keep correctness and failure tests in
 the existing Python integration/E2E and Rust test suites. Extend those owners
 rather than duplicating launchers or adding forwarding packages.
 

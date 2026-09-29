@@ -359,4 +359,4 @@ calibrated priority/deadline hints. Per-device/staging reservations,
 engine-consumption-level usefulness and fault qualification remain open.
 The fixed warmup share is an initial admission policy, not a cost-aware scheduler.
 Restore-versus-recompute decisions remain P4. See the
-[implementation sequence](state-planning.md#implementation-sequence).
+[implementation sequence](completion-plan.md).

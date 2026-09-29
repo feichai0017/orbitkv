@@ -10,8 +10,8 @@ This follows the service topology of
 (v0.5.5): an independent cache service shared by engines on the same node.
 OrbitKV's adapters use UDS/iceoryx2 and CUDA IPC; adding SSD or remote caching
 does not change their connection or expose storage backend selection to them.
-The [implementation plan](implementation-plan.md#deployment-profiles) defines
-the service profiles and qualification order; an upstream deployment example
+The topology table below defines service profiles; the
+[completion plan](completion-plan.md) defines qualification order; an upstream deployment example
 does not establish OrbitKV compatibility.
 
 ## Choose a topology
@@ -191,8 +191,8 @@ then qualifies isolated allocation registration and completion in Rust. Followin
 LMCache's raw CUDA allocation/timeline-event design also requires handling
 OrbitKV's UDS/iceoryx2 resources, stable GPU identity and process-death evidence.
 It is not enough to remove the Torch wrapper or copy `hostIPC: false` into a
-manifest. See [container engineering](implementation-plan.md#container-and-service-engineering)
-for source references, allocator limits and the image/cluster acceptance gates.
+manifest. See the [completion plan](completion-plan.md) for registration, shared-service
+and final image acceptance gates.
 
 ## Add peer caching
 

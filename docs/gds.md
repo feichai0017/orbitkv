@@ -492,7 +492,7 @@ With `ORBITKV_COST_OBSERVATIONS=1`, the `ssd_uring_restore` and
 these totals;
 do not add them or count their physical bytes twice. Observations remain off by
 default while the earlier SGLang ANS overhead gate is open. The route changes have
-[separate validation](implementation-plan.md#ssd-sourcepath-separation-final-evidence);
+[separate validation](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ssd-sourcepath-separation-final-evidence);
 the earlier serving and observation matrices are not reruns of this implementation.
 
 Before claiming a performance improvement, compare io_uring and **verified native** GDS on the same

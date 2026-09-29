@@ -1,7 +1,5 @@
 # Benchmark evidence and artifact storage
 
-Historical run labels below refer to the [evidence inventory and availability limits](benchmark-evidence.md).
-
 Keep benchmark programs, reusable workloads, reproduction scripts and small
 input fixtures in the repository. Raw responses, JSON/CSV measurements, manifests,
 logs, traces, generated plots and per-run reports belong in an explicitly chosen

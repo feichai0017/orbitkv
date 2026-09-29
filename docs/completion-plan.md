@@ -1,14 +1,54 @@
-# Completion stages and independent acceptance
+# Completion and upstream integration plan
 
-This is the implementation-agent handoff and reviewer acceptance sequence, audited
-on 2026-09-29 against `29d95b77` (merged PR #189; implementation head `32f5f916`).
-PR #189's required checks passed. Recheck the current base and working tree before
-starting; this plan does not freeze concurrent user development.
+This is the single execution queue for OrbitKV. Architecture documents describe
+contracts; deployment documents describe supported configurations. Neither is a
+second checklist. The implementing agent delivers one stage or coherent substage;
+the reviewer independently checks its consumed path, tests and evidence.
 
-The implementation agent delivers one stage or coherent substage per reviewable
-change. The reviewing agent checks the actual consumed path and independently
-reproduces its acceptance gates. Follow dependencies below; an infrastructure
-gap may leave a qualification cell open while independent work proceeds.
+## Release baseline and reference policy
+
+Official latest non-prerelease versions were checked on **2026-09-29**:
+
+| Project | Reference release / commit | OrbitKV qualification |
+| --- | --- | --- |
+| [vLLM](https://github.com/vllm-project/vllm/releases/tag/v0.30.0) | `v0.30.0` / `ced6857afa0ea7b2e3f0846a62e1394e90f15607` | Upgrade target. Current dependency/submodule and recorded serving gates remain **0.29.0** until S5.1 passes. |
+| [SGLang](https://github.com/sgl-project/sglang/releases/tag/v0.5.20) | `v0.5.20` / `94602c9c2b7cbdb8efd5c52802dac6a1c180089e` | Current dependency/submodule and recorded serving baseline. |
+| [LMCache](https://github.com/LMCache/LMCache/releases/tag/v0.5.5) | `v0.5.5` / `05a013b29da78cf2321b9b46ec5039dde2fb0bb0` | Integration and matched-comparison reference, not evidence of OrbitKV support. |
+
+At the start of an engine upgrade, recheck official releases, record the selected
+tag and commit, then freeze that version for the review. Inspect upstream main
+and related issues/PRs for existing fixes; main-only APIs are not release APIs.
+Upgrade dependency pins, lockfiles, submodules, examples and qualification together.
+If a required fix is unreleased, identify the upstream patch and keep that profile
+experimental. Remove superseded version branches at cutover rather than building
+a multi-version compatibility layer. A documentation update alone never upgrades
+the runtime or establishes output/performance parity.
+
+The [adapter contract](adapters.md) compares the released LMCache integrations
+and defines engine/cache ownership. The first upstream contribution is a small,
+maintainable cache backend with explicit support limits; hybrid lifecycle and P/D
+extensions can land separately. Maintainer acceptance is external to this plan:
+record submitted, merged and released as different states.
+
+## Delivery status and dependencies
+
+| Stage | Status / next action |
+| --- | --- |
+| S0 | Agent handoff and Codex skill migration merged in PR #190. |
+| S1 | Evidence separation independently verified at `ec3add9b`; this delivery consolidates plans and release-based integration guidance. Acceptance covers S1 only; native CUDA qualification remains blocked on this host. |
+| S2 | Next runtime stage: metadata reliability and capacity qualification. |
+| S3 | Open: native termination proof, page generations and explicit registration. |
+| S4 | Partial: optimize measured execution gaps; qualify mixed communication. |
+| S5 | Partial: existing adapters; release alignment, public interfaces and deployment gates below. |
+| S6 | Partial: observations/limited choices exist; unified executed decisions remain open. |
+| S7 | Open: consumed retention/checkpoint compiler beyond recovery validation. |
+| S8 | Partial: existing wheel workflow; final images, artifact gates and publication remain open. |
+
+S5.1 interface research and S8 documentation/package preparation may proceed while
+S2/S3 run. New reuse, reclamation and early-consumption behavior must wait for its
+listed lifetime dependencies. Hardware gaps leave their cells open and do not stop
+independent work. Use **implementation open**, **implementation partial**,
+**qualification open**, **deferred research**, and **release gate** precisely.
 
 ## Baseline: preserve these implementations
 
@@ -29,18 +69,17 @@ and source-SSD gates on both engines. Same-A100 SGLang P/D evidence does not clo
 its heterogeneous-GPU strict-output gap. Raw-copy and discovery improvements do
 not imply an end-to-end win over an engine's resident HBM hit.
 
-S0 is this handoff change: correct the agent guide, migrate the four project
-skills to `.agents/skills/`, remove stale Claude copies, and make this document
-the current execution sequence. Runtime stages below are not marked complete
-by writing this plan.
+The baseline above describes implemented paths, not universal model, topology or
+performance guarantees. Keep historical measurements tied to their exact builds.
 
 ## S1 — Evidence separation and one truthful work queue
 
-**Scope:** `benches/`, `docs/`, `TODO.md`, `.gitignore`, website content and the
+**Scope:** `benches/`, `docs/`, agent skills, `.gitignore`, website content and the
 smallest relevant CI check. No performance policy changes.
 
-- Inventory every open TODO. Link it to S2–S8, mark code-present/qualification-open
-  separately, and retire obsolete tasks with a reason. Do not implement unused
+- Consolidate the former TODO and competing plans into S2–S8 below. Preserve
+  missing-code versus qualification status and explicit research deferrals. Remove
+  obsolete checklists after migrating their obligations. Do not implement unused
   Python state wrappers, a second replica catalog, a new generic region RPC or
   transport abstraction merely because an old checkbox requests one.
 - Archive the tracked `benches/results/` collections before removing them from
@@ -60,7 +99,7 @@ smallest relevant CI check. No performance policy changes.
 
 **Acceptance:** tracked generated results are gone; archives are readable; normal
 benchmark execution writes outside Git; benchmark tests pass; website build,
-search and link tests pass. Every remaining open TODO has an owning stage or an
+search and link tests pass. Every migrated obligation has an owning stage or an
 explicit deferred research decision. Do not rename Rust crates to mimic Python
 package layout.
 
@@ -107,6 +146,8 @@ transfer/sys C ABI, process channel and the consumed adapter registrations.
   of adding an unused generic fence framework.
 - Replace the remaining framework CUDA IPC pickle interpretation in the Manager
   with explicit validated registration data; remove the retired wire/API path.
+- **Implementation open:** expose a stable native peer-liveness contract before
+  enabling SGLang failed-session probing. Liveness is not transfer termination.
 - Add a bounded operational response to a live Manager that never completes a
   Publish, preserving held pages until drain or established process death.
 
@@ -120,7 +161,8 @@ transfer/sys C ABI, process channel and the consumed adapter registrations.
 
 **Depends on:** S3 for new reuse/early-consumption paths. **Owners:** existing raw
 transfer compiler/workers, channel completion owners, SSD/codec owners and engine
-layer hooks. See `communication-plan.md` and `engine-local-restore.md`.
+layer hooks. The current contracts live in [transport](transport.md) and
+[engine-local restore](engine-local-restore.md).
 
 - Profile adapter hashing/conversions, repeated destination checks, fragmented
   descriptors, dispatch, allocation/scratch work and duplicate shared-prefix H2D.
@@ -135,6 +177,27 @@ layer hooks. See `communication-plan.md` and `engine-local-restore.md`.
   actual dense/hybrid workloads; native GDS needs a real supported mount with
   fallback disabled and physical I/O evidence.
 
+- Measure native completion observation and Python waiting/thread handoffs before
+  replacing them. Prefer bounded batching and demand-driven progress; completion
+  must return network credits without waiting for parsing, H2D or model callbacks.
+  Reuse upstream TENT priority/progress capabilities after checking their actual
+  release/configuration behavior. Reuse the node-local Manager and existing
+  native execution owners; keep short protocol work near I/O progress and heavy
+  codec/SSD work on bounded workers. Do not add a second RPC Agent.
+  Do not build a custom TCP stack or modify TENT
+  to host OrbitKV's metadata protocol.
+- Add mixed inference/network controls: cache READ, P/D WRITE and engine NCCL/
+  expert traffic on shared versus separate NICs. Measure decode ITL tails, TTFT,
+  SLO goodput, CPU cores, PCIe/NUMA pressure and physical NIC counters. TENT's own
+  load counters do not measure non-TENT traffic; RDMA is not bandwidth isolation.
+- **Implementation partial:** direct registered engine-page SSD I/O and multi-writer
+  GPU assembly remain beyond the existing staged GPU path. Include registration,
+  source-page hold time, fragmentation and extra HBM in their admission decision.
+- **Qualification open:** native GDS, selective DRAM admission/GPU writeback,
+  hybrid codec quality, and the SGLang ANS SSD latency gate. Historical TurboQuant
+  greedy-output failures remain visible; keep recurrent state exact until its
+  quality and correctness gates pass. Current hardware evidence cannot close them.
+
 **Acceptance:** byte-exact eager/graph, fragmented/packed/hybrid and partial-failure
   gates; repeated matched native HBM, native CPU offload, OrbitKV and LMCache
   comparisons for each engine. At least three order-alternated runs, fixed
@@ -143,33 +206,130 @@ layer hooks. See `communication-plan.md` and `engine-local-restore.md`.
   and failed preparations. Reject overhead-only optimizations or keep them
   experimental. Do not compare an external miss to a resident HBM hit as equal work.
 
-## S5 — Complete engine deployment and P/D contracts
+## S5 — Released-engine integration and upstream contributions
 
-**Depends on:** S2/S3; consume S4 changes when ready. **Owners:** vLLM scheduler/
-worker/P/D adapters, SGLang linker/P/D integration and node-local Managers.
+**Depends on:** S2/S3 for new lifetime behavior; consume S4 when ready. S5.1 may
+start independently. **Owners:** engine adapters, existing native client owners
+and narrowly scoped upstream engine interfaces. Reference released LMCache
+integration contracts from [the adapter guide](adapters.md#lmcache-reference).
 
-- Define one support matrix per engine: single instance, independent matching
-  replicas, multiple instances sharing a Manager, dense/hybrid recovery, P/D,
-  TP/PP, same-host TCP, two-host TCP and RDMA. Mark implemented, qualified,
-  experimental and unsupported cells separately.
-- Complete P/D plus cache reuse for cold, partial and full hits; verify Prefill
-  and Decode restart, cancellation, preemption, in-flight faults and bounded
-  source/destination ownership. Close SGLang's heterogeneous-GPU output gap with
-  matched native controls, not relaxed assertions or a different prompt silently.
-- Move cross-host rank fan-out/coordinated recovery into node-local Manager owners
-  where appropriate. Agree a common TP recovery boundary and stage-specific PP
-  layout/ownership. Reject unsupported heterogeneous layouts explicitly.
-- Integrate SGLang Radix lifecycle events and model/adapter or live-weight
-  invalidation where their cache semantics require them. Extend model-state
-  support only with real consumed recovery contracts.
-- Qualify multiple engines sharing one Manager and container UDS/iceoryx2/CUDA IPC,
-  pidfd visibility, budgets and failure isolation. A shared service does not
-  imply cross-engine interchangeable cache bytes.
+### S5.1 — Release and interface audit
 
-**Acceptance:** an executable scenario and output/physical-transfer/resource-drain
-  evidence for every claimed matrix cell. Cross-host TP/PP needs enough devices;
-  RDMA needs visible NICs and transport counters. Unsupported hardware cells stay
-  open. Preserve thin, distinct engine callbacks and shared Rust ownership.
+- Audit vLLM 0.30.0 and SGLang 0.5.20 by exact release commits above, and LMCache
+  0.5.5 against those interfaces. Check recipe prerequisites in release source;
+  do not assume a documented upstream PR is included in either engine release.
+- Inventory every public callback, internal Hook, monkey patch, local request
+  state machine and configuration entry. Name its resource owner and replacement,
+  distinguishing already released APIs from main-only or proposed extensions.
+- Upgrade vLLM from 0.29.0 as its own tested change, synchronizing package pins,
+  lockfile and engine submodule. Retain 0.29.0 evidence as historical; run new
+  release correctness, restart, eager/graph and overhead gates before changing
+  public support claims. Keep one maintained release implementation per engine.
+- Audit reuse of native vLLM P/D: layout/state coverage, rank mapping, source
+  retention, cancellation, error reporting and composition with cache restore.
+  Record concrete gaps before expanding or deleting `vllm/pd/`.
+
+**Acceptance:** release/API inventory with exact callers and an upstream issue/PR
+or a bounded local responsibility for each remaining internal dependency.
+
+### S5.2 — Minimal official cache backends
+
+- vLLM: retain `OrbitKVConnector` and distinct scheduler/worker responsibilities.
+  Implement released lookup/allocation, registration, load/save and terminal
+  callbacks; consume success and failure through the selected release's API.
+  Keep cache transfers and engine page-allocation ownership separate.
+- SGLang: retain `UnifiedRadixCache` plus `OrbitKVLinker`, with native tree and
+  component ownership. Reuse the released construction and layer-counter flow;
+  propose a small external-linker registration extension only where needed.
+- Keep runtime/native imports lazy and dependencies optional. Unselected OrbitKV
+  must not initialize CUDA, TENT or a Manager connection. A complete native HBM
+  hit must not add synchronous external lookup or a duplicate H2D copy.
+- Remove duplicate plugin registration at the official-registry cutover; do not
+  suppress all registration errors. Remove internal forwarding facades while
+  retaining the one adapter that actually implements each engine contract.
+- Submit baseline registration/configuration, focused tests and installation
+  docs as small upstream PRs. Core cache policy, etcd and storage stay in OrbitKV.
+
+**Acceptance:** clean supported engine checkout plus an installed OrbitKV wheel;
+no source editing needed for the claimed profile. Cold/partial/full hits,
+pressure/restart reuse and disabled-backend import behavior pass. Upstream PR
+status is reported separately from local adapter qualification.
+
+### S5.3 — Public lifecycle and hybrid-state contracts
+
+- vLLM: replace the `runtime.py` runner patch only after the released interface
+  guarantees preemption/save drain before page reuse and restore after page
+  initialization/COW but before recurrent state preprocessing. Prefer a generic
+  ordering fix to a new callback when the existing contract suffices.
+- Replace `scheduler.py`'s blanket multi-group native-prefix bypass with correct
+  atomic state-group availability/recovery. Audit existing divergent-hit APIs;
+  changing a capability flag alone does not prove all states ready.
+- SGLang: move generic recurrent checkpoint allocation/commit/abort and external
+  linker lifecycle support into engine components where accepted. Shrink
+  `RecoveryLinkerWrapper`; preserve its safety checks until equivalents are
+  actually consumed. Public Full/SWA support does not imply recurrent support.
+- Replace private enqueue/abort/release and decode-ready Hooks with explicit
+  lifecycle contracts. Keep telemetry out of ownership transitions and model
+  computation in the engine. Incorporate generation checks from S3.
+- **Implementation open:** adapter/LoRA identity and live-weight invalidation.
+  Preserve cache salt, computation identity, multimodal inputs and representation
+  boundaries; reject unsupported combinations instead of sharing unsafe keys.
+- **Qualification open:** Full + SWA + temporal recurrent native serving, page
+  reuse under preemption, cancellation, engine restart and each advertised graph
+  mode. Exact synthetic GPU recovery does not establish native model support.
+
+**Acceptance:** no private runtime replacement remains in the claimed upstream
+profile; all-state readiness, GPU ownership and resident-prefix behavior pass.
+Unreleased required fixes keep only their dependent profiles experimental.
+
+### S5.4 — Native P/D lifecycle with TENT payloads
+
+- Keep cache offload/reuse and live P/D handoff independently selectable. Prefer
+  native engine bootstrap, request states and DecodeReady authority; add a
+  released, explicit TENT transport construction boundary without replacing a
+  module's global class. TENT API calls do not establish GPUDirect RDMA use.
+- SGLang: replace `install_sglang_tent_backend` class substitution and private
+  completion/release Hooks. Keep native bootstrap/rank logic. Optional failed-peer
+  probing waits for S3's stable native liveness contract.
+- vLLM: reuse native P/D after S5.1 proves lifecycle/layout equivalence. Fill real
+  upstream gaps in focused PRs; then remove superseded custom handshake, request
+  states and proxy code. Keep only examples needed to launch the chosen upstream
+  router, with one tested production handoff path.
+- Qualify cold/partial/full P/D plus cache reuse. Exactly one owner writes each
+  destination range, commits DecodeReady and authorizes release. `MultiConnector`
+  registration/order alone does not establish safe composition.
+- Preserve producer events, destination generations and physical drain on abort,
+  preemption, restart and partial submission. Close heterogeneous-GPU strict-output
+  failures with matched native controls, not relaxed output assertions.
+
+**Acceptance:** real transfer/output/drain evidence for both P and D, standalone
+cache and composed modes. Retire old paths only in the same change that proves
+the replacement; do not keep TE/TENT compatibility fallbacks or duplicate owners.
+
+### S5.5 — Deployment matrix and upstream maintenance
+
+- Track each engine separately: single instance; independent replicas; multiple
+  instances sharing a Manager; dense/hybrid; P/D; attention DP, TP, PP, MoE EP and
+  relevant combinations; homogeneous/heterogeneous P/D parallelism; same-host TCP,
+  physical two-host TCP and RDMA. Label implemented, qualified, experimental and
+  unsupported independently. Do not infer KV partitioning from EP world size.
+- **Implementation open:** node-local Manager query fan-out for cross-host TP.
+  The engine still owns rank agreement, legal common recovery boundaries, GPU
+  allocation and execution collectives. Define stage-specific PP state/layout;
+  reject unsupported resharding and state mappings explicitly.
+- Qualify source incarnations, cancellation, sender/receiver budgets and transport
+  failures on real hosts. RDMA needs visible NICs and physical counters; multiple
+  ranks/processes on one GPU do not qualify multi-GPU or host-failure behavior.
+- Qualify simultaneous engines, Manager/engine restart, shared DRAM/SSD budgets,
+  containers, UDS/iceoryx2/CUDA IPC, PID visibility and resource drain. Shared
+  service support does not establish cross-engine interchangeable cache bytes.
+- Maintain upstream registration/docs/tests and a release upgrade gate. Submit
+  lifecycle fixes and TENT support separately from the baseline cache entry.
+  Record review links, maintainers, merge commit and first containing release.
+
+**Acceptance:** an executable scenario with output, physical-transfer and drain
+evidence for every claimed cell. The minimal upstream cache PR need not wait for
+all topology/research cells; no untested cell becomes supported by that merge.
 
 ## S6 — One consumed route and admission planner
 
@@ -195,6 +355,27 @@ worker/P/D adapters, SGLang linker/P/D integration and node-local Managers.
   routing milestone is retained; include worker evidence, replica risk and
   revalidation. NIXL/backend expansion is an evaluation decision, not an assumed
   prerequisite to finishing TENT recovery.
+
+- Add receiver-driven admission using a bounded in-flight byte window **and**
+  pacing. One node/physical-NIC/direction budget must include Manager READ and
+  engine-process P/D WRITE; Manager-only admission misses the latter. Lease
+  bounded credits in batches while keeping payload movement direct through TENT.
+- Keep network credits, destination buffer lifetime and source export authority
+  distinct. Return credits on verified receive/transport progress; retain memory
+  until its final user drains. Credit timeout is never a memory-release proof.
+- Schedule ready data using deadlines, remaining critical state/rank/layer work,
+  per-instance fairness and aging. Pair receiver admission with source egress
+  limits; a receiver cannot control other flows or all fabric bottlenecks. Reserve
+  headroom for engine communication using measured physical interference.
+- **Qualification open:** cross-medium selection and peer SSD under contention,
+  cancellation and RDMA. Two-host TCP byte recovery does not qualify policy gain.
+- **Deferred research:** router event normalization and pinned upstream router
+  service integration; eviction externalities/replica risk; load-only versus
+  overlap-only versus joint routing on one trace; active RDMA WRITE cache
+  replication; topology slicing, endpoint pooling and alternate-rail retry;
+  NIXL Mooncake-backend evaluation. These need a concrete scope decision and
+  measured benefit. Current P/D WRITE is not cache replication. Do not introduce
+  a new transport abstraction or deprecated KVBM to close the current plan.
 
 **Acceptance:** selected routes explain their coverage, ownership and predicted
   complete cost; stale evidence/resource rejection replans safely; submitted
@@ -246,6 +427,8 @@ existing build/release workflows.
 - Build independent Manager and engine images from validated artifacts. Separate
   Manager/client packaging only at a clear dependency/version contract; qualify
   shared-process resources, GPU access and SSD mounts before publishing manifests.
+- Preserve licenses and bundled upstream provenance. Keep heavy GPU/RDMA gates
+  explicitly marked and distinguish engine support from runtime build success.
 - Build final wheels/images, install outside the checkout on both hosts and
   repeat the claimed sharing/P/D/restart gates with those exact hashes. Source
   test evidence cannot replace final artifact qualification.
@@ -269,7 +452,7 @@ The implementing agent provides:
    required repo checks. Never build native libraries during live runtime tests.
 4. External evidence locations and artifact hashes, with failed controls and
    environmental limitations. No private credentials or results in the commit.
-5. Updated TODO/support status and the next dependency. Passing unit tests does
+5. Updated completion-plan/support status and the next dependency. Passing unit tests does
    not close a hardware, model-serving or performance cell.
 
 The reviewer inspects implementation and call sites, repeats the smallest tests
@@ -288,6 +471,28 @@ These sources guide organization and workflows, not OrbitKV capability claims:
 - [Codex repository skill discovery](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills).
 
 Architecture contracts remain in [distributed cache](distributed-cache.md),
-[communication](communication-plan.md), [state planning](state-planning.md),
+[transport](transport.md), [state planning](state-planning.md),
 [deployment](deployment.md), [P/D](pd.md) and [release](releases.md) documentation.
 Existing historical reports describe their recorded revisions only.
+
+## Consolidated documentation and retired work
+
+The former root TODO, implementation handoff, communication sequence and roadmap
+have been consolidated here. Their historical revision remains available at
+[the S1 source snapshot](https://github.com/feichai0017/orbitkv/tree/ec3add9bcaf91a0171685ba42b5ae8330076c397).
+All 70 open obligations were assigned to S2–S8: storage/codec execution and
+performance to S4; transfer generations/revocation to S3; engine identity,
+Radix/P-D/topology/container contracts to S5; cost/network admission and explicit
+router/backend research to S6; retention semantics to S7; package/image/provenance
+and recurring release qualification to S8. S2 retains metadata capacity/faults.
+
+Retired proposals remain retired: a second shard Catalog, binary OrbitKV metadata
+inside Mooncake, unused Python state facades, a generic region RPC without a
+consumer, and duplicated backend/cost wrappers. Existing raw 2D DMA, bounded raw
+parts, single-part layer events and local global indexes need extension or
+qualification, not another implementation. The former direct engine-page SSD
+and multi-writer assembly item is **implementation partial**, not just untested.
+
+Historical result tables stay at immutable revisions or external evidence storage.
+Current resource contracts remain in their owner documents. No compatibility
+stub documents or duplicate execution queues replace the deleted files.

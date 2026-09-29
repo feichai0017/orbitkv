@@ -222,7 +222,7 @@ ordered generated text to vLLM native prefix caching. SGLang `0.5.20` passed
 its direct GPU-page restore gate after a radix-cache flush. These are local
 correctness checks, not multi-host reliability or throughput measurements.
 The SGLang multi-rank and cross-host TP paths still need qualification. See
-[Python test gates](../python/tests/README.md) and the [roadmap](roadmap.md).
+[Python test gates](../python/tests/README.md) and the [completion plan](completion-plan.md).
 
 ## Mooncake findings
 
@@ -368,5 +368,5 @@ metadata currently uses gRPC. The selected local global-index replacement moves
 directory synchronization to background etcd publication and snapshot/Watch,
 and removes foreground discovery RPCs. Source grants/completions retain gRPC;
 TENT retains payload READ/WRITE. The custom native metadata bus is outside the
-delivery plan. See the [communication plan](communication-plan.md) and
+delivery plan. See the [communication plan](completion-plan.md#s4--finish-communication-execution-and-demonstrate-gains) and
 [peer-control boundary](peer-control.md).

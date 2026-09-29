@@ -109,7 +109,7 @@ GPUDirect, distributed throughput, P/D or mid-transfer crash/partition revocatio
 
 ### Earlier same-host gates
 
-The [2026-09-25 ownership-layout recheck](implementation-plan.md#ownership-layout-final-evidence)
+The [2026-09-25 ownership-layout recheck](https://github.com/feichai0017/orbitkv/blob/9fe1441c0d7d4c47b1914c303f837bba9f4a758f/docs/implementation-plan.md#ownership-layout-final-evidence)
 passed on native source `046b16f5` with a matching query-body-v6 client and frozen
 Manager. Both engines completed three remote GPU restores, catalog restart
 replay and correct recomputation after source payload loss. Each transferred

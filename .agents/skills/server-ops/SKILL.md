@@ -32,3 +32,10 @@ Catalog placement/lookup RPCs or change etcd's transport to fix a payload proble
 Use test-owned processes for faults; preserve other workloads and collect logs
 outside the repo. Keep same-host TCP, physical two-host TCP and RDMA evidence
 separate. Build first, then test with native binaries/libraries frozen.
+
+For inference interference, measure the physical NIC/direction, PCIe/NUMA and
+engine collective traffic as well as TENT transfers. Manager query-byte budgets
+are not a node-wide network scheduler; engine-local P/D WRITE is a separate
+submitter. Receiver credit/pacing is planned in S6, not an existing runtime flag.
+Source authority, network credits and destination lifetime need separate drain
+evidence. Report that distinction when diagnosing congestion or retained memory.

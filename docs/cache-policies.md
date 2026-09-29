@@ -193,4 +193,4 @@ These are reuse heuristics, not model execution prediction. Compiled recovery
 requirements still determine which pages, windows and checkpoints are legal
 to restore. Cost-based restore-versus-recompute decisions, execution-time
 forecasting and finer copy/compute overlap remain separate work in the
-[roadmap](roadmap.md).
+[completion plan](completion-plan.md).
